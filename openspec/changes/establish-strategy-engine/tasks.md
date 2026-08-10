@@ -19,7 +19,7 @@
 
 ## 3. Strategy contract and analytical result semantics
 
-- [ ] 3.1 RED — Add reusable Strategy Contract Tests for declared `DataRequirement` (`frequency`, `required_fields`, `minimum_history`), equivalent-result reproducibility, StrategyResult strategy/as-of identity, and common MarketState membership.
+- [ ] 3.1 RED — Add reusable Strategy Contract Tests for declared `DataRequirement` (`frequency`, `required_fields`, `minimum_history`), equivalent-result reproducibility, StrategyResult strategy/as-of identity, common MarketState membership, and preservation of implementation-specific regime/details inside strategy-specific signals or diagnostics rather than the common market-state field.
 - [ ] 3.2 RED — Add behavior tests proving Strategy evaluation requires no real holdings, average cost, cash, benchmark, prior execution state, or prior strategy runtime state; verify RED is caused by missing contract behavior.
 - [ ] 3.3 RED — Add result-contract tests proving EntryPlan may expose levels/triggers, ExitPlan may expose dynamic levels/triggers, no fixed profit target is mandatory, and analytical plans do not imply fills or portfolio state.
 - [ ] 3.4 GREEN — Implement the typed stateless Strategy protocol, `DataRequirement`, `StrategyContext`, `StrategyResult`, `MarketState`, EntryPlan, ExitPlan, signals/diagnostics/reasons extension fields, and the minimum registry integration required by the tests.
@@ -29,7 +29,7 @@
 ## 4. Formal market-data normalization and structural validation
 
 - [ ] 4.1 RED — Add data behavior tests showing reverse-chronological provider records can normalize into strict chronological order and that duplicate normalized timestamps fail with `DATA_FAILED / DUPLICATE_TIMESTAMP`.
-- [ ] 4.2 RED — Add tests for invalid/un-normalizable timestamps, non-positive OHLC, invalid OHLC relationships, negative volume, and missing strategy-required fields; assert specific required codes and `VALIDATION_ERROR` fallback where no more specific code is specified.
+- [ ] 4.2 RED — Add tests for invalid/un-normalizable timestamps, non-positive OHLC, invalid OHLC relationships, negative volume, and missing strategy-required fields; assert specific required codes and `VALIDATION_ERROR` fallback where no more specific code is specified, and prove missing required volume is not converted to zero or interpreted as a negative strategy signal.
 - [ ] 4.3 RED — Add tests proving missing required formal data yields `DATA_FAILED / DATA_UNAVAILABLE` and that data failure never becomes `NEUTRAL`; run and verify intended RED failures.
 - [ ] 4.4 GREEN — Implement provider-neutral raw-record normalization into immutable completed `DailyBar` values and structural/requirement validation with the stable data-failure envelope.
 - [ ] 4.5 REFACTOR — Keep provider ordering/conversion in normalization and keep validation independent of provider SDKs or live-network behavior.
@@ -68,7 +68,7 @@
 
 - [ ] 8.1 RED — Add a valid `NEUTRAL` Decision test proving `NEUTRAL` is successful only after configuration/data eligibility and Strategy evaluation succeed.
 - [ ] 8.2 RED — Add a Strategy evaluation failure test expecting `STRATEGY_FAILED`, machine-readable code, human-readable reason, and no valid market state or plan represented as successful output.
-- [ ] 8.3 RED — Add successful artifact traceability tests for instrument, resolved as-of, strategy, parameter set, resolved parameters, Git revision, StrategyResult, and data-quality status.
+- [ ] 8.3 RED — Add successful artifact traceability tests for instrument, resolved as-of, strategy, parameter set, Git revision, StrategyResult, and data-quality status.
 - [ ] 8.4 RED — Add early configuration-failure artifact tests proving unresolved strategy/parameter metadata is not fabricated.
 - [ ] 8.5 RED — Add success and failure artifact tests requiring exactly `僅為個人研究與策略驗證，不構成任何形式之投資建議。`; run and verify intended RED failures.
 - [ ] 8.6 GREEN — Implement the shared failure envelope and Decision artifact builder/JSON serialization with optional metadata according to the point of failure.
@@ -115,7 +115,7 @@
 
 ## 13. Analytical Backtest artifact contract
 
-- [ ] 13.1 RED — Add successful artifact tests for instrument, assignment mode, strategy, parameter set, resolved parameters, Git revision, requested start/end dates, validation status, WARMUP markers where applicable, and eligible StrategyResult timeline.
+- [ ] 13.1 RED — Add successful artifact tests for instrument, assignment mode, strategy, parameter set, Git revision, requested start/end dates, validation status, WARMUP markers where applicable, and eligible StrategyResult timeline.
 - [ ] 13.2 RED — Add failed artifact tests requiring top-level failed status, failure category, machine-readable code, human-readable reason, and no partial timeline represented as successful output.
 - [ ] 13.3 RED — Add success and failure artifact tests requiring exactly `僅為個人研究與策略驗證，不構成任何形式之投資建議。`; run and verify intended RED failures.
 - [ ] 13.4 GREEN — Implement analytical Backtest artifact builder and JSON serialization using the shared failure/disclaimer contracts.
@@ -135,7 +135,7 @@
 ## 15. End-to-end framework regression and OpenSpec conformance
 
 - [ ] 15.1 RED — Add/confirm end-to-end application smoke tests covering one successful Decision, one successful analytical Backtest, representative configuration/data/strategy failures, historical as-of replay, and an optional intraday-overlay case using only test adapters.
-- [ ] 15.2 RED — Temporarily verify the smoke tests would detect look-ahead, Decision/Backtest strategy divergence, missing disclaimer, execution-state leakage, and a configuration failure that incorrectly loads data.
+- [ ] 15.2 RED — Verify the end-to-end tests fail if look-ahead protection, Decision/Backtest strategy equivalence, the fixed disclaimer, execution-state isolation, or configuration-before-data-loading guarantees are broken.
 - [ ] 15.3 GREEN — Make only the minimum integration fixes necessary for all approved capability behaviors to pass together; do not implement deferred production strategies/providers/execution simulation.
 - [ ] 15.4 REFACTOR — Remove duplicate orchestration, dead abstractions, and strategy-specific assumptions introduced during vertical-slice implementation while preserving all behavior tests.
 - [ ] 15.5 VERIFY — Run the complete test suite and required quality gates: `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, and `uv run mypy src tests`.
