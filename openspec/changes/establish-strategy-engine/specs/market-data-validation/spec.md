@@ -28,6 +28,27 @@ The system SHALL keep incomplete current-session snapshot data separate from for
 - THEN those current-session values remain separate from formal historical OHLCV
 - AND they do not alter the Strategy Result evaluated as of T-1
 
+### Requirement: Optional intraday snapshot failure does not invalidate formal data
+
+The system SHALL treat unavailable or invalid optional intraday snapshot data separately from the completed historical data required for formal Decision evaluation.
+
+#### Scenario: Formal data is valid but intraday snapshot is unavailable
+
+- GIVEN completed historical data is valid and eligible for formal Decision evaluation
+- AND the optional current-session snapshot cannot be obtained
+- WHEN Decision data is prepared
+- THEN the formal historical data remains eligible
+- AND the formal Decision is not failed solely because the optional intraday snapshot is unavailable
+- AND the intraday overlay may be omitted or reported as unavailable
+
+#### Scenario: Optional intraday snapshot is structurally invalid
+
+- GIVEN completed historical data is valid and eligible for formal Decision evaluation
+- AND the optional intraday snapshot contains a non-positive open or latest price, an invalid snapshot time, or a session date inconsistent with the current session
+- WHEN the snapshot is validated
+- THEN the invalid snapshot does not alter or invalidate the formal historical Strategy Result
+- AND the intraday overlay may be omitted or reported as unavailable
+
 ### Requirement: Historical observations are bounded by resolved as-of
 
 The system SHALL provide strategy evaluation only with completed observations whose information is available on or before the resolved `as_of` date.
@@ -50,6 +71,19 @@ The system SHALL reject data that is missing a field required by the selected st
 - THEN validation fails with `DATA_FAILED`
 - AND the failure code is `MISSING_REQUIRED_FIELD`
 - AND the missing value is not interpreted as zero or as a negative strategy signal
+
+### Requirement: Formal market data must be available
+
+The system SHALL report `DATA_FAILED` with failure code `DATA_UNAVAILABLE` when required formal market data cannot be obtained for Decision or analytical Backtest evaluation.
+
+#### Scenario: Required historical data cannot be obtained
+
+- GIVEN configuration resolution succeeds
+- AND required formal historical market data cannot be obtained or yields no usable observations
+- WHEN formal market-data loading completes
+- THEN evaluation fails with `DATA_FAILED`
+- AND the failure code is `DATA_UNAVAILABLE`
+- AND strategy evaluation does not run
 
 ### Requirement: OHLC structural relationships are valid
 
