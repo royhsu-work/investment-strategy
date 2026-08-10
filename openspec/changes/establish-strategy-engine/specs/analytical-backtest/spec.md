@@ -44,9 +44,17 @@ The system SHALL support an `ACTIVE` research mode that uses the instrument's co
 - WHEN an analytical Backtest is requested in `ACTIVE` mode
 - THEN each eligible evaluation uses that active strategy and parameter set
 
+#### Scenario: Active assignment is missing
+
+- GIVEN a configured instrument without an active strategy assignment
+- WHEN an analytical Backtest is requested in `ACTIVE` mode
+- THEN the Backtest fails with `CONFIGURATION_FAILED`
+- AND the failure code is `ACTIVE_STRATEGY_NOT_CONFIGURED`
+- AND market-data loading and strategy evaluation do not run
+
 ### Requirement: Analytical Backtest supports explicit strategy assignment
 
-The system SHALL support an `EXPLICIT` research mode that uses a fully specified strategy and parameter-set pair without changing the instrument's active formal assignment.
+The system SHALL support an `EXPLICIT` research mode that uses a fully specified strategy and parameter-set pair without changing or requiring the instrument's active formal assignment.
 
 #### Scenario: Research another strategy pair
 
@@ -55,6 +63,14 @@ The system SHALL support an `EXPLICIT` research mode that uses a fully specified
 - WHEN an analytical Backtest is requested in `EXPLICIT` mode with strategy B and parameter set B1
 - THEN the Backtest evaluates strategy B with parameter set B1
 - AND the instrument's active assignment remains strategy A with parameter set A1
+
+#### Scenario: Instrument has no active assignment
+
+- GIVEN a configured instrument without an active strategy assignment
+- AND a compatible explicit strategy B with parameter set B1 exists
+- WHEN an analytical Backtest is requested in `EXPLICIT` mode with strategy B and parameter set B1
+- THEN the Backtest evaluates strategy B with parameter set B1
+- AND the missing active assignment does not cause the explicit Backtest to fail
 
 ### Requirement: Partial explicit override is rejected
 
@@ -67,6 +83,7 @@ The system SHALL reject an explicit Backtest assignment that specifies only a st
 - WHEN configuration resolution runs
 - THEN the Backtest fails with `CONFIGURATION_FAILED`
 - AND the system does not silently reuse the active parameter set
+- AND market-data loading and strategy evaluation do not run
 
 #### Scenario: Parameter set is specified without strategy
 
@@ -75,10 +92,11 @@ The system SHALL reject an explicit Backtest assignment that specifies only a st
 - WHEN configuration resolution runs
 - THEN the Backtest fails with `CONFIGURATION_FAILED`
 - AND the system does not silently reuse the active strategy
+- AND market-data loading and strategy evaluation do not run
 
 ### Requirement: Backtest data range may include pre-roll history
 
-The system SHALL allow strategy input history to begin before the Backtest performance/evaluation start date so that minimum-history requirements can be satisfied without treating pre-roll dates as part of the requested evaluation range.
+The system SHALL allow strategy input history to begin before the Backtest requested evaluation start date so that minimum-history requirements can be satisfied without treating pre-roll dates as part of the requested evaluation range.
 
 #### Scenario: Minimum history requires observations before Backtest start
 
@@ -111,6 +129,20 @@ The system SHALL fail an analytical Backtest when required historical data is in
 - WHEN validation runs
 - THEN the Backtest reports `DATA_FAILED`
 - AND the invalid observation is not silently skipped
+
+### Requirement: Strategy failure during Backtest is fail-fast
+
+The system SHALL fail the analytical Backtest if strategy evaluation fails at any eligible historical evaluation point and SHALL NOT present a partial timeline as a successful Backtest.
+
+#### Scenario: Strategy evaluation fails at an eligible date
+
+- GIVEN configuration and required market data are valid
+- AND strategy evaluation succeeds for earlier eligible dates
+- AND strategy evaluation fails at historical date T
+- WHEN the analytical Backtest reaches T
+- THEN the Backtest reports `STRATEGY_FAILED`
+- AND it stops successful analytical replay at that failure
+- AND it does not represent the partial Strategy Result timeline as a successful Backtest
 
 ### Requirement: Analytical Backtest does not simulate execution state
 
