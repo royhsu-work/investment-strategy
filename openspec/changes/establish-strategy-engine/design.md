@@ -22,7 +22,7 @@ The design must preserve these boundaries:
 - failures must remain distinct from valid `NEUTRAL` results;
 - public Decision and analytical Backtest artifacts contain the exact disclaimer `僅為個人研究與策略驗證，不構成任何形式之投資建議。`
 
-The implementation is Python 3.11+ and should remain small, typed, testable, and dependency-light. Project tooling will use `uv`, `pytest`, and `ruff`; type annotations are required throughout the core contracts.
+The implementation is Python 3.11+ and should remain small, typed, testable, and dependency-light. Project tooling will use `uv`, `pytest`, `ruff`, and `mypy`; type annotations are required throughout the core contracts.
 
 ## Goals / Non-Goals
 
@@ -277,16 +277,19 @@ DATA_FAILED
 ├── MISSING_REQUIRED_FIELD
 ├── INVALID_OHLC
 ├── DUPLICATE_TIMESTAMP
-└── DATA_GAP
+├── DATA_GAP
+└── VALIDATION_ERROR
 ```
 
-Additional structural detail can be retained in diagnostics without expanding the stable top-level failure categories.
+`VALIDATION_ERROR` is the stable fallback code for structural failures whose specs do not assign a more specific code, such as a negative volume value or an un-normalizable timestamp. Detailed validation diagnostics remain available without expanding the stable failure taxonomy for every field-level case.
 
 **Why:** provider ordering is an adapter concern; invalid normalized data is a domain/application failure and must never become `NEUTRAL`.
 
 ### 6. Make trading time an injected dependency
 
 Decision `as_of` resolution and Backtest date iteration depend on a `TradingCalendar` and an injected `Clock` rather than directly reading system time.
+
+The `Clock` returns timezone-aware instants. The applicable `TradingCalendar` owns the market timezone and session-completion rules so `latest completed trading day` is not derived from the runner's local timezone.
 
 The calendar boundary exposes behavior equivalent to:
 
@@ -330,7 +333,9 @@ IntradaySnapshot (optional)
 
 The Strategy receives only `FormalMarketData` bounded by `resolved_as_of`.
 
-After a successful formal Decision, an optional `IntradayOverlayBuilder` may compare a valid current snapshot with existing analytical entry/exit levels. The overlay may report current relationships such as above/near/at-or-below a level, but it cannot:
+After a successful formal Decision, an optional `IntradayOverlayBuilder` may compare a valid current snapshot with existing analytical entry/exit levels. The framework may report direct deterministic relationships such as `ABOVE_LEVEL` or `AT_OR_BELOW_LEVEL`. It does not invent a framework-level `NEAR` threshold; proximity semantics require an explicitly defined future rule or strategy-provided tolerance.
+
+The overlay cannot:
 
 - mutate StrategyResult;
 - recalculate formal indicators/model state;
@@ -456,11 +461,11 @@ DecisionArtifact
 ├── instrument
 ├── requested_as_of?
 ├── resolved_as_of?
-├── strategy
-├── parameter_set
-├── resolved_parameters
+├── strategy?              # absent when resolution never reached it
+├── parameter_set?         # absent when resolution never reached it
+├── resolved_parameters?   # success or post-resolution failure only
 ├── git_sha
-├── data_quality
+├── data_quality?
 ├── strategy_result?       # success only
 ├── intraday_overlay?      # optional, observational
 ├── failure?               # failure only
@@ -474,17 +479,19 @@ AnalyticalBacktestArtifact
 ├── status
 ├── instrument
 ├── assignment_mode
-├── strategy
-├── parameter_set
-├── resolved_parameters
+├── strategy?              # absent when resolution never reached it
+├── parameter_set?         # absent when resolution never reached it
+├── resolved_parameters?   # success or post-resolution failure only
 ├── git_sha
 ├── start_date
 ├── end_date
-├── validation_status
-├── timeline[]             # WARMUP markers and eligible StrategyResults
+├── validation_status?
+├── timeline[]?            # success; may contain WARMUP markers and eligible StrategyResults
 ├── failure?               # failure only
 └── disclaimer
 ```
+
+Artifact builders preserve whatever requested/resolved identity is actually known at the failure point, but they never fabricate strategy or parameter metadata after an early configuration failure.
 
 The exact public disclaimer value is a shared constant at the artifact boundary:
 
@@ -492,7 +499,7 @@ The exact public disclaimer value is a shared constant at the artifact boundary:
 僅為個人研究與策略驗證，不構成任何形式之投資建議。
 ```
 
-Artifacts are serialized as JSON for machine-readable GitHub Actions output. Large Backtest timelines may additionally use JSON Lines internally/output-side, but the semantic contract remains the same.
+Artifacts are serialized as JSON for machine-readable GitHub Actions output.
 
 **Why:** artifacts remain stable across strategy implementations and are easy to validate in behavioral tests.
 
@@ -537,7 +544,7 @@ RED behavioral test
 -> run and verify failure is the intended missing behavior
 -> minimum GREEN implementation
 -> REFACTOR while preserving behavior
--> full pytest + ruff + type checks when configured
+-> full pytest + ruff + mypy verification
 ```
 
 Tooling baseline:
@@ -547,9 +554,8 @@ uv
 pytest
 ruff check .
 ruff format --check .
+mypy src tests
 ```
-
-A dedicated type checker may be added if configured by the implementation change, but type annotations are mandatory regardless.
 
 ## Risks / Trade-offs
 
@@ -563,7 +569,7 @@ Mitigation: YAML is only a repository adapter. Resolver/application code consume
 
 ### Risk: intraday overlay is mistaken for a new trading signal
 
-Mitigation: place it outside StrategyResult, prohibit formal recalculation, use observational terminology, and make snapshot failure non-fatal to the formal Decision.
+Mitigation: place it outside StrategyResult, prohibit formal recalculation, use observational terminology, avoid implicit proximity thresholds, and make snapshot failure non-fatal to the formal Decision.
 
 ### Risk: analytical Backtest is mistaken for execution performance
 
@@ -571,7 +577,7 @@ Mitigation: name the capability and artifacts `analytical-backtest`, include Str
 
 ### Risk: calendar/session rules depend on market-specific details
 
-Mitigation: inject `TradingCalendar` and `Clock`; this change defines their required behavior but not a concrete exchange-calendar provider.
+Mitigation: inject `TradingCalendar` and timezone-aware `Clock`; this change defines their required behavior but not a concrete exchange-calendar provider.
 
 ### Risk: public artifacts expose research configuration/results
 
@@ -590,7 +596,7 @@ Implementation should proceed incrementally:
 5. Add analytical Backtest replay, assignment modes, warm-up, and failure behavior.
 6. Add traceable artifact serialization and fixed disclaimer tests.
 7. Align request examples and workflow scaffold wording with the new analytical contracts.
-8. Run full regression, lint/format, and OpenSpec traceability verification.
+8. Run full regression, lint/format/type checks, and OpenSpec traceability verification.
 
 No generated analytical result is committed to the repository during this migration.
 
