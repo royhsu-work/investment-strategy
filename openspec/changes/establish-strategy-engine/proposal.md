@@ -6,6 +6,8 @@ The project needs a shared, reproducible strategy-evaluation framework that can 
 
 The framework must support multiple strategy implementations while preventing look-ahead bias, hidden runtime-state dependencies, and accidental mixing of configuration, data-validation, strategy-evaluation, and execution concerns.
 
+Because the repository and generated GitHub Actions artifacts may be publicly accessible, public Decision and analytical Backtest outputs must also clearly state their research purpose and that they do not constitute investment advice.
+
 This change establishes that common evaluation foundation before implementing any production Bollinger, time-series, hybrid, or execution-simulation logic.
 
 ## What Changes
@@ -26,6 +28,7 @@ This change introduces a common Strategy Engine with the following capabilities:
 - Decision evaluation using the configured active assignment.
 - Analytical walk-forward Backtest evaluation using the same Strategy implementation as Decision and without future information.
 - Reproducibility metadata including strategy identity, parameter set, `as_of`, and Git revision in generated results/artifacts.
+- A required disclaimer in every public Decision and analytical Backtest artifact: `僅為個人研究與策略驗證，不構成任何形式之投資建議。`
 
 ## Capabilities
 
@@ -33,8 +36,8 @@ This change introduces a common Strategy Engine with the following capabilities:
 
 - `strategy-engine`: common strategy evaluation contract, common swing-plan result, stateless evaluation, strategy/parameter separation, and strategy resolution.
 - `market-data-validation`: normalized completed daily OHLCV, trading-calendar-aware validation, strategy data requirements, warm-up, and failure semantics.
-- `decision-evaluation`: formal active-strategy evaluation for a symbol and optional historical `as_of` date.
-- `analytical-backtest`: walk-forward historical strategy evaluation with active or explicit strategy assignment and no look-ahead.
+- `decision-evaluation`: formal active-strategy evaluation for a symbol and optional historical `as_of` date, including the required public-output disclaimer.
+- `analytical-backtest`: walk-forward historical strategy evaluation with active or explicit strategy assignment and no look-ahead, including the required public-output disclaimer.
 
 ### Modified Capabilities
 
@@ -78,6 +81,7 @@ Expected affected areas:
 - Analytical Backtest walk-forward flow.
 - Validation and failure reporting.
 - GitHub Actions artifacts for reproducible Decision and analytical Backtest outputs.
+- Public Decision and analytical Backtest artifact schemas, which must carry the fixed research-use disclaimer.
 
 Existing workflow scaffolds may be adapted to call these applications, but generated results remain GitHub Actions Artifacts and are not committed back into the repository.
 
