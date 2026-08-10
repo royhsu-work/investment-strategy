@@ -44,13 +44,13 @@ The system SHALL reject a Decision when the requested instrument or its active a
 - WHEN a Decision evaluation is requested
 - THEN the Decision fails with `CONFIGURATION_FAILED`
 - AND the failure code is `ACTIVE_STRATEGY_NOT_CONFIGURED`
-- AND strategy evaluation does not run
+- AND market-data loading and strategy evaluation do not run
 
-### Requirement: Decision resolves the evaluation date to a completed trading day
+### Requirement: Decision resolves the formal evaluation date to a completed trading day
 
-The system SHALL evaluate a Decision against a completed trading day and SHALL preserve the distinction between a requested date and the resolved evaluation date when they differ.
+The system SHALL evaluate the formal Strategy Result against a completed trading day and SHALL preserve the distinction between a requested date and the resolved evaluation date when they differ.
 
-#### Scenario: No as-of date is supplied
+#### Scenario: No as-of date is supplied outside an incomplete trading session
 
 - GIVEN valid market data and trading-calendar information
 - WHEN a Decision request omits `as_of`
@@ -62,6 +62,14 @@ The system SHALL evaluate a Decision against a completed trading day and SHALL p
 - WHEN the Decision date is resolved
 - THEN the system selects the most recent eligible completed trading day according to the trading calendar
 - AND the Decision output preserves both the requested date and resolved `as_of` date
+
+#### Scenario: Requested date is the current trading day before completion
+
+- GIVEN the requested `as_of` date is the current trading day
+- AND the current trading session is not yet complete
+- WHEN the Decision date is resolved
+- THEN the formal `resolved_as_of` is the most recent eligible completed trading day
+- AND the incomplete current-session bar is not used as formal daily history
 
 ### Requirement: Decision uses only information available by resolved as-of
 
@@ -79,6 +87,40 @@ The system SHALL prevent observations or intraday information unavailable by the
 - AND a separate incomplete intraday snapshot
 - WHEN the formal Decision is evaluated
 - THEN the intraday snapshot does not alter the formal historical strategy evaluation
+
+### Requirement: Decision may include an observational intraday overlay
+
+The system SHALL allow a Decision produced during an incomplete current trading session to include a separate intraday overlay containing current-session observations without changing the formal Strategy Result.
+
+#### Scenario: Current-session open and latest price are available
+
+- GIVEN the formal Strategy Result is evaluated through completed trading day T-1
+- AND trading day T is currently in progress
+- AND current-session open, latest price, and snapshot time are available
+- WHEN the Decision output is produced
+- THEN the formal `resolved_as_of` remains T-1
+- AND the output may include a separate intraday overlay for session T
+- AND the overlay identifies the session date, open, latest price, and snapshot time
+- AND the overlay does not modify the formal market state, entry plan, exit plan, indicators, or model state
+
+### Requirement: Intraday overlay describes current relationship to the formal plan
+
+The system SHALL allow the intraday overlay to describe the current open or latest price relative to analytical entry or exit plan levels without representing execution or historical intraday touch events.
+
+#### Scenario: Latest price is below an entry level
+
+- GIVEN the formal entry plan contains a price level
+- AND the current latest price is at or below that level
+- WHEN the intraday overlay is generated
+- THEN the overlay may indicate that the current price is at or below the analytical entry level
+- AND it does not claim that an order was filled
+
+#### Scenario: Only current snapshot values are available
+
+- GIVEN only the current-session open and latest price are available
+- AND no intraday high, low, bar history, or tick history is available
+- WHEN the intraday overlay is generated
+- THEN the output does not claim that an analytical level was touched earlier in the session
 
 ### Requirement: Successful Decision returns an analytical strategy plan
 
@@ -114,7 +156,7 @@ The system SHALL report `NEUTRAL` only when configuration and required market da
 
 ### Requirement: Decision output is reproducible and traceable
 
-The system SHALL identify enough evaluation metadata in a successful Decision output to trace the strategy configuration and code revision used for the result.
+The system SHALL identify enough evaluation metadata in a successful Decision output to trace the strategy configuration and code revision used for the formal result.
 
 #### Scenario: Successful Decision artifact is generated
 
