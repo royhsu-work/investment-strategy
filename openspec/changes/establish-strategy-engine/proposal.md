@@ -25,6 +25,7 @@ This change introduces a common Strategy Engine with the following capabilities:
 - Structural and strategy-requirement data validation with clear separation between valid `NEUTRAL` outcomes and failures.
 - Trading-calendar-aware as-of resolution, freshness, continuity, and warm-up handling.
 - Formal isolation of incomplete intraday snapshots from completed historical daily data.
+- An optional observational intraday overlay for Decision output that can report the current session open, latest price, snapshot time, and their relationship to the formal analytical plan without changing the formal Strategy Result.
 - Decision evaluation using the configured active assignment.
 - Analytical walk-forward Backtest evaluation using the same Strategy implementation as Decision and without future information.
 - Reproducibility metadata including strategy identity, parameter set, `as_of`, and Git revision in generated results/artifacts.
@@ -36,7 +37,7 @@ This change introduces a common Strategy Engine with the following capabilities:
 
 - `strategy-engine`: common strategy evaluation contract, common swing-plan result, stateless evaluation, strategy/parameter separation, and strategy resolution.
 - `market-data-validation`: normalized completed daily OHLCV, trading-calendar-aware validation, strategy data requirements, warm-up, and failure semantics.
-- `decision-evaluation`: formal active-strategy evaluation for a symbol and optional historical `as_of` date, including the required public-output disclaimer.
+- `decision-evaluation`: formal active-strategy evaluation for a symbol and optional historical `as_of` date, including an optional observational intraday overlay and the required public-output disclaimer.
 - `analytical-backtest`: walk-forward historical strategy evaluation with active or explicit strategy assignment and no look-ahead, including the required public-output disclaimer.
 
 ### Modified Capabilities
@@ -56,6 +57,8 @@ It does **not** define or implement:
 - daily pending-order or execution-state lifecycle;
 - PnL, returns, drawdown, or other execution-derived performance metrics;
 - transaction fees, taxes, slippage, or liquidity assumptions;
+- provisional intraday recalculation of formal indicators, model state, or market state from an incomplete session;
+- intraday tick/bar-history reconstruction or claims that a price was touched earlier in the session when only current snapshot values are available;
 - a production Bollinger strategy;
 - W-bottom, V-reversal, M-top, or inverted-V detection rules;
 - Bollinger `%B`, BandWidth, ATR, or volume-confirmation thresholds;
@@ -77,7 +80,7 @@ Expected affected areas:
 - OpenSpec definitions for strategy evaluation, market-data validation, Decision, and analytical Backtest behavior.
 - New common domain contracts for Strategy, Strategy Result, market state, entry/exit plans, and data requirements.
 - Configuration for instrument active assignments and reusable parameter sets.
-- Decision application flow.
+- Decision application flow, including optional current-session observational overlay output.
 - Analytical Backtest walk-forward flow.
 - Validation and failure reporting.
 - GitHub Actions artifacts for reproducible Decision and analytical Backtest outputs.
