@@ -50,15 +50,25 @@ The system SHALL reject a Decision when the requested instrument or its active a
 
 The system SHALL evaluate the formal Strategy Result against a completed trading day and SHALL preserve the distinction between a requested date and the resolved evaluation date when they differ.
 
-#### Scenario: No as-of date is supplied outside an incomplete trading session
+#### Scenario: No as-of date is supplied when no session is in progress
 
 - GIVEN valid market data and trading-calendar information
+- AND there is no incomplete current trading session
 - WHEN a Decision request omits `as_of`
 - THEN the system resolves `as_of` to the latest eligible completed trading day
+
+#### Scenario: No as-of date is supplied during an incomplete trading session
+
+- GIVEN trading day T is currently in progress
+- AND valid completed daily history is available through T-1
+- WHEN a Decision request omits `as_of`
+- THEN the formal `resolved_as_of` is T-1
+- AND an optional intraday overlay for session T may be included when valid snapshot data is available
 
 #### Scenario: Requested date is not a trading day
 
 - GIVEN a requested `as_of` date that is not a trading day
+- AND the requested date is not in the future
 - WHEN the Decision date is resolved
 - THEN the system selects the most recent eligible completed trading day according to the trading calendar
 - AND the Decision output preserves both the requested date and resolved `as_of` date
@@ -70,6 +80,18 @@ The system SHALL evaluate the formal Strategy Result against a completed trading
 - WHEN the Decision date is resolved
 - THEN the formal `resolved_as_of` is the most recent eligible completed trading day
 - AND the incomplete current-session bar is not used as formal daily history
+
+### Requirement: Future Decision as-of dates are rejected
+
+The system SHALL reject a Decision request whose requested `as_of` is later than the current applicable date/time boundary rather than silently clamping it to an available trading day.
+
+#### Scenario: Requested as-of is in the future
+
+- GIVEN a Decision request specifies a future `as_of` date
+- WHEN request validation runs
+- THEN the Decision fails with `CONFIGURATION_FAILED`
+- AND the failure code is `INVALID_AS_OF`
+- AND market-data loading and strategy evaluation do not run
 
 ### Requirement: Decision uses only information available by resolved as-of
 
@@ -102,6 +124,15 @@ The system SHALL allow a Decision produced during an incomplete current trading 
 - AND the output may include a separate intraday overlay for session T
 - AND the overlay identifies the session date, open, latest price, and snapshot time
 - AND the overlay does not modify the formal market state, entry plan, exit plan, indicators, or model state
+
+#### Scenario: Intraday snapshot is unavailable
+
+- GIVEN the formal Strategy Result can be evaluated successfully from completed historical data
+- AND the optional intraday snapshot is unavailable or invalid
+- WHEN the Decision output is produced
+- THEN the Decision may still complete successfully
+- AND the formal Strategy Result remains valid
+- AND the intraday overlay is omitted or reported as unavailable
 
 ### Requirement: Intraday overlay describes current relationship to the formal plan
 
@@ -170,17 +201,17 @@ The system SHALL identify enough evaluation metadata in a successful Decision ou
 - AND it includes the analytical Strategy Result
 - AND it includes data-quality status
 
-### Requirement: Failed Decision output does not contain a valid trading decision
+### Requirement: Failed Decision output uses a common failure contract
 
 The system SHALL represent configuration, data, or strategy failures explicitly and SHALL NOT serialize a failure as a valid analytical Decision.
 
-#### Scenario: Strategy evaluation fails
+#### Scenario: Decision fails
 
-- GIVEN configuration and data validation succeed
-- AND the strategy evaluation fails
+- GIVEN a Decision fails during configuration resolution, formal data loading or validation, or strategy evaluation
 - WHEN the Decision artifact is produced
-- THEN the artifact reports `STRATEGY_FAILED`
-- AND it contains a machine-readable failure code and human-readable reason
+- THEN the artifact identifies the applicable top-level failure status as `CONFIGURATION_FAILED`, `DATA_FAILED`, or `STRATEGY_FAILED`
+- AND it contains a machine-readable failure code
+- AND it contains a human-readable failure reason
 - AND it does not present a valid market state or trading plan as if evaluation succeeded
 
 ### Requirement: Public Decision artifact includes the fixed disclaimer
