@@ -1,0 +1,30 @@
+name: Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: "Target symbol"
+        required: true
+        type: string
+      period:
+        description: "Backtest period"
+        required: true
+        default: "1y"
+        type: string
+
+  push:
+    paths:
+      - "requests/backtest.json"
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Placeholder
+        run: |
+          echo "Backtest workflow scaffold only."
+          echo "Implement historical replay, fill simulation and artifact output next."
