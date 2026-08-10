@@ -16,6 +16,18 @@ The system SHALL use completed daily OHLCV observations as the formal historical
 - THEN the historical daily dataset contains only completed daily observations
 - AND the intraday snapshot is not inserted into the formal historical series
 
+### Requirement: Intraday snapshots remain observational
+
+The system SHALL keep incomplete current-session snapshot data separate from formal historical data and SHALL NOT use such snapshot values to recalculate formal indicators, model state, or common market state.
+
+#### Scenario: Current session open and latest price are available
+
+- GIVEN formal historical data through completed trading day T-1
+- AND current-session open, latest price, and snapshot time for trading day T
+- WHEN the data is prepared for Decision output
+- THEN those current-session values remain separate from formal historical OHLCV
+- AND they do not alter the Strategy Result evaluated as of T-1
+
 ### Requirement: Historical observations are bounded by resolved as-of
 
 The system SHALL provide strategy evaluation only with completed observations whose information is available on or before the resolved `as_of` date.
@@ -68,20 +80,27 @@ The system SHALL reject an observation whose volume is negative.
 - THEN validation fails with `DATA_FAILED`
 - AND the failure code identifies invalid market data
 
-### Requirement: Observation timestamps are valid, ordered, and unique
+### Requirement: Normalized historical timestamps are valid, unique, and strictly chronological
 
-The system SHALL reject historical data containing invalid timestamps, duplicate timestamps, or an invalid chronological sequence.
+The system SHALL validate the normalized historical series such that timestamps are valid, unique, and strictly chronological. Provider-specific input ordering MAY be normalized before this validation.
 
-#### Scenario: Duplicate trading date
+#### Scenario: Provider returns reverse chronological data
+
+- GIVEN otherwise valid provider data ordered newest to oldest
+- WHEN normalization prepares the historical series
+- THEN the series may be reordered into strict chronological order
+- AND reverse provider ordering alone is not treated as a data-integrity failure
+
+#### Scenario: Duplicate trading date remains after normalization
 
 - GIVEN two historical observations with the same normalized trading timestamp
 - WHEN structural validation runs
 - THEN validation fails with `DATA_FAILED`
 - AND the failure code is `DUPLICATE_TIMESTAMP`
 
-#### Scenario: Invalid chronological sequence
+#### Scenario: Invalid timestamp cannot be normalized
 
-- GIVEN historical observations that cannot be normalized into a valid chronological order without ambiguity or data corruption
+- GIVEN a historical observation whose timestamp cannot be normalized into a valid trading timestamp
 - WHEN structural validation runs
 - THEN validation fails with `DATA_FAILED`
 
