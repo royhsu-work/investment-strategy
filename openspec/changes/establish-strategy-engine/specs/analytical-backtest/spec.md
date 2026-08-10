@@ -119,6 +119,28 @@ The system SHALL classify an early historical evaluation point as `WARMUP` when 
 - AND no Strategy Result is evaluated for that date
 - AND it is not classified as `NEUTRAL` or a data failure
 
+### Requirement: Backtest requires at least one eligible evaluation date
+
+The system SHALL NOT report a successful analytical Backtest when every requested evaluation date is `WARMUP` and no Strategy Result can be evaluated.
+
+#### Scenario: Entire requested range is warm-up
+
+- GIVEN the requested Backtest range contains valid historical data
+- AND every requested evaluation date has fewer observations than the selected strategy's minimum-history requirement
+- WHEN the analytical Backtest completes eligibility processing
+- THEN the Backtest fails with `DATA_FAILED`
+- AND the failure code is `INSUFFICIENT_HISTORY`
+- AND the Backtest does not present an empty analytical timeline as a successful result
+
+#### Scenario: Requested range contains warm-up and eligible dates
+
+- GIVEN early requested dates are `WARMUP`
+- AND at least one later requested date satisfies the selected strategy's minimum-history requirement
+- WHEN the analytical Backtest runs
+- THEN the Backtest may complete successfully
+- AND the eligible dates contain Strategy Results
+- AND the warm-up dates remain distinguishable from eligible dates
+
 ### Requirement: Invalid Backtest data fails instead of being silently skipped
 
 The system SHALL fail an analytical Backtest when required historical data is invalid rather than silently omitting invalid observations and continuing with potentially biased results.
@@ -171,6 +193,19 @@ The system SHALL identify enough metadata in a successful analytical Backtest ou
 - AND it identifies the requested start and end dates
 - AND it includes validation status
 - AND it contains the analytical Strategy Result timeline for eligible evaluation dates
+
+### Requirement: Failed analytical Backtest output uses a common failure contract
+
+The system SHALL represent configuration, data, or strategy failures explicitly in failed analytical Backtest artifacts and SHALL NOT present partial results as a successful Backtest.
+
+#### Scenario: Analytical Backtest fails
+
+- GIVEN an analytical Backtest fails during configuration resolution, formal data loading or validation, or strategy evaluation
+- WHEN the Backtest artifact is produced
+- THEN the artifact identifies the applicable top-level failure status as `CONFIGURATION_FAILED`, `DATA_FAILED`, or `STRATEGY_FAILED`
+- AND it contains a machine-readable failure code
+- AND it contains a human-readable failure reason
+- AND it does not present a partial analytical timeline as a successful Backtest
 
 ### Requirement: Public analytical Backtest artifact includes the fixed disclaimer
 
