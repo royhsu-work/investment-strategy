@@ -4,6 +4,18 @@ Define the common observable behavior of strategy evaluation so Decision and ana
 
 ## ADDED Requirements
 
+### Requirement: Strategy declares market-data requirements
+
+The system SHALL obtain the selected strategy's declared data frequency, required fields, and minimum history before determining data eligibility or running strategy evaluation.
+
+#### Scenario: Strategy requirements are available before data eligibility
+
+- GIVEN a selected strategy
+- WHEN its market-data requirements are requested
+- THEN the requirements identify the required frequency
+- AND they identify the required fields
+- AND they identify the minimum history needed for eligible evaluation
+
 ### Requirement: Explicit strategy evaluation inputs
 
 The system SHALL evaluate a strategy using only the selected instrument, the resolved strategy configuration, the evaluation `as_of` date, and market data available for that evaluation.
@@ -36,6 +48,28 @@ The system SHALL exclude observations and information that become available afte
 - THEN the evaluation uses only information available on or before T
 - AND observations after T do not affect the result
 
+### Requirement: Configuration resolution completes before market-data loading
+
+The system SHALL fully resolve and validate the instrument, strategy, parameter set, and strategy parameters before market-data loading or strategy evaluation begins.
+
+#### Scenario: Strategy implementation is not available
+
+- GIVEN a configuration references a strategy that cannot be resolved
+- WHEN configuration resolution runs
+- THEN the system fails with `CONFIGURATION_FAILED`
+- AND the failure code is `STRATEGY_NOT_FOUND`
+- AND market-data loading does not run
+- AND strategy evaluation does not run
+
+#### Scenario: Parameter set is not available
+
+- GIVEN a configuration references a parameter set that cannot be resolved
+- WHEN configuration resolution runs
+- THEN the system fails with `CONFIGURATION_FAILED`
+- AND the failure code is `PARAMETER_SET_NOT_FOUND`
+- AND market-data loading does not run
+- AND strategy evaluation does not run
+
 ### Requirement: Compatible strategy and parameter-set resolution
 
 The system SHALL resolve a strategy together with a parameter set owned by that strategy before evaluation.
@@ -52,11 +86,12 @@ The system SHALL resolve a strategy together with a parameter set owned by that 
 - WHEN the configuration is resolved
 - THEN the system rejects the configuration with `CONFIGURATION_FAILED`
 - AND the failure code is `STRATEGY_PARAMETER_MISMATCH`
+- AND market-data loading does not run
 - AND strategy evaluation does not run
 
 ### Requirement: Invalid strategy parameters are rejected before evaluation
 
-The system SHALL reject a parameter set whose values are invalid for the selected strategy before strategy evaluation starts.
+The system SHALL reject a parameter set whose values are invalid for the selected strategy before market-data loading or strategy evaluation starts.
 
 #### Scenario: Invalid parameter values
 
@@ -65,6 +100,7 @@ The system SHALL reject a parameter set whose values are invalid for the selecte
 - WHEN the configuration is resolved
 - THEN the system rejects the configuration with `CONFIGURATION_FAILED`
 - AND the failure code is `INVALID_STRATEGY_PARAMETERS`
+- AND market-data loading does not run
 - AND strategy evaluation does not run
 
 ### Requirement: Common swing-analysis result
