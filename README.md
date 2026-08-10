@@ -5,7 +5,7 @@
 本專案將「目前交易決策」與「歷史策略驗證」拆成兩個獨立 GitHub Actions Workflow：
 
 - `decision.yml`：依最新完整歷史資料判定位階，計算當日買點 / 賣點並輸出交易計畫。
-- `backtest.yml`：使用歷史資料逐日重播相同策略，模擬買賣點是否實際觸價成交並統計績效。
+- `backtest.yml`：使用歷史資料逐日重播相同策略，輸出逐日 analytical StrategyResult timeline；成交模擬由後續 Execution Simulator change 處理。
 
 > 核心原則：Decision 與 Backtest 必須共用同一份策略實作。回測不能使用另一套簡化規則。
 
@@ -60,41 +60,35 @@ Decision **不負責宣告成交**。
 產生賣點 ≠ 已賣出
 ```
 
-買點與賣點每日依最新完整歷史資料重新計算，新 Decision 直接取代前一日的交易計畫。
+買點與賣點每日依最新完整歷史資料重新計算；新的 Decision 代表最新 analytical view。本 change 不定義 pending execution plan 的替換、存續或有效期限。
 
 ---
 
-### 2. 執行回測
+### 2. 分析型回測
 
 Backtest Workflow 負責回答：
 
-> 如果在歷史上每天使用完全相同的策略產生交易計畫，實際可能產生什麼交易結果？
+> 如果在歷史上每天使用完全相同的策略，以當時可用資料重新評估，逐日會得到什麼 StrategyResult？
 
 流程：
 
 ```text
-取得歷史資料
+取得歷史資料與 pre-roll
     ↓
 Data Integrity Check
     ↓
 逐交易日推進
     ↓
-使用共用 Strategy 計算當日位階
+只提供截至當日可用資料
     ↓
-產生買點 / 賣點
+使用共用 Strategy 計算 StrategyResult
     ↓
-使用後續 OHLC 判斷是否觸價
-    ↓
-模擬成交 / 未成交
-    ↓
-持倉與資金管理
-    ↓
-統計績效
+記錄 analytical timeline
     ↓
 GitHub Actions Artifact
 ```
 
-回測不能看到當時尚未發生的資料（避免 look-ahead bias）。
+Backtest 不得看到當時尚未發生的資料（避免 look-ahead bias）。本 change 不模擬成交、持倉、現金或執行衍生績效。
 
 ---
 
@@ -168,21 +162,20 @@ decision/
 
 用途：
 
-- 抓取指定期間的歷史資料
-- 每個交易日使用同一份 Strategy 產生買賣點
-- 使用後續市場資料判斷是否觸價
-- 模擬成交與持倉
-- 計算策略績效
-- 將詳細結果存為 Artifact
+- 抓取指定期間與所需 pre-roll 歷史資料
+- 每個交易日使用同一份 Strategy 進行 walk-forward evaluation
+- 嚴格限制每個 evaluation point 只能使用當時可用資料
+- 區分 `WARMUP`、有效 StrategyResult 與失敗
+- 輸出 analytical StrategyResult timeline
+- 將結果存為 Artifact
 
 預期輸出：
 
 ```text
 backtest/
 ├── summary.json
-├── trades.csv
-├── equity_curve.csv
-└── signals.csv
+├── strategy_results.jsonl
+└── data_quality.json
 ```
 
 ---
@@ -201,14 +194,17 @@ Strategy 只負責：
 
 Strategy **不負責假設成交**。
 
-成交判斷屬於 Execution / Backtest Engine：
+成交判斷屬於後續獨立的 Execution Simulator change：
 
 ```text
 Strategy
    │
-   ├── Decision → 輸出交易計畫
+   ├── Decision → 輸出 analytical plan
    │
-   └── Backtest → Execution Engine → 模擬成交
+   └── Analytical Backtest → 輸出 StrategyResult timeline
+
+後續：
+StrategyResult / Plan → Execution Simulator → simulated fills / positions / PnL
 ```
 
 這項分離可以避免把「策略希望成交的價格」誤當成「市場實際可以成交的價格」。
@@ -230,10 +226,8 @@ src/investment_strategy/
 │   └── ...
 ├── decision/
 │   └── engine.py
-├── backtest/
-│   └── engine.py
-└── execution/
-    └── fill.py
+└── backtest/
+    └── engine.py
 ```
 
 兩個 Workflow 只負責 orchestration，不在 YAML 內實作策略規則。
@@ -261,16 +255,15 @@ python -m investment_strategy backtest ...
 
 ---
 
-## 每日買賣點更新規則
+## 每日 analytical view 更新規則
 
 目前確定規則：
 
 1. 使用最新完整歷史資料重新判定位階。
-2. 根據最新位階重新計算買點與賣點。
-3. 新 Decision 取代前一個 Decision。
-4. 不另外維護「買點有效 N 天」。
-5. 不因為產生買點 / 賣點就宣告成交。
-6. Backtest 必須額外判斷市場是否真正觸及策略價格。
+2. 根據最新位階重新計算 Entry / Exit Plan。
+3. 新的 Decision 代表目前最新的 analytical view。
+4. 不因為產生 Entry / Exit Plan 就宣告成交。
+5. pending execution plan 的有效期限、替換與存續規則不屬於本 change，留給後續 Execution Simulator 定義。
 
 ---
 
@@ -365,7 +358,7 @@ git_commit_sha
 - 資料來源 fallback 規則
 - 實際位階定義
 - 買點 / 賣點公式
-- 回測成交價格模型
+- Execution Simulator 成交價格模型
 - 手續費
 - 證交稅
 - 滑價
@@ -474,10 +467,9 @@ openspec/changes/establish-strategy-engine/
 ```text
 Decision
 ├── 使用完整歷史資料判定位階
-├── 根據位階計算買點
-├── 根據位階計算賣點
-├── 買點 / 賣點不代表成交
-└── 每日重新計算，新 Decision 取代舊 Decision
+├── 根據位階計算 Entry / Exit Plan
+├── Entry / Exit Plan 不代表成交
+└── 每日重新計算，新的 Decision 代表最新 analytical view
 
 Backtest
 ├── 與 Decision 共用同一 Strategy
@@ -574,9 +566,9 @@ Architecture / Rules Definition
 - [x] Decision 使用過去完整資料判定位階
 - [x] 由位階計算買點 / 賣點
 - [x] 買點 / 賣點不代表成交
-- [x] 買賣點每日重算，新 Decision 取代舊 Decision
-- [x] Backtest 模擬實際是否觸價成交
+- [x] Entry / Exit Plan 每日重算，新的 Decision 代表最新 analytical view
+- [x] Backtest 僅進行 analytical walk-forward replay，不模擬成交
 - [x] 計算結果以 GitHub Actions Artifact 輸出
 - [x] 計算結果不 commit 回 repository
 - [x] 採用 OpenSpec 管理正式需求與變更
-- [ ] 建立 initial OpenSpec change：`establish-strategy-engine`
+- [x] 建立 initial OpenSpec change：`establish-strategy-engine`
