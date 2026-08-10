@@ -378,6 +378,8 @@ git_commit_sha
 
 ---
 
+---
+
 ## OpenSpec 開發流程
 
 本專案採用 OpenSpec 管理需求、設計與實作變更。
@@ -481,14 +483,20 @@ Backtest
 ├── 與 Decision 共用同一 Strategy
 ├── 歷史資料逐日推進
 ├── 不得使用未來資料
-├── 依 OHLC 判斷買賣點是否觸價
-└── 模擬實際成交與持倉結果
+├── 輸出逐日 StrategyResult analytical timeline
+└── 不模擬成交、持倉、現金或績效
 
 Strategy
 ├── 接收當時可用的歷史資料
 ├── 判定位階
 ├── 計算買點 / 賣點
 └── 不處理成交狀態
+
+Intraday Overlay
+├── 正式 StrategyResult 仍使用最近完整交易日
+├── 可獨立列示當日開盤價、即時價與 snapshot time
+├── 可描述即時價相對既有 Entry / Exit Plan 的位置
+└── 不回寫正式指標、market state 或成交狀態
 ```
 
 ### Strategy 變更原則
@@ -549,6 +557,7 @@ tasks.md
 實作時不得自行擴大未定義需求，也不得將尚未確認的假設直接寫進 Strategy。
 
 若發現規格不足，應先更新 change，再繼續實作。
+
 
 ## 專案狀態
 
