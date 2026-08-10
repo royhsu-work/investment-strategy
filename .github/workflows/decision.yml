@@ -1,0 +1,25 @@
+name: Decision
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: "Target symbol"
+        required: true
+        type: string
+
+  push:
+    paths:
+      - "requests/decision.json"
+
+jobs:
+  decision:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Placeholder
+        run: |
+          echo "Decision workflow scaffold only."
+          echo "Implement data fetch, validation, strategy and artifact output next."
