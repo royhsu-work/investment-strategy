@@ -3,7 +3,7 @@ name = "investment-strategy"
 version = "0.1.0"
 description = "Reproducible analytical strategy engine for Decision and Backtest flows"
 requires-python = ">=3.11"
-dependencies = ["PyYAML>=6.0"]
+dependencies = ["PyYAML>=6.0", "yfinance==0.2.65"]
 
 [dependency-groups]
 dev = [
