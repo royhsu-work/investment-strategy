@@ -1,7 +1,7 @@
 # market-data-validation Specification
 
 ## Purpose
-TBD - created by archiving change establish-strategy-engine. Update Purpose after archive.
+Define the formal market-data eligibility, normalization, validation, continuity, freshness, and no-look-ahead rules that protect Decision and analytical Backtest evaluation from incomplete, unavailable, invalid, or temporally ineligible observations.
 ## Requirements
 ### Requirement: Completed daily OHLCV is the formal historical input
 
