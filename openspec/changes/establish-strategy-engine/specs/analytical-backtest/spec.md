@@ -57,12 +57,12 @@ The system SHALL interpret `start_date` and `end_date` as an inclusive calendar 
 
 ### Requirement: Invalid Backtest ranges are rejected before market-data loading
 
-The system SHALL reject a Backtest range that cannot define a valid completed historical evaluation interval.
+The system SHALL reject a syntactically valid Backtest request whose range cannot define a valid completed historical evaluation interval.
 
 #### Scenario: Start date is after end date
 
-- GIVEN `start_date` is later than `end_date`
-- WHEN the Backtest request is validated
+- GIVEN an accepted Backtest request whose `start_date` is later than `end_date`
+- WHEN application request validation runs
 - THEN the Backtest fails
 - AND the failure category is `CONFIGURATION_FAILED`
 - AND the failure code is `INVALID_BACKTEST_RANGE`
@@ -70,8 +70,8 @@ The system SHALL reject a Backtest range that cannot define a valid completed hi
 
 #### Scenario: End date is in the future
 
-- GIVEN `end_date` is later than the current applicable calendar date
-- WHEN the Backtest request is validated
+- GIVEN an accepted Backtest request whose `end_date` is later than the current applicable calendar date
+- WHEN application request validation runs
 - THEN the Backtest fails
 - AND the failure category is `CONFIGURATION_FAILED`
 - AND the failure code is `INVALID_BACKTEST_RANGE`
@@ -79,7 +79,7 @@ The system SHALL reject a Backtest range that cannot define a valid completed hi
 
 #### Scenario: Range contains no completed trading day
 
-- GIVEN `start_date` is not later than `end_date`
+- GIVEN an accepted Backtest request whose `start_date` is not later than `end_date`
 - AND the inclusive requested interval contains no completed trading day
 - WHEN the Backtest request range is resolved against the trading calendar
 - THEN the Backtest fails
@@ -100,7 +100,7 @@ The system SHALL support an `ACTIVE` research mode that uses the instrument's co
 #### Scenario: Active assignment is missing
 
 - GIVEN a configured instrument without an active strategy assignment
-- WHEN an analytical Backtest is requested in `ACTIVE` mode
+- WHEN an accepted analytical Backtest is requested in `ACTIVE` mode
 - THEN the Backtest fails
 - AND the failure category is `CONFIGURATION_FAILED`
 - AND the failure code is `ACTIVE_STRATEGY_NOT_CONFIGURED`
@@ -126,29 +126,29 @@ The system SHALL support an `EXPLICIT` research mode that uses a fully specified
 - THEN the Backtest evaluates strategy B with parameter set B1
 - AND the missing active assignment does not cause the explicit Backtest to fail
 
-### Requirement: Partial explicit override is rejected
+### Requirement: Partial explicit assignment is rejected at the Backtest request boundary
 
-The system SHALL reject an explicit Backtest assignment that specifies only a strategy or only a parameter set.
+The Backtest request boundary SHALL reject an `EXPLICIT` request that specifies only a strategy or only a parameter set before Backtest application evaluation begins.
 
 #### Scenario: Strategy is specified without parameter set
 
 - GIVEN an analytical Backtest request in `EXPLICIT` mode
 - AND the request provides a strategy but no parameter set
-- WHEN configuration resolution runs
-- THEN the Backtest fails
-- AND the failure category is `CONFIGURATION_FAILED`
+- WHEN the Backtest request boundary validates the request contract
+- THEN the request is rejected
+- AND Backtest application evaluation does not begin
+- AND no public Backtest artifact is produced for the rejected request
 - AND the system does not silently reuse the active parameter set
-- AND market-data loading and strategy evaluation do not run
 
 #### Scenario: Parameter set is specified without strategy
 
 - GIVEN an analytical Backtest request in `EXPLICIT` mode
 - AND the request provides a parameter set but no strategy
-- WHEN configuration resolution runs
-- THEN the Backtest fails
-- AND the failure category is `CONFIGURATION_FAILED`
+- WHEN the Backtest request boundary validates the request contract
+- THEN the request is rejected
+- AND Backtest application evaluation does not begin
+- AND no public Backtest artifact is produced for the rejected request
 - AND the system does not silently reuse the active strategy
-- AND market-data loading and strategy evaluation do not run
 
 ### Requirement: Backtest data range may include pre-roll history
 
@@ -255,29 +255,36 @@ The system SHALL identify enough metadata in a successful analytical Backtest ou
 - AND it includes validation status
 - AND its requested evaluation timeline distinguishes `WARMUP` dates from eligible dates containing Strategy Results
 
-### Requirement: Failed analytical Backtest output uses a common failure contract
+### Requirement: Failed analytical Backtest output uses a minimal common failure contract
 
-The system SHALL represent configuration, data, or strategy failures explicitly in failed analytical Backtest artifacts and SHALL NOT present partial results as a successful Backtest.
+The system SHALL represent application configuration, data, or strategy failures explicitly in failed analytical Backtest artifacts and SHALL NOT present partial results as a successful Backtest.
 
-#### Scenario: Analytical Backtest fails
+#### Scenario: Accepted analytical Backtest fails
 
-- GIVEN an analytical Backtest fails during request validation, configuration resolution, formal data loading or validation, or strategy evaluation
+- GIVEN an accepted analytical Backtest request fails during application request validation, configuration resolution, formal data loading or validation, or strategy evaluation
 - WHEN the Backtest artifact is produced
 - THEN the artifact status is `FAILED`
+- AND it identifies the requested instrument
+- AND it identifies the requested assignment mode
+- AND it identifies the requested start and end dates
+- AND it identifies the Git revision used by the application
 - AND `failure.category` is `CONFIGURATION_FAILED`, `DATA_FAILED`, or `STRATEGY_FAILED` as applicable
 - AND `failure.code` contains a machine-readable failure code
 - AND `failure.reason` contains a human-readable failure reason
 - AND it does not present a partial analytical timeline as a successful Backtest
 
-#### Scenario: Backtest fails before strategy identity is resolved
+#### Scenario: Failure occurs after some internal metadata was resolved
 
-- GIVEN an analytical Backtest fails before a strategy or parameter set can be resolved
-- WHEN the failed artifact is produced
-- THEN unresolved strategy or parameter-set metadata is not fabricated
+- GIVEN an accepted analytical Backtest request later fails
+- AND internal processing may already know a strategy, parameter set, validation status, or partial analytical timeline
+- WHEN the failed public artifact is produced
+- THEN those internally known fields are not required by the public failure contract
+- AND unresolved strategy or parameter-set metadata is not fabricated
+- AND no partial analytical timeline is represented as successful output
 
 ### Requirement: Public analytical Backtest artifact includes the fixed disclaimer
 
-The system SHALL include exactly `僅為個人研究與策略驗證，不構成任何形式之投資建議。` in every public analytical Backtest artifact.
+The system SHALL include exactly `僅為個人研究與策略驗證，不構成任何形式之投資建議。` in every public analytical Backtest artifact produced by the Backtest application.
 
 #### Scenario: Successful public analytical Backtest artifact
 
@@ -287,6 +294,6 @@ The system SHALL include exactly `僅為個人研究與策略驗證，不構成�
 
 #### Scenario: Failed public analytical Backtest artifact
 
-- GIVEN an analytical Backtest fails during request validation, configuration, data validation, or strategy evaluation
+- GIVEN an accepted analytical Backtest request fails during application validation, configuration, data validation, or strategy evaluation
 - WHEN the public artifact is generated
 - THEN the artifact still contains exactly `僅為個人研究與策略驗證，不構成任何形式之投資建議。`
