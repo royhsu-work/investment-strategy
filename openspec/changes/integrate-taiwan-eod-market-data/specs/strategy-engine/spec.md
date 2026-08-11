@@ -23,6 +23,24 @@ The system SHALL represent an instrument's listing venue as provider-neutral con
 - THEN each instrument retains its own listing-venue identity
 - AND downstream provider adapters can route or map them without changing the canonical symbols used by Strategy, Decision, or Backtest
 
+### Requirement: Taiwan EOD integration supports TWSE and TPEx listing venues
+
+The system SHALL support `TWSE` and `TPEX` as provider-neutral listing-venue identities for Taiwan instruments covered by this change.
+
+#### Scenario: TWSE-listed instrument is configured
+
+- GIVEN an instrument listed on the Taiwan Stock Exchange
+- WHEN its instrument configuration is loaded
+- THEN its listing venue can be represented as `TWSE`
+- AND no provider-specific ticker suffix is required in the canonical symbol
+
+#### Scenario: TPEx-listed instrument is configured
+
+- GIVEN an instrument listed on the Taipei Exchange
+- WHEN its instrument configuration is loaded
+- THEN its listing venue can be represented as `TPEX`
+- AND no provider-specific ticker suffix is required in the canonical symbol
+
 ### Requirement: Listing venue is independent of strategy assignment
 
 The system SHALL keep instrument listing-venue identity independent of active strategy assignment and research parameter selection.
