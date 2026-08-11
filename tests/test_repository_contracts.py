@@ -52,4 +52,4 @@ def test_workflow_scaffolds_match_analytical_semantics() -> None:
         "live provider/calendar/production-strategy composition is intentionally deferred"
         in decision.lower()
     )
-    assert "openspec status --change establish-strategy-engine --json" in openspec
+    assert "openspec validate --all --strict --json --no-interactive" in openspec
