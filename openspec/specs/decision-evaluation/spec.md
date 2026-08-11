@@ -1,7 +1,7 @@
 # decision-evaluation Specification
 
 ## Purpose
-TBD - created by archiving change establish-strategy-engine. Update Purpose after archive.
+Define formal Decision evaluation semantics, including active assignment resolution, trading-calendar as-of behavior, no-look-ahead data boundaries, optional current-session observation, reproducible artifacts, and explicit failure reporting.
 ## Requirements
 ### Requirement: Decision uses the active strategy assignment
 
