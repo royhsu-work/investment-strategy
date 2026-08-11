@@ -17,7 +17,7 @@ from investment_strategy.configuration import (
     InMemoryParameterSetRegistry,
     StrategyConfigResolver,
 )
-from investment_strategy.decision import DecisionRequest, DecisionService
+from investment_strategy.decision import DISCLAIMER, DecisionRequest, DecisionService
 from investment_strategy.domain import (
     InstrumentConfig,
     ParameterSet,
@@ -57,6 +57,7 @@ def test_backtest_walking_skeleton_is_chronological_and_analytical_only() -> Non
     service, _ = make_backtest(strategy, records)
     artifact = service.run(active_request(date(2026, 8, 7), date(2026, 8, 11)))
     assert artifact["status"] == "SUCCESS"
+    assert artifact["disclaimer"] == DISCLAIMER
     dates = [entry["date"] for entry in artifact["timeline"]]
     assert dates == ["2026-08-07", "2026-08-10", "2026-08-11"]
     text = str(artifact).lower()
@@ -149,7 +150,7 @@ def test_backtest_current_day_uses_calendar_market_timezone() -> None:
 def test_active_missing_assignment_fails_before_data() -> None:
     strategy = TestStrategy("S", minimum_history=1)
     resolver = StrategyConfigResolver(
-        InMemoryInstrumentRegistry({"00733": InstrumentConfig("00733")}),
+        InMemoryInstrumentRegistry({"00733": InstrumentConfig("00733", listing_venue="TWSE")}),
         InMemoryParameterSetRegistry({"P": ParameterSet("P", "S", {"threshold": 1})}),
         CodeStrategyRegistry([strategy]),
         "sha",
@@ -163,7 +164,7 @@ def test_active_missing_assignment_fails_before_data() -> None:
 def test_explicit_assignment_works_without_active_and_does_not_mutate_instrument() -> None:
     a = TestStrategy("A", minimum_history=1)
     b = TestStrategy("B", minimum_history=1)
-    instrument = InstrumentConfig("00733", None)
+    instrument = InstrumentConfig("00733", None, "TWSE")
     resolver = StrategyConfigResolver(
         InMemoryInstrumentRegistry({"00733": instrument}),
         InMemoryParameterSetRegistry(

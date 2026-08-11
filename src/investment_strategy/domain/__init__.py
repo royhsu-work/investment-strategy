@@ -1,6 +1,7 @@
 from .configuration import (
     ActiveAssignment,
     InstrumentConfig,
+    MarketDataInstrument,
     ParameterSet,
     ResolvedStrategyConfig,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "Failure",
     "FailureCategory",
     "InstrumentConfig",
+    "MarketDataInstrument",
     "MarketState",
     "ParameterSet",
     "RequestRejected",

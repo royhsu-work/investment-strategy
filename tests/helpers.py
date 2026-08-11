@@ -16,6 +16,7 @@ from investment_strategy.domain import (
     EntryPlan,
     ExitPlan,
     InstrumentConfig,
+    MarketDataInstrument,
     MarketState,
     ParameterSet,
     StrategyContext,
@@ -90,9 +91,11 @@ class SpyGateway:
         self.records = records
         self.error = error
         self.calls = 0
+        self.last_instrument: MarketDataInstrument | None = None
 
-    def load_daily(self, symbol: str) -> Sequence[Mapping[str, object]]:
+    def load_daily(self, instrument: MarketDataInstrument) -> Sequence[Mapping[str, object]]:
         self.calls += 1
+        self.last_instrument = instrument
         if self.error is not None:
             raise self.error
         return self.records
@@ -153,6 +156,7 @@ def make_resolver(
     *,
     symbol: str = "00733",
     active: bool = True,
+    listing_venue: str | None = "TWSE",
     parameter_owner: str | None = None,
     parameter_values: Mapping[str, object] | None = None,
     include_strategy: bool = True,
@@ -162,6 +166,7 @@ def make_resolver(
     instrument = InstrumentConfig(
         symbol=symbol,
         active=(ActiveAssignment(strategy.id, "p1") if active else None),
+        listing_venue=listing_venue,
     )
     parameters: dict[str, ParameterSet] = {}
     if include_parameter:

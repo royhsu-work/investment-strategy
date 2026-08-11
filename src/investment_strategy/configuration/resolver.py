@@ -1,12 +1,18 @@
 from __future__ import annotations
 
-from investment_strategy.domain.configuration import InstrumentConfig, ResolvedStrategyConfig
+from investment_strategy.domain.configuration import (
+    InstrumentConfig,
+    MarketDataInstrument,
+    ResolvedStrategyConfig,
+)
 from investment_strategy.domain.failures import configuration_failure
 from investment_strategy.domain.strategy import Strategy
 from investment_strategy.strategies.registry import CodeStrategyRegistry
 
 from .instruments import InstrumentRegistry
 from .parameter_sets import ParameterSetRegistry
+
+SUPPORTED_LISTING_VENUES = frozenset({"TWSE", "TPEX"})
 
 
 class StrategyConfigResolver:
@@ -25,6 +31,22 @@ class StrategyConfigResolver:
     @property
     def git_sha(self) -> str:
         return self._git_sha
+
+    def resolve_market_data_instrument(self, symbol: str) -> MarketDataInstrument:
+        instrument = self._resolve_instrument(symbol)
+        venue = instrument.listing_venue
+        if venue is None or not venue.strip():
+            raise configuration_failure(
+                "LISTING_VENUE_NOT_CONFIGURED",
+                f"instrument {symbol} has no listing venue",
+            )
+        venue = venue.strip().upper()
+        if venue not in SUPPORTED_LISTING_VENUES:
+            raise configuration_failure(
+                "UNSUPPORTED_LISTING_VENUE",
+                f"instrument {symbol} has unsupported listing venue {instrument.listing_venue!r}",
+            )
+        return MarketDataInstrument(symbol=symbol, listing_venue=venue)
 
     def resolve_active(self, symbol: str) -> tuple[Strategy, ResolvedStrategyConfig]:
         instrument = self._resolve_instrument(symbol)

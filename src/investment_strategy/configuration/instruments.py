@@ -38,4 +38,6 @@ class YamlInstrumentRegistry:
                 strategy=str(active_raw["strategy"]),
                 parameter_set=str(active_raw["parameter_set"]),
             )
-        return InstrumentConfig(symbol=symbol, active=active)
+        venue_raw = raw.get("listing_venue") if isinstance(raw, dict) else None
+        venue = str(venue_raw) if venue_raw is not None else None
+        return InstrumentConfig(symbol=symbol, active=active, listing_venue=venue)

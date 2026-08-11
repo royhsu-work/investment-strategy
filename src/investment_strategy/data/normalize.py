@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
+from investment_strategy.domain.configuration import MarketDataInstrument
 from investment_strategy.domain.failures import data_failure
 from investment_strategy.domain.market_data import DailyBar
 
@@ -12,13 +13,17 @@ from .ports import MarketDataGateway
 MANDATORY_FIELDS = ("open", "high", "low", "close", "volume")
 
 
-def acquire_candidates(gateway: MarketDataGateway, symbol: str) -> tuple[Mapping[str, object], ...]:
+def acquire_candidates(
+    gateway: MarketDataGateway, instrument: MarketDataInstrument
+) -> tuple[Mapping[str, object], ...]:
     try:
-        records = tuple(gateway.load_daily(symbol))
+        records = tuple(gateway.load_daily(instrument))
     except Exception as exc:
-        raise data_failure("DATA_UNAVAILABLE", f"market data unavailable for {symbol}") from exc
+        raise data_failure(
+            "DATA_UNAVAILABLE", f"market data unavailable for {instrument.symbol}"
+        ) from exc
     if not records:
-        raise data_failure("DATA_UNAVAILABLE", f"market data unavailable for {symbol}")
+        raise data_failure("DATA_UNAVAILABLE", f"market data unavailable for {instrument.symbol}")
     return records
 
 
@@ -55,9 +60,12 @@ def _decimal(value: object, field: str) -> Decimal:
     if value is None:
         raise data_failure("MISSING_REQUIRED_FIELD", f"missing required field: {field}")
     try:
-        return Decimal(str(value))
+        normalized = Decimal(str(value))
     except (InvalidOperation, ValueError, TypeError) as exc:
         raise data_failure("VALIDATION_ERROR", f"invalid numeric value for {field}") from exc
+    if not normalized.is_finite():
+        raise data_failure("VALIDATION_ERROR", f"non-finite numeric value for {field}")
+    return normalized
 
 
 def normalize_daily_bars(
@@ -104,11 +112,10 @@ def normalize_daily_bars(
 
 def prepare_bars(
     gateway: MarketDataGateway,
-    symbol: str,
+    instrument: MarketDataInstrument,
     *,
     through: date,
 ) -> tuple[DailyBar, ...]:
-    candidates = acquire_candidates(gateway, symbol)
+    candidates = acquire_candidates(gateway, instrument)
     classified = classify_and_bound(candidates, through=through)
-    # Candidates were acquired; an empty bounded set is not reclassified as DATA_UNAVAILABLE.
     return normalize_daily_bars(classified)
