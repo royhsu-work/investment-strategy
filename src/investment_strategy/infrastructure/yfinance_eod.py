@@ -42,7 +42,7 @@ def _timestamp_value(value: object) -> object:
 
 
 class YFinanceEodGateway:
-    """Reported daily OHLCV acquisition; period=max controls breadth, not formal scope."""
+    """Source-native daily OHLCV acquisition; period=max controls breadth, not formal scope."""
 
     def __init__(self, *, history_loader: HistoryLoader | None = None) -> None:
         self._history_loader = history_loader or _default_history_loader
