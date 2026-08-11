@@ -25,6 +25,16 @@
 
 以 OpenSpec 驅動的 Python 投資策略研究專案。Strategy Engine 已建立為 repository 的 canonical analytical baseline，提供可重現、無 look-ahead 的正式 Decision 與歷史 analytical Backtest，且兩者共用同一份 Strategy 實作。對 externally observable contract 的後續變更應透過新的 OpenSpec change lifecycle 進行。
 
+## Taiwan EOD market-data support
+
+- Instrument configuration 使用 provider-neutral `symbol + listing_venue` identity；目前支援 `TWSE` 與 `TPEX`。`.TW` / `.TWO` 等 provider ticker syntax 只存在於 concrete infrastructure adapter，不進入 StrategyContext。
+- yfinance adapter 取得 reported daily OHLCV，明確停用 `auto_adjust`、`back_adjust`、`repair`、actions 與 rounding；正式價格基礎是 reported/unadjusted OHLCV，不以 `Adj Close` 取代 close。
+- provider `period=max` 只代表 acquisition breadth，不定義 analytical history 或 continuity scope。Backtest continuity 以 caller 已選定的 formal replay range 驗證；Decision 在尚未有 Strategy lookback/history-window contract 前不從 provider 第一筆資料自行發明 continuity 起點。
+- Taiwan regular-securities calendar 由 pinned `exchange_calendars` XTAI adapter 提供，市場日期使用 `Asia/Taipei`，current session 採保守 `13:33 Asia/Taipei` 完成邊界。超出 engine 實際可建立的 coverage 時回 `DATA_FAILED / CALENDAR_UNAVAILABLE`，不改寫為 `DATA_GAP` 或 `STALE_DATA`。
+- repository calendar overrides 是 sparse、discrepancy-driven 的 precedence layer；只有官方 TWSE/TPEx regular-market evidence 證實 XTAI discrepancy 時才新增 production override，不維護第二份完整歷史交易日曆。
+- representative official regression evidence 用於驗證正常交易日、休市日、歷史額外週六交易與全市場例外休市等 calendar semantics；它不是完整 calendar dataset。
+- 仍 deferred：Strategy-specific lookback contract、corporate-action methodology、fallback/cache、production strategy/workflow activation、intraday acquisition、prediction 與 execution state。
+
 ## 核心邊界
 
 - 正式 Strategy input 僅使用**已完成的 daily OHLCV**；每根 `DailyBar` 必須有 open/high/low/close/volume。
@@ -34,7 +44,6 @@
 - Decision 與 Backtest 共用相同 Strategy evaluator；任何 evaluation at T 只能看到 T 以前可得資訊。
 - `NEUTRAL` 是合法 StrategyResult，不是 configuration/data/strategy failure 的替代值。
 - 目前 analytical baseline **不**模擬 fills、positions、cash、PnL、returns、drawdown、fees、taxes、slippage 或 pending execution lifecycle。
-- live market-data provider、Taiwan trading-calendar adapter 與 production strategy 仍刻意延後。
 
 ## Development lifecycle
 
@@ -127,6 +136,7 @@ src/investment_strategy/
 ├── domain/          # immutable common contracts and failures
 ├── configuration/   # registry ports, YAML adapters, resolver
 ├── data/            # data/calendar ports, normalization, validation
+├── infrastructure/  # replaceable yfinance EOD and XTAI calendar adapters
 ├── strategies/      # code Strategy registry only; no production strategy yet
 ├── decision/        # request boundary, as-of, intraday overlay, artifact, service
 └── backtest/        # strict request union, analytical replay, artifact, service
@@ -152,7 +162,7 @@ StrategyContext
 └── ResolvedStrategyConfig
 ```
 
-`StrategyContext` does not contain real holdings, average cost, cash, benchmark, execution state, or previous runtime state.
+`StrategyContext` does not contain listing venue, provider ticker syntax, real holdings, average cost, cash, benchmark, execution state, or previous runtime state.
 
 Common `MarketState` is restricted to:
 
@@ -165,20 +175,9 @@ Implementation-specific regimes remain under `signals` or `diagnostics`.
 
 ## Configuration resolution
 
-Configuration resolves before any market-data load:
+Configuration resolves before any market-data load. Market-data identity and Strategy assignment remain separate concerns: a configured instrument may have a valid listing venue without an active strategy.
 
-```text
-1. instrument
-2. ACTIVE or EXPLICIT assignment
-3. code Strategy
-4. parameter set
-5. parameter-set ownership
-6. Strategy-owned parameter validation
-7. immutable ResolvedStrategyConfig
-8. market-data acquisition
-```
-
-Repository YAML adapters live behind registry interfaces. `config/instruments.yaml` and `config/parameter_sets.yaml` are intentionally empty until a production strategy exists; the framework does not create a fake production assignment solely to make workflow scaffolds appear live.
+Repository YAML adapters live behind registry interfaces. `config/instruments.yaml` may contain provider-neutral venue metadata without creating a fake production strategy assignment; `config/parameter_sets.yaml` remains empty until a production strategy exists.
 
 ## Market-data semantics
 
@@ -198,7 +197,7 @@ candidate acquired, then invalid
      STALE_DATA
 ```
 
-For historical `Decision(as_of=T)` the framework first normalizes timestamps enough to establish temporal position, excludes timestamp-known rows after T, and only then validates their non-temporal OHLCV structure. Therefore a known T+1 row with invalid OHLC cannot contaminate the Decision at T; an un-normalizable timestamp can still fail because its temporal position is unknowable.
+For historical `Decision(as_of=T)` the framework first normalizes timestamps enough to establish temporal position, excludes timestamp-known rows after T, and only then validates their non-temporal OHLCV structure. Therefore a known T+1 row with invalid OHLC cannot contaminate the Decision at T；an un-normalizable timestamp can still fail because its temporal position is unknowable.
 
 Trading-day continuity and freshness are based on the injected `TradingCalendar`, not calendar-day continuity. Weekends/holidays are not gaps. Market date/session interpretation is also owned by the `TradingCalendar`; a timezone-aware `Clock` instant is never reduced with the runner's local timezone before calendar evaluation.
 
@@ -328,11 +327,9 @@ Request-boundary rejection 不屬於這個 envelope，因為 application 尚未�
 - `.github/workflows/openspec-validate.yml`：執行 `openspec list` 與 project-level `openspec validate --all --strict --json --no-interactive`，不綁定已 archived change。
 - `.github/workflows/openspec-archive.yml`：手動 `workflow_dispatch`；checkout 後先建立 `agent/archive-<change>`，安裝 OpenSpec，再 validate/status active change，執行 `openspec archive <change> --yes`、驗證 resulting canonical specs，最後 commit/push archive branch，再走一般 PR review；不直接寫入 `main`。
 
-Generated analytical results 應上傳 Actions Artifacts，不 commit 回 repository。Live provider/calendar/production strategy composition 保持 deferred。
+Generated analytical results 應上傳 Actions Artifacts，不 commit 回 repository。Production strategy/workflow activation 保持 deferred。
 
 ## Local verification
-
-Post-archive repository baseline：
 
 ```bash
 uv run pytest
@@ -343,14 +340,17 @@ openspec list
 openspec validate --all --strict --json --no-interactive
 ```
 
-針對仍 active 的 change，`openspec status --change <change>` 可在 change review 與 archive validation 使用；它不是已 archive repository baseline 的固定命令。
+針對仍 active 的 change，`openspec status --change <change>` 可在 change review 與 archive validation 使用。
 
 ## Deferred work
 
 - production Bollinger swing strategy
 - production time-series strategy
 - hybrid strategy（待研究支持）
-- concrete historical/intraday provider and fallback policy
-- concrete Taiwan trading calendar adapter
-- final corporate-action methodology
-- execution simulator：fills / pending orders / positions / cash / PnL / fees / taxes / slippage
+- Strategy-specific lookback/history-window contract
+- corporate-action methodology
+- fallback/cache
+- production Strategy and workflow activation
+- intraday acquisition beyond the existing observational overlay contract
+- prediction
+- execution/fill/portfolio state
