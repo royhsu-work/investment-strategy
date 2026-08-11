@@ -92,10 +92,11 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           openspec --version
-          openspec status --change "$CHANGE" --json > "$RUNNER_TEMP/openspec-status.json"
+          openspec list --json > "$RUNNER_TEMP/openspec-changes.json"
           python .github/scripts/openspec_archive.py completion \
             --event-name "$EVENT_NAME" \
-            --status-file "$RUNNER_TEMP/openspec-status.json" \
+            --change "$CHANGE" \
+            --list-file "$RUNNER_TEMP/openspec-changes.json" \
             >> "$GITHUB_OUTPUT"
 
       - name: Verify change before archive
