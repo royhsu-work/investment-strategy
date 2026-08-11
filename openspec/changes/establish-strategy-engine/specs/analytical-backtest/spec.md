@@ -20,7 +20,7 @@ The system SHALL evaluate Backtest dates in chronological trading-day order.
 
 #### Scenario: Replay a historical range
 
-- GIVEN a valid historical range containing multiple trading days
+- GIVEN a valid historical range containing multiple completed trading days
 - WHEN the analytical Backtest runs
 - THEN evaluation points are processed in chronological trading-day order
 
@@ -33,6 +33,59 @@ The system SHALL ensure that evaluation at historical date T uses only informati
 - GIVEN the Backtest has loaded data through T+N
 - WHEN the Strategy is evaluated at T
 - THEN observations after T do not affect the Strategy Result at T
+
+### Requirement: Backtest range is an inclusive calendar interval over completed trading days
+
+The system SHALL interpret `start_date` and `end_date` as an inclusive calendar interval and SHALL evaluate only completed trading days contained within that interval without resolving non-trading endpoints to dates outside the requested range.
+
+#### Scenario: Range endpoints are non-trading days
+
+- GIVEN `start_date` is a non-trading day
+- AND `end_date` is a later non-trading day
+- AND completed trading days exist between them
+- WHEN the analytical Backtest range is prepared
+- THEN only completed trading days inside the inclusive calendar interval are evaluation dates
+- AND neither endpoint is clamped to a trading day outside the requested interval
+
+#### Scenario: Current incomplete trading day is inside the range
+
+- GIVEN the requested range includes the current trading day
+- AND the current trading session is not complete
+- WHEN evaluation dates are prepared
+- THEN the incomplete current trading day is not an evaluation date
+- AND earlier completed trading days inside the interval remain eligible for replay
+
+### Requirement: Invalid Backtest ranges are rejected before market-data loading
+
+The system SHALL reject a Backtest range that cannot define a valid completed historical evaluation interval.
+
+#### Scenario: Start date is after end date
+
+- GIVEN `start_date` is later than `end_date`
+- WHEN the Backtest request is validated
+- THEN the Backtest fails
+- AND the failure category is `CONFIGURATION_FAILED`
+- AND the failure code is `INVALID_BACKTEST_RANGE`
+- AND market-data loading and strategy evaluation do not run
+
+#### Scenario: End date is in the future
+
+- GIVEN `end_date` is later than the current applicable calendar date
+- WHEN the Backtest request is validated
+- THEN the Backtest fails
+- AND the failure category is `CONFIGURATION_FAILED`
+- AND the failure code is `INVALID_BACKTEST_RANGE`
+- AND market-data loading and strategy evaluation do not run
+
+#### Scenario: Range contains no completed trading day
+
+- GIVEN `start_date` is not later than `end_date`
+- AND the inclusive requested interval contains no completed trading day
+- WHEN the Backtest request range is resolved against the trading calendar
+- THEN the Backtest fails
+- AND the failure category is `CONFIGURATION_FAILED`
+- AND the failure code is `INVALID_BACKTEST_RANGE`
+- AND strategy evaluation does not run
 
 ### Requirement: Analytical Backtest supports active assignment mode
 
@@ -48,7 +101,8 @@ The system SHALL support an `ACTIVE` research mode that uses the instrument's co
 
 - GIVEN a configured instrument without an active strategy assignment
 - WHEN an analytical Backtest is requested in `ACTIVE` mode
-- THEN the Backtest fails with `CONFIGURATION_FAILED`
+- THEN the Backtest fails
+- AND the failure category is `CONFIGURATION_FAILED`
 - AND the failure code is `ACTIVE_STRATEGY_NOT_CONFIGURED`
 - AND market-data loading and strategy evaluation do not run
 
@@ -81,7 +135,8 @@ The system SHALL reject an explicit Backtest assignment that specifies only a st
 - GIVEN an analytical Backtest request in `EXPLICIT` mode
 - AND the request provides a strategy but no parameter set
 - WHEN configuration resolution runs
-- THEN the Backtest fails with `CONFIGURATION_FAILED`
+- THEN the Backtest fails
+- AND the failure category is `CONFIGURATION_FAILED`
 - AND the system does not silently reuse the active parameter set
 - AND market-data loading and strategy evaluation do not run
 
@@ -90,7 +145,8 @@ The system SHALL reject an explicit Backtest assignment that specifies only a st
 - GIVEN an analytical Backtest request in `EXPLICIT` mode
 - AND the request provides a parameter set but no strategy
 - WHEN configuration resolution runs
-- THEN the Backtest fails with `CONFIGURATION_FAILED`
+- THEN the Backtest fails
+- AND the failure category is `CONFIGURATION_FAILED`
 - AND the system does not silently reuse the active strategy
 - AND market-data loading and strategy evaluation do not run
 
@@ -121,21 +177,22 @@ The system SHALL classify an early historical evaluation point as `WARMUP` when 
 
 ### Requirement: Backtest requires at least one eligible evaluation date
 
-The system SHALL NOT report a successful analytical Backtest when every requested evaluation date is `WARMUP` and no Strategy Result can be evaluated.
+The system SHALL NOT report a successful analytical Backtest when every requested completed trading-day evaluation date is `WARMUP` and no Strategy Result can be evaluated.
 
 #### Scenario: Entire requested range is warm-up
 
-- GIVEN the requested Backtest range contains valid historical data
+- GIVEN the requested Backtest range contains completed trading-day evaluation dates with valid historical data
 - AND every requested evaluation date has fewer observations than the selected strategy's minimum-history requirement
 - WHEN the analytical Backtest completes eligibility processing
-- THEN the Backtest fails with `DATA_FAILED`
+- THEN the Backtest fails
+- AND the failure category is `DATA_FAILED`
 - AND the failure code is `INSUFFICIENT_HISTORY`
 - AND the Backtest does not present an empty analytical timeline as a successful result
 
 #### Scenario: Requested range contains warm-up and eligible dates
 
-- GIVEN early requested dates are `WARMUP`
-- AND at least one later requested date satisfies the selected strategy's minimum-history requirement
+- GIVEN early requested evaluation dates are `WARMUP`
+- AND at least one later requested evaluation date satisfies the selected strategy's minimum-history requirement
 - WHEN the analytical Backtest runs
 - THEN the Backtest may complete successfully
 - AND the eligible dates contain Strategy Results
@@ -149,7 +206,8 @@ The system SHALL fail an analytical Backtest when required historical data is in
 
 - GIVEN the historical data required by the Backtest contains an invalid observation
 - WHEN validation runs
-- THEN the Backtest reports `DATA_FAILED`
+- THEN the Backtest fails
+- AND the failure category is `DATA_FAILED`
 - AND the invalid observation is not silently skipped
 
 ### Requirement: Strategy failure during Backtest is fail-fast
@@ -162,7 +220,8 @@ The system SHALL fail the analytical Backtest if strategy evaluation fails at an
 - AND strategy evaluation succeeds for earlier eligible dates
 - AND strategy evaluation fails at historical date T
 - WHEN the analytical Backtest reaches T
-- THEN the Backtest reports `STRATEGY_FAILED`
+- THEN the Backtest fails
+- AND the failure category is `STRATEGY_FAILED`
 - AND it stops successful analytical replay at that failure
 - AND it does not represent the partial Strategy Result timeline as a successful Backtest
 
@@ -180,19 +239,21 @@ The system SHALL limit this capability to analytical Strategy Result replay and 
 
 ### Requirement: Analytical Backtest output is traceable
 
-The system SHALL identify enough metadata in a successful analytical Backtest output to reproduce the evaluated strategy configuration and historical range.
+The system SHALL identify enough metadata in a successful analytical Backtest output to reproduce the evaluated strategy assignment and historical range.
 
 #### Scenario: Successful analytical Backtest artifact is generated
 
 - GIVEN an analytical Backtest completes successfully
 - WHEN its public artifact is produced
-- THEN the artifact identifies the instrument
+- THEN the artifact status is `SUCCESS`
+- AND it identifies the instrument
+- AND it identifies the assignment mode
 - AND it identifies the strategy
 - AND it identifies the parameter set
 - AND it identifies the Git revision
 - AND it identifies the requested start and end dates
 - AND it includes validation status
-- AND it contains the analytical Strategy Result timeline for eligible evaluation dates
+- AND its requested evaluation timeline distinguishes `WARMUP` dates from eligible dates containing Strategy Results
 
 ### Requirement: Failed analytical Backtest output uses a common failure contract
 
@@ -200,12 +261,19 @@ The system SHALL represent configuration, data, or strategy failures explicitly 
 
 #### Scenario: Analytical Backtest fails
 
-- GIVEN an analytical Backtest fails during configuration resolution, formal data loading or validation, or strategy evaluation
+- GIVEN an analytical Backtest fails during request validation, configuration resolution, formal data loading or validation, or strategy evaluation
 - WHEN the Backtest artifact is produced
-- THEN the artifact identifies the applicable top-level failure status as `CONFIGURATION_FAILED`, `DATA_FAILED`, or `STRATEGY_FAILED`
-- AND it contains a machine-readable failure code
-- AND it contains a human-readable failure reason
+- THEN the artifact status is `FAILED`
+- AND `failure.category` is `CONFIGURATION_FAILED`, `DATA_FAILED`, or `STRATEGY_FAILED` as applicable
+- AND `failure.code` contains a machine-readable failure code
+- AND `failure.reason` contains a human-readable failure reason
 - AND it does not present a partial analytical timeline as a successful Backtest
+
+#### Scenario: Backtest fails before strategy identity is resolved
+
+- GIVEN an analytical Backtest fails before a strategy or parameter set can be resolved
+- WHEN the failed artifact is produced
+- THEN unresolved strategy or parameter-set metadata is not fabricated
 
 ### Requirement: Public analytical Backtest artifact includes the fixed disclaimer
 
@@ -219,6 +287,6 @@ The system SHALL include exactly `僅為個人研究與策略驗證，不構成�
 
 #### Scenario: Failed public analytical Backtest artifact
 
-- GIVEN an analytical Backtest fails during configuration, data validation, or strategy evaluation
+- GIVEN an analytical Backtest fails during request validation, configuration, data validation, or strategy evaluation
 - WHEN the public artifact is generated
 - THEN the artifact still contains exactly `僅為個人研究與策略驗證，不構成任何形式之投資建議。`
