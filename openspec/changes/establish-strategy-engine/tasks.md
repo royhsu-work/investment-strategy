@@ -19,33 +19,33 @@
 
 ## 3. Strategy contract, immutability, and analytical result semantics
 
-- [ ] 3.1 RED — Add reusable Strategy Contract Tests for `DataRequirement` with the only supported frequency `DAILY`, explicit additional required fields beyond mandatory OHLCV, minimum history, equivalent-result reproducibility, StrategyResult strategy/as-of identity, common MarketState membership, and preservation of implementation-specific regime/details inside strategy-specific signals or diagnostics.
+- [ ] 3.1 RED — Add reusable Strategy Contract Tests for `DataRequirement` with the only supported frequency `DAILY`, explicit minimum history, equivalent-result reproducibility, StrategyResult strategy/as-of identity, common MarketState membership, and preservation of implementation-specific regime/details inside strategy-specific signals or diagnostics; do not introduce arbitrary additional per-bar data requirements in this change.
 - [ ] 3.2 RED — Add behavior tests proving Strategy evaluation requires no real holdings, average cost, cash, benchmark, prior execution state, or prior strategy runtime state; verify RED is caused by missing contract behavior.
 - [ ] 3.3 RED — Add tests proving `DataRequirement`, `StrategyContext`, `StrategyResult`, EntryPlan, and ExitPlan are immutable domain values, and result-contract tests proving EntryPlan may expose levels/triggers, ExitPlan may expose dynamic levels/triggers, no fixed profit target is mandatory, and analytical plans do not imply fills or portfolio state.
-- [ ] 3.4 GREEN — Implement the typed stateless Strategy protocol, DAILY-only `DataFrequency`, immutable `DataRequirement`, `StrategyContext`, `StrategyResult`, `MarketState`, EntryPlan, ExitPlan, signals/diagnostics/reasons extension fields, and the minimum registry integration required by the tests.
-- [ ] 3.5 REFACTOR — Keep strategy-specific regimes and parameter internals out of common framework fields; retain only the four approved common MarketState values and do not introduce unsupported generic data frequencies.
+- [ ] 3.4 GREEN — Implement the typed stateless Strategy protocol, DAILY-only `DataFrequency`, immutable `DataRequirement` containing only supported frequency and minimum history, `StrategyContext`, `StrategyResult`, `MarketState`, EntryPlan, ExitPlan, signals/diagnostics/reasons extension fields, and the minimum registry integration required by the tests.
+- [ ] 3.5 REFACTOR — Keep strategy-specific regimes and parameter internals out of common framework fields; retain only the four approved common MarketState values and do not introduce unsupported generic data frequencies or formal per-bar extension fields.
 - [ ] 3.6 VERIFY — Run Strategy Contract/immutability tests, application regression tests, and full pytest/ruff/mypy checks.
 
 ## 4. Formal OHLCV normalization, acquisition precedence, and structural validation
 
 - [ ] 4.1 RED — Add data behavior tests showing reverse-chronological provider records can normalize into strict chronological order and duplicate normalized timestamps fail with `DATA_FAILED / DUPLICATE_TIMESTAMP`.
-- [ ] 4.2 RED — Add tests proving every formal normalized `DailyBar` requires open, high, low, close, and volume; missing volume fails with `DATA_FAILED / MISSING_REQUIRED_FIELD` regardless of Strategy requirements, negative volume/un-normalizable timestamps use `VALIDATION_ERROR`, invalid OHLC uses `INVALID_OHLC`, and missing base volume is never converted to zero or interpreted as a negative strategy signal.
+- [ ] 4.2 RED — Add tests proving every formal normalized `DailyBar` requires open, high, low, close, and volume; missing volume fails with `DATA_FAILED / MISSING_REQUIRED_FIELD`, negative volume/un-normalizable timestamps use `VALIDATION_ERROR`, invalid OHLC uses `INVALID_OHLC`, and missing base volume is never converted to zero or interpreted as a negative strategy signal.
 - [ ] 4.3 RED — Add acquisition/precedence tests proving provider failure or zero candidate observations yields `DATA_FAILED / DATA_UNAVAILABLE`, while acquired-but-invalid observations retain their structural code (for example an only observation with an invalid timestamp remains `VALIDATION_ERROR` rather than becoming `DATA_UNAVAILABLE`); also prove data failure never becomes `NEUTRAL`.
-- [ ] 4.4 RED — Add tests for additional strategy-required fields beyond mandatory OHLCV, expecting `DATA_FAILED / MISSING_REQUIRED_FIELD` when such a declared field is absent.
-- [ ] 4.5 GREEN — Implement provider-neutral acquisition handling, raw-record normalization into immutable mandatory-OHLCV `DailyBar` values, and structural/requirement validation with explicit acquisition-versus-structural failure precedence.
-- [ ] 4.6 REFACTOR — Keep provider ordering/conversion in normalization, acquisition failure distinct from validation failure, and validation independent of provider SDKs or live-network behavior.
-- [ ] 4.7 VERIFY — Run data slice tests plus full pytest/ruff/mypy checks.
+- [ ] 4.4 GREEN — Implement provider-neutral acquisition handling, timestamp normalization needed for temporal classification, raw-record normalization into immutable mandatory-OHLCV `DailyBar` values, and structural validation with explicit acquisition-versus-structural failure precedence.
+- [ ] 4.5 REFACTOR — Keep provider ordering/conversion in normalization, acquisition failure distinct from validation failure, the formal data model limited to completed daily OHLCV, and validation independent of provider SDKs or live-network behavior.
+- [ ] 4.6 VERIFY — Run data slice tests plus full pytest/ruff/mypy checks.
 
 ## 5. Trading-calendar continuity, freshness, Decision as-of, and no-look-ahead
 
 - [ ] 5.1 RED — Add calendar-aware continuity tests proving weekends/holidays are not gaps and a missing expected trading day fails with `DATA_FAILED / DATA_GAP`.
 - [ ] 5.2 RED — Add freshness tests proving a missing latest required completed trading-day observation fails with `DATA_FAILED / STALE_DATA`.
-- [ ] 5.3 RED — Add Decision as-of tests for historical trading dates, historical non-trading dates, omitted `as_of` with no session in progress, omitted `as_of` during an incomplete session, explicit current trading day before completion, explicit current trading day after completion, and preservation of requested vs resolved as-of on successful output.
-- [ ] 5.4 RED — Add a Decision-specific no-look-ahead test where source data extends beyond `resolved_as_of=T` and prove observations after T cannot affect the formal StrategyResult.
-- [ ] 5.5 RED — Add a future-date accepted Decision request test expecting `status=FAILED`, `failure.category=CONFIGURATION_FAILED`, and `failure.code=INVALID_AS_OF`, with no market-data loading; run and verify intended RED failures.
-- [ ] 5.6 GREEN — Implement timezone-aware Clock/TradingCalendar ports, deterministic as-of resolution, calendar-based continuity/freshness validation, successful requested/resolved date metadata, and bounded formal history.
-- [ ] 5.7 REFACTOR — Ensure market timezone/session rules are owned by the TradingCalendar adapter and never inferred from the GitHub runner/local system timezone.
-- [ ] 5.8 VERIFY — Run calendar/as-of/no-look-ahead tests plus full pytest/ruff/mypy checks.
+- [ ] 5.3 RED — Add Decision as-of tests for historical trading dates, historical non-trading dates, omitted `as_of` with no session in progress, omitted `as_of` during an incomplete session, explicit current trading day before completion, explicit current trading day after completion, and preservation of requested vs resolved as-of on successful output; assert every resolved date is selected by TradingCalendar/Clock only.
+- [ ] 5.4 RED — Add a calendar/data-boundary guard where TradingCalendar resolves T as the latest completed trading day but T data is missing; prove `resolved_as_of` remains T and Decision fails with the applicable data failure such as `STALE_DATA` rather than silently falling back to T-1.
+- [ ] 5.5 RED — Add a Decision-specific validation-stage no-look-ahead test with valid eligible data through T plus a candidate row at T+1 whose timestamp is valid but OHLC or volume is structurally invalid; prove `Decision(as_of=T)` is equivalent to the source truncated at T and the T+1 structural defect cannot fail the historical Decision. Separately prove an un-normalizable candidate timestamp may still fail with `DATA_FAILED / VALIDATION_ERROR` because its temporal position cannot be established.
+- [ ] 5.6 RED — Add a future-date accepted Decision request test expecting `status=FAILED`, `failure.category=CONFIGURATION_FAILED`, and `failure.code=INVALID_AS_OF`, with no market-data loading; run and verify intended RED failures.
+- [ ] 5.7 GREEN — Implement timezone-aware Clock/TradingCalendar ports, calendar-only as-of resolution, timestamp-first temporal classification, exclusion of timestamp-known future rows before non-temporal OHLCV validation for historical Decision, calendar-based continuity/freshness validation, successful requested/resolved date metadata, and bounded formal history.
+- [ ] 5.8 REFACTOR — Ensure market timezone/session rules are owned by the TradingCalendar adapter, data availability cannot change `resolved_as_of`, and future-row filtering cannot be used to suppress an un-normalizable timestamp whose temporal position is unknown.
+- [ ] 5.9 VERIFY — Run calendar/as-of/validation-stage-no-look-ahead tests plus full pytest/ruff/mypy checks.
 
 ## 6. Minimum history and Decision eligibility
 
@@ -90,12 +90,12 @@
 
 ## 10. Backtest ACTIVE/EXPLICIT assignment and request-policy boundary
 
-- [ ] 10.1 RED — Add `ACTIVE` mode tests proving the instrument active strategy+parameter set is used and missing active assignment fails with `CONFIGURATION_FAILED / ACTIVE_STRATEGY_NOT_CONFIGURED` before data loading.
-- [ ] 10.2 RED — Add `EXPLICIT` mode tests proving a complete compatible strategy+parameter pair is used without mutating the instrument's active assignment and still works when the configured instrument has no active assignment.
-- [ ] 10.3 RED — Add partial EXPLICIT request tests for strategy-only and parameter-set-only inputs, proving the Backtest request boundary rejects them before application evaluation, no public Backtest artifact is produced, and active values are not silently borrowed.
-- [ ] 10.4 GREEN — Implement Backtest request-boundary validation for complete ACTIVE/EXPLICIT request shapes and reuse the common resolver only after a request has been accepted.
+- [ ] 10.1 RED — Add accepted `ACTIVE` mode tests proving the instrument active strategy+parameter set is used and missing active assignment fails with `CONFIGURATION_FAILED / ACTIVE_STRATEGY_NOT_CONFIGURED` before data loading.
+- [ ] 10.2 RED — Add accepted `EXPLICIT` mode tests proving a complete compatible strategy+parameter pair is used without mutating the instrument's active assignment and still works when the configured instrument has no active assignment.
+- [ ] 10.3 RED — Add discriminated-union rejection tests for `ACTIVE` with any supplied strategy/parameter-set field, `EXPLICIT` with neither field, strategy-only `EXPLICIT`, and parameter-set-only `EXPLICIT`; prove every invalid shape is rejected before application evaluation, produces no public Backtest artifact, is not silently converted to another mode, and never borrows or ignores assignment values.
+- [ ] 10.4 GREEN — Implement Backtest request-boundary validation as the exact `ACTIVE`/`EXPLICIT` discriminated union and reuse the common resolver only after a request has been accepted.
 - [ ] 10.5 REFACTOR — Keep request-policy validation and Decision's active-only policy outside Strategy and outside the application failure taxonomy.
-- [ ] 10.6 VERIFY — Run assignment/request-boundary tests plus full pytest/ruff/mypy checks.
+- [ ] 10.6 VERIFY — Run assignment/discriminated-union request-boundary tests plus full pytest/ruff/mypy checks.
 
 ## 11. Backtest pre-roll, WARMUP, and required-data failure semantics
 
@@ -128,10 +128,10 @@
 
 ## 14. Repository request boundaries, README, and GitHub Actions scaffold alignment
 
-- [ ] 14.1 RED — Add schema/parsing tests for the repository Decision request shape (`symbol`, optional `as_of`) and Backtest request shape (`symbol`, `mode`, conditional complete `strategy`/`parameter_set`, `start_date`, `end_date`).
-- [ ] 14.2 RED — Add request-boundary checks proving Decision research overrides and Backtest partial EXPLICIT assignments are rejected before application evaluation and produce no public Decision/Backtest artifact.
+- [ ] 14.1 RED — Add schema/parsing tests for the repository Decision request shape (`symbol`, optional `as_of`) and the exact Backtest discriminated union: `ACTIVE` with no strategy/parameter-set fields, or `EXPLICIT` with both fields plus `symbol`, `start_date`, and `end_date`.
+- [ ] 14.2 RED — Add request-boundary checks proving Decision research overrides, `ACTIVE` Backtests with explicit assignment fields, `EXPLICIT` Backtests with neither field, and partial `EXPLICIT` assignments are rejected before application evaluation and produce no public Decision/Backtest artifact.
 - [ ] 14.3 GREEN — Update `requests/decision.json` and `requests/backtest.json` examples to the approved request contracts without adding personal portfolio state or the legacy `period` shorthand.
-- [ ] 14.4 GREEN — Align README Decision/Backtest artifact examples and terminology with `MarketState`, `StrategyResult`, `entry_plan`, `exit_plan`, mandatory formal OHLCV, current-only intraday overlay, request-boundary rejection versus application failure, the canonical `SUCCESS|FAILED` failure envelope, strategy/parameter-set/Git revision traceability, and analytical-only Backtest semantics.
+- [ ] 14.4 GREEN — Align README Decision/Backtest artifact examples and terminology with `MarketState`, `StrategyResult`, `entry_plan`, `exit_plan`, mandatory formal OHLCV, current-only intraday overlay, exact ACTIVE/EXPLICIT request shapes, request-boundary rejection versus application failure, the canonical `SUCCESS|FAILED` failure envelope, strategy/parameter-set/Git revision traceability, and analytical-only Backtest semantics.
 - [ ] 14.5 GREEN — Align `.github/workflows/decision.yml` and `.github/workflows/backtest.yml` inputs/placeholder wording with formal Decision and analytical Backtest semantics; remove the obsolete fill-simulation placeholder and keep workflow YAML free of strategy rules.
 - [ ] 14.6 GREEN — Keep live provider/calendar/production-strategy composition explicitly deferred rather than introducing fake production implementations solely to make the scaffolds execute live analysis.
 - [ ] 14.7 REFACTOR — Ensure workflow orchestration remains an adapter boundary and generated analytical outputs are intended for Actions Artifacts rather than repository commits.
@@ -139,10 +139,10 @@
 
 ## 15. End-to-end framework regression and OpenSpec conformance
 
-- [ ] 15.1 RED — Add/confirm end-to-end smoke tests covering request-boundary rejection, one successful Decision, one successful analytical Backtest, representative configuration/data/strategy failures, mandatory OHLCV validation, historical as-of replay without current overlay, Backtest range boundaries, and a valid current-only intraday-overlay case using only test adapters.
-- [ ] 15.2 RED — Verify the end-to-end tests fail if request rejection leaks into application artifacts, acquisition/structural failure precedence changes, look-ahead protection, Decision/Backtest strategy equivalence, core immutability, current-only overlay eligibility, the canonical failure envelope, the fixed disclaimer, execution-state isolation, or configuration-before-data-loading guarantees are broken.
+- [ ] 15.1 RED — Add/confirm end-to-end smoke tests covering request-boundary rejection including invalid Backtest union shapes, one successful Decision, one successful analytical Backtest, representative configuration/data/strategy failures, mandatory OHLCV validation, calendar-only Decision as-of with no data-aware fallback, historical Decision validation with a timestamp-known invalid future row, historical as-of replay without current overlay, Backtest range boundaries, and a valid current-only intraday-overlay case using only test adapters.
+- [ ] 15.2 RED — Verify the end-to-end tests fail if request rejection leaks into application artifacts, arbitrary formal per-bar fields re-enter the common contract, acquisition/structural failure precedence changes, calendar resolution falls back because of missing data, timestamp-known future rows contaminate historical validation, Decision/Backtest strategy equivalence, core immutability, current-only overlay eligibility, the canonical failure envelope, the fixed disclaimer, execution-state isolation, or configuration-before-data-loading guarantees are broken.
 - [ ] 15.3 GREEN — Make only the minimum integration fixes necessary for all approved capability behaviors to pass together; do not implement deferred production strategies/providers/execution simulation.
-- [ ] 15.4 REFACTOR — Remove duplicate orchestration, dead abstractions, and strategy-specific assumptions introduced during vertical-slice implementation while preserving all behavior tests.
+- [ ] 15.4 REFACTOR — Remove duplicate orchestration, dead abstractions, unsupported data extensibility, and strategy-specific assumptions introduced during vertical-slice implementation while preserving all behavior tests.
 - [ ] 15.5 VERIFY — Run the complete test suite and required quality gates: `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, and `uv run mypy src tests`.
 - [ ] 15.6 VERIFY — Perform reverse and forward traceability using the two approved provenance paths: Behavior/Product (`proposal -> spec -> design -> task`) and Engineering/Governance (`openspec/config.yaml -> design -> task`).
 - [ ] 15.7 VERIFY — Run strict OpenSpec validation/status for `establish-strategy-engine` and resolve every reported issue before implementation is declared complete.
