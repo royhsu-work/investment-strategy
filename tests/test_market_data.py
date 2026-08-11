@@ -90,7 +90,10 @@ def test_weekend_and_holiday_are_not_gaps_but_missing_trading_day_is() -> None:
     ]
     normalized = prepare_bars(SpyGateway(records), INSTRUMENT, through=date(2026, 1, 13))
     validate_continuity_and_freshness(
-        normalized, calendar=calendar, resolved_as_of=date(2026, 1, 13)
+        normalized,
+        calendar=calendar,
+        resolved_as_of=date(2026, 1, 13),
+        continuity_start=date(2026, 1, 9),
     )
 
     gap_records = bars(date(2026, 1, 5), 3)
@@ -101,6 +104,7 @@ def test_weekend_and_holiday_are_not_gaps_but_missing_trading_day_is() -> None:
             normalized_gap,
             calendar=WeekdayCalendar(),
             resolved_as_of=date(2026, 1, 7),
+            continuity_start=date(2026, 1, 5),
         )
     assert failure_code(exc) == "DATA_GAP"
 
@@ -116,5 +120,6 @@ def test_missing_latest_required_completed_day_is_stale() -> None:
             normalized,
             calendar=WeekdayCalendar(),
             resolved_as_of=date(2026, 1, 7),
+            continuity_start=date(2026, 1, 5),
         )
     assert failure_code(exc) == "STALE_DATA"
