@@ -82,6 +82,27 @@ The system SHALL determine Taiwan trading days from exchange-session information
 - WHEN trading-day eligibility is evaluated
 - THEN the date is not treated as a completed trading session
 
+### Requirement: Calendar knowledge has an explicit supported boundary
+
+The system SHALL distinguish a known exchange-session answer from a date whose session status cannot be established reliably by the configured calendar implementation.
+
+#### Scenario: Requested date is outside supported calendar coverage
+
+- GIVEN an accepted Decision or Backtest evaluation requires Taiwan session knowledge for date T
+- AND the configured Taiwan calendar implementation cannot establish session status for T within its supported coverage
+- WHEN calendar-dependent evaluation is attempted
+- THEN evaluation fails with `DATA_FAILED`
+- AND the failure code is `CALENDAR_UNAVAILABLE`
+- AND the system does not assume T is a trading day or non-trading day
+- AND missing market data for T is not misclassified as `DATA_GAP` or `STALE_DATA`
+
+#### Scenario: Calendar engine has a known incorrect session that is covered by an explicit override
+
+- GIVEN the underlying calendar engine disagrees with an officially verified Taiwan regular-market session fact
+- AND the repository contains an explicit override for that known discrepancy
+- WHEN session status is evaluated
+- THEN the explicit verified override takes precedence for that date
+
 ### Requirement: Completed-session semantics drive latest EOD eligibility
 
 The system SHALL use the Taiwan trading calendar's completed-session semantics to determine whether the current market date may be used as formal EOD history.
@@ -125,7 +146,7 @@ The system SHALL surface an unavailable Taiwan EOD source or absence of candidat
 
 #### Scenario: Latest completed session is absent from acquired history
 
-- GIVEN the Taiwan trading calendar resolves T as the latest required completed trading day
+- GIVEN the Taiwan trading calendar reliably resolves T as the latest required completed trading day
 - AND the acquired historical dataset ends before T
 - WHEN existing freshness validation runs
 - THEN the existing `DATA_FAILED / STALE_DATA` behavior applies
