@@ -87,14 +87,58 @@ The system SHALL reject a syntactically valid Backtest request whose range canno
 - AND the failure code is `INVALID_BACKTEST_RANGE`
 - AND strategy evaluation does not run
 
+### Requirement: Backtest assignment request is a discriminated union
+
+The Backtest request boundary SHALL accept exactly one of two assignment shapes: `ACTIVE`, where `strategy` and `parameter_set` are absent, or `EXPLICIT`, where both `strategy` and `parameter_set` are present. Any request that violates the shape selected by `mode` SHALL be rejected before Backtest application evaluation begins and SHALL NOT produce a public Backtest artifact.
+
+#### Scenario: ACTIVE request includes explicit assignment fields
+
+- GIVEN an analytical Backtest request with `mode=ACTIVE`
+- AND the request supplies a strategy or parameter set
+- WHEN the Backtest request boundary validates the request contract
+- THEN the request is rejected
+- AND Backtest application evaluation does not begin
+- AND no public Backtest artifact is produced
+- AND the supplied explicit fields are not silently ignored or converted into `EXPLICIT` mode
+
+#### Scenario: EXPLICIT request omits both assignment fields
+
+- GIVEN an analytical Backtest request with `mode=EXPLICIT`
+- AND the request supplies neither strategy nor parameter set
+- WHEN the Backtest request boundary validates the request contract
+- THEN the request is rejected
+- AND Backtest application evaluation does not begin
+- AND no public Backtest artifact is produced
+- AND the active assignment is not silently borrowed
+
+#### Scenario: EXPLICIT request supplies only strategy
+
+- GIVEN an analytical Backtest request with `mode=EXPLICIT`
+- AND the request supplies a strategy but no parameter set
+- WHEN the Backtest request boundary validates the request contract
+- THEN the request is rejected
+- AND Backtest application evaluation does not begin
+- AND no public Backtest artifact is produced
+- AND the active parameter set is not silently borrowed
+
+#### Scenario: EXPLICIT request supplies only parameter set
+
+- GIVEN an analytical Backtest request with `mode=EXPLICIT`
+- AND the request supplies a parameter set but no strategy
+- WHEN the Backtest request boundary validates the request contract
+- THEN the request is rejected
+- AND Backtest application evaluation does not begin
+- AND no public Backtest artifact is produced
+- AND the active strategy is not silently borrowed
+
 ### Requirement: Analytical Backtest supports active assignment mode
 
-The system SHALL support an `ACTIVE` research mode that uses the instrument's configured active strategy and parameter set.
+The system SHALL support an accepted `ACTIVE` research mode that uses the instrument's configured active strategy and parameter set.
 
 #### Scenario: Run Backtest with active assignment
 
 - GIVEN an instrument with a valid active strategy assignment
-- WHEN an analytical Backtest is requested in `ACTIVE` mode
+- WHEN an accepted analytical Backtest is requested in `ACTIVE` mode
 - THEN each eligible evaluation uses that active strategy and parameter set
 
 #### Scenario: Active assignment is missing
@@ -108,13 +152,13 @@ The system SHALL support an `ACTIVE` research mode that uses the instrument's co
 
 ### Requirement: Analytical Backtest supports explicit strategy assignment
 
-The system SHALL support an `EXPLICIT` research mode that uses a fully specified strategy and parameter-set pair without changing or requiring the instrument's active formal assignment.
+The system SHALL support an accepted `EXPLICIT` research mode that uses a fully specified strategy and parameter-set pair without changing or requiring the instrument's active formal assignment.
 
 #### Scenario: Research another strategy pair
 
 - GIVEN an instrument whose active assignment is strategy A with parameter set A1
 - AND a compatible strategy B with parameter set B1 exists
-- WHEN an analytical Backtest is requested in `EXPLICIT` mode with strategy B and parameter set B1
+- WHEN an accepted analytical Backtest is requested in `EXPLICIT` mode with strategy B and parameter set B1
 - THEN the Backtest evaluates strategy B with parameter set B1
 - AND the instrument's active assignment remains strategy A with parameter set A1
 
@@ -122,33 +166,9 @@ The system SHALL support an `EXPLICIT` research mode that uses a fully specified
 
 - GIVEN a configured instrument without an active strategy assignment
 - AND a compatible explicit strategy B with parameter set B1 exists
-- WHEN an analytical Backtest is requested in `EXPLICIT` mode with strategy B and parameter set B1
+- WHEN an accepted analytical Backtest is requested in `EXPLICIT` mode with strategy B and parameter set B1
 - THEN the Backtest evaluates strategy B with parameter set B1
 - AND the missing active assignment does not cause the explicit Backtest to fail
-
-### Requirement: Partial explicit assignment is rejected at the Backtest request boundary
-
-The Backtest request boundary SHALL reject an `EXPLICIT` request that specifies only a strategy or only a parameter set before Backtest application evaluation begins.
-
-#### Scenario: Strategy is specified without parameter set
-
-- GIVEN an analytical Backtest request in `EXPLICIT` mode
-- AND the request provides a strategy but no parameter set
-- WHEN the Backtest request boundary validates the request contract
-- THEN the request is rejected
-- AND Backtest application evaluation does not begin
-- AND no public Backtest artifact is produced for the rejected request
-- AND the system does not silently reuse the active parameter set
-
-#### Scenario: Parameter set is specified without strategy
-
-- GIVEN an analytical Backtest request in `EXPLICIT` mode
-- AND the request provides a parameter set but no strategy
-- WHEN the Backtest request boundary validates the request contract
-- THEN the request is rejected
-- AND Backtest application evaluation does not begin
-- AND no public Backtest artifact is produced for the rejected request
-- AND the system does not silently reuse the active strategy
 
 ### Requirement: Backtest data range may include pre-roll history
 
