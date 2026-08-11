@@ -9,7 +9,10 @@ from investment_strategy.domain.failures import data_failure
 
 TAIPEI = ZoneInfo("Asia/Taipei")
 COMPLETION_TIME = time(13, 33)
-PRODUCTION_OVERRIDES: Mapping[date, bool] = {}
+# Official regression evidence is maintained in tests/fixtures/taiwan_calendar_regressions.yaml.
+# Pinned XTAI 4.11.2 does not represent the officially documented 2018-03-31
+# additional Saturday trading session, so keep this correction deliberately sparse.
+PRODUCTION_OVERRIDES: Mapping[date, bool] = {date(2018, 3, 31): True}
 
 
 class CalendarEngine(Protocol):
