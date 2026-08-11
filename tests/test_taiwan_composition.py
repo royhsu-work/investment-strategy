@@ -136,9 +136,7 @@ def test_incomplete_current_session_is_excluded_from_formal_decision_input() -> 
     sessions = {date(2026, 8, 10), date(2026, 8, 11)}
     calendar = TaiwanTradingCalendar(engine=FakeTaiwanEngine(sessions))
     gateway = YFinanceEodGateway(
-        history_loader=history_loader_for(
-            provider_rows([date(2026, 8, 10), date(2026, 8, 11)]), []
-        )
+        history_loader=history_loader_for(provider_rows([date(2026, 8, 10), date(2026, 8, 11)]), [])
     )
     strategy = TestStrategy(minimum_history=1)
     artifact = DecisionService(
