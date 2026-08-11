@@ -16,7 +16,8 @@ This change introduces provider-neutral Taiwan EOD market-data integration with 
 - The first supported Taiwan listing venues are TWSE and TPEx.
 - Market-data acquisition accepts the repository's canonical instrument identity and resolves any provider-specific identifier behind the data-provider boundary.
 - Formal Taiwan market history is acquired as completed daily OHLCV only.
-- Formal EOD prices represent reported regular-session trading prices for each trading date and are not silently replaced by retroactively adjusted, repaired, interpolated, or synthetic price history.
+- Formal EOD history uses the selected provider's source-native daily `Open`/`High`/`Low`/`Close`/`Volume` fields. Adapter-controlled automatic/back adjustment, `Adj Close` substitution, dividend/capital-gain adjustment, repair, interpolation, and synthetic filling are not silently applied.
+- This capability does not guarantee that provider-native historical OHLC remains on the original exchange nominal price scale across splits or consolidations. Any strategy-specific corporate-action or total-return analytical methodology remains a separate concern.
 - Taiwan market dates and completed sessions are resolved in the Taiwan market timezone from an exchange-aware trading calendar rather than a weekday-only heuristic.
 - The Taiwan trading calendar accounts for scheduled holidays, additional trading sessions, and exceptional market closures when determining continuity, freshness, and the latest completed trading day.
 - Calendar support follows the configured pinned calendar engine's actual supported range; if that engine cannot establish required session status, evaluation fails explicitly rather than assuming a session and misclassifying missing price data as `DATA_GAP` or `STALE_DATA`.
@@ -34,7 +35,7 @@ This change introduces provider-neutral Taiwan EOD market-data integration with 
 ### Modified Capabilities
 
 - `strategy-engine`: extend instrument configuration with provider-neutral listing-venue identity needed before Taiwan market-data acquisition.
-- `market-data-validation`: make the formal EOD price basis explicit and clarify that continuity applies to the formal history required by an evaluation rather than to arbitrary extra history returned by a provider.
+- `market-data-validation`: make the source-native formal EOD price basis explicit and clarify that continuity applies to the formal history required by an evaluation rather than to arbitrary extra history returned by a provider.
 
 ## Scope Boundaries
 
@@ -46,7 +47,8 @@ It does **not** define or implement:
 - price prediction, future-return prediction, or forecasting;
 - production Bollinger, time-series, hybrid, or other strategy algorithms;
 - strategy-specific history-window or lookback policy beyond the existing Strategy contracts;
-- corporate-action adjustment or total-return methodology;
+- a canonical exchange-raw historical price reconstruction across splits or consolidations;
+- corporate-action adjustment or total-return analytical methodology;
 - adjusted analytical price-series construction;
 - cross-provider reconciliation or provider fallback policy;
 - persistent market-data databases, caches, or historical-data warehousing;
@@ -56,13 +58,13 @@ It does **not** define or implement:
 - simulated execution, fills, pending orders, positions, cash, PnL, fees, taxes, or slippage;
 - benchmark/reference-instrument logic.
 
-Provider SDK choice, provider-specific symbol mapping, request parameters, and concrete calendar data-source selection are design and implementation concerns and are not part of the capability contract.
+Provider SDK choice, provider-specific symbol mapping, request parameters, provider-native corporate-action conventions, and concrete calendar data-source selection are design and implementation concerns and are not part of the public Strategy/Decision/Backtest contract.
 
 ## Impact
 
 Expected affected areas:
 
-- OpenSpec definitions for Taiwan EOD market-data acquisition, instrument venue identity, formal market-data semantics, and calendar-engine support failure behavior.
+- OpenSpec definitions for Taiwan EOD market-data acquisition, instrument venue identity, source-native formal market-data semantics, and calendar-engine support failure behavior.
 - Instrument configuration domain and YAML adapter behavior.
 - Concrete market-data and Taiwan trading-calendar adapters behind existing ports.
 - Dependency composition for Decision and analytical Backtest services.
@@ -74,8 +76,8 @@ Public Decision and analytical Backtest request and artifact schemas are unchang
 
 Follow-up changes are expected for:
 
-- final corporate-action and analytical price-adjustment methodology;
-- production strategy implementations such as `implement-bollinger-swing-strategy`, including any strategy-specific historical lookback policy they require;
+- final corporate-action, exchange-raw reconstruction if ever required, and analytical price-adjustment methodology;
+- production strategy implementations such as `implement-bollinger-swing-strategy`, including any strategy-specific historical lookback and price-basis policy they require;
 - production workflow activation after a production strategy assignment exists;
 - provider fallback, authoritative cross-validation, persistent market-data storage, or automatic calendar-update ingestion if later justified;
 - execution simulation under a dedicated execution capability.
