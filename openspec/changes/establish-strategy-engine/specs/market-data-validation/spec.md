@@ -112,7 +112,7 @@ The system SHALL reject an observation whose volume is negative.
 - GIVEN an observation with negative volume
 - WHEN structural validation runs
 - THEN validation fails with `DATA_FAILED`
-- AND the failure code identifies invalid market data
+- AND the failure code is `VALIDATION_ERROR`
 
 ### Requirement: Normalized historical timestamps are valid, unique, and strictly chronological
 
@@ -137,6 +137,7 @@ The system SHALL validate the normalized historical series such that timestamps 
 - GIVEN a historical observation whose timestamp cannot be normalized into a valid trading timestamp
 - WHEN structural validation runs
 - THEN validation fails with `DATA_FAILED`
+- AND the failure code is `VALIDATION_ERROR`
 
 ### Requirement: Trading-calendar continuity is used for gap detection
 
