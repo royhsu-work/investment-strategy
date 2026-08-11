@@ -16,6 +16,17 @@ The system SHALL obtain the selected strategy's declared data frequency, require
 - AND they identify the required fields
 - AND they identify the minimum history needed for eligible evaluation
 
+### Requirement: Strategy data frequency is daily in this change
+
+The system SHALL support `DAILY` as the only formal Strategy data frequency in this change.
+
+#### Scenario: Strategy declares supported frequency
+
+- GIVEN a Strategy implementation compatible with this framework change
+- WHEN it declares its `DataRequirement`
+- THEN the declared frequency is `DAILY`
+- AND formal Strategy evaluation consumes completed daily market data
+
 ### Requirement: Explicit strategy evaluation inputs
 
 The system SHALL evaluate a strategy using only the selected instrument, the resolved strategy configuration, the evaluation `as_of` date, and market data available for that evaluation.
