@@ -66,7 +66,7 @@ def test_configuration_failure_stops_before_market_data_and_strategy() -> None:
     strategy = TestStrategy()
     resolver = StrategyConfigResolver(
         InMemoryInstrumentRegistry(
-            {"00733": InstrumentConfig("00733", ActiveAssignment("missing", "p1"))}
+            {"00733": InstrumentConfig("00733", ActiveAssignment("missing", "p1"), "TWSE")}
         ),
         InMemoryParameterSetRegistry({"p1": ParameterSet("p1", "missing", {})}),
         CodeStrategyRegistry([]),
