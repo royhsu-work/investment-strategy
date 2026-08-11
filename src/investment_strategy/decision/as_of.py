@@ -12,7 +12,7 @@ def resolve_decision_as_of(
     now: datetime,
     calendar: TradingCalendar,
 ) -> date:
-    today = now.date()
+    today = calendar.market_date(now)
     if requested is None:
         return calendar.latest_completed_trading_day(now)
     if requested > today:
@@ -33,7 +33,7 @@ def is_current_formal_decision(
     calendar: TradingCalendar,
     resolved_as_of: date,
 ) -> bool:
-    today = now.date()
+    today = calendar.market_date(now)
     if not calendar.is_trading_day(today) or calendar.is_session_complete(today, now):
         return False
     if requested is not None and requested != today:

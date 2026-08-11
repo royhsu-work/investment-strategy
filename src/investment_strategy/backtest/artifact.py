@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 from investment_strategy.decision.artifact import DISCLAIMER
 from investment_strategy.domain.failures import Failure
+from investment_strategy.serialization import serialize_public_artifact
 
 from .request import BacktestRequest
 
@@ -12,8 +16,8 @@ def build_backtest_success(
     strategy: str,
     parameter_set: str,
     git_sha: str,
-    timeline: list[dict[str, object]],
-) -> dict[str, object]:
+    timeline: list[dict[str, Any]],
+) -> dict[str, Any]:
     return {
         "status": "SUCCESS",
         "instrument": request.symbol,
@@ -34,7 +38,7 @@ def build_backtest_failure(
     request: BacktestRequest,
     git_sha: str,
     failure: Failure,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     return {
         "status": "FAILED",
         "instrument": request.symbol,
@@ -45,3 +49,7 @@ def build_backtest_failure(
         "failure": failure.to_dict(),
         "disclaimer": DISCLAIMER,
     }
+
+
+def serialize_backtest_artifact(artifact: Mapping[str, Any]) -> str:
+    return serialize_public_artifact(artifact)

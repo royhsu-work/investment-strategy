@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from investment_strategy.configuration.resolver import StrategyConfigResolver
 from investment_strategy.data.calendar import TradingCalendar
 from investment_strategy.data.normalize import prepare_bars
@@ -33,7 +35,7 @@ class DecisionService:
         self._clock = clock
         self._intraday = intraday
 
-    def run(self, request: DecisionRequest) -> dict[str, object]:
+    def run(self, request: DecisionRequest) -> dict[str, Any]:
         now = self._clock.now()
         try:
             resolved_as_of = resolve_decision_as_of(request.as_of, now=now, calendar=self._calendar)
@@ -73,7 +75,10 @@ class DecisionService:
                     raw_snapshot = self._intraday.load_snapshot(request.symbol)
                 except Exception:
                     raw_snapshot = None
-                snapshot = parse_snapshot(raw_snapshot, expected_session=now.date())
+                snapshot = parse_snapshot(
+                    raw_snapshot,
+                    expected_session=self._calendar.market_date(now),
+                )
                 if snapshot is not None:
                     overlay = build_intraday_overlay(snapshot, result).to_dict()
 

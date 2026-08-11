@@ -1,16 +1,29 @@
 from __future__ import annotations
 
 import inspect
+import json
+from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime
+from zoneinfo import ZoneInfo
 
-from investment_strategy.backtest import AssignmentMode, BacktestRequest, BacktestService
+from investment_strategy.backtest import (
+    AssignmentMode,
+    BacktestRequest,
+    BacktestService,
+    serialize_backtest_artifact,
+)
 from investment_strategy.configuration import (
     InMemoryInstrumentRegistry,
     InMemoryParameterSetRegistry,
     StrategyConfigResolver,
 )
 from investment_strategy.decision import DecisionRequest, DecisionService
-from investment_strategy.domain import InstrumentConfig, ParameterSet
+from investment_strategy.domain import (
+    InstrumentConfig,
+    ParameterSet,
+    StrategyContext,
+    StrategyResult,
+)
 from investment_strategy.strategies import CodeStrategyRegistry
 
 from .helpers import FixedClock, SpyGateway, TestStrategy, WeekdayCalendar, bars, make_resolver
@@ -18,12 +31,12 @@ from .helpers import FixedClock, SpyGateway, TestStrategy, WeekdayCalendar, bars
 
 def make_backtest(
     strategy: TestStrategy,
-    records,
+    records: Sequence[Mapping[str, object]],
     *,
     resolver: StrategyConfigResolver | None = None,
     calendar: WeekdayCalendar | None = None,
     now: datetime | None = None,
-):
+) -> tuple[BacktestService, SpyGateway]:
     gateway = SpyGateway(records)
     service = BacktestService(
         resolver=resolver or make_resolver(strategy),
@@ -110,6 +123,23 @@ def test_incomplete_current_day_is_excluded_from_range() -> None:
         bars(date(2026, 8, 10), 2),
         calendar=calendar,
         now=datetime(2026, 8, 11, 10, tzinfo=UTC),
+    )
+    artifact = service.run(active_request(date(2026, 8, 10), date(2026, 8, 11)))
+    assert artifact["status"] == "SUCCESS"
+    assert [item["date"] for item in artifact["timeline"]] == ["2026-08-10"]
+
+
+def test_backtest_current_day_uses_calendar_market_timezone() -> None:
+    strategy = TestStrategy(minimum_history=1)
+    calendar = WeekdayCalendar(
+        session_complete=False,
+        market_timezone=ZoneInfo("Asia/Taipei"),
+    )
+    service, _ = make_backtest(
+        strategy,
+        bars(date(2026, 8, 10), 1),
+        calendar=calendar,
+        now=datetime(2026, 8, 10, 16, 30, tzinfo=UTC),
     )
     artifact = service.run(active_request(date(2026, 8, 10), date(2026, 8, 11)))
     assert artifact["status"] == "SUCCESS"
@@ -203,7 +233,7 @@ def test_invalid_required_data_fails_instead_of_skipping() -> None:
 
 def test_strategy_failure_is_fail_fast_and_partial_timeline_is_not_public_success() -> None:
     class FailSecond(TestStrategy):
-        def evaluate(self, context):
+        def evaluate(self, context: StrategyContext) -> StrategyResult:
             if self.evaluations == 1:
                 self.fail = True
             return super().evaluate(context)
@@ -214,6 +244,18 @@ def test_strategy_failure_is_fail_fast_and_partial_timeline_is_not_public_succes
     assert artifact["status"] == "FAILED"
     assert artifact["failure"]["category"] == "STRATEGY_FAILED"
     assert "timeline" not in artifact
+
+
+def test_backtest_success_and_failure_artifacts_serialize_to_json() -> None:
+    strategy = TestStrategy(minimum_history=1)
+    service, _ = make_backtest(strategy, bars(date(2026, 8, 10), 1))
+
+    success = service.run(active_request(date(2026, 8, 10), date(2026, 8, 10)))
+    assert json.loads(serialize_backtest_artifact(success)) == success
+
+    failure = service.run(active_request(date(2026, 8, 12), date(2026, 8, 12)))
+    assert failure["status"] == "FAILED"
+    assert json.loads(serialize_backtest_artifact(failure)) == failure
 
 
 def test_backtest_has_no_execution_simulator_dependency() -> None:

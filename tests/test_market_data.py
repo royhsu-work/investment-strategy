@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import date
 
 import pytest
@@ -43,7 +44,10 @@ def test_duplicate_timestamp_fails() -> None:
         (lambda row: row.__setitem__("timestamp", "not-a-date"), "VALIDATION_ERROR"),
     ],
 )
-def test_structural_validation_codes(mutate, code: str) -> None:
+def test_structural_validation_codes(
+    mutate: Callable[[dict[str, object]], object],
+    code: str,
+) -> None:
     records = bars(date(2026, 1, 5), 1)
     mutate(records[0])
     with pytest.raises(ApplicationFailure) as exc:

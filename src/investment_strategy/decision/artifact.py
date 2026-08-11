@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date
+from typing import Any
 
 from investment_strategy.domain.failures import Failure
 from investment_strategy.domain.result import StrategyResult
+from investment_strategy.serialization import serialize_public_artifact
 
 DISCLAIMER = "僅為個人研究與策略驗證，不構成任何形式之投資建議。"
 
@@ -17,9 +20,9 @@ def build_decision_success(
     parameter_set: str,
     git_sha: str,
     strategy_result: StrategyResult,
-    intraday_overlay: dict[str, object] | None = None,
-) -> dict[str, object]:
-    artifact: dict[str, object] = {
+    intraday_overlay: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    artifact: dict[str, Any] = {
         "status": "SUCCESS",
         "instrument": instrument,
         "resolved_as_of": resolved_as_of.isoformat(),
@@ -43,8 +46,8 @@ def build_decision_failure(
     requested_as_of: date | None,
     git_sha: str,
     failure: Failure,
-) -> dict[str, object]:
-    artifact: dict[str, object] = {
+) -> dict[str, Any]:
+    artifact: dict[str, Any] = {
         "status": "FAILED",
         "instrument": instrument,
         "git_sha": git_sha,
@@ -54,3 +57,7 @@ def build_decision_failure(
     if requested_as_of is not None:
         artifact["requested_as_of"] = requested_as_of.isoformat()
     return artifact
+
+
+def serialize_decision_artifact(artifact: Mapping[str, Any]) -> str:
+    return serialize_public_artifact(artifact)

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -9,8 +12,14 @@ from investment_strategy.configuration import (
     InMemoryParameterSetRegistry,
     StrategyConfigResolver,
 )
-from investment_strategy.decision import DISCLAIMER, DecisionRequest, DecisionService
+from investment_strategy.decision import (
+    DISCLAIMER,
+    DecisionRequest,
+    DecisionService,
+    serialize_decision_artifact,
+)
 from investment_strategy.domain import ActiveAssignment, InstrumentConfig, MarketState, ParameterSet
+from investment_strategy.serialization import ArtifactSerializationError
 from investment_strategy.strategies import CodeStrategyRegistry
 
 from .helpers import FixedClock, SpyGateway, TestStrategy, WeekdayCalendar, bars, make_resolver
@@ -18,7 +27,7 @@ from .helpers import FixedClock, SpyGateway, TestStrategy, WeekdayCalendar, bars
 
 def make_service(
     strategy: TestStrategy,
-    records,
+    records: Sequence[Mapping[str, object]],
     *,
     now: datetime,
     calendar: WeekdayCalendar | None = None,
@@ -129,6 +138,24 @@ def test_decision_as_of_resolution(requested: date, session_complete: bool, expe
     assert artifact["resolved_as_of"] == through.isoformat()
 
 
+def test_market_date_is_owned_by_trading_calendar_timezone() -> None:
+    strategy = TestStrategy(minimum_history=1)
+    calendar = WeekdayCalendar(
+        session_complete=False,
+        market_timezone=ZoneInfo("Asia/Taipei"),
+    )
+    service, _ = make_service(
+        strategy,
+        bars(date(2026, 8, 10), 1),
+        now=datetime(2026, 8, 10, 16, 30, tzinfo=UTC),
+        calendar=calendar,
+    )
+    artifact = service.run(DecisionRequest("00733", date(2026, 8, 11)))
+    assert artifact["status"] == "SUCCESS"
+    assert artifact["requested_as_of"] == "2026-08-11"
+    assert artifact["resolved_as_of"] == "2026-08-10"
+
+
 def test_omitted_as_of_uses_latest_completed_trading_day() -> None:
     strategy = TestStrategy(minimum_history=1)
     calendar = WeekdayCalendar(session_complete=False)
@@ -196,3 +223,31 @@ def test_strategy_failure_uses_canonical_failed_artifact() -> None:
     assert "strategy_result" not in artifact
     assert "strategy" not in artifact
     assert artifact["disclaimer"] == DISCLAIMER
+
+
+def test_decision_success_and_failure_artifacts_serialize_to_json() -> None:
+    strategy = TestStrategy(minimum_history=1)
+    service, _ = make_service(
+        strategy,
+        bars(date(2026, 8, 10), 1),
+        now=datetime(2026, 8, 10, 18, tzinfo=UTC),
+    )
+    success = service.run(DecisionRequest("00733", date(2026, 8, 10)))
+    assert json.loads(serialize_decision_artifact(success)) == success
+
+    failure = service.run(DecisionRequest("00733", date(2026, 8, 11)))
+    assert failure["status"] == "FAILED"
+    assert json.loads(serialize_decision_artifact(failure)) == failure
+
+
+def test_artifact_serialization_rejects_non_json_strategy_extension_value() -> None:
+    strategy = TestStrategy(minimum_history=1)
+    service, _ = make_service(
+        strategy,
+        bars(date(2026, 8, 10), 1),
+        now=datetime(2026, 8, 10, 18, tzinfo=UTC),
+    )
+    artifact = service.run(DecisionRequest("00733", date(2026, 8, 10)))
+    artifact["strategy_result"]["signals"]["unsupported"] = object()
+    with pytest.raises(ArtifactSerializationError, match="non-JSON-compatible"):
+        serialize_decision_artifact(artifact)

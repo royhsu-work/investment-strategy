@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, date, datetime
+from zoneinfo import ZoneInfo
 
 from investment_strategy.decision import DecisionRequest, DecisionService
 
@@ -15,7 +17,9 @@ from .helpers import (
 )
 
 
-def current_service(snapshot):
+def current_service(
+    snapshot: Mapping[str, object] | None,
+) -> tuple[DecisionService, TestStrategy, SnapshotGateway]:
     strategy = TestStrategy(minimum_history=1)
     market = SpyGateway(bars(date(2026, 8, 7), 2))
     snapshots = SnapshotGateway(snapshot)
@@ -77,6 +81,26 @@ def test_overlay_uses_only_deterministic_relationships_and_never_near_or_touch_h
     assert "NEAR" not in overlay_text
     assert "TOUCHED" not in overlay_text
     assert "FILL" not in overlay_text
+
+
+def test_intraday_snapshot_session_eligibility_uses_market_timezone() -> None:
+    strategy = TestStrategy(minimum_history=1)
+    snapshots = SnapshotGateway(valid_snapshot())
+    service = DecisionService(
+        resolver=make_resolver(strategy),
+        market_data=SpyGateway(bars(date(2026, 8, 10), 1)),
+        calendar=WeekdayCalendar(
+            session_complete=False,
+            market_timezone=ZoneInfo("Asia/Taipei"),
+        ),
+        clock=FixedClock(datetime(2026, 8, 10, 16, 30, tzinfo=UTC)),
+        intraday=snapshots,
+    )
+    artifact = service.run(DecisionRequest("00733"))
+    assert artifact["status"] == "SUCCESS"
+    assert artifact["resolved_as_of"] == "2026-08-10"
+    assert artifact["intraday_overlay"]["session_date"] == "2026-08-11"
+    assert snapshots.calls == 1
 
 
 def test_invalid_or_unavailable_snapshot_is_non_fatal() -> None:

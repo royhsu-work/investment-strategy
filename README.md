@@ -1,8 +1,29 @@
 # Investment Strategy
 
-以 OpenSpec 驅動的 Python 投資策略研究專案。此 repository 的核心目標是建立可重現、無 look-ahead 的分析型 Strategy Engine，讓正式 Decision 與歷史 analytical Backtest 共用同一份 Strategy 實作。
+以歷史市場資料產生交易計畫，並使用相同策略核心進行歷史回測。
 
-> 公開 Decision / Backtest Artifact 固定包含：`僅為個人研究與策略驗證，不構成任何形式之投資建議。`
+本專案的開發與執行方式：
+
+- **AI-assisted development**：使用 ChatGPT Chat / Work，並依循 OpenSpec 流程進行規格驅動的 AI-assisted development。
+- **Serverless-style execution**：以 GitHub Actions 執行事件或排程觸發的 Decision、Backtest 與驗證工作，無需維運常駐伺服器。
+
+> 核心原則：Decision 與 Backtest 必須共用同一份策略實作。回測不能使用另一套簡化規則。
+
+## 免責聲明
+
+本專案及其產生之所有內容僅供個人研究、學習與策略驗證用途，不構成任何形式之投資建議、投資招攬、證券推薦或買賣依據。
+
+本專案所呈現之市場資料、分析結果、價格區間、交易訊號及回測結果，均可能受到資料品質、模型假設、參數設定及市場變化影響，亦可能存在錯誤、延遲或不完整之情形。
+
+任何投資決策均應由使用者自行評估並承擔相關風險。本專案作者不對依據本專案內容所進行之任何投資或交易行為，以及因此產生之損益負責。
+
+公開的 Decision / Backtest Artifact 固定包含簡短免責聲明：`僅為個人研究與策略驗證，不構成任何形式之投資建議。`
+
+---
+
+## Strategy Engine baseline
+
+以 OpenSpec 驅動的 Python 投資策略研究專案。此 repository 的目前 change 建立可重現、無 look-ahead 的分析型 Strategy Engine，讓正式 Decision 與歷史 analytical Backtest 共用同一份 Strategy 實作。
 
 ## 核心邊界
 
@@ -110,7 +131,7 @@ candidate acquired, then invalid
 
 For historical `Decision(as_of=T)` the framework first normalizes timestamps enough to establish temporal position, excludes timestamp-known rows after T, and only then validates their non-temporal OHLCV structure. Therefore a known T+1 row with invalid OHLC cannot contaminate the Decision at T; an un-normalizable timestamp can still fail because its temporal position is unknowable.
 
-Trading-day continuity and freshness are based on the injected `TradingCalendar`, not calendar-day continuity. Weekends/holidays are not gaps.
+Trading-day continuity and freshness are based on the injected `TradingCalendar`, not calendar-day continuity. Weekends/holidays are not gaps. Market date/session interpretation is also owned by the `TradingCalendar`; a timezone-aware `Clock` instant is never reduced with the runner's local timezone before calendar evaluation.
 
 ## Decision request
 
@@ -154,6 +175,8 @@ Successful artifact shape:
 ```
 
 `requested_as_of` 只有在 caller 明確提供時才需要存在。Failed Decision 使用穩定最小 identity，不因內部已解析多少 metadata 而擴張 public contract。
+
+Decision / Backtest artifact builders produce Python mappings, and the public serialization boundary emits strict JSON. Non-JSON-compatible strategy extension values are rejected deterministically instead of leaking into an Actions Artifact.
 
 ## Current-only intraday overlay
 
@@ -233,7 +256,7 @@ Request-boundary rejection 不屬於這個 envelope，因為 application 尚未�
 - `.github/workflows/decision.yml`：formal Decision orchestration scaffold。
 - `.github/workflows/backtest.yml`：analytical Backtest orchestration scaffold；不含 fill simulation。
 - `.github/workflows/quality.yml`：`uv run pytest`、`ruff check`、`ruff format --check`、`mypy src tests`。
-- `.github/workflows/openspec-validate.yml`：對 `establish-strategy-engine` 執行 strict OpenSpec validation。
+- `.github/workflows/openspec-validate.yml`：對 `establish-strategy-engine` 執行 strict OpenSpec validation 與 status check。
 
 Generated analytical results 應上傳 Actions Artifacts，不 commit 回 repository。Live provider/calendar/production strategy composition 保持 deferred。
 
@@ -244,12 +267,8 @@ uv run pytest
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy src tests
-```
-
-本 change 的最終驗收還包含：
-
-```bash
 openspec validate establish-strategy-engine --type change --strict --json --no-interactive
+openspec status --change establish-strategy-engine --json
 ```
 
 ## Deferred work

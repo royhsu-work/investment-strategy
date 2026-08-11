@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 
 from investment_strategy.configuration import (
     InMemoryInstrumentRegistry,
@@ -33,9 +33,19 @@ class FixedClock:
 
 
 class WeekdayCalendar:
-    def __init__(self, *, session_complete: bool = True, holidays: set[date] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        session_complete: bool = True,
+        holidays: set[date] | None = None,
+        market_timezone: tzinfo = UTC,
+    ) -> None:
         self.session_complete = session_complete
         self.holidays = holidays or set()
+        self.market_timezone = market_timezone
+
+    def market_date(self, now: datetime) -> date:
+        return now.astimezone(self.market_timezone).date()
 
     def is_trading_day(self, day: date) -> bool:
         return day.weekday() < 5 and day not in self.holidays
@@ -47,7 +57,7 @@ class WeekdayCalendar:
         return current
 
     def latest_completed_trading_day(self, now: datetime) -> date:
-        today = now.date()
+        today = self.market_date(now)
         if self.is_trading_day(today) and self.is_session_complete(today, now):
             return today
         return self.previous_trading_day(today)
@@ -62,9 +72,10 @@ class WeekdayCalendar:
         return days
 
     def is_session_complete(self, day: date, now: datetime) -> bool:
-        if day < now.date():
+        today = self.market_date(now)
+        if day < today:
             return True
-        if day > now.date():
+        if day > today:
             return False
         return self.session_complete
 
@@ -152,7 +163,7 @@ def make_resolver(
         symbol=symbol,
         active=(ActiveAssignment(strategy.id, "p1") if active else None),
     )
-    parameters = {}
+    parameters: dict[str, ParameterSet] = {}
     if include_parameter:
         parameters["p1"] = ParameterSet(
             "p1",

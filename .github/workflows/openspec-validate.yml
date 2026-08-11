@@ -29,3 +29,6 @@ jobs:
 
       - name: Validate establish-strategy-engine
         run: openspec validate establish-strategy-engine --type change --strict --json --no-interactive
+
+      - name: Show establish-strategy-engine status
+        run: openspec status --change establish-strategy-engine --json

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Any
 
 from investment_strategy.configuration.resolver import StrategyConfigResolver
 from investment_strategy.data.calendar import TradingCalendar
@@ -35,7 +36,7 @@ class BacktestService:
 
     def _evaluation_dates(self, request: BacktestRequest) -> tuple[date, ...]:
         now = self._clock.now()
-        today = now.date()
+        today = self._calendar.market_date(now)
         if request.start_date > request.end_date or request.end_date > today:
             raise configuration_failure(
                 "INVALID_BACKTEST_RANGE",
@@ -52,7 +53,7 @@ class BacktestService:
             )
         return tuple(days)
 
-    def run(self, request: BacktestRequest) -> dict[str, object]:
+    def run(self, request: BacktestRequest) -> dict[str, Any]:
         try:
             evaluation_dates = self._evaluation_dates(request)
             if request.mode is AssignmentMode.ACTIVE:
@@ -75,7 +76,7 @@ class BacktestService:
                 resolved_as_of=last_evaluation,
             )
 
-            timeline: list[dict[str, object]] = []
+            timeline: list[dict[str, Any]] = []
             eligible_count = 0
             for evaluation_date in evaluation_dates:
                 bounded = tuple(bar for bar in bars if bar.trading_timestamp <= evaluation_date)
