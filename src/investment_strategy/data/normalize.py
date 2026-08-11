@@ -60,9 +60,12 @@ def _decimal(value: object, field: str) -> Decimal:
     if value is None:
         raise data_failure("MISSING_REQUIRED_FIELD", f"missing required field: {field}")
     try:
-        return Decimal(str(value))
+        normalized = Decimal(str(value))
     except (InvalidOperation, ValueError, TypeError) as exc:
         raise data_failure("VALIDATION_ERROR", f"invalid numeric value for {field}") from exc
+    if not normalized.is_finite():
+        raise data_failure("VALIDATION_ERROR", f"non-finite numeric value for {field}")
+    return normalized
 
 
 def normalize_daily_bars(
