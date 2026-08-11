@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
 from types import MappingProxyType
@@ -33,8 +33,8 @@ class StrategyResult:
     market_state: MarketState
     entry_plan: EntryPlan = EntryPlan()
     exit_plan: ExitPlan = ExitPlan()
-    signals: Mapping[str, object] = MappingProxyType({})
-    diagnostics: Mapping[str, object] = MappingProxyType({})
+    signals: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
+    diagnostics: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
     reasons: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
