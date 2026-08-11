@@ -27,8 +27,8 @@ jobs:
       - name: Show OpenSpec version
         run: openspec --version
 
-      - name: Validate establish-strategy-engine
-        run: openspec validate establish-strategy-engine --type change --strict --json --no-interactive
+      - name: Show active changes
+        run: openspec list
 
-      - name: Show establish-strategy-engine status
-        run: openspec status --change establish-strategy-engine --json
+      - name: Validate all OpenSpec artifacts
+        run: openspec validate --all --strict --json --no-interactive
