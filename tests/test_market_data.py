@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import date
+from typing import Any
 
 import pytest
 
@@ -55,6 +56,17 @@ def test_structural_validation_codes(
     with pytest.raises(ApplicationFailure) as exc:
         prepare_bars(SpyGateway(records), INSTRUMENT, through=date(2026, 1, 5))
     assert failure_code(exc) == code
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_numeric_candidates_fail_through_canonical_data_validation(value: Any) -> None:
+    records = bars(date(2026, 1, 5), 1)
+    records[0]["close"] = value
+
+    with pytest.raises(ApplicationFailure) as exc:
+        prepare_bars(SpyGateway(records), INSTRUMENT, through=date(2026, 1, 5))
+
+    assert failure_code(exc) == "VALIDATION_ERROR"
 
 
 def test_provider_failure_and_zero_candidates_are_data_unavailable() -> None:
