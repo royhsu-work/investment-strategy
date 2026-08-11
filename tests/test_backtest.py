@@ -10,7 +10,7 @@ from investment_strategy.configuration import (
     StrategyConfigResolver,
 )
 from investment_strategy.decision import DecisionRequest, DecisionService
-from investment_strategy.domain import ActiveAssignment, InstrumentConfig, ParameterSet
+from investment_strategy.domain import InstrumentConfig, ParameterSet
 from investment_strategy.strategies import CodeStrategyRegistry
 
 from .helpers import FixedClock, SpyGateway, TestStrategy, WeekdayCalendar, bars, make_resolver
