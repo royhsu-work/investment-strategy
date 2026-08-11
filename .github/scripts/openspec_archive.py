@@ -8,6 +8,7 @@ from pathlib import Path, PurePosixPath
 from typing import NoReturn
 
 CHANGE_NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+VALID_PROGRESS_STATES = {"complete", "in-progress", "no-tasks"}
 
 
 def _fail(message: str) -> NoReturn:
@@ -84,22 +85,60 @@ def _classify(args: argparse.Namespace) -> None:
     _emit(action="evaluate", change=candidates[0], reason="single-active-change")
 
 
-def _completion(args: argparse.Namespace) -> None:
+def _load_change_progress(list_file: Path, change: str) -> tuple[str, int, int]:
     try:
-        payload = json.loads(Path(args.status_file).read_text(encoding="utf-8"))
+        payload = json.loads(list_file.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        _fail(f"Unable to read OpenSpec status JSON: {exc}")
+        _fail(f"Unable to read OpenSpec list JSON: {exc}")
 
-    is_complete = payload.get("isComplete")
-    if not isinstance(is_complete, bool):
-        _fail("OpenSpec status JSON must contain boolean isComplete")
+    changes = payload.get("changes") if isinstance(payload, dict) else None
+    if not isinstance(changes, list):
+        _fail("OpenSpec list JSON must contain a changes array")
 
-    if is_complete:
-        _emit(should_archive="true", reason="change-complete")
+    matches = [entry for entry in changes if isinstance(entry, dict) and entry.get("name") == change]
+    if len(matches) != 1:
+        _fail(f"Change {change} not present in OpenSpec active change list")
+
+    entry = matches[0]
+    status = entry.get("status")
+    completed = entry.get("completedTasks")
+    total = entry.get("totalTasks")
+    if status not in VALID_PROGRESS_STATES:
+        _fail(f"Unexpected OpenSpec status for {change}: {status}")
+    if not isinstance(completed, int) or isinstance(completed, bool) or completed < 0:
+        _fail(f"Invalid completedTasks for {change}: {completed}")
+    if not isinstance(total, int) or isinstance(total, bool) or total < 0:
+        _fail(f"Invalid totalTasks for {change}: {total}")
+    if completed > total:
+        _fail(f"Invalid task progress for {change}: {completed}/{total}")
+    if status == "complete" and (total == 0 or completed != total):
+        _fail(f"Inconsistent complete task progress for {change}: {completed}/{total}")
+    if status == "no-tasks" and (completed != 0 or total != 0):
+        _fail(f"Inconsistent no-tasks progress for {change}: {completed}/{total}")
+
+    return status, completed, total
+
+
+def _completion(args: argparse.Namespace) -> None:
+    change = _validate_change_name(args.change)
+    status, completed, total = _load_change_progress(Path(args.list_file), change)
+
+    if status == "complete":
+        _emit(
+            should_archive="true",
+            reason="change-complete",
+            completed_tasks=str(completed),
+            total_tasks=str(total),
+        )
         return
 
     if args.event_name == "pull_request":
-        _emit(should_archive="false", reason="change-incomplete")
+        _emit(
+            should_archive="false",
+            reason="change-incomplete",
+            completed_tasks=str(completed),
+            total_tasks=str(total),
+        )
         return
     if args.event_name == "workflow_dispatch":
         _fail("Manual archive requires a Complete OpenSpec change")
@@ -121,7 +160,8 @@ def _parser() -> argparse.ArgumentParser:
 
     completion = subparsers.add_parser("completion")
     completion.add_argument("--event-name", required=True)
-    completion.add_argument("--status-file", required=True)
+    completion.add_argument("--change", required=True)
+    completion.add_argument("--list-file", required=True)
     completion.set_defaults(handler=_completion)
 
     return parser
