@@ -17,22 +17,24 @@ The system SHALL evaluate a formal Decision using the active strategy and parame
 
 ### Requirement: Decision does not accept research strategy overrides
 
-The system SHALL NOT allow a formal Decision request to override the instrument's active strategy or parameter set.
+The Decision request boundary SHALL accept only the formal Decision request contract and SHALL reject attempts to supply a research strategy or parameter-set override before Decision application evaluation begins.
 
 #### Scenario: Strategy override is supplied to Decision
 
 - GIVEN an instrument with a configured active assignment
 - WHEN a Decision request attempts to provide a different strategy or parameter set
-- THEN the request is rejected as invalid for formal Decision evaluation
+- THEN the request is rejected by the Decision request boundary
+- AND Decision application evaluation does not begin
+- AND no public Decision artifact is produced for the rejected request
 - AND the configured active assignment remains unchanged
 
 ### Requirement: Missing Decision configuration fails before data evaluation
 
-The system SHALL reject a Decision when the requested instrument or its active assignment cannot be resolved.
+The system SHALL reject a Decision when the requested instrument or its active assignment cannot be resolved after a request has passed the Decision request boundary.
 
 #### Scenario: Instrument is not configured
 
-- GIVEN a Decision request for an unknown instrument
+- GIVEN an accepted Decision request for an unknown instrument
 - WHEN configuration resolution runs
 - THEN the Decision fails
 - AND the failure category is `CONFIGURATION_FAILED`
@@ -41,7 +43,7 @@ The system SHALL reject a Decision when the requested instrument or its active a
 
 #### Scenario: Instrument has no active assignment
 
-- GIVEN a configured instrument with no active strategy assignment
+- GIVEN an accepted Decision request for a configured instrument with no active strategy assignment
 - WHEN a Decision evaluation is requested
 - THEN the Decision fails
 - AND the failure category is `CONFIGURATION_FAILED`
@@ -73,7 +75,7 @@ The system SHALL evaluate the formal Strategy Result against a completed trading
 - AND the requested date is not in the future
 - WHEN the Decision date is resolved
 - THEN the system selects the most recent eligible completed trading day according to the trading calendar
-- AND the Decision output preserves both the requested date and resolved `as_of` date
+- AND the Decision output preserves both the requested date and resolved `as_of` date when the Decision succeeds
 
 #### Scenario: Requested date is the current trading day before completion
 
@@ -97,8 +99,8 @@ The system SHALL reject a Decision request whose requested `as_of` is later than
 
 #### Scenario: Requested as-of is in the future
 
-- GIVEN a Decision request specifies a future `as_of` date
-- WHEN request validation runs
+- GIVEN an accepted Decision request specifies a future `as_of` date
+- WHEN application request validation runs
 - THEN the Decision fails
 - AND the failure category is `CONFIGURATION_FAILED`
 - AND the failure code is `INVALID_AS_OF`
@@ -121,14 +123,15 @@ The system SHALL prevent observations or intraday information unavailable by the
 - WHEN the formal Decision is evaluated
 - THEN the intraday snapshot does not alter the formal historical strategy evaluation
 
-### Requirement: Decision may include an observational intraday overlay
+### Requirement: Decision may include an observational intraday overlay only for the current formal Decision
 
-The system SHALL allow a Decision produced during an incomplete current trading session to include a separate intraday overlay containing current-session observations without changing the formal Strategy Result.
+The system SHALL allow a Decision produced during an incomplete current trading session to include a separate current-session intraday overlay only when the formal Decision represents the current analytical view derived from the latest completed trading day. A historical Decision requested for an earlier `as_of` SHALL NOT include the current-session overlay.
 
-#### Scenario: Current-session open and latest price are available
+#### Scenario: Current-session open and latest price are available for the current formal Decision
 
-- GIVEN the formal Strategy Result is evaluated through completed trading day T-1
-- AND trading day T is currently in progress
+- GIVEN trading day T is currently in progress
+- AND the Decision request omits `as_of` or explicitly requests the current trading date
+- AND the formal Strategy Result is evaluated through completed trading day T-1
 - AND current-session open, latest price, and snapshot time are available
 - WHEN the Decision output is produced
 - THEN the formal `resolved_as_of` remains T-1
@@ -136,10 +139,19 @@ The system SHALL allow a Decision produced during an incomplete current trading 
 - AND the overlay identifies the session date, open, latest price, and snapshot time
 - AND the overlay does not modify the formal market state, entry plan, exit plan, indicators, or model state
 
-#### Scenario: Intraday snapshot is unavailable
+#### Scenario: Historical as-of is requested during the current session
 
-- GIVEN the formal Strategy Result can be evaluated successfully from completed historical data
-- AND the optional intraday snapshot is unavailable or invalid
+- GIVEN trading day T is currently in progress
+- AND the caller explicitly requests historical `as_of=H` where H is earlier than the current formal Decision date
+- AND a valid current-session snapshot for T is available
+- WHEN the historical Decision output is produced
+- THEN the formal Strategy Result is evaluated only for H
+- AND the current-session intraday overlay is not included
+
+#### Scenario: Intraday snapshot is unavailable for the current formal Decision
+
+- GIVEN the current formal Strategy Result can be evaluated successfully from completed historical data
+- AND the optional current-session snapshot is unavailable or invalid
 - WHEN the Decision output is produced
 - THEN the Decision may still complete successfully
 - AND the formal Strategy Result remains valid
@@ -229,29 +241,40 @@ The system SHALL identify enough evaluation metadata in a successful Decision ou
 - THEN the artifact identifies the requested `as_of`
 - AND it identifies the resolved `as_of`
 
-### Requirement: Failed Decision output uses a common failure contract
+### Requirement: Failed Decision output uses a minimal common failure contract
 
-The system SHALL represent configuration, data, or strategy failures explicitly and SHALL NOT serialize a failure as a valid analytical Decision.
+The system SHALL represent application configuration, data, or strategy failures explicitly and SHALL NOT serialize a failure as a valid analytical Decision.
 
-#### Scenario: Decision fails
+#### Scenario: Accepted Decision fails
 
-- GIVEN a Decision fails during configuration resolution, formal data loading or validation, or strategy evaluation
+- GIVEN an accepted Decision request fails during application request validation, configuration resolution, formal data loading or validation, or strategy evaluation
 - WHEN the Decision artifact is produced
 - THEN the artifact status is `FAILED`
+- AND it identifies the requested instrument
+- AND it identifies the Git revision used by the application
 - AND `failure.category` is `CONFIGURATION_FAILED`, `DATA_FAILED`, or `STRATEGY_FAILED` as applicable
 - AND `failure.code` contains a machine-readable failure code
 - AND `failure.reason` contains a human-readable failure reason
 - AND it does not present a valid market state or trading plan as if evaluation succeeded
 
-#### Scenario: Decision fails before strategy identity is resolved
+#### Scenario: Explicit requested as-of is preserved in a failed artifact
 
-- GIVEN a Decision fails before a strategy or parameter set can be resolved
-- WHEN the failed artifact is produced
-- THEN unresolved strategy or parameter-set metadata is not fabricated
+- GIVEN an accepted Decision request explicitly supplies `as_of`
+- AND application evaluation later fails
+- WHEN the failed public artifact is produced
+- THEN the artifact identifies the originally requested `as_of`
+
+#### Scenario: Failure occurs after some internal metadata was resolved
+
+- GIVEN an accepted Decision request later fails
+- AND internal processing may already know a resolved `as_of`, strategy, parameter set, or data-quality detail
+- WHEN the failed public artifact is produced
+- THEN those internally known fields are not required by the public failure contract
+- AND unresolved strategy or parameter-set metadata is not fabricated
 
 ### Requirement: Public Decision artifact includes the fixed disclaimer
 
-The system SHALL include exactly `僅為個人研究與策略驗證，不構成任何形式之投資建議。` in every public Decision artifact.
+The system SHALL include exactly `僅為個人研究與策略驗證，不構成任何形式之投資建議。` in every public Decision artifact produced by the Decision application.
 
 #### Scenario: Successful public Decision artifact
 
@@ -261,6 +284,6 @@ The system SHALL include exactly `僅為個人研究與策略驗證，不構成�
 
 #### Scenario: Failed public Decision artifact
 
-- GIVEN a Decision fails during configuration, data validation, or strategy evaluation
+- GIVEN an accepted Decision request fails during application validation, configuration, data validation, or strategy evaluation
 - WHEN the public Decision artifact is generated
 - THEN the artifact still contains exactly `僅為個人研究與策略驗證，不構成任何形式之投資建議。`
