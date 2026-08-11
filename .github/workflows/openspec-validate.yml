@@ -5,6 +5,10 @@ on:
     paths:
       - "openspec/**"
       - ".github/workflows/openspec-validate.yml"
+  pull_request:
+    paths:
+      - "openspec/**"
+      - ".github/workflows/openspec-validate.yml"
   workflow_dispatch:
 
 jobs:
