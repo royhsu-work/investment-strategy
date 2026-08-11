@@ -85,6 +85,10 @@ def _classify(args: argparse.Namespace) -> None:
     _emit(action="evaluate", change=candidates[0], reason="single-active-change")
 
 
+def _is_change_entry(entry: object, change: str) -> bool:
+    return isinstance(entry, dict) and entry.get("name") == change
+
+
 def _load_change_progress(list_file: Path, change: str) -> tuple[str, int, int]:
     try:
         payload = json.loads(list_file.read_text(encoding="utf-8"))
@@ -95,11 +99,7 @@ def _load_change_progress(list_file: Path, change: str) -> tuple[str, int, int]:
     if not isinstance(changes, list):
         _fail("OpenSpec list JSON must contain a changes array")
 
-    matches = [
-        entry
-        for entry in changes
-        if isinstance(entry, dict) and entry.get("name") == change
-    ]
+    matches = [entry for entry in changes if _is_change_entry(entry, change)]
     if len(matches) != 1:
         _fail(f"Change {change} not present in OpenSpec active change list")
 
