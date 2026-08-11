@@ -15,6 +15,7 @@ The design must preserve these boundaries:
 
 - formal strategy analysis uses completed daily OHLCV only;
 - every normalized formal daily bar contains open, high, low, close, and volume;
+- this change does not define arbitrary additional per-bar formal fields beyond OHLCV;
 - incomplete intraday data is observational and cannot mutate formal indicators, model state, market state, or StrategyResult;
 - Decision uses the instrument's active assignment;
 - analytical Backtest can use the active assignment or an explicit research assignment;
@@ -31,7 +32,7 @@ The implementation is Python 3.11+ and should remain small, typed, testable, and
 
 - Provide one strategy contract used by both Decision and analytical Backtest.
 - Make strategy evaluation deterministic for equivalent code revision, configuration, data, and `as_of`.
-- Make information timing explicit and mechanically prevent look-ahead.
+- Make information timing explicit and mechanically prevent look-ahead across both data validation and strategy evaluation.
 - Resolve instrument/strategy/parameter configuration before market-data loading.
 - Validate normalized completed daily OHLCV before strategy evaluation.
 - Support trading-calendar-aware `as_of`, continuity, freshness, and Backtest warm-up behavior.
@@ -43,6 +44,7 @@ The implementation is Python 3.11+ and should remain small, typed, testable, and
 
 - Production Bollinger, time-series, or hybrid strategy algorithms.
 - Pattern detection, indicator thresholds, model fitting choices, or strategy-specific trading rules.
+- Arbitrary formal per-observation fields beyond completed daily OHLCV.
 - Simulated fills, pending orders, execution lifecycle, positions, cash, PnL, returns, drawdown, fees, taxes, slippage, or liquidity modeling.
 - Position sizing or use of real holdings, average cost, account cash, or other personal portfolio state.
 - Benchmark/reference-instrument behavior.
@@ -84,7 +86,29 @@ GitHub Actions / future CLI / tests
       infrastructure adapters
 ```
 
-Request-boundary rejection is distinct from application failure. Examples include a Decision request containing a research strategy override and a Backtest `EXPLICIT` request that supplies only one member of the strategy/parameter-set pair. These requests do not enter Decision/Backtest application evaluation and do not produce public Decision/Backtest artifacts.
+Request-boundary rejection is distinct from application failure. Examples include a Decision request containing a research strategy override or any Backtest request that violates the assignment shape selected by `mode`. These requests do not enter Decision/Backtest application evaluation and do not produce public Decision/Backtest artifacts.
+
+Backtest request policy is a strict discriminated union:
+
+```text
+ACTIVE
+├── symbol
+├── mode = ACTIVE
+├── start_date
+├── end_date
+├── strategy absent
+└── parameter_set absent
+
+EXPLICIT
+├── symbol
+├── mode = EXPLICIT
+├── strategy required
+├── parameter_set required
+├── start_date
+└── end_date
+```
+
+`ACTIVE` with either explicit assignment field, and `EXPLICIT` without both fields, are rejected. The adapter never silently ignores explicit fields, borrows active values, or changes the requested mode.
 
 Syntactically valid requests that enter the application can still fail with the canonical application failure categories. Examples include unknown instruments, invalid strategy configuration, future Decision `as_of`, or an invalid Backtest date range.
 
@@ -137,7 +161,6 @@ DataFrequency
 
 DataRequirement
 ├── frequency: DAILY
-├── additional_required_fields
 └── minimum_history
 
 DailyBar
@@ -171,9 +194,9 @@ MarketState
 └── REVERSAL_RISK
 ```
 
-This change intentionally supports only completed daily Strategy data. Additional frequencies require a later contract change rather than a generic string value that the data model cannot actually support.
+This change intentionally supports only completed daily Strategy data. Additional frequencies or formal per-observation fields require a later contract change rather than generic extension points that the normalized data model cannot actually represent.
 
-The normalized formal base schema is always OHLCV. `DataRequirement` may declare additional strategy-required fields beyond that mandatory base; it does not make base volume optional.
+The normalized formal schema is exactly completed daily OHLCV. Strategies derive indicators or model features from that explicit history plus their resolved parameters; they do not request arbitrary additional per-bar fields in this change.
 
 `StrategyContext` contains no position, cost, cash, execution state, benchmark, or previous strategy runtime state.
 
@@ -209,7 +232,7 @@ A strategy-specific parameter validator is owned by the strategy implementation.
 
 A reusable Strategy Contract Test suite will verify future production strategies for:
 
-- `DAILY` data requirements with explicit additional required fields and minimum history;
+- `DAILY` data requirements with explicit minimum history;
 - deterministic evaluation for equivalent inputs;
 - no dependence on real portfolio/execution state;
 - valid common MarketState values;
@@ -273,9 +296,9 @@ CONFIGURATION_FAILED
 
 A configuration failure terminates the application flow before market-data loading.
 
-### 5. Separate acquisition failure from acquired-data structural failure
+### 5. Separate acquisition failure, temporal classification, and structural validation
 
-Market-data providers return provider-specific candidate records through a `MarketDataGateway`. The framework then converts them into normalized immutable `DailyBar` values and validates them.
+Market-data providers return provider-specific candidate records through a `MarketDataGateway`. The framework then converts applicable records into normalized immutable `DailyBar` values and validates them.
 
 The base normalized `DailyBar` requires open, high, low, close, and volume. A provider record missing any mandatory OHLCV field cannot become a valid formal `DailyBar`.
 
@@ -290,9 +313,14 @@ DATA_FAILED / DATA_UNAVAILABLE
 
 candidate observations acquired
         ↓
-normalization / structural validation
+temporal normalization/classification
+├─ timestamp cannot be normalized -> VALIDATION_ERROR
+└─ timestamp can be normalized     -> temporal position is known
+        ↓
+applicable bounded observations
+        ↓
+structural validation
 ├─ missing mandatory OHLCV       -> MISSING_REQUIRED_FIELD
-├─ invalid timestamp             -> VALIDATION_ERROR
 ├─ invalid OHLC                  -> INVALID_OHLC
 ├─ negative volume               -> VALIDATION_ERROR
 ├─ duplicate timestamp           -> DUPLICATE_TIMESTAMP
@@ -302,15 +330,34 @@ normalization / structural validation
 
 An acquired observation does not become `DATA_UNAVAILABLE` merely because validation leaves zero usable observations. This prevents failure codes from depending on validator execution order.
 
-Normalization may reorder reverse-chronological provider data. Validation applies to the normalized series and verifies:
+Timestamp normalization is a temporal-boundary prerequisite. If a candidate timestamp cannot be normalized, the framework cannot reliably classify the row as past, present, or future, so `VALIDATION_ERROR` remains valid. Once a timestamp is successfully normalized, a historical Decision excludes observations later than `resolved_as_of` before their OHLCV structure can affect that Decision.
 
-- valid timestamps;
+For `Decision(as_of=T)`, data preparation therefore follows this ordering:
+
+```text
+acquire candidate observations
+        ↓
+normalize timestamp enough to establish temporal position
+        ↓
+exclude timestamp-known observations after T
+        ↓
+normalize/validate mandatory OHLCV for observations <= T
+        ↓
+continuity / freshness / minimum-history eligibility
+        ↓
+Strategy.evaluate
+```
+
+A valid-timestamp observation at T+1 with invalid OHLC or volume cannot fail `Decision(as_of=T)`. By contrast, an un-normalizable timestamp can fail because its relation to T is unknowable.
+
+Normalization may reorder reverse-chronological provider data. Validation of applicable formal history verifies:
+
+- valid normalized timestamps;
 - unique strictly chronological timestamps;
 - mandatory OHLCV fields;
 - positive OHLC values;
 - valid OHLC relationships;
 - non-negative volume;
-- additional strategy-required fields;
 - trading-calendar continuity;
 - freshness relative to the resolved formal evaluation date;
 - minimum-history eligibility.
@@ -331,7 +378,7 @@ DATA_FAILED
 
 `VALIDATION_ERROR` is the stable fallback code for structural failures whose specs do not assign a more specific code, including negative volume and an un-normalizable timestamp. Detailed diagnostics may still identify the field-level cause.
 
-### 6. Make trading time an injected dependency
+### 6. Make trading time an injected dependency and keep Decision date resolution calendar-only
 
 Decision `as_of` resolution and Backtest date iteration depend on a `TradingCalendar` and an injected `Clock` rather than directly reading system time.
 
@@ -347,7 +394,7 @@ trading_days(start, end)
 is_session_complete(date, now)
 ```
 
-Decision resolution rules:
+Decision resolution rules are calendar-only:
 
 ```text
 historical trading date       -> that completed trading date
@@ -357,6 +404,8 @@ current trading day, open     -> previous completed trading date
 omitted as_of                 -> latest completed trading date
 future date                   -> CONFIGURATION_FAILED / INVALID_AS_OF
 ```
+
+Market-data availability, freshness, and structural validity never choose or alter `resolved_as_of`. If the TradingCalendar resolves T and required data for T is missing, `resolved_as_of` remains T and the data layer reports the applicable failure (for example `STALE_DATA`) rather than silently falling back to T-1.
 
 When the caller explicitly supplies `as_of`, a successful public Decision artifact preserves `requested_as_of` as well as `resolved_as_of`. Failed-artifact requirements are intentionally smaller and are defined separately below.
 
@@ -426,7 +475,10 @@ Decision request boundary
 accepted DecisionRequest
     |
     v
-validate application as_of
+validate requested as_of is not future
+    |
+    v
+resolve calendar-only resolved_as_of
     |
     v
 resolve ACTIVE configuration
@@ -435,7 +487,19 @@ resolve ACTIVE configuration
 Strategy.requirements
     |
     v
-load + normalize + validate completed daily OHLCV
+acquire candidate market data
+    |
+    v
+normalize temporal identity
+    | unknown timestamp -> DATA_FAILED / VALIDATION_ERROR
+    v
+bound timestamp-known rows to <= resolved_as_of
+    |
+    v
+normalize + structurally validate bounded daily OHLCV
+    |
+    v
+freshness / continuity / minimum-history eligibility
     |
     v
 Strategy.evaluate(resolved_as_of)
@@ -453,18 +517,25 @@ A successful Decision contains one formal StrategyResult. An application-level f
 
 ### 9. Analytical Backtest is chronological replay of the same evaluator
 
-Accepted Backtest input is:
+Accepted Backtest input is one of two exact shapes:
 
 ```text
-symbol
-mode = ACTIVE | EXPLICIT
-strategy?       # both strategy and parameter_set required for EXPLICIT
-parameter_set?
-start_date
-end_date
+ACTIVE
+  symbol
+  mode = ACTIVE
+  start_date
+  end_date
+
+EXPLICIT
+  symbol
+  mode = EXPLICIT
+  strategy
+  parameter_set
+  start_date
+  end_date
 ```
 
-The Backtest request boundary rejects partial `EXPLICIT` assignments before the application is invoked. Such rejected requests do not produce public Backtest artifacts.
+The Backtest request boundary enforces the discriminated union before the application is invoked. `ACTIVE` rejects any supplied `strategy` or `parameter_set`; `EXPLICIT` requires both. Rejected requests produce no public Backtest artifact.
 
 Range semantics are intentionally different from Decision `as_of` resolution:
 
@@ -621,7 +692,7 @@ Test levels:
 ```text
 request-contract tests
         +-- Decision override rejection
-        +-- Backtest partial EXPLICIT rejection
+        +-- Backtest ACTIVE/EXPLICIT discriminated-union rejection
 
 application acceptance/behavior tests
         +-- Decision scenarios
@@ -632,8 +703,8 @@ contract tests
         +-- registry/config adapters
 
 focused unit tests
-        +-- normalization/validation
-        +-- as_of and range resolution
+        +-- acquisition/temporal normalization/structural validation
+        +-- calendar-only as_of and range resolution
         +-- intraday overlay eligibility/comparisons
         +-- immutable domain values
 ```
@@ -676,7 +747,7 @@ mypy src tests
 
 ### Risk: framework abstractions become too generic before real strategies exist
 
-Mitigation: support only DAILY formal data in this change, require a concrete OHLCV base schema, and keep strategy-specific indicators, pattern types, forecast models, and hybrid semantics outside the common framework until a production strategy requires them.
+Mitigation: support only DAILY formal data in this change, require the concrete OHLCV schema, and omit arbitrary additional per-bar fields until a real strategy requires a formal contract change.
 
 ### Risk: YAML configuration becomes coupled to domain behavior
 
@@ -684,7 +755,15 @@ Mitigation: YAML is the first repository adapter, not the domain contract. Resol
 
 ### Risk: request rejection is confused with application failure
 
-Mitigation: validate structural request policy before invoking Decision/Backtest services. Rejected override/partial-assignment requests produce no application artifact; accepted requests use the canonical application failure envelope if later evaluation fails.
+Mitigation: validate structural request policy before invoking Decision/Backtest services. Rejected override or invalid ACTIVE/EXPLICIT shapes produce no application artifact; accepted requests use the canonical application failure envelope if later evaluation fails.
+
+### Risk: future source rows contaminate historical Decision validation
+
+Mitigation: normalize timestamp enough to establish temporal position, bound timestamp-known rows to `<= resolved_as_of`, and only then validate non-temporal OHLCV structure. Un-normalizable timestamps remain failures because temporal placement cannot be established.
+
+### Risk: Decision silently falls back when latest data is missing
+
+Mitigation: resolve `as_of` only through TradingCalendar and Clock. Data availability/freshness validation cannot change `resolved_as_of`; missing data produces a data failure instead.
 
 ### Risk: intraday overlay is mistaken for a new trading signal or attached to historical analysis
 
@@ -715,8 +794,8 @@ Implementation should proceed incrementally:
 1. Add Python project/test tooling needed for the first behavioral slice.
 2. Introduce the request boundaries and minimum immutable domain/application contracts needed to make a Decision walking-skeleton test pass.
 3. Add YAML-backed configuration resolution and mandatory formal daily OHLCV validation behaviors.
-4. Add `as_of` and current-only optional intraday overlay behavior.
-5. Add analytical Backtest request policy, range validation, replay, assignment modes, warm-up, and failure behavior.
+4. Add calendar-only `as_of`, temporal bounding, and current-only optional intraday overlay behavior.
+5. Add analytical Backtest discriminated request policy, range validation, replay, assignment modes, warm-up, and failure behavior.
 6. Add traceable success/failure artifact serialization and fixed disclaimer tests.
 7. Align README, request examples, and workflow scaffold wording with the approved analytical contracts.
 8. Run full regression, lint/format/type checks, strict OpenSpec validation, and traceability verification.
