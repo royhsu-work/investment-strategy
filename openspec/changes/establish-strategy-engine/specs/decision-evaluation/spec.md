@@ -34,7 +34,8 @@ The system SHALL reject a Decision when the requested instrument or its active a
 
 - GIVEN a Decision request for an unknown instrument
 - WHEN configuration resolution runs
-- THEN the Decision fails with `CONFIGURATION_FAILED`
+- THEN the Decision fails
+- AND the failure category is `CONFIGURATION_FAILED`
 - AND the failure code is `INSTRUMENT_NOT_FOUND`
 - AND market-data loading and strategy evaluation do not run
 
@@ -42,7 +43,8 @@ The system SHALL reject a Decision when the requested instrument or its active a
 
 - GIVEN a configured instrument with no active strategy assignment
 - WHEN a Decision evaluation is requested
-- THEN the Decision fails with `CONFIGURATION_FAILED`
+- THEN the Decision fails
+- AND the failure category is `CONFIGURATION_FAILED`
 - AND the failure code is `ACTIVE_STRATEGY_NOT_CONFIGURED`
 - AND market-data loading and strategy evaluation do not run
 
@@ -81,6 +83,14 @@ The system SHALL evaluate the formal Strategy Result against a completed trading
 - THEN the formal `resolved_as_of` is the most recent eligible completed trading day
 - AND the incomplete current-session bar is not used as formal daily history
 
+#### Scenario: Requested date is the current trading day after completion
+
+- GIVEN the requested `as_of` date is the current trading day
+- AND the current trading session is complete
+- AND the completed daily observation for that trading day is available and eligible
+- WHEN the Decision date is resolved
+- THEN the formal `resolved_as_of` is the current trading day
+
 ### Requirement: Future Decision as-of dates are rejected
 
 The system SHALL reject a Decision request whose requested `as_of` is later than the current applicable date/time boundary rather than silently clamping it to an available trading day.
@@ -89,7 +99,8 @@ The system SHALL reject a Decision request whose requested `as_of` is later than
 
 - GIVEN a Decision request specifies a future `as_of` date
 - WHEN request validation runs
-- THEN the Decision fails with `CONFIGURATION_FAILED`
+- THEN the Decision fails
+- AND the failure category is `CONFIGURATION_FAILED`
 - AND the failure code is `INVALID_AS_OF`
 - AND market-data loading and strategy evaluation do not run
 
@@ -136,7 +147,7 @@ The system SHALL allow a Decision produced during an incomplete current trading 
 
 ### Requirement: Intraday overlay describes current relationship to the formal plan
 
-The system SHALL allow the intraday overlay to describe the current open or latest price relative to analytical entry or exit plan levels without representing execution or historical intraday touch events.
+The system SHALL allow the intraday overlay to describe the current open or latest price relative to analytical entry or exit plan levels without representing execution, historical intraday touch events, or an undefined proximity threshold.
 
 #### Scenario: Latest price is below an entry level
 
@@ -152,6 +163,14 @@ The system SHALL allow the intraday overlay to describe the current open or late
 - AND no intraday high, low, bar history, or tick history is available
 - WHEN the intraday overlay is generated
 - THEN the output does not claim that an analytical level was touched earlier in the session
+
+#### Scenario: No proximity tolerance is defined
+
+- GIVEN an analytical plan contains a price level
+- AND no explicit proximity tolerance rule is defined
+- WHEN the intraday overlay compares the current price with that level
+- THEN the framework does not classify the relationship as `NEAR`
+- AND only deterministic relationships supported by the known values may be reported
 
 ### Requirement: Successful Decision returns an analytical strategy plan
 
@@ -193,13 +212,22 @@ The system SHALL identify enough evaluation metadata in a successful Decision ou
 
 - GIVEN a Decision completes successfully
 - WHEN its public artifact is produced
-- THEN the artifact identifies the instrument
+- THEN the artifact status is `SUCCESS`
+- AND it identifies the instrument
 - AND it identifies the resolved `as_of` date
 - AND it identifies the strategy
 - AND it identifies the parameter set
 - AND it identifies the Git revision used for evaluation
 - AND it includes the analytical Strategy Result
 - AND it includes data-quality status
+
+#### Scenario: Explicit requested as-of is present in a successful artifact
+
+- GIVEN a Decision request explicitly supplies `as_of`
+- AND the Decision completes successfully
+- WHEN its public artifact is produced
+- THEN the artifact identifies the requested `as_of`
+- AND it identifies the resolved `as_of`
 
 ### Requirement: Failed Decision output uses a common failure contract
 
@@ -209,10 +237,17 @@ The system SHALL represent configuration, data, or strategy failures explicitly 
 
 - GIVEN a Decision fails during configuration resolution, formal data loading or validation, or strategy evaluation
 - WHEN the Decision artifact is produced
-- THEN the artifact identifies the applicable top-level failure status as `CONFIGURATION_FAILED`, `DATA_FAILED`, or `STRATEGY_FAILED`
-- AND it contains a machine-readable failure code
-- AND it contains a human-readable failure reason
+- THEN the artifact status is `FAILED`
+- AND `failure.category` is `CONFIGURATION_FAILED`, `DATA_FAILED`, or `STRATEGY_FAILED` as applicable
+- AND `failure.code` contains a machine-readable failure code
+- AND `failure.reason` contains a human-readable failure reason
 - AND it does not present a valid market state or trading plan as if evaluation succeeded
+
+#### Scenario: Decision fails before strategy identity is resolved
+
+- GIVEN a Decision fails before a strategy or parameter set can be resolved
+- WHEN the failed artifact is produced
+- THEN unresolved strategy or parameter-set metadata is not fabricated
 
 ### Requirement: Public Decision artifact includes the fixed disclaimer
 
