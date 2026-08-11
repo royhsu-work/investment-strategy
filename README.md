@@ -2,10 +2,11 @@
 
 以歷史市場資料產生交易計畫，並使用相同策略核心進行歷史回測。
 
-本專案將「目前交易決策」與「歷史策略驗證」拆成兩個獨立 GitHub Actions Workflow：
+本專案以三個 GitHub Actions Workflow 分工：
 
 - `decision.yml`：依最新完整歷史資料判定位階，計算當日買點 / 賣點並輸出交易計畫。
 - `backtest.yml`：使用歷史資料逐日重播相同策略，輸出逐日 analytical StrategyResult timeline；成交模擬由後續 Execution Simulator change 處理。
+- `openspec-validate.yml`：在 OpenSpec 變更時執行 strict validation，避免 proposal、specs、design、tasks 出現結構或格式問題。
 
 > 核心原則：Decision 與 Backtest 必須共用同一份策略實作。回測不能使用另一套簡化規則。
 
@@ -94,12 +95,13 @@ Backtest 不得看到當時尚未發生的資料（避免 look-ahead bias）。�
 
 ## Workflow
 
-專案包含兩個 Workflow：
+專案包含三個 Workflow：
 
 ```text
 .github/workflows/
 ├── decision.yml
-└── backtest.yml
+├── backtest.yml
+└── openspec-validate.yml
 ```
 
 ### Decision Workflow
@@ -178,6 +180,18 @@ backtest/
 └── data_quality.json
 ```
 
+### OpenSpec Validate Workflow
+
+用途：
+
+- `openspec/**` 變更時自動執行 OpenSpec strict validation
+- Workflow 本身變更時重新驗證
+- 支援手動 `workflow_dispatch`
+- 使用 workflow 內固定的 OpenSpec 版本，避免不同執行環境產生驗證差異
+- 對目前 change 執行 strict validation；任何 validation issue 都應先修正，再宣告 change 完成
+
+OpenSpec 版本只在 workflow 中固定；`openspec/config.yaml` 定義的是專案規格撰寫與驗收規則，不重複綁定工具版本。
+
 ---
 
 ## Strategy 與 Execution 分離
@@ -230,7 +244,7 @@ src/investment_strategy/
     └── engine.py
 ```
 
-兩個 Workflow 只負責 orchestration，不在 YAML 內實作策略規則。
+Decision / Backtest Workflow 只負責 orchestration，不在 YAML 內實作策略規則。
 
 理想 CLI：
 
@@ -427,6 +441,8 @@ archive
 /opsx:archive
 ```
 
+任何 `openspec/**` 變更都會由 `openspec-validate.yml` 自動執行 strict validation。CI 驗證通過不取代人工的 proposal/specs/design/tasks traceability review；change 在實作完成並準備宣告完成前，仍應再次確認 strict validation 為綠燈。
+
 ### 專案結構
 
 建議加入：
@@ -572,3 +588,4 @@ Architecture / Rules Definition
 - [x] 計算結果不 commit 回 repository
 - [x] 採用 OpenSpec 管理正式需求與變更
 - [x] 建立 initial OpenSpec change：`establish-strategy-engine`
+- [x] 建立 OpenSpec strict validation CI
