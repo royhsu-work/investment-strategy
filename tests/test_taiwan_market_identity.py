@@ -35,9 +35,7 @@ def make_resolver(symbol: str, venue: str | None, strategy: TestStrategy) -> Str
                 )
             }
         ),
-        InMemoryParameterSetRegistry(
-            {"p1": ParameterSet("p1", strategy.id, {"threshold": 1})}
-        ),
+        InMemoryParameterSetRegistry({"p1": ParameterSet("p1", strategy.id, {"threshold": 1})}),
         CodeStrategyRegistry([strategy]),
         "sha",
     )
