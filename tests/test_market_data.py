@@ -95,9 +95,7 @@ def test_weekend_and_holiday_are_not_gaps_but_missing_trading_day_is() -> None:
 
     gap_records = bars(date(2026, 1, 5), 3)
     del gap_records[1]
-    normalized_gap = prepare_bars(
-        SpyGateway(gap_records), INSTRUMENT, through=date(2026, 1, 7)
-    )
+    normalized_gap = prepare_bars(SpyGateway(gap_records), INSTRUMENT, through=date(2026, 1, 7))
     with pytest.raises(ApplicationFailure) as exc:
         validate_continuity_and_freshness(
             normalized_gap,
