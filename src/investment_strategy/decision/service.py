@@ -4,7 +4,10 @@ from investment_strategy.configuration.resolver import StrategyConfigResolver
 from investment_strategy.data.calendar import TradingCalendar
 from investment_strategy.data.normalize import prepare_bars
 from investment_strategy.data.ports import Clock, IntradaySnapshotGateway, MarketDataGateway
-from investment_strategy.data.validate import ensure_minimum_history, validate_continuity_and_freshness
+from investment_strategy.data.validate import (
+    ensure_minimum_history,
+    validate_continuity_and_freshness,
+)
 from investment_strategy.domain.failures import ApplicationFailure, strategy_failure
 from investment_strategy.domain.strategy import evaluate_strategy
 
@@ -62,11 +65,14 @@ class DecisionService:
                 ) from exc
 
             overlay = None
-            if self._intraday is not None and is_current_formal_decision(
-                request.as_of,
-                now=now,
-                calendar=self._calendar,
-                resolved_as_of=resolved_as_of,
+            if (
+                self._intraday is not None
+                and is_current_formal_decision(
+                    request.as_of,
+                    now=now,
+                    calendar=self._calendar,
+                    resolved_as_of=resolved_as_of,
+                )
             ):
                 try:
                     raw_snapshot = self._intraday.load_snapshot(request.symbol)

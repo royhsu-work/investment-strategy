@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date
-from typing import Sequence
 
 from investment_strategy.domain.failures import data_failure
 from investment_strategy.domain.market_data import DailyBar

@@ -33,7 +33,9 @@ class StrategyConfigResolver:
                 "ACTIVE_STRATEGY_NOT_CONFIGURED",
                 f"instrument {symbol} has no active strategy assignment",
             )
-        return self._resolve_pair(symbol, instrument.active.strategy, instrument.active.parameter_set)
+        return self._resolve_pair(
+            symbol, instrument.active.strategy, instrument.active.parameter_set
+        )
 
     def resolve_explicit(
         self, symbol: str, strategy_id: str, parameter_set_id: str
@@ -67,7 +69,10 @@ class StrategyConfigResolver:
         if parameter_set.strategy != strategy_id:
             raise configuration_failure(
                 "STRATEGY_PARAMETER_MISMATCH",
-                f"parameter set {parameter_set_id} belongs to {parameter_set.strategy}, not {strategy_id}",
+                (
+                    f"parameter set {parameter_set_id} belongs to "
+                    f"{parameter_set.strategy}, not {strategy_id}"
+                ),
             )
         try:
             resolved_parameters = strategy.validate_parameters(parameter_set.parameters)

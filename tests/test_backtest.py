@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from datetime import date, datetime, timezone
-from typing import Mapping, Sequence
+from datetime import UTC, date, datetime
 
 from investment_strategy.backtest import AssignmentMode, BacktestRequest, BacktestService
 from investment_strategy.configuration import (
@@ -11,12 +10,7 @@ from investment_strategy.configuration import (
     StrategyConfigResolver,
 )
 from investment_strategy.decision import DecisionRequest, DecisionService
-from investment_strategy.domain import (
-    InstrumentConfig,
-    ParameterSet,
-    StrategyContext,
-    StrategyResult,
-)
+from investment_strategy.domain import ActiveAssignment, InstrumentConfig, ParameterSet
 from investment_strategy.strategies import CodeStrategyRegistry
 
 from .helpers import FixedClock, SpyGateway, TestStrategy, WeekdayCalendar, bars, make_resolver
@@ -24,18 +18,18 @@ from .helpers import FixedClock, SpyGateway, TestStrategy, WeekdayCalendar, bars
 
 def make_backtest(
     strategy: TestStrategy,
-    records: Sequence[Mapping[str, object]],
+    records,
     *,
     resolver: StrategyConfigResolver | None = None,
     calendar: WeekdayCalendar | None = None,
     now: datetime | None = None,
-) -> tuple[BacktestService, SpyGateway]:
+):
     gateway = SpyGateway(records)
     service = BacktestService(
         resolver=resolver or make_resolver(strategy),
         market_data=gateway,
         calendar=calendar or WeekdayCalendar(),
-        clock=FixedClock(now or datetime(2026, 8, 11, 18, tzinfo=timezone.utc)),
+        clock=FixedClock(now or datetime(2026, 8, 11, 18, tzinfo=UTC)),
     )
     return service, gateway
 
@@ -64,7 +58,7 @@ def test_decision_and_backtest_share_equivalent_strategy_evaluation() -> None:
         resolver=make_resolver(decision_strategy),
         market_data=SpyGateway(records),
         calendar=WeekdayCalendar(),
-        clock=FixedClock(datetime(2026, 8, 10, 18, tzinfo=timezone.utc)),
+        clock=FixedClock(datetime(2026, 8, 10, 18, tzinfo=UTC)),
     ).run(DecisionRequest("00733", date(2026, 8, 10)))
 
     backtest_strategy = TestStrategy(minimum_history=2)
@@ -115,7 +109,7 @@ def test_incomplete_current_day_is_excluded_from_range() -> None:
         strategy,
         bars(date(2026, 8, 10), 2),
         calendar=calendar,
-        now=datetime(2026, 8, 11, 10, tzinfo=timezone.utc),
+        now=datetime(2026, 8, 11, 10, tzinfo=UTC),
     )
     artifact = service.run(active_request(date(2026, 8, 10), date(2026, 8, 11)))
     assert artifact["status"] == "SUCCESS"
@@ -126,15 +120,11 @@ def test_active_missing_assignment_fails_before_data() -> None:
     strategy = TestStrategy("S", minimum_history=1)
     resolver = StrategyConfigResolver(
         InMemoryInstrumentRegistry({"00733": InstrumentConfig("00733")}),
-        InMemoryParameterSetRegistry(
-            {"P": ParameterSet("P", "S", {"threshold": 1})}
-        ),
+        InMemoryParameterSetRegistry({"P": ParameterSet("P", "S", {"threshold": 1})}),
         CodeStrategyRegistry([strategy]),
         "sha",
     )
-    service, gateway = make_backtest(
-        strategy, bars(date(2026, 8, 10), 1), resolver=resolver
-    )
+    service, gateway = make_backtest(strategy, bars(date(2026, 8, 10), 1), resolver=resolver)
     artifact = service.run(active_request(date(2026, 8, 10), date(2026, 8, 10)))
     assert artifact["failure"]["code"] == "ACTIVE_STRATEGY_NOT_CONFIGURED"
     assert gateway.calls == 0
@@ -213,7 +203,7 @@ def test_invalid_required_data_fails_instead_of_skipping() -> None:
 
 def test_strategy_failure_is_fail_fast_and_partial_timeline_is_not_public_success() -> None:
     class FailSecond(TestStrategy):
-        def evaluate(self, context: StrategyContext) -> StrategyResult:
+        def evaluate(self, context):
             if self.evaluations == 1:
                 self.fail = True
             return super().evaluate(context)

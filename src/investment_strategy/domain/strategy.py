@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
-from typing import Mapping, Protocol, Sequence
+from typing import Protocol
 
 from .configuration import ResolvedStrategyConfig
 from .market_data import DailyBar, DataRequirement

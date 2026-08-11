@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
-from typing import Mapping, Sequence
+from datetime import UTC, date, datetime, timedelta
 
 from investment_strategy.configuration import (
     InMemoryInstrumentRegistry,
@@ -33,9 +33,7 @@ class FixedClock:
 
 
 class WeekdayCalendar:
-    def __init__(
-        self, *, session_complete: bool = True, holidays: set[date] | None = None
-    ) -> None:
+    def __init__(self, *, session_complete: bool = True, holidays: set[date] | None = None) -> None:
         self.session_complete = session_complete
         self.holidays = holidays or set()
 
@@ -190,6 +188,3 @@ def bars(start: date, count: int, *, reverse: bool = False) -> list[dict[str, ob
     if reverse:
         records.reverse()
     return records
-
-
-UTC = timezone.utc

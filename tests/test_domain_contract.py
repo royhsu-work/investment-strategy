@@ -7,9 +7,9 @@ from decimal import Decimal
 import pytest
 
 from investment_strategy.domain import (
+    DailyBar,
     DataFrequency,
     DataRequirement,
-    DailyBar,
     EntryPlan,
     ExitPlan,
     MarketState,
@@ -35,9 +35,7 @@ def test_common_market_states_are_exactly_the_four_approved_values() -> None:
 
 def test_core_values_are_immutable_and_do_not_contain_execution_state() -> None:
     config = ResolvedStrategyConfig("X", "S", "P", {"threshold": 1}, "sha")
-    bar = DailyBar(
-        date(2026, 1, 2), *(Decimal(str(v)) for v in (10, 11, 9, 10.5, 100))
-    )
+    bar = DailyBar(date(2026, 1, 2), *(Decimal(str(v)) for v in (10, 11, 9, 10.5, 100)))
     context = StrategyContext("X", date(2026, 1, 2), (bar,), config)
     result = StrategyResult(
         "S",

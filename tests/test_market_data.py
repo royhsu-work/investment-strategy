@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Callable
 
 import pytest
 
@@ -44,9 +43,7 @@ def test_duplicate_timestamp_fails() -> None:
         (lambda row: row.__setitem__("timestamp", "not-a-date"), "VALIDATION_ERROR"),
     ],
 )
-def test_structural_validation_codes(
-    mutate: Callable[[dict[str, object]], object], code: str
-) -> None:
+def test_structural_validation_codes(mutate, code: str) -> None:
     records = bars(date(2026, 1, 5), 1)
     mutate(records[0])
     with pytest.raises(ApplicationFailure) as exc:
@@ -62,14 +59,7 @@ def test_provider_failure_and_zero_candidates_are_data_unavailable() -> None:
 
 
 def test_acquired_invalid_observation_is_not_reclassified_as_unavailable() -> None:
-    record = {
-        "timestamp": "bad",
-        "open": 10,
-        "high": 11,
-        "low": 9,
-        "close": 10,
-        "volume": 1,
-    }
+    record = {"timestamp": "bad", "open": 10, "high": 11, "low": 9, "close": 10, "volume": 1}
     with pytest.raises(ApplicationFailure) as exc:
         prepare_bars(SpyGateway([record]), "X", through=date(2026, 1, 5))
     assert failure_code(exc) == "VALIDATION_ERROR"
@@ -89,22 +79,8 @@ def test_timestamp_known_future_invalid_row_does_not_contaminate_historical_vali
 def test_weekend_and_holiday_are_not_gaps_but_missing_trading_day_is() -> None:
     calendar = WeekdayCalendar(holidays={date(2026, 1, 12)})
     records = [
-        {
-            "timestamp": "2026-01-09",
-            "open": 10,
-            "high": 11,
-            "low": 9,
-            "close": 10,
-            "volume": 1,
-        },
-        {
-            "timestamp": "2026-01-13",
-            "open": 10,
-            "high": 11,
-            "low": 9,
-            "close": 10,
-            "volume": 1,
-        },
+        {"timestamp": "2026-01-09", "open": 10, "high": 11, "low": 9, "close": 10, "volume": 1},
+        {"timestamp": "2026-01-13", "open": 10, "high": 11, "low": 9, "close": 10, "volume": 1},
     ]
     normalized = prepare_bars(SpyGateway(records), "X", through=date(2026, 1, 13))
     validate_continuity_and_freshness(
@@ -113,9 +89,7 @@ def test_weekend_and_holiday_are_not_gaps_but_missing_trading_day_is() -> None:
 
     gap_records = bars(date(2026, 1, 5), 3)
     del gap_records[1]
-    normalized_gap = prepare_bars(
-        SpyGateway(gap_records), "X", through=date(2026, 1, 7)
-    )
+    normalized_gap = prepare_bars(SpyGateway(gap_records), "X", through=date(2026, 1, 7))
     with pytest.raises(ApplicationFailure) as exc:
         validate_continuity_and_freshness(
             normalized_gap,

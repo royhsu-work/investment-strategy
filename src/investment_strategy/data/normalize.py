@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Mapping, Sequence
 
 from investment_strategy.domain.failures import data_failure
 from investment_strategy.domain.market_data import DailyBar

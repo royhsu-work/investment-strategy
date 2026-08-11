@@ -31,9 +31,7 @@ def test_resolver_selects_configured_active_assignment_not_first_registry_entry(
     a = TestStrategy("A")
     b = TestStrategy("B")
     resolver = StrategyConfigResolver(
-        InMemoryInstrumentRegistry(
-            {"X": InstrumentConfig("X", ActiveAssignment("B", "B1"))}
-        ),
+        InMemoryInstrumentRegistry({"X": InstrumentConfig("X", ActiveAssignment("B", "B1"))}),
         InMemoryParameterSetRegistry(
             {
                 "A1": ParameterSet("A1", "A", {"threshold": 1}),
@@ -94,7 +92,8 @@ def test_yaml_registry_adapters(tmp_path: Path) -> None:
     instruments = tmp_path / "instruments.yaml"
     params = tmp_path / "parameter_sets.yaml"
     instruments.write_text(
-        "instruments:\n  '00733':\n    active:\n      strategy: demo\n      parameter_set: demo-v1\n",
+        "instruments:\n  '00733':\n    active:\n"
+        "      strategy: demo\n      parameter_set: demo-v1\n",
         encoding="utf-8",
     )
     params.write_text(

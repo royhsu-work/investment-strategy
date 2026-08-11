@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
-from typing import Mapping
+from datetime import UTC, date, datetime
 
 from investment_strategy.decision import DecisionRequest, DecisionService
 
@@ -16,9 +15,7 @@ from .helpers import (
 )
 
 
-def current_service(
-    snapshot: Mapping[str, object] | None,
-) -> tuple[DecisionService, TestStrategy, SnapshotGateway]:
+def current_service(snapshot):
     strategy = TestStrategy(minimum_history=1)
     market = SpyGateway(bars(date(2026, 8, 7), 2))
     snapshots = SnapshotGateway(snapshot)
@@ -26,7 +23,7 @@ def current_service(
         resolver=make_resolver(strategy),
         market_data=market,
         calendar=WeekdayCalendar(session_complete=False),
-        clock=FixedClock(datetime(2026, 8, 11, 10, tzinfo=timezone.utc)),
+        clock=FixedClock(datetime(2026, 8, 11, 10, tzinfo=UTC)),
         intraday=snapshots,
     )
     return service, strategy, snapshots
