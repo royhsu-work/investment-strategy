@@ -68,19 +68,6 @@ The system SHALL provide strategy evaluation only with completed observations wh
 - WHEN evaluation is requested with resolved `as_of=T`
 - THEN observations after T are excluded from the strategy input
 
-### Requirement: Additional strategy-required market-data fields are validated
-
-The system SHALL reject formal data that is missing an additional field explicitly required by the selected strategy beyond the mandatory OHLCV base schema.
-
-#### Scenario: Strategy-required additional field is unavailable
-
-- GIVEN the mandatory completed daily OHLCV fields are present
-- AND the selected strategy declares an additional required field
-- AND an otherwise valid dataset is missing that additional field for a required observation
-- WHEN strategy data eligibility is validated
-- THEN validation fails with `DATA_FAILED`
-- AND the failure code is `MISSING_REQUIRED_FIELD`
-
 ### Requirement: Formal market data must be available
 
 The system SHALL report `DATA_FAILED` with failure code `DATA_UNAVAILABLE` when required formal market data cannot be acquired or when the provider returns no candidate historical observations for the required request.
