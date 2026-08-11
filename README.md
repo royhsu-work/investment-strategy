@@ -68,15 +68,22 @@ Lead implementation review
         ↓
 Ready / merge to main
         ↓
-Archive workflow dispatch
+Merged-PR archive classifier
+changed files + active OpenSpec state on main
+        ↓
+0 active touched / incomplete
+        → successful no-op
+>1 active touched
+        → fail ambiguous
+exactly 1 active touched + Complete
         ↓
 agent/archive-<change>  (archive workflow-created branch)
         ↓
-validate/status active change
+strict validate active change
         ↓
 openspec archive <change> --yes
         ↓
-validate resulting canonical specs
+strict validate resulting canonical specs
         ↓
 commit/push archive branch
         ↓
@@ -89,9 +96,13 @@ High-level responsibilities:
 
 - **Lead**：定義 scope 與 acceptance criteria，review/approve OpenSpec，執行 implementation review，決定 change completion 與 archive。
 - **Executor**：依核准 change 實作、維持 scope boundary、完成 tests/validation、建立 Draft PR，並處理 review findings。
-- **Repository automation**：執行 Python quality gates、project-level OpenSpec validation，以及 OpenSpec archive workflow。
+- **Repository automation**：執行 Python quality gates、project-level OpenSpec validation，以及 state-driven OpenSpec archive workflow。
 
-`agent/<change>` 是 implementation branch 的 repository convention；目前沒有 CI/platform automation 強制此命名。`agent/archive-<change>` 則由 OpenSpec archive workflow 建立並使用。
+`agent/<change>` 是 implementation branch 的 repository convention；archive routing 不依賴 branch name。Automatic archive 由 merged PR changed files 中的 `openspec/changes/<change>/...` 與 merged `main` 上仍 active 的 OpenSpec state 決定。`agent/archive-<change>` 由 archive workflow 建立；existing archive branch 會 fail loudly，automation 不會 force-push 或重用該 branch。`agent/archive-*` PR merge 一律 no-op，避免 archive recursion。
+
+`Complete` 是 repository-level implementation completion signal。一個 change 可以跨多個 proposal / implementation / review-correction PR，但仍有必要工作未 merge 時不得把 active change 留成 `Complete`。使該 change 在 merged `main` 呈現 `Complete` 的 final implementation PR 必須同時更新 `openspec/changes/<change>/`，讓 completion transition 可由 merged-diff classifier 觀察。Automatic classifier 對 0 個 active candidate 或 incomplete change 成功 no-op；一次觸及多個 active changes 則視為 ambiguous lifecycle scope 並失敗，不自動猜測。
+
+`workflow_dispatch` 保留為 recovery / migration fallback。Manual 與 merged-PR path 在 change 進入 archive eligibility 後共用相同的 strict validation、archive-branch existence check、OpenSpec archive、post-archive validation 與 push core；manual 指定 incomplete change 會 fail loudly。
 
 ## OpenSpec lifecycle
 
@@ -325,7 +336,7 @@ Request-boundary rejection 不屬於這個 envelope，因為 application 尚未�
 - `.github/workflows/backtest.yml`：analytical Backtest orchestration scaffold；不含 fill simulation。
 - `.github/workflows/quality.yml`：`uv run pytest`、`ruff check`、`ruff format --check`、`mypy src tests`。
 - `.github/workflows/openspec-validate.yml`：執行 `openspec list` 與 project-level `openspec validate --all --strict --json --no-interactive`，不綁定已 archived change。
-- `.github/workflows/openspec-archive.yml`：手動 `workflow_dispatch`；checkout 後先建立 `agent/archive-<change>`，安裝 OpenSpec，再 validate/status active change，執行 `openspec archive <change> --yes`、驗證 resulting canonical specs，最後 commit/push archive branch，再走一般 PR review；不直接寫入 `main`。
+- `.github/workflows/openspec-archive.yml`：對 merged-to-`main` 的 `pull_request.closed` 事件，從 PR changed files 與 merged `main` active OpenSpec state 分類 archive candidate；0 candidate 或 incomplete change 成功 no-op，>1 candidate fail ambiguous，單一 `Complete` change 則執行 strict pre-validation、existing archive-branch guard、`openspec archive`、strict post-validation，最後只 push `agent/archive-<change>` 供一般 Archive PR review/merge。`agent/archive-*` PR merge 不遞迴；`workflow_dispatch` 保留 manual recovery fallback；workflow 不直接寫入 `main`。
 
 Generated analytical results 應上傳 Actions Artifacts，不 commit 回 repository。Production strategy/workflow activation 保持 deferred。
 
