@@ -59,9 +59,17 @@ Lead implementation review
         ↓
 Ready / merge to main
         ↓
-OpenSpec archive
+Archive workflow dispatch
         ↓
 agent/archive-<change>  (archive workflow-created branch)
+        ↓
+validate/status active change
+        ↓
+openspec archive <change> --yes
+        ↓
+validate resulting canonical specs
+        ↓
+commit/push archive branch
         ↓
 Archive PR / review / merge
         ↓
@@ -95,7 +103,7 @@ openspec/changes/archive/YYYY-MM-DD-<change>/
 openspec archive <change> --yes
 ```
 
-`openspec/specs/` 是 archive 後的 canonical contract source of truth。直接修改 canonical spec 僅適用於不改變 normative contract 的 metadata cleanup（例如 archive-generated `## Purpose` placeholder）；任何 Requirements、Scenarios 或 externally observable contract 的變更，仍必須透過新的 OpenSpec change lifecycle。
+`openspec/specs/` 是 archive 後的 canonical contract source of truth。任何 Requirements、Scenarios 或 externally observable contract 的變更，仍必須透過新的 OpenSpec change lifecycle。
 
 ## Architecture
 
@@ -190,7 +198,7 @@ candidate acquired, then invalid
      STALE_DATA
 ```
 
-For historical `Decision(as_of=T)` the framework first normalizes timestamps enough to establish temporal position, excludes timestamp-known rows after T, and only then validates their non-temporal OHLCV structure. Therefore a known T+1 row with invalid OHLC cannot contaminate the Decision at T; an un-normalizable timestamp can still fail because its temporal position is unknowable.
+For historical `Decision(as_of=T)` the framework first normalizes timestamps enough to establish temporal position, excludes timestamp-known rows after T, and only then validates their non-temporal OHLCV structure. Therefore a known T+1 row with invalid OHLC cannot contaminate the Decision at T；an un-normalizable timestamp can still fail because its temporal position is unknowable.
 
 Trading-day continuity and freshness are based on the injected `TradingCalendar`, not calendar-day continuity. Weekends/holidays are not gaps. Market date/session interpretation is also owned by the `TradingCalendar`; a timezone-aware `Clock` instant is never reduced with the runner's local timezone before calendar evaluation.
 
@@ -318,7 +326,7 @@ Request-boundary rejection 不屬於這個 envelope，因為 application 尚未�
 - `.github/workflows/backtest.yml`：analytical Backtest orchestration scaffold；不含 fill simulation。
 - `.github/workflows/quality.yml`：`uv run pytest`、`ruff check`、`ruff format --check`、`mypy src tests`。
 - `.github/workflows/openspec-validate.yml`：執行 `openspec list` 與 project-level `openspec validate --all --strict --json --no-interactive`，不綁定已 archived change。
-- `.github/workflows/openspec-archive.yml`：手動 `workflow_dispatch`；先驗證 completed change，建立 `agent/archive-<change>`，執行 `openspec archive`、驗證 resulting canonical specs，commit/push archive branch，再走一般 PR review；不直接寫入 `main`。
+- `.github/workflows/openspec-archive.yml`：手動 `workflow_dispatch`；checkout 後先建立 `agent/archive-<change>`，安裝 OpenSpec，再 validate/status active change，執行 `openspec archive <change> --yes`、驗證 resulting canonical specs，最後 commit/push archive branch，再走一般 PR review；不直接寫入 `main`。
 
 Generated analytical results 應上傳 Actions Artifacts，不 commit 回 repository。Live provider/calendar/production strategy composition 保持 deferred。
 
