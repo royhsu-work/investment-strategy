@@ -17,7 +17,7 @@ from investment_strategy.configuration import (
     InMemoryParameterSetRegistry,
     StrategyConfigResolver,
 )
-from investment_strategy.decision import DecisionRequest, DecisionService
+from investment_strategy.decision import DISCLAIMER, DecisionRequest, DecisionService
 from investment_strategy.domain import (
     InstrumentConfig,
     ParameterSet,
@@ -57,6 +57,7 @@ def test_backtest_walking_skeleton_is_chronological_and_analytical_only() -> Non
     service, _ = make_backtest(strategy, records)
     artifact = service.run(active_request(date(2026, 8, 7), date(2026, 8, 11)))
     assert artifact["status"] == "SUCCESS"
+    assert artifact["disclaimer"] == DISCLAIMER
     dates = [entry["date"] for entry in artifact["timeline"]]
     assert dates == ["2026-08-07", "2026-08-10", "2026-08-11"]
     text = str(artifact).lower()
