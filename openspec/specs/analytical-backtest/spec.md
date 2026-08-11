@@ -1,7 +1,7 @@
 # analytical-backtest Specification
 
 ## Purpose
-TBD - created by archiving change establish-strategy-engine. Update Purpose after archive.
+Define chronological, no-look-ahead analytical Backtest replay that reuses the shared Strategy evaluator, supports active or explicit research assignment, distinguishes warm-up from failure, and remains intentionally separate from execution simulation.
 ## Requirements
 ### Requirement: Analytical Backtest reuses Strategy evaluation behavior
 
