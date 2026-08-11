@@ -23,7 +23,7 @@
 
 ## Strategy Engine baseline
 
-以 OpenSpec 驅動的 Python 投資策略研究專案。此 repository 的目前 change 建立可重現、無 look-ahead 的分析型 Strategy Engine，讓正式 Decision 與歷史 analytical Backtest 共用同一份 Strategy 實作。
+以 OpenSpec 驅動的 Python 投資策略研究專案。Strategy Engine 已建立為 repository 的 canonical analytical baseline，提供可重現、無 look-ahead 的正式 Decision 與歷史 analytical Backtest，且兩者共用同一份 Strategy 實作。對 externally observable contract 的後續變更應透過新的 OpenSpec change lifecycle 進行。
 
 ## 核心邊界
 
@@ -33,8 +33,69 @@
 - analytical Backtest 可使用 `ACTIVE` 或完整的 `EXPLICIT` strategy + parameter-set pair。
 - Decision 與 Backtest 共用相同 Strategy evaluator；任何 evaluation at T 只能看到 T 以前可得資訊。
 - `NEUTRAL` 是合法 StrategyResult，不是 configuration/data/strategy failure 的替代值。
-- 本 change **不**模擬 fills、positions、cash、PnL、returns、drawdown、fees、taxes、slippage 或 pending execution lifecycle。
+- 目前 analytical baseline **不**模擬 fills、positions、cash、PnL、returns、drawdown、fees、taxes、slippage 或 pending execution lifecycle。
 - live market-data provider、Taiwan trading-calendar adapter 與 production strategy 仍刻意延後。
+
+## Development lifecycle
+
+Repository 採用下列穩定開發流程；這是 repository-level process，不記錄個別 PR 的歷史 review round、暫時性 finding、commit SHA 或 test count。
+
+```text
+Requirement / research direction
+        ↓
+OpenSpec change
+proposal → design → specs → tasks
+        ↓
+Lead review / approval
+        ↓
+Implementation branch
+agent/<change>  (branch convention)
+        ↓
+Draft PR
+        ↓
+Implementation + tests + quality/OpenSpec validation
+        ↓
+Lead implementation review
+        ↓
+Ready / merge to main
+        ↓
+OpenSpec archive
+        ↓
+agent/archive-<change>  (archive workflow-created branch)
+        ↓
+Archive PR / review / merge
+        ↓
+canonical openspec/specs + dated archive audit trail
+```
+
+High-level responsibilities:
+
+- **Lead**：定義 scope 與 acceptance criteria，review/approve OpenSpec，執行 implementation review，決定 change completion 與 archive。
+- **Executor**：依核准 change 實作、維持 scope boundary、完成 tests/validation、建立 Draft PR，並處理 review findings。
+- **Repository automation**：執行 Python quality gates、project-level OpenSpec validation，以及 OpenSpec archive workflow。
+
+`agent/<change>` 是 implementation branch 的 repository convention；目前沒有 CI/platform automation 強制此命名。`agent/archive-<change>` 則由 OpenSpec archive workflow 建立並使用。
+
+## OpenSpec lifecycle
+
+```text
+openspec/changes/<change>/
+    active proposal/design/tasks/delta specs
+
+openspec/specs/
+    canonical capability specifications
+
+openspec/changes/archive/YYYY-MM-DD-<change>/
+    completed change audit trail
+```
+
+完成的 change 使用 OpenSpec CLI archive，而不是手動搬移目錄：
+
+```bash
+openspec archive <change> --yes
+```
+
+`openspec/specs/` 是 archive 後的 canonical contract source of truth。直接修改 canonical spec 僅適用於不改變 normative contract 的 metadata cleanup（例如 archive-generated `## Purpose` placeholder）；任何 Requirements、Scenarios 或 externally observable contract 的變更，仍必須透過新的 OpenSpec change lifecycle。
 
 ## Architecture
 
@@ -256,20 +317,25 @@ Request-boundary rejection 不屬於這個 envelope，因為 application 尚未�
 - `.github/workflows/decision.yml`：formal Decision orchestration scaffold。
 - `.github/workflows/backtest.yml`：analytical Backtest orchestration scaffold；不含 fill simulation。
 - `.github/workflows/quality.yml`：`uv run pytest`、`ruff check`、`ruff format --check`、`mypy src tests`。
-- `.github/workflows/openspec-validate.yml`：對 `establish-strategy-engine` 執行 strict OpenSpec validation 與 status check。
+- `.github/workflows/openspec-validate.yml`：執行 `openspec list` 與 project-level `openspec validate --all --strict --json --no-interactive`，不綁定已 archived change。
+- `.github/workflows/openspec-archive.yml`：手動 `workflow_dispatch`；先驗證 completed change，建立 `agent/archive-<change>`，執行 `openspec archive`、驗證 resulting canonical specs，commit/push archive branch，再走一般 PR review；不直接寫入 `main`。
 
 Generated analytical results 應上傳 Actions Artifacts，不 commit 回 repository。Live provider/calendar/production strategy composition 保持 deferred。
 
 ## Local verification
+
+Post-archive repository baseline：
 
 ```bash
 uv run pytest
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy src tests
-openspec validate establish-strategy-engine --type change --strict --json --no-interactive
-openspec status --change establish-strategy-engine --json
+openspec list
+openspec validate --all --strict --json --no-interactive
 ```
+
+針對仍 active 的 change，`openspec status --change <change>` 可在 change review 與 archive validation 使用；它不是已 archive repository baseline 的固定命令。
 
 ## Deferred work
 
