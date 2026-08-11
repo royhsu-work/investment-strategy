@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from pathlib import Path
 
 import pytest
+import yaml
 
 from investment_strategy.domain import ApplicationFailure
-from investment_strategy.infrastructure.taiwan_calendar import TaiwanTradingCalendar
+from investment_strategy.infrastructure.taiwan_calendar import (
+    PRODUCTION_OVERRIDES,
+    TaiwanTradingCalendar,
+)
 
 
 class FakeEngine:
@@ -68,3 +73,21 @@ def test_repository_override_wins_and_engine_is_used_without_override() -> None:
     assert not calendar.is_trading_day(date(2026, 1, 5))
     assert calendar.is_trading_day(date(2026, 1, 10))
     assert calendar.is_trading_day(date(2026, 1, 6))
+
+
+def test_approved_official_regressions_match_pinned_xtai_plus_sparse_overrides() -> None:
+    fixture_path = Path(__file__).parent / "fixtures" / "taiwan_calendar_regressions.yaml"
+    payload = yaml.safe_load(fixture_path.read_text(encoding="utf-8"))
+    calendar = TaiwanTradingCalendar()
+
+    observed: dict[date, bool] = {}
+    for case in payload["cases"]:
+        day = date.fromisoformat(case["date"])
+        expected = bool(case["expected_session"])
+        observed[day] = calendar.is_trading_day(day)
+        assert observed[day] is expected
+        assert case["retrieval_date"] == "2026-08-11"
+        assert case["sources"]
+        assert case["evidence_note"]
+
+    assert PRODUCTION_OVERRIDES == {date(2018, 3, 31): True}
