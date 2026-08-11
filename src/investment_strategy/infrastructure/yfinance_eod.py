@@ -29,7 +29,7 @@ _PROVIDER_COLUMNS = {
 
 
 def _default_history_loader(ticker: str, **kwargs: object) -> Any:
-    import yfinance as yf
+    import yfinance as yf  # type: ignore[import-untyped]
 
     return yf.Ticker(ticker).history(**kwargs)
 
