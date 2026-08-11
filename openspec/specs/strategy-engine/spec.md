@@ -1,7 +1,7 @@
 # strategy-engine Specification
 
 ## Purpose
-TBD - created by archiving change establish-strategy-engine. Update Purpose after archive.
+Define the shared, reproducible analytical Strategy contract, configuration-resolution semantics, and common result model used consistently by formal Decision and analytical Backtest evaluation.
 ## Requirements
 ### Requirement: Strategy declares market-data requirements
 
