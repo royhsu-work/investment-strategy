@@ -10,17 +10,23 @@ from .calendar import TradingCalendar
 
 
 def validate_continuity_and_freshness(
-    bars: Sequence[DailyBar], *, calendar: TradingCalendar, resolved_as_of: date
+    bars: Sequence[DailyBar],
+    *,
+    calendar: TradingCalendar,
+    resolved_as_of: date,
+    continuity_start: date | None = None,
 ) -> None:
     if not bars:
         raise data_failure("STALE_DATA", f"no bounded data through {resolved_as_of}")
 
     actual = {bar.trading_timestamp for bar in bars}
-    first = bars[0].trading_timestamp
     last = bars[-1].trading_timestamp
-    for expected in calendar.trading_days(first, last):
-        if expected not in actual:
-            raise data_failure("DATA_GAP", f"missing expected trading day {expected}")
+    if continuity_start is not None:
+        for expected in calendar.trading_days(continuity_start, resolved_as_of):
+            if expected not in actual:
+                if expected == resolved_as_of:
+                    break
+                raise data_failure("DATA_GAP", f"missing expected trading day {expected}")
 
     if last != resolved_as_of:
         raise data_failure(
