@@ -58,9 +58,7 @@ def parse_snapshot(
     try:
         session_raw = raw["session_date"]
         session = (
-            session_raw
-            if isinstance(session_raw, date)
-            else date.fromisoformat(str(session_raw))
+            session_raw if isinstance(session_raw, date) else date.fromisoformat(str(session_raw))
         )
         open_ = Decimal(str(raw["open"]))
         latest = Decimal(str(raw["latest_price"]))

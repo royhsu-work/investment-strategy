@@ -36,9 +36,7 @@ class DecisionService:
     def run(self, request: DecisionRequest) -> dict[str, object]:
         now = self._clock.now()
         try:
-            resolved_as_of = resolve_decision_as_of(
-                request.as_of, now=now, calendar=self._calendar
-            )
+            resolved_as_of = resolve_decision_as_of(request.as_of, now=now, calendar=self._calendar)
             strategy, config = self._resolver.resolve_active(request.symbol)
             requirement = strategy.requirements()
             bars = prepare_bars(self._market_data, request.symbol, through=resolved_as_of)
@@ -65,14 +63,11 @@ class DecisionService:
                 ) from exc
 
             overlay = None
-            if (
-                self._intraday is not None
-                and is_current_formal_decision(
-                    request.as_of,
-                    now=now,
-                    calendar=self._calendar,
-                    resolved_as_of=resolved_as_of,
-                )
+            if self._intraday is not None and is_current_formal_decision(
+                request.as_of,
+                now=now,
+                calendar=self._calendar,
+                resolved_as_of=resolved_as_of,
             ):
                 try:
                     raw_snapshot = self._intraday.load_snapshot(request.symbol)

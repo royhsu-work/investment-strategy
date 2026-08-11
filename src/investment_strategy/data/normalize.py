@@ -12,9 +12,7 @@ from .ports import MarketDataGateway
 MANDATORY_FIELDS = ("open", "high", "low", "close", "volume")
 
 
-def acquire_candidates(
-    gateway: MarketDataGateway, symbol: str
-) -> tuple[Mapping[str, object], ...]:
+def acquire_candidates(gateway: MarketDataGateway, symbol: str) -> tuple[Mapping[str, object], ...]:
     try:
         records = tuple(gateway.load_daily(symbol))
     except Exception as exc:
