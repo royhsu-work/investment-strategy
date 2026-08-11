@@ -13,6 +13,7 @@ This change establishes that data boundary before introducing any production str
 This change introduces provider-neutral Taiwan EOD market-data integration with the following behavior:
 
 - Instrument configuration identifies the instrument's Taiwan listing venue independently of any provider-specific ticker format.
+- The first supported Taiwan listing venues are TWSE and TPEx.
 - Market-data acquisition accepts the repository's canonical instrument identity and resolves any provider-specific identifier behind the data-provider boundary.
 - Formal Taiwan market history is acquired as completed daily OHLCV only.
 - Formal EOD prices represent reported regular-session trading prices for each trading date and are not silently replaced by retroactively adjusted, repaired, interpolated, or synthetic price history.
