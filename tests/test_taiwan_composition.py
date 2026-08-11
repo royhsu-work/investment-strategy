@@ -151,7 +151,9 @@ def test_incomplete_current_session_is_excluded_from_formal_decision_input() -> 
     assert artifact["status"] == "SUCCESS"
     assert artifact["resolved_as_of"] == "2026-08-10"
     assert strategy.last_context is not None
-    assert [bar.trading_timestamp for bar in strategy.last_context.market_data] == [date(2026, 8, 10)]
+    assert [bar.trading_timestamp for bar in strategy.last_context.market_data] == [
+        date(2026, 8, 10)
+    ]
 
 
 def test_missing_latest_completed_session_remains_stale_data() -> None:
