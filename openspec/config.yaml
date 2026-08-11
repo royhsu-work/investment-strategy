@@ -40,3 +40,4 @@ rules:
     - Complete each slice only after slice tests, the full regression suite, type checks, and lint checks are green.
     - Use Markdown checkboxes and keep RED, GREEN, and REFACTOR work grouped at feature-slice granularity.
     - Include behavioral tests that verify public Decision and analytical Backtest artifacts contain the exact required disclaimer text.
+    - Before declaring a change complete, run strict OpenSpec validation and resolve all reported issues.
