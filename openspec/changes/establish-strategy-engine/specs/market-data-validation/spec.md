@@ -6,7 +6,7 @@ Define the observable market-data eligibility, validation, as-of, and warm-up be
 
 ### Requirement: Completed daily OHLCV is the formal historical input
 
-The system SHALL use completed daily OHLCV observations as the formal historical input for strategy evaluation.
+The system SHALL use completed daily OHLCV observations as the formal historical input for strategy evaluation, and every normalized formal daily observation SHALL contain open, high, low, close, and volume.
 
 #### Scenario: Incomplete current-session data is also available
 
@@ -14,7 +14,16 @@ The system SHALL use completed daily OHLCV observations as the formal historical
 - AND an incomplete intraday snapshot for trading day T
 - WHEN formal strategy history is prepared
 - THEN the historical daily dataset contains only completed daily observations
+- AND each formal daily observation contains open, high, low, close, and volume
 - AND the intraday snapshot is not inserted into the formal historical series
+
+#### Scenario: Volume is missing from a formal daily observation
+
+- GIVEN a provider returns a candidate completed daily observation with open, high, low, and close but no volume
+- WHEN the observation is normalized and validated for formal history
+- THEN validation fails with `DATA_FAILED`
+- AND the failure code is `MISSING_REQUIRED_FIELD`
+- AND the missing volume is not interpreted as zero or as a negative strategy signal
 
 ### Requirement: Intraday snapshots remain observational
 
@@ -59,31 +68,53 @@ The system SHALL provide strategy evaluation only with completed observations wh
 - WHEN evaluation is requested with resolved `as_of=T`
 - THEN observations after T are excluded from the strategy input
 
-### Requirement: Required market-data fields are validated
+### Requirement: Additional strategy-required market-data fields are validated
 
-The system SHALL reject data that is missing a field required by the selected strategy.
+The system SHALL reject formal data that is missing an additional field explicitly required by the selected strategy beyond the mandatory OHLCV base schema.
 
-#### Scenario: Required volume is unavailable
+#### Scenario: Strategy-required additional field is unavailable
 
-- GIVEN a strategy whose data requirements include volume
-- AND an otherwise valid dataset contains a missing volume value for a required observation
+- GIVEN the mandatory completed daily OHLCV fields are present
+- AND the selected strategy declares an additional required field
+- AND an otherwise valid dataset is missing that additional field for a required observation
 - WHEN strategy data eligibility is validated
 - THEN validation fails with `DATA_FAILED`
 - AND the failure code is `MISSING_REQUIRED_FIELD`
-- AND the missing value is not interpreted as zero or as a negative strategy signal
 
 ### Requirement: Formal market data must be available
 
-The system SHALL report `DATA_FAILED` with failure code `DATA_UNAVAILABLE` when required formal market data cannot be obtained for Decision or analytical Backtest evaluation.
+The system SHALL report `DATA_FAILED` with failure code `DATA_UNAVAILABLE` when required formal market data cannot be acquired or when the provider returns no candidate historical observations for the required request.
 
 #### Scenario: Required historical data cannot be obtained
 
 - GIVEN configuration resolution succeeds
-- AND required formal historical market data cannot be obtained or yields no usable observations
-- WHEN formal market-data loading completes
+- AND required formal historical market data cannot be obtained
+- WHEN formal market-data acquisition completes
 - THEN evaluation fails with `DATA_FAILED`
 - AND the failure code is `DATA_UNAVAILABLE`
 - AND strategy evaluation does not run
+
+#### Scenario: Provider returns no candidate historical observations
+
+- GIVEN configuration resolution succeeds
+- AND the provider successfully responds but returns no candidate historical observations for the required request
+- WHEN formal market-data acquisition completes
+- THEN evaluation fails with `DATA_FAILED`
+- AND the failure code is `DATA_UNAVAILABLE`
+- AND strategy evaluation does not run
+
+### Requirement: Acquired invalid observations retain structural failure semantics
+
+The system SHALL NOT convert acquired-but-invalid market observations into `DATA_UNAVAILABLE`; once candidate observations are acquired, normalization and structural validation failures SHALL use their applicable structural failure code.
+
+#### Scenario: Only acquired observation has an invalid timestamp
+
+- GIVEN the provider returns one candidate historical observation
+- AND its timestamp cannot be normalized into a valid trading timestamp
+- WHEN normalization and structural validation run
+- THEN validation fails with `DATA_FAILED`
+- AND the failure code is `VALIDATION_ERROR`
+- AND the failure is not rewritten as `DATA_UNAVAILABLE` merely because zero observations remain usable
 
 ### Requirement: OHLC structural relationships are valid
 
@@ -103,13 +134,13 @@ The system SHALL reject observations whose OHLC values violate valid bar relatio
 - THEN validation fails with `DATA_FAILED`
 - AND the failure code is `INVALID_OHLC`
 
-### Requirement: Volume is non-negative when present
+### Requirement: Volume is non-negative
 
-The system SHALL reject an observation whose volume is negative.
+The system SHALL reject a formal daily observation whose mandatory volume value is negative.
 
 #### Scenario: Negative volume
 
-- GIVEN an observation with negative volume
+- GIVEN a formal daily observation with negative volume
 - WHEN structural validation runs
 - THEN validation fails with `DATA_FAILED`
 - AND the failure code is `VALIDATION_ERROR`
