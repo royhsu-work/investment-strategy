@@ -129,37 +129,53 @@ decision/
 └── data_quality.json
 ```
 
-`decision.json` 建議結構：
+`decision.json` 的正式欄位以 OpenSpec change 為準；目前概念結構如下：
 
 ```json
 {
   "status": "SUCCESS",
-  "symbol": "00733",
-  "as_of": "YYYY-MM-DD",
-  "strategy_version": "git-sha-or-version",
-  "position": {
-    "state": "LOW"
+  "instrument": "00733",
+  "requested_as_of": "YYYY-MM-DD",
+  "resolved_as_of": "YYYY-MM-DD",
+  "strategy": "strategy-id",
+  "parameter_set": "parameter-set-id",
+  "git_sha": "git-commit-sha",
+  "data_quality": "PASS",
+  "strategy_result": {
+    "strategy": "strategy-id",
+    "as_of": "YYYY-MM-DD",
+    "market_state": "NEUTRAL",
+    "entry_plan": {
+      "levels": [],
+      "triggers": []
+    },
+    "exit_plan": {
+      "dynamic_levels": [],
+      "triggers": []
+    },
+    "signals": {},
+    "diagnostics": {},
+    "reasons": []
   },
-  "buy_plan": {
-    "enabled": true,
-    "price": 0
-  },
-  "sell_plan": {
-    "enabled": false,
-    "price": null
-  },
-  "reasons": [],
-  "data_quality": "PASS"
+  "disclaimer": "僅為個人研究與策略驗證，不構成任何形式之投資建議。"
 }
 ```
 
-若資料驗證失敗，不應把資料問題解讀成 `HOLD`：
+`requested_as_of` 只在呼叫端明確提供 `as_of` 時需要存在。公開 Artifact 不要求重複輸出 resolved parameter values；`parameter_set + git_sha` 用來追溯該版本的參數定義。
+
+若資料驗證失敗，不應把資料問題解讀成 `NEUTRAL` 或有效交易計畫：
 
 ```json
 {
   "status": "FAILED",
-  "decision": null,
-  "reason": "OHLCV data integrity check failed"
+  "instrument": "00733",
+  "git_sha": "git-commit-sha",
+  "failure": {
+    "category": "DATA_FAILED",
+    "code": "INVALID_OHLC",
+    "reason": "OHLCV data integrity check failed"
+  },
+  "disclaimer": "僅為個人研究與策略驗證，不構成任何形式之投資建議。"
 }
 ```
 
@@ -175,6 +191,8 @@ decision/
 - 區分 `WARMUP`、有效 StrategyResult 與失敗
 - 輸出 analytical StrategyResult timeline
 - 將結果存為 Artifact
+
+Backtest 的 `start_date` / `end_date` 定義 inclusive calendar interval；只評估區間內已完成的 trading days，非交易日 endpoint 不會被 clamp 到區間外。
 
 預期輸出：
 
@@ -354,16 +372,19 @@ Artifact 不需要 commit 回 repository。
 
 ## Strategy Version
 
-每一份 Decision 與 Backtest 結果都應包含策略版本，例如：
+每一份 Decision 與 Backtest 結果都應至少能追溯：
 
 ```text
-strategy_version
-git_commit_sha
+strategy
+parameter_set
+git_sha
 ```
+
+其中 `parameter_set + git_sha` 用來定位該版本實際使用的參數定義，不要求公開 Artifact 再複製一份 `resolved_parameters`。
 
 目的：
 
-- 可以追溯某次 Decision 使用哪一版策略。
+- 可以追溯某次 Decision 使用哪一版策略與參數集。
 - 可以確認某次 Backtest 是否與正式 Decision 使用相同邏輯。
 - 策略修改後，不會把舊結果誤認為目前策略結果。
 
@@ -387,8 +408,6 @@ git_commit_sha
 - Artifact retention
 
 這些規則確認後，再寫入 Strategy / Backtest Engine，避免將尚未確認的假設硬編碼進實作。
-
----
 
 ---
 
@@ -500,7 +519,7 @@ Backtest
 └── 不模擬成交、持倉、現金或績效
 
 Strategy
-├── 接收當時可用的歷史資料
+├── 接收當時可用的完整日線歷史資料
 ├── 判定位階
 ├── 計算買點 / 賣點
 └── 不處理成交狀態
@@ -570,7 +589,6 @@ tasks.md
 實作時不得自行擴大未定義需求，也不得將尚未確認的假設直接寫進 Strategy。
 
 若發現規格不足，應先更新 change，再繼續實作。
-
 
 ## 專案狀態
 
