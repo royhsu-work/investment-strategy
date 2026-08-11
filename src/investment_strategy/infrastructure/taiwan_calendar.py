@@ -13,8 +13,11 @@ PRODUCTION_OVERRIDES: Mapping[date, bool] = {}
 
 
 class CalendarEngine(Protocol):
-    first_session: object
-    last_session: object
+    @property
+    def first_session(self) -> object: ...
+
+    @property
+    def last_session(self) -> object: ...
 
     def is_session(self, day: date) -> bool: ...
 
