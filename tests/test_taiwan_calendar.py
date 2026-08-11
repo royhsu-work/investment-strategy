@@ -58,6 +58,14 @@ def test_completion_boundary_is_conservative_1333_taipei() -> None:
     assert calendar.latest_completed_trading_day(after) == date(2026, 1, 5)
 
 
+def test_historical_exceptional_closure_is_not_a_completed_session() -> None:
+    calendar = TaiwanTradingCalendar()
+    now = datetime(2026, 8, 11, 14, 0, tzinfo=UTC)
+
+    assert not calendar.is_trading_day(date(2024, 7, 24))
+    assert not calendar.is_session_complete(date(2024, 7, 24), now)
+
+
 def test_engine_unavailable_range_maps_to_calendar_unavailable() -> None:
     calendar = TaiwanTradingCalendar(engine=FakeEngine(SESSIONS))
     with pytest.raises(ApplicationFailure) as exc:
