@@ -50,6 +50,41 @@ def _classify(
     )
 
 
+def _completion(
+    tmp_path: Path,
+    *,
+    event_name: str,
+    status: str,
+    completed_tasks: int,
+    total_tasks: int,
+) -> subprocess.CompletedProcess[str]:
+    list_path = tmp_path / "changes.json"
+    list_path.write_text(
+        json.dumps(
+            {
+                "changes": [
+                    {
+                        "name": "change-a",
+                        "completedTasks": completed_tasks,
+                        "totalTasks": total_tasks,
+                        "status": status,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    return _run(
+        "completion",
+        "--event-name",
+        event_name,
+        "--change",
+        "change-a",
+        "--list-file",
+        str(list_path),
+    )
+
+
 def test_closed_unmerged_pr_is_successful_noop(tmp_path: Path) -> None:
     result = _classify(
         tmp_path,
@@ -130,15 +165,12 @@ def test_multiple_active_changes_fail_as_ambiguous(tmp_path: Path) -> None:
 
 
 def test_incomplete_pr_change_is_noop(tmp_path: Path) -> None:
-    status_path = tmp_path / "status.json"
-    status_path.write_text(json.dumps({"isComplete": False}), encoding="utf-8")
-
-    result = _run(
-        "completion",
-        "--event-name",
-        "pull_request",
-        "--status-file",
-        str(status_path),
+    result = _completion(
+        tmp_path,
+        event_name="pull_request",
+        status="in-progress",
+        completed_tasks=3,
+        total_tasks=4,
     )
 
     assert result.returncode == 0
@@ -146,16 +178,26 @@ def test_incomplete_pr_change_is_noop(tmp_path: Path) -> None:
     assert "reason=change-incomplete" in result.stdout
 
 
-def test_incomplete_manual_archive_fails_loudly(tmp_path: Path) -> None:
-    status_path = tmp_path / "status.json"
-    status_path.write_text(json.dumps({"isComplete": False}), encoding="utf-8")
+def test_no_tasks_pr_change_is_not_complete(tmp_path: Path) -> None:
+    result = _completion(
+        tmp_path,
+        event_name="pull_request",
+        status="no-tasks",
+        completed_tasks=0,
+        total_tasks=0,
+    )
 
-    result = _run(
-        "completion",
-        "--event-name",
-        "workflow_dispatch",
-        "--status-file",
-        str(status_path),
+    assert result.returncode == 0
+    assert "should_archive=false" in result.stdout
+
+
+def test_incomplete_manual_archive_fails_loudly(tmp_path: Path) -> None:
+    result = _completion(
+        tmp_path,
+        event_name="workflow_dispatch",
+        status="in-progress",
+        completed_tasks=3,
+        total_tasks=4,
     )
 
     assert result.returncode != 0
@@ -163,17 +205,68 @@ def test_incomplete_manual_archive_fails_loudly(tmp_path: Path) -> None:
 
 
 def test_complete_change_is_eligible_for_archive(tmp_path: Path) -> None:
-    status_path = tmp_path / "status.json"
-    status_path.write_text(json.dumps({"isComplete": True}), encoding="utf-8")
-
-    result = _run(
-        "completion",
-        "--event-name",
-        "pull_request",
-        "--status-file",
-        str(status_path),
+    result = _completion(
+        tmp_path,
+        event_name="pull_request",
+        status="complete",
+        completed_tasks=4,
+        total_tasks=4,
     )
 
     assert result.returncode == 0
     assert "should_archive=true" in result.stdout
     assert "reason=change-complete" in result.stdout
+
+
+def test_completion_fails_when_change_is_missing_from_openspec_list(tmp_path: Path) -> None:
+    list_path = tmp_path / "changes.json"
+    list_path.write_text(json.dumps({"changes": []}), encoding="utf-8")
+
+    result = _run(
+        "completion",
+        "--event-name",
+        "pull_request",
+        "--change",
+        "change-a",
+        "--list-file",
+        str(list_path),
+    )
+
+    assert result.returncode != 0
+    assert "not present in OpenSpec active change list" in result.stderr
+
+
+def test_archive_workflow_keeps_reviewed_lifecycle_guards() -> None:
+    workflow = (ROOT / ".github/workflows/openspec-archive.yml").read_text(encoding="utf-8")
+
+    for required in (
+        "workflow_dispatch:",
+        "pull_request:",
+        "- closed",
+        "pull-requests: read",
+        "ref: main",
+        "gh api --paginate",
+        "openspec list --json",
+        "openspec validate",
+        "git ls-remote --exit-code --heads",
+        "openspec archive",
+        "agent/archive-$CHANGE",
+    ):
+        assert required in workflow
+    assert "git push --force" not in workflow
+    assert "git push -f" not in workflow
+
+
+def test_readme_documents_state_driven_archive_contract() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    for required in (
+        "Merged-PR archive classifier",
+        "branch convention",
+        "archive routing 不依賴 branch name",
+        "0 個 active candidate",
+        ">1 active touched",
+        "Complete` 是 repository-level implementation completion signal",
+        "workflow_dispatch` 保留為 recovery / migration fallback",
+    ):
+        assert required in readme
