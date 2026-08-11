@@ -16,17 +16,29 @@ The system SHALL acquire Taiwan EOD market data using the repository's configure
 - THEN provider-specific identifier resolution occurs behind the market-data provider boundary
 - AND Strategy, Decision, and Backtest continue to identify the instrument by its canonical repository symbol
 
-### Requirement: Taiwan EOD acquisition provides daily OHLCV market facts
+### Requirement: Taiwan EOD acquisition provides source-native daily OHLCV market facts
 
-The system SHALL make completed Taiwan market sessions available as daily observations containing trading date, open, high, low, close, and volume for the existing formal market-data preparation pipeline.
+The system SHALL make completed Taiwan market sessions available as daily observations containing trading date and the selected provider's native `Open`, `High`, `Low`, `Close`, and `Volume` fields for the existing formal market-data preparation pipeline.
+
+The provider adapter SHALL NOT substitute `Adj Close`, apply adapter-controlled dividend/capital-gain adjustment, enable automatic/back adjustment, repair observations, interpolate missing values, or synthesize fields to alter those source-native OHLCV observations.
+
+This capability does not guarantee exchange-raw nominal historical price scale across splits or consolidations unless a future capability explicitly establishes that methodology.
 
 #### Scenario: Completed Taiwan trading session is available
 
 - GIVEN Taiwan trading day T has completed
-- AND the market-data source provides the session's reported daily trading data
+- AND the market-data source provides the session's source-native daily OHLCV
 - WHEN EOD history is acquired through T
 - THEN the acquired candidate observation for T contains trading date, open, high, low, close, and volume
 - AND the observation can be processed by the existing normalization and structural validation behavior
+
+#### Scenario: Provider exposes adjusted analytical fields
+
+- GIVEN the provider exposes native OHLCV and also exposes `Adj Close`, dividends, capital gains, split metadata, or another transformed analytical field
+- WHEN formal EOD history is acquired
+- THEN formal OHLCV is populated from the provider-native OHLCV fields
+- AND those adjusted or action fields are not substituted into formal OHLCV
+- AND the adapter does not apply an additional OHLC transformation
 
 #### Scenario: Candidate EOD observation omits a required field
 
@@ -146,7 +158,13 @@ The system SHALL NOT claim automatic knowledge of future or newly announced exch
 
 ### Requirement: Completed-session semantics drive latest EOD eligibility
 
-The system SHALL use the Taiwan trading calendar's completed-session semantics to determine whether the current market date may be used as formal EOD history.
+The system SHALL use the Taiwan trading calendar's completed-session semantics to determine whether a market date may be treated as a completed trading session.
+
+#### Scenario: Historical market date was not a trading session
+
+- GIVEN historical date T is a holiday or exceptional full-market closure
+- WHEN session completion is queried for T
+- THEN T is not treated as a completed trading session
 
 #### Scenario: Current trading date has not completed
 
