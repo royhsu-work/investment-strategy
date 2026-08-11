@@ -90,4 +90,4 @@ def test_approved_official_regressions_match_pinned_xtai_plus_sparse_overrides()
         assert case["sources"]
         assert case["evidence_note"]
 
-    assert PRODUCTION_OVERRIDES == {date(2018, 3, 31): True}
+    assert {date(2018, 3, 31): True} == PRODUCTION_OVERRIDES
