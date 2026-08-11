@@ -6,14 +6,14 @@ Define the common observable behavior of strategy evaluation so Decision and ana
 
 ### Requirement: Strategy declares market-data requirements
 
-The system SHALL obtain the selected strategy's declared data frequency, required fields, and minimum history before determining data eligibility or running strategy evaluation.
+The system SHALL obtain the selected strategy's declared data frequency, additional required fields beyond the mandatory completed daily OHLCV base schema, and minimum history before determining data eligibility or running strategy evaluation.
 
 #### Scenario: Strategy requirements are available before data eligibility
 
 - GIVEN a selected strategy
 - WHEN its market-data requirements are requested
 - THEN the requirements identify the required frequency
-- AND they identify the required fields
+- AND they identify any additional strategy-required fields beyond the mandatory OHLCV base schema
 - AND they identify the minimum history needed for eligible evaluation
 
 ### Requirement: Strategy data frequency is daily in this change
