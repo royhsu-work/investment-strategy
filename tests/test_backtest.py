@@ -149,7 +149,7 @@ def test_backtest_current_day_uses_calendar_market_timezone() -> None:
 def test_active_missing_assignment_fails_before_data() -> None:
     strategy = TestStrategy("S", minimum_history=1)
     resolver = StrategyConfigResolver(
-        InMemoryInstrumentRegistry({"00733": InstrumentConfig("00733")}),
+        InMemoryInstrumentRegistry({"00733": InstrumentConfig("00733", listing_venue="TWSE")}),
         InMemoryParameterSetRegistry({"P": ParameterSet("P", "S", {"threshold": 1})}),
         CodeStrategyRegistry([strategy]),
         "sha",
@@ -163,7 +163,7 @@ def test_active_missing_assignment_fails_before_data() -> None:
 def test_explicit_assignment_works_without_active_and_does_not_mutate_instrument() -> None:
     a = TestStrategy("A", minimum_history=1)
     b = TestStrategy("B", minimum_history=1)
-    instrument = InstrumentConfig("00733", None)
+    instrument = InstrumentConfig("00733", None, "TWSE")
     resolver = StrategyConfigResolver(
         InMemoryInstrumentRegistry({"00733": instrument}),
         InMemoryParameterSetRegistry(
