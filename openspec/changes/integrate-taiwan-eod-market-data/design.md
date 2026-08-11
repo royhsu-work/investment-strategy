@@ -10,8 +10,9 @@ The approved proposal/specifications constrain this change to facts that have al
 - this change does not introduce intraday, realtime, prediction, execution, or production strategy behavior;
 - `TWSE` and `TPEX` are the supported provider-neutral listing venues;
 - provider SDK types and provider ticker syntax must not leak into Strategy, Decision, or Backtest contracts;
-- reported regular-session OHLC is the formal EOD price basis;
-- provider-side automatic adjustment, repair, interpolation, or synthesis must not silently rewrite formal history;
+- source-native provider OHLCV is the formal EOD acquisition basis;
+- adapter-controlled automatic/back adjustment, `Adj Close` substitution, dividend/capital-gain adjustment, repair, interpolation, or synthesis must not silently rewrite formal history;
+- this capability does not guarantee exchange-raw nominal historical price scale across splits or consolidations;
 - provider acquisition breadth must not silently become a full-instrument-lifetime continuity requirement;
 - Strategy-specific history-window/lookback policy remains outside this change;
 - Taiwan market-date/session semantics must be timezone-aware and exchange-session-aware;
@@ -28,7 +29,7 @@ The implementation remains Python 3.11+, typed, dependency-inverted, and testabl
 - Fail missing or unsupported venue configuration before market-data loading.
 - Pass provider-neutral market-data identity through the application/data boundary without exposing venue details to Strategy implementations.
 - Provide one concrete completed-daily OHLCV adapter suitable for Taiwan-listed instruments while keeping it replaceable.
-- Preserve reported EOD OHLCV rather than provider-transformed price history.
+- Preserve the selected provider's source-native OHLCV fields without adapter-controlled analytical transformation.
 - Prevent provider fetch breadth from defining continuity-validation scope.
 - Provide Taiwan regular-securities trading-session behavior for TWSE and TPEx-listed instruments.
 - Make calendar-engine unsupported dates an explicit data failure.
@@ -41,6 +42,7 @@ The implementation remains Python 3.11+, typed, dependency-inverted, and testabl
 - Forecasting or future-return estimation.
 - Production strategy algorithms or active production assignments.
 - Defining a Strategy-specific lookback/history-window contract.
+- Canonical exchange-raw historical price reconstruction across splits/consolidations.
 - Corporate-action adjusted analytical series or total-return methodology.
 - Cross-provider validation/fallback.
 - Persistent market-data storage or caching.
@@ -166,6 +168,15 @@ volume
 
 Provider DataFrame/index types, provider ticker syntax, and yfinance exceptions do not cross the infrastructure boundary. `Adj Close`, dividends, splits, capital gains, and repair metadata are not formal OHLCV fields.
 
+The formal price-basis boundary is intentionally **source-native**, not exchange-raw:
+
+- native provider `Open`/`High`/`Low`/`Close`/`Volume` are passed through as candidate OHLCV;
+- `auto_adjust=false` and `back_adjust=false` mean the adapter itself does not apply another OHLC adjustment;
+- `Adj Close` is not substituted for `Close`;
+- adapter-controlled dividend/capital-gain adjustment is not applied;
+- provider-native historical conventions around splits/consolidations are not reinterpreted as exchange-raw truth by this capability;
+- any future exchange-raw reconstruction, split normalization, or total-return series is a separate analytical methodology.
+
 ### 4. Separate acquisition breadth, structural validation, freshness, and formal-range continuity
 
 The current validator derives continuity start from the first acquired bar. Combined with `period=max`, that would accidentally impose full-lifetime continuity. This change removes that coupling.
@@ -212,11 +223,12 @@ The provider adapter does not:
 - fill missing OHLCV values;
 - synthesize missing trading dates;
 - interpolate bars;
-- use adjusted OHLC in place of reported OHLC;
+- substitute `Adj Close` or another adjusted analytical field into formal OHLCV;
+- apply an additional adapter-controlled OHLC transformation;
 - enable provider-side price repair;
 - fall back to another provider.
 
-Missing/invalid candidate fields remain visible to the existing normalization and structural validation behavior.
+Missing/invalid candidate fields remain visible to the existing normalization and structural validation behavior. Numeric normalization must also reject non-finite provider values such as `NaN`, `+Infinity`, and `-Infinity` through the canonical data-failure envelope rather than allowing implementation exceptions to escape.
 
 ### 6. Use a replaceable Taiwan regular-securities calendar adapter
 
@@ -234,6 +246,8 @@ Regression fixtures cover at least:
 - historical/declared exceptional full-market closure;
 - non-Taipei runner timezone;
 - previous/latest completed trading-day behavior.
+
+A date must first be a trading session before it can be considered a completed trading session; historical holidays and exceptional closures therefore return false from session-completion queries.
 
 If later evidence proves TWSE and TPEx regular-session calendars diverge materially, a later change can route venue-specific calendar implementations without changing Strategy.
 
@@ -333,7 +347,7 @@ No real active strategy assignment is added to `config/instruments.yaml`.
 | Canonical instrument identity / provider isolation | 1–3 |
 | TWSE/TPEX support / venue validation | 1–2 |
 | Completed daily OHLCV | 3, 5 |
-| Reported unadjusted price basis | 3, 5 |
+| Source-native price basis / no adapter transformation | 3, 5 |
 | Provider breadth does not define continuity scope | 3–4 |
 | Strategy-specific history policy remains separate | 4 |
 | Taiwan timezone / completed session | 6, 9 |
@@ -350,6 +364,10 @@ No real active strategy assignment is added to `config/instruments.yaml`.
 
 Provider outages/schema changes remain possible. Isolation behind `MarketDataGateway`, explicit call parameters, offline tests, and canonical data failures limit the blast radius.
 
+### Source-native OHLC may encode provider corporate-action conventions
+
+The capability deliberately preserves provider-native OHLCV without claiming exchange-raw nominal history or total-return semantics. This keeps EOD acquisition independent from corporate-action analytics, but it means a future production Strategy that is sensitive to long-horizon price continuity must define and validate its own corporate-action/price-basis methodology before relying on that continuity.
+
 ### `period=max` may reacquire more data than an evaluation uses
 
 This is accepted for the current small research scope. The extra data is acquisition breadth only and must not expand continuity requirements. Ranged acquisition or caching can be proposed later if scale justifies it.
@@ -362,14 +380,10 @@ The project does not duplicate or independently certify every historical session
 
 Venue remains explicit so future calendar routing can split TWSE/TPEX without changing Strategy contracts.
 
-### Raw reported prices can contain corporate-action discontinuities
-
-This is deliberate. Any future analytical adjustment methodology must be specified separately before a production strategy relies on adjusted continuity or total-return semantics.
-
 ## Deferred Decisions
 
 - Strategy-specific lookback/history-window policy.
-- Corporate-action and total-return adjustment methodology.
+- Exchange-raw historical reconstruction, corporate-action, and total-return analytical methodology.
 - Provider fallback or authoritative price reconciliation.
 - Persistent cache/database and ranged acquisition.
 - Venue-specific calendar divergence if future evidence requires it.
