@@ -50,23 +50,22 @@ The system SHALL reject a Decision when the requested instrument or its active a
 - AND the failure code is `ACTIVE_STRATEGY_NOT_CONFIGURED`
 - AND market-data loading and strategy evaluation do not run
 
-### Requirement: Decision resolves the formal evaluation date to a completed trading day
+### Requirement: Decision resolves the formal evaluation date from the trading calendar only
 
-The system SHALL evaluate the formal Strategy Result against a completed trading day and SHALL preserve the distinction between a requested date and the resolved evaluation date when they differ.
+The system SHALL resolve the formal Decision `as_of` to a completed trading day using the applicable TradingCalendar before market-data availability, freshness, or structural eligibility is considered. Missing or invalid market data SHALL NOT cause date resolution to fall back to an older trading day.
 
 #### Scenario: No as-of date is supplied when no session is in progress
 
-- GIVEN valid market data and trading-calendar information
+- GIVEN trading-calendar information
 - AND there is no incomplete current trading session
 - WHEN a Decision request omits `as_of`
-- THEN the system resolves `as_of` to the latest eligible completed trading day
+- THEN the system resolves `as_of` to the latest completed trading day according to the TradingCalendar
 
 #### Scenario: No as-of date is supplied during an incomplete trading session
 
 - GIVEN trading day T is currently in progress
-- AND valid completed daily history is available through T-1
 - WHEN a Decision request omits `as_of`
-- THEN the formal `resolved_as_of` is T-1
+- THEN the formal `resolved_as_of` is the previous completed trading day according to the TradingCalendar
 - AND an optional intraday overlay for session T may be included when valid snapshot data is available
 
 #### Scenario: Requested date is not a trading day
@@ -74,7 +73,7 @@ The system SHALL evaluate the formal Strategy Result against a completed trading
 - GIVEN a requested `as_of` date that is not a trading day
 - AND the requested date is not in the future
 - WHEN the Decision date is resolved
-- THEN the system selects the most recent eligible completed trading day according to the trading calendar
+- THEN the system selects the previous completed trading day according to the TradingCalendar
 - AND the Decision output preserves both the requested date and resolved `as_of` date when the Decision succeeds
 
 #### Scenario: Requested date is the current trading day before completion
@@ -82,16 +81,24 @@ The system SHALL evaluate the formal Strategy Result against a completed trading
 - GIVEN the requested `as_of` date is the current trading day
 - AND the current trading session is not yet complete
 - WHEN the Decision date is resolved
-- THEN the formal `resolved_as_of` is the most recent eligible completed trading day
+- THEN the formal `resolved_as_of` is the previous completed trading day according to the TradingCalendar
 - AND the incomplete current-session bar is not used as formal daily history
 
 #### Scenario: Requested date is the current trading day after completion
 
 - GIVEN the requested `as_of` date is the current trading day
 - AND the current trading session is complete
-- AND the completed daily observation for that trading day is available and eligible
 - WHEN the Decision date is resolved
 - THEN the formal `resolved_as_of` is the current trading day
+
+#### Scenario: Latest completed trading day has missing data
+
+- GIVEN the TradingCalendar resolves T as the latest completed trading day
+- AND required formal market data for T is missing or stale
+- WHEN Decision data loading and validation run
+- THEN `resolved_as_of` remains T
+- AND the Decision reports the applicable data failure
+- AND the system does not silently resolve to T-1 to avoid the data failure
 
 ### Requirement: Future Decision as-of dates are rejected
 
@@ -108,13 +115,30 @@ The system SHALL reject a Decision request whose requested `as_of` is later than
 
 ### Requirement: Decision uses only information available by resolved as-of
 
-The system SHALL prevent observations or intraday information unavailable by the resolved `as_of` point from affecting the formal Decision result.
+The system SHALL prevent observations or intraday information unavailable by the resolved `as_of` point from affecting formal Decision data validation or the formal Strategy Result. Candidate observations whose timestamps can be normalized and are later than `resolved_as_of` SHALL be excluded before their non-temporal OHLCV structure can affect the historical Decision. A candidate observation whose timestamp cannot be normalized MAY fail with the defined timestamp validation failure because its temporal position cannot be established.
 
-#### Scenario: Source data contains later observations
+#### Scenario: Source data contains later valid observations
 
 - GIVEN market data that extends beyond resolved `as_of=T`
 - WHEN the Decision is evaluated
-- THEN the strategy result is based only on eligible information available on or before T
+- THEN the formal Decision uses only eligible information available on or before T
+- AND observations after T do not affect the formal Strategy Result
+
+#### Scenario: Future observation has invalid OHLC
+
+- GIVEN all candidate observations on or before resolved `as_of=T` are valid and eligible
+- AND a candidate observation has a valid normalized timestamp after T
+- AND that future observation contains structurally invalid OHLC values
+- WHEN the historical Decision data is prepared and evaluated
+- THEN the future observation is excluded before its OHLC structure can fail the historical Decision
+- AND the Decision outcome is equivalent to evaluating the same source truncated at T
+
+#### Scenario: Candidate timestamp cannot be normalized
+
+- GIVEN the provider returns a candidate historical observation whose timestamp cannot be normalized
+- WHEN the Decision data is prepared
+- THEN the system cannot establish whether that candidate belongs on or before or after `resolved_as_of`
+- AND the Decision may fail with `DATA_FAILED / VALIDATION_ERROR`
 
 #### Scenario: Intraday snapshot is available
 
