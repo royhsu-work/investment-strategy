@@ -75,6 +75,7 @@ class BacktestService:
                 bars,
                 calendar=self._calendar,
                 resolved_as_of=last_evaluation,
+                continuity_start=evaluation_dates[0],
             )
 
             timeline: list[dict[str, Any]] = []
