@@ -1,4 +1,4 @@
-name: Backtest
+name: Analytical Backtest
 
 on:
   workflow_dispatch:
@@ -7,12 +7,30 @@ on:
         description: "Target symbol"
         required: true
         type: string
-      period:
-        description: "Backtest period"
+      mode:
+        description: "Assignment mode: ACTIVE or EXPLICIT"
         required: true
-        default: "1y"
+        default: "ACTIVE"
+        type: choice
+        options:
+          - ACTIVE
+          - EXPLICIT
+      strategy:
+        description: "Required only for EXPLICIT mode"
+        required: false
         type: string
-
+      parameter_set:
+        description: "Required only for EXPLICIT mode"
+        required: false
+        type: string
+      start_date:
+        description: "Inclusive calendar interval start (ISO date)"
+        required: true
+        type: string
+      end_date:
+        description: "Inclusive calendar interval end (ISO date)"
+        required: true
+        type: string
   push:
     paths:
       - "requests/backtest.json"
@@ -20,11 +38,11 @@ on:
 jobs:
   backtest:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-
-      - name: Placeholder
+      - name: Analytical Backtest scaffold
         run: |
-          echo "Backtest workflow scaffold only."
-          echo "Implement historical replay, fill simulation and artifact output next."
+          echo "Analytical Backtest workflow scaffold."
+          echo "This replays StrategyResult only; it does not simulate fills, positions, cash, PnL, returns, or drawdown."
+          echo "Live provider/calendar/production-strategy composition is intentionally deferred."
+          echo "Generated analytical outputs belong in GitHub Actions Artifacts, not repository commits."

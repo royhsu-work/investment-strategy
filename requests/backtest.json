@@ -1,4 +1,6 @@
 {
   "symbol": "00733",
-  "period": "1y"
+  "mode": "ACTIVE",
+  "start_date": "2026-01-01",
+  "end_date": "2026-08-01"
 }
