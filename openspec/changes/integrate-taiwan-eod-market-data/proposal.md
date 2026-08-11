@@ -19,7 +19,8 @@ This change introduces provider-neutral Taiwan EOD market-data integration with 
 - Formal EOD prices represent reported regular-session trading prices for each trading date and are not silently replaced by retroactively adjusted, repaired, interpolated, or synthetic price history.
 - Taiwan market dates and completed sessions are resolved in the Taiwan market timezone from an exchange-aware trading calendar rather than a weekday-only heuristic.
 - The Taiwan trading calendar accounts for scheduled holidays, additional trading sessions, and exceptional market closures when determining continuity, freshness, and the latest completed trading day.
-- Existing market-data normalization, structural validation, no-look-ahead, freshness, continuity, minimum-history, and Backtest warm-up semantics remain authoritative after acquisition.
+- If the calendar cannot reliably establish required session status within its verified knowledge, evaluation fails explicitly rather than assuming a trading session and misclassifying missing price data as `DATA_GAP` or `STALE_DATA`.
+- Existing market-data normalization, structural validation, no-look-ahead, freshness, continuity, minimum-history, and Backtest warm-up semantics remain authoritative for the formal historical range selected by the analytical flow; provider acquisition breadth alone does not create a full-instrument-lifetime continuity requirement.
 - Provider acquisition failures or absence of candidate history continue to surface through the existing market-data failure contract rather than being converted into a valid neutral strategy result.
 - The capability can be consumed by existing Decision and analytical Backtest services without changing their public request or artifact schemas.
 
@@ -32,7 +33,7 @@ This change introduces provider-neutral Taiwan EOD market-data integration with 
 ### Modified Capabilities
 
 - `strategy-engine`: extend instrument configuration with provider-neutral listing-venue identity needed before Taiwan market-data acquisition.
-- `market-data-validation`: make the formal EOD price basis explicit and prohibit silent provider-side adjustment, repair, interpolation, or synthesis from changing the formal historical series.
+- `market-data-validation`: make the formal EOD price basis explicit and clarify that continuity applies to the formal history required by an evaluation rather than to arbitrary extra history returned by a provider.
 
 ## Scope Boundaries
 
@@ -43,6 +44,7 @@ It does **not** define or implement:
 - intraday snapshots, realtime quotes, minute bars, ticks, streaming, or WebSocket feeds;
 - price prediction, future-return prediction, or forecasting;
 - production Bollinger, time-series, hybrid, or other strategy algorithms;
+- strategy-specific history-window or lookback policy beyond the existing Strategy contracts;
 - corporate-action adjustment or total-return methodology;
 - adjusted analytical price-series construction;
 - cross-provider reconciliation or provider fallback policy;
@@ -58,7 +60,7 @@ Provider SDK choice, provider-specific symbol mapping, request parameters, and c
 
 Expected affected areas:
 
-- OpenSpec definitions for Taiwan EOD market-data acquisition, instrument venue identity, and formal market-data semantics.
+- OpenSpec definitions for Taiwan EOD market-data acquisition, instrument venue identity, formal market-data semantics, and calendar-knowledge failure behavior.
 - Instrument configuration domain and YAML adapter behavior.
 - Concrete market-data and Taiwan trading-calendar adapters behind existing ports.
 - Dependency composition for Decision and analytical Backtest services.
@@ -71,7 +73,7 @@ Public Decision and analytical Backtest request and artifact schemas are unchang
 Follow-up changes are expected for:
 
 - final corporate-action and analytical price-adjustment methodology;
-- production strategy implementations such as `implement-bollinger-swing-strategy`;
+- production strategy implementations such as `implement-bollinger-swing-strategy`, including any strategy-specific historical lookback policy they require;
 - production workflow activation after a production strategy assignment exists;
 - provider fallback, authoritative cross-validation, or persistent market-data storage if later justified;
 - execution simulation under a dedicated execution capability.
