@@ -441,9 +441,9 @@ archive
 
 ```text
 /opsx:new <change>
-/opsx/ff
-/opsx/apply
-/opsx/archive
+/opsx:ff
+/opsx:apply
+/opsx:archive
 ```
 
 任何 `openspec/**` 變更都會由 `openspec-validate.yml` 自動執行 strict validation。CI 驗證通過不取代人工的 proposal/specs/design/tasks traceability review；change 在實作完成並準備宣告完成前，仍應再次確認 strict validation 為綠燈。
