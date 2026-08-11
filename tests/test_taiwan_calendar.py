@@ -75,17 +75,25 @@ def test_repository_override_wins_and_engine_is_used_without_override() -> None:
     assert calendar.is_trading_day(date(2026, 1, 6))
 
 
-def test_approved_official_regressions_match_pinned_xtai_plus_sparse_overrides() -> None:
+def test_approved_official_regressions_record_engine_or_override_resolution() -> None:
     fixture_path = Path(__file__).parent / "fixtures" / "taiwan_calendar_regressions.yaml"
     payload = yaml.safe_load(fixture_path.read_text(encoding="utf-8"))
-    calendar = TaiwanTradingCalendar()
+    raw_engine_calendar = TaiwanTradingCalendar(overrides={})
+    final_calendar = TaiwanTradingCalendar()
 
-    observed: dict[date, bool] = {}
     for case in payload["cases"]:
         day = date.fromisoformat(case["date"])
         expected = bool(case["expected_session"])
-        observed[day] = calendar.is_trading_day(day)
-        assert observed[day] is expected
+        raw_engine_result = raw_engine_calendar.is_trading_day(day)
+        final_result = final_calendar.is_trading_day(day)
+
+        if case["resolution"] == "engine":
+            assert raw_engine_result is expected
+        else:
+            assert case["resolution"] == "override"
+            assert raw_engine_result is not expected
+            assert day in PRODUCTION_OVERRIDES
+        assert final_result is expected
         assert case["retrieval_date"] == "2026-08-11"
         assert case["sources"]
         assert case["evidence_note"]
