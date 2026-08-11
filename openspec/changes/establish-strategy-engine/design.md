@@ -114,8 +114,6 @@ Test-only strategies and fixture market-data adapters stay under `tests/`; they 
 
 **Why:** this keeps the common behavioral contract reusable while allowing future live providers, strategy implementations, and execution simulation to attach at explicit boundaries.
 
-**Alternative rejected:** one large Decision/Backtest module containing config lookup, data fetching, indicators, strategy rules, and output generation. It would make Decision/Backtest equivalence difficult to guarantee and would encourage execution logic to leak into strategy evaluation.
-
 ### 2. Represent core values as immutable typed domain models
 
 Core domain values will use typed immutable Python models, preferably frozen dataclasses plus enums/protocols in the framework core. Strategy-specific parameter models may use their own typed validation model behind the Strategy contract.
@@ -123,8 +121,11 @@ Core domain values will use typed immutable Python models, preferably frozen dat
 Key domain contracts:
 
 ```text
+DataFrequency
+└── DAILY
+
 DataRequirement
-├── frequency
+├── frequency: DAILY
 ├── required_fields
 └── minimum_history
 
@@ -151,6 +152,8 @@ MarketState
 └── REVERSAL_RISK
 ```
 
+This change intentionally supports only completed daily Strategy data. Additional frequencies require a later contract change rather than a generic string value that the data model cannot actually support.
+
 `StrategyContext` contains no position, cost, cash, execution state, benchmark, or previous strategy runtime state.
 
 Entry and exit are intentionally asymmetric:
@@ -166,8 +169,6 @@ ExitPlan
 ```
 
 A fixed profit target is not required.
-
-**Why:** immutable explicit inputs make reproducibility and hidden-state testing straightforward.
 
 ### 3. Strategy is a stateless contract resolved from code
 
@@ -185,13 +186,11 @@ A strategy-specific parameter validator is owned by the strategy implementation.
 
 A reusable Strategy Contract Test suite will verify future production strategies for:
 
-- declared data requirements;
+- `DAILY` data requirements with explicit required fields and minimum history;
 - deterministic evaluation for equivalent inputs;
 - no dependence on real portfolio/execution state;
 - valid common MarketState values;
 - StrategyResult identity/as-of consistency.
-
-**Why:** Decision and Backtest can call the same contract without requiring a framework-level voting, hybrid, or strategy-specific abstraction.
 
 ### 4. Separate three registries and produce one immutable resolved configuration
 
@@ -208,7 +207,7 @@ Code Strategy Registry
   strategy id -> Strategy implementation
 ```
 
-The default repository-backed configuration adapters may use human-readable YAML files, while application code depends only on registry interfaces. A future private/external configuration adapter can replace them without changing resolver behavior.
+The first repository-backed configuration adapters **will use human-readable YAML files** for instrument assignments and parameter sets. Application code depends only on registry interfaces, so a future private/external configuration adapter can replace YAML without changing resolver behavior.
 
 Resolution order:
 
@@ -233,7 +232,9 @@ resolved_parameters
 git_sha
 ```
 
-Failure mapping:
+`resolved_parameters` is an internal execution input and diagnostic value. It is not a mandatory public artifact field in this change; `parameter_set + git_sha` identifies the versioned parameter definition used by a public result.
+
+Configuration failure codes include:
 
 ```text
 CONFIGURATION_FAILED
@@ -243,12 +244,11 @@ CONFIGURATION_FAILED
 ├── PARAMETER_SET_NOT_FOUND
 ├── STRATEGY_PARAMETER_MISMATCH
 ├── INVALID_STRATEGY_PARAMETERS
-└── INVALID_AS_OF
+├── INVALID_AS_OF
+└── INVALID_BACKTEST_RANGE
 ```
 
 A configuration failure terminates the application flow before market-data loading.
-
-**Why:** this makes formal assignment, research overrides, and reproducibility explicit while keeping strategy code separate from parameter data.
 
 ### 5. Normalize first, validate the normalized completed-daily series second
 
@@ -267,7 +267,7 @@ Normalization may reorder reverse-chronological provider data. Validation applie
 - freshness relative to the resolved formal evaluation date;
 - minimum-history eligibility.
 
-Formal failures use:
+Formal data failure codes include:
 
 ```text
 DATA_FAILED
@@ -281,9 +281,7 @@ DATA_FAILED
 └── VALIDATION_ERROR
 ```
 
-`VALIDATION_ERROR` is the stable fallback code for structural failures whose specs do not assign a more specific code, such as a negative volume value or an un-normalizable timestamp. Detailed validation diagnostics remain available without expanding the stable failure taxonomy for every field-level case.
-
-**Why:** provider ordering is an adapter concern; invalid normalized data is a domain/application failure and must never become `NEUTRAL`.
+`VALIDATION_ERROR` is the stable fallback code for structural failures whose specs do not assign a more specific code, including negative volume and an un-normalizable timestamp. Detailed diagnostics may still identify the field-level cause.
 
 ### 6. Make trading time an injected dependency
 
@@ -312,9 +310,7 @@ omitted as_of                 -> latest completed trading date
 future date                   -> CONFIGURATION_FAILED / INVALID_AS_OF
 ```
 
-The application output preserves `requested_as_of` separately when the caller supplied a date and resolution changed it.
-
-**Why:** deterministic tests can freeze time/calendar behavior, and session-completion semantics remain separate from provider data.
+When the caller explicitly supplies `as_of`, the public Decision artifact preserves `requested_as_of` as well as `resolved_as_of`.
 
 ### 7. Keep formal historical data and intraday snapshot in separate channels
 
@@ -333,9 +329,9 @@ IntradaySnapshot (optional)
 
 The Strategy receives only `FormalMarketData` bounded by `resolved_as_of`.
 
-After a successful formal Decision, an optional `IntradayOverlayBuilder` may compare a valid current snapshot with existing analytical entry/exit levels. The framework may report direct deterministic relationships such as `ABOVE_LEVEL` or `AT_OR_BELOW_LEVEL`. It does not invent a framework-level `NEAR` threshold; proximity semantics require an explicitly defined future rule or strategy-provided tolerance.
+After a successful formal Decision, an optional `IntradayOverlayBuilder` may compare a valid current snapshot with existing analytical entry/exit levels. The framework may report direct deterministic relationships such as `ABOVE_LEVEL` or `AT_OR_BELOW_LEVEL`.
 
-The overlay cannot:
+The framework does not infer `NEAR` unless a future explicit tolerance rule is defined. It also cannot:
 
 - mutate StrategyResult;
 - recalculate formal indicators/model state;
@@ -343,8 +339,6 @@ The overlay cannot:
 - claim a price was touched earlier in the day when no intraday history is available.
 
 Snapshot acquisition/validation is best-effort. If formal data and strategy evaluation succeed but the optional snapshot is unavailable or invalid, Decision remains successful and the overlay is omitted or marked unavailable.
-
-**Why:** this preserves formal reproducibility while still making current open/latest information useful during the session.
 
 ### 8. Decision is a thin application service around the common evaluator
 
@@ -384,13 +378,11 @@ build formal Decision artifact
           build observational overlay
 ```
 
-Research strategy/parameter overrides are rejected at the Decision boundary.
-
-A successful Decision contains one formal StrategyResult. A failed Decision contains no valid market state or plan.
+Research strategy/parameter overrides are rejected at the Decision boundary. A successful Decision contains one formal StrategyResult. A failed Decision contains no valid market state or plan.
 
 ### 9. Analytical Backtest is chronological replay of the same evaluator
 
-Backtest accepts a requested range plus an assignment mode:
+Backtest accepts:
 
 ```text
 symbol
@@ -401,9 +393,28 @@ start_date
 end_date
 ```
 
+Range semantics are intentionally different from Decision `as_of` resolution:
+
+```text
+[start_date, end_date] inclusive calendar interval
+        ↓
+completed trading days inside the interval
+        ↓
+chronological evaluation points
+```
+
+Rules:
+
+- `start_date > end_date` -> `CONFIGURATION_FAILED / INVALID_BACKTEST_RANGE`.
+- a future `end_date` -> `CONFIGURATION_FAILED / INVALID_BACKTEST_RANGE` rather than truncation.
+- non-trading endpoints are legal and are not clamped outside the interval.
+- an incomplete current trading day inside the interval is not an evaluation point.
+- an interval containing no completed trading day -> `CONFIGURATION_FAILED / INVALID_BACKTEST_RANGE`.
+- an interval with completed trading days that all lack minimum history reaches WARMUP processing and ultimately fails with `DATA_FAILED / INSUFFICIENT_HISTORY` if zero dates become eligible.
+
 The Backtest application resolves configuration once before loading data. In `ACTIVE`, an active assignment is required. In `EXPLICIT`, a complete compatible strategy+parameter-set pair is required and the instrument does not need an active assignment.
 
-The loader may include pre-roll observations before `start_date`. For each requested trading date T, the evaluator receives a bounded historical view ending at T.
+The loader may include pre-roll observations before `start_date`. For each completed requested trading date T, the evaluator receives a bounded historical view ending at T.
 
 ```text
 pre-roll history -----------------------+
@@ -421,20 +432,11 @@ requested range: T1 -> T2 -> ... -> Tn |
                     StrategyResult
 ```
 
-Rules:
-
-- WARMUP is valid-but-ineligible and produces no StrategyResult.
-- Invalid required data fails the Backtest; it is not skipped.
-- Strategy failure at an eligible date is fail-fast.
-- A range with zero eligible dates fails with `DATA_FAILED / INSUFFICIENT_HISTORY`.
-- A successful Backtest contains at least one StrategyResult.
-- No fills, positions, cash, PnL, or execution-derived metrics are created.
-
-**Why:** this gives analytical replay and Decision equivalent semantics while leaving execution interpretation to a future simulator.
+Invalid required data fails the Backtest rather than being skipped. Strategy failure at an eligible date is fail-fast. A successful Backtest contains at least one StrategyResult and creates no fills, positions, cash, PnL, or execution-derived metrics.
 
 ### 10. Use one stable application failure envelope
 
-Both Decision and Backtest artifacts use the same top-level failure model:
+Both Decision and Backtest artifacts use the same canonical application status and failure model:
 
 ```text
 status = SUCCESS | FAILED
@@ -445,11 +447,11 @@ failure? =
 └── reason: human-readable reason
 ```
 
-A failed artifact contains no valid StrategyResult represented as successful output. Backtest may retain failure diagnostics, but a partial timeline is never labeled successful.
+`CONFIGURATION_FAILED`, `DATA_FAILED`, and `STRATEGY_FAILED` are failure categories, not top-level artifact status values.
+
+A failed artifact contains no valid StrategyResult represented as successful output. Backtest may retain diagnostics about where failure occurred, but a partial timeline is never labeled successful.
 
 Strategy-specific internal failures may map to `STRATEGY_FAILED` with a strategy-owned machine-readable code. The common framework does not predefine production model/feature failure codes in this change.
-
-**Why:** applications can expose consistent error semantics without conflating framework failures with strategy-specific details.
 
 ### 11. Artifact schemas are explicit and strategy-neutral
 
@@ -459,11 +461,10 @@ Decision artifact conceptual shape:
 DecisionArtifact
 ├── status
 ├── instrument
-├── requested_as_of?
-├── resolved_as_of?
+├── requested_as_of?       # present when caller explicitly supplied as_of
+├── resolved_as_of?        # present once date resolution succeeded
 ├── strategy?              # absent when resolution never reached it
 ├── parameter_set?         # absent when resolution never reached it
-├── resolved_parameters?   # success or post-resolution failure only
 ├── git_sha
 ├── data_quality?
 ├── strategy_result?       # success only
@@ -481,17 +482,16 @@ AnalyticalBacktestArtifact
 ├── assignment_mode
 ├── strategy?              # absent when resolution never reached it
 ├── parameter_set?         # absent when resolution never reached it
-├── resolved_parameters?   # success or post-resolution failure only
 ├── git_sha
 ├── start_date
 ├── end_date
 ├── validation_status?
-├── timeline[]?            # success; may contain WARMUP markers and eligible StrategyResults
+├── timeline[]?            # success; WARMUP or eligible StrategyResult entries
 ├── failure?               # failure only
 └── disclaimer
 ```
 
-Artifact builders preserve whatever requested/resolved identity is actually known at the failure point, but they never fabricate strategy or parameter metadata after an early configuration failure.
+Artifact builders preserve only identity actually known at the failure point and never fabricate unresolved strategy or parameter metadata. Public artifacts do not require a duplicate `resolved_parameters` payload; the versioned `parameter_set + git_sha` pair is the public reproducibility reference.
 
 The exact public disclaimer value is a shared constant at the artifact boundary:
 
@@ -501,19 +501,15 @@ The exact public disclaimer value is a shared constant at the artifact boundary:
 
 Artifacts are serialized as JSON for machine-readable GitHub Actions output.
 
-**Why:** artifacts remain stable across strategy implementations and are easy to validate in behavioral tests.
-
 ### 12. Keep GitHub Actions thin and defer live composition
 
 The existing workflows are orchestration scaffolds. They must not contain strategy rules.
 
-This change will align their wording and request contracts with analytical Decision/Backtest semantics, but live workflow composition remains dependent on later concrete market-data/provider configuration and at least one production strategy implementation.
+This change will align request examples, README examples, and workflow wording with analytical Decision/Backtest semantics, but live workflow composition remains dependent on later concrete market-data/provider configuration and at least one production strategy implementation.
 
 The obsolete Backtest placeholder text referring to fill simulation must be removed. Generated results remain Actions Artifacts and are not committed back to the repository.
 
-**Why:** implementing a fake live provider or fake production strategy merely to make the workflows appear complete would violate the approved scope.
-
-### 13. Test outside-in with vertical slices
+### 13. Test outside-in with vertical slices and explicit provenance
 
 Tests are organized around observable application behavior rather than one test file per class.
 
@@ -531,7 +527,7 @@ contract tests
         |
 focused unit tests
         +-- normalization/validation
-        +-- as_of resolution
+        +-- as_of and range resolution
         +-- intraday overlay comparisons
 ```
 
@@ -547,6 +543,18 @@ RED behavioral test
 -> full pytest + ruff + mypy verification
 ```
 
+Traceability uses two legitimate provenance paths:
+
+```text
+Behavior / Product
+proposal -> capability spec -> design -> task
+
+Engineering / Governance
+openspec/config.yaml -> design/testing rule -> task
+```
+
+Lint, type checks, strict OpenSpec validation, and similar governance work therefore do not require artificial capability requirements.
+
 Tooling baseline:
 
 ```text
@@ -561,15 +569,15 @@ mypy src tests
 
 ### Risk: framework abstractions become too generic before real strategies exist
 
-Mitigation: keep only abstractions required by the four approved capabilities. Strategy-specific indicators, pattern types, forecast models, and hybrid semantics remain outside the common framework until a production strategy requires them.
+Mitigation: support only DAILY formal data in this change and keep strategy-specific indicators, pattern types, forecast models, and hybrid semantics outside the common framework until a production strategy requires them.
 
 ### Risk: YAML configuration becomes coupled to domain behavior
 
-Mitigation: YAML is only a repository adapter. Resolver/application code consumes registry interfaces and immutable resolved values, allowing future private or external storage without changing semantics.
+Mitigation: YAML is the first repository adapter, not the domain contract. Resolver/application code consumes registry interfaces and immutable resolved values, allowing future private or external storage without changing semantics.
 
 ### Risk: intraday overlay is mistaken for a new trading signal
 
-Mitigation: place it outside StrategyResult, prohibit formal recalculation, use observational terminology, avoid implicit proximity thresholds, and make snapshot failure non-fatal to the formal Decision.
+Mitigation: place it outside StrategyResult, prohibit formal recalculation, use observational terminology, prohibit implicit `NEAR` without a defined tolerance, and make snapshot failure non-fatal to the formal Decision.
 
 ### Risk: analytical Backtest is mistaken for execution performance
 
@@ -579,9 +587,9 @@ Mitigation: name the capability and artifacts `analytical-backtest`, include Str
 
 Mitigation: inject `TradingCalendar` and timezone-aware `Clock`; this change defines their required behavior but not a concrete exchange-calendar provider.
 
-### Risk: public artifacts expose research configuration/results
+### Risk: public artifact reproducibility is duplicated across fields
 
-Mitigation: artifacts include the required disclaimer and no personal portfolio state. Configuration storage remains adapter-based so a future private execution arrangement can replace repository-backed adapters if desired.
+Mitigation: keep resolved parameter values internal and use versioned `parameter_set + git_sha` as the public parameter-definition reference.
 
 ## Migration Plan
 
@@ -591,12 +599,12 @@ Implementation should proceed incrementally:
 
 1. Add Python project/test tooling needed for the first behavioral slice.
 2. Introduce the minimum domain/application contracts needed to make a Decision walking-skeleton test pass.
-3. Add configuration resolution and formal data validation behaviors.
+3. Add YAML-backed configuration resolution and formal daily data validation behaviors.
 4. Add `as_of` and optional intraday overlay behavior.
-5. Add analytical Backtest replay, assignment modes, warm-up, and failure behavior.
+5. Add analytical Backtest range validation, replay, assignment modes, warm-up, and failure behavior.
 6. Add traceable artifact serialization and fixed disclaimer tests.
-7. Align request examples and workflow scaffold wording with the new analytical contracts.
-8. Run full regression, lint/format/type checks, and OpenSpec traceability verification.
+7. Align README, request examples, and workflow scaffold wording with the approved analytical contracts.
+8. Run full regression, lint/format/type checks, strict OpenSpec validation, and traceability verification.
 
 No generated analytical result is committed to the repository during this migration.
 
