@@ -39,9 +39,10 @@ class DecisionService:
         now = self._clock.now()
         try:
             resolved_as_of = resolve_decision_as_of(request.as_of, now=now, calendar=self._calendar)
+            market_instrument = self._resolver.resolve_market_data_instrument(request.symbol)
             strategy, config = self._resolver.resolve_active(request.symbol)
             requirement = strategy.requirements()
-            bars = prepare_bars(self._market_data, request.symbol, through=resolved_as_of)
+            bars = prepare_bars(self._market_data, market_instrument, through=resolved_as_of)
             validate_continuity_and_freshness(
                 bars,
                 calendar=self._calendar,

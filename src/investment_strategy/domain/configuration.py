@@ -12,9 +12,16 @@ class ActiveAssignment:
 
 
 @dataclass(frozen=True, slots=True)
+class MarketDataInstrument:
+    symbol: str
+    listing_venue: str
+
+
+@dataclass(frozen=True, slots=True)
 class InstrumentConfig:
     symbol: str
     active: ActiveAssignment | None = None
+    listing_venue: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

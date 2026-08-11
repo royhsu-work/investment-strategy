@@ -56,6 +56,7 @@ class BacktestService:
     def run(self, request: BacktestRequest) -> dict[str, Any]:
         try:
             evaluation_dates = self._evaluation_dates(request)
+            market_instrument = self._resolver.resolve_market_data_instrument(request.symbol)
             if request.mode is AssignmentMode.ACTIVE:
                 strategy, config = self._resolver.resolve_active(request.symbol)
             else:
@@ -69,7 +70,7 @@ class BacktestService:
 
             requirement = strategy.requirements()
             last_evaluation = evaluation_dates[-1]
-            bars = prepare_bars(self._market_data, request.symbol, through=last_evaluation)
+            bars = prepare_bars(self._market_data, market_instrument, through=last_evaluation)
             validate_continuity_and_freshness(
                 bars,
                 calendar=self._calendar,
