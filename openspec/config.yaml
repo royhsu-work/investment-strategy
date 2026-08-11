@@ -23,7 +23,7 @@ rules:
     - Give every requirement at least one GIVEN/WHEN/THEN scenario using the OpenSpec scenario format.
     - Make information timing explicit whenever market data, as-of dates, or historical replay are involved.
     - Distinguish valid neutral strategy outcomes from configuration, data, or strategy failures.
-    - Require every public Decision and analytical Backtest artifact to contain exactly this disclaimer: 僅為個人研究與策略驗證，不構成任何形式之投資建議。
+    - "Require every public Decision and analytical Backtest artifact to contain exactly this disclaimer: 僅為個人研究與策略驗證，不構成任何形式之投資建議。"
 
   design:
     - Trace major design decisions to requirements and call out trade-offs and deferred decisions.
