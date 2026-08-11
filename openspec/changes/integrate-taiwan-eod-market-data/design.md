@@ -15,7 +15,7 @@ The approved proposal/specifications constrain this change to facts that have al
 - provider acquisition breadth must not silently become a full-instrument-lifetime continuity requirement;
 - Strategy-specific history-window/lookback policy remains outside this change;
 - Taiwan market-date/session semantics must be timezone-aware and exchange-session-aware;
-- calendar knowledge that cannot be established within supported coverage must fail explicitly rather than being misclassified as missing market data;
+- calendar dates that the configured engine cannot establish must fail explicitly rather than being misclassified as missing market data;
 - existing normalization, structural validation, freshness, no-look-ahead, minimum-history, and Backtest WARMUP semantics remain authoritative.
 
 The implementation remains Python 3.11+, typed, dependency-inverted, and testable without requiring live network access in the default test suite.
@@ -31,7 +31,7 @@ The implementation remains Python 3.11+, typed, dependency-inverted, and testabl
 - Preserve reported EOD OHLCV rather than provider-transformed price history.
 - Prevent provider fetch breadth from defining continuity-validation scope.
 - Provide Taiwan regular-securities trading-session behavior for TWSE and TPEx-listed instruments.
-- Make unsupported/unverified calendar coverage an explicit data failure.
+- Make calendar-engine unsupported dates an explicit data failure.
 - Preserve existing Decision/Backtest public request and artifact contracts.
 - Keep default automated tests deterministic and independent of live provider availability.
 
@@ -47,6 +47,8 @@ The implementation remains Python 3.11+, typed, dependency-inverted, and testabl
 - Raw provider-data publication.
 - Production GitHub Actions activation.
 - Execution/fill/portfolio simulation.
+- Maintaining a repository copy of every historical Taiwan trading session.
+- Automatically discovering future or newly announced exchange-calendar changes.
 - TPEx International Bond Market or Emerging Stock Board session semantics; `TPEX` in this change refers to regular listed securities/ETF EOD data compatible with the common daily-OHLCV strategy contract.
 
 ## Decisions
@@ -220,7 +222,7 @@ Missing/invalid candidate fields remain visible to the existing normalization an
 
 Application code continues to depend only on `TradingCalendar`.
 
-The first implementation uses `exchange_calendars` XTAI as a session engine for Taiwan regular-securities dates and keeps the dependency inside infrastructure. TWSE and TPEx regular listed-securities/ETF evaluation share this behavior in this change, guarded by deterministic official-schedule regression fixtures for both venues.
+The first implementation uses a pinned `exchange_calendars` XTAI calendar as the session engine for Taiwan regular-securities dates and keeps the dependency inside infrastructure. TWSE and TPEx regular listed-securities/ETF evaluation share this behavior in this change, guarded by deterministic official-schedule regression fixtures for both venues.
 
 The adapter owns `Asia/Taipei` market timezone behavior.
 
@@ -235,39 +237,49 @@ Regression fixtures cover at least:
 
 If later evidence proves TWSE and TPEx regular-session calendars diverge materially, a later change can route venue-specific calendar implementations without changing Strategy.
 
-### 7. Calendar knowledge is bounded and fails closed outside supported coverage
+### 7. Calendar support follows the configured engine's actual supported range
 
-The calendar adapter must distinguish:
+This change does not hard-code a separate earliest or latest calendar date and does not maintain a duplicate official calendar for every session.
 
-```text
-known session answer
-vs
-session status cannot be established reliably
-```
-
-The adapter exposes/owns a supported coverage boundary derived from the selected calendar engine plus repository-maintained verified corrections. A requested date outside that supported coverage does not fall back to weekday logic.
-
-Failure behavior:
+The supported coverage rule is:
 
 ```text
-calendar status unavailable / outside supported coverage
+configured pinned calendar engine can establish session status
+  -> supported calendar date
+
+configured calendar engine cannot establish session status
+because the date is outside its supported bounds or the engine cannot answer
   -> DATA_FAILED / CALENDAR_UNAVAILABLE
 ```
 
-This failure occurs before `DATA_GAP` or `STALE_DATA` because those codes require reliable knowledge that a session was expected.
+The adapter may expose or inspect the selected engine's actual session bounds as an infrastructure detail, but those concrete dates are not part of the public Strategy/Decision/Backtest contract.
 
-Within supported coverage, the configured calendar engine plus repository explicit overrides are authoritative for this application. A newly declared exceptional closure/session that is not represented must be added as a verified override before the affected date is treated as verified calendar truth.
+`CALENDAR_UNAVAILABLE` occurs before `DATA_GAP` or `STALE_DATA`, because those market-data failures require a reliable calendar answer that a session was expected.
 
-Overrides are **sparse and discrepancy-driven**:
+Existing application request policy already rejects future Decision/Backtest evaluation dates. Therefore this change does not define a future-calendar promise or require the adapter to certify sessions beyond an accepted current/historical evaluation.
 
-- no duplicate full historical calendar is maintained;
-- add an override only when an officially verified TWSE/TPEx regular-market fact differs from the selected calendar engine or is not representable by it;
-- every override must identify the affected date and expected open/closed session truth in test fixtures or equivalent repository evidence;
-- Task implementation is not required to recreate the entire historical range returned by `period=max`.
+### 8. Official evidence is used for regression and real corrections, not per-date certification
 
-### 8. Use a conservative current-day completion boundary
+Within the configured engine's supported range, the engine is the initial session source for application behavior. The repository does not require official evidence for every individual date merely to use that supported engine answer.
 
-Formal EOD eligibility must never include an in-progress session. Taiwan regular trading normally closes at 13:30, while closing matching can be postponed for affected securities. The calendar adapter treats the current Taiwan trading date as formally complete only after 13:33 Asia/Taipei.
+Official TWSE/TPEx regular-market evidence is required for:
+
+- representative deterministic regression fixtures used to validate the chosen engine for this project;
+- any production override added because an actual engine-versus-official discrepancy is identified.
+
+Overrides remain sparse and discrepancy-driven:
+
+- do not duplicate the full historical calendar;
+- do not add an override when the engine already matches the verified fixture;
+- if a real discrepancy is identified, add only the affected date(s) with deterministic evidence of expected open/closed truth;
+- the override mechanism and precedence behavior must be testable even when this implementation finds no real discrepancy;
+- no production override entry is required solely to satisfy the task when no actual discrepancy is found.
+
+A newly announced exceptional closure/session that has not yet reached the pinned engine or repository corrections is not automatically discoverable by this offline calendar adapter. Once such a discrepancy is known and relevant to supported evaluation, dependency update or an explicit verified override is the maintenance path.
+
+### 9. Use a conservative current-day completion boundary
+
+Formal EOD eligibility must never include an in-progress session. The calendar adapter treats the current Taiwan trading date as formally complete only after 13:33 Asia/Taipei.
 
 This only establishes calendar eligibility. It does not claim provider EOD data is already published.
 
@@ -279,7 +291,7 @@ provider still ends at T-1
 
 The application never moves `resolved_as_of` backward to match provider availability.
 
-### 9. Keep calendar source and market-data source independent
+### 10. Keep calendar source and market-data source independent
 
 ```text
 MarketDataGateway
@@ -291,9 +303,9 @@ TradingCalendar
 
 Provider-returned dates do not define exchange sessions. The calendar does not synthesize market-data observations.
 
-Only when session knowledge is reliable may missing provider observations become `DATA_GAP` or `STALE_DATA`.
+Only when session knowledge is available from the configured calendar source may missing provider observations become `DATA_GAP` or `STALE_DATA`.
 
-### 10. Default tests are offline and external availability is not a correctness oracle
+### 11. Default tests are offline and external availability is not a correctness oracle
 
 Default tests use:
 
@@ -308,7 +320,7 @@ contract/behavior tests
 
 Optional/manual smoke verification may call the real external provider, but default `pytest` must not depend on Yahoo/TWSE/TPEx network availability.
 
-### 11. Do not activate public Decision/Backtest workflows yet
+### 12. Do not activate public Decision/Backtest workflows yet
 
 The repository still has no production strategy assignment. This change makes the concrete EOD adapter/calendar composable but leaves Decision/Backtest workflows as scaffolds.
 
@@ -324,12 +336,13 @@ No real active strategy assignment is added to `config/instruments.yaml`.
 | Reported unadjusted price basis | 3, 5 |
 | Provider breadth does not define continuity scope | 3–4 |
 | Strategy-specific history policy remains separate | 4 |
-| Taiwan timezone / completed session | 6, 8 |
-| Actual sessions / holidays / additional sessions / closures | 6–9 |
-| Calendar unsupported coverage / `CALENDAR_UNAVAILABLE` | 7, 9 |
-| Existing `DATA_UNAVAILABLE` / `STALE_DATA` semantics | 3, 5, 8–9 |
+| Taiwan timezone / completed session | 6, 9 |
+| Actual sessions / holidays / additional sessions / closures | 6, 8–10 |
+| Calendar unsupported coverage / `CALENDAR_UNAVAILABLE` | 7, 10 |
+| Official regression evidence / sparse corrections | 6, 8 |
+| Existing `DATA_UNAVAILABLE` / `STALE_DATA` semantics | 3, 5, 9–10 |
 | No provider SDK leakage | 1–3 |
-| No production workflow activation | 11 |
+| No production workflow activation | 12 |
 
 ## Risks / Trade-offs
 
@@ -341,9 +354,9 @@ Provider outages/schema changes remain possible. Isolation behind `MarketDataGat
 
 This is accepted for the current small research scope. The extra data is acquisition breadth only and must not expand continuity requirements. Ranged acquisition or caching can be proposed later if scale justifies it.
 
-### Calendar maintenance is explicit
+### Calendar correctness depends on the pinned engine plus sparse project corrections
 
-A third-party calendar engine can be stale or have unsupported dates. This design prefers explicit `CALENDAR_UNAVAILABLE` outside supported knowledge and sparse verified corrections over silently inventing session truth. The cost is occasional maintenance of supported coverage/overrides.
+The project does not duplicate or independently certify every historical session. Representative official fixtures detect important incompatibilities, and confirmed discrepancies can be corrected explicitly. The trade-off is that a newly announced or previously unknown calendar discrepancy may require a dependency update or repository override once discovered.
 
 ### Shared regular-securities calendar behavior may eventually diverge by venue
 
@@ -360,6 +373,7 @@ This is deliberate. Any future analytical adjustment methodology must be specifi
 - Provider fallback or authoritative price reconciliation.
 - Persistent cache/database and ranged acquisition.
 - Venue-specific calendar divergence if future evidence requires it.
+- Automatic ingestion of newly announced exchange-calendar changes.
 - Production workflow activation.
 - Production strategy assignment.
 - Execution simulation.
