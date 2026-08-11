@@ -112,13 +112,12 @@ class TaiwanTradingCalendar:
         return tuple(sorted(engine_days))
 
     def is_session_complete(self, day: date, now: datetime) -> bool:
-        self._ensure_supported(day)
+        if not self.is_trading_day(day):
+            return False
         today = self.market_date(now)
         if day < today:
             return True
         if day > today:
-            return False
-        if not self.is_trading_day(day):
             return False
         local_now = now.astimezone(TAIPEI)
         return local_now.time().replace(tzinfo=None) >= COMPLETION_TIME
