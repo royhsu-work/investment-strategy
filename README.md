@@ -2,6 +2,11 @@
 
 以歷史市場資料產生交易計畫，並使用相同策略核心進行歷史回測。
 
+本專案的開發與執行方式：
+
+- **AI-assisted development**：使用 ChatGPT Chat / Work，並依循 OpenSpec 流程進行規格驅動的 AI-assisted development。
+- **Serverless-style execution**：以 GitHub Actions 執行事件或排程觸發的 Decision、Backtest 與驗證工作，無需維運常駐伺服器。
+
 本專案以三個 GitHub Actions Workflow 分工：
 
 - `decision.yml`：依最新完整歷史資料判定位階，計算當日買點 / 賣點並輸出交易計畫。
@@ -436,9 +441,9 @@ archive
 
 ```text
 /opsx:new <change>
-/opsx:ff
-/opsx:apply
-/opsx:archive
+/opsx/ff
+/opsx/apply
+/opsx/archive
 ```
 
 任何 `openspec/**` 變更都會由 `openspec-validate.yml` 自動執行 strict validation。CI 驗證通過不取代人工的 proposal/specs/design/tasks traceability review；change 在實作完成並準備宣告完成前，仍應再次確認 strict validation 為綠燈。
