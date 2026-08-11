@@ -95,7 +95,11 @@ def _load_change_progress(list_file: Path, change: str) -> tuple[str, int, int]:
     if not isinstance(changes, list):
         _fail("OpenSpec list JSON must contain a changes array")
 
-    matches = [entry for entry in changes if isinstance(entry, dict) and entry.get("name") == change]
+    matches = [
+        entry
+        for entry in changes
+        if isinstance(entry, dict) and entry.get("name") == change
+    ]
     if len(matches) != 1:
         _fail(f"Change {change} not present in OpenSpec active change list")
 
