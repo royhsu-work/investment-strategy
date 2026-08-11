@@ -82,26 +82,67 @@ The system SHALL determine Taiwan trading days from exchange-session information
 - WHEN trading-day eligibility is evaluated
 - THEN the date is not treated as a completed trading session
 
-### Requirement: Calendar knowledge has an explicit supported boundary
+### Requirement: Calendar knowledge follows the configured engine's supported coverage
 
-The system SHALL distinguish a known exchange-session answer from a date whose session status cannot be established reliably by the configured calendar implementation.
+The system SHALL distinguish dates for which the configured Taiwan calendar engine can establish session status from dates outside or unavailable to that engine's supported coverage.
 
-#### Scenario: Requested date is outside supported calendar coverage
+#### Scenario: Required date is supported by the configured calendar engine
 
 - GIVEN an accepted Decision or Backtest evaluation requires Taiwan session knowledge for date T
-- AND the configured Taiwan calendar implementation cannot establish session status for T within its supported coverage
+- AND the configured calendar engine can establish session status for T
+- WHEN calendar-dependent evaluation is performed
+- THEN T is within supported calendar coverage
+- AND no separate per-date official verification is required solely to use the engine's session answer
+
+#### Scenario: Required date is outside or unavailable to the configured calendar engine
+
+- GIVEN an accepted Decision or Backtest evaluation requires Taiwan session knowledge for date T
+- AND the configured calendar engine cannot establish session status for T because T is outside its supported bounds or the engine cannot provide a session answer
 - WHEN calendar-dependent evaluation is attempted
 - THEN evaluation fails with `DATA_FAILED`
 - AND the failure code is `CALENDAR_UNAVAILABLE`
 - AND the system does not assume T is a trading day or non-trading day
 - AND missing market data for T is not misclassified as `DATA_GAP` or `STALE_DATA`
 
-#### Scenario: Calendar engine has a known incorrect session that is covered by an explicit override
+### Requirement: Official verification is required for regression evidence and production overrides, not every supported engine date
 
-- GIVEN the underlying calendar engine disagrees with an officially verified Taiwan regular-market session fact
-- AND the repository contains an explicit override for that known discrepancy
-- WHEN session status is evaluated
-- THEN the explicit verified override takes precedence for that date
+The system SHALL use official TWSE/TPEx regular-market evidence for representative regression fixtures and for any repository-maintained production override, without requiring a duplicate officially enumerated calendar for every date supported by the configured engine.
+
+#### Scenario: Calendar engine matches an officially verified regression date
+
+- GIVEN a representative TWSE or TPEx regular-market date has official evidence for its expected session status
+- AND the configured calendar engine returns the same status
+- WHEN the regression test runs
+- THEN the engine behavior is accepted for that fixture
+- AND no production override entry is required
+
+#### Scenario: Calendar engine has a verified discrepancy
+
+- GIVEN official TWSE or TPEx regular-market evidence establishes the expected session status for date T
+- AND the configured calendar engine returns a different status for T
+- WHEN repository calendar corrections are applied
+- THEN a sparse explicit override for T MAY be added
+- AND that override takes precedence over the engine for T
+- AND the override records the expected open/closed truth in deterministic repository test evidence
+
+#### Scenario: No real discrepancy is identified during this change
+
+- GIVEN the implementation verifies the required representative regression fixtures
+- AND no real engine-versus-official discrepancy requiring correction is identified
+- WHEN the Taiwan calendar adapter is completed
+- THEN the override mechanism and precedence behavior are still testable with deterministic fixture data
+- AND no production override entry is required solely to satisfy this change
+
+### Requirement: Future calendar truth is not promised by this EOD capability
+
+The system SHALL NOT claim automatic knowledge of future or newly announced exchange-calendar changes beyond the configured calendar engine and explicit repository corrections.
+
+#### Scenario: Request is for a future evaluation date
+
+- GIVEN an accepted application policy rejects future Decision or Backtest evaluation dates
+- WHEN such a future request is submitted
+- THEN existing request/application date-validation semantics apply
+- AND the Taiwan calendar adapter is not required to guarantee future exchange-session truth for that request
 
 ### Requirement: Completed-session semantics drive latest EOD eligibility
 
