@@ -41,6 +41,30 @@ The system SHALL support `TWSE` and `TPEX` as provider-neutral listing-venue ide
 - THEN its listing venue can be represented as `TPEX`
 - AND no provider-specific ticker suffix is required in the canonical symbol
 
+### Requirement: Listing venue is resolved before market-data loading
+
+The system SHALL resolve and validate the configured listing venue before formal market-data loading begins.
+
+#### Scenario: Listing venue is missing
+
+- GIVEN an accepted Decision or Backtest request for a configured instrument
+- AND the instrument has no listing venue configured
+- WHEN configuration resolution runs
+- THEN evaluation fails with `CONFIGURATION_FAILED`
+- AND the failure code is `LISTING_VENUE_NOT_CONFIGURED`
+- AND market-data loading does not run
+- AND strategy evaluation does not run
+
+#### Scenario: Listing venue is unsupported
+
+- GIVEN an accepted Decision or Backtest request for a configured instrument
+- AND its configured listing venue is not supported by the current Taiwan EOD capability
+- WHEN configuration resolution runs
+- THEN evaluation fails with `CONFIGURATION_FAILED`
+- AND the failure code is `UNSUPPORTED_LISTING_VENUE`
+- AND market-data loading does not run
+- AND strategy evaluation does not run
+
 ### Requirement: Listing venue is independent of strategy assignment
 
 The system SHALL keep instrument listing-venue identity independent of active strategy assignment and research parameter selection.
