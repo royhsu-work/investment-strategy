@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import date
 from typing import Any
 
 import pytest
@@ -70,19 +71,19 @@ def test_provider_ticker_mapping_is_adapter_only(
     )
 
 
-def test_reported_daily_history_options_are_explicit_and_adjusted_fields_are_ignored() -> None:
+def test_source_native_daily_history_is_passed_through_without_adapter_transformation() -> None:
     loader = CapturingLoader(
         FakeFrame(
             [
                 (
                     "2026-08-10",
                     {
-                        "Open": 10,
-                        "High": 11,
-                        "Low": 9,
-                        "Close": 10.5,
-                        "Adj Close": 99,
-                        "Volume": 100,
+                        "Open": 10.125,
+                        "High": 11.375,
+                        "Low": 9.625,
+                        "Close": 10.875,
+                        "Adj Close": 99.0,
+                        "Volume": 123_456,
                         "Dividends": 1,
                         "Stock Splits": 2,
                         "Repaired?": True,
@@ -107,8 +108,16 @@ def test_reported_daily_history_options_are_explicit_and_adjusted_fields_are_ign
         "rounding": False,
         "raise_errors": True,
     }
-    assert records[0]["close"] == 10.5
-    assert set(records[0]) == {"timestamp", "open", "high", "low", "close", "volume"}
+    assert records == (
+        {
+            "timestamp": "2026-08-10",
+            "open": 10.125,
+            "high": 11.375,
+            "low": 9.625,
+            "close": 10.875,
+            "volume": 123_456,
+        },
+    )
 
 
 def test_candidate_conversion_does_not_fill_missing_or_invalid_values() -> None:
@@ -131,7 +140,7 @@ def test_candidate_conversion_does_not_fill_missing_or_invalid_values() -> None:
         prepare_bars(
             YFinanceEodGateway(history_loader=loader),
             MarketDataInstrument("00733", "TWSE"),
-            through=__import__("datetime").date(2026, 8, 10),
+            through=date(2026, 8, 10),
         )
     assert exc.value.failure.code == "MISSING_REQUIRED_FIELD"
 
@@ -143,6 +152,6 @@ def test_adapter_exception_and_empty_response_reach_data_unavailable() -> None:
             prepare_bars(
                 YFinanceEodGateway(history_loader=loader),
                 instrument,
-                through=__import__("datetime").date(2026, 8, 10),
+                through=date(2026, 8, 10),
             )
         assert exc.value.failure.code == "DATA_UNAVAILABLE"
