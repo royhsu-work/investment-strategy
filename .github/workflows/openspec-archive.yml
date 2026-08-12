@@ -16,6 +16,7 @@ on:
 permissions:
   contents: write
   issues: read
+  # Archive PR creation elevates the former pull-requests: read permission to write.
   pull-requests: write
 
 concurrency:
