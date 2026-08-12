@@ -76,9 +76,7 @@ def test_new_capability_generated_placeholder_is_replaced_exactly(tmp_path: Path
     )
 
     assert result.returncode == 0
-    assert f"## Purpose\n\n{approved}\n\n## Requirements" in canonical.read_text(
-        encoding="utf-8"
-    )
+    assert f"## Purpose\n\n{approved}\n\n## Requirements" in canonical.read_text(encoding="utf-8")
 
 
 def test_new_capability_exact_approved_purpose_is_accepted(tmp_path: Path) -> None:
