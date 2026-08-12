@@ -28,9 +28,11 @@ If routing, change identity, or required evidence is contradictory, fail closed.
 4. Before handoff, verify required artifacts exist and perform both:
    - forward traceability `proposal → specs → design → tasks`;
    - reverse traceability `tasks → design → specs → proposal`.
-5. Obtain strict OpenSpec validation for the exact handoff revision. Exact-revision successful
-   `OpenSpec Validate` CI evidence is sufficient; when unavailable, use the repository-pinned local CLI
-   against the same revision. Stale/missing/failed/revision-mismatched evidence fails closed.
+5. Obtain strict OpenSpec validation for the exact handoff revision R. CI is sufficient only when
+   durable validator evidence proves checkout `HEAD == R` before strict validation; `run.head_sha == R`
+   alone is association metadata and is not checkout proof. If valid exact-head CI evidence is
+   unavailable, use the repository-pinned local CLI directly against checkout R. Stale, missing,
+   failed, revision-mismatched, or checkout-mismatched evidence fails closed.
 6. Persist revision-aware readiness evidence before routing.
 
 Legal outcomes:
@@ -60,8 +62,9 @@ Legal handoff depends on the gate/blocker being resolved:
 ## Safety
 
 - Do not infer missing specification meaning on behalf of Executor.
-- Do not treat a successful CI run for another revision as current evidence.
-- Do not require a duplicate local CLI run solely because exact-revision CI validation already passed.
+- Do not treat `run.head_sha` or a successful synthetic-merge validation for another checkout as
+  exact-head proof for revision R.
+- Do not require a duplicate local CLI run solely because valid exact-head CI validation already passed.
 - Persist durable result/evidence before routing and fresh-read routing before the label mutation.
 - A routing update is not a mutex/CAS; overlapping Lead runs must tolerate repeated observation and
   stop on stale/contradictory state.
