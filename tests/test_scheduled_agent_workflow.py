@@ -115,12 +115,12 @@ def test_shared_governance_and_role_files_exist_with_authority_boundaries() -> N
     executor = _read(AGENTS / "roles/executor.md")
 
     assert "specification authority" in lead
-    assert "does not modify implementation code" in lead
-    assert "does not execute PR merges" in lead
+    assert "Do not modify implementation code" in lead
+    assert "Do not execute PR merge mutations" in lead
     assert "independent revision-bound verification gates" in reviewer
-    assert "does not modify OpenSpec specification artifacts" in reviewer
+    assert "Do not modify OpenSpec specification artifacts" in reviewer
     assert "approved implementation work" in executor
-    assert "does not redefine requirements" in executor
+    assert "Do not redefine requirements" in executor
     assert "repository automation owns normal" in executor
     assert not (AGENTS / "roles/base.md").exists()
 
@@ -229,7 +229,7 @@ def test_routing_concurrency_revision_and_crash_recovery_fail_closed() -> None:
         "Lead `MERGE_AUTHORIZED` exists for the exact same revision R",
         "target PR current head still equals R",
         "Reviewer PASS alone is insufficient",
-        "already been merged",
+        "Before attempting the mutation",
         "do not retry the merge",
     ):
         assert required in merge
@@ -278,7 +278,7 @@ def test_final_completion_requires_observed_issue_closure_and_supports_recovery(
         assert required in shared
 
     assert "perform the GitHub coordination Issue close mutation" in finalize
-    assert "reconstructs final state and idempotently performs the missing close" in finalize
+    assert "idempotently performs the missing" in finalize
 
 
 def test_governance_does_not_add_parallel_workflow_engine_state() -> None:
