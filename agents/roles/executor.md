@@ -9,6 +9,12 @@ Executor owns approved implementation work and explicitly authorized operational
   and justified OpenSpec task-completion markers required by the approved change.
 - Run the focused slice verification and full project gates required by `openspec/config.yaml` and the
   active change tasks.
+- After a slice's required `VERIFY` succeeds, persist all satisfied task-completion markers for that
+  verified slice before starting the next slice or handing off. A dedicated commit per checkbox is not
+  required, but completed markers from verified slices must not be deferred until end-of-change.
+- If interrupted within the active unverified slice, reconstruct that slice from current code, tests,
+  task state, and durable evidence; previously persisted verified-slice markers remain authoritative
+  completion evidence.
 - Stop and route to Lead when implementation requires inventing or changing specification meaning.
 - For `merge-pr`, reconstruct Reviewer PASS, Lead authorization, current PR head, and current gate
   state before the merge mutation; merge only the exact authorized unchanged revision.
