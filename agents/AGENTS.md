@@ -146,18 +146,24 @@ fact and performs only missing evidence/handoff work; it does not attempt a dupl
 
 ## OpenSpec validation evidence
 
-For a gate requiring strict OpenSpec validation, a successful repository `OpenSpec Validate` GitHub
-Actions run whose `head_sha` equals the exact relevant revision is sufficient durable evidence that
-`.github/workflows/openspec-validate.yml` executed:
+For a gate requiring strict OpenSpec validation for revision R, CI evidence is sufficient only when
+durable run/job evidence proves that the validator checkout `HEAD` equals R before the repository-pinned
+strict command executes:
 
 ```text
 openspec validate --all --strict --json --no-interactive
 ```
 
-A duplicate local CLI run MUST NOT be required solely because exact-revision CI evidence exists. When
-exact-revision CI evidence is unavailable, the repository-pinned OpenSpec CLI may provide equivalent
-validation against that same revision. Missing, failed, stale, or revision-mismatched evidence fails
-closed.
+GitHub Actions `run.head_sha` is association metadata and is insufficient checkout proof by itself. In
+particular, a `pull_request` run that validates a synthetic merge revision M where `M != R` does not
+satisfy an exact-head gate for PR head R merely because its metadata reports `head_sha == R`.
+
+The repository `OpenSpec Validate` workflow determines an exact validation target, checks out that
+target, verifies the actual validator `HEAD`, and records target/checkout identity in durable job
+evidence before strict validation. A proven exact-head CI PASS removes the need for a duplicate local
+CLI run solely because the evidence came from CI. When valid exact-head CI evidence is unavailable, the
+repository-pinned OpenSpec CLI may provide equivalent validation directly against checkout R. Missing,
+failed, stale, revision-mismatched, or checkout-mismatched evidence fails closed.
 
 Before `propose-change` or a materially revised `resolve-question` hands OpenSpec work to
 `review-openspec`, Lead also verifies required artifacts and bidirectional traceability.
