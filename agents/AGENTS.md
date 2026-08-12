@@ -58,8 +58,7 @@ stay on the same coordination Issue. Comments are durable evidence, not canonica
 ## PR linkage lifecycle boundary
 
 Implementation and implementation-correction PRs MUST use non-closing references to their persistent
-coordination Issue and MUST NOT establish GitHub Issue-closing linkage. Closing linkage is reserved for
-the final Archive PR, where it is an expected lifecycle side effect only after the independent archive
+coordination Issue and MUST NOT establish GitHub Issue-closing linkage. Closing linkage is reserved for the final Archive PR, where it is an expected lifecycle side effect only after the independent archive
 review, Lead authorization, unchanged-head, and current-gate merge preconditions are satisfied.
 
 A closing linkage on an implementation or implementation-correction PR is a lifecycle-contract
