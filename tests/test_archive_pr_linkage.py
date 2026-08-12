@@ -30,7 +30,7 @@ def test_resolve_requires_exactly_one_coordination_issue_for_change(tmp_path: Pa
     _write_issues(
         issues,
         [
-            {"number": 21, "body": "Change: `change-a`", "pull_request": None},
+            {"number": 21, "body": "## Workflow identity\n\n`Change: change-a`\n", "pull_request": None},
             {"number": 22, "body": "Change: `different-change`", "pull_request": None},
         ],
     )
