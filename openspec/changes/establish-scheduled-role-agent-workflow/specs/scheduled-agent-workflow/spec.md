@@ -44,7 +44,7 @@ The repository SHALL define exactly the scheduled roles `Lead`, `Reviewer`, and 
 
 ### Requirement: Actionable workflow routing is one logical role/action tuple
 
-An open coordination Issue is actionable by scheduled roles only when it contains exactly one valid `agent:<role>` label and exactly one valid `action:<action>` label forming a legal routing tuple for that role.
+An open coordination Issue SHALL be actionable by scheduled roles only when it contains exactly one valid `agent:<role>` label and exactly one valid `action:<action>` label forming a legal routing tuple for that role.
 
 Zero, multiple, contradictory, or illegal routing labels MUST fail closed and MUST NOT be resolved by model inference.
 
@@ -344,6 +344,8 @@ Scheduled Lead, Reviewer, and Executor MUST NEVER add, remove, restore, or other
 - AND Lead may close the consumed advisory Issue
 
 ### Requirement: Lead idle advisory mode is bounded and non-routing
+
+Lead SHALL keep idle advisory mode bounded and non-routing.
 
 When no active workflow requires Lead action, Lead MAY create an idle advisory Issue containing at most three current recommendations only if no other open `advisory:idle` Issue exists.
 
