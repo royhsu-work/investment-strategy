@@ -17,6 +17,7 @@ Issue #18 is the clean coordination Issue for this change. It also adds a lifecy
 - Use exactly one `(agent:<role>, action:<action>)` tuple as actionable routing.
 - Make every scheduled run reconstruct current durable state and tolerate at-least-once execution.
 - Make review and authorization revision-bound where stale evidence would be unsafe.
+- Define deterministic work selection and minimum review/finalize gates as governance, not implementation discretion.
 - Preserve existing repository archive automation and multi-PR lifecycle behavior.
 - Keep Human admission explicit, including Lead idle advisory behavior.
 - Make final coordination completion depend on observed GitHub Issue closure.
@@ -166,7 +167,52 @@ MERGED → appropriate Lead finalize action
 STALE_AUTHORIZATION / GATE_CHANGED → no merge; Lead
 ```
 
-### 5. Scheduled execution is at-least-once and reconstructable
+### 5. Review and finalize gates are defined upstream of skills
+
+Skills execute governance; they do not invent governance. The minimum gate contracts are:
+
+#### `review-openspec`
+
+Reviewer reads the current OpenSpec revision and verifies:
+
+- forward traceability `proposal → specs → design → tasks`;
+- reverse traceability `tasks → design → specs → proposal`;
+- scope/contract coherence;
+- compatibility with applicable `README.md` and `openspec/config.yaml` rules;
+- findings are actionable and identify the violated contract/evidence;
+- final result is revision-bound `PASS` or `FINDINGS`.
+
+#### `review-implementation`
+
+Reviewer reads the current implementation PR head and verifies:
+
+- implementation and task-completion state satisfy the approved OpenSpec revision;
+- relevant diff and tests cover required behavior;
+- required project quality gates and OpenSpec validation evidence are current;
+- implementation stays within approved scope and does not redefine contract meaning;
+- findings are classified as implementation defects/missing work versus specification ambiguity/defect;
+- final result is bound to the reviewed PR head.
+
+#### `review-archive`
+
+Reviewer reads the current archive PR head and verifies:
+
+- the intended change is archived from the correct merged default-branch state;
+- resulting canonical specs preserve the approved contract;
+- active change state is removed as intended and archive history is preserved;
+- unrelated repository changes are absent;
+- strict OpenSpec and applicable repository validation evidence are current;
+- final result is bound to the reviewed archive PR head.
+
+#### `finalize-change`
+
+Lead requires an unambiguous Reviewer implementation PASS for the current PR head, rechecks current revision/gate state, and binds `MERGE_AUTHORIZED` to that exact revision. Stale or contradictory evidence fails closed. After merge, Lead reconstructs actual default-branch/OpenSpec/archive state before choosing `MORE_IMPLEMENTATION_REQUIRED`, archive waiting/review, or repository-defined recovery.
+
+#### `finalize-archive`
+
+Lead requires an unambiguous Reviewer archive PASS for the current archive PR head before binding archive merge authorization to that revision. After merge, Lead reconstructs canonical default-branch/archive state and only then performs durable Issue closure when final conditions are satisfied.
+
+### 6. Scheduled execution is at-least-once and reconstructable
 
 Every run behaves as if it may be the first run to see the work item:
 
@@ -187,7 +233,7 @@ Partial execution does not transfer ownership. A later run must be able to conti
 
 No previous conversation memory is required for correctness.
 
-### 6. Routing is one logical tuple, but label replacement is not a lock
+### 7. Routing is one logical tuple, but label replacement is not a lock
 
 An actionable coordination Issue requires exactly one valid `agent:*` and one valid `action:*`. Zero, multiple, or contradictory routing labels fail closed.
 
@@ -211,7 +257,7 @@ Two same-role runs may read the same routing tuple before either writes. Therefo
 
 For judgment-producing actions, multiple evidence records for the same revision may exist. Contradictory evidence is not merged optimistically: it invalidates the gate for unsafe downstream operations until a current unambiguous gate/authorization is established.
 
-### 7. Reviews and merge authorizations are revision-bound
+### 8. Reviews and merge authorizations are revision-bound
 
 Implementation and archive review evidence identifies the PR and reviewed head revision. OpenSpec review identifies the reviewed repository/branch revision.
 
@@ -230,7 +276,7 @@ Executor does not infer merge authority from Reviewer PASS alone. Stale authoriz
 
 If a merge already happened before an interrupted run ended, the next Executor run reconstructs merged reality and completes only the missing handoff rather than attempting a second merge.
 
-### 8. Multi-PR change lifecycle remains compatible with existing archive automation
+### 9. Multi-PR change lifecycle remains compatible with existing archive automation
 
 After an implementation PR merge, Lead reconstructs default-branch state:
 
@@ -257,7 +303,7 @@ Archive waiting begins only after merged default-branch state satisfies the READ
 
 Scheduled agents do not perform the normal `openspec archive` mutation; existing repository automation remains authoritative for that deterministic path.
 
-### 9. Human admission remains explicit
+### 10. Human admission remains explicit
 
 Scheduled agents ignore closed Issues and any Issue lacking a valid routing tuple. They do not scan arbitrary repository activity and self-admit work.
 
@@ -272,7 +318,7 @@ Advisory Issues have no routing tuple. If Human wants to admit one direction, bo
 
 Scheduled roles may consume `intake:approved` but must never add, remove, restore, or manufacture it. This is a governance capability boundary, not cryptographic Human identity proof.
 
-### 10. Coordination Issue closure is a durable lifecycle transition
+### 11. Coordination Issue closure is a durable lifecycle transition
 
 Comments and PASS decisions are evidence, not the canonical completion state.
 
@@ -291,9 +337,29 @@ If Lead determines completion but the run stops before closing the Issue, routin
 
 A “may be closed” comment, PASS, or finalization decision alone never counts as closed workflow state.
 
-### 11. Deterministic work discovery and no-op behavior
+### 12. Deterministic work discovery uses role-local action priority plus stable tie-breakers
 
-Each scheduled run processes at most one actionable item. Selection rules are deterministic rather than model preference; implementation may use explicit priority categories and oldest-first tie-breaking.
+Each run processes at most one actionable Issue. The fixed role-local priority is:
+
+```text
+Lead
+resolve-question > finalize-archive > finalize-change > propose-change
+
+Reviewer
+review-archive > review-implementation > review-openspec
+
+Executor
+merge-pr > implement-change
+```
+
+This ordering prioritizes active blockers and irreversible/final lifecycle gates over starting new work, and prioritizes an already authorized merge mutation over beginning additional implementation.
+
+Within the same role/action priority:
+
+1. earlier GitHub `created_at` wins;
+2. if equal, lower numeric Issue number wins.
+
+No model-derived urgency score or discretionary reordering is allowed. Invalid routing never enters the candidate set.
 
 If the role has no eligible work, it performs no workflow mutation and produces no repository noise. Lead may only use the separate idle advisory behavior when its conditions are satisfied.
 
@@ -303,15 +369,16 @@ If the role has no eligible work, it performs no workflow mutation and produces 
 | --- | --- |
 | Default-branch governance / trust boundary | 1 |
 | Role authority separation | 2 |
-| Persistent coordination Issue / routing tuple | 3, 6 |
+| Persistent coordination Issue / routing tuple | 3, 7 |
 | Nine actions / reusable skills | 1, 4 |
-| At-least-once / crash recovery | 5–7 |
-| Overlapping same-role execution / fail closed | 6–7 |
-| Revision-bound review and merge authorization | 7 |
-| Multi-PR lifecycle / archive automation | 8 |
-| Human intake / idle advisory | 9 |
-| Durable Issue closure | 10 |
-| Deterministic selection / no-op | 11 |
+| Review/finalize minimum gates | 5 |
+| At-least-once / crash recovery | 6–8 |
+| Overlapping same-role execution / fail closed | 7–8 |
+| Revision-bound review and merge authorization | 5, 8 |
+| Multi-PR lifecycle / archive automation | 9 |
+| Human intake / idle advisory | 10 |
+| Durable Issue closure | 11 |
+| Deterministic selection / no-op | 12 |
 
 ## Risks / Trade-offs
 
@@ -326,6 +393,10 @@ Because Human and scheduled agents may share a GitHub account, `intake:approved`
 ### Human-readable evidence may be less machine-strict than an event schema
 
 The workflow deliberately avoids a custom serialized event log. Evidence remains readable and revision-bound where required; stronger machine schemas can be introduced only if real ambiguity appears.
+
+### Fixed action priority is intentionally opinionated
+
+The deterministic priority prevents model discretion and makes repeated scheduler runs stable, but it may not represent every future operational urgency. Changing priority is therefore a governance change, not an Executor implementation choice.
 
 ### One coordination Issue may become long
 
