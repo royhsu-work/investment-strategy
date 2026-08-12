@@ -22,7 +22,7 @@
 
 ## 4. Documentation and final verification
 
-- [ ] 4.1 Align README lifecycle documentation with archive-only closing linkage, native final completion, and explicit-close recovery.
-- [ ] 4.2 Confirm the implementation retains one persistent coordination Issue, exactly nine normal actions, existing Human admission, and repository-owned archive automation with no new progress/locking engine.
-- [ ] 4.3 Run full Python quality and exact-revision strict OpenSpec validation; verify validator checkout identity evidence satisfies repository governance.
-- [ ] 4.4 Re-check bidirectional traceability across proposal → modified spec → design → tasks and tasks → design → modified spec → proposal, then prepare revision-bound handoff evidence for Reviewer.
+- [x] 4.1 Align README lifecycle documentation with archive-only closing linkage, native final completion, and explicit-close recovery.
+- [x] 4.2 Confirm the implementation retains one persistent coordination Issue, exactly nine normal actions, existing Human admission, and repository-owned archive automation with no new progress/locking engine.
+- [x] 4.3 Run full Python quality and exact-revision strict OpenSpec validation; verify validator checkout identity evidence satisfies repository governance.
+- [x] 4.4 Re-check bidirectional traceability across proposal → modified spec → design → tasks and tasks → design → modified spec → proposal, then prepare revision-bound handoff evidence for Reviewer.
