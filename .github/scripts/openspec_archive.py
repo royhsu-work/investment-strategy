@@ -100,13 +100,13 @@ def _classify(args: argparse.Namespace) -> None:
     if not candidates:
         _emit(action="noop", change="", mode="normal", reason="no-active-change")
         return
-    if len(candidates) > 1:
-        _fail("Ambiguous OpenSpec archive scope: " + ", ".join(candidates))
     if not same_repository:
         _fail(
             "Unsupported automatic archive source: OpenSpec candidate came from a fork; "
             "use the base-repository recovery/manual path"
         )
+    if len(candidates) > 1:
+        _fail("Ambiguous OpenSpec archive scope: " + ", ".join(candidates))
 
     _emit(action="evaluate", change=candidates[0], mode="normal", reason="single-active-change")
 
