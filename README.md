@@ -55,6 +55,8 @@ Repository 採用 OpenSpec + GitHub Issue/PR 的持久化開發流程。`agents/
 
 Implementation 與 implementation-correction PR 只能使用不會關閉 Issue 的 reference（例如 `Refs #21`），不得建立 GitHub Issue-closing linkage。只有 repository-owned final Archive PR 會對同一 persistent coordination Issue 建立 closing linkage（例如 `Closes #21`）；該 linkage 只是授權後 archive merge 的 lifecycle side effect，不能取代 Reviewer PASS、Lead exact-revision `MERGE_AUTHORIZED`、unchanged-head 或 current-gate preconditions。
 
+最終 completion invariant 仍是 **close coordination Issue and observe it closed**；差別在於正常路徑由 authorized final Archive PR 的 closing linkage 觸發 native close，Lead explicit close 僅作 missing-native-close recovery。
+
 ```text
 Human-admitted requirement / research direction
         ↓
@@ -214,7 +216,7 @@ StrategyContext
 └── ResolvedStrategyConfig
 ```
 
-`StrategyContext` does not contain listing venue, provider ticker syntax, real holdings, average cost, cash, benchmark, execution state, or previous runtime state.
+`StrategyContext` does not contain listing venue, provider ticker syntax, real holdings, average cost, cash, benchmark, execution state, or previous runtime state。
 
 Common `MarketState` is restricted to:
 
@@ -223,11 +225,11 @@ Common `MarketState` is restricted to:
 - `TREND`
 - `REVERSAL_RISK`
 
-Implementation-specific regimes remain under `signals` or `diagnostics`.
+Implementation-specific regimes remain under `signals` or `diagnostics`。
 
 ## Configuration resolution
 
-Configuration resolves before any market-data load. Market-data identity and Strategy assignment remain separate concerns: a configured instrument may have a valid listing venue without an active strategy.
+Configuration resolves before any market-data load. Market-data identity and Strategy assignment remain separate concerns: a configured instrument may have a valid listing venue without an active strategy。
 
 Repository YAML adapters live behind registry interfaces. `config/instruments.yaml` may contain provider-neutral venue metadata without creating a fake production strategy assignment；`config/parameter_sets.yaml` remains empty until a production strategy exists。
 
@@ -249,9 +251,9 @@ candidate acquired, then invalid
      STALE_DATA
 ```
 
-For historical `Decision(as_of=T)` the framework first normalizes timestamps enough to establish temporal position, excludes timestamp-known rows after T, and only then validates their non-temporal OHLCV structure. Therefore a known T+1 row with invalid OHLC cannot contaminate the Decision at T；an un-normalizable timestamp can still fail because its temporal position is unknowable.
+For historical `Decision(as_of=T)` the framework first normalizes timestamps enough to establish temporal position, excludes timestamp-known rows after T, and only then validates their non-temporal OHLCV structure. Therefore a known T+1 row with invalid OHLC cannot contaminate the Decision at T；an un-normalizable timestamp can still fail because its temporal position is unknowable。
 
-Trading-day continuity and freshness are based on the injected `TradingCalendar`, not calendar-day continuity. Weekends/holidays are not gaps. Market date/session interpretation is also owned by the `TradingCalendar`; a timezone-aware `Clock` instant is never reduced with the runner's local timezone before calendar evaluation.
+Trading-day continuity and freshness are based on the injected `TradingCalendar`, not calendar-day continuity. Weekends/holidays are not gaps. Market date/session interpretation is also owned by the `TradingCalendar`; a timezone-aware `Clock` instant is never reduced with the runner's local timezone before calendar evaluation。
 
 ## Decision request
 
@@ -264,9 +266,9 @@ Repository request shape:
 }
 ```
 
-`as_of` is optional. Research fields such as `strategy` or `parameter_set` are rejected by the request boundary and produce no public Decision artifact.
+`as_of` is optional. Research fields such as `strategy` or `parameter_set` are rejected by the request boundary and produce no public Decision artifact。
 
-Decision date resolution is calendar-only. A future accepted `as_of` is an application failure `CONFIGURATION_FAILED / INVALID_AS_OF`; missing data never causes silent fallback to an older date.
+Decision date resolution is calendar-only. A future accepted `as_of` is an application failure `CONFIGURATION_FAILED / INVALID_AS_OF`; missing data never causes silent fallback to an older date。
 
 Successful artifact shape:
 
@@ -296,7 +298,7 @@ Successful artifact shape:
 
 `requested_as_of` 只有在 caller 明確提供時才需要存在。Failed Decision 使用穩定最小 identity，不因內部已解析多少 metadata 而擴張 public contract。
 
-Decision / Backtest artifact builders produce Python mappings, and the public serialization boundary emits strict JSON. Non-JSON-compatible strategy extension values are rejected deterministically instead of leaking into an Actions Artifact.
+Decision / Backtest artifact builders produce Python mappings, and the public serialization boundary emits strict JSON. Non-JSON-compatible strategy extension values are rejected deterministically instead of leaking into an Actions Artifact。
 
 ## Current-only intraday overlay
 
