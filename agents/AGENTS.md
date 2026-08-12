@@ -49,7 +49,7 @@ confirmation. The stable workflow identity is deliberately small:
 ```text
 Change: <change-id>     # may be unset before Lead selects it; immutable afterward
 agent:<role>            # exactly one
- action:<action>         # exactly one
+action:<action>         # exactly one
 ```
 
 `Change:` is immutable after Lead persists it. Normal clarification and review-correction transitions
@@ -58,7 +58,8 @@ stay on the same coordination Issue. Comments are durable evidence, not canonica
 ## PR linkage lifecycle boundary
 
 Implementation and implementation-correction PRs MUST use non-closing references to their persistent
-coordination Issue and MUST NOT establish GitHub Issue-closing linkage. Closing linkage is reserved for the final Archive PR, where it is an expected lifecycle side effect only after the independent archive
+coordination Issue and MUST NOT establish GitHub Issue-closing linkage. Closing linkage is reserved for
+the final Archive PR, where it is an expected lifecycle side effect only after the independent archive
 review, Lead authorization, unchanged-head, and current-gate merge preconditions are satisfied.
 
 A closing linkage on an implementation or implementation-correction PR is a lifecycle-contract
@@ -180,7 +181,9 @@ Before `propose-change` or a materially revised `resolve-question` hands OpenSpe
 
 ## OpenSpec task completion checkpoints
 
-OpenSpec task checkboxes are durable completion evidence, not live progress state. For each approved vertical slice, Executor persists all satisfied task-completion markers after the slice's required `VERIFY` succeeds and before starting the next slice or handing off.
+OpenSpec task checkboxes are durable completion evidence, not live progress state. For each approved
+vertical slice, Executor persists all satisfied task-completion markers after the slice's required
+`VERIFY` succeeds and before starting the next slice or handing off.
 
 Marker persistence does not require a dedicated commit for each individual checkbox; it should
 normally be included with the corresponding implementation checkpoint. Markers for already verified
@@ -225,13 +228,23 @@ capability boundary, not cryptographic proof of Human identity.
 ## Durable final closure
 
 A PASS, completion comment, or statement that an Issue "may be closed" is not completion.
-`finalize-archive` reconstructs canonical archived default-branch state, performs the GitHub Issue close
-mutation only when final lifecycle conditions are actually satisfied, and re-observes the Issue as
-closed. Only the observed closed Issue state completes the coordination lifecycle.
 
-If archive state is complete but a run stops before Issue closure, routing remains
-`Lead / finalize-archive`; the next Lead run reconstructs the completed archive and idempotently
-performs the missing close.
+The final Archive PR carries the repository-approved closing linkage to the persistent coordination
+Issue. After an authorized Archive PR merge, `finalize-archive` reconstructs canonical archived
+default-branch state and first observes the expected native Issue completion. When the Issue is already
+observed closed, Lead records lifecycle completion without a redundant close mutation.
+
+Explicit Issue close is recovery-only. Lead may perform an explicit Issue-close recovery only when the
+authorized Archive PR is merged, canonical archive state is correct, and native completion is missing.
+After that mutation Lead re-observes the Issue and requires `closed` before declaring completion.
+
+If the coordination Issue is observed closed before the authorized Archive PR merge, that state is
+premature and illegal. Scheduled roles fail closed; the premature close must not be treated as successful
+archive completion, regardless of comments or other completion-looking evidence.
+
+If archive state is complete but native Issue completion has not yet been observed, routing remains
+`Lead / finalize-archive`; a later Lead run reconstructs durable state and applies recovery only if the
+native completion remains missing.
 
 ## Deliberately absent machinery
 
