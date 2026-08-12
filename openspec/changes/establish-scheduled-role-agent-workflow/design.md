@@ -22,6 +22,7 @@ Issue #18 is the clean coordination Issue for this change. It also adds a lifecy
 - Keep Human admission explicit, including Lead idle advisory behavior.
 - Make final coordination completion depend on observed GitHub Issue closure.
 - Persist Executor task completion at verified vertical-slice checkpoints without requiring per-checkbox commits or a separate progress-state system.
+- Bind exact-revision OpenSpec validation evidence to the repository revision actually checked out and validated, not only workflow metadata.
 
 ### Non-Goals
 
@@ -217,9 +218,9 @@ Lead requires an unambiguous Reviewer archive PASS for the current archive PR he
 
 Before Lead routes a newly authored or materially revised OpenSpec change to `Reviewer / review-openspec`, Lead verifies that the required OpenSpec artifacts exist, performs the bidirectional traceability/readiness check, and obtains strict OpenSpec validation for the exact revision being handed off.
 
-The repository's existing `.github/workflows/openspec-validate.yml` is the canonical CI path for this evidence. A successful `OpenSpec Validate` run whose `head_sha` equals the exact revision being handed off is sufficient durable evidence that `openspec validate --all --strict --json --no-interactive` passed. Lead does not require a duplicate local CLI run solely because CI supplied the exact-revision evidence.
+The repository's `.github/workflows/openspec-validate.yml` remains the canonical CI path. Evidence is accepted only under Decision 14: the validator checkout itself must be proven to equal the exact target revision. Workflow metadata such as `head_sha` is association evidence, not sufficient checkout-identity evidence by itself.
 
-If exact-revision CI evidence is unavailable, Lead may obtain equivalent evidence by running the repository-pinned OpenSpec CLI command directly against that same revision. Missing, stale, failed, or revision-mismatched validation evidence fails closed and retains Lead ownership.
+When exact-revision CI evidence satisfies Decision 14, Lead does not require a duplicate local CLI run solely because CI supplied the evidence. If such CI evidence is unavailable, Lead may obtain equivalent evidence by running the repository-pinned OpenSpec CLI directly against the exact target checkout. Missing, stale, failed, revision-mismatched, or checkout-mismatched evidence fails closed and retains Lead ownership.
 
 `resolve-question` uses the same readiness rule before returning a materially revised OpenSpec state to `review-openspec`.
 
@@ -400,6 +401,27 @@ An interruption inside the current incomplete/unverified slice may leave that sl
 
 The rule does not create progress percentages, `status:in-progress`, leases, heartbeat state, or another workflow state machine. It uses the OpenSpec task markers already present in the repository and aligns their persistence boundary with the feature-slice granularity required by `openspec/config.yaml`.
 
+### 14. Exact-revision validation is bound to actual checkout identity
+
+The relevant gate first determines a target revision R. Exact-revision CI evidence then follows this identity chain:
+
+```text
+target revision R
+→ checkout the revision intended for validation
+→ establish validator HEAD
+→ require validator HEAD == R
+→ run openspec validate --all --strict --json --no-interactive
+→ persist successful run/job evidence
+```
+
+`run.head_sha == R` is useful association metadata but is not sufficient proof that the checkout used by the validator equals R. This distinction matters for GitHub `pull_request` events because default checkout behavior can operate on a synthetic `refs/pull/<n>/merge` revision while run metadata still identifies the PR head.
+
+A synthetic merge revision M may be useful as separate integration evidence, but when `M != R` it cannot satisfy a gate explicitly requiring exact-head validation for R. The workflow must not silently reinterpret integration validation as revision-bound head validation.
+
+The implementation should make the intended validation revision explicit for each supported trigger and verify the checked-out revision before invoking strict OpenSpec validation. For a PR gate bound to PR head R, the validated checkout must be R rather than the synthetic merge revision. Equivalent repository-pinned local CLI evidence remains an allowed fallback when exact-revision CI evidence is unavailable.
+
+This preserves the earlier no-duplicate-validation rule: once CI proves it actually validated R successfully, an additional local CLI run is unnecessary solely because the evidence came from CI.
+
 ## Requirement Traceability
 
 | Requirement area | Design decision |
@@ -409,11 +431,12 @@ The rule does not create progress percentages, `status:in-progress`, leases, hea
 | Persistent coordination Issue / routing tuple | 3, 7 |
 | Nine actions / reusable skills | 1, 4 |
 | Review/finalize minimum gates | 5 |
-| OpenSpec pre-handoff readiness / validation evidence | 5 |
+| OpenSpec pre-handoff readiness / validation evidence | 5, 14 |
+| Exact-revision validation checkout identity | 14 |
 | At-least-once / crash recovery | 6–8, 13 |
 | Task completion checkpoint persistence | 13 |
 | Overlapping same-role execution / fail closed | 7–8 |
-| Revision-bound review and merge authorization | 5, 8 |
+| Revision-bound review and merge authorization | 5, 8, 14 |
 | Multi-PR lifecycle / archive automation | 9 |
 | Human intake / idle advisory | 10 |
 | Durable Issue closure | 11 |
@@ -440,6 +463,10 @@ The deterministic priority prevents model discretion and makes repeated schedule
 ### Slice-level task markers intentionally lag inside the active slice
 
 The checkpoint rule favors meaningful commits over fine-grained live progress. If a run stops mid-slice, some code may exist while that slice's checkboxes remain unchecked. Recovery therefore reconstructs the active slice from repository/test reality instead of treating unchecked current-slice tasks as proof that no work has started. Previously verified slices remain durable.
+
+### Pull-request CI can validate a different checkout than PR head
+
+GitHub workflow metadata and validator checkout identity are distinct evidence. A PR run may report the PR head while `actions/checkout` validates a synthetic merge commit. Exact-head gates therefore require checkout identity evidence. This adds one explicit check to the validation path but prevents a revision-bound gate from passing on a different tree.
 
 ### One coordination Issue may become long
 
