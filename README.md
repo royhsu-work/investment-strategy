@@ -69,7 +69,8 @@ Lead implementation review
 Ready / merge to main
         ↓
 Merged-PR archive classifier
-changed files + active OpenSpec state on main
+same-repository PR changed files + active OpenSpec state
+at the triggering merge snapshot
         ↓
 0 active touched / incomplete
         → successful no-op
@@ -98,11 +99,17 @@ High-level responsibilities:
 - **Executor**：依核准 change 實作、維持 scope boundary、完成 tests/validation、建立 Draft PR，並處理 review findings。
 - **Repository automation**：執行 Python quality gates、project-level OpenSpec validation，以及 state-driven OpenSpec archive workflow。
 
-`agent/<change>` 是 implementation branch 的 repository convention；archive routing 不依賴 branch name。Automatic archive 由 merged PR changed files 中的 `openspec/changes/<change>/...` 與 merged `main` 上仍 active 的 OpenSpec state 決定。`agent/archive-<change>` 由 archive workflow 建立；existing archive branch 會 fail loudly，automation 不會 force-push 或重用該 branch。`agent/archive-*` PR merge 一律 no-op，避免 archive recursion。
+`agent/<change>` 是 implementation branch 的 repository convention；normal archive routing 不依賴 branch name。Normal automatic archive 只支援 **same-repository** PR，並由 triggering merge snapshot 中仍 active 的 OpenSpec state，搭配 merged PR changed files 中的 `openspec/changes/<change>/...` 決定 candidate。`agent/archive-<change>` 由 archive workflow 建立；existing archive branch 會 fail loudly，automation 不會 force-push 或重用該 branch。`agent/archive-*` PR merge 一律 no-op，避免 archive recursion。
 
-`Complete` 是 repository-level implementation completion signal。一個 change 可以跨多個 proposal / implementation / review-correction PR，但仍有必要工作未 merge 時不得把 active change 留成 `Complete`。使該 change 在 merged `main` 呈現 `Complete` 的 final implementation PR 必須同時更新 `openspec/changes/<change>/`，讓 completion transition 可由 merged-diff classifier 觀察。Automatic classifier 對 0 個 active candidate 或 incomplete change 成功 no-op；一次觸及多個 active changes 則視為 ambiguous lifecycle scope 並失敗，不自動猜測。
+`Complete` 是 repository-level implementation completion signal。一個 change 可以跨多個 proposal / implementation / review-correction PR，但仍有必要工作未 merge 時不得把 active change 留成 `Complete`。使該 change 在 merged `main` 呈現 `Complete` 的 final implementation PR 必須同時更新 `openspec/changes/<change>/`，讓 completion transition 可由 merged-diff classifier 觀察。Normal path 對 0 個 active candidate 或 incomplete change 成功 no-op；一次觸及多個 active changes 則視為 ambiguous lifecycle scope 並失敗，不自動猜測。每個 normal PR run 都以該 PR 的 **triggering merge snapshot** 評估，不重新讀取 runner 啟動時較新的 moving `main`。
 
-`workflow_dispatch` 保留為 recovery / migration fallback。Manual 與 merged-PR path 在 change 進入 archive eligibility 後共用相同的 strict validation、archive-branch existence check、OpenSpec archive、post-archive validation 與 push core；manual 指定 incomplete change 會 fail loudly。
+Fork PR 不屬於 normal automatic archive 支援範圍。Merged fork PR 若沒有 active OpenSpec candidate，維持 ordinary no-op；若 changed files 原本會形成 active OpenSpec candidate，workflow 必須明確 fail 為 `unsupported automatic source`，不得嘗試以 fork `pull_request` 的 read-only token 建立 archive branch，也不得把 archive 視為成功。這類 change 改走 base-repository recovery PR 或 manual fallback；本 change 不引入 `pull_request_target` 或 external-contributor trusted execution model。
+
+Explicit recovery mode 用於已經 Complete、但 normal trigger 已錯過的 active change。Recovery PR 必須是 **same-repository** merged PR、帶有 `openspec-archive-recovery` label，且 head branch 必須為 `agent/<change>`；只有 recovery mode 會把 branch name 當 explicit change selector。Recovery PR 不需要製造 synthetic `openspec/` marker；selected change 不存在、尚未 Complete、validation failure 或 existing archive branch 都會 fail loudly。
+
+`workflow_dispatch` 保留為 recovery / migration fallback。Normal、explicit recovery 與 manual 三條 path 在 change 進入 archive eligibility 後，共用相同的 strict validation、archive-branch existence check、OpenSpec archive、post-archive validation 與 push core；manual 或 recovery 指定 incomplete change 會 fail loudly。
+
+Archive workflow 使用全域 concurrency group 搭配 `queue: max`，避免 GitHub Actions 預設 single-pending semantics 將較早 pending trigger 靜默替換。平台最多可在同一 concurrency group 保留 **100** 個 pending runs；超出容量的 run 會在 GitHub Actions 顯示為 canceled/rejected，屬可觀察 failure，不視為 archive success。
 
 ## OpenSpec lifecycle
 
@@ -186,7 +193,7 @@ Implementation-specific regimes remain under `signals` or `diagnostics`.
 
 ## Configuration resolution
 
-Configuration resolves before any market-data load. Market-data identity and Strategy assignment remain separate concerns: a configured instrument may have a valid listing venue without an active strategy.
+Configuration resolves before any market-data load. Market-data identity and Strategy assignment remain separate concerns: a configured instrument may have a valid listing venue without an active strategy。
 
 Repository YAML adapters live behind registry interfaces. `config/instruments.yaml` may contain provider-neutral venue metadata without creating a fake production strategy assignment; `config/parameter_sets.yaml` remains empty until a production strategy exists.
 
@@ -336,7 +343,7 @@ Request-boundary rejection 不屬於這個 envelope，因為 application 尚未�
 - `.github/workflows/backtest.yml`：analytical Backtest orchestration scaffold；不含 fill simulation。
 - `.github/workflows/quality.yml`：`uv run pytest`、`ruff check`、`ruff format --check`、`mypy src tests`。
 - `.github/workflows/openspec-validate.yml`：執行 `openspec list` 與 project-level `openspec validate --all --strict --json --no-interactive`，不綁定已 archived change。
-- `.github/workflows/openspec-archive.yml`：對 merged-to-`main` 的 `pull_request.closed` 事件，從 PR changed files 與 merged `main` active OpenSpec state 分類 archive candidate；0 candidate 或 incomplete change 成功 no-op，>1 candidate fail ambiguous，單一 `Complete` change 則執行 strict pre-validation、existing archive-branch guard、`openspec archive`、strict post-validation，最後只 push `agent/archive-<change>` 供一般 Archive PR review/merge。`agent/archive-*` PR merge 不遞迴；`workflow_dispatch` 保留 manual recovery fallback；workflow 不直接寫入 `main`。
+- `.github/workflows/openspec-archive.yml`：對 merged-to-`main` 的 `pull_request.closed` 事件，固定 checkout triggering `merge_commit_sha`，從 PR changed files 與該 snapshot 的 active OpenSpec state 分類 candidate。Normal automatic path 只接受 same-repository PR；fork PR 若形成 OpenSpec candidate 則 fail `unsupported automatic source`。`openspec-archive-recovery` + same-repository `agent/<change>` 提供 explicit recovery；`workflow_dispatch` 保留 manual fallback。三條 path 共用 strict pre-validation、existing archive-branch guard、`openspec archive`、strict post-validation 與 push core。Workflow 使用 `queue: max` 保留最多 100 個 pending evaluations，超量 cancellation 是可觀察 failure；workflow 只 push `agent/archive-<change>`，不直接寫入 `main`。
 
 Generated analytical results 應上傳 Actions Artifacts，不 commit 回 repository。Production strategy/workflow activation 保持 deferred。
 
