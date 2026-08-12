@@ -55,6 +55,17 @@ agent:<role>            # exactly one
 `Change:` is immutable after Lead persists it. Normal clarification and review-correction transitions
 stay on the same coordination Issue. Comments are durable evidence, not canonical workflow state.
 
+## PR linkage lifecycle boundary
+
+Implementation and implementation-correction PRs MUST use non-closing references to their persistent
+coordination Issue and MUST NOT establish GitHub Issue-closing linkage. Closing linkage is reserved for
+the final Archive PR, where it is an expected lifecycle side effect only after the independent archive
+review, Lead authorization, unchanged-head, and current-gate merge preconditions are satisfied.
+
+A closing linkage on an implementation or implementation-correction PR is a lifecycle-contract
+violation. Executor MUST fail closed rather than merge such a PR. The presence of closing linkage on an
+Archive PR never substitutes for Reviewer PASS, Lead `MERGE_AUTHORIZED`, or any other merge gate.
+
 ## Routing validity
 
 An Issue is actionable only when it is open and has exactly one legal `agent:*` label and exactly one
