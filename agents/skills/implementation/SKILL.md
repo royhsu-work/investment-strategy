@@ -31,8 +31,13 @@ For each approved feature slice:
    uv run mypy src tests
    ```
 
-5. Mark an OpenSpec task complete only when the described work is actually complete and verified.
-6. Reconstruct current branch/PR/task state before continuing after any interruption.
+5. CHECKPOINT — after VERIFY succeeds, persist all satisfied task markers for that verified slice before
+   starting the next slice or handing off. This checkpoint does not require a commit per checkbox and
+   should normally travel with the corresponding implementation checkpoint.
+6. Do not defer completed markers across verified slices until the end of the whole change. Task
+   checkboxes are durable completion evidence, not a progress percentage or live execution status.
+7. After an interruption within an unverified current slice, reconstruct the active slice from current
+   code, tests, task state, and durable evidence. Previously verified slices keep their persisted markers.
 
 ## Legal results
 
