@@ -24,6 +24,9 @@ def _classify(
     *,
     merged: bool = True,
     head_ref: str = "feature/arbitrary-name",
+    head_repo: str = "owner/repo",
+    base_repo: str = "owner/repo",
+    recovery: bool = False,
     changed_files: tuple[str, ...] = (),
     active_changes: tuple[str, ...] = (),
 ) -> subprocess.CompletedProcess[str]:
@@ -43,6 +46,12 @@ def _classify(
         str(merged).lower(),
         "--head-ref",
         head_ref,
+        "--head-repo",
+        head_repo,
+        "--base-repo",
+        base_repo,
+        "--recovery",
+        str(recovery).lower(),
         "--changed-files",
         str(files_path),
         "--changes-root",
@@ -50,16 +59,14 @@ def _classify(
     )
 
 
-def _completion(
-    tmp_path: Path,
+def _write_change_list(
+    path: Path,
     *,
-    event_name: str,
     status: str,
     completed_tasks: int,
     total_tasks: int,
-) -> subprocess.CompletedProcess[str]:
-    list_path = tmp_path / "changes.json"
-    list_path.write_text(
+) -> None:
+    path.write_text(
         json.dumps(
             {
                 "changes": [
@@ -74,10 +81,27 @@ def _completion(
         ),
         encoding="utf-8",
     )
+
+
+def _completion(
+    tmp_path: Path,
+    *,
+    mode: str,
+    status: str,
+    completed_tasks: int,
+    total_tasks: int,
+) -> subprocess.CompletedProcess[str]:
+    list_path = tmp_path / "changes.json"
+    _write_change_list(
+        list_path,
+        status=status,
+        completed_tasks=completed_tasks,
+        total_tasks=total_tasks,
+    )
     return _run(
         "completion",
-        "--event-name",
-        event_name,
+        "--mode",
+        mode,
         "--change",
         "change-a",
         "--list-file",
@@ -102,6 +126,7 @@ def test_archive_pr_is_unconditional_noop(tmp_path: Path) -> None:
     result = _classify(
         tmp_path,
         head_ref="agent/archive-change-a",
+        recovery=True,
         changed_files=("openspec/changes/change-a/tasks.md",),
         active_changes=("change-a",),
     )
@@ -123,7 +148,7 @@ def test_ordinary_pr_without_active_change_path_is_noop(tmp_path: Path) -> None:
     assert "reason=no-active-change" in result.stdout
 
 
-def test_classifier_uses_changed_files_not_branch_name(tmp_path: Path) -> None:
+def test_normal_classifier_uses_changed_files_not_branch_name(tmp_path: Path) -> None:
     result = _classify(
         tmp_path,
         head_ref="totally-unrelated-branch-name",
@@ -134,9 +159,10 @@ def test_classifier_uses_changed_files_not_branch_name(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert "action=evaluate" in result.stdout
     assert "change=change-a" in result.stdout
+    assert "mode=normal" in result.stdout
 
 
-def test_touched_change_that_is_not_active_on_main_is_ignored(tmp_path: Path) -> None:
+def test_touched_change_that_is_not_active_in_snapshot_is_ignored(tmp_path: Path) -> None:
     result = _classify(
         tmp_path,
         changed_files=("openspec/changes/already-archived/tasks.md",),
@@ -164,10 +190,88 @@ def test_multiple_active_changes_fail_as_ambiguous(tmp_path: Path) -> None:
     assert "change-b" in result.stderr
 
 
-def test_incomplete_pr_change_is_noop(tmp_path: Path) -> None:
+def test_unrelated_fork_pr_remains_noop(tmp_path: Path) -> None:
+    result = _classify(
+        tmp_path,
+        head_repo="external/fork",
+        changed_files=("README.md",),
+        active_changes=("change-a",),
+    )
+
+    assert result.returncode == 0
+    assert "action=noop" in result.stdout
+    assert "reason=no-active-change" in result.stdout
+
+
+def test_fork_pr_with_active_candidate_fails_as_unsupported(tmp_path: Path) -> None:
+    result = _classify(
+        tmp_path,
+        head_repo="external/fork",
+        changed_files=("openspec/changes/change-a/tasks.md",),
+        active_changes=("change-a",),
+    )
+
+    assert result.returncode != 0
+    assert "Unsupported automatic archive source" in result.stderr
+    assert "recovery/manual" in result.stderr
+
+
+def test_same_repository_recovery_selects_change_from_agent_branch(tmp_path: Path) -> None:
+    result = _classify(
+        tmp_path,
+        recovery=True,
+        head_ref="agent/change-a",
+        changed_files=("README.md",),
+        active_changes=("change-a",),
+    )
+
+    assert result.returncode == 0
+    assert "action=evaluate" in result.stdout
+    assert "change=change-a" in result.stdout
+    assert "mode=recovery" in result.stdout
+
+
+def test_recovery_requires_same_repository_source(tmp_path: Path) -> None:
+    result = _classify(
+        tmp_path,
+        recovery=True,
+        head_ref="agent/change-a",
+        head_repo="external/fork",
+        active_changes=("change-a",),
+    )
+
+    assert result.returncode != 0
+    assert "Recovery archive requires a same-repository PR" in result.stderr
+
+
+def test_recovery_requires_valid_agent_change_selector(tmp_path: Path) -> None:
+    result = _classify(
+        tmp_path,
+        recovery=True,
+        head_ref="feature/change-a",
+        active_changes=("change-a",),
+    )
+
+    assert result.returncode != 0
+    assert "Recovery archive requires head branch agent/<change>" in result.stderr
+
+
+def test_recovery_requires_selected_active_change(tmp_path: Path) -> None:
+    result = _classify(
+        tmp_path,
+        recovery=True,
+        head_ref="agent/change-a",
+        active_changes=("change-b",),
+    )
+
+    assert result.returncode != 0
+    assert "Recovery change is not active" in result.stderr
+
+
+def test_incomplete_normal_change_is_noop(tmp_path: Path) -> None:
     result = _completion(
         tmp_path,
-        event_name="pull_request",
+        mode="normal",
         status="in-progress",
         completed_tasks=3,
         total_tasks=4,
@@ -178,10 +282,10 @@ def test_incomplete_pr_change_is_noop(tmp_path: Path) -> None:
     assert "reason=change-incomplete" in result.stdout
 
 
-def test_no_tasks_pr_change_is_not_complete(tmp_path: Path) -> None:
+def test_no_tasks_normal_change_is_not_complete(tmp_path: Path) -> None:
     result = _completion(
         tmp_path,
-        event_name="pull_request",
+        mode="normal",
         status="no-tasks",
         completed_tasks=0,
         total_tasks=0,
@@ -194,7 +298,7 @@ def test_no_tasks_pr_change_is_not_complete(tmp_path: Path) -> None:
 def test_incomplete_manual_archive_fails_loudly(tmp_path: Path) -> None:
     result = _completion(
         tmp_path,
-        event_name="workflow_dispatch",
+        mode="manual",
         status="in-progress",
         completed_tasks=3,
         total_tasks=4,
@@ -204,10 +308,23 @@ def test_incomplete_manual_archive_fails_loudly(tmp_path: Path) -> None:
     assert "Manual archive requires a Complete OpenSpec change" in result.stderr
 
 
+def test_incomplete_recovery_archive_fails_loudly(tmp_path: Path) -> None:
+    result = _completion(
+        tmp_path,
+        mode="recovery",
+        status="in-progress",
+        completed_tasks=3,
+        total_tasks=4,
+    )
+
+    assert result.returncode != 0
+    assert "Recovery archive requires a Complete OpenSpec change" in result.stderr
+
+
 def test_complete_change_is_eligible_for_archive(tmp_path: Path) -> None:
     result = _completion(
         tmp_path,
-        event_name="pull_request",
+        mode="normal",
         status="complete",
         completed_tasks=4,
         total_tasks=4,
@@ -218,14 +335,36 @@ def test_complete_change_is_eligible_for_archive(tmp_path: Path) -> None:
     assert "reason=change-complete" in result.stdout
 
 
+def test_earlier_merge_snapshot_stays_incomplete_after_later_completion(tmp_path: Path) -> None:
+    earlier = tmp_path / "earlier-snapshot.json"
+    later = tmp_path / "later-main.json"
+    _write_change_list(earlier, status="in-progress", completed_tasks=3, total_tasks=4)
+    _write_change_list(later, status="complete", completed_tasks=4, total_tasks=4)
+
+    result = _run(
+        "completion",
+        "--mode",
+        "normal",
+        "--change",
+        "change-a",
+        "--list-file",
+        str(earlier),
+    )
+
+    assert json.loads(later.read_text(encoding="utf-8"))["changes"][0]["status"] == "complete"
+    assert result.returncode == 0
+    assert "should_archive=false" in result.stdout
+    assert "reason=change-incomplete" in result.stdout
+
+
 def test_completion_fails_when_change_is_missing_from_openspec_list(tmp_path: Path) -> None:
     list_path = tmp_path / "changes.json"
     list_path.write_text(json.dumps({"changes": []}), encoding="utf-8")
 
     result = _run(
         "completion",
-        "--event-name",
-        "pull_request",
+        "--mode",
+        "normal",
         "--change",
         "change-a",
         "--list-file",
@@ -244,7 +383,11 @@ def test_archive_workflow_keeps_reviewed_lifecycle_guards() -> None:
         "pull_request:",
         "- closed",
         "pull-requests: read",
-        "ref: main",
+        "queue: max",
+        "github.event.pull_request.merge_commit_sha",
+        "github.event.pull_request.head.repo.full_name",
+        "github.event.pull_request.base.repo.full_name",
+        "openspec-archive-recovery",
         "gh api --paginate",
         "openspec list --json",
         "openspec validate",
@@ -253,8 +396,11 @@ def test_archive_workflow_keeps_reviewed_lifecycle_guards() -> None:
         "agent/archive-$CHANGE",
     ):
         assert required in workflow
+    assert "cancel-in-progress:" not in workflow
+    assert "ref: main" not in workflow
     assert "git push --force" not in workflow
     assert "git push -f" not in workflow
+    assert "pull_request_target:" not in workflow
 
 
 def test_readme_documents_state_driven_archive_contract() -> None:
@@ -267,6 +413,12 @@ def test_readme_documents_state_driven_archive_contract() -> None:
         "0 個 active candidate",
         ">1 active touched",
         "Complete` 是 repository-level implementation completion signal",
+        "triggering merge snapshot",
+        "openspec-archive-recovery",
+        "same-repository",
+        "unsupported automatic source",
+        "queue: max",
+        "100",
         "workflow_dispatch` 保留為 recovery / migration fallback",
     ):
         assert required in readme
