@@ -254,9 +254,7 @@ def _purpose_snapshot(args: argparse.Namespace) -> None:
 
         delta_purpose, _, _, _ = _purpose_parts(delta_spec, expected_requirements_heading=False)
         if _is_generated_purpose(delta_purpose):
-            _fail(
-                f"New capability {capability} delta Purpose is an OpenSpec generated placeholder"
-            )
+            _fail(f"New capability {capability} delta Purpose is an OpenSpec generated placeholder")
         entries.append(
             {
                 "capability": capability,
@@ -351,14 +349,10 @@ def _purpose_preserve(args: argparse.Namespace) -> None:
             f"TBD - created by archiving change {change}. Update Purpose after archive."
         )
         if actual != expected_generated:
-            _fail(
-                f"Unexpected canonical Purpose transformation for new capability {capability}"
-            )
+            _fail(f"Unexpected canonical Purpose transformation for new capability {capability}")
 
         _replace_purpose(canonical_spec, expected, lines, start, end)
-        verified, _, _, _ = _purpose_parts(
-            canonical_spec, expected_requirements_heading=True
-        )
+        verified, _, _, _ = _purpose_parts(canonical_spec, expected_requirements_heading=True)
         if verified != expected:
             _fail(f"Canonical Purpose preservation failed for {capability}")
         if _is_generated_purpose(verified):
