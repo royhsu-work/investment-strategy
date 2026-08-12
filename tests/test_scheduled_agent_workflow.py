@@ -270,7 +270,7 @@ def test_final_completion_requires_observed_issue_closure_and_supports_recovery(
     finalize = _read(AGENTS / "skills/lifecycle-finalize/SKILL.md")
 
     for required in (
-        "PASS, completion comment, or statement that an Issue \"may be closed\" is not completion",
+        'PASS, completion comment, or statement that an Issue "may be closed" is not completion',
         "Issue close",
         "Only the observed closed Issue state completes",
         "next Lead run reconstructs the completed archive",
@@ -279,6 +279,25 @@ def test_final_completion_requires_observed_issue_closure_and_supports_recovery(
 
     assert "perform the GitHub coordination Issue close mutation" in finalize
     assert "idempotently performs the missing" in finalize
+
+
+def test_readme_aligns_role_gates_multi_pr_archive_and_final_closure() -> None:
+    readme = _read(ROOT / "README.md")
+    for required in (
+        "Reviewer / review-openspec",
+        "Reviewer / review-implementation",
+        "Lead / finalize-change",
+        "Executor / merge-pr",
+        "MORE_IMPLEMENTATION_REQUIRED",
+        "Reviewer / review-archive",
+        "Lead / finalize-archive",
+        "close coordination Issue and observe it closed",
+        "intake:approved",
+        "不是** mutex、CAS 或 single-flight",
+        "head_sha` 精確等於 relevant revision",
+        "Scheduled Role 不另建 normal `archive-change` mutation",
+    ):
+        assert required in readme
 
 
 def test_governance_does_not_add_parallel_workflow_engine_state() -> None:
