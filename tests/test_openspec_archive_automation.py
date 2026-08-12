@@ -384,7 +384,7 @@ def test_archive_workflow_keeps_reviewed_lifecycle_guards() -> None:
         "- closed",
         "pull-requests: read",
         "queue: max",
-        "github.event.pull_request.merge_commit_sha",
+        "github.event.pull_request.merged && github.event.pull_request.merge_commit_sha",
         "github.event.pull_request.head.repo.full_name",
         "github.event.pull_request.base.repo.full_name",
         "openspec-archive-recovery",
