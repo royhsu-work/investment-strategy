@@ -26,8 +26,7 @@ If routing, change identity, or required evidence is contradictory, fail closed.
 3. Author the minimum proposal, delta specs, design, and tasks needed by the approved direction. Keep the
    change single-purpose and preserve repository scope boundaries.
 4. Any proposal/implementation PR associated with the persistent coordination Issue must use a
-   non-closing reference to the coordination Issue (for example `Refs #N`) and must not establish
-   Issue-closing linkage. Closing linkage is reserved for the final Archive PR lifecycle boundary.
+   non-closing reference to the coordination Issue (for example `Refs #N`). It must not establish Issue-closing linkage. Closing linkage is reserved for the final Archive PR lifecycle boundary.
 5. Before handoff, verify required artifacts exist and perform both:
    - forward traceability `proposal → specs → design → tasks`;
    - reverse traceability `tasks → design → specs → proposal`.
