@@ -27,6 +27,8 @@
 
 ## Taiwan EOD market-data support
 
+Taiwan EOD market-data infrastructure 已合併至 `main`，目前作為 repository 的 Taiwan daily market-data baseline，涵蓋 provider-neutral identity、source-native EOD acquisition、Taiwan trading calendar，以及 Decision / Backtest composition。這代表資料基礎設施已可用，但不代表 production Strategy 或排程 workflow 已啟用；production strategy/workflow activation 仍維持 deferred。
+
 - Instrument configuration 使用 provider-neutral `symbol + listing_venue` identity；目前支援 `TWSE` 與 `TPEX`。`.TW` / `.TWO` 等 provider ticker syntax 只存在於 concrete infrastructure adapter，不進入 StrategyContext。
 - yfinance adapter 取得 provider/source-native daily OHLCV，明確停用 adapter-controlled `auto_adjust`、`back_adjust`、`repair`、actions 與 rounding；正式價格基礎直接使用 provider native `Open`/`High`/`Low`/`Close`/`Volume`，不以 `Adj Close` 取代 `Close`，也不宣稱跨 split/consolidation 的歷史價格等同交易所 raw nominal scale。
 - provider `period=max` 只代表 acquisition breadth，不定義 analytical history 或 continuity scope。Backtest continuity 以 caller 已選定的 formal replay range 驗證；Decision 在尚未有 Strategy lookback/history-window contract 前不從 provider 第一筆資料自行發明 continuity 起點。
