@@ -123,7 +123,7 @@ merge-pr > implement-change
 
 Scheduled execution 是 at-least-once/reconstructable，而不是 exactly-once。Durable artifact/result 與 revision-aware evidence 必須先寫入，再 fresh-read routing 後 handoff；`fresh-read routing → update labels` **不是** mutex、CAS 或 single-flight。Overlapping runs 依 action-specific idempotency、revision/precondition check 與 fail-closed stale/contradictory evidence 保持安全。
 
-Strict OpenSpec gate 的 canonical CI evidence 是 repository 既有 `.github/workflows/openspec-validate.yml`。當成功的 `OpenSpec Validate` run `head_sha` 精確等於 relevant revision，即足以證明 repository-pinned `openspec validate --all --strict --json --no-interactive` 已通過，不需只因證據來自 CI 而重複 local CLI；如果 exact-revision CI evidence 不可用，才使用同一 pinned CLI 對相同 revision 取得等價 evidence。Missing、failed、stale 或 revision-mismatched evidence 一律 fail closed。
+Strict OpenSpec gate 的 canonical CI path 是 repository 既有 `.github/workflows/openspec-validate.yml`。對 revision R 的 exact-revision gate，CI evidence 必須以 durable job evidence 證明 validator checkout `HEAD` 實際等於 R，且之後才執行 repository-pinned `openspec validate --all --strict --json --no-interactive`。GitHub Actions `run.head_sha` 只是 association metadata，單獨使用是 insufficient checkout proof；若 PR run 驗證的是 synthetic merge revision M 且 `M != R`，就不能拿來滿足 PR head R 的 exact-head gate。已有有效 exact-head CI PASS 時，不需只因證據來自 CI 而重複 local CLI；若 exact-head CI evidence 不可用，才使用同一 pinned CLI 直接對 checkout R 驗證。Missing、failed、stale、revision-mismatched 或 checkout-mismatched evidence 一律 fail closed。
 
 `agent/<change>` 是 implementation branch 的 repository convention；normal archive routing 不依賴 branch name。Normal automatic archive 只支援 **same-repository** PR，並由 triggering merge snapshot 中仍 active 的 OpenSpec state，搭配 merged PR changed files 中的 `openspec/changes/<change>/...` 決定 candidate。`agent/archive-<change>` 由 archive workflow 建立；existing archive branch 會 fail loudly，automation 不會 force-push 或重用該 branch。`agent/archive-*` PR merge 一律 no-op，避免 archive recursion。
 
@@ -223,7 +223,7 @@ Implementation-specific regimes remain under `signals` or `diagnostics`.
 
 Configuration resolves before any market-data load. Market-data identity and Strategy assignment remain separate concerns: a configured instrument may have a valid listing venue without an active strategy.
 
-Repository YAML adapters live behind registry interfaces. `config/instruments.yaml` may contain provider-neutral venue metadata without creating a fake production strategy assignment；`config/parameter_sets.yaml` remains empty until a production strategy exists.
+Repository YAML adapters live behind registry interfaces. `config/instruments.yaml` may contain provider-neutral venue metadata without creating a fake production strategy assignment; `config/parameter_sets.yaml` remains empty until a production strategy exists.
 
 ## Market-data semantics
 
@@ -370,8 +370,8 @@ Request-boundary rejection 不屬於這個 envelope，因為 application 尚未�
 - `.github/workflows/decision.yml`：formal Decision orchestration scaffold。
 - `.github/workflows/backtest.yml`：analytical Backtest orchestration scaffold；不含 fill simulation。
 - `.github/workflows/quality.yml`：`uv run pytest`、`ruff check`、`ruff format --check`、`mypy src tests`。
-- `.github/workflows/openspec-validate.yml`：執行 `openspec list` 與 project-level `openspec validate --all --strict --json --no-interactive`，不綁定已 archived change；對需要 strict OpenSpec gate 的 Scheduled Role，成功且 `head_sha` 精確等於 relevant revision 的 run 是 canonical CI validation evidence。
-- `.github/workflows/openspec-archive.yml`：對 merged-to-`main` 的 `pull_request.closed` 事件，固定 checkout triggering `merge_commit_sha`，從 PR changed files 與該 snapshot 的 active OpenSpec state 分類 candidate。Normal automatic path 只接受 same-repository PR；fork PR 若形成 OpenSpec candidate 則 fail `unsupported automatic source`。`openspec-archive-recovery` + same-repository `agent/<change>` 提供 explicit recovery；`workflow_dispatch` 保留 manual fallback。三條 path 共用 strict pre-validation、existing archive-branch guard、`openspec archive`、strict post-validation 與 push core。Workflow 使用 `queue: max` 保留最多 100 個 pending evaluations，超量 cancellation 是可觀察 failure；workflow 只 push `agent/archive-<change>`，不直接寫入 `main`。
+- `.github/workflows/openspec-validate.yml`：執行 `openspec list` 與 project-level `openspec validate --all --strict --json --no-interactive`，不綁定已 archived change；對 exact-revision gate，workflow 先決定 target revision/repository、checkout 該 target、以 `git rev-parse HEAD` 驗證實際 validator `HEAD` 等於 target，並把 target/checkout identity 寫入 job log/summary 後才執行 strict validation。`run.head_sha` 只作 association metadata，不能單獨作 checkout proof；PR synthetic merge validation 不等於不同 PR head 的 exact-head validation。
+- `.github/workflows/openspec-archive.yml`：對 merged-to-`main` 的 `pull_request.closed` 事件，固定 checkout triggering `merge_commit_sha`，從 PR changed files 與該 snapshot 的 active OpenSpec state 分類 candidate。Normal automatic path 只接受 same-repository PR；fork PR 若形成 OpenSpec candidate 則 fail `unsupported automatic source`。`openspec-archive-recovery` + same-repository `agent/<change>` 提供 explicit recovery；`workflow_dispatch` 保留 manual fallback。三條 path 共用 strict pre-validation、existing archive-branch guard、OpenSpec archive、strict post-validation 與 push core。Workflow 使用 `queue: max` 保留最多 100 個 pending evaluations，超量 cancellation 是可觀察 failure；workflow 只 push `agent/archive-<change>`，不直接寫入 `main`。
 
 Generated analytical results 應上傳 Actions Artifacts，不 commit 回 repository。Production strategy/workflow activation 保持 deferred。
 
@@ -386,7 +386,7 @@ openspec list
 openspec validate --all --strict --json --no-interactive
 ```
 
-針對仍 active 的 change，`openspec status --change <change>` 可在 change review 與 archive validation 使用。當 exact-revision `OpenSpec Validate` GitHub Actions 已成功時，Scheduled Role gate 不需只為重複證明同一 strict validation 而再次執行 local OpenSpec CLI。
+針對仍 active 的 change，`openspec status --change <change>` 可在 change review 與 archive validation 使用。當 exact-revision `OpenSpec Validate` GitHub Actions 已成功，且 durable job evidence 已證明 validator checkout `HEAD` 就是 relevant revision 時，Scheduled Role gate 不需只為重複證明同一 strict validation 而再次執行 local OpenSpec CLI。
 
 ## Deferred work
 
