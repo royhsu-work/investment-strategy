@@ -162,6 +162,20 @@ closed.
 Before `propose-change` or a materially revised `resolve-question` hands OpenSpec work to
 `review-openspec`, Lead also verifies required artifacts and bidirectional traceability.
 
+## OpenSpec task completion checkpoints
+
+OpenSpec task checkboxes are durable completion evidence, not live progress state. For each approved
+vertical slice, Executor persists all satisfied task-completion markers after the slice's required
+`VERIFY` succeeds and before starting the next slice or handing off.
+
+Marker persistence does not require a dedicated commit for each individual checkbox; it should
+normally be included with the corresponding implementation checkpoint. Markers for already verified
+slices must not be deferred until the end of the whole change.
+
+If execution is interrupted inside the current unverified slice, that slice's markers may still lag.
+The next run reconstructs the active slice from code, tests, task state, and durable evidence, while
+previously verified slices remain durable.
+
 ## Multi-PR implementation and archive boundary
 
 A change may require multiple implementation PRs. After each implementation merge, Lead reconstructs
