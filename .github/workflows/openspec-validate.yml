@@ -14,8 +14,33 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    env:
+      VALIDATION_TARGET_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      VALIDATION_TARGET_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout validation target
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.VALIDATION_TARGET_REPOSITORY }}
+          ref: ${{ env.VALIDATION_TARGET_SHA }}
+
+      - name: Verify exact checkout revision
+        shell: bash
+        run: |
+          actual_sha="$(git rev-parse HEAD)"
+          echo "validation_target_repository=$VALIDATION_TARGET_REPOSITORY"
+          echo "validation_target_sha=$VALIDATION_TARGET_SHA"
+          echo "validator_checkout_head=$actual_sha"
+          {
+            echo "### OpenSpec validation checkout"
+            echo "- target repository: \`$VALIDATION_TARGET_REPOSITORY\`"
+            echo "- target revision: \`$VALIDATION_TARGET_SHA\`"
+            echo "- validator checkout HEAD: \`$actual_sha\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$actual_sha" != "$VALIDATION_TARGET_SHA" ]]; then
+            echo "::error::Validator checkout HEAD $actual_sha does not match target $VALIDATION_TARGET_SHA"
+            exit 1
+          fi
 
       - uses: actions/setup-node@v4
         with:
