@@ -37,10 +37,14 @@ def _flatten_issues(payload: object) -> list[dict[str, object]]:
 
 
 def _has_change_identity(body: str, change: str) -> bool:
-    pattern = re.compile(
-        rf"(?m)^\s*Change:\s*`?{re.escape(change)}`?\s*$"
-    )
-    return pattern.search(body) is not None
+    pattern = re.compile(rf"^Change:\s*`?{re.escape(change)}`?$")
+    for raw_line in body.splitlines():
+        line = raw_line.strip()
+        if len(line) >= 2 and line.startswith("`") and line.endswith("`"):
+            line = line[1:-1].strip()
+        if pattern.fullmatch(line):
+            return True
+    return False
 
 
 def _resolve(args: argparse.Namespace) -> None:
