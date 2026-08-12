@@ -216,6 +216,23 @@ def test_fork_pr_with_active_candidate_fails_as_unsupported(tmp_path: Path) -> N
     assert "recovery/manual" in result.stderr
 
 
+def test_fork_pr_with_multiple_active_candidates_fails_as_unsupported(tmp_path: Path) -> None:
+    result = _classify(
+        tmp_path,
+        head_repo="external/fork",
+        changed_files=(
+            "openspec/changes/change-a/tasks.md",
+            "openspec/changes/change-b/tasks.md",
+        ),
+        active_changes=("change-a", "change-b"),
+    )
+
+    assert result.returncode != 0
+    assert "Unsupported automatic archive source" in result.stderr
+    assert "Ambiguous OpenSpec archive scope" not in result.stderr
+    assert "recovery/manual" in result.stderr
+
+
 def test_same_repository_recovery_selects_change_from_agent_branch(tmp_path: Path) -> None:
     result = _classify(
         tmp_path,
