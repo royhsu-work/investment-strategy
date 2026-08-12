@@ -212,6 +212,16 @@ Lead requires an unambiguous Reviewer implementation PASS for the current PR hea
 
 Lead requires an unambiguous Reviewer archive PASS for the current archive PR head before binding archive merge authorization to that revision. After merge, Lead reconstructs canonical default-branch/archive state and only then performs durable Issue closure when final conditions are satisfied.
 
+#### `propose-change` pre-handoff readiness and validation evidence
+
+Before Lead routes a newly authored or materially revised OpenSpec change to `Reviewer / review-openspec`, Lead verifies that the required OpenSpec artifacts exist, performs the bidirectional traceability/readiness check, and obtains strict OpenSpec validation for the exact revision being handed off.
+
+The repository's existing `.github/workflows/openspec-validate.yml` is the canonical CI path for this evidence. A successful `OpenSpec Validate` run whose `head_sha` equals the exact revision being handed off is sufficient durable evidence that `openspec validate --all --strict --json --no-interactive` passed. Lead does not require a duplicate local CLI run solely because CI supplied the exact-revision evidence.
+
+If exact-revision CI evidence is unavailable, Lead may obtain equivalent evidence by running the repository-pinned OpenSpec CLI command directly against that same revision. Missing, stale, failed, or revision-mismatched validation evidence fails closed and retains Lead ownership.
+
+`resolve-question` uses the same readiness rule before returning a materially revised OpenSpec state to `review-openspec`.
+
 ### 6. Scheduled execution is at-least-once and reconstructable
 
 Every run behaves as if it may be the first run to see the work item:
@@ -372,6 +382,7 @@ If the role has no eligible work, it performs no workflow mutation and produces 
 | Persistent coordination Issue / routing tuple | 3, 7 |
 | Nine actions / reusable skills | 1, 4 |
 | Review/finalize minimum gates | 5 |
+| OpenSpec pre-handoff readiness / validation evidence | 5 |
 | At-least-once / crash recovery | 6–8 |
 | Overlapping same-role execution / fail closed | 7–8 |
 | Revision-bound review and merge authorization | 5, 8 |
