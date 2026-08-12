@@ -21,6 +21,7 @@ Issue #18 is the clean coordination Issue for this change. It also adds a lifecy
 - Preserve existing repository archive automation and multi-PR lifecycle behavior.
 - Keep Human admission explicit, including Lead idle advisory behavior.
 - Make final coordination completion depend on observed GitHub Issue closure.
+- Persist Executor task completion at verified vertical-slice checkpoints without requiring per-checkbox commits or a separate progress-state system.
 
 ### Non-Goals
 
@@ -373,6 +374,32 @@ No model-derived urgency score or discretionary reordering is allowed. Invalid r
 
 If the role has no eligible work, it performs no workflow mutation and produces no repository noise. Lead may only use the separate idle advisory behavior when its conditions are satisfied.
 
+### 13. Task completion markers persist at verified vertical-slice checkpoints
+
+OpenSpec task checkboxes are durable completion evidence, not fine-grained live progress state. The existing feature-slice lifecycle remains `RED → GREEN → REFACTOR → VERIFY`.
+
+Executor may complete several tasks while working inside the current slice without creating a commit for each checkbox. Once the slice's required `VERIFY` is green, Executor updates the completion markers for all tasks in that slice whose criteria are satisfied and persists that `tasks.md` state with the corresponding implementation checkpoint before starting the next slice or handing off.
+
+```text
+work current vertical slice
+→ RED
+→ GREEN
+→ REFACTOR
+→ VERIFY green
+→ update completed markers for this slice
+→ persist implementation checkpoint including tasks.md
+→ begin next slice or hand off
+```
+
+This deliberately prevents two undesirable extremes:
+
+- task-level commit noise from persisting every checkbox independently; and
+- end-of-change batching where already verified slices remain unrepresented in durable `tasks.md` state until all implementation is finished.
+
+An interruption inside the current incomplete/unverified slice may leave that slice's checkboxes behind actual in-progress code. Recovery reconstructs code/tests/tasks for that active slice; previously verified slices remain represented durably by their persisted markers. This is accepted because the checkpoint is slice completion, not live progress.
+
+The rule does not create progress percentages, `status:in-progress`, leases, heartbeat state, or another workflow state machine. It uses the OpenSpec task markers already present in the repository and aligns their persistence boundary with the feature-slice granularity required by `openspec/config.yaml`.
+
 ## Requirement Traceability
 
 | Requirement area | Design decision |
@@ -383,7 +410,8 @@ If the role has no eligible work, it performs no workflow mutation and produces 
 | Nine actions / reusable skills | 1, 4 |
 | Review/finalize minimum gates | 5 |
 | OpenSpec pre-handoff readiness / validation evidence | 5 |
-| At-least-once / crash recovery | 6–8 |
+| At-least-once / crash recovery | 6–8, 13 |
+| Task completion checkpoint persistence | 13 |
 | Overlapping same-role execution / fail closed | 7–8 |
 | Revision-bound review and merge authorization | 5, 8 |
 | Multi-PR lifecycle / archive automation | 9 |
@@ -408,6 +436,10 @@ The workflow deliberately avoids a custom serialized event log. Evidence remains
 ### Fixed action priority is intentionally opinionated
 
 The deterministic priority prevents model discretion and makes repeated scheduler runs stable, but it may not represent every future operational urgency. Changing priority is therefore a governance change, not an Executor implementation choice.
+
+### Slice-level task markers intentionally lag inside the active slice
+
+The checkpoint rule favors meaningful commits over fine-grained live progress. If a run stops mid-slice, some code may exist while that slice's checkboxes remain unchecked. Recovery therefore reconstructs the active slice from repository/test reality instead of treating unchecked current-slice tasks as proof that no work has started. Previously verified slices remain durable.
 
 ### One coordination Issue may become long
 
