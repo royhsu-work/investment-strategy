@@ -67,7 +67,8 @@ After archive merge (or when reconstructing a merge already completed):
    expected native Issue completion caused by the Archive PR closing linkage.
 6. If the Issue is observed closed, record completion without executing another Issue-close mutation.
 7. Only when the authorized Archive PR is merged, canonical archive state is correct, and native
-   completion is missing, perform the explicit Issue-close recovery mutation.
+   completion is missing, perform the GitHub coordination Issue close mutation as the explicit
+   Issue-close recovery path.
 8. Re-read the Issue and require observed `closed` state before declaring the coordination lifecycle
    complete.
 
@@ -81,8 +82,7 @@ Legal post-merge outcomes:
   successful completion.
 
 If the run stops after archive completion but before the expected native close is observed, routing
-remains `Lead / finalize-archive`; a later run reconstructs final state. Explicit close is recovery only,
-not the normal completion mutation.
+remains `Lead / finalize-archive`; a later run reconstructs final state and idempotently performs the missing recovery close only after confirming native completion is still absent. Explicit close is recovery only, not the normal completion mutation.
 
 ## Handoff and concurrency safety
 
