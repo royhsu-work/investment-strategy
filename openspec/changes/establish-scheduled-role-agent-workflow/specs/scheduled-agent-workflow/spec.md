@@ -98,6 +98,32 @@ Procedural skills SHOULD be reusable across materially similar actions and MUST 
 - THEN the same merge action contract applies regardless of whether the target is an implementation PR or archive PR
 - AND lifecycle-specific next routing is reconstructed from durable state after merge
 
+### Requirement: Lead obtains exact-revision OpenSpec readiness before review handoff
+
+Before routing a newly authored or materially revised OpenSpec change to `Reviewer / review-openspec`, Lead SHALL verify required OpenSpec artifacts exist, perform forward and reverse traceability/readiness checks, and obtain strict OpenSpec validation evidence for the exact revision being handed off.
+
+A successful repository `OpenSpec Validate` GitHub Actions run whose `head_sha` equals that exact revision SHALL be sufficient durable evidence that the repository-pinned `openspec validate --all --strict --json --no-interactive` validation passed. Lead MUST NOT require a duplicate local CLI run solely because the exact-revision validation evidence was produced by CI.
+
+If exact-revision CI evidence is unavailable, Lead MAY obtain equivalent evidence by running the repository-pinned OpenSpec CLI validation directly against the same revision.
+
+Missing, failed, stale, or revision-mismatched validation evidence MUST fail closed and retain Lead ownership. The same rule SHALL apply when `resolve-question` materially revises OpenSpec artifacts before returning them to `review-openspec`.
+
+#### Scenario: Exact-revision CI validation passes
+
+- GIVEN Lead has completed the OpenSpec readiness and bidirectional traceability checks for revision R
+- AND `OpenSpec Validate` completed successfully with `head_sha` equal to R
+- WHEN Lead evaluates handoff to Reviewer
+- THEN the CI result is sufficient strict-validation evidence for R
+- AND Lead does not require an additional local CLI validation solely because CI supplied the evidence
+
+#### Scenario: Validation evidence is stale
+
+- GIVEN strict OpenSpec validation passed for revision R1
+- AND the OpenSpec artifacts are now at revision R2
+- WHEN Lead evaluates handoff to Reviewer
+- THEN the validation evidence for R1 is stale
+- AND Lead retains ownership until strict validation evidence for R2 is obtained
+
 ### Requirement: Review and finalize actions have Lead-owned minimum gate contracts
 
 The repository specification SHALL define the minimum checks and legal result categories for the three Reviewer gates and the two Lead finalize actions. Procedural skills MAY operationalize these checks but MUST NOT invent or weaken them.
