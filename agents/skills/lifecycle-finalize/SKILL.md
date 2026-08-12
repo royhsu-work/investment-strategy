@@ -13,6 +13,10 @@ and any prior Lead authorization for the relevant revision.
 
 Stale, missing, contradictory, or revision-mismatched gate evidence fails closed.
 
+If the coordination Issue is already closed, reconstruct whether that closure followed the authorized
+final Archive PR merge and canonical archive transition. Closure before the authorized Archive PR merge
+is premature lifecycle completion: fail closed, retain Lead/recovery ownership, and must not be treated as successful completion.
+
 ## `finalize-change`
 
 Before merge authorization:
@@ -52,20 +56,33 @@ Before archive PR merge authorization:
 
 After archive merge (or when reconstructing a merge already completed):
 
-1. Reconstruct canonical default-branch OpenSpec state and dated archive history.
+1. Reconstruct the exact authorized Archive PR merge, canonical default-branch OpenSpec state, and dated
+   archive history.
 2. Confirm final lifecycle conditions are actually satisfied for the immutable change id.
-3. If final state is not complete, retain Lead/recovery ownership; do not close from comments alone.
-4. If final state is complete, perform the GitHub coordination Issue close mutation.
-5. Re-read the Issue and require observed `closed` state before declaring the coordination lifecycle
+3. If the Issue was observed closed before the authorized Archive PR merge, treat it as premature,
+   fail closed, and must not be treated as successful completion.
+4. If final archive state is incomplete or contradictory, retain Lead/recovery ownership; do not infer
+   completion from comments or Issue state alone.
+5. When the authorized Archive PR is merged and canonical archive state is correct, first observe the
+   expected native Issue completion caused by the Archive PR closing linkage.
+6. If the Issue is observed closed, record completion without executing another Issue-close mutation.
+7. Only when the authorized Archive PR is merged, canonical archive state is correct, and native
+   completion is missing, perform the GitHub coordination Issue close mutation as the explicit
+   Issue-close recovery path.
+8. Re-read the Issue and require observed `closed` state before declaring the coordination lifecycle
    complete.
 
-Legal post-merge outcome:
+Legal post-merge outcomes:
 
-- `ARCHIVE_CONFIRMED_ON_DEFAULT_BRANCH` + observed closed Issue → lifecycle complete.
+- `ARCHIVE_CONFIRMED_ON_DEFAULT_BRANCH` + expected native Issue completion observed closed → lifecycle
+  complete;
+- authorized Archive PR merged + canonical archive state correct + native completion is missing →
+  explicit Issue-close recovery, then require observed closed;
+- premature Issue closure before authorized Archive PR merge → fail closed; must not be treated as
+  successful completion.
 
-If the run stops after archive completion but before Issue closure, routing remains
-`Lead / finalize-archive`; a later run reconstructs final state and idempotently performs the missing
-close.
+If the run stops after archive completion but before the expected native close is observed, routing
+remains `Lead / finalize-archive`; a later run reconstructs final state and idempotently performs the missing recovery close only after confirming native completion is still absent. Explicit close is recovery only, not the normal completion mutation.
 
 ## Handoff and concurrency safety
 

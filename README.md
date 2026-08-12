@@ -53,6 +53,10 @@ Repository 採用 OpenSpec + GitHub Issue/PR 的持久化開發流程。`agents/
 
 每個正常 OpenSpec change 使用一個 persistent coordination Issue。Actionable Issue 必須只有一組合法 `(agent:<role>, action:<action>)` routing tuple；scheduled run 每次最多處理一個 Issue，並重新建構 Issue、PR、OpenSpec、GitHub Actions 與 default-branch state，不依賴先前對話或前一次 run 正常結束。
 
+Implementation 與 implementation-correction PR 只能使用不會關閉 Issue 的 reference（例如 `Refs #21`），不得建立 GitHub Issue-closing linkage。只有 repository-owned final Archive PR 會對同一 persistent coordination Issue 建立 closing linkage（例如 `Closes #21`）；該 linkage 只是授權後 archive merge 的 lifecycle side effect，不能取代 Reviewer PASS、Lead exact-revision `MERGE_AUTHORIZED`、unchanged-head 或 current-gate preconditions。
+
+最終 completion invariant 仍是 **close coordination Issue and observe it closed**；差別在於正常路徑由 authorized final Archive PR 的 closing linkage 觸發 native close，Lead explicit close 僅作 missing-native-close recovery。
+
 ```text
 Human-admitted requirement / research direction
         ↓
@@ -67,7 +71,7 @@ exact-revision strict OpenSpec validation
 Reviewer / review-openspec
         ↓ PASS
 Executor / implement-change
-agent/<change> + Draft PR  (branch convention)
+agent/<change> + Draft PR  (branch convention; non-closing Issue reference)
         ↓
 implementation + tests + quality/OpenSpec validation
         ↓
@@ -86,7 +90,7 @@ Lead reconstructs merged default-branch state
              ↓
 Merged-PR archive classifier / existing repository automation
              ↓
-agent/archive-<change> + Archive PR
+agent/archive-<change> + Archive PR with closing linkage
              ↓
 Reviewer / review-archive
              ↓ PASS
@@ -94,17 +98,21 @@ Lead / finalize-archive
              ↓ MERGE_AUTHORIZED for exact archive PR revision
 Executor / merge-pr
              ↓
-Lead reconstructs canonical default-branch/archive state
+GitHub native closing linkage completes coordination Issue
              ↓
-close coordination Issue and observe it closed
+Lead reconstructs canonical default-branch/archive state
+        ├─ expected native Issue close observed → lifecycle complete
+        └─ archive state correct but native close missing
+             → explicit Lead Issue-close recovery
+             → re-observe closed before completion
 ```
 
 High-level responsibilities:
 
-- **Lead**：擁有 proposal/specs/design/tasks 的 specification authority、scope/contract resolution 與 lifecycle authorization；不修改 implementation code，也不執行 PR merge。`finalize-change` / `finalize-archive` 必須依 current revision 與 Reviewer gate 重新判斷，最後只有在 canonical archive state 已確認時才關閉 coordination Issue。
+- **Lead**：擁有 proposal/specs/design/tasks 的 specification authority、scope/contract resolution 與 lifecycle authorization；不修改 implementation code，也不執行 PR merge。`finalize-change` / `finalize-archive` 必須依 current revision 與 Reviewer gate 重新判斷。Archive PR merge 後，Lead 先 reconstruct canonical archive state 並觀察 closing linkage 應造成的 native Issue completion；只有 authorized Archive PR 已 merge、canonical archive state 正確但 native close 仍缺失時，才使用 explicit Issue close 作 recovery，並重新觀察 Issue 為 closed 才宣告 lifecycle complete。Premature Issue closure 一律 fail closed。
 - **Reviewer**：獨立執行 `review-openspec`、`review-implementation`、`review-archive` revision-bound gates；Reviewer 不修改正在審查的 specification/implementation 來自行修正 finding，也不因 PASS 自動取得 merge authority。
-- **Executor**：依核准 OpenSpec 實作 code/tests/config、更新有事實依據的 task completion marker，並只在 Reviewer PASS + Lead exact-revision `MERGE_AUTHORIZED` + current PR head 未改變且 gate 仍有效時執行 `merge-pr`；不重定義 requirements/contracts/task meaning。OpenSpec task checkbox 以 **verified vertical-slice checkpoint** 持久化：slice 的 `VERIFY` 成功後，必須在開始下一個 slice 或 handoff 前更新該 slice 已滿足的 markers；不要求每個 checkbox 各自 commit，但不得延後到整個 change 最後才一次更新。
-- **Repository automation**：執行 Python quality gates、project-level OpenSpec validation，以及既有 deterministic normal OpenSpec archive workflow；Scheduled Role 不另建 normal `archive-change` mutation。
+- **Executor**：依核准 OpenSpec 實作 code/tests/config、更新有事實依據的 task completion marker，並只在 Reviewer PASS + Lead exact-revision `MERGE_AUTHORIZED` + current PR head 未改變且 gate 仍有效時執行 `merge-pr`；不重定義 requirements/contracts/task meaning。Implementation PR 若建立 closing linkage 必須 fail closed；final Archive PR 則必須指向正確 persistent coordination Issue 的 repository-approved closing linkage，但 linkage 本身永遠不是 merge authority。OpenSpec task checkbox 以 **verified vertical-slice checkpoint** 持久化：slice 的 `VERIFY` 成功後，必須在開始下一個 slice 或 handoff 前更新該 slice 已滿足的 markers；不要求每個 checkbox 各自 commit，但不得延後到整個 change 最後才一次更新。
+- **Repository automation**：執行 Python quality gates、project-level OpenSpec validation，以及既有 deterministic normal OpenSpec archive workflow；Scheduled Role 不另建 normal `archive-change` mutation。Archive workflow 負責建立 final Archive PR，並 deterministic resolve 同一 persistent coordination Issue 後加入 closing linkage。
 
 固定 role-local discovery priority：
 
@@ -371,7 +379,7 @@ Request-boundary rejection 不屬於這個 envelope，因為 application 尚未�
 - `.github/workflows/backtest.yml`：analytical Backtest orchestration scaffold；不含 fill simulation。
 - `.github/workflows/quality.yml`：`uv run pytest`、`ruff check`、`ruff format --check`、`mypy src tests`。
 - `.github/workflows/openspec-validate.yml`：執行 `openspec list` 與 project-level `openspec validate --all --strict --json --no-interactive`，不綁定已 archived change；對 exact-revision gate，workflow 先決定 target revision/repository、checkout 該 target、以 `git rev-parse HEAD` 驗證實際 validator `HEAD` 等於 target，並把 target/checkout identity 寫入 job log/summary 後才執行 strict validation。`run.head_sha` 只作 association metadata，不能單獨作 checkout proof；PR synthetic merge validation 不等於不同 PR head 的 exact-head validation。
-- `.github/workflows/openspec-archive.yml`：對 merged-to-`main` 的 `pull_request.closed` 事件，固定 checkout triggering `merge_commit_sha`，從 PR changed files 與該 snapshot 的 active OpenSpec state 分類 candidate。Normal automatic path 只接受 same-repository PR；fork PR 若形成 OpenSpec candidate 則 fail `unsupported automatic source`。`openspec-archive-recovery` + same-repository `agent/<change>` 提供 explicit recovery；`workflow_dispatch` 保留 manual fallback。三條 path 共用 strict pre-validation、existing archive-branch guard、OpenSpec archive、strict post-validation 與 push core。Workflow 使用 `queue: max` 保留最多 100 個 pending evaluations，超量 cancellation 是可觀察 failure；workflow 只 push `agent/archive-<change>`，不直接寫入 `main`。
+- `.github/workflows/openspec-archive.yml`：對 merged-to-`main` 的 `pull_request.closed` 事件，固定 checkout triggering `merge_commit_sha`，從 PR changed files 與該 snapshot 的 active OpenSpec state 分類 candidate。Normal automatic path 只接受 same-repository PR；fork PR 若形成 OpenSpec candidate 則 fail `unsupported automatic source`。`openspec-archive-recovery` + same-repository `agent/<change>` 提供 explicit recovery；`workflow_dispatch` 保留 manual fallback。三條 path 共用 strict pre-validation、existing archive-branch guard、OpenSpec archive、strict post-validation 與 push core；archive snapshot push 後會 deterministic resolve exactly one matching persistent coordination Issue 並建立帶 `Closes #<issue>` linkage 的 final Archive PR。Workflow 使用 `queue: max` 保留最多 100 個 pending evaluations，超量 cancellation 是可觀察 failure；workflow 不直接寫入 `main`。
 
 Generated analytical results 應上傳 Actions Artifacts，不 commit 回 repository。Production strategy/workflow activation 保持 deferred。
 

@@ -25,15 +25,17 @@ If routing, change identity, or required evidence is contradictory, fail closed.
    and persist it; after persistence the identity is immutable.
 3. Author the minimum proposal, delta specs, design, and tasks needed by the approved direction. Keep the
    change single-purpose and preserve repository scope boundaries.
-4. Before handoff, verify required artifacts exist and perform both:
+4. Any proposal/implementation PR associated with the persistent coordination Issue must use a
+   non-closing reference to the coordination Issue (for example `Refs #N`). It must not establish Issue-closing linkage. Closing linkage is reserved for the final Archive PR lifecycle boundary.
+5. Before handoff, verify required artifacts exist and perform both:
    - forward traceability `proposal → specs → design → tasks`;
    - reverse traceability `tasks → design → specs → proposal`.
-5. Obtain strict OpenSpec validation for the exact handoff revision R. CI is sufficient only when
+6. Obtain strict OpenSpec validation for the exact handoff revision R. CI is sufficient only when
    durable validator evidence proves checkout `HEAD == R` before strict validation; `run.head_sha == R`
    alone is association metadata and is not checkout proof. If valid exact-head CI evidence is
    unavailable, use the repository-pinned local CLI directly against checkout R. Stale, missing,
    failed, revision-mismatched, or checkout-mismatched evidence fails closed.
-6. Persist revision-aware readiness evidence before routing.
+7. Persist revision-aware readiness evidence before routing.
 
 Legal outcomes:
 
@@ -49,7 +51,10 @@ Legal outcomes:
    modify implementation code to make a gate pass.
 4. If OpenSpec artifacts changed materially, repeat the same required-artifact, bidirectional
    traceability, and exact-revision strict-validation readiness checks used by `propose-change`.
-5. Persist the resolution and current revision before handoff.
+5. If the same implementation or correction PR remains in use, keep its coordination-Issue reference
+   non-closing; resolving a specification question never authorizes adding Issue-closing linkage to an
+   implementation PR.
+6. Persist the resolution and current revision before handoff.
 
 Legal handoff depends on the gate/blocker being resolved:
 
