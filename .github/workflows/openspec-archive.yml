@@ -19,17 +19,17 @@ permissions:
 
 concurrency:
   group: openspec-archive
-  cancel-in-progress: false
+  queue: max
 
 jobs:
   archive:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout merged main
+      - name: Checkout archive evaluation snapshot
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: main
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || 'main' }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -44,6 +44,9 @@ jobs:
           MANUAL_CHANGE: ${{ inputs.change }}
           PR_MERGED: ${{ github.event.pull_request.merged }}
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          PR_RECOVERY: ${{ contains(github.event.pull_request.labels.*.name, 'openspec-archive-recovery') }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -69,6 +72,9 @@ jobs:
             --event-name "$EVENT_NAME" \
             --merged "${PR_MERGED:-false}" \
             --head-ref "$PR_HEAD_REF" \
+            --head-repo "$PR_HEAD_REPO" \
+            --base-repo "$PR_BASE_REPO" \
+            --recovery "${PR_RECOVERY:-false}" \
             --changed-files "$changed_files" \
             --changes-root openspec/changes \
             >> "$GITHUB_OUTPUT"
@@ -89,12 +95,12 @@ jobs:
         shell: bash
         env:
           CHANGE: ${{ steps.classify.outputs.change }}
-          EVENT_NAME: ${{ github.event_name }}
+          MODE: ${{ steps.classify.outputs.mode }}
         run: |
           openspec --version
           openspec list --json > "$RUNNER_TEMP/openspec-changes.json"
           python .github/scripts/openspec_archive.py completion \
-            --event-name "$EVENT_NAME" \
+            --mode "$MODE" \
             --change "$CHANGE" \
             --list-file "$RUNNER_TEMP/openspec-changes.json" \
             >> "$GITHUB_OUTPUT"
