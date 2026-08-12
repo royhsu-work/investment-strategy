@@ -111,6 +111,15 @@ jobs:
           CHANGE: ${{ steps.classify.outputs.change }}
         run: openspec validate "$CHANGE" --type change --strict --json --no-interactive
 
+      - name: Snapshot canonical Purpose contract
+        if: steps.completion.outputs.should_archive == 'true'
+        env:
+          CHANGE: ${{ steps.classify.outputs.change }}
+        run: |
+          python .github/scripts/openspec_archive.py purpose-snapshot \
+            --change "$CHANGE" \
+            --snapshot-file "$RUNNER_TEMP/openspec-purpose.json"
+
       - name: Prepare archive branch
         if: steps.completion.outputs.should_archive == 'true'
         env:
@@ -130,6 +139,12 @@ jobs:
         env:
           CHANGE: ${{ steps.classify.outputs.change }}
         run: openspec archive "$CHANGE" --yes
+
+      - name: Preserve and verify canonical Purpose
+        if: steps.completion.outputs.should_archive == 'true'
+        run: |
+          python .github/scripts/openspec_archive.py purpose-preserve \
+            --snapshot-file "$RUNNER_TEMP/openspec-purpose.json"
 
       - name: Verify archive result
         if: steps.completion.outputs.should_archive == 'true'
