@@ -12,13 +12,15 @@ Do not rely on a previous conversation or a prior PASS for another revision.
 
 ## Minimum gate
 
-For the exact current OpenSpec revision:
+For the exact current OpenSpec revision R:
 
 1. Verify forward traceability `proposal → specs → design → tasks`.
 2. Verify reverse traceability `tasks → design → specs → proposal`.
 3. Verify scope and contract coherence.
 4. Verify compatibility with applicable README and OpenSpec config governance.
-5. Confirm strict OpenSpec validation evidence is current for the reviewed revision.
+5. Confirm strict OpenSpec validation evidence is current for R and proves the validator checkout
+   `HEAD == R` before strict validation. `run.head_sha == R` is association metadata only; a synthetic
+   PR merge checkout M where `M != R` is not exact-head evidence for R.
 6. Convert each material problem into an actionable finding that identifies the violated contract and
    supporting evidence.
 7. Confirm no task or implementation detail is being used as the sole source of normative governance
