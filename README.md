@@ -27,6 +27,8 @@
 
 ## Taiwan EOD market-data support
 
+Taiwan EOD market-data infrastructure 已合併至 `main`，目前作為 repository 的 Taiwan daily market-data baseline，涵蓋 provider-neutral identity、source-native EOD acquisition、Taiwan trading calendar，以及 Decision / Backtest composition。這代表資料基礎設施已可用，但不代表 production Strategy 或排程 workflow 已啟用；production strategy/workflow activation 仍維持 deferred。
+
 - Instrument configuration 使用 provider-neutral `symbol + listing_venue` identity；目前支援 `TWSE` 與 `TPEX`。`.TW` / `.TWO` 等 provider ticker syntax 只存在於 concrete infrastructure adapter，不進入 StrategyContext。
 - yfinance adapter 取得 provider/source-native daily OHLCV，明確停用 adapter-controlled `auto_adjust`、`back_adjust`、`repair`、actions 與 rounding；正式價格基礎直接使用 provider native `Open`/`High`/`Low`/`Close`/`Volume`，不以 `Adj Close` 取代 `Close`，也不宣稱跨 split/consolidation 的歷史價格等同交易所 raw nominal scale。
 - provider `period=max` 只代表 acquisition breadth，不定義 analytical history 或 continuity scope。Backtest continuity 以 caller 已選定的 formal replay range 驗證；Decision 在尚未有 Strategy lookback/history-window contract 前不從 provider 第一筆資料自行發明 continuity 起點。
@@ -180,7 +182,7 @@ StrategyContext
 └── ResolvedStrategyConfig
 ```
 
-`StrategyContext` does not contain listing venue, provider ticker syntax, real holdings, average cost, cash, benchmark, execution state, or previous runtime state.
+`StrategyContext` does not contain listing venue, provider ticker syntax, real holdings, average cost, cash, benchmark, execution state, or previous runtime state。
 
 Common `MarketState` is restricted to:
 
@@ -189,13 +191,13 @@ Common `MarketState` is restricted to:
 - `TREND`
 - `REVERSAL_RISK`
 
-Implementation-specific regimes remain under `signals` or `diagnostics`.
+Implementation-specific regimes remain under `signals` or `diagnostics`。
 
 ## Configuration resolution
 
-Configuration resolves before any market-data load. Market-data identity and Strategy assignment remain separate concerns: a configured instrument may have a valid listing venue without an active strategy.
+Configuration resolves before any market-data load。Market-data identity and Strategy assignment remain separate concerns: a configured instrument may have a valid listing venue without an active strategy。
 
-Repository YAML adapters live behind registry interfaces. `config/instruments.yaml` may contain provider-neutral venue metadata without creating a fake production strategy assignment; `config/parameter_sets.yaml` remains empty until a production strategy exists.
+Repository YAML adapters live behind registry interfaces。`config/instruments.yaml` may contain provider-neutral venue metadata without creating a fake production strategy assignment；`config/parameter_sets.yaml` remains empty until a production strategy exists。
 
 ## Market-data semantics
 
@@ -215,9 +217,9 @@ candidate acquired, then invalid
      STALE_DATA
 ```
 
-For historical `Decision(as_of=T)` the framework first normalizes timestamps enough to establish temporal position, excludes timestamp-known rows after T, and only then validates their non-temporal OHLCV structure. Therefore a known T+1 row with invalid OHLC cannot contaminate the Decision at T；an un-normalizable timestamp can still fail because its temporal position is unknowable.
+For historical `Decision(as_of=T)` the framework first normalizes timestamps enough to establish temporal position, excludes timestamp-known rows after T, and only then validates their non-temporal OHLCV structure。Therefore a known T+1 row with invalid OHLC cannot contaminate the Decision at T；an un-normalizable timestamp can still fail because its temporal position is unknowable。
 
-Trading-day continuity and freshness are based on the injected `TradingCalendar`, not calendar-day continuity. Weekends/holidays are not gaps. Market date/session interpretation is also owned by the `TradingCalendar`; a timezone-aware `Clock` instant is never reduced with the runner's local timezone before calendar evaluation.
+Trading-day continuity and freshness are based on the injected `TradingCalendar`, not calendar-day continuity。Weekends/holidays are not gaps。Market date/session interpretation is also owned by the `TradingCalendar`；a timezone-aware `Clock` instant is never reduced with the runner's local timezone before calendar evaluation。
 
 ## Decision request
 
@@ -230,9 +232,9 @@ Repository request shape:
 }
 ```
 
-`as_of` is optional. Research fields such as `strategy` or `parameter_set` are rejected by the request boundary and produce no public Decision artifact.
+`as_of` is optional。Research fields such as `strategy` or `parameter_set` are rejected by the request boundary and produce no public Decision artifact。
 
-Decision date resolution is calendar-only. A future accepted `as_of` is an application failure `CONFIGURATION_FAILED / INVALID_AS_OF`; missing data never causes silent fallback to an older date.
+Decision date resolution is calendar-only。A future accepted `as_of` is an application failure `CONFIGURATION_FAILED / INVALID_AS_OF`；missing data never causes silent fallback to an older date。
 
 Successful artifact shape:
 
@@ -262,7 +264,7 @@ Successful artifact shape:
 
 `requested_as_of` 只有在 caller 明確提供時才需要存在。Failed Decision 使用穩定最小 identity，不因內部已解析多少 metadata 而擴張 public contract。
 
-Decision / Backtest artifact builders produce Python mappings, and the public serialization boundary emits strict JSON. Non-JSON-compatible strategy extension values are rejected deterministically instead of leaking into an Actions Artifact.
+Decision / Backtest artifact builders produce Python mappings, and the public serialization boundary emits strict JSON。Non-JSON-compatible strategy extension values are rejected deterministically instead of leaking into an Actions Artifact。
 
 ## Current-only intraday overlay
 
