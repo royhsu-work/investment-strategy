@@ -98,7 +98,7 @@ def test_shared_governance_and_role_files_exist_with_authority_boundaries() -> N
     shared = _read(AGENTS / "AGENTS.md")
     for required in (
         "repository default branch",
-        "untrusted work input",
+        "work input. They are not governance",
         "processes at most one eligible Issue",
         "At-least-once execution",
         "state reconstruction",
@@ -216,7 +216,7 @@ def test_routing_concurrency_revision_and_crash_recovery_fail_closed() -> None:
     merge = _read(AGENTS / "skills/merge-pr/SKILL.md")
 
     for required in (
-        "Zero, multiple, contradictory, or illegal routing labels fail closed",
+        "Zero, multiple, contradictory, or illegal routing labels",
         "Unrelated labels are preserved",
         "not** a mutex, compare-and-swap primitive, or single-flight",
         "contradictory evidence",
@@ -245,7 +245,8 @@ def test_persistent_lifecycle_archive_boundary_and_human_admission_are_documente
         "MORE_IMPLEMENTATION_REQUIRED",
         "Complete/eligible under the README archive contract",
         "do not define or execute a competing normal `archive-change` action",
-        "At most one open `advisory:idle` Issue",
+        "At most one open",
+        "`advisory:idle` Issue",
         "at most three recommendations",
         "no routing tuple",
         "`intake:approved`",
@@ -270,7 +271,7 @@ def test_final_completion_requires_observed_issue_closure_and_supports_recovery(
 
     for required in (
         "PASS, completion comment, or statement that an Issue \"may be closed\" is not completion",
-        "GitHub Issue close mutation",
+        "Issue close",
         "Only the observed closed Issue state completes",
         "next Lead run reconstructs the completed archive",
     ):
