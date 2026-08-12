@@ -2,9 +2,9 @@
 
 ## 1. PR linkage governance
 
-- [ ] 1.1 Add RED contract coverage proving implementation/implementation-correction PRs must not establish closing linkage to the persistent coordination Issue and that `merge-pr` fails closed when they do.
-- [ ] 1.2 Update shared governance and applicable Lead/Executor skills so implementation PR references are non-closing and closing linkage is reserved for the final Archive PR.
-- [ ] 1.3 VERIFY the linkage-governance slice with focused tests and repository quality checks; persist satisfied markers before the next slice.
+- [x] 1.1 Add RED contract coverage proving implementation/implementation-correction PRs must not establish closing linkage to the persistent coordination Issue and that `merge-pr` fails closed when they do.
+- [x] 1.2 Update shared governance and applicable Lead/Executor skills so implementation PR references are non-closing and closing linkage is reserved for the final Archive PR.
+- [x] 1.3 VERIFY the linkage-governance slice with focused tests and repository quality checks; persist satisfied markers before the next slice.
 
 ## 2. Archive PR completion boundary
 
