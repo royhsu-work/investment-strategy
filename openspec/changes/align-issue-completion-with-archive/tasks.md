@@ -8,10 +8,10 @@
 
 ## 2. Archive PR completion boundary
 
-- [ ] 2.1 Add RED contract coverage proving the final Archive PR identifies the correct coordination Issue and carries the repository-approved closing linkage without treating that linkage as merge authorization.
-- [ ] 2.2 Update the existing archive PR creation/documentation path, without adding a second archive engine, so final Archive PR closing linkage is deterministic and testable.
-- [ ] 2.3 Update Executor archive `merge-pr` preconditions to require correct closing linkage in addition to Reviewer PASS, Lead exact-revision authorization, unchanged head, and current gate validity.
-- [ ] 2.4 VERIFY the archive-boundary slice and persist satisfied markers before the next slice.
+- [x] 2.1 Add RED contract coverage proving the final Archive PR identifies the correct coordination Issue and carries the repository-approved closing linkage without treating that linkage as merge authorization.
+- [x] 2.2 Update the existing archive PR creation/documentation path, without adding a second archive engine, so final Archive PR closing linkage is deterministic and testable.
+- [x] 2.3 Update Executor archive `merge-pr` preconditions to require correct closing linkage in addition to Reviewer PASS, Lead exact-revision authorization, unchanged head, and current gate validity.
+- [x] 2.4 VERIFY the archive-boundary slice and persist satisfied markers before the next slice.
 
 ## 3. Finalization and recovery
 
