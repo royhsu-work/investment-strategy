@@ -15,7 +15,8 @@ on:
 
 permissions:
   contents: write
-  pull-requests: read
+  issues: read
+  pull-requests: write
 
 concurrency:
   group: openspec-archive
@@ -170,3 +171,42 @@ jobs:
           git diff --cached --quiet && { echo "No archive changes produced"; exit 1; }
           git commit -m "chore(openspec): archive $CHANGE"
           git push -u origin HEAD:"$target_branch"
+
+      - name: Resolve coordination Issue for Archive PR
+        if: steps.completion.outputs.should_archive == 'true'
+        id: coordination
+        env:
+          CHANGE: ${{ steps.classify.outputs.change }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          issues_file="$RUNNER_TEMP/repository-issues.json"
+          gh api --paginate --slurp \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/$GITHUB_REPOSITORY/issues?state=all&per_page=100" \
+            > "$issues_file"
+          python .github/scripts/archive_pr_linkage.py resolve \
+            --change "$CHANGE" \
+            --issues-file "$issues_file" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Create final Archive PR with closing linkage
+        if: steps.completion.outputs.should_archive == 'true'
+        env:
+          CHANGE: ${{ steps.classify.outputs.change }}
+          ISSUE_NUMBER: ${{ steps.coordination.outputs.issue_number }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          target_branch="agent/archive-$CHANGE"
+          body_file="$RUNNER_TEMP/archive-pr-body.md"
+          python .github/scripts/archive_pr_linkage.py render \
+            --change "$CHANGE" \
+            --issue-number "$ISSUE_NUMBER" \
+            --body-file "$body_file"
+          grep -F "Closes #$ISSUE_NUMBER" "$body_file"
+          gh pr create \
+            --base main \
+            --head "$target_branch" \
+            --title "chore(openspec): archive $CHANGE" \
+            --body-file "$body_file"
