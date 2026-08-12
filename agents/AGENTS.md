@@ -58,8 +58,7 @@ stay on the same coordination Issue. Comments are durable evidence, not canonica
 ## PR linkage lifecycle boundary
 
 Implementation and implementation-correction PRs MUST use non-closing references to their persistent
-coordination Issue and MUST NOT establish GitHub Issue-closing linkage. Closing linkage is reserved for
-the final Archive PR, where it is an expected lifecycle side effect only after the independent archive
+coordination Issue and MUST NOT establish GitHub Issue-closing linkage. Closing linkage is reserved for the final Archive PR, where it is an expected lifecycle side effect only after the independent archive
 review, Lead authorization, unchanged-head, and current-gate merge preconditions are satisfied.
 
 A closing linkage on an implementation or implementation-correction PR is a lifecycle-contract
@@ -232,7 +231,7 @@ A PASS, completion comment, or statement that an Issue "may be closed" is not co
 The final Archive PR carries the repository-approved closing linkage to the persistent coordination
 Issue. After an authorized Archive PR merge, `finalize-archive` reconstructs canonical archived
 default-branch state and first observes the expected native Issue completion. When the Issue is already
-observed closed, Lead records lifecycle completion without a redundant close mutation.
+observed closed, Lead records lifecycle completion without a redundant close mutation. Only the observed closed Issue state completes the coordination lifecycle.
 
 Explicit Issue close is recovery-only. Lead may perform an explicit Issue-close recovery only when the
 authorized Archive PR is merged, canonical archive state is correct, and native completion is missing.
@@ -243,8 +242,8 @@ premature and illegal. Scheduled roles fail closed; the premature close must not
 archive completion, regardless of comments or other completion-looking evidence.
 
 If archive state is complete but native Issue completion has not yet been observed, routing remains
-`Lead / finalize-archive`; a later Lead run reconstructs durable state and applies recovery only if the
-native completion remains missing.
+`Lead / finalize-archive`; the next Lead run reconstructs the completed archive and durable Issue state,
+then applies explicit-close recovery only if native completion remains missing.
 
 ## Deliberately absent machinery
 
