@@ -1,6 +1,6 @@
 ## Purpose
 
-Define repository-governed scheduled role collaboration through durable GitHub/OpenSpec state, explicit Human admission, revision-bound gates, and reconstructable at-least-once execution.
+Define repository-governed scheduled role collaboration through durable GitHub/OpenSpec state, explicit Human admission, revision-bound gates, deterministic work selection, and reconstructable at-least-once execution.
 
 ## ADDED Requirements
 
@@ -97,6 +97,67 @@ Procedural skills SHOULD be reusable across materially similar actions and MUST 
 - WHEN Executor evaluates the merge
 - THEN the same merge action contract applies regardless of whether the target is an implementation PR or archive PR
 - AND lifecycle-specific next routing is reconstructed from durable state after merge
+
+### Requirement: Review and finalize actions have Lead-owned minimum gate contracts
+
+The repository specification SHALL define the minimum checks and legal result categories for the three Reviewer gates and the two Lead finalize actions. Procedural skills MAY operationalize these checks but MUST NOT invent or weaken them.
+
+`review-openspec` SHALL, at minimum:
+
+- inspect the current OpenSpec change revision;
+- verify forward traceability `proposal → specs → design → tasks` and reverse traceability `tasks → design → specs → proposal`;
+- verify contract/scope coherence and compatibility with repository `README.md` and `openspec/config.yaml` governance that applies to the change;
+- produce actionable findings when a material problem exists;
+- produce only `PASS` or `FINDINGS` as the gate result; and
+- bind the result to the reviewed repository/branch revision.
+
+`review-implementation` SHALL, at minimum:
+
+- inspect the current implementation PR head revision;
+- compare implementation and task-completion state with the approved OpenSpec contract;
+- inspect the relevant diff, tests, quality checks, and OpenSpec validation evidence;
+- verify scope discipline and absence of unauthorized contract redefinition;
+- classify material findings as implementation findings or specification findings; and
+- bind `PASS`/findings to the reviewed PR head revision.
+
+`review-archive` SHALL, at minimum:
+
+- inspect the current archive PR revision and the intended source change;
+- verify the intended change is being archived from the correct merged default-branch state;
+- verify resulting canonical specs represent the approved contract, active change state is removed as intended, archived history is preserved, and unrelated changes are absent;
+- inspect strict OpenSpec and applicable repository validation evidence; and
+- bind `PASS`/findings to the reviewed archive PR revision.
+
+`finalize-change` SHALL, at minimum:
+
+- require an unambiguous Reviewer implementation PASS for the current PR head before authorizing merge;
+- reject stale or contradictory gate/authorization evidence;
+- bind any `MERGE_AUTHORIZED` decision to the exact current PR revision; and
+- after merge, reconstruct actual default-branch/OpenSpec/archive state and choose only a legal outcome such as `MORE_IMPLEMENTATION_REQUIRED`, `WAITING_FOR_ARCHIVE_AUTOMATION`, `ARCHIVE_PR_READY`, or a repository-defined recovery decision.
+
+`finalize-archive` SHALL, at minimum:
+
+- require an unambiguous Reviewer archive PASS for the current archive PR head before authorizing archive merge;
+- reject stale or contradictory gate/authorization evidence;
+- bind any archive `MERGE_AUTHORIZED` decision to the exact current archive PR revision; and
+- after archive merge, reconstruct canonical default-branch/archive state and close the coordination Issue only when final lifecycle conditions are actually satisfied.
+
+#### Scenario: Reviewer performs OpenSpec review
+
+- GIVEN a coordination Issue is routed to `Reviewer / review-openspec`
+- AND an OpenSpec change revision is identified
+- WHEN Reviewer executes the gate
+- THEN Reviewer checks bidirectional traceability, contract/scope coherence, and applicable repository governance
+- AND records revision-bound `PASS` or actionable `FINDINGS`
+- AND the procedural skill does not invent additional contract meaning to make the gate pass
+
+#### Scenario: Lead evaluates implementation merge authorization
+
+- GIVEN Reviewer recorded implementation PASS for revision R
+- WHEN Lead executes `finalize-change`
+- THEN Lead verifies R is still the current PR head and the gate remains unambiguous
+- AND any merge authorization is explicitly bound to R
+- AND stale or contradictory evidence cannot produce `MERGE_AUTHORIZED`
 
 ### Requirement: Scheduled execution is at-least-once and state reconstructable
 
@@ -298,20 +359,36 @@ If an open advisory remains without valid Human admission, later Lead runs SHALL
 - THEN Lead does not create another advisory Issue
 - AND does not repeat the same recommendations as new workflow noise
 
-### Requirement: Each scheduled run processes at most one actionable work item deterministically
+### Requirement: Each scheduled run processes at most one actionable work item using a fixed stable order
 
 A scheduled role SHALL process at most one eligible actionable coordination Issue per run.
 
-When multiple eligible Issues exist, selection SHALL follow a repository-defined deterministic priority/order rather than model preference.
+When multiple eligible Issues exist for the same role, selection SHALL use this fixed action priority from highest to lowest:
+
+- Lead: `resolve-question` > `finalize-archive` > `finalize-change` > `propose-change`;
+- Reviewer: `review-archive` > `review-implementation` > `review-openspec`;
+- Executor: `merge-pr` > `implement-change`.
+
+Within the same role/action priority, selection SHALL choose the eligible Issue with the earliest GitHub `created_at`; if `created_at` is equal, the lower numeric Issue number SHALL win.
+
+The model MUST NOT substitute its own urgency or preference for this order.
 
 If no eligible actionable Issue exists, Reviewer and Executor SHALL perform no workflow mutation/noise; Lead may only use the separately governed idle advisory mode.
 
-#### Scenario: Multiple eligible work items exist
+#### Scenario: Multiple eligible actions exist for one role
 
-- GIVEN a scheduled role has multiple eligible routed coordination Issues
-- WHEN the role selects work for the run
-- THEN it uses the repository-defined deterministic selection rule
-- AND processes at most one selected Issue
+- GIVEN Lead has one eligible `propose-change` Issue and one eligible `resolve-question` Issue
+- WHEN Lead selects work for the run
+- THEN Lead selects the `resolve-question` Issue regardless of model preference
+- AND processes at most that one Issue
+
+#### Scenario: Multiple eligible Issues share the same action
+
+- GIVEN Reviewer has two eligible `review-openspec` Issues
+- AND Issue A has an earlier `created_at` than Issue B
+- WHEN Reviewer selects work for the run
+- THEN Reviewer selects Issue A
+- AND if their `created_at` values are equal, the lower numeric Issue number is selected
 
 ### Requirement: Coordination Issue closure is the durable final lifecycle transition
 
