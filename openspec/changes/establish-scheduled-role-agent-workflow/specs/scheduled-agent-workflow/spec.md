@@ -202,6 +202,42 @@ Partial execution, interruption, tool failure, or missing final response MUST NO
 - AND it performs only remaining legal work or the missing handoff
 - AND it does not require memory of the previous run
 
+### Requirement: Executor persists task completion at verified vertical-slice checkpoints
+
+Executor SHALL treat OpenSpec task checkboxes as durable completion evidence rather than fine-grained live progress state.
+
+For each approved vertical feature slice, after that slice's required `VERIFY` succeeds, Executor SHALL persist completion markers for every task in that slice whose completion criteria are satisfied before starting the next slice or handing off from `implement-change`.
+
+Executor MUST NOT defer completed slice markers until the end of the entire OpenSpec change.
+
+The workflow MUST NOT require a dedicated commit for each individual checkbox. Task-marker updates SHOULD be committed together with the corresponding implementation checkpoint when practical.
+
+If execution is interrupted during the current incomplete or unverified slice, that slice's markers MAY remain unpersisted; recovery SHALL reconstruct actual code, test, and task state, while markers from previously verified slices remain durable.
+
+#### Scenario: Verified slice reaches its implementation checkpoint
+
+- GIVEN Executor has completed a vertical slice through its required `VERIFY`
+- AND the slice's task completion criteria are satisfied
+- WHEN Executor prepares to begin the next slice or hand off
+- THEN Executor persists the completed task markers for that slice
+- AND the marker update is normally included with the corresponding implementation checkpoint rather than deferred to the end of the whole change
+
+#### Scenario: Individual task finishes before the slice is verified
+
+- GIVEN work for one task inside the current vertical slice is complete
+- AND the slice has not yet completed its required `VERIFY`
+- WHEN Executor continues implementation
+- THEN the workflow does not require a dedicated task-marker commit for that checkbox
+- AND the slice remains the task-persistence checkpoint
+
+#### Scenario: Run is interrupted during an active slice
+
+- GIVEN previously verified slices have persisted task markers
+- AND Executor is interrupted while the current slice is incomplete or unverified
+- WHEN a later Executor run reconstructs implementation state
+- THEN previously verified slice markers remain durable
+- AND the current slice is reconstructed from repository, test, and task reality without treating missing current-slice markers as proof that no work exists
+
 ### Requirement: Routing handoff persists evidence before ownership transfer
 
 A scheduled role SHALL persist required artifact/result state and durable handoff evidence before changing the logical routing tuple.
