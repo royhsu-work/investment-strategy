@@ -164,9 +164,7 @@ Before `propose-change` or a materially revised `resolve-question` hands OpenSpe
 
 ## OpenSpec task completion checkpoints
 
-OpenSpec task checkboxes are durable completion evidence, not live progress state. For each approved
-vertical slice, Executor persists all satisfied task-completion markers after the slice's required
-`VERIFY` succeeds and before starting the next slice or handing off.
+OpenSpec task checkboxes are durable completion evidence, not live progress state. For each approved vertical slice, Executor persists all satisfied task-completion markers after the slice's required `VERIFY` succeeds and before starting the next slice or handing off.
 
 Marker persistence does not require a dedicated commit for each individual checkbox; it should
 normally be included with the corresponding implementation checkpoint. Markers for already verified
