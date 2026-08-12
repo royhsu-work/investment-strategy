@@ -270,7 +270,7 @@ Decision / Backtest artifact builders produce Python mappings, and the public se
 
 ## Current-only intraday overlay
 
-若 current trading session 尚未完成，而且 request 是 omitted `as_of` 或 explicitly current date，formal StrategyResult 仍以 previous completed trading day為 `resolved_as_of`。若 current snapshot 有效，可另外附加：
+若 current trading session 尚未完成，而且 request 是 omitted `as_of` 或 explicitly current date，formal StrategyResult 仍以 previous completed trading day 為 `resolved_as_of`。若 current snapshot 有效，可另外附加：
 
 - session date
 - open
