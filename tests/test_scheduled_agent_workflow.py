@@ -309,3 +309,34 @@ def test_governance_does_not_add_parallel_workflow_engine_state() -> None:
     assert "status:in-progress" in shared
     assert "generic DAG executor" in implementation
     assert "normal OpenSpec archive mutation" in implementation
+
+
+def test_task_completion_markers_persist_at_verified_slice_boundary() -> None:
+    shared = _read(AGENTS / "AGENTS.md")
+    executor = _read(AGENTS / "roles/executor.md")
+    implementation = _read(AGENTS / "skills/implementation/SKILL.md")
+    readme = _read(ROOT / "README.md")
+
+    for required in (
+        "task checkboxes are durable completion evidence",
+        "after the slice's required `VERIFY` succeeds",
+        "before starting the next slice or handing off",
+        "must not be deferred until the end of the whole change",
+        "does not require a dedicated commit for each individual checkbox",
+        "previously verified slices remain durable",
+    ):
+        assert required in shared
+
+    assert "persist all satisfied task-completion markers for that verified slice" in executor
+    assert "before starting the next slice or handing off" in executor
+
+    for required in (
+        "persist all satisfied task markers for that verified slice",
+        "Do not defer completed markers across verified slices",
+        "does not require a commit per checkbox",
+        "reconstruct the active slice",
+    ):
+        assert required in implementation
+
+    assert "verified vertical-slice checkpoint" in readme
+    assert "不得延後到整個 change 最後才一次更新" in readme
