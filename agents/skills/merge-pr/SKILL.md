@@ -20,8 +20,7 @@ Execute a merge mutation only when all are simultaneously true and unambiguous:
 2. Lead `MERGE_AUTHORIZED` exists for the exact same revision R.
 3. The target PR current head still equals R.
 4. Required gates/checks remain valid and there is no contradictory current evidence.
-5. For an implementation or implementation-correction PR, the PR does not establish GitHub
-   Issue-closing linkage to its persistent coordination Issue; it uses only a non-closing reference.
+5. For an implementation or implementation-correction PR, the PR does not establish GitHub Issue-closing linkage to its persistent coordination Issue; it uses only a non-closing reference.
 
 Reviewer PASS alone is insufficient. Authorization for an earlier head is insufficient.
 
