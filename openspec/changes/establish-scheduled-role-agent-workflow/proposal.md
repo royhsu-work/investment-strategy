@@ -24,6 +24,7 @@ This change establishes a scheduled role-based agent workflow with these externa
   - Executor: `implement-change`, `merge-pr`.
 - Separate authority by artifact: Lead owns specification decisions/artifacts and lifecycle authorization; Reviewer owns independent revision-bound gates; Executor owns implementation and authorized operational mutations; repository automation retains deterministic normal OpenSpec archive mechanics.
 - Treat scheduled execution as at-least-once and reconstructable. Partial/interrupted work retains current routing until a durable handoff completes.
+- Persist Executor OpenSpec task-completion markers at verified vertical-slice checkpoints: after a slice's required `VERIFY` succeeds, persist the completed markers for that slice before beginning the next slice or handing off. Do not require one commit per checkbox, and do not defer all completed markers until the end of the whole change.
 - Require revision-aware/idempotent preconditions and fail-closed behavior for stale or contradictory evidence. `fresh-read routing → update labels` is explicitly not a mutex or compare-and-swap guarantee.
 - Preserve multi-PR OpenSpec lifecycles, including `MORE_IMPLEMENTATION_REQUIRED → Executor / implement-change` when merged default-branch state remains incomplete.
 - Wait for normal archive automation only after merged default-branch state satisfies the existing repository archive eligibility contract.
