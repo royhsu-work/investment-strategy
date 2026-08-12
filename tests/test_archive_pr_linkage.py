@@ -35,9 +35,15 @@ def test_resolve_requires_exactly_one_coordination_issue_for_change(tmp_path: Pa
             {
                 "number": 21,
                 "body": "## Workflow identity\n\n`Change: change-a`\n",
+                "state": "open",
                 "pull_request": None,
             },
-            {"number": 22, "body": "Change: `different-change`", "pull_request": None},
+            {
+                "number": 22,
+                "body": "Change: `different-change`",
+                "state": "open",
+                "pull_request": None,
+            },
         ],
     )
 
@@ -52,8 +58,18 @@ def test_resolve_fails_closed_on_ambiguous_coordination_issue(tmp_path: Path) ->
     _write_issues(
         issues,
         [
-            {"number": 21, "body": "Change: `change-a`", "pull_request": None},
-            {"number": 23, "body": "Change: change-a", "pull_request": None},
+            {
+                "number": 21,
+                "body": "Change: `change-a`",
+                "state": "open",
+                "pull_request": None,
+            },
+            {
+                "number": 23,
+                "body": "Change: change-a",
+                "state": "open",
+                "pull_request": None,
+            },
         ],
     )
 
@@ -61,6 +77,27 @@ def test_resolve_fails_closed_on_ambiguous_coordination_issue(tmp_path: Path) ->
 
     assert result.returncode != 0
     assert "exactly one coordination Issue" in result.stderr
+
+
+def test_resolve_fails_closed_on_prematurely_closed_coordination_issue(tmp_path: Path) -> None:
+    issues = tmp_path / "issues.json"
+    _write_issues(
+        issues,
+        [
+            {
+                "number": 21,
+                "body": "Change: `change-a`",
+                "state": "closed",
+                "pull_request": None,
+            },
+        ],
+    )
+
+    result = _run("resolve", "--change", "change-a", "--issues-file", str(issues))
+
+    assert result.returncode != 0
+    assert "Coordination Issue #21" in result.stderr
+    assert "must be open before Archive PR creation" in result.stderr
 
 
 def test_render_archive_pr_body_contains_only_expected_closing_linkage(tmp_path: Path) -> None:
