@@ -24,8 +24,7 @@ Execute a merge mutation only when all are simultaneously true and unambiguous:
 
 Reviewer PASS alone is insufficient. Authorization for an earlier head is insufficient.
 
-A closing linkage on an implementation or implementation-correction PR is a lifecycle-contract
-violation. Even when every other gate is current, do not merge that PR; persist the violation and hand
+A closing linkage on an implementation or implementation-correction PR is a lifecycle-contract violation. Even when every other gate is current, do not merge that PR; persist the violation and hand
 control to Lead for correction. Closing linkage is reserved for the final Archive PR and never provides
 merge authority by itself.
 
