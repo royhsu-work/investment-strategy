@@ -312,10 +312,10 @@ def test_governance_does_not_add_parallel_workflow_engine_state() -> None:
 
 
 def test_task_completion_markers_persist_at_verified_slice_boundary() -> None:
-    shared = _read(AGENTS / "AGENTS.md")
-    executor = _read(AGENTS / "roles/executor.md")
-    implementation = _read(AGENTS / "skills/implementation/SKILL.md")
-    readme = _read(ROOT / "README.md")
+    shared = " ".join(_read(AGENTS / "AGENTS.md").split())
+    executor = " ".join(_read(AGENTS / "roles/executor.md").split())
+    implementation = " ".join(_read(AGENTS / "skills/implementation/SKILL.md").split())
+    readme = " ".join(_read(ROOT / "README.md").split())
 
     for required in (
         "task checkboxes are durable completion evidence",
