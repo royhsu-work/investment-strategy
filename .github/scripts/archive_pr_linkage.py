@@ -62,8 +62,14 @@ def _resolve(args: argparse.Namespace) -> None:
         body = issue.get("body")
         if not isinstance(number, int) or isinstance(number, bool):
             continue
-        if isinstance(body, str) and _has_change_identity(body, change):
-            matches.append(number)
+        if not isinstance(body, str) or not _has_change_identity(body, change):
+            continue
+        if issue.get("state") != "open":
+            _fail(
+                f"Coordination Issue #{number} for change {change} must be open "
+                "before Archive PR creation"
+            )
+        matches.append(number)
 
     if len(matches) != 1:
         rendered = ", ".join(str(number) for number in sorted(matches)) or "none"
