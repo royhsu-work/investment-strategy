@@ -294,7 +294,9 @@ def test_readme_aligns_role_gates_multi_pr_archive_and_final_closure() -> None:
         "close coordination Issue and observe it closed",
         "intake:approved",
         "不是** mutex、CAS 或 single-flight",
-        "head_sha` 精確等於 relevant revision",
+        "validator checkout `HEAD`",
+        "run.head_sha` 只是 association metadata",
+        "synthetic merge revision",
         "Scheduled Role 不另建 normal `archive-change` mutation",
     ):
         assert required in readme
