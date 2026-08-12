@@ -10,13 +10,16 @@ PR and exact head revision, the active/archive/canonical OpenSpec state, and cur
 
 ## Minimum gate
 
-For the exact current Archive PR head:
+For the exact current Archive PR head R:
 
 1. Verify the intended change is archived from the correct merged default-branch source state.
 2. Verify resulting canonical specs preserve the approved contract.
 3. Verify active change state is removed as intended and dated archive history is preserved.
 4. Verify unrelated repository changes are absent.
-5. Verify strict OpenSpec validation and any applicable repository validation evidence are current.
+5. Verify strict OpenSpec validation and any applicable repository validation evidence are current. If
+   strict validation is claimed for R, durable validator evidence must prove checkout `HEAD == R`
+   before the strict command; `run.head_sha == R` or a different synthetic merge checkout is not
+   sufficient exact-head evidence.
 6. Record actionable findings for any material deviation; otherwise record PASS.
 
 ## Legal results and handoff
