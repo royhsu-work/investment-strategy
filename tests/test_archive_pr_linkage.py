@@ -9,6 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / ".github/scripts/archive_pr_linkage.py"
 WORKFLOW = ROOT / ".github/workflows/openspec-archive.yml"
 MERGE_SKILL = ROOT / "agents/skills/merge-pr/SKILL.md"
+LIFECYCLE_SKILL = ROOT / "agents/skills/lifecycle-finalize/SKILL.md"
+AGENTS = ROOT / "agents/AGENTS.md"
 
 
 def _run(*args: str) -> subprocess.CompletedProcess[str]:
@@ -106,3 +108,27 @@ def test_archive_workflow_and_merge_skill_enforce_archive_linkage_boundary() -> 
         "do not merge",
     ):
         assert required in merge_skill
+
+
+def test_finalize_archive_prefers_native_close_and_limits_explicit_close_to_recovery() -> None:
+    skill = LIFECYCLE_SKILL.read_text(encoding="utf-8")
+
+    for required in (
+        "expected native Issue completion",
+        "observed closed",
+        "explicit Issue-close recovery",
+        "authorized Archive PR is merged",
+        "canonical archive state is correct",
+        "native completion is missing",
+    ):
+        assert required in skill
+
+
+def test_premature_coordination_issue_closure_fails_closed() -> None:
+    skill = LIFECYCLE_SKILL.read_text(encoding="utf-8")
+    governance = AGENTS.read_text(encoding="utf-8")
+
+    for text in (skill, governance):
+        assert "premature" in text
+        assert "fail closed" in text
+        assert "must not be treated as successful" in text
