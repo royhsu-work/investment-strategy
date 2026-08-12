@@ -1,7 +1,9 @@
 # taiwan-eod-market-data Specification
 
 ## Purpose
-TBD - created by archiving change integrate-taiwan-eod-market-data. Update Purpose after archive.
+
+Define provider-neutral acquisition and Taiwan exchange-session semantics for completed daily market facts consumed by formal Decision and analytical Backtest evaluation.
+
 ## Requirements
 ### Requirement: Taiwan EOD acquisition uses canonical instrument identity
 
