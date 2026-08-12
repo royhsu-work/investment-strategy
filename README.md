@@ -67,7 +67,7 @@ exact-revision strict OpenSpec validation
 Reviewer / review-openspec
         ↓ PASS
 Executor / implement-change
-agent/<change> + Draft PR
+agent/<change> + Draft PR  (branch convention)
         ↓
 implementation + tests + quality/OpenSpec validation
         ↓
@@ -127,7 +127,7 @@ Strict OpenSpec gate 的 canonical CI evidence 是 repository 既有 `.github/wo
 
 `agent/<change>` 是 implementation branch 的 repository convention；normal archive routing 不依賴 branch name。Normal automatic archive 只支援 **same-repository** PR，並由 triggering merge snapshot 中仍 active 的 OpenSpec state，搭配 merged PR changed files 中的 `openspec/changes/<change>/...` 決定 candidate。`agent/archive-<change>` 由 archive workflow 建立；existing archive branch 會 fail loudly，automation 不會 force-push 或重用該 branch。`agent/archive-*` PR merge 一律 no-op，避免 archive recursion。
 
-`Complete` 是 repository-level implementation completion signal。一個 change 可以跨多個 proposal / implementation / review-correction PR，但仍有必要工作未 merge 時不得把 active change 留成 `Complete`。使該 change 在 merged `main` 呈現 `Complete` 的 final implementation PR 必須同時更新 `openspec/changes/<change>/`，讓 completion transition 可由 merged-diff classifier 觀察。Normal path 對 0 個 active candidate 或 incomplete change 成功 no-op；一次觸及多個 active changes 則視為 ambiguous lifecycle scope 並失敗，不自動猜測。每個 normal PR run 都以該 PR 的 **triggering merge snapshot** 評估，不重新讀取 runner 啟動時較新的 moving `main`。
+`Complete` 是 repository-level implementation completion signal。一個 change 可以跨多個 proposal / implementation / review-correction PR，但仍有必要工作未 merge 時不得把 active change 留成 `Complete`。使該 change 在 merged `main` 呈現 `Complete` 的 final implementation PR 必須同時更新 `openspec/changes/<change>/`，讓 completion transition 可由 merged-diff classifier 觀察。Normal path 對 0 個 active candidate 或 incomplete change 成功 no-op；`>1 active touched` 表示一次觸及多個 active changes，視為 ambiguous lifecycle scope 並失敗，不自動猜測。每個 normal PR run 都以該 PR 的 **triggering merge snapshot** 評估，不重新讀取 runner 啟動時較新的 moving `main`。
 
 Fork PR 不屬於 normal automatic archive 支援範圍。Merged fork PR 若沒有 active OpenSpec candidate，維持 ordinary no-op；若 changed files 原本會形成 active OpenSpec candidate，workflow 必須明確 fail 為 `unsupported automatic source`，不得嘗試以 fork `pull_request` 的 read-only token 建立 archive branch，也不得把 archive 視為成功。這類 change 改走 base-repository recovery PR 或 manual fallback；本 change 不引入 `pull_request_target` 或 external-contributor trusted execution model。
 
@@ -223,7 +223,7 @@ Implementation-specific regimes remain under `signals` or `diagnostics`.
 
 Configuration resolves before any market-data load. Market-data identity and Strategy assignment remain separate concerns: a configured instrument may have a valid listing venue without an active strategy.
 
-Repository YAML adapters live behind registry interfaces. `config/instruments.yaml` may contain provider-neutral venue metadata without creating a fake production strategy assignment; `config/parameter_sets.yaml` remains empty until a production strategy exists.
+Repository YAML adapters live behind registry interfaces. `config/instruments.yaml` may contain provider-neutral venue metadata without creating a fake production strategy assignment；`config/parameter_sets.yaml` remains empty until a production strategy exists.
 
 ## Market-data semantics
 
