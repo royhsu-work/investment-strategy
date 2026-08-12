@@ -56,33 +56,59 @@ def _active_candidates(changed_files: Path, changes_root: Path) -> list[str]:
     return sorted(candidates)
 
 
+def _recovery_change(head_ref: str, changes_root: Path) -> str:
+    prefix = "agent/"
+    if not head_ref.startswith(prefix):
+        _fail("Recovery archive requires head branch agent/<change>")
+    change = _validate_change_name(head_ref.removeprefix(prefix))
+    if not (changes_root / change).is_dir():
+        _fail(f"Recovery change is not active: {change}")
+    return change
+
+
 def _classify(args: argparse.Namespace) -> None:
     if args.event_name == "workflow_dispatch":
         if not args.manual_change:
             _fail("workflow_dispatch requires --manual-change")
         change = _validate_change_name(args.manual_change)
-        _emit(action="evaluate", change=change, reason="manual-dispatch")
+        _emit(action="evaluate", change=change, mode="manual", reason="manual-dispatch")
         return
 
     if args.event_name != "pull_request":
         _fail(f"Unsupported event: {args.event_name}")
 
     if not _parse_bool(args.merged):
-        _emit(action="noop", change="", reason="not-merged")
+        _emit(action="noop", change="", mode="normal", reason="not-merged")
         return
 
     if args.head_ref.startswith("agent/archive-"):
-        _emit(action="noop", change="", reason="archive-pr")
+        _emit(action="noop", change="", mode="normal", reason="archive-pr")
         return
 
-    candidates = _active_candidates(Path(args.changed_files), Path(args.changes_root))
+    changes_root = Path(args.changes_root)
+    same_repository = args.head_repo == args.base_repo
+    recovery = _parse_bool(args.recovery)
+
+    if recovery:
+        if not same_repository:
+            _fail("Recovery archive requires a same-repository PR")
+        change = _recovery_change(args.head_ref, changes_root)
+        _emit(action="evaluate", change=change, mode="recovery", reason="explicit-recovery")
+        return
+
+    candidates = _active_candidates(Path(args.changed_files), changes_root)
     if not candidates:
-        _emit(action="noop", change="", reason="no-active-change")
+        _emit(action="noop", change="", mode="normal", reason="no-active-change")
         return
     if len(candidates) > 1:
         _fail("Ambiguous OpenSpec archive scope: " + ", ".join(candidates))
+    if not same_repository:
+        _fail(
+            "Unsupported automatic archive source: OpenSpec candidate came from a fork; "
+            "use the base-repository recovery/manual path"
+        )
 
-    _emit(action="evaluate", change=candidates[0], reason="single-active-change")
+    _emit(action="evaluate", change=candidates[0], mode="normal", reason="single-active-change")
 
 
 def _is_change_entry(entry: object, change: str) -> bool:
@@ -136,7 +162,7 @@ def _completion(args: argparse.Namespace) -> None:
         )
         return
 
-    if args.event_name == "pull_request":
+    if args.mode == "normal":
         _emit(
             should_archive="false",
             reason="change-incomplete",
@@ -144,9 +170,11 @@ def _completion(args: argparse.Namespace) -> None:
             total_tasks=str(total),
         )
         return
-    if args.event_name == "workflow_dispatch":
+    if args.mode == "manual":
         _fail("Manual archive requires a Complete OpenSpec change")
-    _fail(f"Unsupported event: {args.event_name}")
+    if args.mode == "recovery":
+        _fail("Recovery archive requires a Complete OpenSpec change")
+    _fail(f"Unsupported archive mode: {args.mode}")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -157,13 +185,16 @@ def _parser() -> argparse.ArgumentParser:
     classify.add_argument("--event-name", required=True)
     classify.add_argument("--merged", default="false")
     classify.add_argument("--head-ref", default="")
+    classify.add_argument("--head-repo", default="")
+    classify.add_argument("--base-repo", default="")
+    classify.add_argument("--recovery", default="false")
     classify.add_argument("--changed-files", default="")
     classify.add_argument("--changes-root", default="openspec/changes")
     classify.add_argument("--manual-change")
     classify.set_defaults(handler=_classify)
 
     completion = subparsers.add_parser("completion")
-    completion.add_argument("--event-name", required=True)
+    completion.add_argument("--mode", choices=("normal", "recovery", "manual"), required=True)
     completion.add_argument("--change", required=True)
     completion.add_argument("--list-file", required=True)
     completion.set_defaults(handler=_completion)
