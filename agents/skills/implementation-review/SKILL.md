@@ -10,11 +10,13 @@ completion markers, relevant diff/tests, project quality checks, and strict Open
 
 ## Minimum gate
 
-For the exact current implementation PR head:
+For the exact current implementation PR head R:
 
 1. Compare implemented behavior and completed-task claims with the approved OpenSpec contract.
 2. Inspect the relevant diff and tests for required behavior and meaningful regression coverage.
-3. Verify required project gates and OpenSpec validation evidence are current.
+3. Verify required project gates and OpenSpec validation evidence are current. When strict OpenSpec
+   validation is claimed for R, durable validator evidence must prove checkout `HEAD == R` before the
+   strict command; `run.head_sha == R` alone or a different synthetic merge checkout is insufficient.
 4. Verify implementation remains inside approved scope and did not redefine requirements/contracts.
 5. Classify each material problem as either:
    - `IMPLEMENTATION_FINDINGS`: implementation defect, missing approved work, insufficient tests, or
