@@ -308,3 +308,16 @@ def test_snapshot_records_existing_and_new_capabilities(tmp_path: Path) -> None:
         "kind": "existing",
         "expected_purpose": "Existing canonical purpose.",
     }
+
+
+def test_readme_documents_purpose_compatibility_guard() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    for required in (
+        "Pinned OpenSpec CLI 在本 repository 已觀察到",
+        "canonical Purpose 必須精確等於 approved delta Purpose",
+        "existing canonical capability 的 Purpose 必須保持不變",
+        "pinned CLI compatibility guard",
+        "不改寫 Requirements / Scenarios",
+    ):
+        assert required in readme
