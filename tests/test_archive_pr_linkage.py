@@ -94,7 +94,7 @@ def test_archive_workflow_and_merge_skill_enforce_archive_linkage_boundary() -> 
         "archive_pr_linkage.py resolve",
         "archive_pr_linkage.py render",
         "gh pr create",
-        'Closes #',
+        "Closes #",
     ):
         assert required in workflow
 
