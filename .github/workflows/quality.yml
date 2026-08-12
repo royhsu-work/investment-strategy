@@ -7,6 +7,8 @@ on:
       - "tests/**"
       - "pyproject.toml"
       - "uv.lock"
+      - ".github/scripts/openspec_archive.py"
+      - ".github/workflows/openspec-archive.yml"
       - ".github/workflows/quality.yml"
   pull_request:
     paths:
@@ -14,6 +16,8 @@ on:
       - "tests/**"
       - "pyproject.toml"
       - "uv.lock"
+      - ".github/scripts/openspec_archive.py"
+      - ".github/workflows/openspec-archive.yml"
       - ".github/workflows/quality.yml"
 
 jobs:
