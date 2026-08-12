@@ -74,8 +74,10 @@ def test_render_archive_pr_body_contains_only_expected_closing_linkage(tmp_path:
     assert "Archive OpenSpec change `change-a`." in rendered
     assert "Closes #21" in rendered
     assert rendered.count("Closes #21") == 1
+    assert "lifecycle side effect only" in rendered
+    assert "Reviewer PASS" in rendered
+    assert "remain required before merge" in rendered
     assert "MERGE_AUTHORIZED" not in rendered
-    assert "Reviewer PASS" not in rendered
 
 
 def test_archive_workflow_and_merge_skill_enforce_archive_linkage_boundary() -> None:
