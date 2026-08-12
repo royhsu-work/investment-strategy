@@ -67,9 +67,7 @@ def _resolve(args: argparse.Namespace) -> None:
 
     if len(matches) != 1:
         rendered = ", ".join(str(number) for number in sorted(matches)) or "none"
-        _fail(
-            f"Expected exactly one coordination Issue for change {change}; found: {rendered}"
-        )
+        _fail(f"Expected exactly one coordination Issue for change {change}; found: {rendered}")
 
     print(f"issue_number={matches[0]}")
 
