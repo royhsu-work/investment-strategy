@@ -102,27 +102,53 @@ Procedural skills SHOULD be reusable across materially similar actions and MUST 
 
 Before routing a newly authored or materially revised OpenSpec change to `Reviewer / review-openspec`, Lead SHALL verify required OpenSpec artifacts exist, perform forward and reverse traceability/readiness checks, and obtain strict OpenSpec validation evidence for the exact revision being handed off.
 
-A successful repository `OpenSpec Validate` GitHub Actions run whose `head_sha` equals that exact revision SHALL be sufficient durable evidence that the repository-pinned `openspec validate --all --strict --json --no-interactive` validation passed. Lead MUST NOT require a duplicate local CLI run solely because the exact-revision validation evidence was produced by CI.
+That validation evidence MUST satisfy the repository's exact-revision checkout-identity contract below. Missing, failed, stale, revision-mismatched, or checkout-mismatched validation evidence MUST fail closed and retain Lead ownership. The same rule SHALL apply when `resolve-question` materially revises OpenSpec artifacts before returning them to `review-openspec`.
 
-If exact-revision CI evidence is unavailable, Lead MAY obtain equivalent evidence by running the repository-pinned OpenSpec CLI validation directly against the same revision.
+#### Scenario: Lead hands off an exactly validated revision
 
-Missing, failed, stale, or revision-mismatched validation evidence MUST fail closed and retain Lead ownership. The same rule SHALL apply when `resolve-question` materially revises OpenSpec artifacts before returning them to `review-openspec`.
-
-#### Scenario: Exact-revision CI validation passes
-
-- GIVEN Lead has completed the OpenSpec readiness and bidirectional traceability checks for revision R
-- AND `OpenSpec Validate` completed successfully with `head_sha` equal to R
+- GIVEN Lead has completed OpenSpec readiness and bidirectional traceability checks for revision R
+- AND strict OpenSpec validation evidence satisfies the exact-revision checkout-identity contract for R
 - WHEN Lead evaluates handoff to Reviewer
-- THEN the CI result is sufficient strict-validation evidence for R
-- AND Lead does not require an additional local CLI validation solely because CI supplied the evidence
+- THEN the validation gate for R is satisfied
+- AND Lead may route the change to `Reviewer / review-openspec`
 
-#### Scenario: Validation evidence is stale
+#### Scenario: Lead has stale validation evidence
 
 - GIVEN strict OpenSpec validation passed for revision R1
 - AND the OpenSpec artifacts are now at revision R2
 - WHEN Lead evaluates handoff to Reviewer
 - THEN the validation evidence for R1 is stale
-- AND Lead retains ownership until strict validation evidence for R2 is obtained
+- AND Lead retains ownership until valid exact-revision evidence for R2 is obtained
+
+### Requirement: Exact-revision OpenSpec validation evidence binds validator checkout identity
+
+Whenever a workflow gate claims that strict OpenSpec validation passed for revision R, the evidence SHALL establish that the validator actually operated on a repository checkout whose `HEAD` equals R before the strict OpenSpec command executes.
+
+A successful repository `OpenSpec Validate` GitHub Actions run MAY satisfy this gate only when durable run/job evidence establishes the validated checkout revision is R. GitHub Actions metadata such as `run.head_sha == R` MAY identify the relevant PR/branch revision but MUST NOT by itself be treated as proof that the validator checkout was R.
+
+A `pull_request` workflow run that checks out a synthetic `refs/pull/<n>/merge` commit M, where M differs from PR head R, MUST NOT satisfy an exact-head validation gate for R merely because the run metadata reports `head_sha == R`.
+
+When exact-revision CI evidence establishes that the checked-out `HEAD` is R and strict validation succeeds, the workflow MUST NOT require a duplicate local CLI validation solely because the evidence came from CI. If exact-revision CI evidence is unavailable, the repository-pinned OpenSpec CLI MAY provide equivalent evidence when it is run directly against checkout R.
+
+Missing, failed, stale, revision-mismatched, or checkout-mismatched evidence MUST fail closed for any gate requiring exact-revision OpenSpec validation.
+
+#### Scenario: Exact-head CI validation is sufficient
+
+- GIVEN a workflow gate requires strict OpenSpec validation for revision R
+- AND a successful `OpenSpec Validate` run is associated with R
+- AND durable checkout evidence establishes validator `HEAD == R` before `openspec validate --all --strict --json --no-interactive` executes
+- WHEN the gate evaluates the validation evidence
+- THEN the CI result is sufficient strict-validation evidence for R
+- AND no duplicate local CLI run is required solely because CI supplied the evidence
+
+#### Scenario: PR synthetic merge checkout is not exact-head evidence
+
+- GIVEN PR head revision is R
+- AND a successful `OpenSpec Validate` run reports `head_sha == R`
+- AND the validator actually checked out synthetic merge revision M where `M != R`
+- WHEN a gate requires exact-revision validation for PR head R
+- THEN that run is insufficient evidence for R
+- AND the gate fails closed until validation actually operates on R or equivalent pinned local evidence for R is obtained
 
 ### Requirement: Review and finalize actions have Lead-owned minimum gate contracts
 
