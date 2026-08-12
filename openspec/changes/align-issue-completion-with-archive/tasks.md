@@ -15,10 +15,10 @@
 
 ## 3. Finalization and recovery
 
-- [ ] 3.1 Add RED coverage for normal native Issue completion after authorized Archive PR merge, missing-native-close recovery, and premature implementation-time closure fail-closed behavior.
-- [ ] 3.2 Update `Lead / finalize-archive` governance/skill so normal completion reconstructs canonical archive state and observes the Issue closed; explicit Lead close is used only when the authorized Archive PR is merged and canonical archive state is correct but native completion is missing.
-- [ ] 3.3 Define durable handling for premature Issue closure so it cannot be mistaken for successful archive completion.
-- [ ] 3.4 VERIFY the finalization/recovery slice and persist satisfied markers before final handoff.
+- [x] 3.1 Add RED coverage for normal native Issue completion after authorized Archive PR merge, missing-native-close recovery, and premature implementation-time closure fail-closed behavior.
+- [x] 3.2 Update `Lead / finalize-archive` governance/skill so normal completion reconstructs canonical archive state and observes the Issue closed; explicit Lead close is used only when the authorized Archive PR is merged and canonical archive state is correct but native completion is missing.
+- [x] 3.3 Define durable handling for premature Issue closure so it cannot be mistaken for successful archive completion.
+- [x] 3.4 VERIFY the finalization/recovery slice and persist satisfied markers before final handoff.
 
 ## 4. Documentation and final verification
 
