@@ -103,7 +103,7 @@ High-level responsibilities:
 
 - **Lead**：擁有 proposal/specs/design/tasks 的 specification authority、scope/contract resolution 與 lifecycle authorization；不修改 implementation code，也不執行 PR merge。`finalize-change` / `finalize-archive` 必須依 current revision 與 Reviewer gate 重新判斷，最後只有在 canonical archive state 已確認時才關閉 coordination Issue。
 - **Reviewer**：獨立執行 `review-openspec`、`review-implementation`、`review-archive` revision-bound gates；Reviewer 不修改正在審查的 specification/implementation 來自行修正 finding，也不因 PASS 自動取得 merge authority。
-- **Executor**：依核准 OpenSpec 實作 code/tests/config、更新有事實依據的 task completion marker，並只在 Reviewer PASS + Lead exact-revision `MERGE_AUTHORIZED` + current PR head 未改變且 gate 仍有效時執行 `merge-pr`；不重定義 requirements/contracts/task meaning。
+- **Executor**：依核准 OpenSpec 實作 code/tests/config、更新有事實依據的 task completion marker，並只在 Reviewer PASS + Lead exact-revision `MERGE_AUTHORIZED` + current PR head 未改變且 gate 仍有效時執行 `merge-pr`；不重定義 requirements/contracts/task meaning。OpenSpec task checkbox 以 **verified vertical-slice checkpoint** 持久化：slice 的 `VERIFY` 成功後，必須在開始下一個 slice 或 handoff 前更新該 slice 已滿足的 markers；不要求每個 checkbox 各自 commit，但不得延後到整個 change 最後才一次更新。
 - **Repository automation**：執行 Python quality gates、project-level OpenSpec validation，以及既有 deterministic normal OpenSpec archive workflow；Scheduled Role 不另建 normal `archive-change` mutation。
 
 固定 role-local discovery priority：
@@ -290,7 +290,7 @@ Successful artifact shape:
 
 `requested_as_of` 只有在 caller 明確提供時才需要存在。Failed Decision 使用穩定最小 identity，不因內部已解析多少 metadata 而擴張 public contract。
 
-Decision / Backtest artifact builders produce Python mappings, and the public serialization boundary emits strict JSON. Non-JSON-compatible strategy extension values are rejected deterministically instead of leaking into an Actions Artifact.
+Decision / Backtest artifact builders produce Python mappings, and the public serialization boundary emits strict JSON. Non-JSON-compatible strategy extension values are rejected deterministically instead of leaking into an Actions Artifact。
 
 ## Current-only intraday overlay
 
