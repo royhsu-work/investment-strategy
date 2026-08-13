@@ -1,4 +1,4 @@
-"""Contract coverage for workflow-dynamic dispatch and verified-slice checkpoint governance."""
+"""Contract coverage for workflow-dynamic dispatch, checkpointing, and compatibility."""
 
 from __future__ import annotations
 
