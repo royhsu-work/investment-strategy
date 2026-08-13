@@ -80,7 +80,7 @@ def test_pre_activation_legacy_messages_remain_valid_historical_evidence() -> No
     messages = _normalized(MESSAGES)
     migration = _normalized(MIGRATION)
     for required in (
-        "pre-activation free-form/legacy messages",
+        "Pre-activation free-form/legacy messages",
         "then-authoritative default-branch governance",
         "not a retroactive template finding",
     ):
