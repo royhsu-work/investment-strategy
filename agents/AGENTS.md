@@ -273,8 +273,7 @@ A PASS, completion comment, or statement that an Issue "may be closed" is not co
 The final Archive PR carries the repository-approved closing linkage to the persistent coordination
 Issue. After an authorized Archive PR merge, `finalize-archive` reconstructs canonical archived
 default-branch state and first observes the expected native Issue completion. When the Issue is already
-observed closed, Lead records lifecycle completion without a redundant close mutation. Only the observed
-closed Issue state completes the coordination lifecycle.
+observed closed, Lead records lifecycle completion without a redundant close mutation. Only the observed closed Issue state completes the coordination lifecycle.
 
 Explicit Issue close is recovery-only. Lead may perform an explicit Issue-close recovery only when the
 authorized Archive PR is merged, canonical archive state is correct, and native completion is missing.
