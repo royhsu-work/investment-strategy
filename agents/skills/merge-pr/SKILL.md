@@ -39,8 +39,8 @@ For a final Archive PR, after a successful merge or when reconstructing a merge 
 
 1. Fresh-read the Archive PR and persistent coordination Issue.
 2. If the Archive PR is durably merged and the coordination Issue is observed natively `closed` through
-   the repository-approved closing linkage, replace the consumed routing tuple on that closed Issue with
-   exactly `agent:lead + action:finalize-archive`.
+   the repository-approved closing linkage, replace the consumed routing tuple with exactly
+   `agent:lead + action:finalize-archive` on that closed Issue.
 3. Persist one bounded merge/native-close/handoff journal on the coordination Issue identifying the
    authorized exact head, merge result, observed native closure, and terminal Lead handoff.
 4. End the invocation. Executor MUST NOT execute Lead finalization in the same invocation.
