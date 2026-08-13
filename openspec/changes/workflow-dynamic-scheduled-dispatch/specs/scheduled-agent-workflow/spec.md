@@ -47,6 +47,56 @@ The dispatcher MUST NOT introduce model-derived global urgency, cross-role prior
 - THEN the current invocation ends as Lead
 - AND it does not execute Reviewer work in the same invocation
 
+### Requirement: Selected Scheduled Agent actions are work-conserving within an invocation
+
+After a Scheduled Agent invocation selects one legal role/action, that selected action SHALL continue all immediately actionable work within the same invocation while the routing still matches the selected action, required revision/preconditions and authority remain current, and no legal blocking condition exists.
+
+A durable checkpoint, remaining approved local work, a recoverable same-role failure, or a failed-but-actionable validation MUST NOT by itself be treated as a voluntary yield point. When the correction is within the selected role/action authority and approved contract, the invocation SHALL perform that correction and continue the action instead of deferring it solely to a later wake.
+
+A selected action MAY end before its normal completion only when at least one of these conditions applies:
+
+- the action has completed a legal handoff or terminal result;
+- continuing requires a different role or authoritative Human decision;
+- progress genuinely depends on external asynchronous evidence that is not yet available;
+- approved contract/state is genuinely ambiguous, contradictory, or unsafe to continue under the selected authority;
+- stale or competing durable state invalidates the invocation's revision/base/preconditions; or
+- an actual tool failure, hard runtime limit, or other execution interruption prevents continuation.
+
+The generic continuation/termination contract SHALL be owned once by shared governance in `agents/AGENTS.md`. Role and skill documents MUST NOT duplicate or weaken this shared rule; they MAY define only action-specific results, authority boundaries, waits, blockers, and handoffs.
+
+#### Scenario: Failed validation is locally actionable
+
+- GIVEN a selected action still owns the current routing
+- AND its validation fails for a clear correction inside that same action's approved authority
+- AND the execution revision/preconditions remain current
+- WHEN the invocation evaluates whether to stop
+- THEN the validation failure is not a voluntary yield point
+- AND the invocation corrects the failure and reruns the required validation in the same invocation
+
+#### Scenario: Verified implementation checkpoint has more approved work
+
+- GIVEN Executor is selected for `implement-change`
+- AND one approved Slice reaches successful VERIFY and its required checkpoint is persisted
+- AND another approved Slice is immediately actionable under the same current routing and approved contract
+- WHEN Executor completes the checkpoint boundary
+- THEN the checkpoint is a durable recovery boundary rather than a scheduled-run termination boundary
+- AND Executor continues the next approved Slice in the same invocation
+
+#### Scenario: External asynchronous evidence is genuinely pending
+
+- GIVEN Lead is selected for a finalize action
+- AND the action has completed all immediately actionable Lead work
+- AND legal continuation depends on repository automation that is still running and whose result is not yet available
+- WHEN Lead evaluates continuation
+- THEN retaining the current routing and ending the invocation is a legal external-wait outcome
+
+#### Scenario: Competing durable state invalidates the execution base
+
+- GIVEN an invocation selected a role/action from durable revision R
+- AND another run wins a competing durable mutation so the required base/preconditions are no longer current
+- WHEN the first invocation rechecks its preconditions
+- THEN it stops as stale rather than rebasing or continuing speculative work inside the same invocation
+
 ### Requirement: Persisted Change identity defines the single active workflow boundary
 
 An open coordination Issue with a valid routing tuple and a persisted non-`unset` `Change:` identity SHALL be an active workflow. The repository MUST allow at most one such active workflow at a time.
@@ -403,12 +453,12 @@ If an open advisory remains without valid Human admission, later Lead runs SHALL
 
 Implementation SHALL provide:
 
-- `agents/AGENTS.md` for shared execution protocol and the single authoritative `Scheduled-Dispatch-Mode` marker;
+- `agents/AGENTS.md` for shared execution protocol, the single authoritative `Scheduled-Dispatch-Mode` marker, and the shared work-conserving selected-action termination/yield contract;
 - role definitions for Lead, Reviewer, and Executor under `agents/roles/`;
-- a reduced reusable set of procedural skills under `agents/skills/` covering the nine action contracts without one skill per trivial action;
-- repository documentation describing fixed-role compatibility, workflow-dynamic dispatch, the single-active activation boundary, verified-slice coordination checkpoints, lifecycle-transition journaling, native-close terminal handoff/reconstruction, and the relationship to existing OpenSpec/archive automation.
+- a reduced reusable set of procedural skills under `agents/skills/` covering the nine action contracts without one skill per trivial action and without duplicating or weakening shared termination semantics;
+- repository documentation describing fixed-role compatibility, workflow-dynamic dispatch, the single-active activation boundary, shared work-conserving invocation semantics, verified-slice coordination checkpoints, lifecycle-transition journaling, native-close terminal handoff/reconstruction, and the relationship to existing OpenSpec/archive automation.
 
-Scheduled Task prompts SHALL remain bootstrap-only: they may require loading default-branch governance and selecting dispatch mode, but MUST NOT duplicate repository execution, concurrency, handoff, stale-state, Human-escalation, checkpoint-journal, lifecycle-journal, terminal-reconstruction, or idle semantics.
+Scheduled Task prompts SHALL remain bootstrap-only: they may require loading default-branch governance and selecting dispatch mode, but MUST NOT duplicate repository execution, concurrency, handoff, stale-state, Human-escalation, termination/yield, checkpoint-journal, lifecycle-journal, terminal-reconstruction, or idle semantics.
 
 Associated Scheduled Task conversation/result surfacing SHALL be treated as an external product boundary and MUST NOT become repository workflow state.
 
