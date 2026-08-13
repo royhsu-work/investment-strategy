@@ -1,4 +1,4 @@
-"""Contract coverage for dispatch, activation, orphan, and Human-authority governance."""
+"""Contract coverage for workflow-dynamic scheduled dispatch governance."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents" / "AGENTS.md"
 LEAD = ROOT / "agents" / "roles" / "lead.md"
 OPEN_SPEC_CHANGE = ROOT / "agents" / "skills" / "openspec-change" / "SKILL.md"
+IMPLEMENTATION = ROOT / "agents" / "skills" / "implementation" / "SKILL.md"
 
 
 def _read(path: Path) -> str:
@@ -167,3 +168,45 @@ def test_lead_escalation_is_decision_ready_bounded_and_not_repeated() -> None:
         "no-op",
     ):
         assert required in lead
+
+
+def test_verified_slice_requires_markers_and_bounded_issue_checkpoint() -> None:
+    shared = _normalized(AGENTS)
+    implementation = _normalized(IMPLEMENTATION)
+    for required in (
+        "one bounded checkpoint comment",
+        "persistent coordination Issue",
+        "completed slice/task IDs",
+        "durable checkpoint or verified revision",
+        "VERIFY/gate result",
+        "remaining approved work or handoff",
+        "before beginning the next slice or handing off",
+    ):
+        assert required in shared
+    for required in (
+        "one bounded checkpoint comment",
+        "persistent coordination Issue",
+        "PR/commit",
+        "task markers",
+        "CI evidence",
+        "completion-boundary",
+    ):
+        assert required in implementation
+
+
+def test_missing_verified_slice_checkpoint_is_recovered_without_replaying_completion() -> None:
+    shared = _normalized(AGENTS)
+    implementation = _normalized(IMPLEMENTATION)
+    for required in (
+        "task markers are durable but the checkpoint comment is missing",
+        "does not rerun or clear the already verified slice",
+        "persists the missing bounded checkpoint",
+    ):
+        assert required in shared
+    for required in (
+        "markers are already durable but the checkpoint comment is missing",
+        "do not repeat the implementation or marker writes",
+        "persist only the missing checkpoint",
+        "before further slice work or handoff",
+    ):
+        assert required in implementation
