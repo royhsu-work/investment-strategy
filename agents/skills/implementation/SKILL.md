@@ -62,6 +62,19 @@ For each approved feature slice:
   continuation/termination contract determines whether the same invocation must continue or whether a
   legal termination boundary has actually been reached.
 
+## Durable messages and handoff recovery
+
+Use the shared Markdown presentation contract in `agents/templates/messages.md`. Verified Slice completion
+uses `SLICE_CHECKPOINT`; implementation result evidence uses the applicable result presentation; catchable
+execution evidence uses `EXECUTION_EXCEPTION`; and completed ownership transfer uses canonical `HANDOFF`
+after the routing mutation succeeds.
+
+If an already-durable result such as `READY` exists but source routing still matches
+`Executor / implement-change`, reconstruct and preserve the completed Slice/result evidence, fresh-read the
+source tuple, perform only the missing routing mutation to the action-defined target, observe the target
+routing, and persist canonical `HANDOFF`. Do not repeat completed implementation, do not rewrite verified
+Slice markers/checkpoints, and do not fabricate another result merely to recover the missing handoff.
+
 ## Scope and safety
 
 - Do not change proposal/spec/design meaning or expand scope opportunistically.
