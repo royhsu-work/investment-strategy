@@ -229,6 +229,40 @@ Overlapping wakes SHALL remain safe through durable reconstruction, idempotency 
 - AND each action re-evaluates durable preconditions before unsafe mutation
 - AND a run that becomes stale stops rather than overwriting newer durable state
 
+### Requirement: Scheduled Agent reconstruction preserves authoritative context continuity
+
+Every selected Scheduled Agent action SHALL reconstruct the current durable state and all still-applicable durable evidence required by that action. Current snapshots such as routing labels, Issue open/closed state, and the current PR head MAY use current-state semantics, but durable requirements, authoritative source decisions, Human clarifications, unresolved findings, review obligations/results, execution blockers/exceptions, merge authorizations, and other action-relevant evidence MUST be interpreted by their workflow meaning rather than by comment or revision recency alone.
+
+A newer comment, readiness result, handoff, routing transition, validation result, or revision MUST NOT implicitly supersede, resolve, accept, or consume earlier unresolved evidence. Evidence MAY leave the action's required reconstruction context only when an explicit contract-defined event makes that legal, including authoritative supersession, durable resolution, applicable independent gate acceptance, completion of the lifecycle boundary the evidence authorized, or another action-specific consumption event defined by the approved contract.
+
+When a coordination workflow declares an authoritative upstream source decision and/or independent source gate, Lead authoring and the applicable independent Reviewer gate MUST dereference those sources. A copied or shortened coordination-Issue summary MAY provide orientation but MUST NOT replace the declared source authority. If the source authority, its supersession state, or required unresolved evidence cannot be reconstructed unambiguously, the selected action MUST fail closed rather than invent a replacement interpretation.
+
+This requirement does not require replaying an entire Issue history when authoritative source references, valid independent gates, explicit resolution/supersession evidence, and current artifacts bound the relevant evidence set. It MUST NOT introduce a message queue, event-sourcing runtime, hidden context cache, sequence number/label, pending-review state, consumed-evidence flag, or generic context-processing engine.
+
+#### Scenario: New coordination workflow inherits declared source authority
+
+- GIVEN a coordination Issue declares an authoritative upstream Lead decision and its independent Reviewer gate
+- AND the coordination Issue also contains a shortened summary of that upstream decision
+- WHEN Lead authors or materially revises the OpenSpec change
+- THEN Lead dereferences the declared authoritative source decision and gate
+- AND preserves all still-applicable accepted and rejected/superseded boundaries from that source
+- AND does not treat the shortened summary as a replacement canonical requirement set
+
+#### Scenario: Newer handoff does not erase an unresolved obligation
+
+- GIVEN an earlier durable Human clarification, finding, blocker, or unreviewed material revision remains unresolved under the approved contract
+- AND a later readiness result, handoff, comment, validation result, routing transition, or revision is persisted
+- WHEN the next selected action reconstructs its required evidence
+- THEN the earlier unresolved obligation remains in context
+- AND simple recency does not consume it
+
+#### Scenario: Authoritative supersession consumes conflicting older meaning
+
+- GIVEN an authoritative Human clarification explicitly supersedes an older requirement or interpretation
+- WHEN a later action reconstructs the durable context
+- THEN the conflicting older meaning is treated as historical evidence rather than current authority
+- AND the explicit superseding clarification is used as current contract meaning
+
 ### Requirement: Unexplained durable workflow evidence fails closed to Lead diagnosis
 
 If dispatch finds no active workflow but durable repository evidence indicates an unresolved workflow-related state that cannot be safely classified under the normal lifecycle, it MUST NOT activate queued proposal work merely by ignoring that evidence.
@@ -342,6 +376,43 @@ The inspection order MUST NOT weaken or replace the correctness gate. A `PASS` s
 - THEN Reviewer first verifies `tasks → design → specs → proposal`
 - AND then verifies `proposal → specs → design → tasks`
 - AND Reviewer may record `PASS` only if both directions are complete for revision R
+
+### Requirement: Revision-bound Reviewer gates preserve cumulative unreviewed coverage
+
+For each revision-bound Reviewer action — `review-openspec`, `review-implementation`, and `review-archive` — Reviewer SHALL reconstruct both the last valid applicable independent review baseline B and the exact current review target R before issuing a new gate result.
+
+Reviewer MUST cover every material change that remains unreviewed in the interval `(B, R]` and MUST also evaluate the complete current state at R under that action's normal gate criteria. A Lead or Executor readiness result, routing handoff, mechanical validation result, or intermediate revision that has not received the applicable independent Reviewer PASS MUST NOT advance B. A later pending target MAY replace an earlier pending target as the current target R, but it MUST NOT remove the earlier target's still-unreviewed material changes from cumulative coverage.
+
+If no trustworthy applicable baseline, revision ancestry, source state, or review evidence can be reconstructed unambiguously, Reviewer MUST fail closed rather than assuming that intermediate work was already accepted. This cumulative-coverage requirement supplements rather than replaces exact-current-revision review: the resulting PASS/FINDINGS remains bound to R.
+
+#### Scenario: OpenSpec target changes before the pending review occurs
+
+- GIVEN Reviewer last independently passed OpenSpec revision B
+- AND Lead later hands off material OpenSpec revision A for review
+- BUT no Reviewer PASS is recorded for A
+- AND a subsequent material clarification produces current review target R
+- WHEN Reviewer executes `review-openspec` for R
+- THEN Reviewer treats B as the last accepted review baseline
+- AND covers the material OpenSpec changes from B through A and R
+- AND performs the required reverse-first then forward semantic gate on the complete current artifacts at R
+
+#### Scenario: Implementation receives multiple corrections before a new gate
+
+- GIVEN an implementation revision has a prior applicable Reviewer baseline or findings boundary B
+- AND Executor produces multiple material correction revisions before the next `review-implementation`
+- WHEN Reviewer evaluates the exact current implementation head R
+- THEN Reviewer covers all material unreviewed corrections in `(B, R]`
+- AND evaluates the complete current implementation at R against the approved OpenSpec contract
+- AND does not treat an intermediate READY/checkpoint as independent review acceptance
+
+#### Scenario: Archive target changes after an intermediate handoff
+
+- GIVEN an Archive PR has a last valid applicable archive-review baseline B or no later applicable PASS
+- AND one or more material archive corrections occur before the current exact head R is reviewed
+- WHEN Reviewer executes `review-archive`
+- THEN Reviewer includes all still-unreviewed archive changes through R
+- AND evaluates the complete archive/current-source relationship at R
+- AND records the result only for exact target R
 
 ### Requirement: Recurring workflow messages use canonical shared templates
 
@@ -505,12 +576,12 @@ When forming bounded idle recommendations, Lead SHALL consider relevant reposito
 
 ### Requirement: Workflow governance applies a simplicity and proportionality constraint
 
-Repository workflow design SHALL add complexity only when justified by current approved requirements or demonstrated failure modes. Hypothetical future generality MUST NOT by itself justify a central workflow engine, multi-active arbitration platform, generic fault classifier, generic exception/retry platform, message bus/template engine, or hidden runtime ownership state.
+Repository workflow design SHALL add complexity only when justified by current approved requirements or demonstrated failure modes. Hypothetical future generality MUST NOT by itself justify a central workflow engine, multi-active arbitration platform, generic fault classifier, generic exception/retry platform, message bus/template engine, generic context/event processor, or hidden runtime ownership state.
 
 #### Scenario: A generalized dispatcher framework is proposed without current need
 
-- GIVEN current workflow requirements are satisfied by the thin workflow-first dispatcher, shared execution contracts, and shared Markdown message contract
-- AND no demonstrated failure requires a generalized orchestration, messaging, exception-classification, or retry subsystem
+- GIVEN current workflow requirements are satisfied by the thin workflow-first dispatcher, shared execution/context contracts, and shared Markdown message contract
+- AND no demonstrated failure requires a generalized orchestration, messaging, context/event-processing, exception-classification, or retry subsystem
 - WHEN an implementation or later proposal considers such machinery
 - THEN the additional machinery is out of scope
 - AND a new approved OpenSpec change with concrete evidence is required before adding it
@@ -684,13 +755,13 @@ If an open advisory remains without valid Human admission, later Lead runs SHALL
 
 Implementation SHALL provide:
 
-- `agents/AGENTS.md` for shared execution protocol, the single authoritative `Scheduled-Dispatch-Mode` marker, the shared work-conserving selected-action termination/yield contract, the shared catchable-exception capture and invocation-finalization contracts, and the shared result-vs-handoff completion rule;
-- role definitions for Lead, Reviewer, and Executor under `agents/roles/`;
-- a reduced reusable set of procedural skills under `agents/skills/` covering the nine action contracts without one skill per trivial action and without duplicating or weakening shared termination/exception/finalization/handoff semantics;
+- `agents/AGENTS.md` for shared execution protocol, the single authoritative `Scheduled-Dispatch-Mode` marker, the shared work-conserving selected-action termination/yield contract, the shared authoritative-context continuity contract, the shared catchable-exception capture and invocation-finalization contracts, and the shared result-vs-handoff completion rule;
+- role definitions for Lead, Reviewer, and Executor under `agents/roles/`, including the Reviewer-wide last-valid-independent-baseline and cumulative-unreviewed-coverage responsibility;
+- a reduced reusable set of procedural skills under `agents/skills/` covering the nine action contracts without one skill per trivial action and without duplicating or weakening shared termination/context/exception/finalization/handoff semantics; Lead OpenSpec authoring dereferences declared authoritative upstream provenance, and each Reviewer skill specializes the shared revision-coverage rule for its gate;
 - one shared `agents/templates/messages.md` Markdown presentation contract containing the common envelope and the eight canonical workflow message types without per-role/per-action template copies or a template/message runtime engine;
-- repository documentation describing fixed-role compatibility, workflow-dynamic dispatch, the single-active activation boundary, shared work-conserving invocation semantics, shared catchable exception capture and invocation finalization, canonical workflow messages, result-vs-handoff completion, verified-slice coordination checkpoints, lifecycle-transition journaling, Lead-only decision-required Human delivery eligibility, native-close terminal handoff/reconstruction, and the relationship to existing OpenSpec/archive automation.
+- repository documentation describing fixed-role compatibility, workflow-dynamic dispatch, the single-active activation boundary, shared work-conserving invocation semantics, authoritative context/provenance continuity, cumulative Reviewer baseline coverage, shared catchable exception capture and invocation finalization, canonical workflow messages, result-vs-handoff completion, verified-slice coordination checkpoints, lifecycle-transition journaling, Lead-only decision-required Human delivery eligibility, native-close terminal handoff/reconstruction, and the relationship to existing OpenSpec/archive automation.
 
-Scheduled Task prompts SHALL remain bootstrap-only: they may require loading default-branch governance and selecting dispatch mode, but MUST NOT duplicate repository execution, concurrency, handoff, stale-state, Human-escalation, termination/yield, exception-capture/finalization, canonical message bodies, checkpoint-journal, lifecycle-journal, terminal-reconstruction, or idle semantics.
+Scheduled Task prompts SHALL remain bootstrap-only: they may require loading default-branch governance and selecting dispatch mode, but MUST NOT duplicate repository execution, concurrency, handoff, stale-state, Human-escalation, termination/yield, context-continuity/provenance, Reviewer-baseline, exception-capture/finalization, canonical message bodies, checkpoint-journal, lifecycle-journal, terminal-reconstruction, or idle semantics.
 
 Associated Scheduled Task conversation/result surfacing SHALL be treated as an external product boundary and MUST NOT become repository workflow state. The external migration configuration SHALL treat ordinary workflow outcomes and `EXECUTION_EXCEPTION` evidence as Human-silent and SHALL reserve Human-facing workflow delivery eligibility for Lead `HUMAN_DECISION_REQUIRED` only, subject to actual product delivery capabilities.
 
@@ -700,4 +771,4 @@ Associated Scheduled Task conversation/result surfacing SHALL be treated as an e
 - WHEN it loads default-branch shared governance
 - THEN it determines dispatch mode from `Scheduled-Dispatch-Mode`
 - AND in `workflow-dynamic` mode reconstructs the active or terminal-pending workflow to derive role/action and mapped skill
-- AND repository governance/templates remain sufficient without embedding a duplicate workflow, exception-handling, or message protocol in the Scheduled Task prompt
+- AND repository governance/templates remain sufficient without embedding a duplicate workflow, context-reconstruction, exception-handling, or message protocol in the Scheduled Task prompt
