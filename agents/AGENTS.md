@@ -256,7 +256,7 @@ After capture, the selected role/action determines whether the failure can be le
 
 If local recovery is not legal or sufficient, the invocation MUST preserve completed durable work and, while execution opportunity remains, persist the action-defined legal blocked/disposition result or route to the contract-defined diagnosis owner, then complete any required routing handoff before normal exit. When a newly observed catchable failure has no legal action-specific recovery or existing disposition, bounded unresolved diagnosis routes to `Lead / resolve-question` using the captured raw evidence as durable input. The shared contract MUST NOT invent one universal blocked-result enum.
 
-If a truly uncatchable hard termination prevents current-run capture, later reconstruction uses normal at-least-once durable state. A later run MUST NOT fabricate exception evidence for an error the prior invocation could not persist.
+If a truly uncatchable hard termination prevents current-run capture, later reconstruction uses normal at-least-once durable state. A later run MUST NOT fabricate `EXECUTION_EXCEPTION` for an error the prior invocation could not persist.
 
 This shared contract is not a universal blocked-result enum, generic retry engine, failure-state machine, retry counter, automatic fault classifier, hidden execution status, automatic remediation platform, or second orchestration layer.
 
@@ -435,7 +435,7 @@ archive completion, regardless of comments or other completion-looking evidence.
 ## Deliberately absent machinery
 
 The MVP has no central workflow engine, generic transition/DAG executor, distributed lock, lease,
-heartbeat, retry counter, progress percentage, hidden sequence number, `status:in-progress`, exactly-once
-mechanism, message queue, event-sourcing engine, hidden context cache, template-version state,
+heartbeat, retry counter, progress percentage, hidden sequence number, `status:in-progress`, exactly-once mechanism,
+message queue, event-sourcing engine, hidden context cache, template-version state,
 semantic-revision classifier service, review-applicability label, or second workflow DAG. Do not add such
 state without a new approved OpenSpec change.
