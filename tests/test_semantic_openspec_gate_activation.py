@@ -94,3 +94,4 @@ def test_pre_activation_legacy_messages_remain_valid_historical_evidence() -> No
         "review-applicability label",
     ):
         assert prohibited in shared or prohibited in migration
+    assert "exactly-once mechanism" in shared
