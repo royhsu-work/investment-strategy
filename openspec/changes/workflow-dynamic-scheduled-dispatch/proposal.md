@@ -10,6 +10,7 @@ Implementation experience on #21 and #25 also demonstrated an observability boun
 
 - Add one default-branch `Scheduled-Dispatch-Mode` governance marker with `fixed-role` and `workflow-dynamic` values.
 - In `workflow-dynamic` mode, make each wake reconstruct repository workflow state first and derive the invocation role/action from the single active workflow; the externally assigned legacy role becomes compatibility fallback only.
+- Preserve the existing three external Scheduled Task wake slots during this migration as an external product-configuration/rollout constraint; the repository capability remains agnostic to external slot count and cadence and governs only the bootstrap behavior consumed by any wake.
 - Define `Change:` persistence as the activation boundary. At most one open coordination Issue with a persisted active Change may exist; additional `Lead / propose-change` Issues with `Change: unset` remain queued pre-activation work.
 - Preserve one-role-per-invocation semantics: once dispatch selects a role, handoff does not redispatch inside that invocation.
 - Preserve at-least-once safety through reconstruction, idempotency where practical, revision/precondition checks, first-valid-write-wins where applicable, and stale-run termination rather than mutex/claim/lease state.
@@ -35,4 +36,4 @@ The journal is evidence, not heartbeat, progress percentage, `status:in-progress
 
 Reverse-first changes only the required `review-openspec` inspection order; it does not weaken or replace exact-revision bidirectional traceability. This change does not add multi-active workflow arbitration, global urgency scoring, locks/leases/heartbeats/claims, hidden in-progress state, a Human waiting state machine, extra completion/status labels, or a separate dispatcher configuration subsystem.
 
-External Scheduled Task cadence and associated-conversation/result UI are product configuration boundaries; repository behavior only defines the bootstrap contract those tasks consume.
+The existing three external wake slots are retained as a migration/rollout constraint owned by the external Scheduled Task product configuration. Their exact count, topology, and cadence are not repository capability state and are not modeled as repository runtime workflow state. Repository behavior defines the bootstrap contract consumed by any external wake; associated-conversation/result UI likewise remains an external product boundary.
