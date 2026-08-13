@@ -18,9 +18,9 @@ Trace: proposal activation/concurrency → specs `Persisted Change identity defi
 
 ## 3. Orphan guard and Human authority/escalation
 
-- [ ] 3.1 RED: add tests for unexplained durable workflow evidence blocking new activation, Human-required evidence accepted only from `royhsu-work`, non-Human evidence remaining non-authoritative, `human:notified` having no routing/authorization effect, and duplicate unanswered escalation suppression.
-- [ ] 3.2 GREEN: implement the minimum Lead diagnosis/escalation and actor-bound Human evidence checks required by the specs; do not add a generic fault classifier or Human waiting state machine.
-- [ ] 3.3 REFACTOR/VERIFY: ensure Human-facing escalation is decision-ready with at most three options, impact/trade-off, and recommendation; run slice tests, full regression suite, type checks, and lint checks.
+- [x] 3.1 RED: add tests for unexplained durable workflow evidence blocking new activation, Human-required evidence accepted only from `royhsu-work`, non-Human evidence remaining non-authoritative, `human:notified` having no routing/authorization effect, and duplicate unanswered escalation suppression.
+- [x] 3.2 GREEN: implement the minimum Lead diagnosis/escalation and actor-bound Human evidence checks required by the specs; do not add a generic fault classifier or Human waiting state machine.
+- [x] 3.3 REFACTOR/VERIFY: ensure Human-facing escalation is decision-ready with at most three options, impact/trade-off, and recommendation; run slice tests, full regression suite, type checks, and lint checks.
 
 Trace: proposal orphan/Human contract → specs `Unexplained durable workflow evidence...`, `Human-required authority...`, `Lead Human-facing escalation...` → design Decisions 5-6.
 
