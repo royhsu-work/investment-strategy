@@ -8,6 +8,8 @@ Implementation experience on #21 and #25 also demonstrated an observability boun
 
 #25 additionally exposed a termination-semantics gap: action-specific skills can describe crash recovery or remaining work in a way that permits a healthy invocation to stop even when the selected action still has immediately actionable, authorized work. The workflow therefore needs one shared work-conserving rule that distinguishes real blockers/interruption from voluntary yield without duplicating that rule across every action skill.
 
+The same discussion exposed a Lead-role gap: when a material workflow defect appears local but may reflect a shared contract problem, Lead must actively test the reasonable blast radius instead of waiting for Human to point out sibling actions with the same root cause. This is a bounded systemic-coherence responsibility of the Lead role, not a new shared execution rule or supervisory workflow layer.
+
 ## What Changes
 
 - Add one default-branch `Scheduled-Dispatch-Mode` governance marker with `fixed-role` and `workflow-dynamic` values.
@@ -17,6 +19,7 @@ Implementation experience on #21 and #25 also demonstrated an observability boun
 - Preserve one-role-per-invocation semantics: once dispatch selects a role, handoff does not redispatch inside that invocation.
 - Add one shared work-conserving selected-action contract: while the selected role/action, revision/preconditions, authority, and execution context remain current, an invocation continues immediately actionable work instead of voluntarily yielding merely because a checkpoint exists, approved local work remains, or a same-role validation failure is directly correctable. Legal termination remains limited to completed handoff/terminal result, another role or Human authority boundary, a real external asynchronous wait, genuine ambiguity/unsafe state, stale/concurrency loss, or actual tool/hard-runtime interruption.
 - Keep that termination contract in shared governance; role/action skills retain only action-specific blockers/results/handoffs and must not duplicate or weaken the shared rule.
+- Make bounded systemic coherence explicit in the Lead role: when a material finding, Human clarification, workflow failure, or specification defect may indicate a cross-cutting pattern, Lead evaluates the directly related sibling actions/contracts and chooses the narrowest correct ownership layer before settling on a local fix. This does not authorize unrelated broad audits, progress polling/supervision of Reviewer or Executor, or generalized orchestration design.
 - Preserve at-least-once safety through reconstruction, idempotency where practical, revision/precondition checks, first-valid-write-wins where applicable, and stale-run termination rather than mutex/claim/lease state.
 - Add minimal orphan/unexplained durable-state handling through Lead diagnosis and decision-ready Human escalation.
 - Bind Human-required workflow authority to GitHub actor `royhsu-work`; other actors remain evidence-only for Human-required decisions.
@@ -30,7 +33,7 @@ Implementation experience on #21 and #25 also demonstrated an observability boun
 
 ## Affected Capabilities
 
-- `scheduled-agent-workflow` — modifies scheduled dispatch, workflow activation/admission, work selection, shared selected-action termination/yield semantics, Reviewer OpenSpec inspection order, Executor verified-slice checkpoint observability, lifecycle-transition journaling, native-close terminal handoff/reconstruction, Human authority/notification, idle advisory, and repository governance exposure.
+- `scheduled-agent-workflow` — modifies scheduled dispatch, workflow activation/admission, work selection, shared selected-action termination/yield semantics, Reviewer OpenSpec inspection order, Executor verified-slice checkpoint observability, lifecycle-transition journaling, native-close terminal handoff/reconstruction, Human authority/notification, idle advisory, and repository governance exposure. Lead systemic coherence is implemented as a role-governance responsibility rather than a separate shared capability rule.
 
 ## Scope Boundaries
 
@@ -38,8 +41,10 @@ This change does not alter the nine OpenSpec lifecycle actions, role artifact au
 
 The shared work-conserving rule is intentionally centralized: `agents/AGENTS.md` owns the common continuation/voluntary-yield contract. Individual role and skill documents only identify action-specific legal results, authority boundaries, waits, and blockers; they must not restate a weaker or competing generic termination policy. Crash/recovery language describes what to do after an actual interruption and is not itself permission to stop a healthy invocation.
 
+Lead systemic coherence is intentionally role-scoped: `agents/roles/lead.md` owns the expectation that Lead performs bounded root-cause/blast-radius analysis when evidence plausibly indicates a cross-cutting workflow/specification defect. The responsibility is not copied into shared governance or every Lead skill, and it does not make Lead a supervisor over another role's valid routed work.
+
 Implementation journaling is deliberately slice-boundary based: RED/GREEN/refactor/test-trigger/compatibility-correction commits, ordinary governed artifact edits, and task-marker writes inside the same not-yet-complete implementation slice do not independently require Issue comments. Git/PR remains the detailed implementation log. Lifecycle-transition journal entries are evidence, not heartbeat, progress percentage, `status:in-progress`, lock/claim/lease, retry counter, or other live runtime ownership state. The closed terminal tuple does not create a new lifecycle action or status label: Executor performs only the post-merge routing handoff, and a later Lead invocation performs the existing `finalize-archive` reconstruction. Lead's `LIFECYCLE_COMPLETE` comment is durable execution evidence for that terminal reconstruction; canonical completion still requires the authorized Archive PR merge, correct canonical archive state, and observed closed Issue.
 
-Reverse-first changes only the required `review-openspec` inspection order; it does not weaken or replace exact-revision bidirectional traceability. This change does not add multi-active workflow arbitration, global urgency scoring, locks/leases/heartbeats/claims, hidden in-progress state, a Human waiting state machine, extra completion/status labels, per-action copies of generic termination semantics, or a separate dispatcher configuration subsystem.
+Reverse-first changes only the required `review-openspec` inspection order; it does not weaken or replace exact-revision bidirectional traceability. This change does not add multi-active workflow arbitration, global urgency scoring, locks/leases/heartbeats/claims, hidden in-progress state, a Human waiting state machine, extra completion/status labels, per-action copies of generic termination semantics, Lead supervisory polling/intervention, unrelated broad audits, or a separate dispatcher configuration subsystem.
 
 The existing three external wake slots are retained as a migration/rollout constraint owned by the external Scheduled Task product configuration. Their exact count, topology, and cadence are not repository capability state and are not modeled as repository runtime workflow state. Repository behavior defines the bootstrap contract consumed by any external wake; associated-conversation/result UI likewise remains an external product boundary.
