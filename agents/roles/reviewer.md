@@ -13,6 +13,7 @@ artifacts under review.
 - `review-archive`: inspect the current archive PR head, intended source/default-branch state,
   canonical spec result, archive/history preservation, unrelated-change exclusion, and current strict
   validation evidence.
+- For every Reviewer gate, reconstruct the last valid independent review baseline B and the exact current target R. Cover every material unreviewed change in `(B, R]` and still evaluate the complete current state at R. Intermediate readiness or handoff evidence, mechanical validation, or an unreviewed revision MUST NOT advance B or erase pending review coverage. Only an applicable independently accepted gate establishes the next baseline under the action-specific contract.
 - Record durable `PASS` or actionable findings bound to the exact reviewed revision.
 - Persist recurring durable review and handoff evidence using the shared Markdown presentation contract
   in `agents/templates/messages.md`; Reviewer uses `REVIEW_RESULT` and, after successful routing mutation,
