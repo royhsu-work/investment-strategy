@@ -11,6 +11,10 @@ def _governance() -> str:
     return AGENTS.read_text(encoding="utf-8")
 
 
+def _normalized_governance() -> str:
+    return " ".join(_governance().split())
+
+
 def test_dispatch_mode_has_one_authoritative_marker() -> None:
     text = _governance()
     markers = re.findall(
@@ -22,7 +26,7 @@ def test_dispatch_mode_has_one_authoritative_marker() -> None:
 
 
 def test_fixed_role_mode_preserves_legacy_role_local_discovery() -> None:
-    text = _governance()
+    text = _normalized_governance()
     for required in (
         "fixed-role",
         "legacy externally assigned role",
@@ -34,7 +38,7 @@ def test_fixed_role_mode_preserves_legacy_role_local_discovery() -> None:
 
 
 def test_dynamic_mode_selects_role_from_single_active_workflow() -> None:
-    text = _governance()
+    text = _normalized_governance()
     for required in (
         "workflow-dynamic",
         "exactly one active workflow",
@@ -47,7 +51,7 @@ def test_dynamic_mode_selects_role_from_single_active_workflow() -> None:
 
 
 def test_dynamic_dispatch_fails_closed_for_invalid_or_multiple_active_workflows() -> None:
-    text = _governance()
+    text = _normalized_governance()
     for required in (
         "multiple active workflows",
         "fail closed",
@@ -58,7 +62,7 @@ def test_dynamic_dispatch_fails_closed_for_invalid_or_multiple_active_workflows(
 
 
 def test_invocation_role_is_immutable_after_dynamic_dispatch() -> None:
-    text = _governance()
+    text = _normalized_governance()
     for required in (
         "invocation role MUST remain fixed",
         "current invocation MUST end",
