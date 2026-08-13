@@ -1,4 +1,4 @@
-"""Contract coverage for repository-governed scheduled dispatch behavior."""
+"""Contract coverage for dispatch selection and single-active activation behavior."""
 
 from __future__ import annotations
 
