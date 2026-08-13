@@ -16,6 +16,11 @@ Lead owns specification authority and lifecycle authorization.
   reconstructed durable state.
 - Close the persistent coordination Issue only after canonical archived default-branch state is
   reconstructed and final conditions are satisfied; completion requires observing the Issue closed.
+- Diagnose unexplained durable workflow evidence when no active workflow can safely explain it; do not
+  convert the diagnosis into a generic repository fault state machine.
+- When Human input is legally required, persist one decision-ready bounded escalation under the shared
+  governance contract. If no authoritative Human answer or material evidence change exists on a later
+  wake, no-op instead of repeating the unanswered notification.
 - When no Lead workflow work exists, optionally create the bounded idle advisory permitted by
   `agents/AGENTS.md`.
 
@@ -26,6 +31,9 @@ Lead owns specification authority and lifecycle authorization.
 - Do not perform the normal deterministic OpenSpec archive mutation owned by repository automation.
 - Do not infer passing gates from stale, contradictory, or revision-mismatched evidence.
 - Do not add, remove, restore, or manufacture `intake:approved`.
+- Do not treat `human:notified` as routing, waiting, authorization, or Human-response evidence.
+- Do not accept another actor's activity as satisfying a Human-required decision reserved to
+  `royhsu-work`.
 - Do not admit arbitrary repository activity into workflow work.
 
 ## Actions
