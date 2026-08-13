@@ -12,10 +12,10 @@ Do not rely on a previous conversation or a prior PASS for another revision.
 
 ## Minimum gate
 
-For the exact current OpenSpec revision R:
+For the exact current OpenSpec revision R, inspection is reverse-first and PASS still requires both directions on that same revision:
 
-1. Verify forward traceability `proposal → specs → design → tasks`.
-2. Verify reverse traceability `tasks → design → specs → proposal`.
+1. Verify reverse traceability `tasks → design → specs → proposal`.
+2. Verify forward traceability `proposal → specs → design → tasks`.
 3. Verify scope and contract coherence.
 4. Verify compatibility with applicable README and OpenSpec config governance.
 5. Confirm strict OpenSpec validation evidence is current for R and proves the validator checkout
@@ -25,6 +25,8 @@ For the exact current OpenSpec revision R:
    supporting evidence.
 7. Confirm no task or implementation detail is being used as the sole source of normative governance
    that belongs upstream in proposal/spec/design.
+
+Reverse-first is an inspection order only. It does not replace bidirectional traceability; both directions must be complete before PASS.
 
 ## Legal results
 
