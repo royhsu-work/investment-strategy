@@ -63,11 +63,14 @@ Lead / propose-change
 OpenSpec change
 proposal → specs → design → tasks
         ↓
-exact-revision strict OpenSpec validation
-+ proposal/specs/design/tasks bidirectional traceability
+required trace declarations/references
++ exact-revision strict OpenSpec validation
         ↓
 Reviewer / review-openspec
-(reverse-first inspection, then forward; both must PASS)
+Reviewer semantic bidirectional review:
+reverse-first `tasks → design → specs → proposal`
+then `proposal → specs → design → tasks`
+(both directions must PASS on the same exact revision)
         ↓ PASS
 Executor / implement-change
 agent/<change> + Draft PR  (branch convention)
@@ -108,9 +111,9 @@ and records LIFECYCLE_COMPLETE
 
 High-level responsibilities:
 
-- **Lead**：擁有 proposal/specs/design/tasks 的 specification authority、scope/contract resolution、bounded systemic coherence 與 lifecycle authorization；不修改 implementation code，也不執行 PR merge。當 material defect 可能是 cross-cutting contract 問題時，只在合理 blast radius 內檢查直接相關 sibling actions/contracts，選擇 narrowest correct ownership layer，不做 progress polling 或無關的 repository-wide audit。`finalize-change` / `finalize-archive` 必須依 current revision 與 Reviewer gate 重新判斷；native-close 正常路徑只重建 archive/default-branch/closed evidence 並記錄 `LIFECYCLE_COMPLETE`，不重開或重複關閉已由 GitHub native close 的 Issue。
-- **Reviewer**：獨立執行 `review-openspec`、`review-implementation`、`review-archive` revision-bound gates；Reviewer 不修改正在審查的 specification/implementation 來自行修正 finding，也不因 PASS 自動取得 merge authority。`review-openspec` 固定先檢查 `tasks → design → specs → proposal`，再檢查 `proposal → specs → design → tasks`，同一 exact revision 的雙向 traceability 都完整才能 PASS。
-- **Executor**：依核准 OpenSpec 實作 code/tests/config、更新有事實依據的 task completion marker，並只在 Reviewer PASS + Lead exact-revision `MERGE_AUTHORIZED` + current PR head 未改變且 gate 仍有效時執行 `merge-pr`；不重定義 requirements/contracts/task meaning。OpenSpec task checkbox 以 **verified vertical-slice checkpoint** 持久化：slice 的 `VERIFY` 成功後，必須在開始下一個 slice 或 handoff 前更新該 slice 已滿足的 markers，並留下 exactly one bounded coordination-Issue checkpoint；不要求每個 checkbox 各自 commit，也不把 checkpoint 當成中止健康 invocation 的理由。final Archive merge 後若 Issue 已由 closing linkage native close，Executor 只完成 closed-Issue terminal handoff/journal，不在同一 invocation 執行 Lead finalization。
+- **Lead**：擁有 proposal/specs/design/tasks 的 specification authority、scope/contract resolution、bounded systemic coherence 與 lifecycle authorization；Lead 負責 author/maintain OpenSpec required trace declarations/references 並取得 exact-revision mechanical strict validation evidence，但不自行宣告 semantic bidirectional PASS。當 material defect 可能是 cross-cutting contract 問題時，只在合理 blast radius 內檢查直接相關 sibling actions/contracts，選擇 narrowest correct ownership layer，不做 progress polling 或無關的 repository-wide audit。`finalize-change` / `finalize-archive` 必須依 current revision 與 Reviewer gate 重新判斷；native-close 正常路徑只重建 archive/default-branch/closed evidence 並記錄 `LIFECYCLE_COMPLETE`，不重開或重複關閉已由 GitHub native close 的 Issue。
+- **Reviewer**：獨立執行 `review-openspec`、`review-implementation`、`review-archive` revision-bound gates；Reviewer 不修改正在審查的 specification/implementation 來自行修正 finding，也不因 PASS 自動取得 merge authority。`review-openspec` 是 Reviewer semantic bidirectional review gate，固定 reverse-first `tasks → design → specs → proposal`，then `proposal → specs → design → tasks`；同一 exact revision 的雙向 traceability 都完整才能 PASS。
+- **Executor**：依核准 OpenSpec 實作 code/tests/config、更新有事實依據的 task completion marker，並只在 Reviewer PASS + Lead exact-revision `MERGE_AUTHORIZED` + current PR head 未改變且 gate 仍有效時執行 `merge-pr`；不重定義 requirements/contracts/task meaning，也不執行 semantic bidirectional OpenSpec review。OpenSpec task checkbox 以 **verified vertical-slice checkpoint** 持久化：slice 的 `VERIFY` 成功後，必須在開始下一個 slice 或 handoff 前更新該 slice 已滿足的 markers，並留下 exactly one bounded coordination-Issue checkpoint；不要求每個 checkbox 各自 commit，也不把 checkpoint 當成中止健康 invocation 的理由。final Archive merge 後若 Issue 已由 closing linkage native close，Executor 只完成 closed-Issue terminal handoff/journal，不在同一 invocation 執行 Lead finalization。
 - **Repository automation**：執行 Python quality gates、project-level OpenSpec validation，以及既有 deterministic normal OpenSpec archive workflow；Scheduled Role 不另建 normal `archive-change` mutation。
 
 Legal role-local action priority 仍保留作 fixed-role compatibility 與 deterministic ordering contract：
