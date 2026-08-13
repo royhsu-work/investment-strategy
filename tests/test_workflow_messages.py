@@ -187,7 +187,7 @@ def test_result_evidence_does_not_complete_required_handoff() -> None:
         "mutate routing to the target tuple",
         "observe successful routing mutation",
         "persist canonical `HANDOFF`",
-        "HANDOFF follows successful routing mutation",
+        "`HANDOFF` follows successful routing mutation",
     ):
         assert required in shared
 
