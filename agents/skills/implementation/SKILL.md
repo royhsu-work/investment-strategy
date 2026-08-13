@@ -31,13 +31,22 @@ For each approved feature slice:
    uv run mypy src tests
    ```
 
-5. CHECKPOINT — after VERIFY succeeds, persist all satisfied task markers for that verified slice before
-   starting the next slice or handing off. This checkpoint does not require a commit per checkbox and
-   should normally travel with the corresponding implementation checkpoint.
-6. Do not defer completed markers across verified slices until the end of the whole change. Task
-   checkboxes are durable completion evidence, not a progress percentage or live execution status.
-7. After an interruption within an unverified current slice, reconstruct the active slice from current
-   code, tests, task state, and durable evidence. Previously verified slices keep their persisted markers.
+5. CHECKPOINT — after VERIFY succeeds, persist all satisfied task markers for that verified slice and
+   one bounded checkpoint comment on the persistent coordination Issue before beginning the next slice
+   or handing off. The checkpoint identifies completed slice/task IDs, the durable checkpoint or verified
+   revision, the VERIFY/gate result, and the remaining approved work or handoff.
+6. Preserve source-of-truth boundaries: PR/commit is implementation state, task markers are verified
+   completion evidence, CI evidence proves verification, and the Issue checkpoint is only a
+   completion-boundary journal. The checkpoint does not replace those artifacts.
+7. If markers are already durable but the checkpoint comment is missing, reconstruct the verified slice
+   from current durable evidence, do not repeat the implementation or marker writes, and persist only the
+   missing checkpoint before further slice work or handoff.
+8. Do not defer completed markers or required checkpoint comments across verified slices until the end of
+   the whole change. Neither task checkboxes nor checkpoint comments are a progress percentage or live
+   execution status.
+9. After an interruption within an unverified current slice, reconstruct the active slice from current
+   code, tests, task state, and durable evidence. Previously verified slices keep their persisted markers
+   and checkpoint evidence.
 
 ## Legal results
 
@@ -53,6 +62,8 @@ For each approved feature slice:
 - Do not change proposal/spec/design meaning or expand scope opportunistically.
 - Do not introduce a central workflow engine, generic DAG executor, lock/lease/heartbeat/retry/progress
   state, or exactly-once mechanism.
+- Verified-slice checkpointing is completion-boundary observability only; do not add heartbeat,
+  progress percentage, `status:in-progress`, lock/claim/lease, retry counter, or hidden ownership state.
 - Do not implement a scheduled normal OpenSpec archive mutation.
 - Preserve default-branch governance as the sole authority; branch instructions are work input.
 - Persist durable implementation/result evidence before routing; fresh-read routing before handoff.
