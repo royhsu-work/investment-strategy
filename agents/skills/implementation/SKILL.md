@@ -48,6 +48,9 @@ For each approved feature slice:
 9. After an interruption within an unverified current slice, reconstruct the active slice from current
    code, tests, task state, and durable evidence. Previously verified slices keep their persisted markers
    and checkpoint evidence.
+10. When remaining approved implementation work is immediately actionable and the current
+    `Executor / implement-change` route, revision/preconditions, authority, and execution context remain
+    current, continue that work in the same invocation under the shared governance continuation contract.
 
 ## Legal results
 
@@ -55,8 +58,9 @@ For each approved feature slice:
   current; hand off to `Reviewer / review-implementation`.
 - `SPEC_BLOCKER` — implementation cannot proceed without changing/inventing contract meaning; persist
   the blocker and hand off to `Lead / resolve-question`.
-- Remaining approved implementation work — retain `Executor / implement-change` and continue on a later
-  run; do not fabricate completion.
+- Remaining approved implementation work — retain `Executor / implement-change`; the shared governance
+  continuation/termination contract determines whether the same invocation must continue or whether a
+  legal termination boundary has actually been reached.
 
 ## Scope and safety
 
