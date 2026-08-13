@@ -96,6 +96,13 @@ stop as stale if another valid activation or newer contradictory state won. This
 reconstruction and preconditions, not a lock, claim, lease, heartbeat, hidden sequence, or
 `status:in-progress` state.
 
+A terminal-pending active workflow is the one narrow exception to the normal open-Issue active-workflow
+shape: a closed coordination Issue carrying `agent:lead + action:finalize-archive`, backed by matching
+authorized merged Archive PR and observed native-close evidence, with no valid Lead `LIFECYCLE_COMPLETE`
+result. While such terminal-pending work exists, Scheduled roles MUST NOT activate a queued proposal.
+After a valid Lead `LIFECYCLE_COMPLETE` result exists, the closed tuple is terminal history and MUST NOT
+block later workflow admission.
+
 ## Orphan evidence and Human authority
 
 If no active workflow exists but unexplained durable workflow evidence indicates unresolved PR,
@@ -119,7 +126,8 @@ available evidence remain unchanged.
 ## PR linkage lifecycle boundary
 
 Implementation and implementation-correction PRs MUST use non-closing references to their persistent
-coordination Issue and MUST NOT establish GitHub Issue-closing linkage. Closing linkage is reserved for the final Archive PR, where it is an expected lifecycle side effect only after the independent archive
+coordination Issue and MUST NOT establish GitHub Issue-closing linkage. Closing linkage is reserved for
+the final Archive PR, where it is an expected lifecycle side effect only after the independent archive
 review, Lead authorization, unchanged-head, and current-gate merge preconditions are satisfied.
 
 A closing linkage on an implementation or implementation-correction PR is a lifecycle-contract
@@ -128,9 +136,11 @@ Archive PR never substitutes for Reviewer PASS, Lead `MERGE_AUTHORIZED`, or any 
 
 ## Routing validity
 
-An Issue is actionable only when it is open and has exactly one legal `agent:*` label and exactly one
-legal `action:*` label for the same role. Zero, multiple, contradictory, or illegal routing labels fail
-closed; model inference MUST NOT repair them. Unrelated labels are preserved during routing changes.
+An Issue is normally actionable only when it is open and has exactly one legal `agent:*` label and
+exactly one legal `action:*` label for the same role. The only closed-Issue eligibility exception is the
+terminal-pending `Lead / finalize-archive` reconstruction defined above. Zero, multiple, contradictory,
+or illegal routing labels fail closed; model inference MUST NOT repair them. Unrelated labels are
+preserved during routing changes.
 
 Legal tuples are exactly the nine role/action pairs listed above.
 
@@ -194,6 +204,25 @@ A normal handoff MUST NOT intentionally expose two role owners or two action own
 guarantee. Two same-role runs may observe the same tuple concurrently. Safety therefore depends on
 reconstruction, idempotency where practical, revision/precondition-aware unsafe mutations, and
 fail-closed interpretation of stale or contradictory evidence.
+
+## Lifecycle-transition journal
+
+A material workflow lifecycle transition that changes durable workflow ownership or lifecycle state
+requires one bounded comment on the persistent coordination Issue. The journal identifies the transition,
+resulting durable state or evidence, and next action or terminal result. Covered boundaries include
+routing handoff, PR merge, Archive native close/post-merge terminal handoff, Lead `LIFECYCLE_COMPLETE`,
+and Human escalation/specification-resolution. Related low-level writes inside one legal transition may
+be represented by that one journal entry, and the journal comment itself does not recursively require
+another meta-comment.
+
+This lifecycle journal is distinct from implementation Slice checkpointing. Ordinary
+RED/GREEN/refactor/test-trigger/compatibility-correction commits and ordinary artifact/task edits inside
+an unverified implementation Slice do not independently require coordination-Issue comments. They are
+represented by the exactly-one verified-Slice checkpoint after successful VERIFY.
+
+If a lifecycle transition succeeds but its journal write is interrupted, the next eligible run
+reconstructs and preserves the already durable transition rather than replaying it, then persists the
+missing journal before performing a further lifecycle transition or handoff.
 
 ## Revision-bound review and merge authorization
 
@@ -278,7 +307,7 @@ merged default-branch OpenSpec state:
 - merged and Complete/eligible under the README archive contract → Lead may wait for existing archive
   automation;
 - durable Archive PR ready → route `Reviewer / review-archive`;
-- archive automation failure/unsupported path → Lead chooses only repository-defined recovery/manual
+- archive automation failed/unsupported path → Lead chooses only repository-defined recovery/manual
   behavior.
 
 Scheduled roles do not define or execute a competing normal `archive-change` action. The existing
@@ -305,9 +334,16 @@ capability boundary, not cryptographic proof of Human identity.
 A PASS, completion comment, or statement that an Issue "may be closed" is not completion.
 
 The final Archive PR carries the repository-approved closing linkage to the persistent coordination
-Issue. After an authorized Archive PR merge, `finalize-archive` reconstructs canonical archived
-default-branch state and first observes the expected native Issue completion. When the Issue is already
-observed closed, Lead records lifecycle completion without a redundant close mutation. Only the observed closed Issue state completes the coordination lifecycle.
+Issue. After Executor merges the authorized final Archive PR and fresh-reads the coordination Issue as
+natively closed, Executor replaces the consumed routing tuple on that closed Issue with exactly
+`agent:lead + action:finalize-archive`, persists one bounded merge/native-close/handoff journal, and ends
+the invocation. Executor MUST NOT execute Lead finalization in the same invocation.
+
+The closed Issue is then the terminal-pending active workflow only while matching authorized merged
+Archive PR/native-close evidence exists and no valid Lead `LIFECYCLE_COMPLETE` result exists. Lead
+reconstructs canonical archived default-branch state and records bounded `LIFECYCLE_COMPLETE` evidence
+without reopening or redundantly closing an already natively closed Issue. Once that result exists, the
+closed tuple is terminal history and no longer blocks later admission.
 
 Explicit Issue close is recovery-only. Lead may perform an explicit Issue-close recovery only when the
 authorized Archive PR is merged, canonical archive state is correct, and native completion is missing.
@@ -316,10 +352,6 @@ After that mutation Lead re-observes the Issue and requires `closed` before decl
 If the coordination Issue is observed closed before the authorized Archive PR merge, that state is
 premature and illegal. Scheduled roles fail closed; the premature close must not be treated as successful
 archive completion, regardless of comments or other completion-looking evidence.
-
-If archive state is complete but native Issue completion has not yet been observed, routing remains
-`Lead / finalize-archive`; the next Lead run reconstructs the completed archive and durable Issue state,
-then applies explicit-close recovery only if native completion remains missing.
 
 ## Deliberately absent machinery
 
