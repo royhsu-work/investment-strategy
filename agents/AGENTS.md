@@ -230,6 +230,22 @@ Recurring durable workflow messages use the single shared Markdown source `agent
 
 A canonical typed message that directly represents a covered lifecycle transition satisfies the required lifecycle journal for that same boundary. The workflow MUST NOT add a duplicate generic `LIFECYCLE_JOURNAL` or recursive meta-comment merely to restate it. Routing transfer uses `HANDOFF`, PR merge uses `MERGE_RESULT`, applicable non-review lifecycle completion uses `ACTION_RESULT`, and Human escalation uses `HUMAN_DECISION_REQUIRED`.
 
+## Shared exception capture and invocation finalization
+
+This contract applies to all three Scheduled Agent roles and all nine normal actions. All Scheduled Agent actions inherit one shared exception-capture and invocation-finalization rule for catchable tool, runtime, and execution failures. Role and skill documents retain action-specific normal results and known local recovery only and MUST NOT copy this generic execution contract.
+
+When a catchable failure is observable and the current invocation can still persist repository evidence, the current role MUST persist one canonical `EXECUTION_EXCEPTION` before relying on a summarized interpretation or normally exiting because of that failure. The evidence MUST preserve the raw error message exactly as it was observable to the Agent after the platform's existing safety redaction. It MUST NOT reveal hidden or withheld content, reverse platform redaction, or add secrets that were not present in the observable error. The record also identifies the selected role/action, attempted operation/tool, relevant revision/base when applicable, whether a durable mutation is known to have completed before the failure, and the unfinished work boundary needed for reconstruction.
+
+Raw observation and agent interpretation remain separate. A classification MAY be recorded only when justified by evidence; otherwise `UNCLASSIFIED_EXECUTION_EXCEPTION` is legal. Disposition is recorded separately when known. The raw observable error MUST NOT be replaced by a paraphrase or classification-only summary. `EXECUTION_EXCEPTION` is durable evidence only and does not by itself authorize a retry, establish an action result or lifecycle transition, or transfer ownership.
+
+After capture, the selected role/action determines whether the failure can be legally recovered within the same authority while routing, revision/preconditions, and execution context remain current. If local recovery is legal and immediately actionable, the role MUST perform that recovery and continue the selected action in the same invocation under the shared work-conserving contract. Recording `EXECUTION_EXCEPTION` MUST NOT become a voluntary yield point.
+
+If local recovery is not legal or sufficient, the invocation MUST preserve completed durable work and, while execution opportunity remains, persist the action-defined legal blocked/disposition result or route to the contract-defined diagnosis owner, then complete any required routing handoff with canonical `HANDOFF` before normal exit. When a newly observed catchable failure has no legal action-specific recovery or existing disposition, bounded unresolved diagnosis routes to `Lead / resolve-question` using the captured raw evidence as durable input. The shared contract MUST NOT invent one universal blocked-result enum.
+
+If a truly uncatchable hard termination prevents current-run capture, later reconstruction uses normal at-least-once durable state. A later run MUST NOT fabricate `EXECUTION_EXCEPTION` for an error the prior invocation could not persist.
+
+This shared contract is not a universal blocked-result enum, generic retry engine, failure-state machine, retry counter, automatic fault classifier, hidden execution status, automatic remediation platform, or second orchestration layer.
+
 ## Lifecycle-transition journal
 
 A material workflow lifecycle transition that changes durable workflow ownership or lifecycle state
