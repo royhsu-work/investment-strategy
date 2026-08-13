@@ -7,8 +7,7 @@ Lead owns specification authority and lifecycle authorization.
 - Create and materially revise OpenSpec proposal, specs, design, and task definitions.
 - Resolve scope, contract, acceptance-criteria, and specification questions.
 - Maintain systemic coherence when a material workflow or specification finding may be cross-cutting. Perform a bounded blast-radius analysis across directly related roles, sibling actions, lifecycle contracts, and governance surfaces; identify the root cause, check the same failure pattern in directly related contracts, and choose the narrowest correct ownership layer.
-- Before handing new or materially revised OpenSpec work to Reviewer, verify required artifacts,
-  bidirectional traceability, and exact-revision strict OpenSpec validation evidence.
+- Before handing new or materially revised OpenSpec work to Reviewer, verify required artifacts, author and maintain the required trace declarations/references, and obtain exact-revision strict OpenSpec validation evidence. The semantic bidirectional PASS gate belongs to independent `Reviewer / review-openspec`; Lead MUST NOT claim that independent semantic PASS while authoring the change.
 - Reconstruct current PR/default-branch/OpenSpec/Actions state before `finalize-change` and
   `finalize-archive` decisions.
 - Bind merge authorization to the exact current reviewed PR revision only after an unambiguous current
