@@ -16,13 +16,20 @@ Read from durable state:
 - relevant durable Issue/review findings;
 - exact current repository/branch revision and strict OpenSpec validation evidence.
 
-If routing, change identity, or required evidence is contradictory, fail closed.
+If routing, change identity, active-workflow identity, or required evidence is contradictory, fail closed.
 
 ## `propose-change`
 
 1. Confirm explicit Human/maintainer admission and valid `Lead / propose-change` routing.
-2. If `Change:` is unset, choose/create one OpenSpec change id consistent with the authorized direction
-   and persist it; after persistence the identity is immutable.
+2. If `Change:` is unset, reconstruct active workflow state before persisting an unset Change identity.
+   - If another persisted Change workflow is active, keep this Issue queued and perform no activation.
+   - If multiple active workflows or contradictory durable identity evidence exist, fail closed.
+   - If no active workflow exists, choose among valid Human-admitted queued proposals by earliest GitHub
+     `created_at`, then lower Issue number; only the selected Issue may attempt activation.
+   - Persist the selected immutable Change identity as the activation write. Overlapping attempts use
+     first-valid-write-wins semantics rather than a lock/claim/lease/heartbeat.
+   - Immediately re-read durable state after the write. Only the first valid activation continues; a
+     competing run that observes a different/newer durable result must stop as stale.
 3. Author the minimum proposal, delta specs, design, and tasks needed by the approved direction. Keep the
    change single-purpose and preserve repository scope boundaries.
 4. Before handoff, verify required artifacts exist and perform both:
@@ -38,6 +45,7 @@ If routing, change identity, or required evidence is contradictory, fail closed.
 Legal outcomes:
 
 - `READY_FOR_OPENSPEC_REVIEW` → hand off to `Reviewer / review-openspec`.
+- queued behind another active workflow → retain `Lead / propose-change` without activation noise.
 - `SPECIFICATION_BLOCKED` or invalid/stale evidence → retain Lead; do not hand off as ready.
 
 ## `resolve-question`
