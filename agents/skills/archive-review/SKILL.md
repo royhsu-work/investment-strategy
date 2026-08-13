@@ -8,6 +8,8 @@ Read default-branch governance and Reviewer role, the coordination Issue and imm
 merged implementation/default-branch state, the existing archive automation result, the current Archive
 PR and exact head revision, the active/archive/canonical OpenSpec state, and current validation evidence.
 
+Reconstruct the action-specific accepted baseline B from the last valid independent `review-archive` gate that remains applicable to this archive stream, and the current target R as the exact current Archive PR head. Inspect all material unreviewed changes in `(B, R]` and evaluate the complete current state at R; the accepted baseline is a coverage boundary only and never authorizes a changed archive head.
+
 ## Minimum gate
 
 For the exact current Archive PR head R:
