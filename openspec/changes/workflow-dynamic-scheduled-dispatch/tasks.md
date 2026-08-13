@@ -10,9 +10,9 @@ Trace: proposal dispatch mode + thin dispatcher → specs `Default-branch govern
 
 ## 2. Single-active activation and concurrent wake safety
 
-- [ ] 2.1 RED: add tests for `Change: unset` queued proposals, persisted Change activation, oldest-created/lower-number activation order, refusal to activate while another Change is active, and overlapping/stale activation attempts; verify target-behavior RED failures.
-- [ ] 2.2 GREEN: implement the minimum single-active admission/activation behavior using durable reconstruction and first-valid-write-wins/precondition checks where applicable, without lock/claim/lease/heartbeat/in-progress state.
-- [ ] 2.3 REFACTOR/VERIFY: confirm existing at-least-once action safety remains intact; run slice tests, full regression suite, type checks, and lint checks.
+- [x] 2.1 RED: add tests for `Change: unset` queued proposals, persisted Change activation, oldest-created/lower-number activation order, refusal to activate while another Change is active, and overlapping/stale activation attempts; verify target-behavior RED failures.
+- [x] 2.2 GREEN: implement the minimum single-active admission/activation behavior using durable reconstruction and first-valid-write-wins/precondition checks where applicable, without lock/claim/lease/heartbeat/in-progress state.
+- [x] 2.3 REFACTOR/VERIFY: confirm existing at-least-once action safety remains intact; run slice tests, full regression suite, type checks, and lint checks.
 
 Trace: proposal activation/concurrency → specs `Persisted Change identity defines...`, `Dynamic dispatch tolerates...`, modified Human admission → design Decisions 3-4.
 
