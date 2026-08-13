@@ -102,5 +102,6 @@ def test_shared_contract_does_not_become_generic_context_runtime_state() -> None
     ):
         assert prohibited_machinery in shared or prohibited_machinery in readme
 
+    heading = "## Authoritative context continuity and evidence consumption"
     for path in (*ROLE_FILES, *SKILL_FILES):
-        assert "## Authoritative context continuity and evidence consumption" not in _normalized(path), path
+        assert heading not in _normalized(path), path
