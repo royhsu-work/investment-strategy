@@ -138,9 +138,9 @@ Archive PR never substitutes for Reviewer PASS, Lead `MERGE_AUTHORIZED`, or any 
 
 An Issue is normally actionable only when it is open and has exactly one legal `agent:*` label and
 exactly one legal `action:*` label for the same role. The only closed-Issue eligibility exception is the
-terminal-pending `Lead / finalize-archive` reconstruction defined above. Zero, multiple, contradictory,
-or illegal routing labels fail closed; model inference MUST NOT repair them. Unrelated labels are
-preserved during routing changes.
+terminal-pending `Lead / finalize-archive` reconstruction defined above.
+Zero, multiple, contradictory, or illegal routing labels fail closed; model inference MUST NOT repair them.
+Unrelated labels are preserved during routing changes.
 
 Legal tuples are exactly the nine role/action pairs listed above.
 
@@ -215,7 +215,7 @@ and Human escalation/specification-resolution. Related low-level writes inside o
 be represented by that one journal entry, and the journal comment itself does not recursively require
 another meta-comment.
 
-This lifecycle journal is distinct from implementation Slice checkpointing. Ordinary
+This lifecycle journal is distinct from implementation Slice checkpointing. ordinary
 RED/GREEN/refactor/test-trigger/compatibility-correction commits and ordinary artifact/task edits inside
 an unverified implementation Slice do not independently require coordination-Issue comments. They are
 represented by the exactly-one verified-Slice checkpoint after successful VERIFY.
@@ -307,7 +307,7 @@ merged default-branch OpenSpec state:
 - merged and Complete/eligible under the README archive contract → Lead may wait for existing archive
   automation;
 - durable Archive PR ready → route `Reviewer / review-archive`;
-- archive automation failed/unsupported path → Lead chooses only repository-defined recovery/manual
+- archive automation failed/unsupported → Lead chooses only repository-defined recovery/manual
   behavior.
 
 Scheduled roles do not define or execute a competing normal `archive-change` action. The existing
@@ -332,6 +332,7 @@ capability boundary, not cryptographic proof of Human identity.
 ## Durable final closure
 
 A PASS, completion comment, or statement that an Issue "may be closed" is not completion.
+Only the observed closed Issue state completes the coordination lifecycle.
 
 The final Archive PR carries the repository-approved closing linkage to the persistent coordination
 Issue. After Executor merges the authorized final Archive PR and fresh-reads the coordination Issue as
@@ -348,6 +349,10 @@ closed tuple is terminal history and no longer blocks later admission.
 Explicit Issue close is recovery-only. Lead may perform an explicit Issue-close recovery only when the
 authorized Archive PR is merged, canonical archive state is correct, and native completion is missing.
 After that mutation Lead re-observes the Issue and requires `closed` before declaring completion.
+
+If archive state is complete but the terminal result is still missing, the next Lead run reconstructs the completed archive
+and current Issue state; it persists only the missing terminal evidence or applies recovery-only close
+behavior when native completion is still absent.
 
 If the coordination Issue is observed closed before the authorized Archive PR merge, that state is
 premature and illegal. Scheduled roles fail closed; the premature close must not be treated as successful
