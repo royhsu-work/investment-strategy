@@ -313,7 +313,7 @@ repository-pinned OpenSpec CLI may provide equivalent validation directly agains
 failed, stale, revision-mismatched, or checkout-mismatched evidence fails closed.
 
 Before `propose-change` or a materially revised `resolve-question` hands OpenSpec work to
-`review-openspec`, Lead also verifies required artifacts and bidirectional traceability.
+`review-openspec`, Lead verifies required artifacts, authors and maintains the required trace declarations/references, and obtains valid exact-revision mechanical OpenSpec validation evidence. The semantic bidirectional PASS gate belongs to independent `Reviewer / review-openspec`; Lead MUST NOT self-authorize that semantic PASS.
 
 ## OpenSpec task completion checkpoints
 
