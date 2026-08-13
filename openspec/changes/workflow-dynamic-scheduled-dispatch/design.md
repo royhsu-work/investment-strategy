@@ -4,7 +4,7 @@
 
 The repository already has durable coordination Issues, one legal routing tuple, role/action skills, revision-bound evidence, and at-least-once reconstruction. The missing piece is dispatch: external Scheduled Tasks currently wake a fixed role and then perform role-local discovery. #23 accepted a workflow-first mode where the repository's active workflow selects the role while preserving the same lifecycle.
 
-Implementation history also exposed a coordination observability gap. #21 consistently mirrored verified Executor slices into the persistent coordination Issue, while #25 demonstrated that task markers and PR commits alone can leave the coordination Issue looking unchanged even though implementation progressed. The workflow therefore needs a bounded completion-boundary journal without introducing live progress state.
+Implementation history also exposed coordination observability gaps. #21 consistently mirrored verified Executor slices into the persistent coordination Issue, while #25 demonstrated that task markers and PR commits alone can leave the coordination Issue looking unchanged even though implementation progressed. #21 also showed that native Archive PR closing can close the Issue while routing still says `Executor / merge-pr`, making the documented `Lead / finalize-archive` terminal reconstruction unreachable under an open-Issue-only dispatcher.
 
 ## Goals
 
@@ -16,6 +16,8 @@ Implementation history also exposed a coordination observability gap. #21 consis
 - Keep Scheduled Task prompts thin and product-independent.
 - Make `review-openspec` inspection order deterministic without changing its bidirectional correctness gate.
 - Make each verified Executor slice reconstructable from the persistent coordination Issue as well as PR/task evidence.
+- Make every substantive Scheduled Agent durable mutation reconstructable from one bounded coordination journal.
+- Preserve native Archive PR closing while keeping `Lead / finalize-archive` reachable as the terminal owner and preserving meaningful terminal routing history.
 
 ## Non-goals
 
@@ -23,7 +25,7 @@ Implementation history also exposed a coordination observability gap. #21 consis
 - Global cross-role/action priority scoring.
 - Locks, claims, leases, heartbeat, retry/progress state, or exactly-once execution.
 - A generic repository fault classifier or Human wait-state machine.
-- Changes to the nine actions, OpenSpec lifecycle, independent Reviewer authority, exact-revision PASS semantics, merge authority, or archive automation.
+- New lifecycle actions, completion/status labels, independent Reviewer authority changes, exact-revision PASS changes, merge-authority changes, or replacement of repository-owned archive automation.
 
 ## Decision 1: One explicit dispatch marker
 
@@ -47,17 +49,19 @@ Trace: proposal dispatch-mode change → spec `Default-branch governance declare
 
 A dynamic wake performs only enough bootstrap to load default-branch governance, determine mode, reconstruct active workflow identity/routing, and select one role/action/skill. It then executes that role normally. The invocation role is immutable after selection.
 
-This avoids a second DAG: the dispatcher does not understand proposal/review/implementation semantics beyond the existing legal routing tuple. Handoff persists the next tuple and ends the invocation.
+This avoids a second DAG: the dispatcher does not understand proposal/review/implementation semantics beyond the existing legal routing tuple and the narrow terminal reconstruction exception defined below. Handoff persists the next tuple and ends the invocation.
 
 Trace: proposal thin dispatcher → specs `Workflow-dynamic dispatch derives one fixed invocation role` and modified selection requirement → slice 1.
 
-## Decision 3: `Change:` persistence is activation
+## Decision 3: `Change:` persistence is activation, with one closed terminal-pending exception
 
-The single-active invariant is defined over open coordination Issues with a valid routing tuple and persisted non-`unset` Change identity. Human-admitted `Lead / propose-change` Issues may queue with `Change: unset`. When no active workflow exists, oldest `created_at`, then lower Issue number selects the next proposal for Lead to activate.
+The normal single-active invariant is defined over open coordination Issues with a valid routing tuple and persisted non-`unset` Change identity. Human-admitted `Lead / propose-change` Issues may queue with `Change: unset`. When no active workflow exists, oldest `created_at`, then lower Issue number selects the next proposal for Lead to activate.
 
-This is deliberately not multi-workflow arbitration: queued proposals are not active changes, and no conflict graph or urgency engine is needed.
+One narrow exception preserves terminal reconstruction after native Archive PR close: a closed coordination Issue with persisted Change identity, routing exactly `agent:lead + action:finalize-archive`, an authorized merged Archive PR/native close, and no durable Lead `LIFECYCLE_COMPLETE` evidence for that archive merge remains terminal-pending workflow work. It blocks activation of queued proposals until Lead performs the existing `finalize-archive` reconstruction and records completion evidence. After that bounded Lead completion record exists, the closed tuple is terminal history, is not eligible work, and does not block later admission.
 
-Trace: proposal activation boundary → spec `Persisted Change identity defines the single active workflow boundary` → slice 2.
+This is deliberately not multi-workflow arbitration and adds no completion label. The terminal candidate is derived from existing durable archive/Issue/routing evidence plus the Lead finalization result comment.
+
+Trace: proposal activation boundary + native-close terminal handoff → specs `Persisted Change identity defines the single active workflow boundary` and `Native Archive close hands off to terminal Lead reconstruction` → slices 2 and 5.
 
 ## Decision 4: At-least-once overlap remains the concurrency model
 
@@ -87,13 +91,13 @@ Trace: proposal Human boundary → specs `Human-required authority...` and `Lead
 
 Idle advisory remains Lead-only and bounded. Its research context expands to relevant Issues created or materially active in the preceding seven days. This is an evidence window, not a new queue or routing source.
 
-Trace: proposal idle exploration → spec idle requirements → slice 5.
+Trace: proposal idle exploration → spec idle requirements → slice 6.
 
 ## Decision 8: Simplicity/proportionality is a governance constraint
 
 Implementation and future workflow changes must justify complexity with current approved requirements or demonstrated failures. Generalized orchestration machinery is explicitly deferred.
 
-Trace: proposal scope boundary → spec proportionality requirement → slice 5 and final review.
+Trace: proposal scope boundary → spec proportionality requirement → slice 6 and final review.
 
 ## Decision 9: `review-openspec` is reverse-first, while PASS stays bidirectional
 
@@ -101,7 +105,7 @@ Reviewer inspection order is now deterministic: for each exact revision under `r
 
 This is deliberately an inspection-order contract rather than a different correctness rule. Reviewer independence and revision binding remain unchanged, and `PASS` still requires both directions to be complete for the same exact revision. Reverse-first must therefore be reflected in Reviewer governance/skill guidance and regression or contract coverage, but it must not be used to waive forward traceability.
 
-Trace: proposal reverse-first review requirement → spec `OpenSpec review uses reverse-first inspection while retaining the bidirectional gate` → implementation slice 5 and OpenSpec completion gate.
+Trace: proposal reverse-first review requirement → spec `OpenSpec review uses reverse-first inspection while retaining the bidirectional gate` → implementation slice 6 and OpenSpec completion gate.
 
 ## Decision 10: Verified slices also journal one bounded coordination checkpoint
 
@@ -113,6 +117,26 @@ This intentionally follows the successful #21 execution-journal pattern while av
 
 Trace: proposal verified-slice checkpoint requirement → spec `Verified implementation slices persist a bounded coordination-Issue checkpoint` → implementation slice 4.
 
+## Decision 11: Every substantive durable workflow mutation has one bounded journal record
+
+A Scheduled Agent that changes durable workflow state must leave a bounded comment on the persistent coordination Issue describing what changed, the resulting durable state/evidence, and the next action or terminal result. Covered mutations include governed artifact/task-marker writes, routing-label changes, Issue/PR state changes, and merge mutations.
+
+The required journal comment is evidence, not a second state machine, and does not recursively require a meta-comment about itself. If the substantive mutation succeeds but the journal write is interrupted, a later eligible run reconstructs the durable mutation and writes the missing bounded record before performing further workflow mutation or handoff.
+
+This general rule subsumes the verified-slice checkpoint when the mutation is a verified implementation boundary; it does not require duplicate comments for the same atomic workflow boundary.
+
+Trace: proposal mutation journal requirement → spec `Substantive durable workflow mutations are journaled on the coordination Issue` → implementation slice 5.
+
+## Decision 12: Native Archive close hands off to Lead on the closed Issue
+
+The final Archive PR keeps repository-approved `Closes #N` linkage. Executor still owns only the authorized merge mutation. After merge succeeds, Executor fresh-reads the PR and coordination Issue. When the Archive PR is durably merged and the Issue is observed natively closed, Executor replaces the consumed `Executor / merge-pr` labels with `Lead / finalize-archive` even though the Issue is closed, then records the bounded merge/native-close/handoff journal entry. Invocation role remains Executor and ends after that handoff.
+
+The dispatcher admits exactly one closed-Issue exception: `closed + agent:lead + action:finalize-archive` with a matching authorized merged Archive PR and no durable Lead `LIFECYCLE_COMPLETE` result for that merge. Lead reconstructs canonical archived default-branch state, confirms the expected native closure and exact archive evidence, and records one bounded `LIFECYCLE_COMPLETE` result comment bound to the Archive PR/head/merge commit. No reopen/close mutation is needed on the normal path. After that result exists, later wakes reconstruct the tuple as completed terminal history and do not select it or let it block queued workflow admission.
+
+If merge succeeded and native close happened but Executor was interrupted before relabel/comment, a later reconstruction may repair only the missing post-merge terminal handoff/journal after proving the exact authorized archive merge and native closure; it must not re-merge. If canonical archive state is wrong or closure happened before the authorized Archive PR merge, existing fail-closed semantics still apply.
+
+Trace: proposal native-close terminal handoff → specs `Native Archive close hands off to terminal Lead reconstruction` and modified work-selection/active-workflow requirements → implementation slice 5.
+
 ## Scheduled Task migration
 
 The three existing external wake slots remain. Their prompts should converge on the same bootstrap contract: read `README.md` and `agents/AGENTS.md`, determine the declared mode, use the legacy assigned role only in `fixed-role`, and in `workflow-dynamic` derive role/action from durable workflow state. Once an invocation selects a role, it never switches role in that run.
@@ -121,4 +145,4 @@ Prompt configuration itself is external product state. Repository tests/docs can
 
 ## Validation strategy
 
-Behavioral tests should exercise mode parsing, fixed-role compatibility, active-workflow selection, queued proposal activation ordering, invalid/multiple active fail-closed behavior, immutable invocation role, stale competing activation, actor-bound Human evidence, duplicate escalation suppression, seven-day advisory evidence, analytics-only notification metadata, reverse-first `review-openspec` inspection with unchanged exact-revision bidirectional PASS semantics, and verified-slice checkpoint persistence/recovery without live progress state. Repository quality checks and strict OpenSpec validation remain required.
+Behavioral tests should exercise mode parsing, fixed-role compatibility, active-workflow selection, queued proposal activation ordering, invalid/multiple active fail-closed behavior, immutable invocation role, stale competing activation, actor-bound Human evidence, duplicate escalation suppression, seven-day advisory evidence, analytics-only notification metadata, reverse-first `review-openspec` inspection with unchanged exact-revision bidirectional PASS semantics, verified-slice checkpoint persistence/recovery, substantive-mutation journal recovery, native Archive close followed by closed-Issue `Lead / finalize-archive` handoff, terminal candidate selection before Lead completion evidence, and terminal exclusion after bounded `LIFECYCLE_COMPLETE` evidence. Repository quality checks and strict OpenSpec validation remain required.
