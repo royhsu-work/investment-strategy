@@ -186,6 +186,22 @@ Previous conversation memory is never required for correctness. A partial run, t
 missing final response does not transfer ownership. A later run reconstructs durable reality and
 continues only the missing legal work.
 
+## Work-conserving selected-action execution
+
+Once an invocation selects a role/action, execution is work-conserving: it MUST continue all immediately
+actionable work within that same authorized action while routing, revision/preconditions, authority, and
+execution context remain current. A verified Slice checkpoint with more approved local work, a
+failed-but-actionable validation, a recoverable same-role failure, or another ordinary intermediate
+checkpoint is not a legal voluntary yield point.
+
+Legal termination or yield is limited to action completion with handoff or terminal result, a boundary
+that requires a different role or Human authority, a real external asynchronous wait, genuine ambiguity
+or unsafe state, stale/concurrency loss, or an actual tool or hard-runtime interruption. Handoff still
+ends the current invocation; this rule does not authorize same-run role switching or redispatch.
+
+Role and skill documents define only action-specific blockers, results, recovery details, and handoffs.
+They MUST NOT introduce a competing generic continuation policy or weaken this shared termination rule.
+
 ## Handoff ordering and concurrency safety
 
 Ownership transfer occurs only after durable work is persisted:
