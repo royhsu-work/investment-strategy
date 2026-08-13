@@ -8,6 +8,10 @@ Read default-branch governance and Reviewer role, the coordination Issue and imm
 merged implementation/default-branch state, the existing archive automation result, the current Archive
 PR and exact head revision, the active/archive/canonical OpenSpec state, and current validation evidence.
 
+Reconstruct the action-specific accepted baseline B from the last valid independent `review-archive` gate that remains applicable to this archive stream, and the current target R as the exact current Archive PR head. Inspect all material unreviewed changes in `(B, R]` and evaluate the complete current state at R; the accepted baseline is a coverage boundary only and never authorizes a changed archive head.
+
+This action is an exact-current-head gate. The semantic OpenSpec bookkeeping exception does not weaken this gate: even when a bookkeeping-only OpenSpec revision does not require another semantic `review-openspec`, Reviewer still evaluates the exact current Archive PR head R.
+
 ## Minimum gate
 
 For the exact current Archive PR head R:
@@ -30,6 +34,13 @@ For the exact current Archive PR head R:
 
 The result is bound to the exact archive PR head. A changed head invalidates the old gate for merge
 authorization.
+
+## Durable messages
+
+Use `agents/templates/messages.md` for recurring durable presentation only when that presentation
+contract is authoritative on the default branch. Once active, Archive gate outcomes use `REVIEW_RESULT`;
+completed routing transfer uses canonical `HANDOFF` only after the routing mutation succeeds. Do not
+duplicate shared template bodies in this skill.
 
 ## Boundary and safety
 

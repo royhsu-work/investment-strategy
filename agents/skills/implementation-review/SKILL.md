@@ -5,8 +5,13 @@ Mapped action: `Reviewer / review-implementation`.
 ## Reconstruct before acting
 
 Read default-branch governance and Reviewer role, the coordination Issue and immutable `Change:`, the
-approved OpenSpec revision/gate, the current implementation PR and exact head revision, current task
-completion markers, relevant diff/tests, project quality checks, and strict OpenSpec validation evidence.
+approved semantic OpenSpec gate that remains applicable, the current implementation PR and exact head
+revision, current task completion markers, relevant diff/tests, project quality checks, and strict
+OpenSpec validation evidence.
+
+Reconstruct the action-specific accepted baseline B from the last valid independent `review-implementation` gate that remains applicable to this implementation stream, and the current target R as the exact current implementation PR head. Inspect all material unreviewed changes in `(B, R]` and evaluate the complete current state at R; an older accepted result is only the coverage baseline and never substitutes for a current exact-head gate.
+
+This action is an exact-current-head gate. The semantic OpenSpec bookkeeping exception does not weaken this gate: task-marker-only OpenSpec revisions may leave the approved semantic contract applicable, but Reviewer still evaluates the exact current implementation PR head R.
 
 ## Minimum gate
 
@@ -31,6 +36,13 @@ For the exact current implementation PR head R:
 - `SPEC_FINDINGS` → `Lead / resolve-question`.
 
 A later PR head does not inherit the prior result. Contradictory current evidence fails closed.
+
+## Durable messages
+
+Use `agents/templates/messages.md` for recurring durable presentation only when that presentation contract
+is authoritative on the default branch. Once active, the revision-bound gate result uses `REVIEW_RESULT`;
+a completed ownership transfer uses canonical `HANDOFF` only after the routing mutation succeeds. Do not
+duplicate shared template bodies in this skill.
 
 ## Independence and handoff safety
 

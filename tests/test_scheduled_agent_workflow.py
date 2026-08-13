@@ -103,7 +103,7 @@ def test_shared_governance_and_role_files_exist_with_authority_boundaries() -> N
         "At-least-once execution",
         "state reconstruction",
         "exactly one legal `agent:*` label",
-        "persist artifact/result",
+        "persist result + revision-aware evidence",
         "produces no repository noise",
         "not** a mutex, compare-and-swap primitive, or single-flight",
         "OpenSpec Validate",
@@ -236,7 +236,7 @@ def test_routing_concurrency_revision_and_crash_recovery_fail_closed() -> None:
 
 
 def test_pr_linkage_governance_reserves_closing_linkage_for_archive() -> None:
-    shared = _read(AGENTS / "AGENTS.md")
+    shared = " ".join(_read(AGENTS / "AGENTS.md").split())
     openspec_change = _read(AGENTS / "skills/openspec-change/SKILL.md")
     merge = _read(AGENTS / "skills/merge-pr/SKILL.md")
 
@@ -315,7 +315,7 @@ def test_readme_aligns_role_gates_multi_pr_archive_and_final_closure() -> None:
         "MORE_IMPLEMENTATION_REQUIRED",
         "Reviewer / review-archive",
         "Lead / finalize-archive",
-        "close coordination Issue and observe it closed",
+        "GitHub native close via final Archive PR closing linkage",
         "intake:approved",
         "不是** mutex、CAS 或 single-flight",
         "validator checkout `HEAD`",
@@ -365,4 +365,5 @@ def test_task_completion_markers_persist_at_verified_slice_boundary() -> None:
         assert required in implementation
 
     assert "verified vertical-slice checkpoint" in readme
-    assert "不得延後到整個 change 最後才一次更新" in readme
+    assert "`VERIFY` 成功後" in readme
+    assert "開始下一個 slice 或 handoff 前更新該 slice 已滿足的 markers" in readme

@@ -13,10 +13,6 @@ and any prior Lead authorization for the relevant revision.
 
 Stale, missing, contradictory, or revision-mismatched gate evidence fails closed.
 
-If the coordination Issue is already closed, reconstruct whether that closure followed the authorized
-final Archive PR merge and canonical archive transition. Closure before the authorized Archive PR merge
-is premature lifecycle completion: fail closed, retain Lead/recovery ownership, and must not be treated as successful completion.
-
 ## `finalize-change`
 
 Before merge authorization:
@@ -54,38 +50,45 @@ Before archive PR merge authorization:
 3. Recheck current head and gate state.
 4. Persist archive `MERGE_AUTHORIZED` bound to R before `Executor / merge-pr` handoff.
 
-After archive merge (or when reconstructing a merge already completed):
+After archive merge, or when reconstructing the narrow closed-Issue terminal handoff, Lead reconstructs
+canonical archived default-branch state, the authorized Archive PR exact head, its merge commit, and
+observed native Issue closure. A closed Issue with `agent:lead + action:finalize-archive` is eligible only
+when that matching authorized merged-archive/native-close evidence exists and no valid Lead
+`LIFECYCLE_COMPLETE` result already exists.
 
-1. Reconstruct the exact authorized Archive PR merge, canonical default-branch OpenSpec state, and dated
-   archive history.
-2. Confirm final lifecycle conditions are actually satisfied for the immutable change id.
-3. If the Issue was observed closed before the authorized Archive PR merge, treat it as premature,
-   fail closed, and must not be treated as successful completion.
-4. If final archive state is incomplete or contradictory, retain Lead/recovery ownership; do not infer
-   completion from comments or Issue state alone.
-5. When the authorized Archive PR is merged and canonical archive state is correct, first observe the
-   expected native Issue completion caused by the Archive PR closing linkage.
-6. If the Issue is observed closed, record completion without executing another Issue-close mutation.
-7. Only when the authorized Archive PR is merged, canonical archive state is correct, and native
-   completion is missing, perform the GitHub coordination Issue close mutation as the explicit
-   Issue-close recovery path.
-8. Re-read the Issue and require observed `closed` state before declaring the coordination lifecycle
-   complete.
+The normal path first observes the expected native Issue completion and requires the Issue to be observed closed.
+If Issue closure is observed before the authorized Archive PR merge, that closure is premature and must fail closed;
+it must not be treated as successful archive completion.
 
-Legal post-merge outcomes:
+When those final conditions are satisfied, Lead persists one bounded `LIFECYCLE_COMPLETE` result that
+identifies the Archive PR exact head, merge commit, canonical archived default-branch state, and observed
+native Issue closure. This result is durable execution evidence only; canonical completion still depends
+on the authorized archive merge, correct archived state, and observed `closed` state. Lead does not reopen
+or redundantly close the Issue when native closure is already present; in other words, finalization does
+not reopen or redundantly close the Issue.
 
-- `ARCHIVE_CONFIRMED_ON_DEFAULT_BRANCH` + expected native Issue completion observed closed → lifecycle
-  complete;
-- authorized Archive PR merged + canonical archive state correct + native completion is missing →
-  explicit Issue-close recovery, then require observed closed;
-- premature Issue closure before authorized Archive PR merge → fail closed; must not be treated as
-  successful completion.
+Only when the authorized Archive PR is merged, canonical archive state is correct, and native completion is missing
+may Lead use explicit Issue-close recovery. In that recovery-only path, Lead may perform the GitHub coordination Issue close mutation
+and must re-observe `closed` before persisting `LIFECYCLE_COMPLETE`.
 
-If the run stops after archive completion but before the expected native close is observed, routing
-remains `Lead / finalize-archive`; a later run reconstructs final state and idempotently performs the missing recovery close only after confirming native completion is still absent. Explicit close is recovery only, not the normal completion mutation.
+If a recovery run is interrupted after archive completion but before the recovery close, the next Lead
+run reconstructs the completed archive and idempotently performs the missing close recovery only when
+native completion is still absent. Normal native-close finalization never performs that redundant close.
+
+If the run stops after archive merge/native close but before the bounded completion result, a later Lead
+run reconstructs the same terminal evidence and persists only the missing result. A valid existing
+`LIFECYCLE_COMPLETE` makes the closed tuple terminal history rather than eligible work.
+
+## Durable messages
+
+Use `agents/templates/messages.md` for recurring durable presentation. Lead merge authorization uses
+`MERGE_AUTHORIZATION`; non-review lifecycle outcomes including terminal `LIFECYCLE_COMPLETE` use the
+applicable `ACTION_RESULT`; and completed routing transfer uses canonical `HANDOFF` only after the routing
+mutation succeeds. Do not duplicate the shared template bodies here.
 
 ## Handoff and concurrency safety
 
-Persist authorization/result evidence before routing. Fresh-read routing before handoff. A fresh read
+Persist authorization/result evidence before routing. Material workflow lifecycle transitions use the
+shared bounded coordination-Issue journal contract. Fresh-read routing before handoff. A fresh read
 followed by a label update is not CAS/mutex/single-flight; overlapping Lead runs must recheck unsafe
 preconditions and stop on changed or contradictory durable state.

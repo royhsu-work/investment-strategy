@@ -12,6 +12,10 @@ Executor owns approved implementation work and explicitly authorized operational
 - After a slice's required `VERIFY` succeeds, persist all satisfied task-completion markers for that
   verified slice before starting the next slice or handing off. A dedicated commit per checkbox is not
   required, but completed markers from verified slices must not be deferred until end-of-change.
+- Persist recurring durable Executor evidence using `agents/templates/messages.md`: verified Slice
+  completion uses `SLICE_CHECKPOINT`; implementation completion uses the applicable action result; merge
+  execution uses `MERGE_RESULT`; routing transfer uses canonical `HANDOFF` only after successful routing
+  mutation; catchable execution evidence uses `EXECUTION_EXCEPTION`.
 - If interrupted within the active unverified slice, reconstruct that slice from current code, tests,
   task state, and durable evidence; previously persisted verified-slice markers remain authoritative
   completion evidence.
