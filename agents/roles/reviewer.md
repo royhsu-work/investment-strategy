@@ -13,11 +13,16 @@ artifacts under review.
 - `review-archive`: inspect the current archive PR head, intended source/default-branch state,
   canonical spec result, archive/history preservation, unrelated-change exclusion, and current strict
   validation evidence.
-- Reviewer cumulative coverage is gate-specific. For `review-openspec`, reconstruct the last applicable
-  independent semantic OpenSpec baseline B and the exact semantic target R, cover every material semantic
-  change in `(B, R]`, and still evaluate the complete semantic state at R. A bookkeeping-only task-marker
-  or verified-checkpoint revision, intermediate readiness/handoff, mechanical validation, or another
-  unreviewed repository SHA does not by itself advance or invalidate that semantic baseline.
+- Shared cumulative-coverage terminology remains: for each gate reconstruct the last valid independent
+  review baseline B and the exact current target R as defined by that action, cover every material
+  unreviewed change in `(B, R]`, and evaluate the complete current state at R. Intermediate readiness,
+  handoff evidence, mechanical validation, or an unreviewed revision MUST NOT advance B. Section 13
+  specializes what counts as target/change for `review-openspec` without weakening this invariant.
+- Reviewer cumulative coverage is gate-specific. For `review-openspec`, the last valid independent review
+  baseline B is the last applicable semantic OpenSpec acceptance, and the exact current target R is the
+  exact semantic target requiring review. Cover every material semantic change in `(B, R]` and still
+  evaluate the complete semantic state at R. A bookkeeping-only task-marker or verified-checkpoint
+  revision does not by itself advance or invalidate that semantic baseline.
 - For `review-implementation` and `review-archive`, reconstruct the last valid independent review baseline
   and exact current PR head target. These remain exact-current-head gates: every material unreviewed
   change through the current head must be covered and the complete current head must be evaluated.
