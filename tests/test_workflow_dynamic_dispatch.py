@@ -1,4 +1,4 @@
-"""Contract coverage for dynamic dispatch, Slice checkpoints, lifecycle journals, and terminal recovery verification."""
+"""Contract coverage for dynamic dispatch, Slice checkpoints, and lifecycle terminal flow."""
 
 from __future__ import annotations
 
@@ -214,7 +214,8 @@ def test_missing_verified_slice_checkpoint_is_recovered_without_replaying_comple
         assert required in implementation
 
 
-def test_material_lifecycle_transitions_require_bounded_journal_without_per_mutation_logging() -> None:
+def test_material_lifecycle_transitions_require_bounded_journal_without_per_mutation_logging(
+) -> None:
     shared = _normalized(AGENTS)
     for required in (
         "material workflow lifecycle transition",
