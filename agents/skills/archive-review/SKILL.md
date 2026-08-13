@@ -31,6 +31,12 @@ For the exact current Archive PR head R:
 The result is bound to the exact archive PR head. A changed head invalidates the old gate for merge
 authorization.
 
+## Durable messages
+
+Use `agents/templates/messages.md` for recurring durable presentation. Archive gate outcomes use
+`REVIEW_RESULT`; completed routing transfer uses canonical `HANDOFF` only after the routing mutation
+succeeds. Do not duplicate shared template bodies in this skill.
+
 ## Boundary and safety
 
 Reviewer does not repair archive/specification/implementation artifacts itself. This skill reviews the
