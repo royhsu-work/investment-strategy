@@ -64,8 +64,13 @@ or redundantly close the Issue when native closure is already present; in other 
 not reopen or redundantly close the Issue.
 
 If canonical archive state is correct after the authorized merge but native close is unexpectedly
-missing, explicit Issue close remains recovery-only. Lead may perform that recovery and must re-observe
-`closed` before persisting `LIFECYCLE_COMPLETE`.
+missing, explicit Issue close remains recovery-only. In that recovery-only path, Lead may perform the
+GitHub coordination Issue close mutation and must re-observe `closed` before persisting
+`LIFECYCLE_COMPLETE`.
+
+If a recovery run is interrupted after archive completion but before the recovery close, the next Lead
+run reconstructs the completed archive and idempotently performs the missing close recovery only when
+native completion is still absent. Normal native-close finalization never performs that redundant close.
 
 If the run stops after archive merge/native close but before the bounded completion result, a later Lead
 run reconstructs the same terminal evidence and persists only the missing result. A valid existing
