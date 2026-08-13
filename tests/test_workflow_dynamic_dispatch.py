@@ -1,4 +1,4 @@
-"""Contract coverage for workflow-dynamic scheduled dispatch governance."""
+"""Contract coverage for dispatch, activation, orphan, and Human-authority governance."""
 
 from __future__ import annotations
 
