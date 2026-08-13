@@ -45,8 +45,9 @@ def test_reviewer_openspec_uses_semantic_baseline_and_material_cumulative_covera
     assert "Successful mechanical OpenSpec validation is not semantic PASS evidence" in skill
 
 
-def test_implementation_completion_routes_directly_to_implementation_review_without_semantic_change(
-) -> None:
+def test_implementation_completion_routes_directly_to_implementation_review_without_semantic_change() -> (
+    None
+):
     implementation = _normalized(IMPLEMENTATION)
     for required in (
         "no material semantic OpenSpec change",
