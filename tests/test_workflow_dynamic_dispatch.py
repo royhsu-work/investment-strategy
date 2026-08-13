@@ -214,18 +214,20 @@ def test_missing_verified_slice_checkpoint_is_recovered_without_replaying_comple
         assert required in implementation
 
 
-def test_substantive_mutations_require_bounded_journal_and_interrupted_write_recovery() -> None:
+def test_material_lifecycle_transitions_require_bounded_journal_without_per_mutation_logging() -> None:
     shared = _normalized(AGENTS)
     for required in (
-        "substantive durable workflow mutation",
+        "material workflow lifecycle transition",
         "one bounded comment on the persistent coordination Issue",
         "resulting durable state or evidence",
         "next action or terminal result",
         "journal comment itself",
         "does not recursively require another meta-comment",
-        "mutation succeeds but its journal write is interrupted",
-        "preserves the already durable mutation",
-        "before performing further substantive workflow mutation or handoff",
+        "ordinary RED/GREEN/refactor/test-trigger/compatibility-correction commits",
+        "do not independently require coordination-Issue comments",
+        "lifecycle transition succeeds but its journal write is interrupted",
+        "preserves the already durable transition",
+        "before performing a further lifecycle transition or handoff",
     ):
         assert required in shared
 
