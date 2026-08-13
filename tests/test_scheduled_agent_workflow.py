@@ -103,7 +103,7 @@ def test_shared_governance_and_role_files_exist_with_authority_boundaries() -> N
         "At-least-once execution",
         "state reconstruction",
         "exactly one legal `agent:*` label",
-        "persist artifact/result",
+        "persist result + revision-aware evidence",
         "produces no repository noise",
         "not** a mutex, compare-and-swap primitive, or single-flight",
         "OpenSpec Validate",
@@ -291,7 +291,7 @@ def test_readme_aligns_role_gates_multi_pr_archive_and_final_closure() -> None:
         "MORE_IMPLEMENTATION_REQUIRED",
         "Reviewer / review-archive",
         "Lead / finalize-archive",
-        "close coordination Issue and observe it closed",
+        "GitHub native close via final Archive PR closing linkage",
         "intake:approved",
         "不是** mutex、CAS 或 single-flight",
         "validator checkout `HEAD`",
@@ -341,4 +341,4 @@ def test_task_completion_markers_persist_at_verified_slice_boundary() -> None:
         assert required in implementation
 
     assert "verified vertical-slice checkpoint" in readme
-    assert "不得延後到整個 change 最後才一次更新" in readme
+    assert "`VERIFY` 成功後，必須在開始下一個 slice 或 handoff 前更新該 slice 已滿足的 markers" in readme
