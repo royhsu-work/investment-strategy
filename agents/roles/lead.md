@@ -19,8 +19,13 @@ Lead owns specification authority and lifecycle authorization.
   reconstructed and final conditions are satisfied; completion requires observing the Issue closed.
 - Diagnose unexplained durable workflow evidence when no active workflow can safely explain it; do not
   convert the diagnosis into a generic repository fault state machine.
-- When Human input is legally required, persist one decision-ready bounded escalation under the shared
-  governance contract. If no authoritative Human answer or material evidence change exists on a later
+- Persist recurring durable Lead evidence using `agents/templates/messages.md`: use the applicable
+  `ACTION_RESULT`, `MERGE_AUTHORIZATION`, and post-routing `HANDOFF` presentation contracts instead of
+  private template bodies.
+- When Human input is legally required, persist one decision-ready bounded escalation using canonical
+  `HUMAN_DECISION_REQUIRED` from `agents/templates/messages.md`. This is the only Lead workflow message
+  eligible for Human-facing scheduled delivery; ordinary Lead results and `EXECUTION_EXCEPTION` remain
+  repository-durable only. If no authoritative Human answer or material evidence change exists on a later
   wake, no-op instead of repeating the unanswered notification.
 - When no Lead workflow work exists, optionally create the bounded idle advisory permitted by
   `agents/AGENTS.md`.
