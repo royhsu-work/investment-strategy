@@ -8,6 +8,8 @@ Read default-branch governance and Reviewer role, the coordination Issue and imm
 approved OpenSpec revision/gate, the current implementation PR and exact head revision, current task
 completion markers, relevant diff/tests, project quality checks, and strict OpenSpec validation evidence.
 
+Reconstruct the action-specific accepted baseline B from the last valid independent `review-implementation` gate that remains applicable to this implementation stream, and the current target R as the exact current implementation PR head. Inspect all material unreviewed changes in `(B, R]` and evaluate the complete current state at R; an older accepted result is only the coverage baseline and never substitutes for a current exact-head gate.
+
 ## Minimum gate
 
 For the exact current implementation PR head R:
