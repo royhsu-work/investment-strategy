@@ -77,10 +77,30 @@ action:<action>         # exactly one
 `Change:` is immutable after Lead persists it. Normal clarification and review-correction transitions
 stay on the same coordination Issue. Comments are durable evidence, not canonical workflow state.
 
+## Single-active workflow activation
+
+An open coordination Issue with valid routing and a persisted non-`unset` `Change:` identity is an
+active workflow. The repository permits at most one active workflow. An open Human-admitted
+`Lead / propose-change` Issue with `Change: unset` is queued pre-activation work and MUST NOT count as
+an active workflow until Lead persists its immutable Change identity.
+
+Lead MUST NOT activate a queued proposal while another active workflow exists. When no active workflow
+exists, valid Human-admitted queued proposals are selected by earliest GitHub `created_at`, then lower
+Issue number. The selected Lead persists its immutable Change identity; that durable write is the
+activation boundary.
+
+Overlapping activation attempts remain at-least-once. Before the activation write, Lead re-read checks
+that no active workflow has appeared and that the candidate is still the deterministic winner. The
+activation contract is first-valid-write-wins: after writing, the run MUST re-read durable state and
+stop as stale if another valid activation or newer contradictory state won. This safety model uses
+reconstruction and preconditions, not a lock, claim, lease, heartbeat, hidden sequence, or
+`status:in-progress` state.
+
 ## PR linkage lifecycle boundary
 
 Implementation and implementation-correction PRs MUST use non-closing references to their persistent
-coordination Issue and MUST NOT establish GitHub Issue-closing linkage. Closing linkage is reserved for the final Archive PR, where it is an expected lifecycle side effect only after the independent archive
+coordination Issue and MUST NOT establish GitHub Issue-closing linkage. Closing linkage is reserved for
+the final Archive PR, where it is an expected lifecycle side effect only after the independent archive
 review, Lead authorization, unchanged-head, and current-gate merge preconditions are satisfied.
 
 A closing linkage on an implementation or implementation-correction PR is a lifecycle-contract
@@ -253,7 +273,8 @@ A PASS, completion comment, or statement that an Issue "may be closed" is not co
 The final Archive PR carries the repository-approved closing linkage to the persistent coordination
 Issue. After an authorized Archive PR merge, `finalize-archive` reconstructs canonical archived
 default-branch state and first observes the expected native Issue completion. When the Issue is already
-observed closed, Lead records lifecycle completion without a redundant close mutation. Only the observed closed Issue state completes the coordination lifecycle.
+observed closed, Lead records lifecycle completion without a redundant close mutation. Only the observed
+closed Issue state completes the coordination lifecycle.
 
 Explicit Issue close is recovery-only. Lead may perform an explicit Issue-close recovery only when the
 authorized Archive PR is merged, canonical archive state is correct, and native completion is missing.
