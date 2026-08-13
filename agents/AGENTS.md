@@ -96,6 +96,26 @@ stop as stale if another valid activation or newer contradictory state won. This
 reconstruction and preconditions, not a lock, claim, lease, heartbeat, hidden sequence, or
 `status:in-progress` state.
 
+## Orphan evidence and Human authority
+
+If no active workflow exists but unexplained durable workflow evidence indicates unresolved PR,
+OpenSpec, branch, or other workflow-related state, Scheduled roles MUST NOT activate queued proposal work
+by ignoring that evidence. The bounded response is Lead diagnosis and, only when Human input is legally
+required, a decision-ready escalation. This rule does not create a repository-wide fault classifier or
+persistent fault-state machine.
+
+For decisions governance reserves to Human, only durable GitHub activity attributable to actor
+`royhsu-work` satisfies Human authority. Activity from other actors may be supporting evidence but
+MUST NOT satisfy Human-required admission, answers, authorization, or resume conditions.
+
+`human:notified`, if present, is analytics-only metadata. It MUST NOT grant authority, change routing,
+create waiting semantics, or prove that Human answered.
+
+When Lead requires Human input, the durable escalation contains at most three actionable proposals,
+states the material impact and risk/trade-off for the decision, and identifies the Lead recommendation.
+Lead MUST NOT repeat materially equivalent unanswered notifications while the durable question and
+available evidence remain unchanged.
+
 ## PR linkage lifecycle boundary
 
 Implementation and implementation-correction PRs MUST use non-closing references to their persistent
