@@ -60,7 +60,8 @@ When those final conditions are satisfied, Lead persists one bounded `LIFECYCLE_
 identifies the Archive PR exact head, merge commit, canonical archived default-branch state, and observed
 native Issue closure. This result is durable execution evidence only; canonical completion still depends
 on the authorized archive merge, correct archived state, and observed closed Issue. Lead does not reopen
-or redundantly close the Issue when native closure is already present.
+or redundantly close the Issue when native closure is already present; in other words, finalization does
+not reopen or redundantly close the Issue.
 
 If canonical archive state is correct after the authorized merge but native close is unexpectedly
 missing, explicit Issue close remains recovery-only. Lead may perform that recovery and must re-observe
