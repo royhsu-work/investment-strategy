@@ -15,14 +15,15 @@ The current Scheduled Tasks are externally assigned fixed roles, so handoff late
 - Bind Human-required workflow authority to GitHub actor `royhsu-work`; other actors remain evidence-only for Human-required decisions.
 - Tighten Lead Human notifications and idle exploration: at most three decision-ready proposals, no repeated unanswered notification, and idle exploration considers relevant Issues created or materially active in the preceding 7 days.
 - Define `human:notified` as analytics-only metadata and keep Scheduled Task conversation/result surfacing outside repository workflow state.
+- Require `review-openspec` to inspect reverse traceability first (`tasks → design → specs → proposal`), then forward traceability (`proposal → specs → design → tasks`), while keeping PASS dependent on both directions against the same exact revision.
 - Add a simplicity/proportionality constraint so hypothetical generality cannot justify a central dispatcher platform or fault state machine.
 
 ## Affected Capabilities
 
-- `scheduled-agent-workflow` — modifies scheduled dispatch, workflow activation/admission, work selection, Human authority/notification, idle advisory, and repository governance exposure.
+- `scheduled-agent-workflow` — modifies scheduled dispatch, workflow activation/admission, work selection, Reviewer OpenSpec inspection order, Human authority/notification, idle advisory, and repository governance exposure.
 
 ## Scope Boundaries
 
-This change does not alter the nine OpenSpec lifecycle actions, role artifact authority, Reviewer independence, exact-revision gates, merge authorization, task checkpoint semantics, or repository-owned normal archive automation. It does not add multi-active workflow arbitration, global urgency scoring, locks/leases/heartbeats/claims, hidden in-progress state, a Human waiting state machine, or a separate dispatcher configuration subsystem.
+This change does not alter the nine OpenSpec lifecycle actions, role artifact authority, Reviewer independence, exact-revision gates, merge authorization, task checkpoint semantics, or repository-owned normal archive automation. Reverse-first changes only the required `review-openspec` inspection order; it does not weaken or replace exact-revision bidirectional traceability. It does not add multi-active workflow arbitration, global urgency scoring, locks/leases/heartbeats/claims, hidden in-progress state, a Human waiting state machine, or a separate dispatcher configuration subsystem.
 
 External Scheduled Task cadence and associated-conversation/result UI are product configuration boundaries; repository behavior only defines the bootstrap contract those tasks consume.
