@@ -6,12 +6,15 @@ The repository already has durable coordination Issues, one legal routing tuple,
 
 Implementation history also exposed coordination observability gaps. #21 consistently mirrored verified Executor slices into the persistent coordination Issue, while #25 demonstrated that task markers and PR commits alone can leave the coordination Issue looking unchanged even though implementation progressed. #21 also showed that native Archive PR closing can close the Issue while routing still says `Executor / merge-pr`, making the documented `Lead / finalize-archive` terminal reconstruction unreachable under an open-Issue-only dispatcher.
 
+During #25 implementation, another gap became concrete: the generic governance did not distinguish crash/recovery wording from a healthy invocation's voluntary termination. `Executor / implement-change` could legally retain routing and defer clear failed-VERIFY corrections or remaining approved work to a later wake even though the selected action still had immediately actionable work. The same ambiguity could affect Lead authoring/finalization actions if fixed independently in each skill.
+
 ## Goals
 
 - Make dispatch mode explicit and default-branch governed.
 - Reuse existing routing and skills rather than build a scheduler/orchestrator subsystem.
 - Enforce one active persisted Change while allowing queued Human-admitted proposals.
 - Keep overlapping wakes safe without hidden ownership state.
+- Make the selected action work-conserving under one shared termination/yield contract rather than duplicating generic continuation semantics across role/action skills.
 - Make Human authority and escalation reconstructable from durable GitHub evidence.
 - Keep Scheduled Task prompts thin and product-independent.
 - Make `review-openspec` inspection order deterministic without changing its bidirectional correctness gate.
@@ -21,6 +24,7 @@ Implementation history also exposed coordination observability gaps. #21 consist
 
 ## Non-goals
 
+- Per-action copies of the generic work-conserving/termination contract.
 - Per-commit, per-file, or per-mutation Issue logging inside an implementation slice.
 - Multi-active workflow arbitration or dependency/conflict graphing.
 - Global cross-role/action priority scoring.
@@ -74,19 +78,19 @@ Trace: proposal Human boundary → specs `Human-required authority...` and `Lead
 
 Idle advisory remains Lead-only and bounded. Its research context expands to relevant Issues created or materially active in the preceding seven days. This is an evidence window, not a new queue or routing source.
 
-Trace: proposal idle exploration → spec idle requirements → slice 6.
+Trace: proposal idle exploration → spec idle requirements → slice 7.
 
 ## Decision 8: Simplicity/proportionality is a governance constraint
 
 Implementation and future workflow changes must justify complexity with current approved requirements or demonstrated failures. Generalized orchestration machinery is explicitly deferred.
 
-Trace: proposal scope boundary → spec proportionality requirement → slice 6 and final review.
+Trace: proposal scope boundary → spec proportionality requirement → slice 7 and final review.
 
 ## Decision 9: `review-openspec` is reverse-first, while PASS stays bidirectional
 
 Reviewer inspection order is now deterministic: for each exact revision under `review-openspec`, inspect `tasks → design → specs → proposal` first, then inspect `proposal → specs → design → tasks`. PASS still requires both directions to be complete for the same exact revision.
 
-Trace: proposal reverse-first review requirement → spec `OpenSpec review uses reverse-first inspection while retaining the bidirectional gate` → implementation slice 6 and OpenSpec completion gate.
+Trace: proposal reverse-first review requirement → spec `OpenSpec review uses reverse-first inspection while retaining the bidirectional gate` → implementation slice 7 and OpenSpec completion gate.
 
 ## Decision 10: Verified slices journal exactly one bounded coordination checkpoint
 
@@ -116,12 +120,22 @@ If merge succeeded and native close happened but Executor was interrupted before
 
 Trace: proposal native-close terminal handoff → specs `Native Archive close hands off to terminal Lead reconstruction` and modified work-selection/active-workflow requirements → implementation slice 5.
 
+## Decision 13: Work-conserving selected-action semantics are shared governance
+
+Once dispatch selects a legal role/action, the action continues all immediately actionable work in the same invocation while routing, revision/base preconditions, authority, and execution context remain current. Checkpoints are durable recovery boundaries, not automatic yield points. A recoverable same-role failure or failed-but-actionable validation is also not a voluntary yield point: if correction is inside the selected authority and approved contract, correct it and rerun the relevant gate in the same invocation.
+
+The shared contract enumerates the bounded reasons an invocation may end early: completed handoff/terminal result, another role or Human authority boundary, a genuine external asynchronous wait, ambiguity/contradictory unsafe state, stale/concurrency loss, or actual tool/hard-runtime interruption. This is intentionally not copied into every skill. Skills express only action-specific outcomes and blockers; generic crash-recovery language must not be interpreted as permission for a healthy invocation to stop.
+
+This design keeps termination semantics coherent across `implement-change`, Lead authoring/finalization actions, Reviewer gates, and merge actions without adding an execution state machine. It also keeps the Scheduled Task prompt thin because the external wake only selects and loads governance; it does not restate yield policy.
+
+Trace: proposal shared work-conserving contract → spec `Selected Scheduled Agent actions are work-conserving within an invocation` and repository-artifact requirement → implementation slice 6.
+
 ## Scheduled Task migration
 
 The three existing external wake slots remain. Their prompts should converge on the same bootstrap contract: read `README.md` and `agents/AGENTS.md`, determine the declared mode, use the legacy assigned role only in `fixed-role`, and in `workflow-dynamic` derive role/action from durable workflow state. Once an invocation selects a role, it never switches role in that run.
 
-Prompt configuration itself is external product state. Repository tests/docs can define the required bootstrap contract but cannot make Scheduled Task conversation/result surfacing part of GitHub workflow state.
+Prompt configuration itself is external product state. Repository tests/docs can define the required bootstrap contract but cannot make Scheduled Task conversation/result surfacing part of GitHub workflow state. The prompt also does not duplicate the shared work-conserving termination/yield semantics; those remain repository governance loaded after bootstrap.
 
 ## Validation strategy
 
-Behavioral tests should exercise mode parsing, fixed-role compatibility, active-workflow selection, queued proposal activation ordering, invalid/multiple active fail-closed behavior, immutable invocation role, stale competing activation, actor-bound Human evidence, duplicate escalation suppression, seven-day advisory evidence, analytics-only notification metadata, reverse-first `review-openspec` inspection with unchanged exact-revision bidirectional PASS semantics, verified-Slice checkpoint persistence/recovery with no per-mutation implementation logging, lifecycle-transition journal recovery, native Archive close followed by closed-Issue `Lead / finalize-archive` handoff, terminal candidate selection before Lead completion evidence, and terminal exclusion after bounded `LIFECYCLE_COMPLETE` evidence. Repository quality checks and strict OpenSpec validation remain required.
+Behavioral tests should exercise mode parsing, fixed-role compatibility, active-workflow selection, queued proposal activation ordering, invalid/multiple active fail-closed behavior, immutable invocation role, work-conserving continuation after recoverable same-role or failed-but-actionable validation, legal external-wait/stale/handoff termination, absence of duplicated weaker per-skill yield wording, stale competing activation, actor-bound Human evidence, duplicate escalation suppression, seven-day advisory evidence, analytics-only notification metadata, reverse-first `review-openspec` inspection with unchanged exact-revision bidirectional PASS semantics, verified-Slice checkpoint persistence/recovery with no per-mutation implementation logging, lifecycle-transition journal recovery, native Archive close followed by closed-Issue `Lead / finalize-archive` handoff, terminal candidate selection before Lead completion evidence, and terminal exclusion after bounded `LIFECYCLE_COMPLETE` evidence. Repository quality checks and strict OpenSpec validation remain required.
