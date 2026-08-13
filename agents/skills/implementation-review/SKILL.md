@@ -32,6 +32,12 @@ For the exact current implementation PR head R:
 
 A later PR head does not inherit the prior result. Contradictory current evidence fails closed.
 
+## Durable messages
+
+Use `agents/templates/messages.md` for recurring durable presentation. The revision-bound gate result
+uses `REVIEW_RESULT`; a completed ownership transfer uses canonical `HANDOFF` only after the routing
+mutation succeeds. Do not duplicate shared template bodies in this skill.
+
 ## Independence and handoff safety
 
 Reviewer does not modify implementation or specification artifacts to make the gate pass. Persist the
