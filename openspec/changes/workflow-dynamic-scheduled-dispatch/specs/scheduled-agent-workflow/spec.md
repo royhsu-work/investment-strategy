@@ -360,6 +360,40 @@ Repository workflow design SHALL add complexity only when justified by current a
 
 ## MODIFIED Requirements
 
+### Requirement: Actionable workflow routing is one logical role/action tuple
+
+A coordination Issue SHALL be actionable by scheduled roles only when it contains exactly one valid `agent:<role>` label and exactly one valid `action:<action>` label forming a legal routing tuple for that role, and either:
+
+- the Issue is open; or
+- the Issue is the one narrow terminal-pending exception: it is closed, has persisted non-`unset` `Change:` identity, is routed exactly `agent:lead + action:finalize-archive`, is backed by the repository-approved authorized merged Archive PR/native close for that Change, and does not yet have valid Lead `LIFECYCLE_COMPLETE` evidence for that archive merge.
+
+Zero, multiple, contradictory, or illegal routing labels MUST fail closed and MUST NOT be resolved by model inference.
+
+Unrelated Issue labels MUST be preserved during routing changes.
+
+#### Scenario: Open coordination Issue has valid routing
+
+- GIVEN an open coordination Issue has exactly one `agent:reviewer` label
+- AND exactly one `action:review-openspec` label
+- WHEN Reviewer discovers eligible work
+- THEN the Issue is eligible for the Reviewer `review-openspec` action
+
+#### Scenario: Closed terminal-pending Issue has the one legal exception
+
+- GIVEN a coordination Issue is closed by the authorized final Archive PR linkage
+- AND its persisted routing is exactly `agent:lead + action:finalize-archive`
+- AND matching authorized merged-archive/native-close evidence exists
+- AND no valid Lead `LIFECYCLE_COMPLETE` evidence exists for that archive merge
+- WHEN scheduled work discovery evaluates routing eligibility
+- THEN the closed Issue remains eligible only for terminal Lead reconstruction
+
+#### Scenario: Coordination Issue has conflicting role labels
+
+- GIVEN an open coordination Issue has both `agent:lead` and `agent:reviewer`
+- WHEN a scheduled role evaluates eligibility
+- THEN the routing is invalid
+- AND no role proceeds by guessing which role owns the work
+
 ### Requirement: Each scheduled run processes at most one actionable work item using a fixed stable order
 
 A scheduled invocation SHALL process at most one eligible actionable coordination Issue per run.
