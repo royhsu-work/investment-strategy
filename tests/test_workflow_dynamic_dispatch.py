@@ -1,3 +1,5 @@
+"""Contract coverage for repository-governed scheduled dispatch behavior."""
+
 from __future__ import annotations
 
 import re
