@@ -5,13 +5,13 @@ Mapped action: `Executor / implement-change`.
 ## Reconstruct before acting
 
 Read default-branch governance and Executor role, the coordination Issue, immutable `Change:` identity,
-the exact approved OpenSpec revision and Reviewer PASS, current implementation branch/PR state,
-OpenSpec task completion state, relevant review findings, and current repository quality/OpenSpec gate
-evidence.
+the approved semantic OpenSpec revision and independent Reviewer PASS that remains applicable, current
+implementation branch/PR state, OpenSpec task completion state, relevant review findings, and current
+repository quality/OpenSpec gate evidence.
 
-Implementation begins only from a valid `Executor / implement-change` route supported by an approved
-OpenSpec gate. If the approved specification is ambiguous or contradictory, stop rather than inventing
-contract meaning.
+Implementation begins only from a valid `Executor / implement-change` route supported by an applicable
+approved OpenSpec gate. If the approved specification is ambiguous or contradictory, stop rather than
+inventing contract meaning.
 
 ## Procedure
 
@@ -51,37 +51,55 @@ For each approved feature slice:
 10. When remaining approved implementation work is immediately actionable and the current
     `Executor / implement-change` route, revision/preconditions, authority, and execution context remain
     current, continue that work in the same invocation under the shared governance continuation contract.
+11. Before completion handoff, distinguish implementation/checkpoint bookkeeping from a material semantic
+    OpenSpec change. If implementation completed with no material semantic OpenSpec change after the
+    applicable PASS, hand off directly to `Reviewer / review-implementation`; a newer task-marker,
+    checkpoint, implementation, or mechanical-validation SHA does not insert another semantic review.
+12. If implementation discovers a material semantic OpenSpec change is required—proposal intent,
+    requirement/scenario, design decision, traceability, scope, or normative task meaning—Executor MUST
+    NOT author that meaning. Persist `SPEC_BLOCKER` and hand off to `Lead / resolve-question`; after Lead
+    correction, independent `Reviewer / review-openspec` must PASS the new semantic target before Executor
+    resumes implementation.
 
-Executor does not perform semantic bidirectional OpenSpec review as part of implementation completion or task-marker verification. That exact-revision semantic gate belongs to independent `Reviewer / review-openspec`; Executor only consumes the approved revision/gate and runs the implementation/mechanical verification assigned to this action.
+Executor does not perform semantic bidirectional OpenSpec review as part of implementation completion or
+task-marker verification. That semantic gate belongs to independent `Reviewer / review-openspec` only
+when a new material semantic target exists; Executor consumes the applicable approved meaning and runs
+the implementation/mechanical verification assigned to this action.
 
 ## Legal results
 
-- `READY` — approved implementation work for the current slice/change is complete and required gates are
-  current; hand off to `Reviewer / review-implementation`.
+- `READY` — approved implementation work is complete, required gates are current, and there is no material
+  semantic OpenSpec change requiring another specification gate; hand off directly to
+  `Reviewer / review-implementation`.
 - `SPEC_BLOCKER` — implementation cannot proceed without changing/inventing contract meaning; persist
-  the blocker and hand off to `Lead / resolve-question`.
+  the blocker and hand off to `Lead / resolve-question`. The resulting material semantic correction must
+  return through `Reviewer / review-openspec` before implementation resumes.
 - Remaining approved implementation work — retain `Executor / implement-change`; the shared governance
   continuation/termination contract determines whether the same invocation must continue or whether a
   legal termination boundary has actually been reached.
 
 ## Durable messages and handoff recovery
 
-Use the shared Markdown presentation contract in `agents/templates/messages.md`. Verified Slice completion
-uses `SLICE_CHECKPOINT`; implementation result evidence uses the applicable result presentation; catchable
-execution evidence uses `EXECUTION_EXCEPTION`; and completed ownership transfer uses canonical `HANDOFF`
-after the routing mutation succeeds.
+Use the shared Markdown presentation contract in `agents/templates/messages.md` only after that contract
+is authoritative on the default branch. Before its activation, feature-branch templates are work input
+and the invocation follows then-current default-branch presentation rules.
+
+After activation, verified Slice completion uses `SLICE_CHECKPOINT`; implementation result evidence uses
+the applicable result presentation; catchable execution evidence uses `EXECUTION_EXCEPTION`; and
+completed ownership transfer uses canonical `HANDOFF` after the routing mutation succeeds.
 
 If an already-durable result such as `READY` exists but source routing still matches
 `Executor / implement-change`, reconstruct and preserve the completed Slice/result evidence, fresh-read the
 source tuple, perform only the missing routing mutation to the action-defined target, observe the target
-routing, and persist canonical `HANDOFF`. Do not repeat completed implementation, do not rewrite verified
-Slice markers/checkpoints, and do not fabricate another result merely to recover the missing handoff.
+routing, and persist the then-authoritative handoff evidence. Do not repeat completed implementation, do
+not rewrite verified Slice markers/checkpoints, and do not fabricate another result merely to recover the
+missing handoff.
 
 ## Scope and safety
 
 - Do not change proposal/spec/design meaning or expand scope opportunistically.
 - Do not introduce a central workflow engine, generic DAG executor, lock/lease/heartbeat/retry/progress
-  state, or exactly-once mechanism.
+  state, semantic-revision classifier service, review-applicability label, or exactly-once mechanism.
 - Verified-slice checkpointing is completion-boundary observability only; do not add heartbeat,
   progress percentage, `status:in-progress`, lock/claim/lease, retry counter, or hidden ownership state.
 - Do not implement a scheduled normal OpenSpec archive mutation.
