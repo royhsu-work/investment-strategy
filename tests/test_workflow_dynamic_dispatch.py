@@ -33,7 +33,7 @@ def test_dispatch_mode_has_one_authoritative_marker() -> None:
         text,
         re.MULTILINE,
     )
-    assert markers == ["fixed-role"]
+    assert markers == ["workflow-dynamic"]
 
 
 def test_fixed_role_mode_preserves_legacy_role_local_discovery() -> None:
@@ -223,7 +223,7 @@ def test_lifecycle_transitions_use_bounded_journal_without_per_mutation_logging(
         "next action or terminal result",
         "journal comment itself",
         "does not recursively require another meta-comment",
-        "ordinary RED/GREEN/refactor/test-trigger/compatibility-correction commits",
+        "Ordinary RED/GREEN/refactor/test-trigger/compatibility-correction commits",
         "do not independently require coordination-Issue comments",
         "lifecycle transition succeeds but its journal write is interrupted",
         "preserves the already durable transition",
