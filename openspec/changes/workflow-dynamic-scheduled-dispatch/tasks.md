@@ -32,16 +32,26 @@ Trace: proposal orphan/Human contract → specs `Unexplained durable workflow ev
 
 Trace: proposal verified-slice observability → spec `Verified implementation slices persist a bounded coordination-Issue checkpoint` and repository-artifact bootstrap boundary → design Decision 10.
 
-## 5. Idle advisory, Reviewer order, documentation, and migration contract
+## 5. Durable mutation journal and native-close terminal handoff
 
-- [ ] 5.1 RED: add tests/contract checks for the seven-day relevant-Issue advisory lens, bounded/no-duplicate advisory behavior, required reverse-first `review-openspec` inspection followed by forward inspection with unchanged exact-revision bidirectional PASS semantics, bootstrap-only Scheduled Task contract, and simplicity/proportionality constraints where mechanically testable.
-- [ ] 5.2 GREEN: update repository governance/docs/role-skill guidance needed for workflow-dynamic mode and for Reviewer reverse-first `review-openspec` inspection; switch the canonical dispatch marker only with the completed compatible behavior; preserve the three external wake slots and document the external prompt migration contract without treating product conversation/result state as repository state.
-- [ ] 5.3 REFACTOR/VERIFY: confirm reverse-first changes inspection order only and does not weaken bidirectional traceability; confirm no new lifecycle action, global priority table, multi-active arbitration, fault platform, lock/lease/claim state, or duplicate OpenSpec DAG was introduced; run slice tests, full regression suite, type checks, and lint checks.
+- [ ] 5.1 RED: add contract/regression coverage proving substantive Scheduled Agent durable mutations require one bounded persistent-coordination-Issue journal record; cover mutation-success/journal-interruption recovery without repeating the mutation, and prove the journal comment itself does not recursively require a meta-comment.
+- [ ] 5.2 RED: add lifecycle/dispatcher coverage for final Archive PR native close: after authorized archive merge, Executor observes the closed Issue, replaces consumed routing with `agent:lead + action:finalize-archive`, journals the merge/native-close/handoff, and ends without role switching; cover interrupted post-merge handoff recovery without duplicate merge.
+- [ ] 5.3 RED: add selection/finalization coverage proving `closed + Lead / finalize-archive` is eligible only while matching authorized merged-archive/native-close evidence exists and no valid Lead `LIFECYCLE_COMPLETE` result exists; prove terminal-pending work blocks queued activation and completed terminal history does not.
+- [ ] 5.4 GREEN: update shared governance, dispatcher/action skills, and lifecycle documentation to implement the bounded mutation journal, closed terminal-reconstruction exception, Executor post-merge terminal handoff, and Lead bounded `LIFECYCLE_COMPLETE` evidence without adding a completion/status label or reopening normally natively closed Issues.
+- [ ] 5.5 REFACTOR/VERIFY: confirm canonical completion still requires authorized Archive PR merge + correct archived default-branch state + observed closed Issue, while the Lead result comment is durable execution evidence only; confirm no new lifecycle action, heartbeat/progress/in-progress state, lock/claim/lease, or generic terminal state machine was introduced; run slice tests, full regression suite, type checks, and lint checks.
+
+Trace: proposal mutation journal + native-close terminal ownership → specs `Substantive durable workflow mutations are journaled...`, `Native Archive close hands off to terminal Lead reconstruction`, modified active-workflow/work-selection requirements → design Decisions 3, 11-12.
+
+## 6. Idle advisory, Reviewer order, documentation, and migration contract
+
+- [ ] 6.1 RED: add tests/contract checks for the seven-day relevant-Issue advisory lens, bounded/no-duplicate advisory behavior, required reverse-first `review-openspec` inspection followed by forward inspection with unchanged exact-revision bidirectional PASS semantics, bootstrap-only Scheduled Task contract, and simplicity/proportionality constraints where mechanically testable.
+- [ ] 6.2 GREEN: update repository governance/docs/role-skill guidance needed for workflow-dynamic mode and for Reviewer reverse-first `review-openspec` inspection; switch the canonical dispatch marker only with the completed compatible behavior; preserve the three external wake slots and document the external prompt migration contract without treating product conversation/result state as repository state.
+- [ ] 6.3 REFACTOR/VERIFY: confirm reverse-first changes inspection order only and does not weaken bidirectional traceability; confirm no global priority table, multi-active arbitration, fault platform, lock/lease/claim state, or duplicate OpenSpec DAG was introduced; run slice tests, full regression suite, type checks, and lint checks.
 
 Trace: proposal idle/product/reviewer-order/simplicity boundaries → specs idle, `OpenSpec review uses reverse-first inspection while retaining the bidirectional gate`, repository artifacts, and proportionality requirements → design Decisions 7-9 and Scheduled Task migration.
 
-## 6. OpenSpec completion gate
+## 7. OpenSpec completion gate
 
-- [ ] 6.1 Verify reverse traceability first `tasks → design → specs → proposal`, then verify forward traceability `proposal → specs → design → tasks`; resolve any orphan requirement/task. This inspection order does not replace the requirement that both directions pass for the same exact revision.
-- [ ] 6.2 Run repository-pinned `openspec validate --all --strict --json --no-interactive` against the exact final change revision and preserve exact-checkout validation evidence.
-- [ ] 6.3 Confirm proposal/spec/design/tasks remain single-purpose and consistent with `README.md`, `openspec/config.yaml`, the authoritative Human updates on #25, and the accepted #23 scope before requesting independent OpenSpec review.
+- [ ] 7.1 Verify reverse traceability first `tasks → design → specs → proposal`, then verify forward traceability `proposal → specs → design → tasks`; resolve any orphan requirement/task. This inspection order does not replace the requirement that both directions pass for the same exact revision.
+- [ ] 7.2 Run repository-pinned `openspec validate --all --strict --json --no-interactive` against the exact final change revision and preserve exact-checkout validation evidence.
+- [ ] 7.3 Confirm proposal/spec/design/tasks remain single-purpose and consistent with `README.md`, `openspec/config.yaml`, the authoritative Human updates on #25, and the accepted #23 scope before requesting independent OpenSpec review.
