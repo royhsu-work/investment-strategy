@@ -8,6 +8,10 @@ Read default-branch governance, the coordination Issue, immutable `Change:` iden
 revision, proposal/specs/design/tasks, applicable canonical specs, `README.md`, `openspec/config.yaml`,
 and exact-revision strict-validation evidence.
 
+If the coordination Issue or current OpenSpec artifacts contain declared upstream authoritative decision/gate references, Reviewer MUST dereference those sources before deciding the gate. A cross-Issue summary is orientation only and is not replacement authority for the declared source evidence.
+
+Reconstruct the action-specific accepted baseline B from the last valid independent `review-openspec` gate that remains applicable, and the current target R as the exact current OpenSpec revision. Inspect all material unreviewed changes in `(B, R]` and evaluate the complete current state at R; the baseline is a coverage boundary, not authority for the changed target.
+
 Do not rely on a previous conversation or a prior PASS for another revision.
 
 ## Minimum gate
