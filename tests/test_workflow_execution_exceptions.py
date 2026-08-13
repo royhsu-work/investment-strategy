@@ -98,6 +98,9 @@ def test_uncatchable_termination_relies_on_later_reconstruction_without_fabricat
 
 
 def test_exception_protocol_is_shared_not_copied_into_roles_or_skills() -> None:
+    shared = _normalized(AGENTS)
+    assert shared.count("Shared exception capture and invocation finalization") == 1
+
     for path in (*ROLE_FILES, *SKILL_FILES):
         text = _normalized(path)
         assert "## Shared exception capture and invocation finalization" not in text, path
