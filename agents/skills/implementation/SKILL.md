@@ -91,9 +91,10 @@ completed ownership transfer uses canonical `HANDOFF` after the routing mutation
 If an already-durable result such as `READY` exists but source routing still matches
 `Executor / implement-change`, reconstruct and preserve the completed Slice/result evidence, fresh-read the
 source tuple, perform only the missing routing mutation to the action-defined target, observe the target
-routing, and persist the then-authoritative handoff evidence. Do not repeat completed implementation, do
-not rewrite verified Slice markers/checkpoints, and do not fabricate another result merely to recover the
-missing handoff.
+routing, and, when the shared template contract is active, persist canonical `HANDOFF`. Before activation,
+persist the equivalent then-authoritative handoff evidence instead. Do not repeat completed implementation,
+do not rewrite verified Slice markers/checkpoints, and do not fabricate another result merely to recover
+the missing handoff.
 
 ## Scope and safety
 
