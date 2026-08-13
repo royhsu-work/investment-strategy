@@ -138,9 +138,7 @@ def test_canonical_templates_preserve_event_specific_evidence() -> None:
             assert field in section, f"{message_type}: {field}"
 
 
-def test_roles_and_skills_reference_shared_templates_without_private_template_bodies() -> (
-    None
-):
+def test_roles_and_skills_reference_shared_templates_without_private_template_bodies() -> None:
     heading_pattern = re.compile(
         r"^## `(ACTION_RESULT|REVIEW_RESULT|SLICE_CHECKPOINT|MERGE_AUTHORIZATION|"
         r"MERGE_RESULT|HANDOFF|HUMAN_DECISION_REQUIRED|EXECUTION_EXCEPTION)`$",
@@ -154,9 +152,7 @@ def test_roles_and_skills_reference_shared_templates_without_private_template_bo
 
 
 def test_intermediate_progress_and_status_noise_are_not_supported_message_types() -> None:
-    headings = set(
-        re.findall(r"^## `([A-Z_]+)`$", _read(MESSAGES), flags=re.MULTILINE)
-    )
+    headings = set(re.findall(r"^## `([A-Z_]+)`$", _read(MESSAGES), flags=re.MULTILINE))
     assert headings == set(CANONICAL_TYPES)
     for unsupported in (
         "RED_PROGRESS",
@@ -173,12 +169,8 @@ def test_intermediate_progress_and_status_noise_are_not_supported_message_types(
 
 def test_result_evidence_does_not_complete_required_handoff() -> None:
     shared = _normalized(AGENTS)
-    implementation = _normalized(
-        ROOT / "agents" / "skills" / "implementation" / "SKILL.md"
-    )
-    reviewer = _normalized(
-        ROOT / "agents" / "skills" / "openspec-review" / "SKILL.md"
-    )
+    implementation = _normalized(ROOT / "agents" / "skills" / "implementation" / "SKILL.md")
+    reviewer = _normalized(ROOT / "agents" / "skills" / "openspec-review" / "SKILL.md")
 
     for required in (
         "Result evidence does not by itself complete a required routing handoff",
