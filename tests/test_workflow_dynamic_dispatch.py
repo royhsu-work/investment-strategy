@@ -278,3 +278,25 @@ def test_closed_terminal_pending_work_blocks_activation_until_lifecycle_complete
         "observed native Issue closure",
     ):
         assert required in finalize
+
+
+def test_selected_action_is_work_conserving_until_a_legal_termination_boundary() -> None:
+    shared = _normalized(AGENTS)
+    implementation = _normalized(IMPLEMENTATION)
+
+    for required in (
+        "work-conserving",
+        "all immediately actionable work",
+        "same authorized action",
+        "failed-but-actionable validation",
+        "verified Slice checkpoint",
+        "not a legal voluntary yield point",
+        "real external asynchronous wait",
+        "stale/concurrency loss",
+        "handoff",
+    ):
+        assert required in shared
+
+    assert "continue on a later run" not in implementation
+    assert "remaining approved implementation work" in implementation
+    assert "same invocation" in implementation
