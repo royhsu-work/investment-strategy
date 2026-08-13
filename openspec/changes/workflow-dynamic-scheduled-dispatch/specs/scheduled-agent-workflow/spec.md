@@ -215,6 +215,39 @@ Lead MUST NOT repeat materially equivalent unanswered notifications while the du
 - WHEN a later wake reconstructs the same blocked state
 - THEN Lead does not post a duplicate unanswered notification
 
+### Requirement: Human-facing scheduled delivery is Lead-only and decision-required
+
+Repository workflow evidence and Human-facing Scheduled Task delivery SHALL be treated as separate channels.
+
+Ordinary Reviewer and Executor workflow results, checkpoints, merge results, and handoffs MUST remain repository-durable evidence only and MUST NOT be marked as Human-facing scheduled delivery. Ordinary Lead action results, merge authorization, resolved clarification, finalize progress, and handoff evidence MUST likewise remain repository-durable only.
+
+Only Lead MAY emit the canonical `HUMAN_DECISION_REQUIRED` workflow message, and Lead SHALL do so only when current approved contract and durable evidence are insufficient for Lead to legally resolve a decision that genuinely requires Human authority or intent. When no such unresolved Lead-owned Human decision exists, the Scheduled Agent wake SHALL be Human-silent even though repository work or durable GitHub evidence may have been produced.
+
+The repository SHALL define Human-delivery eligibility, while actual Scheduled Task notification or associated-conversation surfacing remains external product configuration and MUST NOT become workflow routing, waiting, authorization, or completion state.
+
+#### Scenario: Reviewer records PASS and hands off
+
+- GIVEN Reviewer completes an independent gate with `PASS`
+- WHEN Reviewer persists the review evidence and legal handoff
+- THEN the `REVIEW_RESULT` and `HANDOFF` remain repository-durable workflow evidence
+- AND no Human-facing scheduled delivery is required
+
+#### Scenario: Lead can resolve a workflow problem itself
+
+- GIVEN a finding or workflow problem routes to Lead
+- AND Lead can resolve it within current specification/lifecycle authority from durable approved evidence
+- WHEN Lead records the resolution and next handoff
+- THEN the Lead result remains repository-durable only
+- AND no Human-facing scheduled delivery is required
+
+#### Scenario: Lead genuinely requires Human authority
+
+- GIVEN Lead has exhausted its authorized resolution path
+- AND workflow progress requires Human authority or intent not derivable from approved contract and durable evidence
+- WHEN Lead escalates
+- THEN Lead uses `HUMAN_DECISION_REQUIRED`
+- AND that message is the only workflow result eligible for Human-facing scheduled delivery
+
 ### Requirement: OpenSpec review uses reverse-first inspection while retaining the bidirectional gate
 
 For `Reviewer / review-openspec`, Reviewer MUST inspect reverse traceability first in the order `tasks → design → specs → proposal`, and MUST then inspect forward traceability in the order `proposal → specs → design → tasks`.
@@ -229,11 +262,44 @@ The inspection order MUST NOT weaken or replace the correctness gate. A `PASS` s
 - AND then verifies `proposal → specs → design → tasks`
 - AND Reviewer may record `PASS` only if both directions are complete for revision R
 
+### Requirement: Recurring workflow messages use canonical shared templates
+
+The repository SHALL define one shared Markdown presentation contract for recurring durable workflow messages and SHALL support the following seven canonical message types: `ACTION_RESULT`, `REVIEW_RESULT`, `SLICE_CHECKPOINT`, `MERGE_AUTHORIZATION`, `MERGE_RESULT`, `HANDOFF`, and `HUMAN_DECISION_REQUIRED`.
+
+The shared template artifact SHALL define a common workflow envelope and the event-specific evidence fields required by each type. Templates MUST define presentation/evidence shape only and MUST NOT redefine routing, authorization, termination, review, merge, lifecycle, or result-enum semantics owned by governance and role/action skills.
+
+Roles and skills SHALL reference the shared template source rather than duplicate full template bodies per role/action. The message contract MUST NOT require a parser-dependent message bus, JSON/YAML runtime schema, template engine, notification state machine, or hidden workflow state.
+
+Free-form RED/GREEN/refactor/test-trigger/compatibility-correction progress, Lead progress polling, and `No Human action is required` status noise MUST NOT become additional supported workflow message types.
+
+When a canonical typed message directly represents a lifecycle-journal boundary, that typed message SHALL satisfy the one required journal record for that boundary and MUST NOT require an additional duplicate generic `LIFECYCLE_JOURNAL` or recursive meta-comment.
+
+#### Scenario: Verified Slice uses the shared checkpoint template
+
+- GIVEN Executor completes a verified implementation Slice
+- WHEN the required coordination checkpoint is persisted
+- THEN it uses the canonical `SLICE_CHECKPOINT` shape
+- AND identifies the Slice/tasks, durable verified/checkpoint evidence, required gates, and remaining work or handoff
+
+#### Scenario: Reviewer gate uses the shared review template
+
+- GIVEN Reviewer records a revision-bound PASS or finding
+- WHEN the durable review result is persisted
+- THEN it uses `REVIEW_RESULT`
+- AND preserves the exact reviewed revision, gate evidence, findings when present, and expected next owner
+
+#### Scenario: Typed transition message is already the lifecycle journal
+
+- GIVEN a PR merge boundary is durably represented by canonical `MERGE_RESULT`
+- WHEN lifecycle-journal compliance is evaluated for that same merge boundary
+- THEN that typed message is the required bounded journal record
+- AND no second generic lifecycle-journal comment is required solely to restate the merge
+
 ### Requirement: Verified implementation slices persist a bounded coordination-Issue checkpoint
 
 For `Executor / implement-change`, after an approved vertical slice reaches successful `VERIFY`, Executor MUST persist all satisfied task markers for that slice and MUST persist exactly one bounded checkpoint comment on the persistent coordination Issue before beginning the next slice or handing off.
 
-The checkpoint comment MUST identify the completed slice or task IDs, the durable checkpoint or verified revision, the required VERIFY/gate result, and the remaining approved work or handoff target. The comment SHALL summarize the completion boundary and MUST NOT replace the PR/commit, task markers, or CI evidence as their respective sources of truth.
+The checkpoint comment MUST use the canonical `SLICE_CHECKPOINT` presentation contract and MUST identify the completed slice or task IDs, the durable checkpoint or verified revision, the required VERIFY/gate result, and the remaining approved work or handoff target. The comment SHALL summarize the completion boundary and MUST NOT replace the PR/commit, task markers, or CI evidence as their respective sources of truth.
 
 RED/GREEN/refactor/test-trigger/compatibility-correction commits and ordinary governed artifact or task-marker edits inside the same not-yet-complete slice MUST NOT independently require coordination-Issue progress comments. This requirement is completion-boundary observability only and MUST NOT introduce periodic heartbeat, progress percentage, `status:in-progress`, lock, claim, lease, retry counter, hidden ownership state, or other live execution machinery.
 
@@ -243,7 +309,7 @@ RED/GREEN/refactor/test-trigger/compatibility-correction commits and ordinary go
 - AND the slice's required VERIFY and repository gates succeed
 - WHEN Executor prepares to continue implementation
 - THEN all satisfied task markers for that slice are durably persisted
-- AND exactly one bounded checkpoint is durably recorded on the persistent coordination Issue
+- AND exactly one canonical `SLICE_CHECKPOINT` is durably recorded on the persistent coordination Issue
 - AND the checkpoint identifies the completed work, durable revision, gate result, and remaining work
 - AND only then may Executor begin the next approved slice
 
@@ -261,21 +327,23 @@ RED/GREEN/refactor/test-trigger/compatibility-correction commits and ordinary go
 - BUT the run ended before the required coordination-Issue checkpoint was persisted
 - WHEN a later Executor run reconstructs the active implementation state
 - THEN it does not rerun or clear the already verified slice merely to recreate progress
-- AND it persists the missing bounded checkpoint from current durable evidence before beginning another slice or handing off
+- AND it persists the missing canonical `SLICE_CHECKPOINT` from current durable evidence before beginning another slice or handing off
 
 ### Requirement: Material workflow lifecycle transitions are journaled on the coordination Issue
 
 A Scheduled Agent MUST persist one bounded coordination-Issue journal entry when it completes a material workflow lifecycle transition that changes durable workflow ownership or lifecycle state. Covered boundaries include routing handoff, PR merge, Archive native close/post-merge terminal handoff, Lead `LIFECYCLE_COMPLETE`, and Human escalation/specification-resolution boundaries.
 
+When an approved canonical typed message represents the covered transition, that typed message SHALL be the required journal entry for the boundary: routing ownership transfer uses `HANDOFF`; PR merge uses `MERGE_RESULT`; Lead terminal or other non-review lifecycle result uses `ACTION_RESULT`; and Human escalation uses `HUMAN_DECISION_REQUIRED`. The workflow MUST NOT add a duplicate generic `LIFECYCLE_JOURNAL` message solely to restate a boundary already represented by its canonical typed event.
+
 Related low-level writes that together implement one legal lifecycle transition MAY be represented by the single boundary journal. Ordinary implementation mutations inside an unverified slice are governed by the verified-Slice checkpoint requirement above and MUST NOT become per-commit, per-file, or per-mutation Issue logging. The journal comment itself SHALL NOT recursively require another meta-comment.
 
-If a lifecycle transition succeeds but its required journal write is interrupted, a later eligible run MUST reconstruct the already durable transition and persist the missing bounded journal before performing a later lifecycle transition or handoff; it MUST NOT replay the completed unsafe mutation merely to recreate journal evidence.
+If a lifecycle transition succeeds but its required journal write is interrupted, a later eligible run MUST reconstruct the already durable transition and persist the missing bounded canonical journal message before performing a later lifecycle transition or handoff; it MUST NOT replay the completed unsafe mutation merely to recreate journal evidence.
 
 #### Scenario: Routing handoff is durably changed
 
 - GIVEN a Scheduled Agent legally completes an action and changes the coordination Issue routing tuple
 - WHEN the routing handoff succeeds
-- THEN the Agent records one bounded coordination-Issue comment describing the completed boundary, resulting durable state/evidence, and next role/action
+- THEN the Agent records one canonical `HANDOFF` comment describing the completed boundary, resulting durable state/evidence, and next role/action
 - AND no recursive meta-comment is required for that journal write
 
 #### Scenario: Intermediate implementation commit is persisted
@@ -288,18 +356,57 @@ If a lifecycle transition succeeds but its required journal write is interrupted
 #### Scenario: Lifecycle transition succeeds but journal write is interrupted
 
 - GIVEN a Scheduled Agent completed a material lifecycle transition
-- BUT the run ended before its required bounded journal comment was persisted
+- BUT the run ended before its required bounded canonical journal message was persisted
 - WHEN a later eligible run reconstructs that state
 - THEN it preserves the already durable transition
-- AND writes the missing bounded journal record before a later lifecycle transition or handoff
+- AND writes only the missing canonical journal record before a later lifecycle transition or handoff
+
+### Requirement: Required routing handoff completes only after durable routing transition and HANDOFF evidence
+
+When an action's legal result requires ownership transfer to another routing tuple, persisting the action/review result and revision-aware evidence SHALL NOT by itself constitute normal action completion.
+
+After persisting the result, the current role MUST fresh-read the coordination Issue routing. If the source tuple still matches and the handoff remains legal, it MUST replace the routing tuple with the target owner/action, observe the successful routing mutation, and persist canonical `HANDOFF` evidence. Only then SHALL the required handoff boundary be considered durably completed for normal execution.
+
+If an actual interruption occurs after result evidence is durable but before the routing mutation or `HANDOFF` record is complete, a later eligible run MUST reconstruct and preserve the existing completed result, perform only the missing legal handoff work, and MUST NOT repeat already completed implementation/review/finalization solely because routing still names the source owner.
+
+This contract MUST NOT treat comments as canonical routing state: the routing labels remain authoritative workflow ownership, while `HANDOFF` is reconstructable evidence that the ownership transition completed.
+
+#### Scenario: Executor READY exists but routing still names Executor
+
+- GIVEN `Executor / implement-change` has a durable `READY` action result for exact revision R
+- AND all approved implementation work required for that result is already complete
+- BUT the coordination Issue routing still reads `Executor / implement-change`
+- WHEN a later Executor invocation reconstructs the work
+- THEN it preserves the completed implementation/result evidence
+- AND does not repeat the completed Slices
+- AND fresh-reads and changes routing to `Reviewer / review-implementation` if the handoff preconditions remain current
+- AND persists canonical `HANDOFF` evidence after the routing mutation succeeds
+
+#### Scenario: Reviewer PASS result precedes routing transfer
+
+- GIVEN Reviewer has durably recorded `PASS` for exact revision R
+- AND the legal next owner is Lead
+- WHEN the Issue still carries the Reviewer routing tuple
+- THEN the PASS remains valid review evidence for R
+- BUT the handoff is not complete merely because the review comment names the next action
+- AND Reviewer must complete the routing mutation and `HANDOFF` boundary unless a legal interruption/stale condition prevents it
+
+#### Scenario: Routing changed but HANDOFF write was interrupted
+
+- GIVEN a legal routing mutation already changed ownership to the target tuple
+- BUT the run ended before canonical `HANDOFF` evidence was persisted
+- WHEN the next eligible run reconstructs the durable state
+- THEN it preserves the already changed routing
+- AND repairs only the missing `HANDOFF` journal evidence before a later lifecycle transition
+- AND does not revert/replay the completed source action
 
 ### Requirement: Native Archive close hands off to terminal Lead reconstruction
 
 The final Archive PR SHALL retain the repository-approved GitHub closing linkage to the persistent coordination Issue.
 
-After Executor successfully merges the authorized Archive PR, Executor MUST fresh-read the Archive PR and coordination Issue. If the PR is durably merged and the coordination Issue is observed natively `closed`, Executor MUST replace the consumed routing tuple with exactly `agent:lead + action:finalize-archive` on that closed Issue and MUST record a bounded merge/native-close/handoff journal comment. Executor MUST NOT execute Lead finalization in the same invocation.
+After Executor successfully merges the authorized Archive PR, Executor MUST fresh-read the Archive PR and coordination Issue. If the PR is durably merged and the coordination Issue is observed natively `closed`, Executor MUST replace the consumed routing tuple with exactly `agent:lead + action:finalize-archive` on that closed Issue and MUST record a bounded canonical `HANDOFF` message whose evidence includes the merge/native-close boundary. Executor MUST NOT execute Lead finalization in the same invocation.
 
-A closed coordination Issue with exactly `agent:lead + action:finalize-archive` SHALL be eligible only as the narrow terminal-reconstruction candidate defined by the active-workflow requirement above. Lead `finalize-archive` MUST reconstruct the authorized Archive PR merge, canonical archived default-branch state, and observed native Issue closure. On successful reconstruction Lead MUST record one bounded `LIFECYCLE_COMPLETE` result comment bound to the Archive PR exact head and merge commit; the normal native-close path MUST NOT reopen or redundantly close the Issue.
+A closed coordination Issue with exactly `agent:lead + action:finalize-archive` SHALL be eligible only as the narrow terminal-reconstruction candidate defined by the active-workflow requirement above. Lead `finalize-archive` MUST reconstruct the authorized Archive PR merge, canonical archived default-branch state, and observed native Issue closure. On successful reconstruction Lead MUST record one bounded canonical `ACTION_RESULT` carrying `LIFECYCLE_COMPLETE` bound to the Archive PR exact head and merge commit; the normal native-close path MUST NOT reopen or redundantly close the Issue.
 
 After valid Lead `LIFECYCLE_COMPLETE` evidence exists for the current archive merge, the closed tuple MUST remain terminal history but MUST NOT be selected again and MUST NOT block later workflow admission.
 
@@ -310,7 +417,7 @@ After valid Lead `LIFECYCLE_COMPLETE` evidence exists for the current archive me
 - WHEN Executor merges the Archive PR and GitHub natively closes the coordination Issue through the approved closing linkage
 - THEN Executor fresh-reads and confirms the merged PR and closed Issue
 - AND replaces routing with `agent:lead + action:finalize-archive` on the closed Issue
-- AND records the bounded merge/native-close/handoff journal entry
+- AND records the canonical `HANDOFF` evidence for the merge/native-close/terminal ownership boundary
 - AND ends the invocation without executing Lead work
 
 #### Scenario: Lead completes terminal reconstruction on the closed Issue
@@ -320,7 +427,7 @@ After valid Lead `LIFECYCLE_COMPLETE` evidence exists for the current archive me
 - AND no valid Lead `LIFECYCLE_COMPLETE` evidence exists yet
 - WHEN Lead is dispatched for terminal reconstruction
 - THEN Lead verifies canonical archived default-branch state and native closure
-- AND records bounded `LIFECYCLE_COMPLETE` evidence bound to the Archive PR exact head and merge commit
+- AND records canonical `ACTION_RESULT` with `LIFECYCLE_COMPLETE` evidence bound to the Archive PR exact head and merge commit
 - AND does not reopen or redundantly close the Issue
 - AND later dispatch excludes that closed tuple from active work
 
@@ -330,7 +437,7 @@ After valid Lead `LIFECYCLE_COMPLETE` evidence exists for the current archive me
 - AND routing still contains the consumed pre-merge tuple because Executor stopped before terminal handoff
 - WHEN a later run reconstructs exact authorized merge and native-close evidence
 - THEN it MUST NOT re-merge
-- AND MAY repair only the missing `Lead / finalize-archive` terminal routing and bounded journal evidence according to the merge recovery contract
+- AND MAY repair only the missing `Lead / finalize-archive` terminal routing and canonical `HANDOFF` evidence according to the merge recovery contract
 
 ### Requirement: Idle exploration considers recent relevant Issue activity
 
@@ -348,12 +455,12 @@ When forming bounded idle recommendations, Lead SHALL consider relevant reposito
 
 ### Requirement: Workflow governance applies a simplicity and proportionality constraint
 
-Repository workflow design SHALL add complexity only when justified by current approved requirements or demonstrated failure modes. Hypothetical future generality MUST NOT by itself justify a central workflow engine, multi-active arbitration platform, generic fault classifier, or hidden runtime ownership state.
+Repository workflow design SHALL add complexity only when justified by current approved requirements or demonstrated failure modes. Hypothetical future generality MUST NOT by itself justify a central workflow engine, multi-active arbitration platform, generic fault classifier, message bus/template engine, or hidden runtime ownership state.
 
 #### Scenario: A generalized dispatcher framework is proposed without current need
 
-- GIVEN current workflow requirements are satisfied by the thin workflow-first dispatcher
-- AND no demonstrated failure requires a generalized orchestration subsystem
+- GIVEN current workflow requirements are satisfied by the thin workflow-first dispatcher and shared Markdown message contract
+- AND no demonstrated failure requires a generalized orchestration or messaging subsystem
 - WHEN an implementation or later proposal considers such machinery
 - THEN the additional machinery is out of scope
 - AND a new approved OpenSpec change with concrete evidence is required before adding it
@@ -487,14 +594,15 @@ If an open advisory remains without valid Human admission, later Lead runs SHALL
 
 Implementation SHALL provide:
 
-- `agents/AGENTS.md` for shared execution protocol, the single authoritative `Scheduled-Dispatch-Mode` marker, and the shared work-conserving selected-action termination/yield contract;
+- `agents/AGENTS.md` for shared execution protocol, the single authoritative `Scheduled-Dispatch-Mode` marker, the shared work-conserving selected-action termination/yield contract, and the shared result-vs-handoff completion rule;
 - role definitions for Lead, Reviewer, and Executor under `agents/roles/`;
-- a reduced reusable set of procedural skills under `agents/skills/` covering the nine action contracts without one skill per trivial action and without duplicating or weakening shared termination semantics;
-- repository documentation describing fixed-role compatibility, workflow-dynamic dispatch, the single-active activation boundary, shared work-conserving invocation semantics, verified-slice coordination checkpoints, lifecycle-transition journaling, native-close terminal handoff/reconstruction, and the relationship to existing OpenSpec/archive automation.
+- a reduced reusable set of procedural skills under `agents/skills/` covering the nine action contracts without one skill per trivial action and without duplicating or weakening shared termination/handoff semantics;
+- one shared `agents/templates/messages.md` Markdown presentation contract containing the common envelope and the seven canonical workflow message types without per-role/per-action template copies or a template/message runtime engine;
+- repository documentation describing fixed-role compatibility, workflow-dynamic dispatch, the single-active activation boundary, shared work-conserving invocation semantics, canonical workflow messages, result-vs-handoff completion, verified-slice coordination checkpoints, lifecycle-transition journaling, Lead-only decision-required Human delivery eligibility, native-close terminal handoff/reconstruction, and the relationship to existing OpenSpec/archive automation.
 
-Scheduled Task prompts SHALL remain bootstrap-only: they may require loading default-branch governance and selecting dispatch mode, but MUST NOT duplicate repository execution, concurrency, handoff, stale-state, Human-escalation, termination/yield, checkpoint-journal, lifecycle-journal, terminal-reconstruction, or idle semantics.
+Scheduled Task prompts SHALL remain bootstrap-only: they may require loading default-branch governance and selecting dispatch mode, but MUST NOT duplicate repository execution, concurrency, handoff, stale-state, Human-escalation, termination/yield, canonical message bodies, checkpoint-journal, lifecycle-journal, terminal-reconstruction, or idle semantics.
 
-Associated Scheduled Task conversation/result surfacing SHALL be treated as an external product boundary and MUST NOT become repository workflow state.
+Associated Scheduled Task conversation/result surfacing SHALL be treated as an external product boundary and MUST NOT become repository workflow state. The external migration configuration SHALL treat ordinary workflow outcomes as Human-silent and SHALL reserve Human-facing workflow delivery eligibility for Lead `HUMAN_DECISION_REQUIRED` only, subject to actual product delivery capabilities.
 
 #### Scenario: Dynamic Scheduled Task bootstraps from repository governance
 
@@ -502,4 +610,4 @@ Associated Scheduled Task conversation/result surfacing SHALL be treated as an e
 - WHEN it loads default-branch shared governance
 - THEN it determines dispatch mode from `Scheduled-Dispatch-Mode`
 - AND in workflow-dynamic mode reconstructs the active or terminal-pending workflow to derive role/action and mapped skill
-- AND repository governance remains sufficient without embedding a duplicate workflow protocol in the Scheduled Task prompt
+- AND repository governance/templates remain sufficient without embedding a duplicate workflow or message protocol in the Scheduled Task prompt
