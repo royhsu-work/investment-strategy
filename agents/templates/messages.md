@@ -2,6 +2,14 @@
 
 This file is the single shared Markdown presentation contract for recurring durable Scheduled Agent workflow messages. It defines presentation/evidence shape only and does not redefine routing, authorization, termination, review, merge, lifecycle, result-enum, or exception semantics owned by `agents/AGENTS.md`, role files, and action skills.
 
+## Activation boundary
+
+Repository execution authority comes only from the default branch. The default-branch merge is the activation boundary for this canonical presentation contract. While an unmerged governance PR introduces or edits this file and its role/skill references, those feature-branch artifacts are review target/input and must not govern its own current invocation. The invocation continues to use the then-authoritative default-branch governance.
+
+After the governance/template change is merged to the default branch, later covered workflow events use this single shared template source. Pre-activation free-form/legacy messages that complied with then-authoritative default-branch governance remain valid historical evidence; their older presentation is not a retroactive template finding.
+
+This activation rule does not add template-version state, migration state, a parser-dependent runtime, branch-authority override, or hidden workflow state.
+
 The common workflow envelope is used whenever a field is applicable to the event:
 
 - `Workflow`: persistent coordination Issue identity.
@@ -35,6 +43,8 @@ Required evidence:
 - gate evidence used for the independent review;
 - `PASS` or action-defined findings, with findings identified when present;
 - expected next owner or correction owner.
+
+For `review-openspec`, the exact reviewed revision is the semantic target actually inspected; later bookkeeping-only SHAs do not retroactively rewrite that semantic review record. Implementation and archive review records remain bound to their exact current PR heads.
 
 ## `SLICE_CHECKPOINT`
 
