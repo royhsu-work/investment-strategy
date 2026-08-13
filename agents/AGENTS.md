@@ -119,8 +119,7 @@ available evidence remain unchanged.
 ## PR linkage lifecycle boundary
 
 Implementation and implementation-correction PRs MUST use non-closing references to their persistent
-coordination Issue and MUST NOT establish GitHub Issue-closing linkage. Closing linkage is reserved for
-the final Archive PR, where it is an expected lifecycle side effect only after the independent archive
+coordination Issue and MUST NOT establish GitHub Issue-closing linkage. Closing linkage is reserved for the final Archive PR, where it is an expected lifecycle side effect only after the independent archive
 review, Lead authorization, unchanged-head, and current-gate merge preconditions are satisfied.
 
 A closing linkage on an implementation or implementation-correction PR is a lifecycle-contract
@@ -243,16 +242,28 @@ Before `propose-change` or a materially revised `resolve-question` hands OpenSpe
 ## OpenSpec task completion checkpoints
 
 OpenSpec task checkboxes are durable completion evidence, not live progress state. For each approved
-vertical slice, Executor persists all satisfied task-completion markers after the slice's required
-`VERIFY` succeeds and before starting the next slice or handing off.
+vertical slice, after the slice's required `VERIFY` succeeds, Executor persists all satisfied task
+markers and one bounded checkpoint comment on the persistent coordination Issue before beginning the
+next slice or handing off.
 
-Marker persistence does not require a dedicated commit for each individual checkbox; it should
-normally be included with the corresponding implementation checkpoint. Markers for already verified
-slices must not be deferred until the end of the whole change.
+The bounded checkpoint identifies the completed slice/task IDs, durable checkpoint or verified
+revision, VERIFY/gate result, and remaining approved work or handoff. PR/commit remains the source of
+implementation state, task markers remain verified completion evidence, CI remains verification
+evidence, and the Issue checkpoint is only a completion-boundary journal; the comment does not replace
+those sources of truth.
+
+Marker persistence does not require a dedicated commit for each individual checkbox. If task markers
+are durable but the checkpoint comment is missing, the next Executor run reconstructs the verified
+slice from current durable evidence, does not rerun or clear the already verified slice, and persists
+the missing bounded checkpoint before beginning another slice or handing off.
 
 If execution is interrupted inside the current unverified slice, that slice's markers may still lag.
 The next run reconstructs the active slice from code, tests, task state, and durable evidence, while
-previously verified slices remain durable.
+previously verified slices retain their durable marker/checkpoint evidence.
+
+Verified-slice checkpointing is completion-boundary observability only. It MUST NOT introduce a
+heartbeat, progress percentage, `status:in-progress`, lock, claim, lease, retry counter, hidden
+ownership state, or other live runtime machinery.
 
 ## Multi-PR implementation and archive boundary
 
