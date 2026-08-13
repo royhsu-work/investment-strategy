@@ -34,16 +34,17 @@ For each approved feature slice:
 5. CHECKPOINT — after VERIFY succeeds, persist all satisfied task markers for that verified slice and
    one bounded checkpoint comment on the persistent coordination Issue before beginning the next slice
    or handing off. The checkpoint identifies completed slice/task IDs, the durable checkpoint or verified
-   revision, the VERIFY/gate result, and the remaining approved work or handoff.
+   revision, the VERIFY/gate result, and the remaining approved work or handoff. Marker persistence does
+   not require a commit per checkbox.
 6. Preserve source-of-truth boundaries: PR/commit is implementation state, task markers are verified
    completion evidence, CI evidence proves verification, and the Issue checkpoint is only a
    completion-boundary journal. The checkpoint does not replace those artifacts.
 7. If markers are already durable but the checkpoint comment is missing, reconstruct the verified slice
    from current durable evidence, do not repeat the implementation or marker writes, and persist only the
    missing checkpoint before further slice work or handoff.
-8. Do not defer completed markers or required checkpoint comments across verified slices until the end of
-   the whole change. Neither task checkboxes nor checkpoint comments are a progress percentage or live
-   execution status.
+8. Do not defer completed markers across verified slices. Required checkpoint comments also must not be
+   deferred until the end of the whole change. Neither task checkboxes nor checkpoint comments are a
+   progress percentage or live execution status.
 9. After an interruption within an unverified current slice, reconstruct the active slice from current
    code, tests, task state, and durable evidence. Previously verified slices keep their persisted markers
    and checkpoint evidence.
