@@ -335,7 +335,7 @@ Scheduled roles do not admit arbitrary repository activity. Initial workflow ent
 Human/maintainer creation or designation of a coordination Issue with
 `agent:lead + action:propose-change`.
 
-Lead idle advisory is allowed only when Lead has no eligible workflow work. At most one open
+Lead idle advisory is allowed only when Lead has no eligible workflow work. Its bounded evidence lens includes relevant Issues created or materially active in the preceding 7 days. At most one open
 `advisory:idle` Issue may exist and it may contain at most three recommendations. Advisory Issues have
 no routing tuple. If an undecided open advisory already exists, later Lead runs no-op instead of
 creating duplicate noise.
