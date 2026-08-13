@@ -1,4 +1,4 @@
-"""Contract coverage for OpenSpec traceability responsibility separation."""
+"""Contract coverage for OpenSpec traceability responsibility ownership."""
 
 from __future__ import annotations
 
