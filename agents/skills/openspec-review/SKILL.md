@@ -11,6 +11,13 @@ that mechanical evidence is required.
 
 If the coordination Issue or current OpenSpec artifacts contain declared upstream authoritative decision/gate references, Reviewer MUST dereference those sources before deciding the gate. A cross-Issue summary is orientation only and is not replacement authority for the declared source evidence.
 
+For continuity terminology, the action-specific accepted baseline B is the last independently accepted
+semantic OpenSpec state that remains applicable, and the current target R is the exact semantic target
+that now requires review. Reviewer covers material unreviewed changes in `(B, R]` as material semantic
+changes and evaluates the complete current state at R. These established baseline/target names remain
+part of the generic Reviewer coverage contract even though `review-openspec` applicability is semantic
+rather than raw-SHA-global.
+
 Reconstruct the applicable semantic OpenSpec baseline B from the last valid independent `review-openspec`
 gate whose accepted meaning has not been materially superseded. Determine the semantic target R from the
 latest material OpenSpec meaning that requires review. Cover all material semantic changes in `(B, R]`
@@ -51,12 +58,13 @@ Reverse-first is an inspection order only. It does not replace bidirectional tra
 
 ## Legal results
 
-- `PASS` — all minimum semantic checks are satisfied for the exact reviewed semantic target.
+- `PASS` — all minimum semantic checks are satisfied for the exact reviewed revision, which is the exact
+  semantic target actually inspected.
 - `FINDINGS` — one or more actionable material findings exist.
 
-The result MUST identify the exact semantic target revision reviewed. A later material semantic OpenSpec
-change requires a new gate; a bookkeeping-only OpenSpec revision does not stale an applicable semantic
-PASS merely because its SHA is newer.
+The result MUST identify the exact reviewed revision and semantic target. A later material semantic
+OpenSpec change requires a new gate; a bookkeeping-only OpenSpec revision does not stale an applicable
+semantic PASS merely because its SHA is newer.
 
 ## Handoff
 
@@ -77,8 +85,9 @@ canonical `HANDOFF` only after the routing mutation succeeds.
 
 If an already-durable result exists but source routing still matches `Reviewer / review-openspec`,
 preserve the review evidence, fresh-read the source tuple, perform only the missing routing mutation to
-the action-defined target, observe the target routing, and persist the then-authoritative handoff evidence.
-Do not repeat the independent review or fabricate another review result merely to recover the missing handoff.
+the action-defined target, observe the target routing, and persist canonical `HANDOFF` when that template
+contract is active. Do not repeat the independent review or fabricate another review result merely to
+recover the missing handoff.
 
 ## Independence and concurrency
 
