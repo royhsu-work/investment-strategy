@@ -57,6 +57,13 @@ native-close recovery/final reconstruction.
 Do not infer downstream completion merely from a successful merge response; Lead owns lifecycle
 judgment after merged default-branch state is reconstructed.
 
+## Durable messages
+
+Use `agents/templates/messages.md` for recurring durable presentation. Merge success or action-defined
+merge blocker evidence uses `MERGE_RESULT`; completed ownership transfer uses canonical `HANDOFF` only
+after routing mutation succeeds. A typed `MERGE_RESULT` that directly represents the PR-merge lifecycle
+boundary satisfies that one lifecycle journal record and does not require a duplicate generic journal.
+
 ## Mutation safety
 
 Every substantive merge/routing mutation follows the shared bounded coordination-Issue journal
