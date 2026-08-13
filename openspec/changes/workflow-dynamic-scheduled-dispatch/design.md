@@ -8,6 +8,8 @@ Implementation history also exposed coordination observability gaps. #21 consist
 
 During #25 implementation, another gap became concrete: the generic governance did not distinguish crash/recovery wording from a healthy invocation's voluntary termination. `Executor / implement-change` could legally retain routing and defer clear failed-VERIFY corrections or remaining approved work to a later wake even though the selected action still had immediately actionable work. The same ambiguity could affect Lead authoring/finalization actions if fixed independently in each skill.
 
+The analysis of that defect also exposed a Lead-role behavior gap. Lead initially treated the Executor stop as a local implementation-workflow issue and only broadened the analysis to sibling actions after Human explicitly asked whether the same defect existed elsewhere. A Lead responsible for specification/lifecycle coherence needs a bounded systemic view: when evidence plausibly points to a shared contract problem, Lead should proactively test the directly related blast radius before choosing a local abstraction.
+
 ## Goals
 
 - Make dispatch mode explicit and default-branch governed.
@@ -15,6 +17,7 @@ During #25 implementation, another gap became concrete: the generic governance d
 - Enforce one active persisted Change while allowing queued Human-admitted proposals.
 - Keep overlapping wakes safe without hidden ownership state.
 - Make the selected action work-conserving under one shared termination/yield contract rather than duplicating generic continuation semantics across role/action skills.
+- Give Lead a bounded systemic-coherence responsibility for cross-cutting workflow/specification defects without turning Lead into a supervisor or central orchestrator.
 - Make Human authority and escalation reconstructable from durable GitHub evidence.
 - Keep Scheduled Task prompts thin and product-independent.
 - Make `review-openspec` inspection order deterministic without changing its bidirectional correctness gate.
@@ -24,6 +27,8 @@ During #25 implementation, another gap became concrete: the generic governance d
 
 ## Non-goals
 
+- Continuous Lead supervision, progress polling, or intervention into another role's valid routed action.
+- Unrelated repository-wide audits or speculative generalized frameworks under the banner of systemic coherence.
 - Per-action copies of the generic work-conserving/termination contract.
 - Per-commit, per-file, or per-mutation Issue logging inside an implementation slice.
 - Multi-active workflow arbitration or dependency/conflict graphing.
@@ -130,6 +135,14 @@ This design keeps termination semantics coherent across `implement-change`, Lead
 
 Trace: proposal shared work-conserving contract → spec `Selected Scheduled Agent actions are work-conserving within an invocation` and repository-artifact requirement → implementation slice 6.
 
+## Decision 14: Systemic coherence is a bounded Lead role responsibility
+
+Lead owns specification meaning and lifecycle authorization, so it also owns checking whether a material defect is actually local before choosing the abstraction level of a fix. When a material finding, Human clarification, workflow failure, or specification defect plausibly indicates a cross-cutting pattern, Lead performs a bounded blast-radius analysis over the directly related sibling actions, role contracts, lifecycle invariants, and governance surfaces. The analysis identifies the root cause, checks whether sibling contracts can fail for the same reason, and selects the narrowest correct ownership layer.
+
+This responsibility is implemented once in `agents/roles/lead.md`. It is not copied into `agents/AGENTS.md` or each Lead skill. It does not grant Lead supervisory authority over Reviewer/Executor, does not justify progress polling or intervention while another role owns valid routing, and does not require unrelated repository-wide audits. Simplicity/proportionality still constrains the scan to the plausible blast radius of the observed evidence.
+
+This is an Engineering/Governance role-artifact responsibility rather than a new generic scheduled-agent capability requirement. Its trace runs proposal role responsibility → this design decision → implementation slice 7 → `agents/roles/lead.md`, under the existing `openspec/config.yaml` allowance for governance tasks.
+
 ## Scheduled Task migration
 
 The three existing external wake slots remain. Their prompts should converge on the same bootstrap contract: read `README.md` and `agents/AGENTS.md`, determine the declared mode, use the legacy assigned role only in `fixed-role`, and in `workflow-dynamic` derive role/action from durable workflow state. Once an invocation selects a role, it never switches role in that run.
@@ -138,4 +151,4 @@ Prompt configuration itself is external product state. Repository tests/docs can
 
 ## Validation strategy
 
-Behavioral tests should exercise mode parsing, fixed-role compatibility, active-workflow selection, queued proposal activation ordering, invalid/multiple active fail-closed behavior, immutable invocation role, work-conserving continuation after recoverable same-role or failed-but-actionable validation, legal external-wait/stale/handoff termination, absence of duplicated weaker per-skill yield wording, stale competing activation, actor-bound Human evidence, duplicate escalation suppression, seven-day advisory evidence, analytics-only notification metadata, reverse-first `review-openspec` inspection with unchanged exact-revision bidirectional PASS semantics, verified-Slice checkpoint persistence/recovery with no per-mutation implementation logging, lifecycle-transition journal recovery, native Archive close followed by closed-Issue `Lead / finalize-archive` handoff, terminal candidate selection before Lead completion evidence, and terminal exclusion after bounded `LIFECYCLE_COMPLETE` evidence. Repository quality checks and strict OpenSpec validation remain required.
+Behavioral tests should exercise mode parsing, fixed-role compatibility, active-workflow selection, queued proposal activation ordering, invalid/multiple active fail-closed behavior, immutable invocation role, work-conserving continuation after recoverable same-role or failed-but-actionable validation, legal external-wait/stale/handoff termination, absence of duplicated weaker per-skill yield wording, stale competing activation, actor-bound Human evidence, duplicate escalation suppression, seven-day advisory evidence, analytics-only notification metadata, reverse-first `review-openspec` inspection with unchanged exact-revision bidirectional PASS semantics, Lead-role systemic-coherence contract wording and its non-supervisory/bounded scope, verified-Slice checkpoint persistence/recovery with no per-mutation implementation logging, lifecycle-transition journal recovery, native Archive close followed by closed-Issue `Lead / finalize-archive` handoff, terminal candidate selection before Lead completion evidence, and terminal exclusion after bounded `LIFECYCLE_COMPLETE` evidence. Repository quality checks and strict OpenSpec validation remain required.
