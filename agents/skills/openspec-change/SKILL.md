@@ -32,15 +32,13 @@ If routing, change identity, active-workflow identity, or required evidence is c
      competing run that observes a different/newer durable result must stop as stale.
 3. Author the minimum proposal, delta specs, design, and tasks needed by the approved direction. Keep the
    change single-purpose and preserve repository scope boundaries.
-4. Before handoff, verify required artifacts exist and perform both:
-   - forward traceability `proposal → specs → design → tasks`;
-   - reverse traceability `tasks → design → specs → proposal`.
+4. Before handoff, verify required artifacts exist and author/maintain the required trace declarations/references across proposal, specs, design, and tasks. These authoring references must be present and mechanically consistent enough to hand to independent review, but the semantic bidirectional PASS gate belongs to `Reviewer / review-openspec`; Lead MUST NOT execute or claim that independent PASS gate.
 5. Obtain strict OpenSpec validation for the exact handoff revision R. CI is sufficient only when
    durable validator evidence proves checkout `HEAD == R` before strict validation; `run.head_sha == R`
    alone is association metadata and is not checkout proof. If valid exact-head CI evidence is
    unavailable, use the repository-pinned local CLI directly against checkout R. Stale, missing,
    failed, revision-mismatched, or checkout-mismatched evidence fails closed.
-6. Persist revision-aware readiness evidence before routing.
+6. Persist revision-aware readiness evidence before routing to `Reviewer / review-openspec` for the semantic bidirectional gate.
 
 Legal outcomes:
 
@@ -55,8 +53,7 @@ Legal outcomes:
    evidence. Explain the decision durably.
 3. If accepted, revise only Lead-owned OpenSpec specification artifacts needed to resolve it; do not
    modify implementation code to make a gate pass.
-4. If OpenSpec artifacts changed materially, repeat the same required-artifact, bidirectional
-   traceability, and exact-revision strict-validation readiness checks used by `propose-change`.
+4. If OpenSpec artifacts changed materially, repeat the same required-artifact, required trace declarations/references authoring, and exact-revision strict-validation readiness checks used by `propose-change`. The semantic bidirectional PASS gate remains independent Reviewer work.
 5. Persist the resolution and current revision before handoff.
 
 Legal handoff depends on the gate/blocker being resolved:
@@ -80,6 +77,7 @@ routing mutation succeeds. Do not copy private template bodies into this skill.
 - Do not treat `run.head_sha` or a successful synthetic-merge validation for another checkout as
   exact-head proof for revision R.
 - Do not require a duplicate local CLI run solely because valid exact-head CI validation already passed.
+- Do not perform the Reviewer-owned semantic bidirectional PASS gate while authoring or revising OpenSpec artifacts.
 - Persist durable result/evidence before routing and fresh-read routing before the label mutation.
 - A routing update is not a mutex/CAS; overlapping Lead runs must tolerate repeated observation and
   stop on stale/contradictory state.
