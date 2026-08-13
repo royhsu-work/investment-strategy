@@ -186,6 +186,16 @@ Previous conversation memory is never required for correctness. A partial run, t
 missing final response does not transfer ownership. A later run reconstructs durable reality and
 continues only the missing legal work.
 
+## Authoritative context continuity and evidence consumption
+
+This reconstruction contract applies across all nine normal actions. Each selected action MUST reconstruct the still-applicable durable evidence that its existing contract needs; a newer comment, readiness result, handoff, routing transition, validation result, revision, or current snapshot does not implicitly erase an earlier unresolved obligation. Simple recency does not consume evidence.
+
+Durable evidence is consumed only by an explicit contract-defined event that makes the earlier obligation no longer applicable: authoritative supersession, durable resolution, applicable independent gate acceptance, lifecycle completion, or another action-specific legal consumption event. Until then, current-state reconstruction preserves both the current snapshot and unresolved evidence needed to interpret it correctly.
+
+When durable workflow state declares an authoritative source outside the current coordination Issue, the selected action MUST follow that provenance as required by its action contract rather than treating a shortened local summary as replacement authority. Cross-Issue summaries may orient reconstruction, but source authority remains with the declared durable evidence.
+
+This is a reconstruction rule, not new runtime state. It MUST NOT introduce a message queue, event-sourcing engine, hidden context cache, sequence number/label, pending-review state, consumed-evidence flag, or second workflow DAG. Role and skill documents specialize only the provenance or review baseline needed by their existing action and MUST NOT copy this shared section.
+
 ## Work-conserving selected-action execution
 
 Once an invocation selects a role/action, execution is work-conserving: it MUST continue all immediately
