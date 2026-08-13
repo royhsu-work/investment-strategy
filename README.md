@@ -51,7 +51,9 @@ Taiwan EOD market-data infrastructure 已合併至 `main`，目前作為 reposit
 
 Repository 採用 OpenSpec + GitHub Issue/PR 的持久化開發流程。`agents/AGENTS.md`、`agents/roles/*`、`agents/skills/*` 由 repository default branch 提供 Scheduled Role 的治理權威；feature branch、PR、Issue/comment 與先前對話只屬工作輸入，不能覆寫治理規則。
 
-每個正常 OpenSpec change 使用一個 persistent coordination Issue。Actionable Issue 必須只有一組合法 `(agent:<role>, action:<action>)` routing tuple；scheduled run 每次最多處理一個 Issue，並重新建構 Issue、PR、OpenSpec、GitHub Actions 與 default-branch state，不依賴先前對話或前一次 run 正常結束。
+Scheduled dispatch mode 由 default-branch `agents/AGENTS.md` 的唯一 `Scheduled-Dispatch-Mode` marker 決定。`workflow-dynamic` 模式下，wake 先重建單一 active workflow，再由其合法 routing tuple 決定本次 invocation 的 role/action；role 一旦選定，在該 invocation 內保持固定，handoff 後結束而不在同一 run 切換角色。既有三個外部 wake slots 的 migration 與共用 bootstrap prompt 見 `agents/scheduled-task-migration.md`；slot 數量、topology、cadence 與 associated-conversation/result surfacing 都是外部產品設定，不是 repository runtime state。
+
+每個正常 OpenSpec change 使用一個 persistent coordination Issue。Actionable Issue 必須只有一組合法 `(agent:<role>, action:<action>)` routing tuple；scheduled run 每次最多處理一個 Issue，並重新建構 Issue、PR、OpenSpec、GitHub Actions 與 default-branch state，不依賴先前對話或前一次 run 正常結束。選定 action 後遵循 shared work-conserving contract：只要 routing、revision/preconditions、authority 與 execution context 仍有效，就持續完成當下可執行工作；verified checkpoint 或可直接修正的 same-role validation failure 本身不是自願 yield 點。
 
 ```text
 Human-admitted requirement / research direction
@@ -65,6 +67,7 @@ exact-revision strict OpenSpec validation
 + proposal/specs/design/tasks bidirectional traceability
         ↓
 Reviewer / review-openspec
+(reverse-first inspection, then forward; both must PASS)
         ↓ PASS
 Executor / implement-change
 agent/<change> + Draft PR  (branch convention)
@@ -94,19 +97,23 @@ Lead / finalize-archive
              ↓ MERGE_AUTHORIZED for exact archive PR revision
 Executor / merge-pr
              ↓
-Lead reconstructs canonical default-branch/archive state
+GitHub native close via final Archive PR closing linkage
              ↓
-close coordination Issue and observe it closed
+Executor fresh-reads merged PR + closed Issue
+and hands off closed Issue to Lead / finalize-archive
+             ↓
+Lead reconstructs canonical archived default-branch state
+and records LIFECYCLE_COMPLETE
 ```
 
 High-level responsibilities:
 
-- **Lead**：擁有 proposal/specs/design/tasks 的 specification authority、scope/contract resolution 與 lifecycle authorization；不修改 implementation code，也不執行 PR merge。`finalize-change` / `finalize-archive` 必須依 current revision 與 Reviewer gate 重新判斷，最後只有在 canonical archive state 已確認時才關閉 coordination Issue。
-- **Reviewer**：獨立執行 `review-openspec`、`review-implementation`、`review-archive` revision-bound gates；Reviewer 不修改正在審查的 specification/implementation 來自行修正 finding，也不因 PASS 自動取得 merge authority。
-- **Executor**：依核准 OpenSpec 實作 code/tests/config、更新有事實依據的 task completion marker，並只在 Reviewer PASS + Lead exact-revision `MERGE_AUTHORIZED` + current PR head 未改變且 gate 仍有效時執行 `merge-pr`；不重定義 requirements/contracts/task meaning。OpenSpec task checkbox 以 **verified vertical-slice checkpoint** 持久化：slice 的 `VERIFY` 成功後，必須在開始下一個 slice 或 handoff 前更新該 slice 已滿足的 markers；不要求每個 checkbox 各自 commit，但不得延後到整個 change 最後才一次更新。
+- **Lead**：擁有 proposal/specs/design/tasks 的 specification authority、scope/contract resolution、bounded systemic coherence 與 lifecycle authorization；不修改 implementation code，也不執行 PR merge。當 material defect 可能是 cross-cutting contract 問題時，只在合理 blast radius 內檢查直接相關 sibling actions/contracts，選擇 narrowest correct ownership layer，不做 progress polling 或無關的 repository-wide audit。`finalize-change` / `finalize-archive` 必須依 current revision 與 Reviewer gate 重新判斷；native-close 正常路徑只重建 archive/default-branch/closed evidence 並記錄 `LIFECYCLE_COMPLETE`，不重開或重複關閉已由 GitHub native close 的 Issue。
+- **Reviewer**：獨立執行 `review-openspec`、`review-implementation`、`review-archive` revision-bound gates；Reviewer 不修改正在審查的 specification/implementation 來自行修正 finding，也不因 PASS 自動取得 merge authority。`review-openspec` 固定先檢查 `tasks → design → specs → proposal`，再檢查 `proposal → specs → design → tasks`，同一 exact revision 的雙向 traceability 都完整才能 PASS。
+- **Executor**：依核准 OpenSpec 實作 code/tests/config、更新有事實依據的 task completion marker，並只在 Reviewer PASS + Lead exact-revision `MERGE_AUTHORIZED` + current PR head 未改變且 gate 仍有效時執行 `merge-pr`；不重定義 requirements/contracts/task meaning。OpenSpec task checkbox 以 **verified vertical-slice checkpoint** 持久化：slice 的 `VERIFY` 成功後，必須在開始下一個 slice 或 handoff 前更新該 slice 已滿足的 markers，並留下 exactly one bounded coordination-Issue checkpoint；不要求每個 checkbox 各自 commit，也不把 checkpoint 當成中止健康 invocation 的理由。final Archive merge 後若 Issue 已由 closing linkage native close，Executor 只完成 closed-Issue terminal handoff/journal，不在同一 invocation 執行 Lead finalization。
 - **Repository automation**：執行 Python quality gates、project-level OpenSpec validation，以及既有 deterministic normal OpenSpec archive workflow；Scheduled Role 不另建 normal `archive-change` mutation。
 
-固定 role-local discovery priority：
+Legal role-local action priority 仍保留作 fixed-role compatibility 與 deterministic ordering contract：
 
 ```text
 Lead
@@ -119,9 +126,9 @@ Executor
 merge-pr > implement-change
 ```
 
-同一 role/action 以較早 GitHub `created_at`，再以較小 Issue number 排序；不得用模型自行推導 urgency 重新排序。沒有 eligible work 時不產生 workflow mutation/noise。Lead 只有在沒有 active workflow work 時，才能依 `agents/AGENTS.md` 的限制建立最多一個 `advisory:idle` Issue；Human admission marker `intake:approved` 只能由 Human/maintainer 管理，Scheduled Role 不得新增、移除、恢復或製造它。Label/bootstrap vocabulary 見 `agents/labels.md`。
+`workflow-dynamic` 模式先選單一 active/terminal-pending workflow，再由其 routing tuple 決定 role/action；不做 cross-role urgency scoring。fixed-role 同一 role/action 則以較早 GitHub `created_at`，再以較小 Issue number 排序。沒有 eligible work 時不產生 workflow mutation/noise。Lead 只有在沒有 active workflow work 時，才能依 `agents/AGENTS.md` 的限制建立最多一個 `advisory:idle` Issue；advisory 研究脈絡包含 preceding 7 days 內 created 或 materially active 的 relevant Issues，且最多三個 recommendation。Human admission marker `intake:approved` 只能由 Human/maintainer 管理，Scheduled Role 不得新增、移除、恢復或製造它。Label/bootstrap vocabulary 見 `agents/labels.md`。
 
-Scheduled execution 是 at-least-once/reconstructable，而不是 exactly-once。Durable artifact/result 與 revision-aware evidence 必須先寫入，再 fresh-read routing 後 handoff；`fresh-read routing → update labels` **不是** mutex、CAS 或 single-flight。Overlapping runs 依 action-specific idempotency、revision/precondition check 與 fail-closed stale/contradictory evidence 保持安全。
+Scheduled execution 是 at-least-once/reconstructable，而不是 exactly-once。Durable artifact/result 與 revision-aware evidence 必須先寫入，再 fresh-read routing 後 handoff；`fresh-read routing → update labels` **不是** mutex、CAS 或 single-flight。Overlapping runs 依 action-specific idempotency、revision/precondition check 與 fail-closed stale/contradictory evidence 保持安全。Material lifecycle ownership/state transition 需留下 bounded coordination-Issue journal；ordinary RED/GREEN/refactor/test-trigger/compatibility-correction mutations 不需要逐 mutation comment。Workflow complexity 只由 current approved requirements 或 demonstrated failure modes 支持；generalized orchestration/fault machinery 的 hypothetical future generality 不構成引入理由，細節見 `agents/proportionality.md`。
 
 Strict OpenSpec gate 的 canonical CI path 是 repository 既有 `.github/workflows/openspec-validate.yml`。對 revision R 的 exact-revision gate，CI evidence 必須以 durable job evidence 證明 validator checkout `HEAD` 實際等於 R，且之後才執行 repository-pinned `openspec validate --all --strict --json --no-interactive`。GitHub Actions `run.head_sha` 只是 association metadata，單獨使用是 insufficient checkout proof；若 PR run 驗證的是 synthetic merge revision M 且 `M != R`，就不能拿來滿足 PR head R 的 exact-head gate。已有有效 exact-head CI PASS 時，不需只因證據來自 CI 而重複 local CLI；若 exact-head CI evidence 不可用，才使用同一 pinned CLI 直接對 checkout R 驗證。Missing、failed、stale、revision-mismatched 或 checkout-mismatched evidence 一律 fail closed。
 
@@ -223,7 +230,7 @@ Implementation-specific regimes remain under `signals` or `diagnostics`.
 
 Configuration resolves before any market-data load. Market-data identity and Strategy assignment remain separate concerns: a configured instrument may have a valid listing venue without an active strategy.
 
-Repository YAML adapters live behind registry interfaces. `config/instruments.yaml` may contain provider-neutral venue metadata without creating a fake production strategy assignment; `config/parameter_sets.yaml` remains empty until a production strategy exists.
+Repository YAML adapters live behind registry interfaces. `config/instruments.yaml` may contain provider-neutral venue metadata without creating a fake production strategy assignment；`config/parameter_sets.yaml` remains empty until a production strategy exists。
 
 ## Market-data semantics
 
@@ -243,9 +250,9 @@ candidate acquired, then invalid
      STALE_DATA
 ```
 
-For historical `Decision(as_of=T)` the framework first normalizes timestamps enough to establish temporal position, excludes timestamp-known rows after T, and only then validates their non-temporal OHLCV structure. Therefore a known T+1 row with invalid OHLC cannot contaminate the Decision at T；an un-normalizable timestamp can still fail because its temporal position is unknowable.
+For historical `Decision(as_of=T)` the framework first normalizes timestamps enough to establish temporal position, excludes timestamp-known rows after T, and only then validates their non-temporal OHLCV structure. Therefore a known T+1 row with invalid OHLC cannot contaminate the Decision at T；an un-normalizable timestamp can still fail because its temporal position is unknowable。
 
-Trading-day continuity and freshness are based on the injected `TradingCalendar`, not calendar-day continuity. Weekends/holidays are not gaps. Market date/session interpretation is also owned by the `TradingCalendar`; a timezone-aware `Clock` instant is never reduced with the runner's local timezone before calendar evaluation.
+Trading-day continuity and freshness are based on the injected `TradingCalendar`, not calendar-day continuity. Weekends/holidays are not gaps. Market date/session interpretation is also owned by the `TradingCalendar`; a timezone-aware `Clock` instant is never reduced with the runner's local timezone before calendar evaluation。
 
 ## Decision request
 
@@ -258,9 +265,9 @@ Repository request shape:
 }
 ```
 
-`as_of` is optional. Research fields such as `strategy` or `parameter_set` are rejected by the request boundary and produce no public Decision artifact.
+`as_of` is optional. Research fields such as `strategy` or `parameter_set` are rejected by the request boundary and produce no public Decision artifact。
 
-Decision date resolution is calendar-only. A future accepted `as_of` is an application failure `CONFIGURATION_FAILED / INVALID_AS_OF`; missing data never causes silent fallback to an older date.
+Decision date resolution is calendar-only. A future accepted `as_of` is an application failure `CONFIGURATION_FAILED / INVALID_AS_OF`; missing data never causes silent fallback to an older date。
 
 Successful artifact shape:
 
@@ -290,7 +297,7 @@ Successful artifact shape:
 
 `requested_as_of` 只有在 caller 明確提供時才需要存在。Failed Decision 使用穩定最小 identity，不因內部已解析多少 metadata 而擴張 public contract。
 
-Decision / Backtest artifact builders produce Python mappings, and the public serialization boundary emits strict JSON. Non-JSON-compatible strategy extension values are rejected deterministically instead of leaking into an Actions Artifact.
+Decision / Backtest artifact builders produce Python mappings, and the public serialization boundary emits strict JSON. Non-JSON-compatible strategy extension values are rejected deterministically instead of leaking into an Actions Artifact。
 
 ## Current-only intraday overlay
 
