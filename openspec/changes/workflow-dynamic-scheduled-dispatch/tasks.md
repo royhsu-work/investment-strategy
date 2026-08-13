@@ -24,16 +24,16 @@ Trace: proposal activation/concurrency → specs `Persisted Change identity defi
 
 Trace: proposal orphan/Human contract → specs `Unexplained durable workflow evidence...`, `Human-required authority...`, `Lead Human-facing escalation...` → design Decisions 5-6.
 
-## 4. Idle advisory, documentation, and migration contract
+## 4. Idle advisory, Reviewer order, documentation, and migration contract
 
-- [ ] 4.1 RED: add tests/contract checks for the seven-day relevant-Issue advisory lens, bounded/no-duplicate advisory behavior, bootstrap-only Scheduled Task contract, and simplicity/proportionality constraints where mechanically testable.
-- [ ] 4.2 GREEN: update repository governance/docs/role-skill guidance needed for workflow-dynamic mode and switch the canonical dispatch marker only with the completed compatible behavior; preserve the three external wake slots and document the external prompt migration contract without treating product conversation/result state as repository state.
-- [ ] 4.3 REFACTOR/VERIFY: confirm no new lifecycle action, global priority table, multi-active arbitration, fault platform, lock/lease/claim state, or duplicate OpenSpec DAG was introduced; run slice tests, full regression suite, type checks, and lint checks.
+- [ ] 4.1 RED: add tests/contract checks for the seven-day relevant-Issue advisory lens, bounded/no-duplicate advisory behavior, required reverse-first `review-openspec` inspection followed by forward inspection with unchanged exact-revision bidirectional PASS semantics, bootstrap-only Scheduled Task contract, and simplicity/proportionality constraints where mechanically testable.
+- [ ] 4.2 GREEN: update repository governance/docs/role-skill guidance needed for workflow-dynamic mode and for Reviewer reverse-first `review-openspec` inspection; switch the canonical dispatch marker only with the completed compatible behavior; preserve the three external wake slots and document the external prompt migration contract without treating product conversation/result state as repository state.
+- [ ] 4.3 REFACTOR/VERIFY: confirm reverse-first changes inspection order only and does not weaken bidirectional traceability; confirm no new lifecycle action, global priority table, multi-active arbitration, fault platform, lock/lease/claim state, or duplicate OpenSpec DAG was introduced; run slice tests, full regression suite, type checks, and lint checks.
 
-Trace: proposal idle/product/simplicity boundaries → specs idle, repository artifacts, and proportionality requirements → design Decisions 7-8 and Scheduled Task migration.
+Trace: proposal idle/product/reviewer-order/simplicity boundaries → specs idle, `OpenSpec review uses reverse-first inspection while retaining the bidirectional gate`, repository artifacts, and proportionality requirements → design Decisions 7-9 and Scheduled Task migration.
 
 ## 5. OpenSpec completion gate
 
-- [ ] 5.1 Verify forward traceability `proposal → specs → design → tasks` and reverse traceability `tasks → design → specs → proposal`; resolve any orphan requirement/task.
+- [ ] 5.1 Verify reverse traceability first `tasks → design → specs → proposal`, then verify forward traceability `proposal → specs → design → tasks`; resolve any orphan requirement/task. This inspection order does not replace the requirement that both directions pass for the same exact revision.
 - [ ] 5.2 Run repository-pinned `openspec validate --all --strict --json --no-interactive` against the exact final change revision and preserve exact-checkout validation evidence.
-- [ ] 5.3 Confirm proposal/spec/design/tasks remain single-purpose and consistent with `README.md`, `openspec/config.yaml`, and the accepted #23 scope before requesting independent OpenSpec review.
+- [ ] 5.3 Confirm proposal/spec/design/tasks remain single-purpose and consistent with `README.md`, `openspec/config.yaml`, the authoritative Human update on #25, and the accepted #23 scope before requesting independent OpenSpec review.
