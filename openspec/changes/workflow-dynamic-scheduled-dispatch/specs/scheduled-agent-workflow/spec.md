@@ -145,6 +145,20 @@ Lead MUST NOT repeat materially equivalent unanswered notifications while the du
 - WHEN a later wake reconstructs the same blocked state
 - THEN Lead does not post a duplicate unanswered notification
 
+### Requirement: OpenSpec review uses reverse-first inspection while retaining the bidirectional gate
+
+For `Reviewer / review-openspec`, Reviewer MUST inspect reverse traceability first in the order `tasks → design → specs → proposal`, and MUST then inspect forward traceability in the order `proposal → specs → design → tasks`.
+
+The inspection order MUST NOT weaken or replace the correctness gate. A `PASS` still requires both traceability directions to be complete against the same exact revision under review.
+
+#### Scenario: Reviewer performs OpenSpec traceability inspection
+
+- GIVEN Reviewer is executing `review-openspec` for exact revision R
+- WHEN Reviewer evaluates proposal/spec/design/task traceability
+- THEN Reviewer first verifies `tasks → design → specs → proposal`
+- AND then verifies `proposal → specs → design → tasks`
+- AND Reviewer may record `PASS` only if both directions are complete for revision R
+
 ### Requirement: Idle exploration considers recent relevant Issue activity
 
 Lead idle advisory SHALL remain available only when no active workflow requires work and no unresolved advisory already prevents duplicate advisory creation.
