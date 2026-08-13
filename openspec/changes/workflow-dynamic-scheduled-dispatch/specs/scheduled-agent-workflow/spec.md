@@ -159,6 +159,32 @@ The inspection order MUST NOT weaken or replace the correctness gate. A `PASS` s
 - AND then verifies `proposal → specs → design → tasks`
 - AND Reviewer may record `PASS` only if both directions are complete for revision R
 
+### Requirement: Verified implementation slices persist a bounded coordination-Issue checkpoint
+
+For `Executor / implement-change`, after an approved vertical slice reaches successful `VERIFY`, Executor MUST persist all satisfied task markers for that slice and MUST persist one bounded checkpoint comment on the persistent coordination Issue before beginning the next slice or handing off.
+
+The checkpoint comment MUST identify the completed slice or task IDs, the durable checkpoint or verified revision, the required VERIFY/gate result, and the remaining approved work or handoff target. The comment SHALL summarize the completion boundary and MUST NOT replace the PR/commit, task markers, or CI evidence as their respective sources of truth.
+
+This requirement is completion-boundary observability only. It MUST NOT introduce periodic heartbeat, progress percentage, `status:in-progress`, lock, claim, lease, retry counter, hidden ownership state, or other live execution machinery.
+
+#### Scenario: Verified slice completes before another slice begins
+
+- GIVEN Executor completes an approved vertical slice
+- AND the slice's required VERIFY and repository gates succeed
+- WHEN Executor prepares to continue implementation
+- THEN all satisfied task markers for that slice are durably persisted
+- AND one bounded checkpoint is durably recorded on the persistent coordination Issue
+- AND the checkpoint identifies the completed work, durable revision, gate result, and remaining work
+- AND only then may Executor begin the next approved slice
+
+#### Scenario: Task markers persisted but checkpoint write was interrupted
+
+- GIVEN a prior Executor run successfully verified a slice and durably persisted its satisfied task markers
+- BUT the run ended before the required coordination-Issue checkpoint was persisted
+- WHEN a later Executor run reconstructs the active implementation state
+- THEN it does not rerun or clear the already verified slice merely to recreate progress
+- AND it persists the missing bounded checkpoint from current durable evidence before beginning another slice or handing off
+
 ### Requirement: Idle exploration considers recent relevant Issue activity
 
 Lead idle advisory SHALL remain available only when no active workflow requires work and no unresolved advisory already prevents duplicate advisory creation.
@@ -273,9 +299,9 @@ Implementation SHALL provide:
 - `agents/AGENTS.md` for shared execution protocol and the single authoritative `Scheduled-Dispatch-Mode` marker;
 - role definitions for Lead, Reviewer, and Executor under `agents/roles/`;
 - a reduced reusable set of procedural skills under `agents/skills/` covering the nine action contracts without one skill per trivial action;
-- repository documentation describing fixed-role compatibility, workflow-dynamic dispatch, the single-active activation boundary, and the relationship to existing OpenSpec/archive automation.
+- repository documentation describing fixed-role compatibility, workflow-dynamic dispatch, the single-active activation boundary, verified-slice coordination checkpoints, and the relationship to existing OpenSpec/archive automation.
 
-Scheduled Task prompts SHALL remain bootstrap-only: they may require loading default-branch governance and selecting dispatch mode, but MUST NOT duplicate repository execution, concurrency, handoff, stale-state, Human-escalation, or idle semantics.
+Scheduled Task prompts SHALL remain bootstrap-only: they may require loading default-branch governance and selecting dispatch mode, but MUST NOT duplicate repository execution, concurrency, handoff, stale-state, Human-escalation, checkpoint-journal, or idle semantics.
 
 Associated Scheduled Task conversation/result surfacing SHALL be treated as an external product boundary and MUST NOT become repository workflow state.
 
