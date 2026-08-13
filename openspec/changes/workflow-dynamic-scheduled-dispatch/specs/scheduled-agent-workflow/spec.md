@@ -51,9 +51,18 @@ The dispatcher MUST NOT introduce model-derived global urgency, cross-role prior
 
 An open coordination Issue with a valid routing tuple and a persisted non-`unset` `Change:` identity SHALL be an active workflow. The repository MUST allow at most one such active workflow at a time.
 
+A closed coordination Issue SHALL also remain terminal-pending active workflow work only when all of the following hold:
+
+- it has a persisted non-`unset` `Change:` identity;
+- its routing tuple is exactly `agent:lead + action:finalize-archive`;
+- the repository-approved Archive PR for that Change is durably merged and the Issue is natively closed by the approved closing linkage; and
+- no durable Lead `LIFECYCLE_COMPLETE` result bound to that archive merge exists yet.
+
+Once Lead records valid `LIFECYCLE_COMPLETE` evidence after terminal reconstruction, that closed tuple SHALL be terminal history, MUST NOT be selected as active work, and MUST NOT block later workflow admission.
+
 An open Human-admitted `Lead / propose-change` coordination Issue with `Change: unset` SHALL be queued pre-activation work and MUST NOT count as an active workflow until Lead persists its immutable Change identity.
 
-Lead MUST NOT activate a queued proposal while another active workflow exists. If no active workflow exists, deterministic admission among queued `propose-change` candidates SHALL use earliest GitHub `created_at`, then lower Issue number.
+Lead MUST NOT activate a queued proposal while another active or terminal-pending workflow exists. If no active or terminal-pending workflow exists, deterministic admission among queued `propose-change` candidates SHALL use earliest GitHub `created_at`, then lower Issue number.
 
 #### Scenario: Queued proposal exists while another workflow is active
 
@@ -63,9 +72,20 @@ Lead MUST NOT activate a queued proposal while another active workflow exists. I
 - THEN Change A remains the only active workflow
 - AND Change B is not activated or globally arbitrated against Change A
 
-#### Scenario: Oldest queued proposal activates when idle
+#### Scenario: Closed terminal handoff still blocks new activation
 
-- GIVEN no active workflow exists
+- GIVEN Change A has an authorized merged Archive PR and its coordination Issue is natively closed
+- AND that Issue is routed `Lead / finalize-archive`
+- AND no valid Lead `LIFECYCLE_COMPLETE` evidence exists for the archive merge
+- AND Change B is queued with `Change: unset`
+- WHEN workflow-dynamic dispatch reconstructs work
+- THEN Change A is selected as terminal-pending workflow work
+- AND Change B is not activated
+
+#### Scenario: Oldest queued proposal activates after terminal completion
+
+- GIVEN no open active workflow exists
+- AND no closed terminal-pending workflow exists because any prior closed terminal tuple has valid Lead `LIFECYCLE_COMPLETE` evidence
 - AND two valid Human-admitted `Lead / propose-change` Issues have `Change: unset`
 - WHEN Lead selects pre-activation work
 - THEN the earlier `created_at` Issue is selected
@@ -185,6 +205,68 @@ This requirement is completion-boundary observability only. It MUST NOT introduc
 - THEN it does not rerun or clear the already verified slice merely to recreate progress
 - AND it persists the missing bounded checkpoint from current durable evidence before beginning another slice or handing off
 
+### Requirement: Substantive durable workflow mutations are journaled on the coordination Issue
+
+Whenever a Scheduled Agent performs a substantive durable workflow mutation, it MUST persist one bounded comment on the persistent coordination Issue describing the mutation, the resulting durable state or evidence, and the next action or terminal result.
+
+Substantive mutations include governed artifact or task-marker writes, routing-label changes, Issue or PR state mutations, and merge mutations. The required journal comment itself is durable evidence and SHALL NOT recursively require another meta-comment solely because the comment was written.
+
+If multiple related mutations form one legal workflow boundary, one bounded comment MAY journal that boundary without duplicating comments for each low-level API call. If the substantive mutation succeeds but its journal write is interrupted, a later eligible run MUST reconstruct the durable mutation and persist the missing journal entry before performing further substantive workflow mutation or handoff.
+
+#### Scenario: Routing handoff is durably changed
+
+- GIVEN a Scheduled Agent legally changes the coordination Issue routing tuple
+- WHEN the routing mutation succeeds
+- THEN the Agent records a bounded coordination-Issue comment describing the prior/current durable result and next role/action
+- AND no recursive meta-comment is required for that journal write
+
+#### Scenario: Mutation succeeds but journal write is interrupted
+
+- GIVEN a Scheduled Agent completed a substantive durable mutation
+- BUT the run ended before its required bounded journal comment was persisted
+- WHEN a later eligible run reconstructs that state
+- THEN it preserves the already durable mutation
+- AND writes the missing bounded journal record before further substantive workflow mutation or handoff
+
+### Requirement: Native Archive close hands off to terminal Lead reconstruction
+
+The final Archive PR SHALL retain the repository-approved GitHub closing linkage to the persistent coordination Issue.
+
+After Executor successfully merges the authorized Archive PR, Executor MUST fresh-read the Archive PR and coordination Issue. If the PR is durably merged and the coordination Issue is observed natively `closed`, Executor MUST replace the consumed routing tuple with exactly `agent:lead + action:finalize-archive` on that closed Issue and MUST record a bounded merge/native-close/handoff journal comment. Executor MUST NOT execute Lead finalization in the same invocation.
+
+A closed coordination Issue with exactly `agent:lead + action:finalize-archive` SHALL be eligible only as the narrow terminal-reconstruction candidate defined by the active-workflow requirement above. Lead `finalize-archive` MUST reconstruct the authorized Archive PR merge, canonical archived default-branch state, and observed native Issue closure. On successful reconstruction Lead MUST record one bounded `LIFECYCLE_COMPLETE` result comment bound to the Archive PR exact head and merge commit; the normal native-close path MUST NOT reopen or redundantly close the Issue.
+
+After valid Lead `LIFECYCLE_COMPLETE` evidence exists for the current archive merge, the closed tuple MUST remain terminal history but MUST NOT be selected again and MUST NOT block later workflow admission.
+
+#### Scenario: Archive merge native-closes the Issue
+
+- GIVEN Reviewer archive PASS and Lead merge authorization bind to exact Archive PR revision R
+- AND Executor confirms unchanged current head R and all merge preconditions
+- WHEN Executor merges the Archive PR and GitHub natively closes the coordination Issue through the approved closing linkage
+- THEN Executor fresh-reads and confirms the merged PR and closed Issue
+- AND replaces routing with `agent:lead + action:finalize-archive` on the closed Issue
+- AND records the bounded merge/native-close/handoff journal entry
+- AND ends the invocation without executing Lead work
+
+#### Scenario: Lead completes terminal reconstruction on the closed Issue
+
+- GIVEN the Issue is closed and routed `Lead / finalize-archive`
+- AND the matching authorized Archive PR is merged
+- AND no valid Lead `LIFECYCLE_COMPLETE` evidence exists yet
+- WHEN Lead is dispatched for terminal reconstruction
+- THEN Lead verifies canonical archived default-branch state and native closure
+- AND records bounded `LIFECYCLE_COMPLETE` evidence bound to the Archive PR exact head and merge commit
+- AND does not reopen or redundantly close the Issue
+- AND later dispatch excludes that closed tuple from active work
+
+#### Scenario: Merge succeeded but post-merge handoff was interrupted
+
+- GIVEN the authorized Archive PR is already merged and the Issue is natively closed
+- AND routing still contains the consumed pre-merge tuple because Executor stopped before terminal handoff
+- WHEN a later run reconstructs exact authorized merge and native-close evidence
+- THEN it MUST NOT re-merge
+- AND MAY repair only the missing `Lead / finalize-archive` terminal routing and bounded journal evidence according to the merge recovery contract
+
 ### Requirement: Idle exploration considers recent relevant Issue activity
 
 Lead idle advisory SHALL remain available only when no active workflow requires work and no unresolved advisory already prevents duplicate advisory creation.
@@ -225,7 +307,7 @@ In `fixed-role` mode, selection SHALL retain the existing role-local action prio
 
 Within the same fixed-role role/action priority, selection SHALL choose earliest GitHub `created_at`, then lower Issue number.
 
-In `workflow-dynamic` mode, the single active workflow SHALL be selected before role/action selection; its valid routing tuple determines the role/action. If no active workflow exists, only valid queued `Lead / propose-change` admission or bounded Lead idle/orphan diagnosis may proceed according to the requirements above.
+In `workflow-dynamic` mode, the single active workflow SHALL be selected before role/action selection; its valid routing tuple determines the role/action. The only closed-Issue exception is a terminal-pending `closed + agent:lead + action:finalize-archive` workflow with matching authorized merged Archive PR/native close and no valid Lead `LIFECYCLE_COMPLETE` evidence. If no active or terminal-pending workflow exists, only valid queued `Lead / propose-change` admission or bounded Lead idle/orphan diagnosis may proceed according to the requirements above.
 
 The model MUST NOT substitute its own urgency or preference for either mode's deterministic selection rules.
 
@@ -247,13 +329,23 @@ The model MUST NOT substitute its own urgency or preference for either mode's de
 - AND Executor is the fixed invocation role
 - AND the queued proposal remains pre-activation
 
+#### Scenario: Dynamic mode selects terminal reconstruction before queued work
+
+- GIVEN dispatch mode is `workflow-dynamic`
+- AND a closed coordination Issue is terminal-pending under `Lead / finalize-archive`
+- AND a queued `Lead / propose-change` Issue exists
+- WHEN a Scheduled Task selects work
+- THEN the closed terminal-pending workflow is selected
+- AND Lead is the fixed invocation role
+- AND the queued proposal remains pre-activation
+
 ### Requirement: Workflow admission is explicitly Human-controlled
 
 Scheduled agents MUST NOT autonomously admit arbitrary Issues, PRs, repository activity, discussions, or discovered requirements into workflow work.
 
 An initial coordination Issue is Human-admitted only through explicit routing established by actor `royhsu-work`; other actors cannot satisfy this Human-required admission condition.
 
-A Human-admitted `Lead / propose-change` Issue MAY remain queued with `Change: unset`; in workflow-dynamic mode it becomes active only when no other active workflow exists and Lead durably persists its immutable Change identity.
+A Human-admitted `Lead / propose-change` Issue MAY remain queued with `Change: unset`; in workflow-dynamic mode it becomes active only when no other active or terminal-pending workflow exists and Lead durably persists its immutable Change identity.
 
 Lead idle advisory admission additionally requires both an unambiguous selected direction from actor `royhsu-work` and the reserved Human capability marker `intake:approved` applied by that Human actor.
 
@@ -265,7 +357,7 @@ Scheduled Lead, Reviewer, and Executor MUST NEVER add, remove, restore, or other
 - AND `Change:` is unset
 - WHEN scheduled workflow reconstructs admission
 - THEN the Issue is valid queued pre-activation work
-- AND it does not become active while another persisted Change workflow exists
+- AND it does not become active while another persisted Change or terminal-pending workflow exists
 
 #### Scenario: Non-Human routing is insufficient
 
@@ -278,7 +370,7 @@ Scheduled Lead, Reviewer, and Executor MUST NEVER add, remove, restore, or other
 
 Lead SHALL keep idle advisory mode bounded and non-routing.
 
-When no active workflow requires work, no queued Human-admitted proposal is eligible for activation, and no unresolved orphan evidence requires diagnosis, Lead MAY create an idle advisory Issue containing at most three current recommendations only if no other open `advisory:idle` Issue exists.
+When no active or terminal-pending workflow requires work, no queued Human-admitted proposal is eligible for activation, and no unresolved orphan evidence requires diagnosis, Lead MAY create an idle advisory Issue containing at most three current recommendations only if no other open `advisory:idle` Issue exists.
 
 An advisory Issue MUST NOT contain `agent:*` or `action:*` routing labels and is not itself a coordination workflow instance.
 
@@ -299,9 +391,9 @@ Implementation SHALL provide:
 - `agents/AGENTS.md` for shared execution protocol and the single authoritative `Scheduled-Dispatch-Mode` marker;
 - role definitions for Lead, Reviewer, and Executor under `agents/roles/`;
 - a reduced reusable set of procedural skills under `agents/skills/` covering the nine action contracts without one skill per trivial action;
-- repository documentation describing fixed-role compatibility, workflow-dynamic dispatch, the single-active activation boundary, verified-slice coordination checkpoints, and the relationship to existing OpenSpec/archive automation.
+- repository documentation describing fixed-role compatibility, workflow-dynamic dispatch, the single-active activation boundary, verified-slice coordination checkpoints, substantive-mutation journaling, native-close terminal handoff/reconstruction, and the relationship to existing OpenSpec/archive automation.
 
-Scheduled Task prompts SHALL remain bootstrap-only: they may require loading default-branch governance and selecting dispatch mode, but MUST NOT duplicate repository execution, concurrency, handoff, stale-state, Human-escalation, checkpoint-journal, or idle semantics.
+Scheduled Task prompts SHALL remain bootstrap-only: they may require loading default-branch governance and selecting dispatch mode, but MUST NOT duplicate repository execution, concurrency, handoff, stale-state, Human-escalation, checkpoint-journal, mutation-journal, terminal-reconstruction, or idle semantics.
 
 Associated Scheduled Task conversation/result surfacing SHALL be treated as an external product boundary and MUST NOT become repository workflow state.
 
@@ -310,5 +402,5 @@ Associated Scheduled Task conversation/result surfacing SHALL be treated as an e
 - GIVEN a Scheduled Task wakes
 - WHEN it loads default-branch shared governance
 - THEN it determines dispatch mode from `Scheduled-Dispatch-Mode`
-- AND in workflow-dynamic mode reconstructs the active workflow to derive role/action and mapped skill
+- AND in workflow-dynamic mode reconstructs the active or terminal-pending workflow to derive role/action and mapped skill
 - AND repository governance remains sufficient without embedding a duplicate workflow protocol in the Scheduled Task prompt
