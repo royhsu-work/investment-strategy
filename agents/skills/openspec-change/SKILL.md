@@ -16,7 +16,7 @@ Read from durable state:
 - relevant durable Issue/review findings;
 - exact current repository/branch revision and strict OpenSpec validation evidence.
 
-If the coordination Issue or current OpenSpec artifacts declare upstream authoritative decision/gate references, Lead MUST dereference those sources during `propose-change` and any materially revised `resolve-question`. A cross-Issue summary is orientation only and is not replacement authority for the declared source evidence.
+If the coordination Issue or current OpenSpec artifacts contain declared upstream authoritative decision/gate references, Lead MUST dereference those sources during `propose-change` and any materially revised `resolve-question`. A cross-Issue summary is orientation only and is not replacement authority for the declared source evidence.
 
 If routing, change identity, active-workflow identity, or required evidence is contradictory, fail closed.
 
