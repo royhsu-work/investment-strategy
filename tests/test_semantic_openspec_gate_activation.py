@@ -26,7 +26,7 @@ def test_mechanical_validation_does_not_implicitly_stale_semantic_openspec_pass(
         "Mechanical OpenSpec validation and semantic OpenSpec review applicability",
         "bookkeeping-only OpenSpec revision",
         "does not stale an applicable semantic OpenSpec PASS",
-        "mechanical validation alone does not create semantic acceptance",
+        "Mechanical validation alone does not create semantic acceptance",
         "material semantic OpenSpec change",
     ):
         assert required in shared
@@ -42,7 +42,7 @@ def test_reviewer_openspec_uses_semantic_baseline_and_material_cumulative_covera
     ):
         assert required in reviewer or required in skill
     assert "bookkeeping-only revision does not advance or invalidate the semantic baseline" in skill
-    assert "successful mechanical OpenSpec validation is not semantic PASS evidence" in skill
+    assert "Successful mechanical OpenSpec validation is not semantic PASS evidence" in skill
 
 
 def test_implementation_completion_routes_directly_to_implementation_review_without_semantic_change() -> None:
