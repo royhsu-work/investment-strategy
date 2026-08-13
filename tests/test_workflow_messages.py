@@ -181,7 +181,7 @@ def test_result_evidence_does_not_complete_required_handoff() -> None:
     )
 
     for required in (
-        "result evidence does not by itself complete a required routing handoff",
+        "Result evidence does not by itself complete a required routing handoff",
         "persist result + revision-aware evidence",
         "fresh-read source routing",
         "mutate routing to the target tuple",
@@ -228,7 +228,7 @@ def test_human_delivery_is_lead_only_decision_required_and_other_wakes_are_silen
         "Human-facing delivery-eligible",
         "Reviewer/Executor",
         "`EXECUTION_EXCEPTION`",
-        "ordinary Lead",
+        "Ordinary Lead",
         "repository-durable only",
     ):
         assert required in shared
