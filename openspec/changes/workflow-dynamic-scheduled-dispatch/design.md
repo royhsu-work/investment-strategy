@@ -12,6 +12,8 @@ The analysis of that defect also exposed a Lead-role behavior gap. Lead initiall
 
 The coordination history across #18, #21, and #25 also shows the same workflow events being reported in several incompatible free-form shapes. #18 commonly used explicit Role/Action/Change/Revision/Result/Next headers, #21 converged on checkpoint/READY/PASS/MERGE/BLOCKED event families, and #25 added Slice and lifecycle journals but still emitted ad-hoc single-line checkpoints. Most importantly, #25 reached `Executor / implement-change` READY while the routing labels still remained on Executor, demonstrating that a durable action result and a completed ownership handoff are distinct boundaries that must not be conflated by message prose.
 
+A later Executor wake then exposed a generic execution-finalization gap. The selected action had approved Section 9 work and the external GitHub file mutation returned a catchable safety/policy denial. The Scheduled Task could surface a prose summary externally, but the repository retained only the prior Reviewer handoff: no raw exception evidence, no durable disposition, and no defined path for later Lead diagnosis. Because the same failure shape can occur while Lead, Reviewer, or Executor is calling a tool, the correction belongs in shared execution governance rather than the implementation skill alone.
+
 ## Goals
 
 - Make dispatch mode explicit and default-branch governed.
@@ -19,6 +21,8 @@ The coordination history across #18, #21, and #25 also shows the same workflow e
 - Enforce one active persisted Change while allowing queued Human-admitted proposals.
 - Keep overlapping wakes safe without hidden ownership state.
 - Make the selected action work-conserving under one shared termination/yield contract rather than duplicating generic continuation semantics across role/action skills.
+- Make catchable tool/runtime/execution exceptions reconstructable by preserving the platform-observable raw error before interpretation or disposition.
+- Make normal invocation exit converge to a reconstructable durable outcome, with local recovery continuing in the same action and non-local recovery completing the required legal result/handoff.
 - Give Lead a bounded systemic-coherence responsibility for cross-cutting workflow/specification defects without turning Lead into a supervisor or central orchestrator.
 - Make Human authority and escalation reconstructable from durable GitHub evidence.
 - Keep Scheduled Task prompts thin and product-independent.
@@ -34,10 +38,11 @@ The coordination history across #18, #21, and #25 also shows the same workflow e
 
 - Continuous Lead supervision, progress polling, or intervention into another role's valid routed action.
 - Unrelated repository-wide audits or speculative generalized frameworks under the banner of systemic coherence.
-- Per-action copies of the generic work-conserving/termination contract.
+- Per-action copies of the generic work-conserving, exception-capture, or invocation-finalization contracts.
 - Per-role/per-action copies of shared message template bodies.
 - Per-commit, per-file, or per-mutation Issue logging inside an implementation slice.
 - A template engine, JSON/YAML runtime message schema, parser-dependent message bus, notification state machine, or generic messaging framework.
+- A generic exception/fault classifier, retry engine, automatic remediation platform, or persistent failure-state machine.
 - Normalizing free-form RED/GREEN/test-trigger/compatibility-correction progress, Lead progress polling, or `No Human action is required` noise into supported workflow message types.
 - Multi-active workflow arbitration or dependency/conflict graphing.
 - Global cross-role/action priority scoring.
@@ -119,7 +124,7 @@ Coordination-Issue journaling has a separate lifecycle boundary. A Scheduled Age
 
 Related low-level writes within one legal lifecycle transition are summarized by that one journal entry. Ordinary implementation mutations remain in Git/PR/task evidence and are surfaced to the coordination Issue only by Decision 10 after successful Slice VERIFY. This prevents the Issue from becoming a duplicate commit/activity log while preserving reconstructable ownership transitions.
 
-When a canonical typed message introduced by Decision 15 represents the covered boundary, that typed message is the required lifecycle journal for the boundary. There is no eighth generic `LIFECYCLE_JOURNAL` message and no duplicate meta-comment solely to restate the same transition.
+When a canonical typed message introduced by Decision 15 represents the covered boundary, that typed message is the required lifecycle journal for the boundary. There is no additional generic `LIFECYCLE_JOURNAL` message and no duplicate meta-comment solely to restate the same transition.
 
 If a lifecycle transition succeeds but its journal write is interrupted, a later eligible run reconstructs the durable transition and repairs only the missing journal before a later lifecycle transition or handoff; it does not replay a completed unsafe mutation.
 
@@ -139,7 +144,7 @@ Trace: proposal native-close terminal handoff → specs modified `Actionable wor
 
 Once dispatch selects a legal role/action, the action continues all immediately actionable work in the same invocation while routing, revision/base preconditions, authority, and execution context remain current. Checkpoints are durable recovery boundaries, not automatic yield points. A recoverable same-role failure or failed-but-actionable validation is also not a voluntary yield point: if correction is inside the selected authority and approved contract, correct it and rerun the relevant gate in the same invocation.
 
-The shared contract enumerates the bounded reasons an invocation may end early: completed handoff/terminal result, another role or Human authority boundary, a genuine external asynchronous wait, ambiguity/contradictory unsafe state, stale/concurrency loss, or actual tool/hard-runtime interruption. This is intentionally not copied into every skill. Skills express only action-specific outcomes and blockers; generic crash-recovery language must not be interpreted as permission for a healthy invocation to stop.
+The shared contract enumerates the bounded reasons an invocation may end early: completed handoff/terminal result, another role or Human authority boundary, a genuine external asynchronous wait, ambiguity/contradictory unsafe state, stale/concurrency loss, or actual tool/hard-runtime interruption. A catchable execution failure does not bypass Decisions 18-19: if the invocation still has execution opportunity, it captures the raw failure, attempts legal local recovery when available, and otherwise finalizes a durable disposition before normal exit. Only a genuinely uncatchable hard termination may prevent current-run finalization.
 
 This design keeps termination semantics coherent across `implement-change`, Lead authoring/finalization actions, Reviewer gates, and merge actions without adding an execution state machine. It also keeps the Scheduled Task prompt thin because the external wake only selects and loads governance; it does not restate yield policy.
 
@@ -153,21 +158,22 @@ This responsibility is implemented once in `agents/roles/lead.md`. It is not cop
 
 This is an Engineering/Governance role-artifact responsibility rather than a new generic scheduled-agent capability requirement. Its trace runs proposal role responsibility → this design decision → implementation slice 7 → `agents/roles/lead.md`, under the existing `openspec/config.yaml` allowance for governance tasks.
 
-## Decision 15: Recurring workflow messages use seven canonical Markdown templates
+## Decision 15: Recurring workflow messages use eight canonical Markdown templates
 
-The repository will add one shared presentation artifact at `agents/templates/messages.md`. It defines a common envelope and exactly seven currently supported recurring message types derived from the concrete history in #18, #21, and #25:
+The repository will add one shared presentation artifact at `agents/templates/messages.md`. It defines a common envelope and exactly eight currently supported recurring message types derived from the concrete history in #18, #21, and #25 plus the newly demonstrated catchable execution-failure evidence:
 
 - `ACTION_RESULT` for non-review action outcomes and lifecycle results such as OpenSpec readiness, resolution, archive readiness, or terminal completion;
 - `REVIEW_RESULT` for `review-openspec`, `review-implementation`, and `review-archive` PASS/FINDINGS results;
 - `SLICE_CHECKPOINT` for the verified Executor Slice completion boundary;
 - `MERGE_AUTHORIZATION` for Lead exact-revision merge authorization;
 - `MERGE_RESULT` for Executor merge success or merge blocker results;
-- `HANDOFF` for a completed routing ownership transfer after the routing mutation succeeds; and
-- `HUMAN_DECISION_REQUIRED` for the bounded Lead-only Human escalation.
+- `HANDOFF` for a completed routing ownership transfer after the routing mutation succeeds;
+- `HUMAN_DECISION_REQUIRED` for the bounded Lead-only Human escalation; and
+- `EXECUTION_EXCEPTION` for a catchable tool/runtime/execution failure, preserving the raw platform-observable error before separate interpretation/disposition.
 
-The templates define presentation and required evidence fields, not workflow meaning. The common envelope carries the durable workflow identity/context that is broadly useful (`Workflow`, `Change`, `Action`, `Result`, and an exact revision when applicable); individual message types then require only the fields justified by that event. `SLICE_CHECKPOINT` carries Slice/task IDs, verified and marker/checkpoint revisions where distinct, required gate evidence, remaining work, and current/expected routing. Review, merge, authorization, handoff, and Human-decision templates carry their corresponding revision/evidence fields.
+The templates define presentation and required evidence fields, not workflow meaning. The common envelope carries the durable workflow identity/context that is broadly useful (`Workflow`, `Change`, `Action`, `Result`, and an exact revision when applicable); individual message types then require only the fields justified by that event. `SLICE_CHECKPOINT` carries Slice/task IDs, verified and marker/checkpoint revisions where distinct, required gate evidence, remaining work, and current/expected routing. `EXECUTION_EXCEPTION` carries the selected role/action, attempted operation/tool, relevant revision, whether any durable mutation completed before failure, unfinished work boundary, raw observable error text, and separate classification/disposition fields where known.
 
-Roles/skills choose when an event is legal under the capability/governance contract and reference this one template source. They do not copy the full template body into every skill. The artifact is Markdown for Human/agent readability; no parser, message bus, code-generation layer, JSON/YAML runtime schema, or hidden workflow state is introduced.
+Roles/skills choose when an event is legal under the capability/governance contract and reference this one template source. They do not copy the full template body into every skill. The artifact is Markdown for Human/agent readability; no parser, message bus, code-generation layer, JSON/YAML runtime schema, global exception taxonomy, or hidden workflow state is introduced.
 
 Free-form Lead progress polling, RED/GREEN/test-trigger/compatibility-correction progress, and `No Human action is required` status messages are intentionally not template types. They are noise or intermediate activity rather than durable workflow boundaries.
 
@@ -198,7 +204,7 @@ Trace: proposal result-vs-handoff contract → modified spec `Routing handoff pe
 
 ## Decision 17: Human-facing scheduled delivery is Lead-only and decision-required
 
-Repository workflow evidence and Human delivery are separate channels. Reviewer and Executor continue to write the GitHub evidence needed by later agents, but their ordinary `REVIEW_RESULT`, `SLICE_CHECKPOINT`, `MERGE_RESULT`, and `HANDOFF` messages are not Human-facing Scheduled Task delivery. Ordinary Lead `ACTION_RESULT`, `MERGE_AUTHORIZATION`, handoff, finalize progress, and successful self-resolved clarification are also repository-durable only.
+Repository workflow evidence and Human delivery are separate channels. Reviewer and Executor continue to write the GitHub evidence needed by later agents, but their ordinary `REVIEW_RESULT`, `SLICE_CHECKPOINT`, `MERGE_RESULT`, `HANDOFF`, and `EXECUTION_EXCEPTION` messages are not Human-facing Scheduled Task delivery. Ordinary Lead `ACTION_RESULT`, `MERGE_AUTHORIZATION`, handoff, execution-exception evidence, finalize progress, and successful self-resolved clarification are also repository-durable only.
 
 Only Lead may emit `HUMAN_DECISION_REQUIRED`, and only after Lead has reconstructed current durable evidence, applied its own specification/lifecycle authority and bounded systemic-coherence responsibility, and established that workflow progress genuinely requires Human authority or intent that Lead cannot legally resolve. That message uses the existing bounded escalation shape: no more than three options, material impact/risk/trade-off, Lead recommendation, and an explicit requested Human response.
 
@@ -208,16 +214,40 @@ The repository defines delivery eligibility; the external Scheduled Task product
 
 Trace: proposal Human-delivery boundary → specs `Human-facing scheduled delivery is Lead-only and decision-required`, repository-artifact requirement, and Scheduled Task migration → implementation slice 9 plus external migration configuration.
 
+## Decision 18: Catchable execution exceptions preserve raw observable evidence before classification
+
+All Scheduled Agent engineering actions share one exception-capture contract. When a tool/runtime/execution operation returns a catchable failure and the invocation still has the ability to persist repository evidence, the current role records one bounded canonical `EXECUTION_EXCEPTION` before relying on a summarized interpretation.
+
+The raw field is the error text actually observable to the Agent after the platform's existing safety redaction. The workflow neither attempts to recover hidden/withheld data nor unredacts credentials. The record also captures factual context required for later reconstruction: selected role/action, attempted operation/tool, relevant revision/base when applicable, whether any durable mutation is known to have completed before the failure, and the current unfinished work boundary.
+
+Raw observation and interpretation are separate. The Agent may add a classification such as a known transient/recoverable condition when the evidence supports it, but an unfamiliar failure may remain `UNCLASSIFIED_EXECUTION_EXCEPTION`. The raw message must not be replaced by a paraphrase such as `GitHub mutation failed`, because Lead and later runs need the original observable evidence to determine whether a stable recovery path should be added.
+
+The exception record is evidence, not a new lifecycle action/result and not automatically a lifecycle-transition journal. It does not itself change routing or authorize a retry. Repeated exception handling remains bounded by normal reconstruction and work-conserving/finalization rules rather than a retry counter or fault state machine.
+
+Trace: proposal shared exception capture → spec `Catchable execution exceptions preserve raw observable evidence before disposition` → implementation slice 10 and message-template slice 9.
+
+## Decision 19: Invocation finalization converges catchable failures to reconstructable durable outcomes
+
+After `EXECUTION_EXCEPTION` evidence is captured, the current role/action first asks whether the failure can be legally recovered within the same selected authority while routing and preconditions remain current. If yes, it performs that recovery and continues immediately under Decision 13; recording an exception does not create a voluntary yield point.
+
+If the catchable failure cannot be resolved within the current role/action, the invocation must not normally disappear with only an external Scheduled Task reply. While the execution context still permits finalization, it persists the action-defined legal blocked/disposition result or routes to the contract-defined diagnosis owner, fresh-reads routing, completes any required ownership transfer under Decision 16, and persists the corresponding `HANDOFF` when a handoff is required.
+
+This shared rule does not invent one universal `EXECUTION_BLOCKED` result or force every failure to Lead. Action-specific contracts remain responsible for normal result enums and any known local recovery. For a newly observed failure with no existing legal disposition, bounded Lead diagnosis is the fallback specification/authority path; the durable raw exception evidence is what allows Lead to classify the root cause without relying on conversation memory.
+
+A truly uncatchable hard termination—such as the execution environment ending before the Agent can persist anything—cannot be required to run a conceptual `finally` block. A later wake uses the existing at-least-once reconstruction rules over partial durable state. Thus the contract distinguishes `catchable failure with execution opportunity` from `hard termination with no persistence opportunity` without pretending exactly-once finalization is possible.
+
+Trace: proposal invocation-finalization contract → spec `Catchable execution exceptions are dispositioned before normal invocation exit` plus work-conserving and modified handoff requirements → implementation slice 10.
+
 ## Scheduled Task migration
 
 The three existing external wake slots remain. Their prompts should converge on the same bootstrap contract: read `README.md` and `agents/AGENTS.md`, determine the declared mode, use the legacy assigned role only in `fixed-role`, and in `workflow-dynamic` derive role/action from durable workflow state. Once an invocation selects a role, it never switches role in that run.
 
-Prompt configuration itself is external product state. Repository tests/docs can define the required bootstrap and Human-delivery eligibility contract but cannot make Scheduled Task conversation/result surfacing part of GitHub workflow state. The prompt also does not duplicate the shared work-conserving termination/yield semantics or canonical message bodies; those remain repository governance/templates loaded after bootstrap.
+Prompt configuration itself is external product state. Repository tests/docs can define the required bootstrap and Human-delivery eligibility contract but cannot make Scheduled Task conversation/result surfacing part of GitHub workflow state. The prompt also does not duplicate the shared work-conserving, exception-capture, invocation-finalization, or canonical message bodies; those remain repository governance/templates loaded after bootstrap.
 
-The retained external wake configuration must treat ordinary workflow execution as silent. Reviewer/Executor results and ordinary Lead results are still persisted to GitHub for reconstruction, but only a Lead-owned unresolved `HUMAN_DECISION_REQUIRED` condition is eligible to surface to Human. If product UI still exposes associated task-conversation history, that surfacing remains external history rather than workflow state and does not change the repository delivery-eligibility contract.
+The retained external wake configuration must treat ordinary workflow execution as silent. Reviewer/Executor results, `EXECUTION_EXCEPTION` evidence, and ordinary Lead results are still persisted to GitHub for reconstruction, but only a Lead-owned unresolved `HUMAN_DECISION_REQUIRED` condition is eligible to surface to Human. If product UI still exposes associated task-conversation history, that surfacing remains external history rather than workflow state and does not change the repository delivery-eligibility contract.
 
 ## Validation strategy
 
-Behavioral tests should exercise mode parsing, fixed-role compatibility, active-workflow selection, queued proposal activation ordering, invalid/multiple active fail-closed behavior, immutable invocation role, work-conserving continuation after recoverable same-role or failed-but-actionable validation, legal external-wait/stale/handoff termination, absence of duplicated weaker per-skill yield wording, stale competing activation, actor-bound Human evidence, duplicate escalation suppression, seven-day advisory evidence, analytics-only notification metadata, reverse-first `review-openspec` inspection with unchanged exact-revision bidirectional PASS semantics, Lead-role systemic-coherence contract wording and its non-supervisory/bounded scope, verified-Slice checkpoint persistence/recovery with no per-mutation implementation logging, lifecycle-transition journal recovery, native Archive close followed by closed-Issue `Lead / finalize-archive` handoff, terminal candidate selection before Lead completion evidence, and terminal exclusion after bounded `LIFECYCLE_COMPLETE` evidence.
+Behavioral tests should exercise mode parsing, fixed-role compatibility, active-workflow selection, queued proposal activation ordering, invalid/multiple active fail-closed behavior, immutable invocation role, work-conserving continuation after recoverable same-role or failed-but-actionable validation, legal external-wait/stale/handoff termination, catchable exception capture before disposition, local recovery continuation after captured exception, non-local catchable failure finalization to a legal durable outcome/handoff, uncatchable-hard-termination reconstruction, absence of duplicated weaker per-skill execution policy, stale competing activation, actor-bound Human evidence, duplicate escalation suppression, seven-day advisory evidence, analytics-only notification metadata, reverse-first `review-openspec` inspection with unchanged exact-revision bidirectional PASS semantics, Lead-role systemic-coherence contract wording and its non-supervisory/bounded scope, verified-Slice checkpoint persistence/recovery with no per-mutation implementation logging, lifecycle-transition journal recovery, native Archive close followed by closed-Issue `Lead / finalize-archive` handoff, terminal candidate selection before Lead completion evidence, and terminal exclusion after bounded `LIFECYCLE_COMPLETE` evidence.
 
-Message-contract tests should additionally prove one shared `agents/templates/messages.md` source contains the seven approved types and common envelope without per-role copies; each recurring event references the applicable type; `SLICE_CHECKPOINT` preserves the verified-Slice required fields; canonical typed lifecycle-boundary messages satisfy the journal boundary without a duplicate generic meta-journal; the modified canonical handoff requirement keeps result/revision evidence before transfer while requiring `HANDOFF` after successful routing mutation; a persisted READY/PASS result with unchanged source routing is not treated as completed handoff; interrupted result-before-handoff recovery performs only the missing routing transition and `HANDOFF`; Reviewer/Executor and ordinary Lead results are not Human-delivery eligible; and only Lead `HUMAN_DECISION_REQUIRED` carries the bounded decision-ready Human shape. Repository quality checks and strict OpenSpec validation remain required.
+Message-contract tests should additionally prove one shared `agents/templates/messages.md` source contains the eight approved types and common envelope without per-role copies; `EXECUTION_EXCEPTION` preserves the raw platform-observable message plus bounded factual context and keeps interpretation/classification separate; unknown classification is allowed; each recurring event references the applicable type; `SLICE_CHECKPOINT` preserves the verified-Slice required fields; canonical typed lifecycle-boundary messages satisfy the journal boundary without a duplicate generic meta-journal; the modified canonical handoff requirement keeps result/revision evidence before transfer while requiring `HANDOFF` after successful routing mutation; a persisted READY/PASS result with unchanged source routing is not treated as completed handoff; interrupted result-before-handoff recovery performs only the missing routing transition and `HANDOFF`; Reviewer/Executor exception/results and ordinary Lead exception/results are not Human-delivery eligible; and only Lead `HUMAN_DECISION_REQUIRED` carries the bounded decision-ready Human shape. Repository quality checks and strict OpenSpec validation remain required.
