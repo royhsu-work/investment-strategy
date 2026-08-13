@@ -57,7 +57,7 @@ The normal single-active invariant is defined over open coordination Issues with
 
 One narrow exception preserves terminal reconstruction after native Archive PR close: a closed coordination Issue with persisted Change identity, routing exactly `agent:lead + action:finalize-archive`, an authorized merged Archive PR/native close, and no durable Lead `LIFECYCLE_COMPLETE` evidence for that archive merge remains terminal-pending workflow work. It blocks activation of queued proposals until Lead performs the existing `finalize-archive` reconstruction and records completion evidence. After that bounded Lead completion record exists, the closed tuple is terminal history, is not eligible work, and does not block later admission.
 
-Trace: proposal activation boundary + native-close terminal handoff → specs `Persisted Change identity defines the single active workflow boundary` and `Native Archive close hands off to terminal Lead reconstruction` → slices 2 and 5.
+Trace: proposal activation boundary + native-close terminal handoff → specs `Persisted Change identity defines the single active workflow boundary`, modified `Actionable workflow routing is one logical role/action tuple`, and `Native Archive close hands off to terminal Lead reconstruction` → slices 2 and 5.
 
 ## Decision 4: At-least-once overlap remains the concurrency model
 
@@ -123,7 +123,7 @@ The dispatcher admits exactly one closed-Issue exception: `closed + agent:lead +
 
 If merge succeeded and native close happened but Executor was interrupted before relabel/comment, later reconstruction repairs only the missing post-merge terminal handoff/journal after proving exact authorized archive merge and native closure; it must not re-merge.
 
-Trace: proposal native-close terminal handoff → specs `Native Archive close hands off to terminal Lead reconstruction` and modified work-selection/active-workflow requirements → implementation slice 5.
+Trace: proposal native-close terminal handoff → specs modified `Actionable workflow routing is one logical role/action tuple`, `Native Archive close hands off to terminal Lead reconstruction`, and modified work-selection/active-workflow requirements → implementation slice 5.
 
 ## Decision 13: Work-conserving selected-action semantics are shared governance
 
