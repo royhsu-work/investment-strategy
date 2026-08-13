@@ -75,6 +75,13 @@ If the run stops after archive merge/native close but before the bounded complet
 run reconstructs the same terminal evidence and persists only the missing result. A valid existing
 `LIFECYCLE_COMPLETE` makes the closed tuple terminal history rather than eligible work.
 
+## Durable messages
+
+Use `agents/templates/messages.md` for recurring durable presentation. Lead merge authorization uses
+`MERGE_AUTHORIZATION`; non-review lifecycle outcomes including terminal `LIFECYCLE_COMPLETE` use the
+applicable `ACTION_RESULT`; and completed routing transfer uses canonical `HANDOFF` only after the routing
+mutation succeeds. Do not duplicate the shared template bodies here.
+
 ## Handoff and concurrency safety
 
 Persist authorization/result evidence before routing. Material workflow lifecycle transitions use the
