@@ -1,4 +1,4 @@
-"""Contract coverage for dynamic dispatch, verified checkpoints, and legacy compatibility."""
+"""Contract coverage for dynamic dispatch, checkpoints, journaling, and terminal lifecycle."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ AGENTS = ROOT / "agents" / "AGENTS.md"
 LEAD = ROOT / "agents" / "roles" / "lead.md"
 OPEN_SPEC_CHANGE = ROOT / "agents" / "skills" / "openspec-change" / "SKILL.md"
 IMPLEMENTATION = ROOT / "agents" / "skills" / "implementation" / "SKILL.md"
+MERGE_PR = ROOT / "agents" / "skills" / "merge-pr" / "SKILL.md"
+LIFECYCLE_FINALIZE = ROOT / "agents" / "skills" / "lifecycle-finalize" / "SKILL.md"
 
 
 def _read(path: Path) -> str:
@@ -210,3 +212,67 @@ def test_missing_verified_slice_checkpoint_is_recovered_without_replaying_comple
         "before further slice work or handoff",
     ):
         assert required in implementation
+
+
+def test_substantive_mutations_require_bounded_journal_and_interrupted_write_recovery() -> None:
+    shared = _normalized(AGENTS)
+    for required in (
+        "substantive durable workflow mutation",
+        "one bounded comment on the persistent coordination Issue",
+        "resulting durable state or evidence",
+        "next action or terminal result",
+        "journal comment itself",
+        "does not recursively require another meta-comment",
+        "mutation succeeds but its journal write is interrupted",
+        "preserves the already durable mutation",
+        "before performing further substantive workflow mutation or handoff",
+    ):
+        assert required in shared
+
+
+def test_archive_native_close_hands_off_to_terminal_lead_without_role_switch() -> None:
+    shared = _normalized(AGENTS)
+    merge = _normalized(MERGE_PR)
+    for required in (
+        "final Archive PR",
+        "natively closed",
+        "`agent:lead + action:finalize-archive`",
+        "closed Issue",
+        "bounded merge/native-close/handoff journal",
+        "MUST NOT execute Lead finalization in the same invocation",
+    ):
+        assert required in shared
+    for required in (
+        "Archive PR is durably merged",
+        "coordination Issue is observed natively `closed`",
+        "replace the consumed routing tuple with exactly `agent:lead + action:finalize-archive`",
+        "bounded merge/native-close/handoff journal",
+        "do not re-merge",
+        "repair only the missing terminal routing and journal evidence",
+    ):
+        assert required in merge
+
+
+def test_closed_terminal_pending_work_blocks_activation_until_lifecycle_complete() -> None:
+    shared = _normalized(AGENTS)
+    finalize = _normalized(LIFECYCLE_FINALIZE)
+    for required in (
+        "terminal-pending active workflow",
+        "closed coordination Issue",
+        "`agent:lead + action:finalize-archive`",
+        "authorized merged Archive PR",
+        "no valid Lead `LIFECYCLE_COMPLETE`",
+        "MUST NOT activate a queued proposal",
+        "terminal history",
+        "MUST NOT block later workflow admission",
+    ):
+        assert required in shared
+    for required in (
+        "LIFECYCLE_COMPLETE",
+        "Archive PR exact head",
+        "merge commit",
+        "does not reopen or redundantly close the Issue",
+        "canonical archived default-branch state",
+        "observed native Issue closure",
+    ):
+        assert required in finalize
