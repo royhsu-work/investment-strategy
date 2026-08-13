@@ -1,4 +1,4 @@
-"""Contract coverage for workflow-dynamic dispatch, checkpointing, and compatibility."""
+"""Contract coverage for dynamic dispatch, verified checkpoints, and legacy compatibility."""
 
 from __future__ import annotations
 
