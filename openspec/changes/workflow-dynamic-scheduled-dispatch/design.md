@@ -12,6 +12,7 @@ The repository already has durable coordination Issues, one legal routing tuple,
 - Keep overlapping wakes safe without hidden ownership state.
 - Make Human authority and escalation reconstructable from durable GitHub evidence.
 - Keep Scheduled Task prompts thin and product-independent.
+- Make `review-openspec` inspection order deterministic without changing its bidirectional correctness gate.
 
 ## Non-goals
 
@@ -19,7 +20,7 @@ The repository already has durable coordination Issues, one legal routing tuple,
 - Global cross-role/action priority scoring.
 - Locks, claims, leases, heartbeat, retry/progress state, or exactly-once execution.
 - A generic repository fault classifier or Human wait-state machine.
-- Changes to the nine actions, OpenSpec lifecycle, independent Reviewer gates, merge authority, or archive automation.
+- Changes to the nine actions, OpenSpec lifecycle, independent Reviewer authority, exact-revision PASS semantics, merge authority, or archive automation.
 
 ## Decision 1: One explicit dispatch marker
 
@@ -91,6 +92,14 @@ Implementation and future workflow changes must justify complexity with current 
 
 Trace: proposal scope boundary → spec proportionality requirement → slice 4 and final review.
 
+## Decision 9: `review-openspec` is reverse-first, while PASS stays bidirectional
+
+Reviewer inspection order is now deterministic: for each exact revision under `review-openspec`, inspect `tasks → design → specs → proposal` first, then inspect `proposal → specs → design → tasks`.
+
+This is deliberately an inspection-order contract rather than a different correctness rule. Reviewer independence and revision binding remain unchanged, and `PASS` still requires both directions to be complete for the same exact revision. Reverse-first must therefore be reflected in Reviewer governance/skill guidance and regression or contract coverage, but it must not be used to waive forward traceability.
+
+Trace: proposal reverse-first review requirement → spec `OpenSpec review uses reverse-first inspection while retaining the bidirectional gate` → implementation slice 4 and OpenSpec completion gate.
+
 ## Scheduled Task migration
 
 The three existing external wake slots remain. Their prompts should converge on the same bootstrap contract: read `README.md` and `agents/AGENTS.md`, determine the declared mode, use the legacy assigned role only in `fixed-role`, and in `workflow-dynamic` derive role/action from durable workflow state. Once an invocation selects a role, it never switches role in that run.
@@ -99,4 +108,4 @@ Prompt configuration itself is external product state. Repository tests/docs can
 
 ## Validation strategy
 
-Behavioral tests should exercise mode parsing, fixed-role compatibility, active-workflow selection, queued proposal activation ordering, invalid/multiple active fail-closed behavior, immutable invocation role, stale competing activation, actor-bound Human evidence, duplicate escalation suppression, seven-day advisory evidence, and analytics-only notification metadata. Repository quality checks and strict OpenSpec validation remain required.
+Behavioral tests should exercise mode parsing, fixed-role compatibility, active-workflow selection, queued proposal activation ordering, invalid/multiple active fail-closed behavior, immutable invocation role, stale competing activation, actor-bound Human evidence, duplicate escalation suppression, seven-day advisory evidence, analytics-only notification metadata, and reverse-first `review-openspec` inspection with unchanged exact-revision bidirectional PASS semantics. Repository quality checks and strict OpenSpec validation remain required.
