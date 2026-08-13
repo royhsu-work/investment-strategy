@@ -361,45 +361,6 @@ If a lifecycle transition succeeds but its required journal write is interrupted
 - THEN it preserves the already durable transition
 - AND writes only the missing canonical journal record before a later lifecycle transition or handoff
 
-### Requirement: Required routing handoff completes only after durable routing transition and HANDOFF evidence
-
-When an action's legal result requires ownership transfer to another routing tuple, persisting the action/review result and revision-aware evidence SHALL NOT by itself constitute normal action completion.
-
-After persisting the result, the current role MUST fresh-read the coordination Issue routing. If the source tuple still matches and the handoff remains legal, it MUST replace the routing tuple with the target owner/action, observe the successful routing mutation, and persist canonical `HANDOFF` evidence. Only then SHALL the required handoff boundary be considered durably completed for normal execution.
-
-If an actual interruption occurs after result evidence is durable but before the routing mutation or `HANDOFF` record is complete, a later eligible run MUST reconstruct and preserve the existing completed result, perform only the missing legal handoff work, and MUST NOT repeat already completed implementation/review/finalization solely because routing still names the source owner.
-
-This contract MUST NOT treat comments as canonical routing state: the routing labels remain authoritative workflow ownership, while `HANDOFF` is reconstructable evidence that the ownership transition completed.
-
-#### Scenario: Executor READY exists but routing still names Executor
-
-- GIVEN `Executor / implement-change` has a durable `READY` action result for exact revision R
-- AND all approved implementation work required for that result is already complete
-- BUT the coordination Issue routing still reads `Executor / implement-change`
-- WHEN a later Executor invocation reconstructs the work
-- THEN it preserves the completed implementation/result evidence
-- AND does not repeat the completed Slices
-- AND fresh-reads and changes routing to `Reviewer / review-implementation` if the handoff preconditions remain current
-- AND persists canonical `HANDOFF` evidence after the routing mutation succeeds
-
-#### Scenario: Reviewer PASS result precedes routing transfer
-
-- GIVEN Reviewer has durably recorded `PASS` for exact revision R
-- AND the legal next owner is Lead
-- WHEN the Issue still carries the Reviewer routing tuple
-- THEN the PASS remains valid review evidence for R
-- BUT the handoff is not complete merely because the review comment names the next action
-- AND Reviewer must complete the routing mutation and `HANDOFF` boundary unless a legal interruption/stale condition prevents it
-
-#### Scenario: Routing changed but HANDOFF write was interrupted
-
-- GIVEN a legal routing mutation already changed ownership to the target tuple
-- BUT the run ended before canonical `HANDOFF` evidence was persisted
-- WHEN the next eligible run reconstructs the durable state
-- THEN it preserves the already changed routing
-- AND repairs only the missing `HANDOFF` journal evidence before a later lifecycle transition
-- AND does not revert/replay the completed source action
-
 ### Requirement: Native Archive close hands off to terminal Lead reconstruction
 
 The final Archive PR SHALL retain the repository-approved GitHub closing linkage to the persistent coordination Issue.
@@ -500,6 +461,46 @@ Unrelated Issue labels MUST be preserved during routing changes.
 - WHEN a scheduled role evaluates eligibility
 - THEN the routing is invalid
 - AND no role proceeds by guessing which role owns the work
+
+### Requirement: Routing handoff persists evidence before ownership transfer
+
+A scheduled role SHALL persist the required action/review result, governed artifact state, and revision-aware evidence before changing the logical routing tuple. The result evidence MAY therefore exist while the source routing tuple is still current and MUST NOT by itself be treated as proof that ownership transferred.
+
+Before the routing mutation, the role SHALL fresh-read current Issue routing. If routing no longer matches the source action being completed, the role MUST NOT overwrite the newer routing and MUST stop as stale/contradictory rather than manufacture a handoff.
+
+If the source tuple still matches and the handoff remains legal, the role SHALL replace the routing tuple with the target owner/action and observe the successful routing mutation. The canonical `HANDOFF` lifecycle-journal evidence SHALL then be persisted after the routing mutation succeeds and SHALL describe the resulting target ownership. A required normal handoff is durably complete only when both the target routing mutation and its canonical `HANDOFF` evidence are durable.
+
+The workflow MUST NOT intentionally expose an intermediate state with two role owners or two action owners during a normal handoff. Routing labels remain canonical workflow ownership; `HANDOFF` is reconstructable evidence of the completed transition rather than a substitute for routing state.
+
+If an actual interruption occurs after result evidence is durable but before routing mutation or `HANDOFF` persistence completes, a later eligible run SHALL preserve the completed result and perform only the missing legal handoff work. If the routing mutation already succeeded but the `HANDOFF` write was interrupted, recovery SHALL preserve the target routing and repair only the missing `HANDOFF` evidence; it MUST NOT replay the completed source action merely to recreate the journal.
+
+#### Scenario: Result is durable before ownership transfer
+
+- GIVEN a role has durably persisted the action/review result and required revision-aware evidence
+- AND the coordination Issue still carries the matching source routing tuple
+- WHEN the role performs the required handoff
+- THEN it fresh-reads the source routing
+- AND changes routing to the legal target tuple
+- AND observes the successful routing mutation
+- AND only then persists canonical `HANDOFF` evidence describing the target ownership
+
+#### Scenario: Another run has already changed routing
+
+- GIVEN a role has completed work and persisted its result/revision evidence
+- AND a fresh read shows that another run has already changed the Issue routing tuple
+- WHEN the first run reaches its handoff step
+- THEN it does not overwrite the newer routing
+- AND it does not persist a false `HANDOFF` claiming a transition it did not perform
+- AND it stops for later reconstruction under the current durable owner/action
+
+#### Scenario: Routing changed but HANDOFF write was interrupted
+
+- GIVEN a legal handoff already changed routing to the target tuple
+- BUT the run ended before canonical `HANDOFF` evidence was persisted
+- WHEN a later eligible run reconstructs the durable state
+- THEN it preserves the already changed routing
+- AND repairs only the missing canonical `HANDOFF` evidence before a later lifecycle transition
+- AND it does not replay the completed source action
 
 ### Requirement: Each scheduled run processes at most one actionable work item using a fixed stable order
 
@@ -609,5 +610,5 @@ Associated Scheduled Task conversation/result surfacing SHALL be treated as an e
 - GIVEN a Scheduled Task wakes
 - WHEN it loads default-branch shared governance
 - THEN it determines dispatch mode from `Scheduled-Dispatch-Mode`
-- AND in workflow-dynamic mode reconstructs the active or terminal-pending workflow to derive role/action and mapped skill
+- AND in `workflow-dynamic` mode reconstructs the active or terminal-pending workflow to derive role/action and mapped skill
 - AND repository governance/templates remain sufficient without embedding a duplicate workflow or message protocol in the Scheduled Task prompt
