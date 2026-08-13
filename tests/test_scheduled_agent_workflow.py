@@ -235,6 +235,30 @@ def test_routing_concurrency_revision_and_crash_recovery_fail_closed() -> None:
         assert required in merge
 
 
+def test_pr_linkage_governance_reserves_closing_linkage_for_archive() -> None:
+    shared = _read(AGENTS / "AGENTS.md")
+    openspec_change = _read(AGENTS / "skills/openspec-change/SKILL.md")
+    merge = _read(AGENTS / "skills/merge-pr/SKILL.md")
+
+    for required in (
+        "Implementation and implementation-correction PRs MUST use non-closing references",
+        "MUST NOT establish GitHub Issue-closing linkage",
+        "reserved for the final Archive PR",
+    ):
+        assert required in shared
+
+    assert "non-closing reference to the coordination Issue" in openspec_change
+    assert "must not establish Issue-closing linkage" in openspec_change
+
+    for required in (
+        "implementation or implementation-correction PR",
+        "does not establish GitHub Issue-closing linkage",
+        "lifecycle-contract violation",
+        "do not merge",
+    ):
+        assert required in merge
+
+
 def test_persistent_lifecycle_archive_boundary_and_human_admission_are_documented() -> None:
     shared = _read(AGENTS / "AGENTS.md")
     labels = _read(AGENTS / "labels.md")
