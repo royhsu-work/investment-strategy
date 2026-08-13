@@ -2,9 +2,9 @@
 
 ## 1. Dispatch mode and workflow-first role selection
 
-- [ ] 1.1 RED: add behavioral tests for the authoritative `Scheduled-Dispatch-Mode` marker, fixed-role compatibility, workflow-dynamic active-workflow selection, invalid/multiple-active fail-closed behavior, and immutable invocation role; verify failures are caused by missing target behavior.
-- [ ] 1.2 GREEN: implement the minimum default-branch governance/dispatcher behavior that parses the single marker and derives role/action/skill from the one active workflow without global urgency scoring or a second DAG.
-- [ ] 1.3 REFACTOR/VERIFY: keep bootstrap logic thin; run slice tests, full regression suite, type checks, and lint checks.
+- [x] 1.1 RED: add behavioral tests for the authoritative `Scheduled-Dispatch-Mode` marker, fixed-role compatibility, workflow-dynamic active-workflow selection, invalid/multiple-active fail-closed behavior, and immutable invocation role; verify failures are caused by missing target behavior.
+- [x] 1.2 GREEN: implement the minimum default-branch governance/dispatcher behavior that parses the single marker and derives role/action/skill from the one active workflow without global urgency scoring or a second DAG.
+- [x] 1.3 REFACTOR/VERIFY: keep bootstrap logic thin; run slice tests, full regression suite, type checks, and lint checks.
 
 Trace: proposal dispatch mode + thin dispatcher → specs `Default-branch governance declares the scheduled dispatch mode`, `Workflow-dynamic dispatch derives one fixed invocation role`, modified `Each scheduled run processes...` → design Decisions 1-2.
 
