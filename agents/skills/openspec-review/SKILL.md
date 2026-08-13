@@ -44,6 +44,17 @@ that later state.
 Persist the review result before routing. Fresh-read current routing before handoff; if another run
 already changed it, do not overwrite the newer tuple.
 
+## Durable messages and handoff recovery
+
+Use `agents/templates/messages.md` for recurring durable presentation: the independent gate result uses
+`REVIEW_RESULT`, and completed routing transfer uses canonical `HANDOFF` only after the routing mutation
+succeeds.
+
+If an already-durable result exists but source routing still matches `Reviewer / review-openspec`,
+preserve the review evidence, fresh-read the source tuple, perform only the missing routing mutation to
+the action-defined target, observe the target routing, and persist canonical `HANDOFF`. Do not repeat
+the independent review or fabricate another review result merely to recover the missing handoff.
+
 ## Independence and concurrency
 
 Reviewer does not edit specification artifacts to resolve its own findings. Multiple evidence records
