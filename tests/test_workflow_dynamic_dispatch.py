@@ -1,4 +1,4 @@
-"""Contract coverage for dispatch selection and single-active activation behavior."""
+"""Contract coverage for workflow-dynamic scheduled dispatch governance."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents" / "AGENTS.md"
+LEAD = ROOT / "agents" / "roles" / "lead.md"
 OPEN_SPEC_CHANGE = ROOT / "agents" / "skills" / "openspec-change" / "SKILL.md"
 
 
@@ -122,3 +123,47 @@ def test_activation_overlap_uses_first_valid_write_and_stale_run_termination() -
         "stop as stale",
     ):
         assert required in change
+
+
+def test_orphan_evidence_blocks_new_activation_and_routes_to_bounded_lead_diagnosis() -> None:
+    text = _normalized(AGENTS)
+    for required in (
+        "unexplained durable workflow evidence",
+        "MUST NOT activate queued proposal work",
+        "Lead diagnosis",
+        "decision-ready escalation",
+        "repository-wide fault classifier",
+    ):
+        assert required in text
+
+
+def test_human_authority_is_actor_bound_and_notification_metadata_is_analytics_only() -> None:
+    text = _normalized(AGENTS)
+    for required in (
+        "actor `royhsu-work`",
+        "other actors",
+        "MUST NOT satisfy Human-required admission, answers, authorization, or resume conditions",
+        "`human:notified`",
+        "analytics-only metadata",
+        "MUST NOT grant authority",
+    ):
+        assert required in text
+
+
+def test_lead_escalation_is_decision_ready_bounded_and_not_repeated() -> None:
+    shared = _normalized(AGENTS)
+    lead = _normalized(LEAD)
+    for required in (
+        "at most three actionable proposals",
+        "material impact",
+        "risk/trade-off",
+        "Lead recommendation",
+        "MUST NOT repeat materially equivalent unanswered notifications",
+    ):
+        assert required in shared
+    for required in (
+        "authoritative Human answer",
+        "material evidence change",
+        "no-op",
+    ):
+        assert required in lead
