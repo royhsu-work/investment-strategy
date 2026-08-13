@@ -67,6 +67,13 @@ Legal handoff depends on the gate/blocker being resolved:
   contract makes that legal;
 - unresolved ambiguity or failed readiness evidence → retain Lead.
 
+## Durable messages
+
+Use `agents/templates/messages.md` for recurring durable presentation. Lead readiness/resolution outcomes
+use the applicable `ACTION_RESULT`; a genuine unresolved Human authority/intent decision uses Lead-only
+`HUMAN_DECISION_REQUIRED`; and a completed ownership transfer uses canonical `HANDOFF` only after the
+routing mutation succeeds. Do not copy private template bodies into this skill.
+
 ## Safety
 
 - Do not infer missing specification meaning on behalf of Executor.
