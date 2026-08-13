@@ -1,4 +1,4 @@
-"""Contract coverage for dynamic dispatch, Slice checkpoints, and lifecycle terminal flow."""
+"""Contract coverage for dynamic dispatch, Slice checkpoints, and work-conserving lifecycle flow."""
 
 from __future__ import annotations
 
