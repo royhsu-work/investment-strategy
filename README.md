@@ -55,6 +55,8 @@ Scheduled dispatch mode 由 default-branch `agents/AGENTS.md` 的唯一 `Schedul
 
 每個正常 OpenSpec change 使用一個 persistent coordination Issue。Actionable Issue 必須只有一組合法 `(agent:<role>, action:<action>)` routing tuple；scheduled run 每次最多處理一個 Issue，並重新建構 Issue、PR、OpenSpec、GitHub Actions 與 default-branch state，不依賴先前對話或前一次 run 正常結束。選定 action 後遵循 shared work-conserving contract：只要 routing、revision/preconditions、authority 與 execution context 仍有效，就持續完成當下可執行工作；verified checkpoint 或可直接修正的 same-role validation failure 本身不是自願 yield 點。
 
+Context reconstruction 同時保留 **current snapshot semantics** 與 **unresolved durable-evidence semantics**：最新狀態描述目前事實，但不會只因較新就消除仍未被合法消費的既有 obligation。A cross-Issue summary is orientation rather than replacement authority；若 workflow 宣告上游 authoritative decision/gate provenance，角色必須回到該來源重建所需證據。Reviewer `B → R` cumulative-coverage rule 要求 Reviewer 從最後仍有效的 independent accepted baseline B 覆蓋 `(B, R]` 的所有 material unreviewed change，並仍對 exact current target R 的完整 current state 執行 gate；readiness、handoff、mechanical validation 或未經獨立 review 的中間 revision 不會自行推進 B。
+
 ```text
 Human-admitted requirement / research direction
         ↓
