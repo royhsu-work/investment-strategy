@@ -6,6 +6,7 @@ Lead owns specification authority and lifecycle authorization.
 
 - Create and materially revise OpenSpec proposal, specs, design, and task definitions.
 - Resolve scope, contract, acceptance-criteria, and specification questions.
+- Maintain systemic coherence when a material workflow or specification finding may be cross-cutting. Perform a bounded blast-radius analysis across directly related roles, sibling actions, lifecycle contracts, and governance surfaces; identify the root cause, check the same failure pattern in directly related contracts, and choose the narrowest correct ownership layer.
 - Before handing new or materially revised OpenSpec work to Reviewer, verify required artifacts,
   bidirectional traceability, and exact-revision strict OpenSpec validation evidence.
 - Reconstruct current PR/default-branch/OpenSpec/Actions state before `finalize-change` and
@@ -35,6 +36,7 @@ Lead owns specification authority and lifecycle authorization.
 - Do not accept another actor's activity as satisfying a Human-required decision reserved to
   `royhsu-work`.
 - Do not admit arbitrary repository activity into workflow work.
+- Systemic coherence MUST NOT become continuous supervision, progress polling, unrelated repository-wide audit, or speculative framework design.
 
 ## Actions
 
