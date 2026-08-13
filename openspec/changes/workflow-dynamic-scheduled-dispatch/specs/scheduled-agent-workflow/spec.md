@@ -62,7 +62,9 @@ A selected action MAY end before its normal completion only when at least one of
 - stale or competing durable state invalidates the invocation's revision/base/preconditions; or
 - an actual tool failure, hard runtime limit, or other execution interruption prevents continuation.
 
-The generic continuation/termination contract SHALL be owned once by shared governance in `agents/AGENTS.md`. Role and skill documents MUST NOT duplicate or weaken this shared rule; they MAY define only action-specific results, authority boundaries, waits, blockers, and handoffs.
+A catchable tool/runtime/execution failure does not by itself waive exception capture or invocation finalization. If the invocation still has execution opportunity, it MUST first preserve the required raw exception evidence, then either recover and continue within the same selected role/action or converge to a legal durable disposition and required handoff before normal exit. A genuinely uncatchable hard termination MAY prevent current-run persistence and is handled by later at-least-once reconstruction.
+
+The generic continuation/termination, catchable-exception, and normal-finalization contracts SHALL be owned once by shared governance in `agents/AGENTS.md`. Role and skill documents MUST NOT duplicate or weaken these shared rules; they MAY define only action-specific results, authority boundaries, waits, local recovery, blockers, and handoffs.
 
 #### Scenario: Failed validation is locally actionable
 
@@ -96,6 +98,77 @@ The generic continuation/termination contract SHALL be owned once by shared gove
 - AND another run wins a competing durable mutation so the required base/preconditions are no longer current
 - WHEN the first invocation rechecks its preconditions
 - THEN it stops as stale rather than rebasing or continuing speculative work inside the same invocation
+
+### Requirement: Catchable execution exceptions preserve raw observable evidence before disposition
+
+All Scheduled Agent engineering actions SHALL apply one shared exception-capture contract to catchable tool, runtime, and execution failures.
+
+When such a failure is observable and the current invocation still has the ability to persist repository evidence, the current role MUST persist one canonical `EXECUTION_EXCEPTION` record before relying on a summarized interpretation or ending the invocation because of that failure.
+
+The record MUST preserve the raw error message exactly as it was observable to the Agent after the platform's existing safety redaction. It MUST NOT attempt to reveal hidden/withheld content, reverse platform redaction, or add secrets that were not present in the observable message.
+
+The record MUST also identify the selected role/action, attempted operation/tool, relevant revision/base when applicable, whether a durable mutation is known to have completed before the failure, and the current unfinished work boundary needed for reconstruction.
+
+Raw observation and agent interpretation/classification SHALL be separate fields. A known classification MAY be recorded when justified by evidence, but an unfamiliar failure MAY remain `UNCLASSIFIED_EXECUTION_EXCEPTION`. The raw observable error MUST NOT be replaced by a paraphrase or classification-only summary.
+
+`EXECUTION_EXCEPTION` is durable evidence, not a new lifecycle action, result enum, routing state, retry counter, or generic fault taxonomy. Persisting it does not by itself authorize a retry, transfer ownership, or prove an action result.
+
+#### Scenario: File mutation returns a catchable safety denial
+
+- GIVEN Executor is selected for `implement-change`
+- AND an approved file mutation is immediately actionable
+- WHEN the tool returns a catchable safety/policy denial before the mutation succeeds
+- THEN Executor records canonical `EXECUTION_EXCEPTION`
+- AND preserves the raw observable denial text separately from any classification
+- AND records that no durable file mutation is known to have completed
+- AND does not mark the affected task or Slice complete solely because the failure was observed
+
+#### Scenario: Unknown tool failure is not prematurely classified
+
+- GIVEN a catchable tool/runtime failure has a raw observable message
+- AND the current contract does not justify a known failure class
+- WHEN the Agent records the exception
+- THEN the classification MAY remain `UNCLASSIFIED_EXECUTION_EXCEPTION`
+- AND the raw observable message and factual operation/mutation context remain durable for later diagnosis
+
+#### Scenario: Hard termination prevents current-run capture
+
+- GIVEN an invocation is terminated before it has execution opportunity to persist exception evidence
+- WHEN a later wake reconstructs the workflow
+- THEN the workflow does not fabricate an `EXECUTION_EXCEPTION` message that the prior run never observed or persisted
+- AND it reconstructs partial durable state under the normal at-least-once contract
+
+### Requirement: Catchable execution exceptions are dispositioned before normal invocation exit
+
+After a catchable execution exception is durably captured, the selected role/action SHALL determine whether the failure can be legally recovered within the same authority while routing, revision/preconditions, and execution context remain current.
+
+If local recovery is legal and immediately actionable, the role MUST perform that recovery and continue the selected action under the shared work-conserving contract. Recording `EXECUTION_EXCEPTION` MUST NOT become a voluntary yield point.
+
+If local recovery is not legal or not sufficient, the invocation MUST, while it still has execution opportunity, persist the action-defined legal blocked/disposition result or route to the contract-defined diagnosis owner, then complete any required routing handoff under the canonical handoff contract before normal exit. The shared contract MUST NOT invent one universal blocked-result enum for all actions.
+
+When a newly observed catchable failure has no existing legal action-specific disposition or recovery path, bounded Lead diagnosis SHALL be the fallback specification/authority path. The captured raw evidence SHALL be the durable input to that diagnosis; Scheduled Task conversation memory MUST NOT be required.
+
+This requirement MUST NOT create a generic retry engine, failure-state machine, retry counter, automatic fault classifier, or hidden execution status. A truly uncatchable hard termination remains a later-reconstruction case rather than a falsely guaranteed `finally` block.
+
+#### Scenario: Captured exception is locally recoverable
+
+- GIVEN a role has persisted `EXECUTION_EXCEPTION`
+- AND the failure has a legal same-role/action recovery under the current contract
+- AND routing and preconditions remain current
+- WHEN the role evaluates disposition
+- THEN it performs the recovery
+- AND continues the current action in the same invocation
+- AND does not hand off merely because the exception record exists
+
+#### Scenario: Captured exception has no current action-specific path
+
+- GIVEN a role has persisted `EXECUTION_EXCEPTION`
+- AND the current role/action has no legal local recovery or existing disposition for the observed failure
+- WHEN the invocation still has execution opportunity
+- THEN it preserves completed durable work
+- AND routes the bounded unresolved execution diagnosis to `Lead / resolve-question`
+- AND completes the required routing/HANDOFF boundary
+- AND it does not repeatedly retry the rejected operation merely to avoid handoff
 
 ### Requirement: Persisted Change identity defines the single active workflow boundary
 
@@ -219,7 +292,7 @@ Lead MUST NOT repeat materially equivalent unanswered notifications while the du
 
 Repository workflow evidence and Human-facing Scheduled Task delivery SHALL be treated as separate channels.
 
-Ordinary Reviewer and Executor workflow results, checkpoints, merge results, and handoffs MUST remain repository-durable evidence only and MUST NOT be marked as Human-facing scheduled delivery. Ordinary Lead action results, merge authorization, resolved clarification, finalize progress, and handoff evidence MUST likewise remain repository-durable only.
+Ordinary Reviewer and Executor workflow results, checkpoints, merge results, handoffs, and `EXECUTION_EXCEPTION` evidence MUST remain repository-durable evidence only and MUST NOT be marked as Human-facing scheduled delivery. Ordinary Lead action results, merge authorization, resolved clarification, finalize progress, handoff evidence, and `EXECUTION_EXCEPTION` evidence MUST likewise remain repository-durable only.
 
 Only Lead MAY emit the canonical `HUMAN_DECISION_REQUIRED` workflow message, and Lead SHALL do so only when current approved contract and durable evidence are insufficient for Lead to legally resolve a decision that genuinely requires Human authority or intent. When no such unresolved Lead-owned Human decision exists, the Scheduled Agent wake SHALL be Human-silent even though repository work or durable GitHub evidence may have been produced.
 
@@ -231,6 +304,14 @@ The repository SHALL define Human-delivery eligibility, while actual Scheduled T
 - WHEN Reviewer persists the review evidence and legal handoff
 - THEN the `REVIEW_RESULT` and `HANDOFF` remain repository-durable workflow evidence
 - AND no Human-facing scheduled delivery is required
+
+#### Scenario: Execution exception is repository evidence only
+
+- GIVEN any Scheduled Agent role persists canonical `EXECUTION_EXCEPTION`
+- AND no unresolved Human authority/intent decision exists
+- WHEN scheduled delivery eligibility is evaluated
+- THEN the exception evidence remains repository-durable only
+- AND it does not become Human-facing merely because execution was blocked
 
 #### Scenario: Lead can resolve a workflow problem itself
 
@@ -264,15 +345,15 @@ The inspection order MUST NOT weaken or replace the correctness gate. A `PASS` s
 
 ### Requirement: Recurring workflow messages use canonical shared templates
 
-The repository SHALL define one shared Markdown presentation contract for recurring durable workflow messages and SHALL support the following seven canonical message types: `ACTION_RESULT`, `REVIEW_RESULT`, `SLICE_CHECKPOINT`, `MERGE_AUTHORIZATION`, `MERGE_RESULT`, `HANDOFF`, and `HUMAN_DECISION_REQUIRED`.
+The repository SHALL define one shared Markdown presentation contract for recurring durable workflow messages and SHALL support the following eight canonical message types: `ACTION_RESULT`, `REVIEW_RESULT`, `SLICE_CHECKPOINT`, `MERGE_AUTHORIZATION`, `MERGE_RESULT`, `HANDOFF`, `HUMAN_DECISION_REQUIRED`, and `EXECUTION_EXCEPTION`.
 
-The shared template artifact SHALL define a common workflow envelope and the event-specific evidence fields required by each type. Templates MUST define presentation/evidence shape only and MUST NOT redefine routing, authorization, termination, review, merge, lifecycle, or result-enum semantics owned by governance and role/action skills.
+The shared template artifact SHALL define a common workflow envelope and the event-specific evidence fields required by each type. Templates MUST define presentation/evidence shape only and MUST NOT redefine routing, authorization, termination, review, merge, lifecycle, result-enum, or generic exception-classification semantics owned by governance and role/action skills.
 
-Roles and skills SHALL reference the shared template source rather than duplicate full template bodies per role/action. The message contract MUST NOT require a parser-dependent message bus, JSON/YAML runtime schema, template engine, notification state machine, or hidden workflow state.
+Roles and skills SHALL reference the shared template source rather than duplicate full template bodies per role/action. The message contract MUST NOT require a parser-dependent message bus, JSON/YAML runtime schema, template engine, notification state machine, generic exception engine, or hidden workflow state.
 
 Free-form RED/GREEN/refactor/test-trigger/compatibility-correction progress, Lead progress polling, and `No Human action is required` status noise MUST NOT become additional supported workflow message types.
 
-When a canonical typed message directly represents a lifecycle-journal boundary, that typed message SHALL satisfy the one required journal record for that boundary and MUST NOT require an additional duplicate generic `LIFECYCLE_JOURNAL` or recursive meta-comment.
+When a canonical typed message directly represents a lifecycle-journal boundary, that typed message SHALL satisfy the one required journal record for that boundary and MUST NOT require an additional duplicate generic `LIFECYCLE_JOURNAL` or recursive meta-comment. `EXECUTION_EXCEPTION` is not automatically a lifecycle boundary and MUST NOT be treated as an action result or handoff solely because the exception evidence exists.
 
 #### Scenario: Verified Slice uses the shared checkpoint template
 
@@ -287,6 +368,14 @@ When a canonical typed message directly represents a lifecycle-journal boundary,
 - WHEN the durable review result is persisted
 - THEN it uses `REVIEW_RESULT`
 - AND preserves the exact reviewed revision, gate evidence, findings when present, and expected next owner
+
+#### Scenario: Catchable execution failure uses the shared exception template
+
+- GIVEN a Scheduled Agent observes a catchable execution failure
+- WHEN it persists the required raw exception evidence
+- THEN it uses `EXECUTION_EXCEPTION`
+- AND preserves the raw platform-observable error separately from classification/disposition
+- AND includes the attempted operation/tool, relevant revision, known mutation outcome, and unfinished work boundary
 
 #### Scenario: Typed transition message is already the lifecycle journal
 
@@ -416,12 +505,12 @@ When forming bounded idle recommendations, Lead SHALL consider relevant reposito
 
 ### Requirement: Workflow governance applies a simplicity and proportionality constraint
 
-Repository workflow design SHALL add complexity only when justified by current approved requirements or demonstrated failure modes. Hypothetical future generality MUST NOT by itself justify a central workflow engine, multi-active arbitration platform, generic fault classifier, message bus/template engine, or hidden runtime ownership state.
+Repository workflow design SHALL add complexity only when justified by current approved requirements or demonstrated failure modes. Hypothetical future generality MUST NOT by itself justify a central workflow engine, multi-active arbitration platform, generic fault classifier, generic exception/retry platform, message bus/template engine, or hidden runtime ownership state.
 
 #### Scenario: A generalized dispatcher framework is proposed without current need
 
-- GIVEN current workflow requirements are satisfied by the thin workflow-first dispatcher and shared Markdown message contract
-- AND no demonstrated failure requires a generalized orchestration or messaging subsystem
+- GIVEN current workflow requirements are satisfied by the thin workflow-first dispatcher, shared execution contracts, and shared Markdown message contract
+- AND no demonstrated failure requires a generalized orchestration, messaging, exception-classification, or retry subsystem
 - WHEN an implementation or later proposal considers such machinery
 - THEN the additional machinery is out of scope
 - AND a new approved OpenSpec change with concrete evidence is required before adding it
@@ -595,15 +684,15 @@ If an open advisory remains without valid Human admission, later Lead runs SHALL
 
 Implementation SHALL provide:
 
-- `agents/AGENTS.md` for shared execution protocol, the single authoritative `Scheduled-Dispatch-Mode` marker, the shared work-conserving selected-action termination/yield contract, and the shared result-vs-handoff completion rule;
+- `agents/AGENTS.md` for shared execution protocol, the single authoritative `Scheduled-Dispatch-Mode` marker, the shared work-conserving selected-action termination/yield contract, the shared catchable-exception capture and invocation-finalization contracts, and the shared result-vs-handoff completion rule;
 - role definitions for Lead, Reviewer, and Executor under `agents/roles/`;
-- a reduced reusable set of procedural skills under `agents/skills/` covering the nine action contracts without one skill per trivial action and without duplicating or weakening shared termination/handoff semantics;
-- one shared `agents/templates/messages.md` Markdown presentation contract containing the common envelope and the seven canonical workflow message types without per-role/per-action template copies or a template/message runtime engine;
-- repository documentation describing fixed-role compatibility, workflow-dynamic dispatch, the single-active activation boundary, shared work-conserving invocation semantics, canonical workflow messages, result-vs-handoff completion, verified-slice coordination checkpoints, lifecycle-transition journaling, Lead-only decision-required Human delivery eligibility, native-close terminal handoff/reconstruction, and the relationship to existing OpenSpec/archive automation.
+- a reduced reusable set of procedural skills under `agents/skills/` covering the nine action contracts without one skill per trivial action and without duplicating or weakening shared termination/exception/finalization/handoff semantics;
+- one shared `agents/templates/messages.md` Markdown presentation contract containing the common envelope and the eight canonical workflow message types without per-role/per-action template copies or a template/message runtime engine;
+- repository documentation describing fixed-role compatibility, workflow-dynamic dispatch, the single-active activation boundary, shared work-conserving invocation semantics, shared catchable exception capture and invocation finalization, canonical workflow messages, result-vs-handoff completion, verified-slice coordination checkpoints, lifecycle-transition journaling, Lead-only decision-required Human delivery eligibility, native-close terminal handoff/reconstruction, and the relationship to existing OpenSpec/archive automation.
 
-Scheduled Task prompts SHALL remain bootstrap-only: they may require loading default-branch governance and selecting dispatch mode, but MUST NOT duplicate repository execution, concurrency, handoff, stale-state, Human-escalation, termination/yield, canonical message bodies, checkpoint-journal, lifecycle-journal, terminal-reconstruction, or idle semantics.
+Scheduled Task prompts SHALL remain bootstrap-only: they may require loading default-branch governance and selecting dispatch mode, but MUST NOT duplicate repository execution, concurrency, handoff, stale-state, Human-escalation, termination/yield, exception-capture/finalization, canonical message bodies, checkpoint-journal, lifecycle-journal, terminal-reconstruction, or idle semantics.
 
-Associated Scheduled Task conversation/result surfacing SHALL be treated as an external product boundary and MUST NOT become repository workflow state. The external migration configuration SHALL treat ordinary workflow outcomes as Human-silent and SHALL reserve Human-facing workflow delivery eligibility for Lead `HUMAN_DECISION_REQUIRED` only, subject to actual product delivery capabilities.
+Associated Scheduled Task conversation/result surfacing SHALL be treated as an external product boundary and MUST NOT become repository workflow state. The external migration configuration SHALL treat ordinary workflow outcomes and `EXECUTION_EXCEPTION` evidence as Human-silent and SHALL reserve Human-facing workflow delivery eligibility for Lead `HUMAN_DECISION_REQUIRED` only, subject to actual product delivery capabilities.
 
 #### Scenario: Dynamic Scheduled Task bootstraps from repository governance
 
@@ -611,4 +700,4 @@ Associated Scheduled Task conversation/result surfacing SHALL be treated as an e
 - WHEN it loads default-branch shared governance
 - THEN it determines dispatch mode from `Scheduled-Dispatch-Mode`
 - AND in `workflow-dynamic` mode reconstructs the active or terminal-pending workflow to derive role/action and mapped skill
-- AND repository governance/templates remain sufficient without embedding a duplicate workflow or message protocol in the Scheduled Task prompt
+- AND repository governance/templates remain sufficient without embedding a duplicate workflow, exception-handling, or message protocol in the Scheduled Task prompt
