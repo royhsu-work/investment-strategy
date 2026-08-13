@@ -181,11 +181,11 @@ The inspection order MUST NOT weaken or replace the correctness gate. A `PASS` s
 
 ### Requirement: Verified implementation slices persist a bounded coordination-Issue checkpoint
 
-For `Executor / implement-change`, after an approved vertical slice reaches successful `VERIFY`, Executor MUST persist all satisfied task markers for that slice and MUST persist one bounded checkpoint comment on the persistent coordination Issue before beginning the next slice or handing off.
+For `Executor / implement-change`, after an approved vertical slice reaches successful `VERIFY`, Executor MUST persist all satisfied task markers for that slice and MUST persist exactly one bounded checkpoint comment on the persistent coordination Issue before beginning the next slice or handing off.
 
 The checkpoint comment MUST identify the completed slice or task IDs, the durable checkpoint or verified revision, the required VERIFY/gate result, and the remaining approved work or handoff target. The comment SHALL summarize the completion boundary and MUST NOT replace the PR/commit, task markers, or CI evidence as their respective sources of truth.
 
-This requirement is completion-boundary observability only. It MUST NOT introduce periodic heartbeat, progress percentage, `status:in-progress`, lock, claim, lease, retry counter, hidden ownership state, or other live execution machinery.
+RED/GREEN/refactor/test-trigger/compatibility-correction commits and ordinary governed artifact or task-marker edits inside the same not-yet-complete slice MUST NOT independently require coordination-Issue progress comments. This requirement is completion-boundary observability only and MUST NOT introduce periodic heartbeat, progress percentage, `status:in-progress`, lock, claim, lease, retry counter, hidden ownership state, or other live execution machinery.
 
 #### Scenario: Verified slice completes before another slice begins
 
@@ -193,9 +193,17 @@ This requirement is completion-boundary observability only. It MUST NOT introduc
 - AND the slice's required VERIFY and repository gates succeed
 - WHEN Executor prepares to continue implementation
 - THEN all satisfied task markers for that slice are durably persisted
-- AND one bounded checkpoint is durably recorded on the persistent coordination Issue
+- AND exactly one bounded checkpoint is durably recorded on the persistent coordination Issue
 - AND the checkpoint identifies the completed work, durable revision, gate result, and remaining work
 - AND only then may Executor begin the next approved slice
+
+#### Scenario: Work continues inside an unverified slice
+
+- GIVEN Executor is performing RED, GREEN, refactor, test-trigger, compatibility correction, or ordinary artifact/task edits inside one approved slice
+- AND that slice has not yet reached successful VERIFY
+- WHEN those intermediate mutations are persisted
+- THEN Git/PR/task evidence remains the detailed source of truth
+- AND no additional implementation-progress Issue comment is required solely for those mutations
 
 #### Scenario: Task markers persisted but checkpoint write was interrupted
 
@@ -205,28 +213,35 @@ This requirement is completion-boundary observability only. It MUST NOT introduc
 - THEN it does not rerun or clear the already verified slice merely to recreate progress
 - AND it persists the missing bounded checkpoint from current durable evidence before beginning another slice or handing off
 
-### Requirement: Substantive durable workflow mutations are journaled on the coordination Issue
+### Requirement: Material workflow lifecycle transitions are journaled on the coordination Issue
 
-Whenever a Scheduled Agent performs a substantive durable workflow mutation, it MUST persist one bounded comment on the persistent coordination Issue describing the mutation, the resulting durable state or evidence, and the next action or terminal result.
+A Scheduled Agent MUST persist one bounded coordination-Issue journal entry when it completes a material workflow lifecycle transition that changes durable workflow ownership or lifecycle state. Covered boundaries include routing handoff, PR merge, Archive native close/post-merge terminal handoff, Lead `LIFECYCLE_COMPLETE`, and Human escalation/specification-resolution boundaries.
 
-Substantive mutations include governed artifact or task-marker writes, routing-label changes, Issue or PR state mutations, and merge mutations. The required journal comment itself is durable evidence and SHALL NOT recursively require another meta-comment solely because the comment was written.
+Related low-level writes that together implement one legal lifecycle transition MAY be represented by the single boundary journal. Ordinary implementation mutations inside an unverified slice are governed by the verified-Slice checkpoint requirement above and MUST NOT become per-commit, per-file, or per-mutation Issue logging. The journal comment itself SHALL NOT recursively require another meta-comment.
 
-If multiple related mutations form one legal workflow boundary, one bounded comment MAY journal that boundary without duplicating comments for each low-level API call. If the substantive mutation succeeds but its journal write is interrupted, a later eligible run MUST reconstruct the durable mutation and persist the missing journal entry before performing further substantive workflow mutation or handoff.
+If a lifecycle transition succeeds but its required journal write is interrupted, a later eligible run MUST reconstruct the already durable transition and persist the missing bounded journal before performing a later lifecycle transition or handoff; it MUST NOT replay the completed unsafe mutation merely to recreate journal evidence.
 
 #### Scenario: Routing handoff is durably changed
 
-- GIVEN a Scheduled Agent legally changes the coordination Issue routing tuple
-- WHEN the routing mutation succeeds
-- THEN the Agent records a bounded coordination-Issue comment describing the prior/current durable result and next role/action
+- GIVEN a Scheduled Agent legally completes an action and changes the coordination Issue routing tuple
+- WHEN the routing handoff succeeds
+- THEN the Agent records one bounded coordination-Issue comment describing the completed boundary, resulting durable state/evidence, and next role/action
 - AND no recursive meta-comment is required for that journal write
 
-#### Scenario: Mutation succeeds but journal write is interrupted
+#### Scenario: Intermediate implementation commit is persisted
 
-- GIVEN a Scheduled Agent completed a substantive durable mutation
+- GIVEN Executor is inside an approved slice that has not reached successful VERIFY
+- WHEN a RED, GREEN, refactor, test-trigger, compatibility-correction, artifact, or task-edit mutation is persisted
+- THEN that mutation does not independently require a lifecycle journal comment
+- AND the eventual successful Slice VERIFY is journaled exactly once under the verified-Slice checkpoint requirement
+
+#### Scenario: Lifecycle transition succeeds but journal write is interrupted
+
+- GIVEN a Scheduled Agent completed a material lifecycle transition
 - BUT the run ended before its required bounded journal comment was persisted
 - WHEN a later eligible run reconstructs that state
-- THEN it preserves the already durable mutation
-- AND writes the missing bounded journal record before further substantive workflow mutation or handoff
+- THEN it preserves the already durable transition
+- AND writes the missing bounded journal record before a later lifecycle transition or handoff
 
 ### Requirement: Native Archive close hands off to terminal Lead reconstruction
 
@@ -391,9 +406,9 @@ Implementation SHALL provide:
 - `agents/AGENTS.md` for shared execution protocol and the single authoritative `Scheduled-Dispatch-Mode` marker;
 - role definitions for Lead, Reviewer, and Executor under `agents/roles/`;
 - a reduced reusable set of procedural skills under `agents/skills/` covering the nine action contracts without one skill per trivial action;
-- repository documentation describing fixed-role compatibility, workflow-dynamic dispatch, the single-active activation boundary, verified-slice coordination checkpoints, substantive-mutation journaling, native-close terminal handoff/reconstruction, and the relationship to existing OpenSpec/archive automation.
+- repository documentation describing fixed-role compatibility, workflow-dynamic dispatch, the single-active activation boundary, verified-slice coordination checkpoints, lifecycle-transition journaling, native-close terminal handoff/reconstruction, and the relationship to existing OpenSpec/archive automation.
 
-Scheduled Task prompts SHALL remain bootstrap-only: they may require loading default-branch governance and selecting dispatch mode, but MUST NOT duplicate repository execution, concurrency, handoff, stale-state, Human-escalation, checkpoint-journal, mutation-journal, terminal-reconstruction, or idle semantics.
+Scheduled Task prompts SHALL remain bootstrap-only: they may require loading default-branch governance and selecting dispatch mode, but MUST NOT duplicate repository execution, concurrency, handoff, stale-state, Human-escalation, checkpoint-journal, lifecycle-journal, terminal-reconstruction, or idle semantics.
 
 Associated Scheduled Task conversation/result surfacing SHALL be treated as an external product boundary and MUST NOT become repository workflow state.
 
