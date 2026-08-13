@@ -1,4 +1,4 @@
-"""Contract coverage for dynamic dispatch, Slice checkpoints, lifecycle journals, and terminal-flow verification."""
+"""Contract coverage for dynamic dispatch, Slice checkpoints, lifecycle journals, and terminal recovery verification."""
 
 from __future__ import annotations
 
