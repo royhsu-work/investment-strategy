@@ -14,6 +14,9 @@ artifacts under review.
   canonical spec result, archive/history preservation, unrelated-change exclusion, and current strict
   validation evidence.
 - Record durable `PASS` or actionable findings bound to the exact reviewed revision.
+- Persist recurring durable review and handoff evidence using the shared Markdown presentation contract
+  in `agents/templates/messages.md`; Reviewer uses `REVIEW_RESULT` and, after successful routing mutation,
+  canonical `HANDOFF` rather than private per-action template bodies.
 - Fail closed when current evidence is stale, contradictory, missing, or revision-mismatched.
 
 ## Prohibitions
