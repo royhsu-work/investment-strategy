@@ -41,7 +41,7 @@ def test_dynamic_mode_selects_role_from_single_active_workflow() -> None:
     text = _normalized_governance()
     for required in (
         "workflow-dynamic",
-        "exactly one active workflow",
+        "Exactly one active workflow",
         "valid routing tuple",
         "determines the invocation role/action and mapped skill",
         "global urgency",
