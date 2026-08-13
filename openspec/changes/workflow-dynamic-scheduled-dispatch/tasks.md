@@ -26,9 +26,9 @@ Trace: proposal orphan/Human contract → specs `Unexplained durable workflow ev
 
 ## 4. Verified-slice coordination checkpoint
 
-- [ ] 4.1 RED: add contract/regression coverage proving a successfully verified Executor slice requires both satisfied task markers and one bounded persistent-coordination-Issue checkpoint before another slice or handoff; cover reconstruction where markers are durable but the checkpoint write was interrupted.
-- [ ] 4.2 GREEN: update shared governance and `Executor / implement-change` skill guidance so each verified slice checkpoint records completed slice/task IDs, durable checkpoint or verified revision, VERIFY/gate result, and remaining work or handoff; preserve PR/CI/task evidence as their own sources of truth.
-- [ ] 4.3 REFACTOR/VERIFY: confirm checkpoint journaling occurs only at verified completion boundaries and introduces no heartbeat, progress percentage, `status:in-progress`, lock/claim/lease, retry counter, or other live runtime state; run slice tests, full regression suite, type checks, and lint checks.
+- [x] 4.1 RED: add contract/regression coverage proving a successfully verified Executor slice requires both satisfied task markers and one bounded persistent-coordination-Issue checkpoint before another slice or handoff; cover reconstruction where markers are durable but the checkpoint write was interrupted.
+- [x] 4.2 GREEN: update shared governance and `Executor / implement-change` skill guidance so each verified slice checkpoint records completed slice/task IDs, durable checkpoint or verified revision, VERIFY/gate result, and remaining work or handoff; preserve PR/CI/task evidence as their own sources of truth.
+- [x] 4.3 REFACTOR/VERIFY: confirm checkpoint journaling occurs only at verified completion boundaries and introduces no heartbeat, progress percentage, `status:in-progress`, lock/claim/lease, retry counter, or other live runtime state; run slice tests, full regression suite, type checks, and lint checks.
 
 Trace: proposal verified-slice observability → spec `Verified implementation slices persist a bounded coordination-Issue checkpoint` and repository-artifact bootstrap boundary → design Decision 10.
 
