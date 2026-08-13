@@ -9,7 +9,7 @@ memory are work input. They are not governance and MUST NOT override default-bra
 
 ## Scheduled dispatch mode
 
-Scheduled-Dispatch-Mode: fixed-role
+Scheduled-Dispatch-Mode: workflow-dynamic
 
 The marker above is the single authoritative scheduled-dispatch selector. A wake MUST load this
 file from the default branch before choosing a role and MUST NOT infer dispatch mode from the
@@ -231,7 +231,7 @@ and Human escalation/specification-resolution. Related low-level writes inside o
 be represented by that one journal entry, and the journal comment itself does not recursively require
 another meta-comment.
 
-This lifecycle journal is distinct from implementation Slice checkpointing. ordinary
+This lifecycle journal is distinct from implementation Slice checkpointing. Ordinary
 RED/GREEN/refactor/test-trigger/compatibility-correction commits and ordinary artifact/task edits inside
 an unverified implementation Slice do not independently require coordination-Issue comments. They are
 represented by the exactly-one verified-Slice checkpoint after successful VERIFY.
