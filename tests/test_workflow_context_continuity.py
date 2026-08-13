@@ -1,4 +1,4 @@
-"""Contract coverage for durable context continuity and cumulative Reviewer coverage."""
+"""Contract coverage for authoritative continuity and cumulative Reviewer coverage."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def test_shared_context_continuity_applies_to_all_nine_actions() -> None:
         "Authoritative context continuity and evidence consumption",
         "all nine normal actions",
         "still-applicable durable evidence",
-        "simple recency does not consume evidence",
+        "Simple recency does not consume evidence",
         "authoritative supersession",
         "durable resolution",
         "applicable independent gate acceptance",
@@ -57,7 +57,7 @@ def test_reviewer_role_owns_cumulative_baseline_to_target_coverage() -> None:
         "exact current target R",
         "every material unreviewed change in `(B, R]`",
         "complete current state at R",
-        "intermediate readiness",
+        "Intermediate readiness",
         "mechanical validation",
         "unreviewed revision",
         "MUST NOT advance B",
