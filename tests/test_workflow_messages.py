@@ -84,7 +84,12 @@ def test_shared_message_source_defines_exactly_eight_canonical_types() -> None:
 def test_canonical_templates_preserve_event_specific_evidence() -> None:
     expected_fields = {
         "ACTION_RESULT": ("Result", "Revision", "evidence", "next"),
-        "REVIEW_RESULT": ("reviewed revision", "gate evidence", "findings", "next owner"),
+        "REVIEW_RESULT": (
+            "reviewed revision",
+            "gate evidence",
+            "findings",
+            "next owner",
+        ),
         "SLICE_CHECKPOINT": (
             "Slice/task",
             "verified revision",
@@ -93,7 +98,11 @@ def test_canonical_templates_preserve_event_specific_evidence() -> None:
             "remaining work",
             "routing",
         ),
-        "MERGE_AUTHORIZATION": ("authorized revision", "gate evidence", "merge preconditions"),
+        "MERGE_AUTHORIZATION": (
+            "authorized revision",
+            "gate evidence",
+            "merge preconditions",
+        ),
         "MERGE_RESULT": ("PR", "exact head", "merge commit", "result", "next"),
         "HANDOFF": (
             "From",
@@ -129,16 +138,25 @@ def test_canonical_templates_preserve_event_specific_evidence() -> None:
             assert field in section, f"{message_type}: {field}"
 
 
-def test_roles_and_skills_reference_shared_templates_without_private_template_bodies() -> None:
+def test_roles_and_skills_reference_shared_templates_without_private_template_bodies() -> (
+    None
+):
+    heading_pattern = re.compile(
+        r"^## `(ACTION_RESULT|REVIEW_RESULT|SLICE_CHECKPOINT|MERGE_AUTHORIZATION|"
+        r"MERGE_RESULT|HANDOFF|HUMAN_DECISION_REQUIRED|EXECUTION_EXCEPTION)`$",
+        re.MULTILINE,
+    )
     for path in (*ROLE_FILES, *SKILL_FILES):
         text = _read(path)
         normalized = " ".join(text.split())
         assert "agents/templates/messages.md" in normalized, path
-        assert not re.search(r"^## `(ACTION_RESULT|REVIEW_RESULT|SLICE_CHECKPOINT|MERGE_AUTHORIZATION|MERGE_RESULT|HANDOFF|HUMAN_DECISION_REQUIRED|EXECUTION_EXCEPTION)`$", text, re.MULTILINE), path
+        assert not heading_pattern.search(text), path
 
 
 def test_intermediate_progress_and_status_noise_are_not_supported_message_types() -> None:
-    headings = set(re.findall(r"^## `([A-Z_]+)`$", _read(MESSAGES), flags=re.MULTILINE))
+    headings = set(
+        re.findall(r"^## `([A-Z_]+)`$", _read(MESSAGES), flags=re.MULTILINE)
+    )
     assert headings == set(CANONICAL_TYPES)
     for unsupported in (
         "RED_PROGRESS",
@@ -155,8 +173,12 @@ def test_intermediate_progress_and_status_noise_are_not_supported_message_types(
 
 def test_result_evidence_does_not_complete_required_handoff() -> None:
     shared = _normalized(AGENTS)
-    implementation = _normalized(ROOT / "agents" / "skills" / "implementation" / "SKILL.md")
-    reviewer = _normalized(ROOT / "agents" / "skills" / "openspec-review" / "SKILL.md")
+    implementation = _normalized(
+        ROOT / "agents" / "skills" / "implementation" / "SKILL.md"
+    )
+    reviewer = _normalized(
+        ROOT / "agents" / "skills" / "openspec-review" / "SKILL.md"
+    )
 
     for required in (
         "result evidence does not by itself complete a required routing handoff",
@@ -175,12 +197,14 @@ def test_result_evidence_does_not_complete_required_handoff() -> None:
             "source routing still matches",
             "perform only the missing routing mutation",
             "persist canonical `HANDOFF`",
-            "do not repeat",
+            "Do not repeat",
         ):
             assert required in text
 
 
-def test_typed_boundary_message_satisfies_lifecycle_journal_without_duplicate_meta_comment() -> None:
+def test_typed_boundary_message_satisfies_lifecycle_journal_without_duplicate_meta_comment() -> (
+    None
+):
     shared = _normalized(AGENTS)
     for required in (
         "canonical typed message",
@@ -199,7 +223,7 @@ def test_human_delivery_is_lead_only_decision_required_and_other_wakes_are_silen
     migration = _normalized(MIGRATION)
 
     for required in (
-        "only Lead",
+        "Only Lead",
         "`HUMAN_DECISION_REQUIRED`",
         "Human-facing delivery-eligible",
         "Reviewer/Executor",
@@ -210,7 +234,7 @@ def test_human_delivery_is_lead_only_decision_required_and_other_wakes_are_silen
         assert required in shared
 
     for required in (
-        "ordinary wakes are Human-silent",
+        "Ordinary wakes are Human-silent",
         "only",
         "`HUMAN_DECISION_REQUIRED`",
         "associated-conversation",
