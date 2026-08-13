@@ -60,6 +60,6 @@ Trace: the Lead systemic-coherence portion is an Engineering/Governance role-art
 
 ## 8. OpenSpec completion gate
 
-- [ ] 8.1 Verify reverse traceability first `tasks → design → specs → proposal`, then verify forward traceability `proposal → specs → design → tasks`; resolve any orphan requirement/task. This inspection order does not replace the requirement that both directions pass for the same exact revision.
+- [x] 8.1 Verify reverse traceability first `tasks → design → specs → proposal`, then verify forward traceability `proposal → specs → design → tasks`; resolve any orphan requirement/task. This inspection order does not replace the requirement that both directions pass for the same exact revision.
 - [ ] 8.2 Run repository-pinned `openspec validate --all --strict --json --no-interactive` against the exact final change revision and preserve exact-checkout validation evidence.
-- [ ] 8.3 Confirm proposal/spec/design/tasks remain single-purpose and consistent with `README.md`, `openspec/config.yaml`, the authoritative Human updates on #25, and the accepted #23 scope before requesting independent OpenSpec review.
+- [x] 8.3 Confirm proposal/spec/design/tasks remain single-purpose and consistent with `README.md`, `openspec/config.yaml`, the authoritative Human updates on #25, and the accepted #23 scope before requesting independent OpenSpec review.
