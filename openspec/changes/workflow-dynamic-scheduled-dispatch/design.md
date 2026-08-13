@@ -4,6 +4,8 @@
 
 The repository already has durable coordination Issues, one legal routing tuple, role/action skills, revision-bound evidence, and at-least-once reconstruction. The missing piece is dispatch: external Scheduled Tasks currently wake a fixed role and then perform role-local discovery. #23 accepted a workflow-first mode where the repository's active workflow selects the role while preserving the same lifecycle.
 
+Implementation history also exposed a coordination observability gap. #21 consistently mirrored verified Executor slices into the persistent coordination Issue, while #25 demonstrated that task markers and PR commits alone can leave the coordination Issue looking unchanged even though implementation progressed. The workflow therefore needs a bounded completion-boundary journal without introducing live progress state.
+
 ## Goals
 
 - Make dispatch mode explicit and default-branch governed.
@@ -13,6 +15,7 @@ The repository already has durable coordination Issues, one legal routing tuple,
 - Make Human authority and escalation reconstructable from durable GitHub evidence.
 - Keep Scheduled Task prompts thin and product-independent.
 - Make `review-openspec` inspection order deterministic without changing its bidirectional correctness gate.
+- Make each verified Executor slice reconstructable from the persistent coordination Issue as well as PR/task evidence.
 
 ## Non-goals
 
@@ -84,13 +87,13 @@ Trace: proposal Human boundary → specs `Human-required authority...` and `Lead
 
 Idle advisory remains Lead-only and bounded. Its research context expands to relevant Issues created or materially active in the preceding seven days. This is an evidence window, not a new queue or routing source.
 
-Trace: proposal idle exploration → spec idle requirements → slice 4.
+Trace: proposal idle exploration → spec idle requirements → slice 5.
 
 ## Decision 8: Simplicity/proportionality is a governance constraint
 
 Implementation and future workflow changes must justify complexity with current approved requirements or demonstrated failures. Generalized orchestration machinery is explicitly deferred.
 
-Trace: proposal scope boundary → spec proportionality requirement → slice 4 and final review.
+Trace: proposal scope boundary → spec proportionality requirement → slice 5 and final review.
 
 ## Decision 9: `review-openspec` is reverse-first, while PASS stays bidirectional
 
@@ -98,7 +101,17 @@ Reviewer inspection order is now deterministic: for each exact revision under `r
 
 This is deliberately an inspection-order contract rather than a different correctness rule. Reviewer independence and revision binding remain unchanged, and `PASS` still requires both directions to be complete for the same exact revision. Reverse-first must therefore be reflected in Reviewer governance/skill guidance and regression or contract coverage, but it must not be used to waive forward traceability.
 
-Trace: proposal reverse-first review requirement → spec `OpenSpec review uses reverse-first inspection while retaining the bidirectional gate` → implementation slice 4 and OpenSpec completion gate.
+Trace: proposal reverse-first review requirement → spec `OpenSpec review uses reverse-first inspection while retaining the bidirectional gate` → implementation slice 5 and OpenSpec completion gate.
+
+## Decision 10: Verified slices also journal one bounded coordination checkpoint
+
+After a vertical implementation slice reaches successful `VERIFY`, Executor must persist the satisfied task markers and one bounded comment on the persistent coordination Issue before beginning another slice or handing off. The comment records only durable completion evidence: completed slice/task IDs, verified or checkpoint revision, required gate result, and remaining work or handoff.
+
+The Issue comment is not a second source of truth for code or task completion. PR commits and task markers remain the detailed implementation evidence; the Issue checkpoint makes the workflow boundary reconstructable from the persistent coordination journal. If task markers are already durable but the corresponding checkpoint write was interrupted, a later Executor run reconstructs that verified boundary and persists the missing bounded checkpoint before further implementation rather than rerunning completed work.
+
+This intentionally follows the successful #21 execution-journal pattern while avoiding heartbeat or progress machinery. There is no periodic update, percentage, retry counter, ownership claim, or `status:in-progress`; comments are emitted only at verified completion boundaries.
+
+Trace: proposal verified-slice checkpoint requirement → spec `Verified implementation slices persist a bounded coordination-Issue checkpoint` → implementation slice 4.
 
 ## Scheduled Task migration
 
@@ -108,4 +121,4 @@ Prompt configuration itself is external product state. Repository tests/docs can
 
 ## Validation strategy
 
-Behavioral tests should exercise mode parsing, fixed-role compatibility, active-workflow selection, queued proposal activation ordering, invalid/multiple active fail-closed behavior, immutable invocation role, stale competing activation, actor-bound Human evidence, duplicate escalation suppression, seven-day advisory evidence, analytics-only notification metadata, and reverse-first `review-openspec` inspection with unchanged exact-revision bidirectional PASS semantics. Repository quality checks and strict OpenSpec validation remain required.
+Behavioral tests should exercise mode parsing, fixed-role compatibility, active-workflow selection, queued proposal activation ordering, invalid/multiple active fail-closed behavior, immutable invocation role, stale competing activation, actor-bound Human evidence, duplicate escalation suppression, seven-day advisory evidence, analytics-only notification metadata, reverse-first `review-openspec` inspection with unchanged exact-revision bidirectional PASS semantics, and verified-slice checkpoint persistence/recovery without live progress state. Repository quality checks and strict OpenSpec validation remain required.
