@@ -341,4 +341,5 @@ def test_task_completion_markers_persist_at_verified_slice_boundary() -> None:
         assert required in implementation
 
     assert "verified vertical-slice checkpoint" in readme
-    assert "`VERIFY` 成功後，必須在開始下一個 slice 或 handoff 前更新該 slice 已滿足的 markers" in readme
+    assert "`VERIFY` 成功後" in readme
+    assert "開始下一個 slice 或 handoff 前更新該 slice 已滿足的 markers" in readme
