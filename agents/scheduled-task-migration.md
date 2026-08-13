@@ -6,4 +6,6 @@ Each external Scheduled Task uses a common bootstrap prompt: read `README.md` an
 
 Migration retains the existing three wake slots externally. Exact slot count/topology/cadence is outside repository capability/runtime state and is not modeled as durable workflow state.
 
-Associated-conversation and result surfacing are external product behavior, not repository workflow state.
+Ordinary wakes are Human-silent. Reviewer/Executor workflow results, checkpoints, handoffs, merge results, and `EXECUTION_EXCEPTION` evidence remain repository-durable only; ordinary Lead results and exception evidence do likewise. Only a Lead-owned unresolved `HUMAN_DECISION_REQUIRED` condition is eligible for Human-facing scheduled delivery.
+
+Actual notification, associated-conversation, and result surfacing remain external product configuration and are not repository routing, waiting, authorization, or completion state. Scheduled Task prompts must not emit `No Human action is required` or equivalent status noise as a substitute for silence.
