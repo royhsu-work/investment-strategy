@@ -56,6 +56,10 @@ observed native Issue closure. A closed Issue with `agent:lead + action:finalize
 when that matching authorized merged-archive/native-close evidence exists and no valid Lead
 `LIFECYCLE_COMPLETE` result already exists.
 
+The normal path first observes the expected native Issue completion and requires the Issue to be
+observed closed. If Issue closure is observed before the authorized Archive PR merge, that closure is
+premature and fails closed rather than being accepted as lifecycle completion.
+
 When those final conditions are satisfied, Lead persists one bounded `LIFECYCLE_COMPLETE` result that
 identifies the Archive PR exact head, merge commit, canonical archived default-branch state, and observed
 native Issue closure. This result is durable execution evidence only; canonical completion still depends
@@ -63,8 +67,9 @@ on the authorized archive merge, correct archived state, and observed `closed` s
 or redundantly close the Issue when native closure is already present; in other words, finalization does
 not reopen or redundantly close the Issue.
 
-If canonical archive state is correct after the authorized merge but native close is unexpectedly
-missing, explicit Issue close remains recovery-only. In that recovery-only path, Lead may perform the GitHub coordination Issue close mutation and must re-observe `closed` before persisting
+Only when the authorized Archive PR is merged, canonical archive state is correct, and native completion
+is missing may Lead use explicit Issue-close recovery. In that recovery-only path, Lead may perform the
+GitHub coordination Issue close mutation and must re-observe `closed` before persisting
 `LIFECYCLE_COMPLETE`.
 
 If a recovery run is interrupted after archive completion but before the recovery close, the next Lead

@@ -236,7 +236,7 @@ def test_routing_concurrency_revision_and_crash_recovery_fail_closed() -> None:
 
 
 def test_pr_linkage_governance_reserves_closing_linkage_for_archive() -> None:
-    shared = _read(AGENTS / "AGENTS.md")
+    shared = " ".join(_read(AGENTS / "AGENTS.md").split())
     openspec_change = _read(AGENTS / "skills/openspec-change/SKILL.md")
     merge = _read(AGENTS / "skills/merge-pr/SKILL.md")
 
