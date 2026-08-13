@@ -55,7 +55,7 @@ def test_readme_places_semantic_bidirectional_review_inside_reviewer_gate() -> N
     assert "Reviewer semantic bidirectional review" in readme
     assert "reverse-first `tasks → design → specs → proposal`" in readme
     assert "then `proposal → specs → design → tasks`" in readme
-    assert "exact-revision strict OpenSpec validation" in readme
+    assert "exact-revision mechanical OpenSpec validation" in readme
 
 
 def test_executor_completion_does_not_claim_semantic_traceability_review() -> None:
