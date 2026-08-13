@@ -52,6 +52,8 @@ For each approved feature slice:
     `Executor / implement-change` route, revision/preconditions, authority, and execution context remain
     current, continue that work in the same invocation under the shared governance continuation contract.
 
+Executor does not perform semantic bidirectional OpenSpec review as part of implementation completion or task-marker verification. That exact-revision semantic gate belongs to independent `Reviewer / review-openspec`; Executor only consumes the approved revision/gate and runs the implementation/mechanical verification assigned to this action.
+
 ## Legal results
 
 - `READY` — approved implementation work for the current slice/change is complete and required gates are
