@@ -204,15 +204,18 @@ They MUST NOT introduce a competing generic continuation policy or weaken this s
 
 ## Handoff ordering and concurrency safety
 
-Ownership transfer occurs only after durable work is persisted:
+Ownership transfer occurs only after durable work is persisted. Result evidence does not by itself complete a required routing handoff. When an action-defined result requires another owner, the required order is:
 
 ```text
-persist artifact/result
-→ persist revision-aware evidence where required
-→ fresh-read Issue routing
-→ if routing still matches, replace the routing tuple
-→ otherwise stop; reconstruct on a later eligible run
+persist result + revision-aware evidence
+→ fresh-read source routing
+→ mutate routing to the target tuple
+→ observe successful routing mutation
+→ persist canonical `HANDOFF`
+→ end the current invocation
 ```
+
+`HANDOFF` follows successful routing mutation. If a prior invocation already persisted the result but source routing still matches the completed source action, a later eligible invocation preserves the already-durable result, performs only the missing routing mutation, observes the target tuple, persists canonical `HANDOFF`, and does not repeat completed implementation/review work or fabricate another result.
 
 A normal handoff MUST NOT intentionally expose two role owners or two action owners.
 
@@ -220,6 +223,12 @@ A normal handoff MUST NOT intentionally expose two role owners or two action own
 guarantee. Two same-role runs may observe the same tuple concurrently. Safety therefore depends on
 reconstruction, idempotency where practical, revision/precondition-aware unsafe mutations, and
 fail-closed interpretation of stale or contradictory evidence.
+
+## Canonical workflow messages
+
+Recurring durable workflow messages use the single shared Markdown source `agents/templates/messages.md`. Roles and skills reference that source instead of copying template bodies. The shared templates define presentation/evidence shape only; this governance and the owning role/action contracts retain all routing, authorization, termination, review, merge, lifecycle, result-enum, and exception meaning.
+
+A canonical typed message that directly represents a covered lifecycle transition satisfies the required lifecycle journal for that same boundary. The workflow MUST NOT add a duplicate generic `LIFECYCLE_JOURNAL` or recursive meta-comment merely to restate it. Routing transfer uses `HANDOFF`, PR merge uses `MERGE_RESULT`, applicable non-review lifecycle completion uses `ACTION_RESULT`, and Human escalation uses `HUMAN_DECISION_REQUIRED`.
 
 ## Lifecycle-transition journal
 
@@ -239,6 +248,12 @@ represented by the exactly-one verified-Slice checkpoint after successful VERIFY
 If a lifecycle transition succeeds but its journal write is interrupted, the next eligible run
 reconstructs and preserves the already durable transition rather than replaying it, then persists the
 missing journal before performing a further lifecycle transition or handoff.
+
+## Human-facing delivery eligibility
+
+Repository-durable workflow evidence and Human-facing Scheduled Task delivery are separate channels. Reviewer/Executor `REVIEW_RESULT`, `SLICE_CHECKPOINT`, `MERGE_RESULT`, `HANDOFF`, ordinary action evidence, and all-role `EXECUTION_EXCEPTION` are repository-durable only. Ordinary Lead `ACTION_RESULT`, `MERGE_AUTHORIZATION`, resolved clarification/finalize evidence, `HANDOFF`, and `EXECUTION_EXCEPTION` are also repository-durable only.
+
+Only Lead may produce `HUMAN_DECISION_REQUIRED`, and only that message is Human-facing delivery-eligible when current approved contract and durable evidence cannot legally resolve a decision that genuinely requires Human authority or intent. Otherwise the wake remains Human-silent. Actual notification and associated-conversation/result surfacing are external product configuration and MUST NOT become repository routing, waiting, authorization, or completion state.
 
 ## Revision-bound review and merge authorization
 
