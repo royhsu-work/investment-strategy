@@ -22,10 +22,9 @@ def test_constrained_branch_integration_is_executor_owned_and_non_force() -> Non
         "non-force",
         "new head invalidates exact-head readiness evidence",
         "Lead / resolve-question",
+        "Do not force update the implementation branch",
     ):
         assert required in role or required in skill
-
-    assert "force update" not in skill.lower()
 
 
 def test_constrained_integration_requires_verifiable_tree_and_changed_head_gates() -> None:
