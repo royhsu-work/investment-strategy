@@ -68,3 +68,15 @@ def test_final_archive_merge_requires_known_temporary_cleanup_first() -> None:
     assert "before the final Archive PR merge mutation" in merge
     assert "temporary integration/recovery branches" in merge
     assert "do not merge" in merge
+
+
+def test_repository_governance_delta_has_archiveable_purpose() -> None:
+    delta_path = (
+        ROOT
+        / "openspec/changes/establish-governance-single-source-of-truth/specs"
+        / "repository-governance/spec.md"
+    )
+    delta = _read(delta_path)
+    assert delta.count("## Purpose") == 1
+    purpose = delta.split("## Purpose", 1)[1].split("## ADDED Requirements", 1)[0].strip()
+    assert purpose
