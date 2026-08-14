@@ -57,6 +57,8 @@ This behavior MUST NOT create a polling service, durable timer, heartbeat, retry
 - THEN it does not invent same-invocation polling to cross that authority boundary
 - AND it follows the existing legal handoff/escalation/async-wait contract
 
+## ADDED Requirements
+
 ### Requirement: External wake topology is deployment configuration, not repository workflow state
 
 The repository SHALL define the bootstrap and dynamic-dispatch behavior a Scheduled Task must follow, but SHALL NOT require an exact number of external wake slots, exact cadence, or scheduler topology as durable workflow state or permanent runtime governance.
