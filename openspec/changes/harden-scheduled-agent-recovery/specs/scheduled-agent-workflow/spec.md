@@ -31,7 +31,7 @@ This requirement MUST NOT create a polling loop, heartbeat, retry counter, hidde
 
 ### Requirement: Constrained branch integration preserves reviewed semantics and fail-closed gates
 
-When `Executor / implement-change` must reconcile its implementation branch with a newer default branch, Executor MAY use a repository mutation path that does not require ordinary local git merge/rebase tooling only when the operation is non-force, its source head and current default-branch base are fresh-read and still current, and the resulting commit/tree can be verified to preserve the intended approved implementation semantics.
+When `Executor / implement-change` must reconcile its implementation branch with a newer default branch, Executor SHALL treat any constrained-tool reconciliation as an implementation correction and MAY use a repository mutation path that does not require ordinary local git merge/rebase tooling only when the operation is non-force, its source head and current default-branch base are fresh-read and still current, and the resulting commit/tree can be verified to preserve the intended approved implementation semantics.
 
 Such reconciliation MUST remain implementation-owned and MUST NOT redefine OpenSpec requirements, bypass independent Reviewer coverage, weaken exact-head validation, or manufacture merge authorization.
 
