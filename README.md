@@ -55,7 +55,13 @@ Repository 使用 OpenSpec + GitHub Issue/PR 進行規格驅動開發。README �
 
 外部 Scheduled Task 的 exact slot count、topology、cadence、notification 與 associated-conversation configuration 屬 product/deployment configuration；repository 只治理 bootstrap/dispatch behavior。Migration 說明見 `agents/scheduled-task-migration.md`。
 
-正常變更沿用 repository-governed OpenSpec lifecycle、independent review、exact-revision gates、verified-slice task checkpoints、repository-owned archive automation 與 final native Issue closure。完整 routing、handoff、Human authority、exception/recovery、merge authorization、archive terminal semantics 以 `agents/AGENTS.md` 及對應 role/skill 為準，README 不建立第二份 normative copy。
+下列名稱僅作 Human 搜尋與流程導覽，不在 README 重新定義其 normative semantics：`Lead / propose-change`、`Reviewer / review-openspec`、`Executor / implement-change`、`Reviewer / review-implementation`、`Lead / finalize-change`、`Executor / merge-pr`、`MORE_IMPLEMENTATION_REQUIRED`、`Reviewer / review-archive`、`Lead / finalize-archive`。Final lifecycle 仍包含 GitHub native close via final Archive PR closing linkage；`intake:approved`、routing、merge authorization、Human authority 與 exact gate meaning 一律以 authoritative governance 為準。Scheduled Role 不另建 normal `archive-change` mutation。
+
+同樣地，`current snapshot semantics`、`unresolved durable-evidence semantics`、`cross-Issue summary is orientation rather than replacement authority`、Reviewer `B → R` cumulative-coverage rule、verified vertical-slice checkpoint 等術語只是導覽索引；具體 contract 位於 `agents/AGENTS.md` 與對應 role/skill。Verified-slice 概念的高階意圖是：`VERIFY` 成功後才持久化完成證據，並在開始下一個 slice 或 handoff 前更新該 slice 已滿足的 markers；README 不規範其完整執行程序。
+
+Canonical workflow-message presentation 也遵循 default-branch authority：the default-branch merge is the activation boundary。An unmerged governance PR is review target/input and must not govern its own current invocation；詳細 activation/reconstruction rules 只在 authoritative governance 定義。
+
+Scheduled execution 的 concurrency 高階原則是 at-least-once/reconstructable；fresh-read routing → update labels **不是** mutex、CAS 或 single-flight。這裡只說明模型，具體 preconditions、handoff 與 stale-run 行為仍由 authoritative governance 擁有。
 
 ## OpenSpec lifecycle
 
@@ -79,6 +85,10 @@ openspec archive <change> --yes
 `openspec/specs/` 是 archive 後的 canonical contract source of truth。任何 Requirements、Scenarios 或 externally observable contract 的變更，仍必須透過新的 OpenSpec change lifecycle。
 
 Pinned OpenSpec CLI 在本 repository 已觀察到：建立新的 canonical capability 時，archive 可能以 generated `Purpose: TBD ...` 取代 delta spec 已核准的 Purpose。Repository archive workflow 因此在 archive 前 snapshot Purpose contract，archive 後只針對已知 generated placeholder 做 deterministic preservation：new capability 的 canonical Purpose 必須精確等於 approved delta Purpose；existing canonical capability 的 Purpose 必須保持不變。未知 Purpose transformation、缺失／空白／重複／placeholder delta Purpose，或不符合預期 canonical section shape 都會 fail loudly，且不 push archive branch。這是 pinned CLI compatibility guard，不改寫 Requirements / Scenarios。
+
+### Archive automation orientation
+
+Merged-PR archive classifier 是 repository automation 的 project-level 行為摘要，不是 Scheduled-Agent routing authority。Implementation branch 使用 `agent/<change>` branch convention，但 normal archive routing 不依賴 branch name。Classifier 在 triggering merge snapshot 上依 merged PR changed files 與 active OpenSpec state 判斷 candidate：0 個 active candidate 或 incomplete change 為 successful no-op，`>1 active touched` fail ambiguous；`Complete` 是 repository-level implementation completion signal。Normal automatic path 只接受 same-repository PR；fork candidate fail `unsupported automatic source`。Explicit recovery 使用 `openspec-archive-recovery`，`workflow_dispatch` 保留為 recovery / migration fallback。Archive queue 使用 `queue: max`，目前平台容量契約為 100 個 pending evaluations；詳細 deterministic archive mechanics 以 `.github/workflows/openspec-archive.yml` 與其 tests 為準。
 
 ## Architecture
 
@@ -290,8 +300,8 @@ Request-boundary rejection 不屬於這個 envelope，因為 application 尚未�
 - `.github/workflows/decision.yml`：formal Decision orchestration scaffold。
 - `.github/workflows/backtest.yml`：analytical Backtest orchestration scaffold；不含 fill simulation。
 - `.github/workflows/quality.yml`：`uv run pytest`、`ruff check`、`ruff format --check`、`mypy src tests`。
-- `.github/workflows/openspec-validate.yml`：執行 `openspec list` 與 project-level `openspec validate --all --strict --json --no-interactive`，不綁定已 archived change；對 exact-revision mechanical gate，workflow 先決定 target revision/repository、checkout 該 target、以 `git rev-parse HEAD` 驗證實際 validator `HEAD` 等於 target，並把 target/checkout identity 寫入 job log/summary 後才執行 strict validation。`run.head_sha` 只作 association metadata，不能單獨作 checkout proof；PR synthetic merge validation 不等於不同 PR head 的 exact-head validation。此 mechanical PASS 不自行建立或刷新 semantic `review-openspec` acceptance。
-- `.github/workflows/openspec-archive.yml`：對 merged-to-`main` 的 `pull_request.closed` 事件，固定 checkout triggering `merge_commit_sha`，從 PR changed files 與該 snapshot 的 active OpenSpec state 分類 candidate。Normal automatic path 只接受 same-repository PR；fork PR 若形成 OpenSpec candidate 則 fail `unsupported automatic source`。`openspec-archive-recovery` + same-repository `agent/<change>` 提供 explicit recovery；`workflow_dispatch` 保留 manual fallback。三條 path 共用 strict pre-validation、existing archive-branch guard、OpenSpec archive、strict post-validation 與 push core。Workflow 使用 `queue: max` 保留最多 100 個 pending evaluations，超量 cancellation 是可觀察 failure；workflow 只 push `agent/archive-<change>`，不直接寫入 `main`。
+- `.github/workflows/openspec-validate.yml`：執行 `openspec list` 與 project-level `openspec validate --all --strict --json --no-interactive`，不綁定已 archived change；對 exact-revision mechanical gate，workflow 先決定 target revision/repository、checkout 該 target、以 `git rev-parse HEAD` 驗證實際 validator `HEAD` 等於 target，並把 target/checkout identity 寫入 job log/summary 後才執行 strict validation。`run.head_sha` 只是 association metadata，單獨使用是 insufficient checkout proof；PR synthetic merge revision validation 不等於不同 PR head 的 exact-head validation。此 mechanical PASS 不自行建立或刷新 semantic acceptance。
+- `.github/workflows/openspec-archive.yml`：state-driven archive automation；詳細 classifier/recovery/queue behavior 見上方 orientation 與 workflow/tests。
 
 Generated analytical results 應上傳 Actions Artifacts，不 commit 回 repository。Production strategy/workflow activation 保持 deferred。
 
