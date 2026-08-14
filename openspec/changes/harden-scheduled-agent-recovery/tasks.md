@@ -54,5 +54,5 @@ Trace: #28 Human temporary branch cleanup addition (`issuecomment-5289581387`) �
 Trace: proposal full intent → all scheduled-agent-workflow delta requirements → Design Decisions 1–7; engineering/governance verification also follows `openspec/config.yaml`.
 
 - [x] 7.1 Re-check required trace declarations/references across proposal, spec, design, and tasks; confirm all #28 source incidents including `issuecomment-5289581387` are covered without expanding into #29 documentation/SSOT scope.
-- [ ] 7.2 Run repository-pinned strict OpenSpec validation for the exact final handoff revision and retain checkout-identity evidence satisfying the default-branch exact-revision contract.
+- [x] 7.2 Run repository-pinned strict OpenSpec validation for the exact final handoff revision and retain checkout-identity evidence satisfying the default-branch exact-revision contract.
 - [x] 7.3 Confirm the change remains single-purpose: constrained recovery/reconstruction only; no retry engine, lock/lease/heartbeat, hidden state, branch registry/garbage collector, global supervisor, new normal action, Reviewer-independence change, or gate weakening.
