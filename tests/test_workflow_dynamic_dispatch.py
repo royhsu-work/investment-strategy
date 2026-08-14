@@ -147,7 +147,8 @@ def test_human_authority_is_actor_bound_and_notification_metadata_is_analytics_o
         "other actors",
         "MUST NOT satisfy Human-required admission, answers, authorization, or resume conditions",
         "`human:notified`",
-        "analytics-only metadata",
+        "analytics-only",
+        "historical metadata",
         "MUST NOT grant authority",
     ):
         assert required in text
