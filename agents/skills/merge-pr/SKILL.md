@@ -12,9 +12,10 @@ target PR and exact current head revision R, durable Reviewer gate evidence, dur
 `MERGE_AUTHORIZED` evidence, current required gate/check state, and whether the target is an
 implementation/implementation-correction PR or the final Archive PR.
 
-For the final Archive PR, also reconstruct the expected persistent coordination Issue and verify the PR
-body establishes the repository-approved closing linkage to that same Issue. The linkage is structural
-lifecycle evidence only and never provides merge authority.
+For the final Archive PR, also reconstruct the expected persistent coordination Issue, verify the PR
+body establishes the repository-approved closing linkage to that same Issue, and reconstruct any known
+workflow-owned temporary integration/recovery branches named by durable lifecycle/recovery provenance or
+Lead authorization. The linkage is structural lifecycle evidence only and never provides merge authority.
 
 ## Merge preconditions
 
@@ -26,25 +27,53 @@ Execute a merge mutation only when all are simultaneously true and unambiguous:
 4. Required gates/checks remain valid and there is no contradictory current evidence.
 5. For an implementation or implementation-correction PR, the PR does not establish GitHub Issue-closing linkage to its persistent coordination Issue; it uses only a non-closing reference.
 6. For the final Archive PR, the PR establishes exactly the repository-approved closing linkage to the same persistent coordination Issue reconstructed for the immutable change identity.
+7. For the final Archive PR, all known pre-native-close temporary integration/recovery branch obligations
+   are cleared or have a durable reason they are not safely deletable. Executor fresh-reads branch
+   existence, open PR head/base usage, active recovery/integration references, and containment before any
+   cleanup mutation.
 
 Reviewer PASS alone is insufficient. Authorization for an earlier head is insufficient.
 
-A closing linkage on an implementation or implementation-correction PR is a lifecycle-contract violation. Even when every other gate is current, do not merge that PR; persist the violation and hand
-control to Lead for correction. Closing linkage is reserved for the final Archive PR and never provides
-merge authority by itself.
+A closing linkage on an implementation or implementation-correction PR is a lifecycle-contract violation.
+Even when every other gate is current, do not merge that PR; persist the violation and hand control to
+Lead for correction. Closing linkage is reserved for the final Archive PR and never provides merge
+authority by itself.
 
 A final Archive PR with missing, ambiguous, or wrong-Issue closing linkage also fails closed. Do not
 merge until the Archive PR identifies the same persistent coordination Issue and carries the
 repository-approved closing linkage while all independent revision-bound gates remain current.
 
+## Final Archive pre-close temporary branch cleanup
+
+Immediately before the final Archive PR merge mutation, Executor must process only the known
+workflow-owned temporary integration/recovery branches reconstructed for this lifecycle.
+
+For each such branch:
+
+1. Fresh-read the branch, all open PR head/base usage, durable recovery/integration references, and
+   containment against canonical `main` or an explicitly retained successor.
+2. Delete only when the branch is still the identified workflow-owned temporary branch, is not an open PR
+   head or base, is not active recovery/integration input, and has no unique commits (`ahead_by == 0` or
+   equivalent current containment proof).
+3. After deletion, re-read enough durable state to prove the known obligation is cleared before merging
+   the final Archive PR.
+4. If the branch has unique commits, active use, ambiguous ownership/use, unavailable proof, or a denied
+   cleanup mutation, do not merge. Preserve the observable failure with the shared exception contract and
+   hand bounded diagnosis to Lead when same-action recovery is not legal.
+
+This is pre-close lifecycle hygiene, not broad branch garbage collection. Executor must not force-delete,
+force-update, or infer cleanup ownership merely from an `agent/*` name pattern.
+
 Legal pre-merge outcomes:
 
-- all preconditions current → merge exactly R;
+- all preconditions current and final-Archive cleanup obligations cleared → merge exactly R;
 - `STALE_AUTHORIZATION` or `GATE_CHANGED`/contradictory evidence → do not merge; hand control to Lead;
 - implementation PR contains coordination-Issue closing linkage → `LIFECYCLE_CONTRACT_VIOLATION`; do
   not merge and hand control to Lead;
 - final Archive PR has missing/ambiguous/wrong coordination-Issue closing linkage →
-  `LIFECYCLE_CONTRACT_VIOLATION`; do not merge and hand control to Lead.
+  `LIFECYCLE_CONTRACT_VIOLATION`; do not merge and hand control to Lead;
+- final Archive cleanup obligation blocked/unsafe/unavailable → do not merge; keep the coordination Issue
+  open and use existing exception/disposition/Lead-diagnosis semantics.
 
 ## Crash-safe merge recovery
 

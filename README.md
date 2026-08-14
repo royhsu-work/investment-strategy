@@ -49,120 +49,19 @@ Taiwan EOD market-data infrastructure 已合併至 `main`，目前作為 reposit
 
 ## Development lifecycle
 
-Repository 採用 OpenSpec + GitHub Issue/PR 的持久化開發流程。`agents/AGENTS.md`、`agents/roles/*`、`agents/skills/*` 由 repository default branch 提供 Scheduled Role 的治理權威；feature branch、PR、Issue/comment 與先前對話只屬工作輸入，不能覆寫治理規則。
+Repository 使用 OpenSpec + GitHub Issue/PR 進行規格驅動開發。README 只提供 Human/contributor 導覽，不複製 Scheduled-Agent runtime protocol。
 
-Scheduled dispatch mode 由 default-branch `agents/AGENTS.md` 的唯一 `Scheduled-Dispatch-Mode` marker 決定。`workflow-dynamic` 模式下，wake 先重建單一 active workflow，再由其合法 routing tuple 決定本次 invocation 的 role/action；role 一旦選定，在該 invocation 內保持固定，handoff 後結束而不在同一 run 切換角色。既有三個外部 wake slots 的 migration 與共用 bootstrap prompt 見 `agents/scheduled-task-migration.md`；slot 數量、topology、cadence 與 associated-conversation/result surfacing 都是外部產品設定，不是 repository runtime state。
+**Authoritative Scheduled-Agent runtime governance** 位於 default-branch `agents/AGENTS.md`；role authority 位於 `agents/roles/*.md`，action procedure 位於 `agents/skills/*`。OpenSpec authoring conventions 位於 `openspec/config.yaml`，批准後的 capability requirements 位於 `openspec/specs/*`。Active change 與 PR/Issue/comment 是 review/work input，不會覆寫 default-branch runtime governance。
 
-每個正常 OpenSpec change 使用一個 persistent coordination Issue。Actionable Issue 必須只有一組合法 `(agent:<role>, action:<action>)` routing tuple；scheduled run 每次最多處理一個 Issue，並重新建構 Issue、PR、OpenSpec、GitHub Actions 與 default-branch state，不依賴先前對話或前一次 run 正常結束。選定 action 後遵循 shared work-conserving contract：只要 routing、revision/preconditions、authority 與 execution context 仍有效，就持續完成當下可執行工作；verified checkpoint 或可直接修正的 same-role validation failure 本身不是自願 yield 點。
+外部 Scheduled Task 的 exact slot count、topology、cadence、notification 與 associated-conversation configuration 屬 product/deployment configuration；repository 只治理 bootstrap/dispatch behavior。Migration 說明見 `agents/scheduled-task-migration.md`。
 
-Context reconstruction 同時保留 **current snapshot semantics** 與 **unresolved durable-evidence semantics**：最新狀態描述目前事實，但不會只因較新就消除仍未被合法消費的既有 obligation。A cross-Issue summary is orientation rather than replacement authority；若 workflow 宣告上游 authoritative decision/gate provenance，角色必須回到該來源重建所需證據。
+下列名稱僅作 Human 搜尋與流程導覽，不在 README 重新定義其 normative semantics：`Lead / propose-change`、`Reviewer / review-openspec`、`Executor / implement-change`、`Reviewer / review-implementation`、`Lead / finalize-change`、`Executor / merge-pr`、`MORE_IMPLEMENTATION_REQUIRED`、`Reviewer / review-archive`、`Lead / finalize-archive`。Final lifecycle 仍包含 GitHub native close via final Archive PR closing linkage；`intake:approved`、routing、merge authorization、Human authority 與 exact gate meaning 一律以 authoritative governance 為準。Scheduled Role 不另建 normal `archive-change` mutation。
 
-Reviewer `B → R` cumulative-coverage rule 是 gate-specific。`review-openspec` 的 B 是最後仍適用的 independent semantic OpenSpec baseline，R 是目前需要獨立檢查的 exact semantic target；只覆蓋 material semantic changes，task-marker/checkpoint bookkeeping、implementation SHA 或新的 mechanical CI SHA 不會只因較新就推進或失效 semantic baseline。`review-implementation` 與 `review-archive` 則仍是 exact-current-head gates，必須覆蓋到目前 PR head 並檢查該 head 的完整 current state。
+同樣地，`current snapshot semantics`、`unresolved durable-evidence semantics`、`cross-Issue summary is orientation rather than replacement authority`、Reviewer `B → R` cumulative-coverage rule、verified vertical-slice checkpoint 等術語只是導覽索引；具體 contract 位於 `agents/AGENTS.md` 與對應 role/skill。Verified-slice 概念的高階意圖是：`VERIFY` 成功後才持久化完成證據，並在開始下一個 slice 或 handoff 前更新該 slice 已滿足的 markers；README 不規範其完整執行程序。
 
-### Mechanical validation vs semantic OpenSpec review
+Canonical workflow-message presentation 也遵循 default-branch authority：the default-branch merge is the activation boundary。An unmerged governance PR is review target/input and must not govern its own current invocation；詳細 activation/reconstruction rules 只在 authoritative governance 定義。
 
-Repository-level `OpenSpec Validate` 是 broad mechanical gate：任何 `openspec/**` 變更，包括 checkbox/task-marker/checkpoint bookkeeping，都可能觸發 exact-head strict validation。這只證明被 checkout 的 revision 通過 pinned CLI；successful mechanical validation alone does not create semantic acceptance，也不會讓已適用的 semantic OpenSpec PASS 自動 stale。
-
-只有 proposal intent、capability requirements/scenarios、design decisions、traceability、scope boundary 或 normative task meaning 的 material semantic OpenSpec change 才建立新的 semantic target。若 Executor 發現需要這類修正，正常例外路徑是 `Executor / implement-change → Lead / resolve-question → Reviewer / review-openspec → Executor / implement-change`。若 implementation 完成後沒有 material semantic OpenSpec change，則直接 `Executor / implement-change → Reviewer / review-implementation`，不因 task-marker/checkpoint-only revision 再插入一次 `review-openspec`。
-
-### Canonical message activation
-
-Canonical workflow-message presentation 仍遵循 default-branch authority。The default-branch merge is the activation boundary. 同一個 unmerged governance PR 即使已新增 `agents/templates/messages.md` 與 role/skill references，這些 feature-branch artifacts 只是 review target/input，must not govern its own current invocation；當下 invocation 仍依 then-authoritative default-branch governance 執行。
-
-Merge 到 default branch 後，後續 covered events 才必須使用 canonical shared template source。Pre-activation free-form/legacy messages 若符合 then-authoritative default-branch governance，仍是有效 historical evidence，not a retroactive template finding。這個 activation 不建立 template-version state、migration service、parser-dependent runtime 或 branch-authority override。
-
-```text
-Human-admitted requirement / research direction
-        ↓
-Lead / propose-change
-        ↓
-OpenSpec change
-proposal → specs → design → tasks
-        ↓
-required trace declarations/references
-+ exact-revision mechanical OpenSpec validation
-        ↓
-Reviewer / review-openspec
-Reviewer semantic bidirectional review:
-reverse-first `tasks → design → specs → proposal`
-then `proposal → specs → design → tasks`
-(both directions must PASS on the same semantic target)
-        ↓ PASS
-Executor / implement-change
-agent/<change> + Draft PR  (branch convention)
-        ↓
-implementation + tests + quality/OpenSpec validation
-        ↓
-(no material semantic OpenSpec change)
-Reviewer / review-implementation
-        ↓ PASS
-Lead / finalize-change
-        ↓ MERGE_AUTHORIZED for exact PR revision
-Executor / merge-pr
-        ↓
-Lead reconstructs merged default-branch state
-        ├─ active change incomplete
-        │    → MORE_IMPLEMENTATION_REQUIRED
-        │    → Executor / implement-change
-        │
-        └─ active change Complete / archive-eligible
-             ↓
-Merged-PR archive classifier / existing repository automation
-             ↓
-agent/archive-<change> + Archive PR
-             ↓
-Reviewer / review-archive
-             ↓ PASS
-Lead / finalize-archive
-             ↓ MERGE_AUTHORIZED for exact archive PR revision
-Executor / merge-pr
-             ↓
-GitHub native close via final Archive PR closing linkage
-             ↓
-Executor fresh-reads merged PR + closed Issue
-and hands off closed Issue to Lead / finalize-archive
-             ↓
-Lead reconstructs canonical archived default-branch state
-and records LIFECYCLE_COMPLETE
-```
-
-High-level responsibilities:
-
-- **Lead**：擁有 proposal/specs/design/tasks 的 specification authority、scope/contract resolution、bounded systemic coherence 與 lifecycle authorization；Lead 負責 author/maintain OpenSpec required trace declarations/references 並取得 exact-revision mechanical strict validation evidence，但不自行宣告 semantic bidirectional PASS。當 material defect 可能是 cross-cutting contract 問題時，只在合理 blast radius 內檢查直接相關 sibling actions/contracts，選擇 narrowest correct ownership layer，不做 progress polling 或無關的 repository-wide audit。`finalize-change` / `finalize-archive` 必須依 current revision 與 Reviewer gate 重新判斷；native-close 正常路徑只重建 archive/default-branch/closed evidence 並記錄 `LIFECYCLE_COMPLETE`，不重開或重複關閉已由 GitHub native close 的 Issue。
-- **Reviewer**：獨立執行 `review-openspec`、`review-implementation`、`review-archive` gates；Reviewer 不修改正在審查的 specification/implementation 來自行修正 finding，也不因 PASS 自動取得 merge authority。`review-openspec` 是 semantic bidirectional review gate，固定 reverse-first `tasks → design → specs → proposal`，then `proposal → specs → design → tasks`，semantic applicability 依 OpenSpec meaning 而非 raw SHA recency。`review-implementation` / `review-archive` 仍綁定 exact current PR head。
-- **Executor**：依核准 OpenSpec 實作 code/tests/config、更新有事實依據的 task completion marker，並只在 Reviewer PASS + Lead exact-revision `MERGE_AUTHORIZED` + current PR head 未改變且 gate 仍有效時執行 `merge-pr`；不重定義 requirements/contracts/task meaning，也不執行 semantic bidirectional OpenSpec review。OpenSpec task checkbox 以 **verified vertical-slice checkpoint** 持久化：slice 的 `VERIFY` 成功後，必須在開始下一個 slice 或 handoff 前更新該 slice 已滿足的 markers，並留下 exactly one bounded coordination-Issue checkpoint；不要求每個 checkbox 各自 commit，也不把 checkpoint 當成中止健康 invocation 的理由。final Archive merge 後若 Issue 已由 closing linkage native close，Executor 只完成 closed-Issue terminal handoff/journal，不在同一 invocation 執行 Lead finalization。
-- **Repository automation**：執行 Python quality gates、project-level mechanical OpenSpec validation，以及既有 deterministic normal OpenSpec archive workflow；Scheduled Role 不另建 normal `archive-change` mutation。
-
-Legal role-local action priority 仍保留作 fixed-role compatibility 與 deterministic ordering contract：
-
-```text
-Lead
-resolve-question > finalize-archive > finalize-change > propose-change
-
-Reviewer
-review-archive > review-implementation > review-openspec
-
-Executor
-merge-pr > implement-change
-```
-
-`workflow-dynamic` 模式先選單一 active/terminal-pending workflow，再由其 routing tuple 決定 role/action；不做 cross-role urgency scoring。fixed-role 同一 role/action 則以較早 GitHub `created_at`，再以較小 Issue number 排序。沒有 eligible work 時不產生 workflow mutation/noise。Lead 只有在沒有 active workflow work 時，才能依 `agents/AGENTS.md` 的限制建立最多一個 `advisory:idle` Issue；advisory 研究脈絡包含 preceding 7 days 內 created 或 materially active 的 relevant Issues，且最多三個 recommendation。Human admission marker `intake:approved` 只能由 Human/maintainer 管理，Scheduled Role 不得新增、移除、恢復或製造它。Label/bootstrap vocabulary 見 `agents/labels.md`。
-
-Scheduled execution 是 at-least-once/reconstructable，而不是 exactly-once。Durable artifact/result 與 revision-aware evidence 必須先寫入，再 fresh-read routing 後 handoff；`fresh-read routing → update labels` **不是** mutex、CAS 或 single-flight。Overlapping runs 依 action-specific idempotency、revision/precondition check 與 fail-closed stale/contradictory evidence 保持安全。Material lifecycle ownership/state transition 需留下 bounded coordination-Issue journal；ordinary RED/GREEN/refactor/test-trigger/compatibility-correction mutations 不需要逐 mutation comment。Workflow complexity 只由 current approved requirements 或 demonstrated failure modes 支持；generalized orchestration/fault machinery 的 hypothetical future generality 不構成引入理由，細節見 `agents/proportionality.md`。
-
-Strict OpenSpec gate 的 canonical CI path 是 repository 既有 `.github/workflows/openspec-validate.yml`。對 revision R 的 exact-revision mechanical gate，CI evidence 必須以 durable job evidence 證明 validator checkout `HEAD` 實際等於 R，且之後才執行 repository-pinned `openspec validate --all --strict --json --no-interactive`。GitHub Actions `run.head_sha` 只是 association metadata，單獨使用是 insufficient checkout proof；若 PR run 驗證的是 synthetic merge revision M 且 `M != R`，就不能拿來滿足 PR head R 的 exact-head mechanical gate。已有有效 exact-head CI PASS 時，不需只因證據來自 CI 而重複 local CLI；若 exact-head CI evidence 不可用，才使用同一 pinned CLI 直接對 checkout R 驗證。Missing、failed、stale、revision-mismatched 或 checkout-mismatched mechanical evidence 一律 fail closed。
-
-`agent/<change>` 是 implementation branch 的 repository convention；normal archive routing 不依賴 branch name。Normal automatic archive 只支援 **same-repository** PR，並由 triggering merge snapshot 中仍 active 的 OpenSpec state，搭配 merged PR changed files 中的 `openspec/changes/<change>/...` 決定 candidate。`agent/archive-<change>` 由 archive workflow 建立；existing archive branch 會 fail loudly，automation 不會 force-push 或重用該 branch。`agent/archive-*` PR merge 一律 no-op，避免 archive recursion。
-
-`Complete` 是 repository-level implementation completion signal。一個 change 可以跨多個 proposal / implementation / review-correction PR，但仍有必要工作未 merge 時不得把 active change 留成 `Complete`。使該 change 在 merged `main` 呈現 `Complete` 的 final implementation PR 必須同時更新 `openspec/changes/<change>/`，讓 completion transition 可由 merged-diff classifier 觀察。Normal path 對 0 個 active candidate 或 incomplete change 成功 no-op；`>1 active touched` 表示一次觸及多個 active changes，視為 ambiguous lifecycle scope 並失敗，不自動猜測。每個 normal PR run 都以該 PR 的 **triggering merge snapshot** 評估，不重新讀取 runner 啟動時較新的 moving `main`。
-
-Fork PR 不屬於 normal automatic archive 支援範圍。Merged fork PR 若沒有 active OpenSpec candidate，維持 ordinary no-op；若 changed files 原本會形成 active OpenSpec candidate，workflow 必須明確 fail 為 `unsupported automatic source`，不得嘗試以 fork `pull_request` 的 read-only token 建立 archive branch，也不得把 archive 視為成功。這類 change 改走 base-repository recovery PR 或 manual fallback；本 change 不引入 `pull_request_target` 或 external-contributor trusted execution model。
-
-Explicit recovery mode 用於已經 Complete、但 normal trigger 已錯過的 active change。Recovery PR 必須是 **same-repository** merged PR、帶有 `openspec-archive-recovery` label，且 head branch 必須為 `agent/<change>`；只有 recovery mode 會把 branch name 當 explicit change selector。Recovery PR 不需要製造 synthetic `openspec/` marker；selected change 不存在、尚未 Complete、validation failure 或 existing archive branch 都會 fail loudly。
-
-`workflow_dispatch` 保留為 recovery / migration fallback。Normal、explicit recovery 與 manual 三條 path 在 change 進入 archive eligibility 後，共用相同的 strict validation、archive-branch existence check、OpenSpec archive、post-archive validation 與 push core；manual 或 recovery 指定 incomplete change 會 fail loudly。
-
-Archive workflow 使用全域 concurrency group 搭配 `queue: max`，避免 GitHub Actions 預設 single-pending semantics 將較早 pending trigger 靜默替換。平台最多可在同一 concurrency group 保留 **100** 個 pending runs；超出容量的 run 會在 GitHub Actions 顯示為 canceled/rejected，屬可觀察 failure，不視為 archive success。
+Scheduled execution 的 concurrency 高階原則是 at-least-once/reconstructable；fresh-read routing → update labels **不是** mutex、CAS 或 single-flight。這裡只說明模型，具體 preconditions、handoff 與 stale-run 行為仍由 authoritative governance 擁有。
 
 ## OpenSpec lifecycle
 
@@ -186,6 +85,10 @@ openspec archive <change> --yes
 `openspec/specs/` 是 archive 後的 canonical contract source of truth。任何 Requirements、Scenarios 或 externally observable contract 的變更，仍必須透過新的 OpenSpec change lifecycle。
 
 Pinned OpenSpec CLI 在本 repository 已觀察到：建立新的 canonical capability 時，archive 可能以 generated `Purpose: TBD ...` 取代 delta spec 已核准的 Purpose。Repository archive workflow 因此在 archive 前 snapshot Purpose contract，archive 後只針對已知 generated placeholder 做 deterministic preservation：new capability 的 canonical Purpose 必須精確等於 approved delta Purpose；existing canonical capability 的 Purpose 必須保持不變。未知 Purpose transformation、缺失／空白／重複／placeholder delta Purpose，或不符合預期 canonical section shape 都會 fail loudly，且不 push archive branch。這是 pinned CLI compatibility guard，不改寫 Requirements / Scenarios。
+
+### Archive automation orientation
+
+Merged-PR archive classifier 是 repository automation 的 project-level 行為摘要，不是 Scheduled-Agent routing authority。Implementation branch 使用 `agent/<change>` branch convention，但 normal archive routing 不依賴 branch name。Classifier 在 triggering merge snapshot 上依 merged PR changed files 與 active OpenSpec state 判斷 candidate：0 個 active candidate 或 incomplete change 為 successful no-op，`>1 active touched` fail ambiguous；`Complete` 是 repository-level implementation completion signal。Normal automatic path 只接受 same-repository PR；fork candidate fail `unsupported automatic source`。Explicit recovery 使用 `openspec-archive-recovery`，`workflow_dispatch` 保留為 recovery / migration fallback。Archive queue 使用 `queue: max`，目前平台容量契約為 100 個 pending evaluations；詳細 deterministic archive mechanics 以 `.github/workflows/openspec-archive.yml` 與其 tests 為準。
 
 ## Architecture
 
@@ -397,8 +300,8 @@ Request-boundary rejection 不屬於這個 envelope，因為 application 尚未�
 - `.github/workflows/decision.yml`：formal Decision orchestration scaffold。
 - `.github/workflows/backtest.yml`：analytical Backtest orchestration scaffold；不含 fill simulation。
 - `.github/workflows/quality.yml`：`uv run pytest`、`ruff check`、`ruff format --check`、`mypy src tests`。
-- `.github/workflows/openspec-validate.yml`：執行 `openspec list` 與 project-level `openspec validate --all --strict --json --no-interactive`，不綁定已 archived change；對 exact-revision mechanical gate，workflow 先決定 target revision/repository、checkout 該 target、以 `git rev-parse HEAD` 驗證實際 validator `HEAD` 等於 target，並把 target/checkout identity 寫入 job log/summary 後才執行 strict validation。`run.head_sha` 只作 association metadata，不能單獨作 checkout proof；PR synthetic merge validation 不等於不同 PR head 的 exact-head validation。此 mechanical PASS 不自行建立或刷新 semantic `review-openspec` acceptance。
-- `.github/workflows/openspec-archive.yml`：對 merged-to-`main` 的 `pull_request.closed` 事件，固定 checkout triggering `merge_commit_sha`，從 PR changed files 與該 snapshot 的 active OpenSpec state 分類 candidate。Normal automatic path 只接受 same-repository PR；fork PR 若形成 OpenSpec candidate 則 fail `unsupported automatic source`。`openspec-archive-recovery` + same-repository `agent/<change>` 提供 explicit recovery；`workflow_dispatch` 保留 manual fallback。三條 path 共用 strict pre-validation、existing archive-branch guard、OpenSpec archive、strict post-validation 與 push core。Workflow 使用 `queue: max` 保留最多 100 個 pending evaluations，超量 cancellation 是可觀察 failure；workflow 只 push `agent/archive-<change>`，不直接寫入 `main`。
+- `.github/workflows/openspec-validate.yml`：執行 `openspec list` 與 project-level `openspec validate --all --strict --json --no-interactive`，不綁定已 archived change；對 exact-revision mechanical gate，workflow 先決定 target revision/repository、checkout 該 target、以 `git rev-parse HEAD` 驗證實際 validator `HEAD` 等於 target，並把 target/checkout identity 寫入 job log/summary 後才執行 strict validation。`run.head_sha` 只是 association metadata，單獨使用是 insufficient checkout proof；PR synthetic merge revision validation 不等於不同 PR head 的 exact-head validation。此 mechanical PASS 不自行建立或刷新 semantic acceptance。
+- `.github/workflows/openspec-archive.yml`：state-driven archive automation；詳細 classifier/recovery/queue behavior 見上方 orientation 與 workflow/tests。
 
 Generated analytical results 應上傳 Actions Artifacts，不 commit 回 repository。Production strategy/workflow activation 保持 deferred。
 
@@ -413,7 +316,7 @@ openspec list
 openspec validate --all --strict --json --no-interactive
 ```
 
-針對仍 active 的 change，`openspec status --change <change>` 可在 change review 與 archive validation 使用。當 exact-revision `OpenSpec Validate` GitHub Actions 已成功，且 durable job evidence 已證明 validator checkout `HEAD` 就是 relevant revision 時，Scheduled Role gate 不需只為重複證明同一 strict mechanical validation 而再次執行 local OpenSpec CLI；是否需要新的 semantic `review-openspec` gate 依 material OpenSpec meaning change 判斷，不依 raw SHA recency。
+針對仍 active 的 change，`openspec status --change <change>` 可在 change review 與 archive validation 使用。當 exact-revision `OpenSpec Validate` GitHub Actions 已成功，且 durable job evidence 已證明 validator checkout `HEAD` 就是 relevant revision 時，Scheduled Role gate 不需只為重複證明同一 strict mechanical validation 而再次執行 local OpenSpec CLI；是否需要新的 semantic review gate 依 material OpenSpec meaning change 判斷，不依 raw SHA recency。
 
 ## Deferred work
 
