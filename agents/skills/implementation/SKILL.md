@@ -84,6 +84,36 @@ OpenSpec meaning.
    failure using `EXECUTION_EXCEPTION` while a repository evidence surface is writable, state whether any
    durable mutation completed, and hand bounded unresolved diagnosis to `Lead / resolve-question`.
 
+## Implementation-review readiness
+
+Before `READY` and the handoff to `Reviewer / review-implementation`, Executor owns the PR Draft-to-Ready
+transition. Fresh-read the current implementation PR head, request the repository-supported Ready-for-review
+mutation for that exact head, and re-read the PR to require that the same current head is non-Draft before
+persisting `READY`. A Draft PR MUST NOT be handed to implementation review.
+
+If the Ready mutation fails, capture the observable error with `EXECUTION_EXCEPTION` and apply the shared
+recovery/disposition contract. Do not route to Reviewer while the current implementation PR remains Draft,
+and do not introduce a routing/status label as a substitute for GitHub PR presentation state.
+
+## Temporary recovery branch cleanup
+
+A temporary integration/recovery branch is identified from durable workflow/recovery provenance and use,
+not from an `agent/*` name pattern or hidden registry. When Executor created or adopted such a temporary
+branch and its recovery purpose has been consumed, Executor owns cleanup when all safe-delete preconditions
+are current.
+
+Before deletion, fresh-read the branch, open PR usage, owning workflow/recovery evidence, and containment.
+Delete only when the branch is still the identified workflow-owned temporary branch, is not an open PR head
+or base, is not referenced by active recovery/integration work, and has no unique commits relative to
+canonical `main` or an explicitly retained successor (`ahead_by == 0` or equivalent proof). Never force
+update/delete to hide unintegrated commits.
+
+If unique commits remain, active use exists, or ownership/use is ambiguous, fail closed and preserve the
+branch for the legal recovery/diagnosis owner. If the delete mutation is unavailable or denied, persist the
+observable failure through `EXECUTION_EXCEPTION`; an identical delete may be retried only after a fresh-read
+material precondition changes or through a different legal repository operation path. No broad branch garbage
+collection is authorized.
+
 Executor does not perform semantic bidirectional OpenSpec review as part of implementation completion or
 task-marker verification. That semantic gate belongs to independent `Reviewer / review-openspec` only
 when a new material semantic target exists; Executor consumes the applicable approved meaning and runs
@@ -91,9 +121,9 @@ the implementation/mechanical verification assigned to this action.
 
 ## Legal results
 
-- `READY` — approved implementation work is complete, required gates are current, and there is no material
-  semantic OpenSpec change requiring another specification gate; hand off directly to
-  `Reviewer / review-implementation`.
+- `READY` — approved implementation work is complete, required gates are current, the current implementation
+  PR is non-Draft at the same current head, and there is no material semantic OpenSpec change requiring
+  another specification gate; hand off directly to `Reviewer / review-implementation`.
 - `SPEC_BLOCKER` — implementation cannot proceed without changing/inventing contract meaning; persist
   the blocker and hand off to `Lead / resolve-question`. The resulting material semantic correction must
   return through `Reviewer / review-openspec` before implementation resumes.
