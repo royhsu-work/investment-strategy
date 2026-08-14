@@ -1,5 +1,9 @@
 # repository-governance
 
+## Purpose
+
+Define repository governance authority and ownership boundaries, single-source-of-truth reference rules, and current-versus-history boundaries so approved governance remains traceable without competing normative copies.
+
 ## ADDED Requirements
 
 ### Requirement: Governance rule categories have one authoritative surface
