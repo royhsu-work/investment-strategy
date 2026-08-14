@@ -61,6 +61,29 @@ For each approved feature slice:
     correction, independent `Reviewer / review-openspec` must PASS the new semantic target before Executor
     resumes implementation.
 
+## Constrained branch integration recovery
+
+When the implementation PR needs branch integration but ordinary local git merge/rebase is unavailable,
+Executor may perform only a semantics-preserving integration correction that remains inside the approved
+OpenSpec meaning.
+
+1. Fresh-read the implementation PR head and default-branch head immediately before constructing any
+   reconciliation. Historical heads or comments are not sufficient mutation preconditions.
+2. Use only a non-force repository-governed operation path. A two-parent reconciliation commit or an
+   equivalent repository primitive is legal only when the resulting tree can be verified against the
+   current implementation tree plus current default-branch state without inventing new requirement
+   meaning.
+3. Verify the resulting tree is a pure integration correction under the approved OpenSpec meaning. If
+   conflict resolution requires choosing new product/specification behavior, stop and route to
+   `Lead / resolve-question`.
+4. Any successfully moved implementation head is a new head and invalidates exact-head readiness,
+   implementation-review, and merge-authorization evidence that was bound to the prior head. Obtain
+   current quality gates and required exact-head OpenSpec validation before `Reviewer / review-implementation`.
+5. Do not force update the implementation branch as a recovery shortcut and do not discard unique work.
+6. If the available mutation surface cannot safely complete the correction, persist the raw observable
+   failure using `EXECUTION_EXCEPTION` while a repository evidence surface is writable, state whether any
+   durable mutation completed, and hand bounded unresolved diagnosis to `Lead / resolve-question`.
+
 Executor does not perform semantic bidirectional OpenSpec review as part of implementation completion or
 task-marker verification. That semantic gate belongs to independent `Reviewer / review-openspec` only
 when a new material semantic target exists; Executor consumes the applicable approved meaning and runs
