@@ -14,11 +14,13 @@ The authoritative incident set is #28 plus its Human-authored additions, with so
 - Keep branch-integration recovery inside Executor authority when semantics are unchanged and the mutation is safely verifiable.
 - Align GitHub PR Draft/Ready presentation state with the implementation-review lifecycle boundary.
 - Make Human escalation observability consistently produced without turning `human:notified` into workflow state.
+- Ensure workflow-owned temporary integration/recovery branches cannot remain indefinitely after their purpose is consumed without a reconstructable retention reason.
 
 ## Non-goals
 
 - no retry engine/counter/backoff state machine;
 - no lock, claim, lease, heartbeat, or hidden progress/wait state;
+- no branch registry or branch-cleanup daemon;
 - no new workflow action/result enum solely for tooling failures;
 - no weakening of independent review, exact-head validation, or merge authorization;
 - no broad documentation/SSOT restructuring owned by #29.
@@ -77,27 +79,53 @@ Only Lead may emit canonical `HUMAN_DECISION_REQUIRED`; therefore Lead is the pr
 
 The label is historical observability and is not cleared on ordinary resolution. Current waiting/resume semantics remain expressed by routing and durable Human-decision evidence. If the label mutation fails, the already-durable escalation remains authoritative and the failure follows the ordinary exception/disposition contract.
 
+## Decision 7: Temporary recovery branches have an explicit terminal cleanup obligation
+
+**Requirement:** `Workflow-owned temporary recovery branches are safely retired before terminal completion`.
+
+The #25 residue `agent/integrate-main-workflow-dynamic` demonstrates a lifecycle gap distinct from normal feature/archive PR heads. GitHub native delete-on-merge can clean the merged PR head, but it cannot clean a temporary integration/recovery branch that was never the final merged PR head.
+
+The contract therefore distinguishes two classes by durable usage, not by branch-name pattern:
+
+- normal feature/archive PR heads remain governed by their existing PR/native lifecycle;
+- a temporary integration/recovery branch is one created as an intermediate recovery/integration surface whose owning workflow, coordination Issue/PR relation, and purpose are reconstructable from durable repository evidence and which is not the normal surviving implementation/archive PR head.
+
+No hidden branch registry is added. Reconstructable ownership comes from existing durable Issue/PR comments, branch/commit ancestry, and the recovery operation evidence that created or adopted the branch.
+
+Cleanup mutation stays with the Executor action that owns the recovery/integration correction when cleanup becomes immediately possible in that action. Lead owns terminal lifecycle verification: before `LIFECYCLE_COMPLETE`, Lead must verify that no still-owned temporary recovery branch is both unused and safely deletable, or that a branch intentionally retained has a durable reconstructable reason and legal next owner. Lead does not delete implementation branches merely because it performs this verification.
+
+Safe deletion requires a fresh read proving all of the following:
+
+1. the branch is still the identified workflow-owned temporary branch;
+2. it is not an open PR head or base and is not referenced by active recovery/integration work;
+3. its commits are fully contained by canonical `main` or an explicitly retained successor (`ahead_by == 0` or equivalent no-unique-commits proof);
+4. no stale comment, naming convention, or historical observation is being used as the sole deletion authority.
+
+No force update/delete may be used to hide unintegrated commits. If unique commits remain or ownership/use is ambiguous, cleanup fails closed and routes to the legal recovery/diagnosis owner. If deletion is blocked by the tool/permission surface, the existing minimum durable evidence and changed-precondition retry rules apply; the workflow does not busy-loop on the same denied delete.
+
+A terminal completion claim with an unused, safely deletable, still workflow-owned temporary recovery branch is incomplete. This makes branch cleanup a bounded lifecycle obligation rather than a repository-wide garbage collector.
+
 ## Bounded blast-radius analysis
 
 ### Shared governance
 
-Affected: at-least-once reconstruction, async-wait legality, exception disposition, and Human-label semantics. These rules apply across all roles because stale external evidence and denied mutations are not action-specific failure classes.
+Affected: at-least-once reconstruction, async-wait legality, exception disposition, Human-label semantics, and the terminal invariant that workflow-owned temporary recovery obligations must be resolved or durably retained. These rules apply across roles only where they describe shared reconstruction/lifecycle meaning.
 
 ### Executor role / implementation skill
 
-Affected: constrained branch-integration procedure and the Draft-to-Ready completion boundary. These are implementation-action responsibilities and should not be copied into Lead/Reviewer procedures.
+Affected: constrained branch-integration procedure, Draft-to-Ready completion boundary, and cleanup of temporary recovery/integration branches created or adopted by Executor when safe-delete preconditions become true. These are implementation/recovery responsibilities and should not be copied into Reviewer procedures.
 
 ### Reviewer actions
 
-No new Reviewer authority. Reviewer benefits from receiving a non-Draft implementation PR and from fresh current gate reads after any real wait; independent gate semantics remain unchanged.
+No new Reviewer authority. Reviewer benefits from receiving a non-Draft implementation PR and from fresh current gate reads after any real wait; independent gate semantics remain unchanged. Reviewer does not delete branches.
 
 ### Lead actions
 
-Lead remains the bounded diagnosis owner when an execution failure has no legal local path. Lead also owns the `human:notified` producer step because Lead alone persists `HUMAN_DECISION_REQUIRED`.
+Lead remains the bounded diagnosis owner when an execution failure has no legal local path. Lead owns the `human:notified` producer step because Lead alone persists `HUMAN_DECISION_REQUIRED`, and Lead final lifecycle verification checks that temporary recovery-branch obligations are cleared or have a durable retention reason before `LIFECYCLE_COMPLETE`.
 
 ### Merge lifecycle
 
-Exact-head review and `MERGE_AUTHORIZED` semantics remain unchanged. Any branch reconciliation changes the PR head and therefore requires current gate evidence before later authorization.
+Exact-head review and `MERGE_AUTHORIZED` semantics remain unchanged. Any branch reconciliation changes the PR head and therefore requires current gate evidence before later authorization. Normal merged implementation/archive PR heads continue to rely on native/PR cleanup; the new terminal check covers only separately created/adopted temporary recovery branches.
 
 ## Alternatives considered
 
@@ -117,6 +145,10 @@ Rejected. Ready is the implementation presentation completion boundary; repairin
 
 Rejected. Product result surfacing is not repository workflow authority and cannot provide at-least-once reconstruction guarantees.
 
+### Delete every `agent/*` branch at lifecycle completion
+
+Rejected. Branch names do not prove ownership, use, or commit containment. Broad deletion would blur normal PR/native cleanup with recovery cleanup and could destroy unique work. Cleanup must be provenance- and containment-based.
+
 ## Validation strategy
 
 Implementation should add repository contract tests covering:
@@ -127,6 +159,9 @@ Implementation should add repository contract tests covering:
 4. no legal integration mutation path routes bounded diagnosis to Lead without weakening gates;
 5. implementation review handoff requires current PR `draft == false` and failed Ready transition follows exception/finalization semantics;
 6. `HUMAN_DECISION_REQUIRED` idempotently ensures `human:notified`, preserves the label after resolution, and never uses it as routing/waiting/authorization evidence;
-7. no writable repository evidence surface does not turn Scheduled Task output into durable workflow state.
+7. no writable repository evidence surface does not turn Scheduled Task output into durable workflow state;
+8. a workflow-owned temporary recovery branch with no open PR/active recovery use and no unique commits becomes cleanup-eligible, while a branch with unique commits or active use fails closed;
+9. blocked temporary-branch deletion preserves minimum durable evidence and is not identically retried without changed preconditions;
+10. terminal lifecycle verification rejects `LIFECYCLE_COMPLETE` while an unused safely deletable workflow-owned temporary recovery branch remains, but accepts an intentionally retained branch only with a durable reconstructable reason.
 
 Final verification follows `openspec/config.yaml`: strict OpenSpec validation plus repository quality/lint/type gates after implementation.
