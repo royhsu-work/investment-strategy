@@ -2,13 +2,15 @@
 
 ## MODIFIED Requirements
 
-### Requirement: External asynchronous wait is a cross-invocation boundary, not any nonterminal read
+### Requirement: External asynchronous waits are revalidated from the awaited resource
 
 A selected Scheduled-Agent action MUST NOT classify the first observation of an exact external resource as a real cross-invocation asynchronous wait merely because the resource is absent, queued, or in progress.
 
 When the exact resource was created or triggered by the current selected action, routing/preconditions remain current, no different role/Human authority boundary is required, and the invocation still has bounded execution opportunity, the action MAY continue bounded observation of that same exact resource without introducing durable waiter state.
 
-If the resource resolves while that bounded same-invocation opportunity remains, the action MUST continue immediately actionable work under the shared work-conserving contract. If bounded execution opportunity is exhausted while the resource remains nonterminal, the action MAY yield as a real external asynchronous wait. A later wake then applies the existing fresh-read-on-resume contract.
+If the resource resolves while that bounded same-invocation opportunity remains, the action MUST continue immediately actionable work under the shared work-conserving contract. If bounded execution opportunity is exhausted while the resource remains nonterminal, the action MAY yield as a real external asynchronous wait.
+
+When a scheduled invocation resumes work that previously yielded because a specific external asynchronous resource was not yet complete, the selected action SHALL fresh-read that awaited resource before concluding that the wait still exists. A prior coordination-Issue comment, checkpoint, or summarized observation that recorded the resource as `in_progress`, pending, or unavailable MUST be treated as historical evidence only and MUST NOT by itself justify another asynchronous-wait yield.
 
 This behavior MUST NOT create a polling service, durable timer, heartbeat, retry counter, hidden waiting state, or scheduler-side workflow state.
 
@@ -28,6 +30,14 @@ This behavior MUST NOT create a polling service, durable timer, heartbeat, retry
 - WHEN the invocation can no longer continue bounded observation without exceeding its available execution context
 - THEN yielding is a legal real external asynchronous wait
 - AND the next wake MUST fresh-read that exact awaited resource before concluding that the wait still exists
+
+#### Scenario: Resumed wait is revalidated from the exact awaited resource
+
+- GIVEN a prior invocation yielded because a specific external asynchronous resource was not yet complete
+- AND a later wake reconstructs the same selected action
+- WHEN current wait status is evaluated
+- THEN the selected action fresh-reads that exact awaited resource
+- AND stale `in_progress`, pending, or unavailable evidence alone cannot justify another yield
 
 #### Scenario: Nonterminal resource belongs to another authority boundary
 
