@@ -71,6 +71,20 @@ Legal handoff depends on the gate/blocker being resolved:
   contract makes that legal;
 - unresolved ambiguity or failed readiness evidence → retain Lead.
 
+## Human escalation producer
+
+A genuine unresolved Human authority/intent decision uses canonical `HUMAN_DECISION_REQUIRED`. Lead first
+persists the durable escalation evidence. After that write succeeds, Lead MUST idempotently ensure the
+`human:notified` label. The label is historical analytics-only observability: it does not participate in
+routing, waiting, authorization, resume conditions, or proof of Human response, and ordinary resolution
+does not remove it.
+
+If `human:notified` is already present, the ensure is a no-op. If the label mutation fails while the
+escalation evidence is already durable, capture the observable failure through the shared exception
+contract and disposition it from current evidence; do not repeat an identical denied mutation unless a
+fresh-read material precondition changed or a different legal repository operation path is available.
+The already-durable escalation remains authoritative even when label production fails.
+
 ## Durable messages
 
 Use `agents/templates/messages.md` for recurring durable presentation. Lead readiness/resolution outcomes
