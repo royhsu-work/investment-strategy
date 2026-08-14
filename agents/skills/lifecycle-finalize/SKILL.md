@@ -43,9 +43,9 @@ eligibility contract.
 
 ## `finalize-archive`
 
-Before archive `MERGE_AUTHORIZED`, Lead must reconstruct both the exact archive gate and any known
-terminal cleanup obligations that would become unreachable after the final Archive PR native-closes the
-coordination Issue.
+Lead performs the cleanup reconstruction before archive `MERGE_AUTHORIZED`: it must reconstruct both the
+exact archive gate and any known terminal cleanup obligations that would become unreachable after the
+final Archive PR native-closes the coordination Issue.
 
 1. Identify the exact current archive PR head revision R.
 2. Require an unambiguous Reviewer archive `PASS` for R.
@@ -57,6 +57,7 @@ coordination Issue.
 5. Classify known terminal cleanup obligations without performing the Executor-owned delete. A branch
    that is unused, has no unique commits, is not an open PR head/base, and is not active recovery input is
    a safely deletable obligation that Executor must retire before the final Archive PR merge mutation.
+   A branch that is intentionally retained needs a durable reconstructable reason and a legal next owner.
    Unique commits, active use, ambiguous ownership/use, or unavailable proof fail closed to the legal
    diagnosis owner rather than being silently discarded.
 6. Persist archive `MERGE_AUTHORIZED` bound to R only after the known obligations are reconstructable and
@@ -74,13 +75,15 @@ native Issue closure, and the cleanup evidence produced before that merge. A clo
 close evidence exists and no valid Lead `LIFECYCLE_COMPLETE` result already exists.
 
 The normal path first observes the expected native Issue completion and requires the Issue to be observed
-closed. If Issue closure is observed before the authorized Archive PR merge, that closure is premature
-and must fail closed; it must not be treated as successful archive completion.
+closed. The observed `closed` state is mandatory. If Issue closure is observed before the authorized
+Archive PR merge, that closure is premature and must fail closed; it must not be treated as successful
+archive completion.
 
 When final conditions are satisfied, Lead persists one bounded `LIFECYCLE_COMPLETE` result that
 identifies the Archive PR exact head, merge commit, canonical archived default-branch state, observed
 native Issue closure, and the reconstructed pre-merge temporary-branch cleanup/retention outcome. Lead
-verifies the terminal invariant but does not replay an Executor-owned deletion after native close.
+verifies the terminal invariant but does not replay an Executor-owned deletion after native close, and
+does not reopen or redundantly close the Issue when native closure is already present.
 
 Only when the authorized Archive PR is merged, canonical archive state is correct, and native completion
 is missing may Lead use explicit Issue-close recovery. In that recovery-only path, Lead may perform the
