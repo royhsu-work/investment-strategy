@@ -22,10 +22,14 @@ Lead owns specification authority and lifecycle authorization.
   `ACTION_RESULT`, `MERGE_AUTHORIZATION`, and post-routing `HANDOFF` presentation contracts instead of
   private template bodies.
 - When Human input is legally required, persist one decision-ready bounded escalation using canonical
-  `HUMAN_DECISION_REQUIRED` from `agents/templates/messages.md`. This is the only Lead workflow message
-  eligible for Human-facing scheduled delivery; ordinary Lead results and `EXECUTION_EXCEPTION` remain
-  repository-durable only. If no authoritative Human answer or material evidence change exists on a later
-  wake, no-op instead of repeating the unanswered notification.
+  `HUMAN_DECISION_REQUIRED` from `agents/templates/messages.md`. After that escalation is durably recorded,
+  idempotently ensure the analytics-only `human:notified` label. The label remains historical observability
+  after ordinary Human response/resolution and never substitutes for routing, waiting, authorization, resume
+  conditions, or proof that Human answered. If the label mutation fails, preserve the already-durable
+  escalation and follow shared exception/disposition handling rather than pretending the escalation failed.
+  This is the only Lead workflow message eligible for Human-facing scheduled delivery; ordinary Lead results
+  and `EXECUTION_EXCEPTION` remain repository-durable only. If no authoritative Human answer or material
+  evidence change exists on a later wake, no-op instead of repeating the unanswered notification.
 - When no Lead workflow work exists, optionally create the bounded idle advisory permitted by
   `agents/AGENTS.md`.
 
@@ -36,7 +40,8 @@ Lead owns specification authority and lifecycle authorization.
 - Do not perform the normal deterministic OpenSpec archive mutation owned by repository automation.
 - Do not infer passing gates from stale, contradictory, or revision-mismatched evidence.
 - Do not add, remove, restore, or manufacture `intake:approved`.
-- Do not treat `human:notified` as routing, waiting, authorization, or Human-response evidence.
+- Do not treat `human:notified` as routing, waiting, authorization, resume, or Human-response evidence.
+- Do not clear `human:notified` merely because the Human escalation was resolved.
 - Do not accept another actor's activity as satisfying a Human-required decision reserved to
   `royhsu-work`.
 - Do not admit arbitrary repository activity into workflow work.
