@@ -115,8 +115,12 @@ For decisions governance reserves to Human, only durable GitHub activity attribu
 `royhsu-work` satisfies Human authority. Activity from other actors may be supporting evidence but
 MUST NOT satisfy Human-required admission, answers, authorization, or resume conditions.
 
-`human:notified`, if present, is analytics-only metadata. It MUST NOT grant authority, change routing,
-create waiting semantics, or prove that Human answered.
+`human:notified`, if present, is analytics-only historical metadata. It MUST NOT grant authority, change
+routing, create waiting semantics, participate in resume conditions, or prove that Human answered.
+After Lead has durably persisted a canonical `HUMAN_DECISION_REQUIRED`, Lead MUST idempotently ensure
+`human:notified`. The label remains historical observability after ordinary Human response/resolution and
+MUST NOT be removed merely to represent that waiting ended. If label production fails, the already-durable
+escalation remains authoritative and the shared execution-exception/disposition contract applies.
 
 When Lead requires Human input, the durable escalation contains at most three actionable proposals,
 states the material impact and risk/trade-off for the decision, and identifies the Lead recommendation.
@@ -186,6 +190,13 @@ Previous conversation memory is never required for correctness. A partial run, t
 missing final response does not transfer ownership. A later run reconstructs durable reality and
 continues only the missing legal work.
 
+A wake resuming from a real external asynchronous wait MUST fresh-read the specific awaited resource
+itself before concluding that the wait still exists. Historical `in_progress`, waiting, checkpoint, or
+summary evidence remains provenance but is not current-status authority and cannot by itself justify
+another yield. If the awaited condition has resolved and work is immediately actionable inside the
+selected role/action, execution continues under the shared work-conserving contract. This requires one
+normal reconstruction read per wake; it does not authorize polling, heartbeat state, or a hidden waiter.
+
 ## Authoritative context continuity and evidence consumption
 
 This reconstruction contract applies across all nine normal actions. Each selected action MUST reconstruct the still-applicable durable evidence that its existing contract needs; a newer comment, readiness result, handoff, routing transition, validation result, revision, or current snapshot does not implicitly erase an earlier unresolved obligation. Simple recency does not consume evidence.
@@ -253,6 +264,19 @@ When a catchable failure is observable and the current invocation can still pers
 Raw observation and agent interpretation remain separate. A classification MAY be recorded only when justified by evidence; otherwise `UNCLASSIFIED_EXECUTION_EXCEPTION` is legal. Disposition is recorded separately when known. The raw observable error MUST NOT be replaced by a paraphrase or classification-only summary. `EXECUTION_EXCEPTION` is durable evidence only and does not by itself authorize a retry, establish an action result or lifecycle transition, or transfer ownership.
 
 After capture, the selected role/action determines whether the failure can be legally recovered within the same authority while routing, revision/preconditions, and execution context remain current. If local recovery is legal and immediately actionable, the role MUST perform that recovery and continue the selected action in the same invocation under the shared work-conserving contract. Recording exception evidence MUST NOT become a voluntary yield point.
+
+Retry eligibility is evidence-based rather than counter-based. The same identical operation MUST NOT be
+repeated merely because it failed before. A retry is legal only after a fresh-read material precondition
+changed in a way that can alter the outcome, or when the role uses a different legal repository operation
+path with independently valid preconditions. Unchanged denied, unsupported, permission-blocked, or stale
+mutation conditions do not justify busy-loop retries and MUST NOT create retry counters/backoff state.
+
+When any legal repository evidence surface remains writable, preserve the raw exception plus the action-
+specific result/disposition or handoff that actually completed. If no repository write surface is
+available, external Scheduled Task output may inform Human observation but is not durable workflow state,
+does not transfer ownership, and cannot replace Issue labels/comments, PR/branch state, OpenSpec state,
+Actions evidence, or another repository-governed durable surface. The next wake reconstructs from the
+repository state that actually exists.
 
 If local recovery is not legal or sufficient, the invocation MUST preserve completed durable work and, while execution opportunity remains, persist the action-defined legal blocked/disposition result or route to the contract-defined diagnosis owner, then complete any required routing handoff before normal exit. When a newly observed catchable failure has no legal action-specific recovery or existing disposition, bounded unresolved diagnosis routes to `Lead / resolve-question` using the captured raw evidence as durable input. The shared contract MUST NOT invent one universal blocked-result enum.
 
@@ -420,6 +444,15 @@ reconstructs canonical archived default-branch state and records bounded `LIFECY
 without reopening or redundantly closing an already natively closed Issue. Once that result exists, the
 closed tuple is terminal history and no longer blocks later admission.
 
+Before `LIFECYCLE_COMPLETE`, Lead MUST reconstruct any workflow-owned temporary integration/recovery
+branches from durable repository provenance. Terminal completion is not legal while a still-owned
+branch is unused and safely deletable: fresh branch/PR/workflow reads must prove it is not an open PR
+head or base, is not active recovery/integration input, and has no unique commits relative to canonical
+`main` or an explicitly retained successor (`ahead_by == 0` or equivalent containment proof). A branch
+that must be retained requires a durable reconstructable reason and legal next owner. Lead verifies this
+terminal invariant but does not usurp Executor-owned deletion authority. Normal feature/archive PR heads
+remain under their existing PR/native cleanup lifecycle; this is not broad `agent/*` garbage collection.
+
 Explicit Issue close is recovery-only. Lead may perform an explicit Issue-close recovery only when the
 authorized Archive PR is merged, canonical archive state is correct, and native completion is missing.
 After that mutation Lead re-observes the Issue and requires `closed` before declaring completion.
@@ -437,5 +470,5 @@ archive completion, regardless of comments or other completion-looking evidence.
 The MVP has no central workflow engine, generic transition/DAG executor, distributed lock, lease,
 heartbeat, retry counter, progress percentage, hidden sequence number, `status:in-progress`, exactly-once mechanism,
 message queue, event-sourcing engine, hidden context cache, template-version state,
-semantic-revision classifier service, review-applicability label, or second workflow DAG. Do not add such
-state without a new approved OpenSpec change.
+semantic-revision classifier service, review-applicability label, branch registry, or second workflow DAG.
+Do not add such state without a new approved OpenSpec change.

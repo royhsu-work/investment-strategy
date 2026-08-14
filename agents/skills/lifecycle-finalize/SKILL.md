@@ -56,16 +56,31 @@ observed native Issue closure. A closed Issue with `agent:lead + action:finalize
 when that matching authorized merged-archive/native-close evidence exists and no valid Lead
 `LIFECYCLE_COMPLETE` result already exists.
 
+Before `LIFECYCLE_COMPLETE`, Lead also reconstructs any workflow-owned temporary integration/recovery
+branches from durable Issue/PR/recovery provenance. For each such branch, fresh-read the branch, open PR
+head/base usage, active recovery/integration references, and commit containment. Terminal cleanup is
+satisfied only when no still-owned temporary branch is both unused and safely deletable, or when every
+intentionally retained branch has a durable reconstructable reason and legal next owner.
+
+A branch that is unused, has no unique commits relative to canonical `main` or an explicitly retained
+successor, and is not an open PR head/base or active recovery input is an unresolved cleanup obligation.
+Lead does not perform the Executor-owned delete merely to satisfy finalization; it routes the required
+implementation/recovery mutation to the legal owner. Unique commits or ambiguous ownership/use fail
+closed. Normal feature/archive PR heads remain under their existing PR/native cleanup lifecycle rather
+than this temporary-branch check.
+
 The normal path first observes the expected native Issue completion and requires the Issue to be observed closed.
 If Issue closure is observed before the authorized Archive PR merge, that closure is premature and must fail closed;
 it must not be treated as successful archive completion.
 
-When those final conditions are satisfied, Lead persists one bounded `LIFECYCLE_COMPLETE` result that
-identifies the Archive PR exact head, merge commit, canonical archived default-branch state, and observed
-native Issue closure. This result is durable execution evidence only; canonical completion still depends
-on the authorized archive merge, correct archived state, and observed `closed` state. Lead does not reopen
-or redundantly close the Issue when native closure is already present; in other words, finalization does
-not reopen or redundantly close the Issue.
+When those final conditions and temporary-branch terminal obligations are satisfied, Lead persists one
+bounded `LIFECYCLE_COMPLETE` result that identifies the Archive PR exact head, merge commit, canonical
+archived default-branch state, observed native Issue closure, and the reconstructed temporary-branch
+cleanup/retention outcome. This result is durable execution evidence only; canonical completion still
+depends on the authorized archive merge, correct archived state, observed `closed` state, and no silent
+unused safely deletable workflow-owned temporary branch. Lead does not reopen or redundantly close the
+Issue when native closure is already present; in other words, finalization does not reopen or redundantly
+close the Issue.
 
 Only when the authorized Archive PR is merged, canonical archive state is correct, and native completion is missing
 may Lead use explicit Issue-close recovery. In that recovery-only path, Lead may perform the GitHub coordination Issue close mutation

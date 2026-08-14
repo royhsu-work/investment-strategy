@@ -61,6 +61,59 @@ For each approved feature slice:
     correction, independent `Reviewer / review-openspec` must PASS the new semantic target before Executor
     resumes implementation.
 
+## Constrained branch integration recovery
+
+When the implementation PR needs branch integration but ordinary local git merge/rebase is unavailable,
+Executor may perform only a semantics-preserving integration correction that remains inside the approved
+OpenSpec meaning.
+
+1. Fresh-read the implementation PR head and default-branch head immediately before constructing any
+   reconciliation. Historical heads or comments are not sufficient mutation preconditions.
+2. Use only a non-force repository-governed operation path. A two-parent reconciliation commit or an
+   equivalent repository primitive is legal only when the resulting tree can be verified against the
+   current implementation tree plus current default-branch state without inventing new requirement
+   meaning.
+3. Verify the resulting tree is a pure integration correction under the approved OpenSpec meaning. If
+   conflict resolution requires choosing new product/specification behavior, stop and route to
+   `Lead / resolve-question`.
+4. Any successfully moved implementation head is a new head and invalidates exact-head readiness,
+   implementation-review, and merge-authorization evidence that was bound to the prior head. Obtain
+   current quality gates and required exact-head OpenSpec validation before `Reviewer / review-implementation`.
+5. Do not force update the implementation branch as a recovery shortcut and do not discard unique work.
+6. If the available mutation surface cannot safely complete the correction, persist the raw observable
+   failure using `EXECUTION_EXCEPTION` while a repository evidence surface is writable, state whether any
+   durable mutation completed, and hand bounded unresolved diagnosis to `Lead / resolve-question`.
+
+## Implementation-review readiness
+
+Before `READY` and the handoff to `Reviewer / review-implementation`, Executor owns the PR Draft-to-Ready
+transition. Fresh-read the current implementation PR head, request the repository-supported Ready-for-review
+mutation for that exact head, and re-read the PR to require that the same current head is non-Draft before
+persisting `READY`. A Draft PR MUST NOT be handed to implementation review.
+
+If the Ready mutation fails, capture the observable error with `EXECUTION_EXCEPTION` and apply the shared
+recovery/disposition contract. Do not route to Reviewer while the current implementation PR remains Draft,
+and do not introduce a routing/status label as a substitute for GitHub PR presentation state.
+
+## Temporary recovery branch cleanup
+
+A temporary integration/recovery branch is identified from durable workflow/recovery provenance and use,
+not from an `agent/*` name pattern or hidden registry. When Executor created or adopted such a temporary
+branch and its recovery purpose has been consumed, Executor owns cleanup when all safe-delete preconditions
+are current.
+
+Before deletion, fresh-read the branch, open PR usage, owning workflow/recovery evidence, and containment.
+Delete only when the branch is still the identified workflow-owned temporary branch, is not an open PR head
+or base, is not referenced by active recovery/integration work, and has no unique commits relative to
+canonical `main` or an explicitly retained successor (`ahead_by == 0` or equivalent proof). Never force
+update/delete to hide unintegrated commits.
+
+If unique commits remain, active use exists, or ownership/use is ambiguous, fail closed and preserve the
+branch for the legal recovery/diagnosis owner. If the delete mutation is unavailable or denied, persist the
+observable failure through `EXECUTION_EXCEPTION`; an identical delete may be retried only after a fresh-read
+material precondition changes or through a different legal repository operation path. No broad branch garbage
+collection is authorized.
+
 Executor does not perform semantic bidirectional OpenSpec review as part of implementation completion or
 task-marker verification. That semantic gate belongs to independent `Reviewer / review-openspec` only
 when a new material semantic target exists; Executor consumes the applicable approved meaning and runs
@@ -68,9 +121,9 @@ the implementation/mechanical verification assigned to this action.
 
 ## Legal results
 
-- `READY` — approved implementation work is complete, required gates are current, and there is no material
-  semantic OpenSpec change requiring another specification gate; hand off directly to
-  `Reviewer / review-implementation`.
+- `READY` — approved implementation work is complete, required gates are current, the current implementation
+  PR is non-Draft at the same current head, and there is no material semantic OpenSpec change requiring
+  another specification gate; hand off directly to `Reviewer / review-implementation`.
 - `SPEC_BLOCKER` — implementation cannot proceed without changing/inventing contract meaning; persist
   the blocker and hand off to `Lead / resolve-question`. The resulting material semantic correction must
   return through `Reviewer / review-openspec` before implementation resumes.
