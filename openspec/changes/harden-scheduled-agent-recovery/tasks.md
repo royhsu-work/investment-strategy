@@ -40,10 +40,19 @@ Trace: #28 Human escalation observability addition → spec `Human escalation cr
 - [ ] 5.2 GREEN: update Lead/shared Human-escalation governance so Lead ensures the analytics label after durable escalation without making it routing/waiting/authorization/resume state.
 - [ ] 5.3 VERIFY: run focused/full quality gates and strict OpenSpec validation; confirm the label remains analytics-only and does not become a workflow-state dependency.
 
-## 6. Final coherence and review readiness
+## 6. Temporary integration/recovery branch terminal cleanup
 
-Trace: proposal full intent → all scheduled-agent-workflow delta requirements → Design Decisions 1–6; engineering/governance verification also follows `openspec/config.yaml`.
+Trace: #28 Human temporary branch cleanup addition (`issuecomment-5289581387`) → proposal `temporary integration/recovery branch terminal cleanup` → spec `Workflow-owned temporary recovery branches are safely retired before terminal completion` → Design Decision 7.
 
-- [ ] 6.1 Re-check required trace declarations/references across proposal, spec, design, and tasks; confirm #28 source incidents are covered without expanding into #29 documentation/SSOT scope.
-- [ ] 6.2 Run repository-pinned strict OpenSpec validation for the exact final handoff revision and retain checkout-identity evidence satisfying the default-branch exact-revision contract.
-- [ ] 6.3 Confirm the change remains single-purpose: constrained recovery/reconstruction only; no retry engine, lock/lease/heartbeat, hidden state, global supervisor, new normal action, Reviewer-independence change, or gate weakening.
+- [ ] 6.1 RED: add contract tests distinguishing normal PR heads from durably attributable temporary recovery branches; cover safe-delete eligibility only after fresh branch/PR/workflow reads, no active use, and no unique commits; cover unique-commit/active-input fail-closed behavior.
+- [ ] 6.2 GREEN: add the minimum shared lifecycle + Executor recovery procedure needed to make temporary-branch ownership/purpose reconstructable without a registry, let Executor clean a recovery branch when its safe-delete preconditions are current, and make Lead terminal finalization verify no unused safely deletable workflow-owned temporary branch remains.
+- [ ] 6.3 RED/GREEN: cover restricted delete-tool failure through existing minimum durable evidence and evidence-based no-identical-retry behavior; do not authorize force delete/update or broad `agent/*` garbage collection.
+- [ ] 6.4 VERIFY: run focused/full quality gates plus strict OpenSpec validation; verify normal feature/archive PR head cleanup remains unchanged, retained branches require a durable reconstructable reason, and `LIFECYCLE_COMPLETE` cannot silently ignore unresolved temporary residue.
+
+## 7. Final coherence and review readiness
+
+Trace: proposal full intent → all scheduled-agent-workflow delta requirements → Design Decisions 1–7; engineering/governance verification also follows `openspec/config.yaml`.
+
+- [ ] 7.1 Re-check required trace declarations/references across proposal, spec, design, and tasks; confirm all #28 source incidents including `issuecomment-5289581387` are covered without expanding into #29 documentation/SSOT scope.
+- [ ] 7.2 Run repository-pinned strict OpenSpec validation for the exact final handoff revision and retain checkout-identity evidence satisfying the default-branch exact-revision contract.
+- [ ] 7.3 Confirm the change remains single-purpose: constrained recovery/reconstruction only; no retry engine, lock/lease/heartbeat, hidden state, branch registry/garbage collector, global supervisor, new normal action, Reviewer-independence change, or gate weakening.
