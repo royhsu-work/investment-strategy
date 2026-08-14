@@ -74,10 +74,7 @@ native Issue closure, and the cleanup evidence produced before that merge. A clo
 `agent:lead + action:finalize-archive` is eligible only when that matching authorized merged-archive/native-
 close evidence exists and no valid Lead `LIFECYCLE_COMPLETE` result already exists.
 
-The normal path first observes the expected native Issue completion and requires the Issue to be observed
-closed. The observed `closed` state is mandatory. If Issue closure is observed before the authorized
-Archive PR merge, that closure is premature and must fail closed; it must not be treated as successful
-archive completion.
+The normal path first observes the expected native Issue completion and requires the Issue to be observed closed. The observed `closed` state is mandatory. If Issue closure is observed before the authorized Archive PR merge, that closure is premature and must fail closed; it must not be treated as successful archive completion.
 
 When final conditions are satisfied, Lead persists one bounded `LIFECYCLE_COMPLETE` result that
 identifies the Archive PR exact head, merge commit, canonical archived default-branch state, observed
