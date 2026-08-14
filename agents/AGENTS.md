@@ -205,7 +205,7 @@ final response does not transfer ownership. A later run reconstructs durable rea
 the missing legal work.
 
 A first nonterminal observation (`absent`, `queued`, or `in_progress`) of an exact external resource just
-caused by or required for the current selected action does not by itself prove a cross-invocation external
+created or triggered by the current selected action does not by itself prove a cross-invocation external
 asynchronous wait. While the same invocation still has bounded execution opportunity and no different
 authority boundary is required, the selected role/action MAY perform bounded same-invocation observation
 of only the same exact resource. If that resource reaches a terminal state during that bounded opportunity,
