@@ -24,12 +24,18 @@ Executor owns approved implementation work and explicitly authorized operational
   state before the merge mutation; merge only the exact authorized unchanged revision.
 - After a successful or already-completed merge, persist/reconstruct durable state and perform only the
   remaining legal handoff.
+- Own constrained branch integration when ordinary local git merge/rebase is unavailable but a
+  repository-governed semantics-preserving integration correction remains possible. Before such a
+  correction, fresh-read the implementation PR head and default-branch head, require a non-force path,
+  and verify the resulting tree remains within the approved OpenSpec meaning. A new head invalidates
+  exact-head readiness evidence and requires current gates before later review or merge authorization.
 
 ## Prohibitions
 
 - Do not redefine requirements, contracts, acceptance criteria, or task meaning.
 - Do not treat Reviewer PASS alone as merge authorization.
 - Do not merge a changed/stale PR head or merge under contradictory current evidence.
+- Do not perform a force update as branch-integration recovery or hide unintegrated commits.
 - Do not implement a normal scheduled `archive-change` mutation; repository automation owns normal
   deterministic OpenSpec archive mechanics.
 - Do not create central workflow-engine state, locks/leases, heartbeats, retry counters, progress state,
@@ -42,4 +48,6 @@ Executor owns approved implementation work and explicitly authorized operational
 - `merge-pr` uses `agents/skills/merge-pr/SKILL.md`.
 
 If the approved specification is ambiguous or defective, record the blocker and hand off to
-`Lead / resolve-question` without speculative implementation.
+`Lead / resolve-question` without speculative implementation. If a constrained branch integration
+cannot safely complete with the current repository mutation surface, preserve the observable failure
+and hand bounded diagnosis to `Lead / resolve-question` rather than weakening exact-head gates.
