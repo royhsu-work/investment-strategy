@@ -16,7 +16,7 @@ CONFIG = ROOT / "openspec" / "config.yaml"
 
 
 def _normalized(path: Path) -> str:
-    return " ".join(path.read_text(encoding="utf-8").split())
+    return " ".join(path.read_text(encoding="utf-8").split()).replace("/ ", "/")
 
 
 def test_lead_authors_trace_references_but_does_not_own_semantic_pass_gate() -> None:
@@ -47,15 +47,16 @@ def test_reviewer_retains_reverse_first_semantic_bidirectional_gate() -> None:
     assert "PASS" in skill and "FINDINGS" in skill
 
 
-def test_readme_places_semantic_bidirectional_review_inside_reviewer_gate() -> None:
+def test_readme_orients_to_traceability_owners_without_copying_review_protocol() -> None:
     readme = _normalized(README)
-    assert "Lead / propose-change" in readme
-    assert "required trace declarations/references" in readme
+    assert "Authoritative Scheduled-Agent runtime governance" in readme
+    assert "agents/AGENTS.md" in readme
+    assert "OpenSpec authoring conventions" in readme
+    assert "openspec/config.yaml" in readme
     assert "Reviewer / review-openspec" in readme
-    assert "Reviewer semantic bidirectional review" in readme
-    assert "reverse-first `tasks → design → specs → proposal`" in readme
-    assert "then `proposal → specs → design → tasks`" in readme
-    assert "exact-revision mechanical OpenSpec validation" in readme
+    assert "下列名稱僅作 Human 搜尋與流程導覽" in readme
+    assert "README 只提供 Human/contributor 導覽" in readme
+    assert "reverse-first `tasks → design → specs → proposal`" not in readme
 
 
 def test_executor_completion_does_not_claim_semantic_traceability_review() -> None:
