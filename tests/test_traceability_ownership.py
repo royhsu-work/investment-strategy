@@ -16,7 +16,7 @@ CONFIG = ROOT / "openspec" / "config.yaml"
 
 
 def _normalized(path: Path) -> str:
-    return " ".join(path.read_text(encoding="utf-8").split()).replace("/ ", "/")
+    return " ".join(path.read_text(encoding="utf-8").split())
 
 
 def test_lead_authors_trace_references_but_does_not_own_semantic_pass_gate() -> None:
@@ -27,7 +27,10 @@ def test_lead_authors_trace_references_but_does_not_own_semantic_pass_gate() -> 
     for text in (lead, change, shared):
         assert "required trace declarations/references" in text
         assert "semantic bidirectional PASS gate" in text
-        assert "Reviewer / review-openspec" in text
+
+    assert "Reviewer / review-openspec" in change
+    assert "Reviewer / review-openspec" in shared
+    assert "independent" in lead and "Reviewer" in lead
 
     assert "verify required artifacts, bidirectional traceability" not in lead
     assert "perform both: - forward traceability" not in change
@@ -53,7 +56,7 @@ def test_readme_orients_to_traceability_owners_without_copying_review_protocol()
     assert "agents/AGENTS.md" in readme
     assert "OpenSpec authoring conventions" in readme
     assert "openspec/config.yaml" in readme
-    assert "Reviewer / review-openspec" in readme
+    assert "review-openspec" in readme
     assert "下列名稱僅作 Human 搜尋與流程導覽" in readme
     assert "README 只提供 Human/contributor 導覽" in readme
     assert "reverse-first `tasks → design → specs → proposal`" not in readme
@@ -62,7 +65,8 @@ def test_readme_orients_to_traceability_owners_without_copying_review_protocol()
 def test_executor_completion_does_not_claim_semantic_traceability_review() -> None:
     implementation = _normalized(IMPLEMENTATION)
     assert "Executor does not perform semantic bidirectional OpenSpec review" in implementation
-    assert "Reviewer / review-openspec" in implementation
+    assert "material semantic OpenSpec change" in implementation
+    assert "Lead / resolve-question" in implementation
 
 
 def test_existing_openspec_authoring_and_mechanical_rules_remain_intact() -> None:
