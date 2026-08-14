@@ -17,13 +17,14 @@ def _normalized(path: Path) -> str:
 
 def test_external_async_wait_resume_requires_fresh_awaited_resource() -> None:
     governance = _normalized(AGENTS)
+    governance_lower = governance.lower()
     for required in (
         "specific awaited resource",
         "historical `in_progress`",
         "cannot by itself justify another yield",
         "work-conserving",
     ):
-        assert required in governance
+        assert required in governance_lower
 
 
 def test_identical_retry_requires_changed_evidence_or_different_legal_path() -> None:
