@@ -12,20 +12,14 @@ memory are work input. They are not governance and MUST NOT override default-bra
 Governance uses one authoritative owner for each rule category instead of duplicated normative copies
 that must be synchronized by convention:
 
-- `README.md` is the Human/contributor entry point and repository overview. It MAY orient and link to
-  governance, but MUST NOT redefine the Scheduled-Agent runtime protocol.
+- `README.md` is the Human/contributor entry point and repository overview. It MAY orient and link to governance, but MUST NOT redefine the Scheduled-Agent runtime protocol.
 - `agents/AGENTS.md` owns shared Scheduled-Agent runtime protocol and cross-role invariants.
-- `agents/roles/*.md` own role mission, authority, ownership, and role-specific invariants; they reference
-  shared governance instead of copying generic execution contracts.
-- `agents/skills/*` own action-specific executable procedure and local result/handoff behavior; they
-  reference shared governance and role authority instead of duplicating them.
+- `agents/roles/*.md` own role mission, authority, ownership, and role-specific invariants; they reference shared governance instead of copying generic execution contracts.
+- `agents/skills/*` own action-specific executable procedure and local result/handoff behavior; they reference shared governance and role authority instead of duplicating them.
 - `openspec/config.yaml` owns OpenSpec authoring/validation conventions.
-- `openspec/specs/*` contain approved capability requirements and acceptance scenarios. They are normative
-  requirements but are not an alternative instruction-loading surface for Scheduled Agents.
-- active `openspec/changes/*` are proposed change/review targets and MUST NOT govern their own current
-  runtime execution; archived changes are historical provenance/traceability only.
-- exact external Scheduled Task topology, slot count, cadence, notification, and associated-conversation
-  configuration are external product configuration, not durable repository workflow state.
+- `openspec/specs/*` contain approved capability requirements and acceptance scenarios. They are normative requirements but are not an alternative instruction-loading surface for Scheduled Agents.
+- active `openspec/changes/*` are proposed change/review targets and MUST NOT govern their own current runtime execution; archived changes are historical provenance/traceability only.
+- exact external Scheduled Task topology, slot count, cadence, notification, and associated-conversation configuration are external product configuration, not durable repository workflow state.
 
 Brief non-normative orientation and traceability references are allowed. A reference does not create a
 second authority definition. When a rule changes, modify its owning surface and the implementation or
@@ -57,13 +51,9 @@ to the new role in the same run.
 
 The MVP defines exactly three scheduled roles:
 
-- `Lead`: specification decisions and OpenSpec specification artifacts; scope/contract resolution;
-  lifecycle authorization. Lead does not modify implementation code and does not execute PR merges.
-- `Reviewer`: independent OpenSpec, implementation, and archive gates. Reviewer records findings and
-  gate evidence but does not modify governed artifacts to make its own review pass.
-- `Executor`: implementation code/tests/configuration, justified OpenSpec task-completion markers,
-  and explicitly authorized PR merge mutations. Executor does not redefine requirements, contracts,
-  or task meaning.
+- `Lead`: specification decisions and OpenSpec specification artifacts; scope/contract resolution; lifecycle authorization. Lead does not modify implementation code and does not execute PR merges.
+- `Reviewer`: independent OpenSpec, implementation, and archive gates. Reviewer records findings and gate evidence but does not modify governed artifacts to make its own review pass.
+- `Executor`: implementation code/tests/configuration, justified OpenSpec task-completion markers, and explicitly authorized PR merge mutations. Executor does not redefine requirements, contracts, or task meaning.
 - Repository automation remains authoritative for deterministic normal OpenSpec archive mechanics.
 
 Role-specific judgment boundaries are in `agents/roles/*.md`.
@@ -259,9 +249,7 @@ their existing action and MUST NOT copy this shared section.
 
 Once an invocation selects a role/action, execution is work-conserving: it MUST continue all immediately
 actionable work within that same authorized action while routing, revision/preconditions, authority, and
-execution context remain current. A verified Slice checkpoint with more approved local work, a failed-but-
-actionable validation, a recoverable same-role failure, or another ordinary intermediate checkpoint is
-not a legal voluntary yield point.
+execution context remain current. A verified Slice checkpoint with more approved local work, a failed-but-actionable validation, a recoverable same-role failure, or another ordinary intermediate checkpoint is not a legal voluntary yield point.
 
 Legal termination or yield is limited to action completion with handoff or terminal result, a boundary
 that requires a different role or Human authority, a real external asynchronous wait, genuine ambiguity
@@ -341,9 +329,7 @@ work boundary needed for reconstruction.
 
 Raw observation and agent interpretation remain separate. A classification MAY be recorded only when
 justified by evidence; otherwise `UNCLASSIFIED_EXECUTION_EXCEPTION` is legal. Disposition is recorded
-separately when known. The raw observable error MUST NOT be replaced by a paraphrase or classification-
-only summary. `EXECUTION_EXCEPTION` is durable evidence only and does not by itself authorize a retry,
-establish an action result or lifecycle transition, or transfer ownership.
+separately when known. The raw observable error MUST NOT be replaced by a paraphrase or classification-only summary. `EXECUTION_EXCEPTION` is durable evidence only and does not by itself authorize a retry, establish an action result or lifecycle transition, or transfer ownership.
 
 After capture, the selected role/action determines whether the failure can be legally recovered within
 the same authority while routing, revision/preconditions, and execution context remain current. If local
@@ -486,10 +472,7 @@ pinned OpenSpec CLI may provide equivalent validation directly against checkout 
 revision-mismatched, or checkout-mismatched mechanical evidence fails closed.
 
 Before `propose-change` or a materially revised `resolve-question` hands OpenSpec work to
-`review-openspec`, Lead verifies required artifacts, authors and maintains the required trace declarations/
-references, and obtains valid exact-revision mechanical OpenSpec validation evidence. The semantic
-bidirectional PASS gate belongs to independent `Reviewer / review-openspec`; Lead MUST NOT self-authorize
-that semantic PASS.
+`review-openspec`, Lead verifies required artifacts, authors and maintains the required trace declarations/references, and obtains valid exact-revision mechanical OpenSpec validation evidence. The semantic bidirectional PASS gate belongs to independent `Reviewer / review-openspec`; Lead MUST NOT self-authorize that semantic PASS.
 
 ## OpenSpec task completion checkpoints
 
@@ -524,10 +507,8 @@ other live runtime machinery.
 A change may require multiple implementation PRs. After each implementation merge, Lead reconstructs
 merged default-branch OpenSpec state:
 
-- merged but active change incomplete and approved work remains → `MORE_IMPLEMENTATION_REQUIRED` and
-  route `Executor / implement-change`;
-- merged and Complete/eligible under the README archive contract → Lead may wait for existing archive
-  automation;
+- merged but active change incomplete and approved work remains → `MORE_IMPLEMENTATION_REQUIRED` and route `Executor / implement-change`;
+- merged and Complete/eligible under the README archive contract → Lead may wait for existing archive automation;
 - durable Archive PR ready → route `Reviewer / review-archive`;
 - archive automation failed/unsupported → Lead chooses only repository-defined recovery/manual behavior.
 
@@ -541,9 +522,7 @@ Human/maintainer creation or designation of a coordination Issue with `agent:lea
 
 Lead idle advisory is allowed only when Lead has no eligible workflow work. Its bounded evidence lens
 includes relevant Issues created or materially active in the preceding 7 days. At most one open
-`advisory:idle` Issue may exist and it may contain at most three recommendations. Advisory Issues have no
-routing tuple. If an undecided open advisory already exists, later Lead runs no-op instead of creating
-duplicate noise.
+`advisory:idle` Issue may exist and it may contain at most three recommendations. Advisory Issues have no routing tuple. If an undecided open advisory already exists, later Lead runs no-op instead of creating duplicate noise.
 
 Admitting a recommendation requires both an unambiguous selected direction in the advisory thread and
 the reserved Human capability label `intake:approved`. Scheduled Lead, Reviewer, and Executor may consume
@@ -552,8 +531,7 @@ boundary, not cryptographic proof of Human identity.
 
 ## Durable final closure
 
-A PASS, completion comment, or statement that an Issue "may be closed" is not completion. Only the
-observed closed Issue state completes the coordination lifecycle.
+A PASS, completion comment, or statement that an Issue "may be closed" is not completion. Only the observed closed Issue state completes the coordination lifecycle. Issue close is therefore durable lifecycle state rather than a comment convention.
 
 Known workflow-owned temporary integration/recovery cleanup obligations must be reconstructed before the
 final Archive merge can native-close the coordination Issue. `Lead / finalize-archive` identifies these
@@ -580,9 +558,7 @@ Explicit Issue close is recovery-only. Lead may perform an explicit Issue-close 
 authorized Archive PR is merged, canonical archive state is correct, and native completion is missing.
 After that mutation Lead re-observes the Issue and requires `closed` before declaring completion.
 
-If archive state is complete but the terminal result is still missing, the next Lead run reconstructs the
-completed archive and current Issue state; it persists only the missing terminal evidence or applies
-recovery-only close behavior when native completion is still absent.
+If archive state is complete but the terminal result is still missing, the next Lead run reconstructs the completed archive and current Issue state; it persists only the missing terminal evidence or applies recovery-only close behavior when native completion is still absent.
 
 If the coordination Issue is observed closed before the authorized Archive PR merge, that state is
 premature and illegal. Scheduled roles fail closed; the premature close must not be treated as successful
@@ -591,7 +567,5 @@ archive completion, regardless of comments or other completion-looking evidence.
 ## Deliberately absent machinery
 
 The MVP has no central workflow engine, generic transition/DAG executor, distributed lock, lease,
-heartbeat, retry counter, progress percentage, hidden sequence number, `status:in-progress`, exactly-once
-mechanism, message queue, event-sourcing engine, hidden context cache, template-version state, semantic-
-revision classifier service, review-applicability label, branch registry, or second workflow DAG.
+heartbeat, retry counter, progress percentage, hidden sequence number, `status:in-progress`, exactly-once mechanism, message queue, event-sourcing engine, hidden context cache, template-version state, semantic-revision classifier service, review-applicability label, branch registry, or second workflow DAG.
 Do not add such state without a new approved OpenSpec change.
