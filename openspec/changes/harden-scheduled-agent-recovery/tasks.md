@@ -20,9 +20,9 @@ Trace: proposal `unchanged rejected mutation + minimum durable evidence` → mod
 
 Trace: proposal `restricted branch integration` → spec `Constrained branch integration preserves reviewed semantics and fail-closed gates` → Design Decision 3.
 
-- [ ] 3.1 RED: add Executor contract tests for non-force reconciliation using fresh implementation/default-branch heads, tree/semantic preservation, new-head gate invalidation, and no-legal-mutation-path escalation.
-- [ ] 3.2 GREEN: update Executor role/implementation procedure with the minimum constrained integration recovery sequence; keep semantics-changing conflicts outside Executor authority and route unresolved tool/authority boundaries to Lead diagnosis.
-- [ ] 3.3 VERIFY: run focused and full quality gates plus strict OpenSpec validation; verify exact-head review/merge gates are unchanged and no force-update path is authorized.
+- [x] 3.1 RED: add Executor contract tests for non-force reconciliation using fresh implementation/default-branch heads, tree/semantic preservation, new-head gate invalidation, and no-legal-mutation-path escalation.
+- [x] 3.2 GREEN: update Executor role/implementation procedure with the minimum constrained integration recovery sequence; keep semantics-changing conflicts outside Executor authority and route unresolved tool/authority boundaries to Lead diagnosis.
+- [x] 3.3 VERIFY: run focused and full quality gates plus strict OpenSpec validation; verify exact-head review/merge gates are unchanged and no force-update path is authorized.
 
 ## 4. PR Ready boundary before implementation review
 
