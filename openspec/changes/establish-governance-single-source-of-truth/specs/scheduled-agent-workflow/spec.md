@@ -12,6 +12,8 @@ If the resource resolves while that bounded same-invocation opportunity remains,
 
 When a scheduled invocation resumes work that previously yielded because a specific external asynchronous resource was not yet complete, the selected action SHALL fresh-read that awaited resource before concluding that the wait still exists. A prior coordination-Issue comment, checkpoint, or summarized observation that recorded the resource as `in_progress`, pending, or unavailable MUST be treated as historical evidence only and MUST NOT by itself justify another asynchronous-wait yield.
 
+If the fresh-read resource shows that the awaited condition has resolved and the selected role/action has immediately actionable work under current routing and preconditions, the invocation MUST continue that work under the shared work-conserving contract.
+
 This behavior MUST NOT create a polling service, durable timer, heartbeat, retry counter, hidden waiting state, or scheduler-side workflow state.
 
 #### Scenario: Just-triggered CI settles during the same invocation
@@ -38,6 +40,15 @@ This behavior MUST NOT create a polling service, durable timer, heartbeat, retry
 - WHEN current wait status is evaluated
 - THEN the selected action fresh-reads that exact awaited resource
 - AND stale `in_progress`, pending, or unavailable evidence alone cannot justify another yield
+
+#### Scenario: Awaited gate has completed successfully
+
+- GIVEN a later wake fresh-reads the specific awaited validation run
+- AND the run is now completed successfully for the required revision
+- AND routing and other preconditions remain current
+- WHEN the selected action evaluates continuation
+- THEN the prior async-wait boundary no longer applies
+- AND the action continues its immediately actionable work in the same invocation
 
 #### Scenario: Nonterminal resource belongs to another authority boundary
 
