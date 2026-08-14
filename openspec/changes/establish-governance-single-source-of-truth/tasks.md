@@ -39,8 +39,8 @@ Trace: #29 `issuecomment-5293197049` + #28 source incident → `scheduled-agent-
 
 ## Slice 5 — Final coherence and traceability
 
-- [ ] Verify proposal → specs → design → tasks references for both affected capabilities.
-- [ ] Verify reverse trace tasks → design → specs → proposal without claiming the independent Reviewer semantic PASS.
-- [ ] Confirm #28 recovery semantics remain intact and #35/#38 remain out of scope.
-- [ ] Confirm implementation PR uses non-closing `Refs #29` linkage.
-- [ ] Run full project quality gates and strict OpenSpec validation on the exact final revision before `READY_FOR_OPENSPEC_REVIEW`.
+- [x] Verify proposal → specs → design → tasks references for both affected capabilities.
+- [x] Verify reverse trace tasks → design → specs → proposal without claiming the independent Reviewer semantic PASS.
+- [x] Confirm #28 recovery semantics remain intact and #35/#38 remain out of scope.
+- [x] Confirm implementation PR uses non-closing `Refs #29` linkage.
+- [x] Run full project quality gates and strict OpenSpec validation on the exact final revision before `READY_FOR_OPENSPEC_REVIEW`.
