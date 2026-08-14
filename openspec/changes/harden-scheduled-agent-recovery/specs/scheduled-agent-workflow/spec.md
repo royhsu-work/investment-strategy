@@ -112,6 +112,58 @@ Failure to add the analytics label MUST NOT erase or invalidate already-durable 
 - WHEN a scheduled role reconstructs the workflow
 - THEN it does not infer that the workflow is waiting for Human merely from the label
 
+### Requirement: Workflow-owned temporary recovery branches are safely retired before terminal completion
+
+A temporary integration/recovery branch created or adopted as an intermediate workflow recovery surface SHALL have reconstructable workflow ownership and purpose from existing durable repository evidence. Branch naming alone MUST NOT establish temporary-branch identity or deletion authority, and this requirement MUST NOT introduce a hidden branch registry or second workflow state store.
+
+Normal feature and archive PR heads SHALL continue to use their existing PR/native branch lifecycle. This cleanup contract applies only to a separately workflow-owned temporary recovery/integration branch that is not the normal surviving implementation/archive PR head.
+
+Before deleting such a temporary branch, the responsible action MUST fresh-read branch, PR, and workflow state and MUST verify that the branch is not an open PR head or base, is not still referenced by active recovery/integration work, and has no commits outside canonical `main` or an explicitly retained successor branch. An `ahead_by == 0` comparison or equivalent no-unique-commits proof MAY satisfy the containment check. Stale observations, branch-name patterns, or an assumption that the workflow is finished MUST NOT by themselves authorize deletion.
+
+A force update/delete MUST NOT be used to hide unintegrated commits. If unique commits remain, branch ownership/use is ambiguous, or the branch is still active input, cleanup MUST fail closed and preserve the branch while routing to the legal recovery/diagnosis owner.
+
+If a temporary-branch delete mutation is denied, unsupported, or unavailable, the action MUST preserve minimum durable evidence and apply the same evidence-based no-identical-retry rule as other constrained mutations.
+
+Before Lead persists terminal `LIFECYCLE_COMPLETE`, Lead SHALL verify that no temporary branch still owned by that workflow is both unused and safely deletable. An intentionally retained branch is compatible with terminal completion only when a durable reconstructable reason and legal ownership/next disposition remain recorded. Lead's verification MUST NOT grant Lead authority to perform Executor-owned implementation/recovery branch mutations.
+
+#### Scenario: Temporary integration branch becomes cleanup-eligible
+
+- GIVEN a workflow-owned temporary integration branch is no longer an open PR head/base or active recovery input
+- AND a fresh comparison proves it has no commits not already contained in canonical `main`
+- WHEN the responsible recovery action evaluates terminal cleanup
+- THEN the branch is eligible for non-force deletion
+- AND deletion is not authorized merely by its name or an older progress comment
+
+#### Scenario: Temporary branch still has unique commits
+
+- GIVEN a workflow-owned temporary recovery branch still contains commits not present in canonical `main` or an explicitly retained successor
+- WHEN cleanup is evaluated
+- THEN the branch is not deleted
+- AND the workflow fails closed to the legal recovery/diagnosis owner rather than using force deletion
+
+#### Scenario: Temporary branch remains active workflow input
+
+- GIVEN a temporary branch is still an open PR head/base or is referenced by active recovery/integration work
+- WHEN cleanup is evaluated
+- THEN the branch is retained
+- AND terminal cleanup does not treat it as unused
+
+#### Scenario: Cleanup mutation is blocked by restricted tooling
+
+- GIVEN all safe-delete preconditions are satisfied
+- AND the repository branch-delete mutation is denied or unavailable
+- WHEN the responsible action handles the failure
+- THEN it preserves the cleanup obligation and observable minimum durable evidence
+- AND it does not repeatedly attempt the identical delete without a materially changed precondition or different legal operation surface
+
+#### Scenario: Terminal completion checks unresolved temporary residue
+
+- GIVEN Lead is preparing to persist `LIFECYCLE_COMPLETE`
+- AND a branch remains durably attributable to the workflow as a temporary recovery branch
+- WHEN Lead reconstructs terminal state
+- THEN Lead verifies whether the branch is still needed, safely deleted, or durably retained for a stated reason
+- AND Lead does not claim lifecycle completion while an unused safely deletable temporary branch remains without disposition
+
 ## MODIFIED Requirements
 
 ### Requirement: Scheduled execution is at-least-once and state reconstructable
