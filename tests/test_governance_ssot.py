@@ -19,7 +19,8 @@ def test_readme_is_orientation_not_competing_runtime_protocol() -> None:
     assert "Authoritative Scheduled-Agent runtime governance" in readme
     assert "agents/AGENTS.md" in readme
     assert "README 只提供 Human/contributor 導覽" in readme
-    assert "README 不建立第二份 normative copy" in readme
+    assert "不複製 Scheduled-Agent runtime protocol" in readme
+    assert "下列名稱僅作 Human 搜尋與流程導覽" in readme
 
 
 def test_shared_governance_declares_rule_category_ownership() -> None:
