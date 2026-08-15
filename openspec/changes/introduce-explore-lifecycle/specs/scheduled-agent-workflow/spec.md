@@ -1,5 +1,10 @@
 # scheduled-agent-workflow Specification Delta
 
+## RENAMED Requirements
+
+- FROM: `### Requirement: The MVP exposes exactly nine normal scheduled actions`
+- TO: `### Requirement: The MVP exposes exactly ten normal scheduled actions`
+
 ## MODIFIED Requirements
 
 ### Requirement: One persistent coordination Issue represents the normal OpenSpec workflow lifecycle
