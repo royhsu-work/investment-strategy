@@ -31,4 +31,4 @@ Trace: proposal `What Changes` items 4–5; modified requirement `Scheduled exec
 
 - [x] Verify proposal → specs → design → tasks forward traceability and tasks → design → specs → proposal reverse traceability.
 - [x] Verify no unrelated Human-authority provenance, Python Ruff security, or prompt-security implementation entered this change.
-- [ ] Run `pytest`, `mypy`, `ruff`, and strict OpenSpec validation; record exact-revision evidence before Reviewer handoff.
+- [x] Run `pytest`, `mypy`, `ruff`, and strict OpenSpec validation; record exact-revision evidence before Reviewer handoff.
