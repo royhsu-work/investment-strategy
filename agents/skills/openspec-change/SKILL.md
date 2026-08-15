@@ -61,6 +61,12 @@ Legal target action depends on the gate/blocker being resolved:
 
 When the legal target is another Lead action on the same coordination Issue, perform the source `ACTION_RESULT`, fresh-read and replace the action routing, observe the target tuple, then reconstruct that target action using its mapped default-branch skill. If it is immediately actionable, continue in the same invocation under the shared fixed-role contract without `HANDOFF`. Cross-role targets still use canonical `HANDOFF` and end the invocation.
 
+## Exact validation run observation
+
+When `propose-change` or a materially revised `resolve-question` has just caused a just-triggered exact required run for OpenSpec validation, the first observation of that run as `queued` or `in_progress` is not by itself a reason to yield. While bounded execution opportunity remains and no different authority boundary is required, observe only the same exact run using bounded same-invocation observation. If the same exact run becomes terminal, consume that terminal result and continue immediately with the current action's next legal step. If it remains nonterminal when bounded execution opportunity is exhausted, that is a real external asynchronous wait.
+
+A later wake does not trust the earlier nonterminal observation. It must fresh-read that exact run before deciding that waiting still applies. This specialization adds no timer, sleep policy, polling counter, heartbeat, retry counter, background service, or hidden waiter; the shared asynchronous-resource contract remains authoritative in `agents/AGENTS.md`.
+
 ## Human escalation producer
 
 A genuine unresolved Human authority/intent decision uses canonical `HUMAN_DECISION_REQUIRED`. Lead first
