@@ -58,8 +58,8 @@
 
 ## Slice 6 — OpenSpec and repository-wide verification
 
-- [ ] Verify proposal → specs → design → tasks forward traceability and tasks → design → specs → proposal reverse traceability for every Behavior/Product task in this Change.
-- [ ] Verify external OpenSpec Explore references remain non-authoritative runtime design evidence and no feature-branch instruction becomes current execution authority before default-branch merge.
-- [ ] Run the repository OpenSpec exact-revision validation path and require validator checkout identity to equal the handoff revision before accepting strict validation success.
-- [ ] Run the full repository regression suite, type checks, and lint checks required by current `openspec/config.yaml`.
-- [ ] Confirm the final implementation contains no central dispatcher engine, new role, research persistence subsystem, lock/lease/heartbeat, retry/progress counter, hidden ownership state, mandatory Explore gate, or `review-explore` action.
+- [x] Verify proposal → specs → design → tasks forward traceability and tasks → design → specs → proposal reverse traceability for every Behavior/Product task in this Change.
+- [x] Verify external OpenSpec Explore references remain non-authoritative runtime design evidence and no feature-branch instruction becomes current execution authority before default-branch merge.
+- [x] Run the repository OpenSpec exact-revision validation path and require validator checkout identity to equal the handoff revision before accepting strict validation success.
+- [x] Run the full repository regression suite, type checks, and lint checks required by current `openspec/config.yaml`.
+- [x] Confirm the final implementation contains no central dispatcher engine, new role, research persistence subsystem, lock/lease/heartbeat, retry/progress counter, hidden ownership state, mandatory Explore gate, or `review-explore` action.
