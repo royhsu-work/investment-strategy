@@ -24,7 +24,7 @@ def test_required_deferred_follow_up_is_enforced_at_review_and_finalization() ->
     assert "create or reuse" in lead and "required deferred follow-up" in lead
     assert "required deferred follow-up" in review
     assert "missing" in review and "tracker" in review
-    assert "ordinary out-of-scope" in review
+    assert "ordinary out-of-scope" in review.lower()
     assert "required deferred follow-up" in finalize
     assert "LIFECYCLE_COMPLETE" in finalize
     assert "tracker" in finalize
