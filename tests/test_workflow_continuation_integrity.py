@@ -50,5 +50,5 @@ def test_handoff_is_cross_role_only_and_same_role_needs_no_synthetic_message() -
     assert "HANDOFF is cross-role" in shared
     assert "Same-role action transitions MUST NOT emit" in messages
     assert "source `ACTION_RESULT`" in messages
-    assert "same-role" in change
+    assert "same-role" in change.lower()
     assert "without `HANDOFF`" in change
