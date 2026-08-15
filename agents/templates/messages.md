@@ -90,7 +90,7 @@ When `MERGE_RESULT` directly represents the covered PR-merge lifecycle boundary,
 
 ## `HANDOFF`
 
-Use only after a routing ownership transfer succeeds and the target routing is observed.
+Use only after a cross-role routing ownership transfer succeeds and the target routing is observed.
 
 Required evidence:
 
@@ -102,7 +102,9 @@ Required evidence:
 - observed target routing after successful mutation;
 - next owner/action.
 
-A result message alone is not a handoff. `HANDOFF` is reconstructable evidence for the completed routing boundary; the routing tuple remains canonical workflow state.
+A result message alone is not a handoff. `HANDOFF` is reconstructable evidence for the completed cross-role ownership boundary; the routing tuple remains canonical workflow state.
+
+Same-role action transitions MUST NOT emit a synthetic `HANDOFF` or a new action-transition message. The source `ACTION_RESULT` or other action-defined result evidence, successful routing mutation on the same coordination Issue, and target-action reconstruction are sufficient durable evidence for that same-role boundary.
 
 ## `HUMAN_DECISION_REQUIRED`
 
