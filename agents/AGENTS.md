@@ -51,7 +51,7 @@ to the new role in the same run.
 
 The MVP defines exactly three scheduled roles:
 
-- `Lead`: specification decisions and OpenSpec specification artifacts; scope/contract resolution; lifecycle authorization. Lead does not modify implementation code and does not execute PR merges.
+- `Lead`: specification decisions and OpenSpec specification artifacts; pre-Propose Explore; scope/contract resolution; lifecycle authorization. Lead does not modify implementation code and does not execute PR merges.
 - `Reviewer`: independent OpenSpec, implementation, and archive gates. Reviewer records findings and gate evidence but does not modify governed artifacts to make its own review pass.
 - `Executor`: implementation code/tests/configuration, justified OpenSpec task-completion markers, and explicitly authorized PR merge mutations. Executor does not redefine requirements, contracts, or task meaning.
 - Repository automation remains authoritative for deterministic normal OpenSpec archive mechanics.
@@ -60,10 +60,11 @@ Role-specific judgment boundaries are in `agents/roles/*.md`.
 
 ## Normal action surface and skill mapping
 
-Exactly nine normal actions are supported:
+Exactly ten normal actions are supported:
 
 | Role | Action | Skill |
 | --- | --- | --- |
+| Lead | `explore-change` | `agents/skills/openspec-explore/SKILL.md` |
 | Lead | `propose-change` | `agents/skills/openspec-change/SKILL.md` |
 | Lead | `resolve-question` | `agents/skills/openspec-change/SKILL.md` |
 | Lead | `finalize-change` | `agents/skills/lifecycle-finalize/SKILL.md` |
@@ -80,10 +81,12 @@ contracts, and they MUST NOT create a second proposal/specs/design/tasks workflo
 ## Persistent coordination Issue
 
 One normal OpenSpec change uses one persistent coordination Issue from proposal through final archive
-confirmation. The stable workflow identity is deliberately small:
+confirmation. Optional pre-Propose Explore uses the same coordination Issue when it later proceeds to a
+formal Change; terminal no-change/no-go research may end before a Change identity exists. The stable
+workflow identity is deliberately small:
 
 ```text
-Change: <change-id>     # may be unset before Lead selects it; immutable afterward
+Change: <change-id>     # remains unset through Explore; immutable after Propose persists it
 agent:<role>            # exactly one
 action:<action>         # exactly one
 ```
@@ -91,39 +94,64 @@ action:<action>         # exactly one
 `Change:` is immutable after Lead persists it. Normal clarification and review-correction transitions
 stay on the same coordination Issue. Comments are durable evidence, not canonical workflow state.
 
-## Single-active workflow activation
+## Single-active workflow activation and pre-activation intake
 
 An open coordination Issue with valid routing and a persisted non-`unset` `Change:` identity is an
-active workflow. The repository permits at most one active workflow. An open Human-admitted
-`Lead / propose-change` Issue with `Change: unset` is queued pre-activation work and MUST NOT count as
-an active workflow until Lead persists its immutable Change identity.
+active workflow. The repository permits at most one active workflow. A closed terminal-pending workflow
+is the narrow exception defined below.
 
-Lead MUST NOT activate a queued proposal while another active workflow exists. When no active workflow
-exists, valid Human-admitted queued proposals are selected by earliest GitHub `created_at`, then lower
-Issue number. The selected Lead persists its immutable Change identity; that durable write is the
-activation boundary.
+Human-admitted open `Lead / explore-change` and `Lead / propose-change` Issues with `Change: unset` are
+queued pre-activation work and MUST NOT count as an active formal workflow. Explore keeps `Change: unset`
+and does not create formal OpenSpec Change artifacts. Formal activation remains owned by Propose when Lead
+persists the immutable non-`unset` Change identity.
+
+When no formal active or terminal-pending workflow exists, valid Human-admitted `Lead / explore-change`
+and `Lead / propose-change` entries participate in one combined pre-activation queue ordered by earliest
+GitHub `created_at`, then lower Issue number. A formal active or terminal-pending workflow must win over
+pre-activation intake. The selected Issue's current routing determines whether Lead executes Explore or
+Propose; there is no `explore-change > propose-change` priority inside this combined queue.
+
+Lead MUST NOT activate a queued proposal while another formal active/terminal-pending workflow exists or
+while an older eligible Explore/direct-Propose entry is the deterministic combined pre-activation winner.
+Immediately before persisting a non-`unset` Change identity, Propose MUST re-read durable state and confirm
+its Issue is still the combined pre-activation winner. The selected Lead persists its immutable Change
+identity; that durable write is the formal activation boundary.
 
 Overlapping activation attempts remain at-least-once. Before the activation write, Lead re-read checks
 that no active workflow has appeared and that the candidate is still the deterministic winner. The
 activation contract is first-valid-write-wins: after writing, the run MUST re-read durable state and
 stop as stale if another valid activation or newer contradictory state won. This safety model uses
-reconstruction and preconditions, not a lock, claim, lease, heartbeat, hidden sequence, or
-`status:in-progress` state.
+reconstruction and preconditions, not a lock, claim, lease, heartbeat, hidden sequence, `status:exploring`,
+or `status:in-progress` state.
 
 A terminal-pending active workflow is the one narrow exception to the normal open-Issue active-workflow
 shape: a closed coordination Issue carrying `agent:lead + action:finalize-archive`, backed by matching
 authorized merged Archive PR and observed native-close evidence, with no valid Lead `LIFECYCLE_COMPLETE`
-result. While such terminal-pending work exists, Scheduled roles MUST NOT activate a queued proposal.
-After a valid Lead `LIFECYCLE_COMPLETE` result exists, the closed tuple is terminal history and MUST NOT
-block later workflow admission.
+result. While such terminal-pending work exists, Scheduled roles MUST NOT activate or execute queued
+pre-activation intake. After a valid Lead `LIFECYCLE_COMPLETE` result exists, the closed tuple is terminal
+history and MUST NOT block later workflow admission.
+
+## Explore completion boundary
+
+`Lead / explore-change` is optional pre-Propose investigation. It preserves problem-before-solution
+semantics, keeps `Change: unset`, and creates neither formal OpenSpec artifacts nor implementation code.
+Its legal decision-complete dispositions are `PROPOSAL_READY`, `NO_CHANGE_REQUIRED`, `NO_GO`, and genuine
+`HUMAN_DECISION_REQUIRED` under the existing Human escalation contract.
+
+`PROPOSAL_READY` does not itself authorize a formal Change. Lead records the bounded result and requests
+Human intent to proceed; only authoritative Human approval allows routing the same Issue to
+`Lead / propose-change` while `Change: unset`. `NO_CHANGE_REQUIRED` and `NO_GO` may close the research Issue
+as completed after their bounded result is durable, without creating a fake Change or entering Archive.
+There is no independent `review-explore` gate, research database, completeness score, or hidden research
+state machine.
 
 ## Orphan evidence and Human authority
 
 If no active workflow exists but unexplained durable workflow evidence indicates unresolved PR,
-OpenSpec, branch, or other workflow-related state, Scheduled roles MUST NOT activate queued proposal work
-by ignoring that evidence. The bounded response is Lead diagnosis and, only when Human input is legally
-required, a decision-ready escalation. This rule does not create a repository-wide fault classifier or
-persistent fault-state machine.
+OpenSpec, branch, or other workflow-related state, Scheduled roles MUST NOT activate or execute queued
+pre-activation work by ignoring that evidence. The bounded response is Lead diagnosis and, only when Human
+input is legally required, a decision-ready escalation. This rule does not create a repository-wide fault
+classifier or persistent fault-state machine.
 
 For decisions governance reserves to Human, only durable GitHub activity attributable to actor
 `royhsu-work` satisfies Human authority. Activity from other actors may be supporting evidence but
@@ -160,16 +188,18 @@ terminal-pending `Lead / finalize-archive` reconstruction defined above.
 Zero, multiple, contradictory, or illegal routing labels fail closed; model inference MUST NOT repair them.
 Unrelated labels are preserved during routing changes.
 
-Legal tuples are exactly the nine role/action pairs listed above.
+Legal tuples are exactly the ten role/action pairs listed above.
 
 ## Deterministic discovery
 
 A scheduled run processes at most one eligible Issue. Invalid routing never enters the candidate set.
-Role-local action priority is fixed:
+
+In fixed-role mode, role-local action priority is fixed. Lead lifecycle/blocker work stays ahead of new
+intake; if none is eligible, Lead uses the same combined pre-activation queue as workflow-dynamic mode:
 
 ```text
 Lead
-resolve-question > finalize-archive > finalize-change > propose-change
+resolve-question > finalize-archive > finalize-change > pre-activation intake
 
 Reviewer
 review-archive > review-implementation > review-openspec
@@ -178,8 +208,18 @@ Executor
 merge-pr > implement-change
 ```
 
-Within the same role/action priority, earlier GitHub `created_at` wins; if equal, lower numeric Issue
-number wins. Model-derived urgency, scoring, or discretionary reordering is prohibited.
+Pre-activation intake contains valid Human-admitted open `Lead / explore-change + Change: unset` and
+`Lead / propose-change + Change: unset` entries together, ordered by earliest GitHub `created_at`, then
+lower Issue number. Fixed-role and workflow-dynamic discovery MUST NOT choose different pre-activation
+winners for the same candidate set. Within the same ordinary role/action priority, earlier GitHub
+`created_at` wins; if equal, lower numeric Issue number wins. Model-derived urgency, scoring, or
+discretionary reordering is prohibited.
+
+In workflow-dynamic mode, a formal active/terminal-pending workflow is selected first. Only when none
+exists may the combined pre-activation winner determine `Lead / explore-change` or `Lead / propose-change`.
+An oldest eligible open Explore naturally remains the deterministic winner across wakes until it reaches a
+terminal result or Human-authorized transition; no claim, lease, heartbeat, or hidden ownership state is
+required.
 
 If the role has no eligible work, it performs no workflow mutation and produces no repository noise.
 Only Lead may use the separate bounded idle-advisory mode defined below.
@@ -224,7 +264,7 @@ or a hidden waiter.
 
 ## Authoritative context continuity and evidence consumption
 
-This reconstruction contract applies across all nine normal actions. Each selected action MUST reconstruct
+This reconstruction contract applies across all ten normal actions. Each selected action MUST reconstruct
 the still-applicable durable evidence that its existing contract needs; a newer comment, readiness result,
 handoff, routing transition, validation result, revision, or current snapshot does not implicitly erase an
 earlier unresolved obligation. Simple recency does not consume evidence.
@@ -311,7 +351,7 @@ escalation uses `HUMAN_DECISION_REQUIRED`.
 
 ## Shared exception capture and invocation finalization
 
-This contract applies to all three Scheduled Agent roles and all nine normal actions. All Scheduled Agent
+This contract applies to all three Scheduled Agent roles and all ten normal actions. All Scheduled Agent
 actions inherit one shared exception-capture and invocation-finalization rule for catchable tool, runtime,
 and execution failures. Role and skill documents retain action-specific normal results and known local
 recovery only and MUST NOT copy this generic execution contract.
@@ -371,9 +411,9 @@ A material workflow lifecycle transition that changes durable workflow ownership
 requires one bounded comment on the persistent coordination Issue. The journal identifies the transition,
 resulting durable state or evidence, and next action or terminal result. Covered boundaries include
 routing handoff, PR merge, Archive native close/post-merge terminal handoff, Lead `LIFECYCLE_COMPLETE`,
-and Human escalation/specification-resolution. Related low-level writes inside one legal transition may
-be represented by that one journal entry, and the journal comment itself does not recursively require
-another meta-comment.
+Explore terminal research closure, and Human escalation/specification-resolution. Related low-level writes
+inside one legal transition may be represented by that one journal entry, and the journal comment itself
+does not recursively require another meta-comment.
 
 This lifecycle journal is distinct from implementation Slice checkpointing. Ordinary
 RED/GREEN/refactor/test-trigger/compatibility-correction commits and ordinary artifact/task edits inside
@@ -499,8 +539,8 @@ next run reconstructs the active slice from code, tests, task state, and durable
 verified slices remain durable and retain their checkpoint evidence.
 
 Verified-slice checkpointing is completion-boundary observability only. It MUST NOT introduce a heartbeat,
-progress percentage, `status:in-progress`, lock, claim, lease, retry counter, hidden ownership state, or
-other live runtime machinery.
+progress percentage, `status:in-progress`, `status:exploring`, lock, claim, lease, retry counter, hidden
+ownership state, or other live runtime machinery.
 
 ## Multi-PR implementation and archive boundary
 
@@ -517,17 +557,20 @@ repository archive workflow remains authoritative for deterministic normal archi
 
 ## Human admission and idle advisory
 
-Scheduled roles do not admit arbitrary repository activity. Initial workflow entry requires explicit
-Human/maintainer creation or designation of a coordination Issue with `agent:lead + action:propose-change`.
+Scheduled roles do not admit arbitrary repository activity. Initial pre-activation entry requires explicit
+Human/maintainer creation or designation of a coordination Issue with `agent:lead + action:explore-change`
+for fuzzy investigation or `agent:lead + action:propose-change` for already concrete/buildable direction.
+Explore is optional; direct-to-Propose remains valid without an Explore prerequisite.
 
 Lead idle advisory is allowed only when Lead has no eligible workflow work. Its bounded evidence lens
 includes relevant Issues created or materially active in the preceding 7 days. At most one open
 `advisory:idle` Issue may exist and it may contain at most three recommendations. Advisory Issues have no routing tuple. If an undecided open advisory already exists, later Lead runs no-op instead of creating duplicate noise.
 
 Admitting a recommendation requires both an unambiguous selected direction in the advisory thread and
-the reserved Human capability label `intake:approved`. Scheduled Lead, Reviewer, and Executor may consume
-the marker but MUST NEVER add, remove, restore, or manufacture it. This is a governance capability
-boundary, not cryptographic proof of Human identity.
+the reserved Human capability label `intake:approved`. Human may admit that direction to Explore or direct
+Propose according to its clarity. Scheduled Lead, Reviewer, and Executor may consume the marker but MUST
+NEVER add, remove, restore, or manufacture it. This is a governance capability boundary, not cryptographic
+proof of Human identity.
 
 ## Durable final closure
 
@@ -567,5 +610,8 @@ archive completion, regardless of comments or other completion-looking evidence.
 ## Deliberately absent machinery
 
 The MVP has no central workflow engine, generic transition/DAG executor, distributed lock, lease,
-heartbeat, retry counter, progress percentage, hidden sequence number, `status:in-progress`, exactly-once mechanism, message queue, event-sourcing engine, hidden context cache, template-version state, semantic-revision classifier service, review-applicability label, branch registry, or second workflow DAG.
+heartbeat, retry counter, progress percentage, hidden sequence number, `status:in-progress`,
+`status:exploring`, exactly-once mechanism, message queue, event-sourcing engine, hidden context cache,
+hidden memory, research database, completeness score, `review-explore` action, template-version state,
+semantic-revision classifier service, review-applicability label, branch registry, or second workflow DAG.
 Do not add such state without a new approved OpenSpec change.
