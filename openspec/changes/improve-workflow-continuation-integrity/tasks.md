@@ -20,15 +20,15 @@ Trace: proposal `What Changes` items 2–3; modified requirements `Scheduled exe
 
 ## Slice 3 — Short exact CI/Actions work conservation
 
-- [ ] **RED** Add regression tests proving the first queued/in-progress observation of a just-triggered exact required run does not force a yield while bounded execution opportunity remains, that a terminal result reached in the same invocation is consumed immediately, and that a later wake fresh-reads the exact awaited run.
-- [ ] **GREEN** Strengthen affected OpenSpec-change and implementation procedures to observe only the exact just-triggered required run and continue when it becomes terminal, while preserving real asynchronous wait and cross-role stop boundaries.
-- [ ] **REFACTOR** Keep shared async semantics in `agents/AGENTS.md`; action skills contain only executable specialization and no timers, sleep policy, poll counters, heartbeat, or hidden waiter state.
-- [ ] **VERIFY** Run focused tests, full pytest suite, mypy, Ruff, and strict OpenSpec validation for the exact branch revision.
+- [x] **RED** Add regression tests proving the first queued/in-progress observation of a just-triggered exact required run does not force a yield while bounded execution opportunity remains, that a terminal result reached in the same invocation is consumed immediately, and that a later wake fresh-reads the exact awaited run.
+- [x] **GREEN** Strengthen affected OpenSpec-change and implementation procedures to observe only the exact just-triggered required run and continue when it becomes terminal, while preserving real asynchronous wait and cross-role stop boundaries.
+- [x] **REFACTOR** Keep shared async semantics in `agents/AGENTS.md`; action skills contain only executable specialization and no timers, sleep policy, poll counters, heartbeat, or hidden waiter state.
+- [x] **VERIFY** Run focused tests, full pytest suite, mypy, Ruff, and strict OpenSpec validation for the exact branch revision.
 
 Trace: proposal `What Changes` items 4–5; modified requirement `Scheduled execution is at-least-once and state reconstructable`; design Decision 4.
 
 ## Final verification
 
-- [ ] Verify proposal → specs → design → tasks forward traceability and tasks → design → specs → proposal reverse traceability.
-- [ ] Verify no unrelated Human-authority provenance, Python Ruff security, or prompt-security implementation entered this change.
+- [x] Verify proposal → specs → design → tasks forward traceability and tasks → design → specs → proposal reverse traceability.
+- [x] Verify no unrelated Human-authority provenance, Python Ruff security, or prompt-security implementation entered this change.
 - [ ] Run `pytest`, `mypy`, `ruff`, and strict OpenSpec validation; record exact-revision evidence before Reviewer handoff.
