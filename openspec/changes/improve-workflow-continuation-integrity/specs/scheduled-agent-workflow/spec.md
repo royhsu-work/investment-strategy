@@ -24,6 +24,23 @@ The invocation MUST stop at the first cross-role transfer, unresolved Human boun
 
 A first `absent`, `queued`, or `in_progress` observation of the exact required external resource just created or triggered by the selected action MUST NOT by itself be treated as a real cross-invocation asynchronous wait while bounded same-invocation execution opportunity remains. The action SHALL confine bounded observation to that same exact resource and, if it becomes terminal during the invocation, SHALL consume that terminal result immediately when the current action remains authorized. A later wake resuming a real wait SHALL fresh-read the exact awaited resource before yielding again.
 
+#### Scenario: Run stops after durable work but before handoff
+
+- GIVEN a scheduled role completes durable action work
+- AND the run terminates before routing changes
+- WHEN a later run observes the same routing tuple
+- THEN it reconstructs whether the durable action work already exists
+- AND it performs only remaining legal work or the missing transition/handoff
+- AND it does not require memory of the previous run
+
+#### Scenario: Normal evidence write itself is unavailable
+
+- GIVEN a catchable execution failure occurs
+- AND the current invocation cannot write the normal coordination-Issue evidence surface
+- WHEN no other repository-governed durable evidence surface is legally available
+- THEN the invocation does not claim that a result, handoff, or ownership transfer became durable merely because external Scheduled Task output exists
+- AND a later wake reconstructs from actual repository mutations and current routing
+
 #### Scenario: Same-role action becomes immediately actionable
 
 - GIVEN one invocation selected coordination Issue I with fixed role Lead
@@ -64,9 +81,42 @@ A scheduled role SHALL persist the required action/review result, governed artif
 
 Before the routing mutation, the role SHALL fresh-read current Issue routing. If routing no longer matches the source action being completed, the role MUST NOT overwrite the newer routing and MUST stop as stale/contradictory rather than manufacture a transition.
 
-If the source tuple still matches and the target role differs from the fixed invocation role, the role SHALL replace the routing tuple with the target owner/action, observe the successful routing mutation, persist canonical `HANDOFF` evidence, and end the invocation. A required cross-role handoff is durably complete only when both target routing and required handoff evidence are durable.
+If the source tuple still matches and the target role differs from the fixed invocation role, the role SHALL replace the routing tuple with the target owner/action and observe the successful routing mutation. After the routing mutation succeeds, the role SHALL persist the handoff lifecycle-journal evidence required by the currently authoritative presentation contract and SHALL describe the resulting target ownership. When the canonical template contract is active on the default branch, this record uses `HANDOFF`. A required cross-role handoff is durably complete only when both target routing and required handoff evidence are durable, and the invocation SHALL end without executing the target role.
 
-If the target role equals the fixed invocation role, the source action result plus successful routing mutation is sufficient transition evidence; the workflow MUST NOT require a synthetic `HANDOFF` or a new transition message type. After fresh reconstruction, same-role continuation follows the at-least-once requirement above.
+If the source tuple still matches and the target role equals the fixed invocation role, the role SHALL replace the routing tuple with the target action and observe the successful routing mutation. The source action result plus successful routing mutation is sufficient transition evidence; the workflow MUST NOT require a synthetic `HANDOFF` or a new transition message type. After fresh reconstruction, same-role continuation follows the at-least-once requirement above.
+
+The workflow MUST NOT intentionally expose an intermediate state with two role owners or two action owners during either a same-role transition or a cross-role handoff. Routing labels remain canonical workflow ownership; handoff evidence is reconstructable evidence of a completed cross-role transfer rather than a substitute for routing state.
+
+If an actual interruption occurs after result evidence is durable but before routing mutation completes, a later eligible run SHALL preserve the completed result and perform only the missing legal routing work. If a cross-role routing mutation already succeeded but the handoff write was interrupted, recovery SHALL preserve the target routing and repair only the missing handoff evidence; it MUST NOT replay the completed source action merely to recreate the journal. If a same-role routing mutation already succeeded, recovery SHALL reconstruct the target action from current routing without manufacturing a `HANDOFF`.
+
+#### Scenario: Result is durable before ownership transfer
+
+- GIVEN a role has durably persisted the action/review result and required revision-aware evidence
+- AND the coordination Issue still carries the matching source routing tuple
+- AND the legal target belongs to a different role
+- WHEN the role performs the required cross-role handoff
+- THEN it fresh-reads the source routing
+- AND changes routing to the legal target tuple
+- AND observes the successful routing mutation
+- AND only then persists the required handoff evidence using the currently authoritative presentation contract
+
+#### Scenario: Another run has already changed routing
+
+- GIVEN a role has completed work and persisted its result/revision evidence
+- AND a fresh read shows that another run has already changed the Issue routing tuple
+- WHEN the first run reaches its routing transition step
+- THEN it does not overwrite the newer routing
+- AND it does not persist false handoff evidence claiming a cross-role transition it did not perform
+- AND it stops for later reconstruction under the current durable owner/action
+
+#### Scenario: Routing changed but handoff write was interrupted
+
+- GIVEN a legal cross-role handoff already changed routing to the target tuple
+- BUT the run ended before required handoff evidence was persisted
+- WHEN a later eligible run reconstructs the durable state
+- THEN it preserves the already changed routing
+- AND repairs only the missing handoff evidence before a later lifecycle transition
+- AND it does not replay the completed source action
 
 #### Scenario: Same-role transition does not create synthetic handoff
 
