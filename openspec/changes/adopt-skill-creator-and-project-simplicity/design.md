@@ -40,9 +40,27 @@ The rule applies equally to runtime state, dependencies, configuration, data mod
 
 Trace: #35 acceptance questions → `repository-governance` project-wide proportionality scenarios.
 
+## Decision 6 — Preserve security evidence as separate follow-up scope
+
+Durable #35 comments `issuecomment-5291555571` and `issuecomment-5291586680` identify demonstrated security concerns that are real but belong to different contract boundaries than Skill maintenance/project-wide simplicity:
+
+1. **Human-authority provenance** changes who/what can satisfy Human-reserved admission, answers, authorization, and resume conditions. It requires revision/provenance binding, rollout compatibility, raw GitHub event evidence, and fail-closed semantics across the workflow.
+2. **Ruff `S`** changes Python source-security lint policy and test exceptions. It belongs to project quality/security configuration rather than Skill-authoring governance.
+3. **Prompt/Agent security regression coverage** concerns the runtime trust/authority boundary and must not be conflated with static Python source analysis.
+
+Folding these into the current change would materially expand affected capabilities and implementation/review blast radius, violating the single-purpose rule that this same change is intended to strengthen. Therefore the current change records an explicit **deferred disposition** rather than silently consuming or weakening the evidence.
+
+The deferred concerns remain durable source evidence for a future **separately Human-admitted OpenSpec change**. Human admission is the follow-up authority boundary; after admission, Lead owns specification resolution, Reviewer independently verifies the semantic contract, and Executor implements only the approved scope. This change does not create a follow-up workflow, reserved approval label, security state machine, or new authorization mechanism on its own.
+
+Until a separate security change is admitted and activated, current default-branch Human-authority, lint, and prompt-security behavior remains authoritative and unchanged. In particular, the test-only `injection` label is not routing or Human authority.
+
+Trace: #35 `issuecomment-5291555571` + `issuecomment-5291586680` → explicit single-purpose deferral; no capability requirement or task is added to this change.
+
 ## Deferred
 
 - Agent memory/knowledge/RAG systems remain unsupported absent new concrete evidence.
 - Mandatory Skill eval/benchmark tooling is deferred; objective tests may be added when a specific Skill change benefits from them.
 - Explore lifecycle remains #38.
+- Human-authority provenance hardening remains a separate Human-admitted security follow-up, preserving #35 `issuecomment-5291555571` as source evidence.
+- Ruff `S` enablement and prompt/Agent security regression policy remain separate Human-admitted security/quality follow-up scope, preserving #35 `issuecomment-5291586680` as source evidence.
 - No unrelated existing architecture is refactored solely to demonstrate the new principle.
