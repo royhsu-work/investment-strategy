@@ -70,13 +70,9 @@ def test_final_archive_merge_requires_known_temporary_cleanup_first() -> None:
     assert "do not merge" in merge
 
 
-def test_repository_governance_delta_has_archiveable_purpose() -> None:
-    delta_path = (
-        ROOT
-        / "openspec/changes/establish-governance-single-source-of-truth/specs"
-        / "repository-governance/spec.md"
-    )
-    delta = _read(delta_path)
-    assert delta.count("## Purpose") == 1
-    purpose = delta.split("## Purpose", 1)[1].split("## ADDED Requirements", 1)[0].strip()
+def test_repository_governance_canonical_spec_preserves_archiveable_purpose() -> None:
+    spec_path = ROOT / "openspec/specs/repository-governance/spec.md"
+    spec = _read(spec_path)
+    assert spec.count("## Purpose") == 1
+    purpose = spec.split("## Purpose", 1)[1].split("## Requirements", 1)[0].strip()
     assert purpose
