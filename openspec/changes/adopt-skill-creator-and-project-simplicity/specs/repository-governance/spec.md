@@ -58,7 +58,34 @@ External mutable Skill-authoring references MAY inform a governed change, but sc
 
 The repository SHALL assign each governance rule category to one authoritative surface and SHALL NOT require duplicated normative definitions across multiple surfaces to remain synchronized by convention.
 
-The minimum ownership model SHALL include the existing repository-overview, Scheduled-Agent shared governance, role, action Skill, OpenSpec configuration/specification, active-change/history, and external scheduler boundaries, and SHALL additionally treat project-wide proportionality/simplicity as a repository-governance capability requirement implemented through the narrowest applicable current authority surface rather than a workflow-only standalone rule.
+The minimum ownership model SHALL be:
+
+| Rule category | Authoritative surface | Other surfaces |
+| --- | --- | --- |
+| Repository overview / Human entry point | `README.md` | MAY link to authoritative governance; MUST NOT redefine runtime protocol |
+| Shared Scheduled-Agent runtime protocol / cross-role invariants | `agents/AGENTS.md` | roles/skills MAY reference; MUST NOT duplicate shared normative contract |
+| Role mission / authority / ownership / role-specific invariant | `agents/roles/*.md` | AGENTS/skills MAY orient/reference; MUST NOT create a competing authority definition |
+| Action-specific executable procedure / local result and handoff behavior | `agents/skills/*` | role/AGENTS MAY map/reference; MUST NOT duplicate procedure bodies |
+| OpenSpec authoring/validation conventions | `openspec/config.yaml` | change artifacts follow them; MUST NOT restate them as independent runtime rules |
+| Approved capability requirements / acceptance scenarios | `openspec/specs/*` | runtime governance MAY implement/reference them; they are not an alternative instruction-loading surface for Scheduled Agents |
+| Proposed change intent/design/tasks before merge | active `openspec/changes/*` | review target only; MUST NOT govern its own current runtime execution |
+| Historical change provenance | archived OpenSpec changes | history/traceability only; MUST NOT override current default-branch runtime governance |
+| External Scheduled Task topology/cadence/configuration | external product configuration | repository docs MAY describe migration/current setup informationally; MUST NOT model it as durable workflow state |
+| Project-wide proportionality / simplicity contract | `openspec/specs/repository-governance/spec.md` | runtime/documentation surfaces MAY implement or reference it; MUST NOT maintain a competing workflow-only normative definition |
+
+#### Scenario: Shared rule appears in a role or skill
+
+- GIVEN a rule is owned by shared Scheduled-Agent governance
+- WHEN a role or skill needs that rule
+- THEN it references the shared contract or states only its role/action-specific specialization
+- AND it does not redefine a second normative copy that must be manually synchronized
+
+#### Scenario: Active change contains future governance
+
+- GIVEN an unmerged OpenSpec change or feature branch defines new governance behavior
+- WHEN a Scheduled Agent wakes before that change is merged to the default branch
+- THEN the feature-branch/change content is review input only
+- AND the Scheduled Agent still loads current runtime governance from the default branch
 
 #### Scenario: Project-wide design principle is needed by workflow and production design
 
