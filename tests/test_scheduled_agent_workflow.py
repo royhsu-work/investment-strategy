@@ -108,7 +108,7 @@ def test_shared_governance_and_role_files_exist_with_authority_boundaries() -> N
         "state reconstruction",
         "exactly one legal `agent:*` label",
         "persist result + revision-aware evidence",
-        "produces no repository noise",
+        "no repository noise",
         "not** a mutex, compare-and-swap primitive, or single-flight",
         "OpenSpec Validate",
     ):
