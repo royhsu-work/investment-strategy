@@ -147,29 +147,30 @@ def test_ten_actions_map_once_to_a_reduced_reusable_skill_set() -> None:
 
 
 def test_deterministic_discovery_uses_fixed_priority_and_stable_tie_breakers() -> None:
-    shared = _read(AGENTS / "AGENTS.md")
-    assert _priority(shared) == EXPECTED_PRIORITY
+    shared = " ".join(_read(AGENTS / "AGENTS.md").split())
+    assert _priority(_read(AGENTS / "AGENTS.md")) == EXPECTED_PRIORITY
     assert "earlier GitHub `created_at` wins" in shared
     assert "lower numeric Issue" in shared
     assert "Model-derived urgency" in shared
     assert "combined pre-activation queue" in shared
     assert "there is no `explore-change > propose-change` priority" in shared
 
+    raw = _read(AGENTS / "AGENTS.md")
     candidates = [
         Candidate(5, "2026-08-01T00:00:00Z", "Executor", "implement-change"),
         Candidate(30, "2026-08-10T00:00:00Z", "Executor", "merge-pr"),
     ]
-    assert _select(shared, "Executor", candidates) == candidates[1]
+    assert _select(raw, "Executor", candidates) == candidates[1]
 
     same_action = [
         Candidate(9, "2026-08-02T00:00:00Z", "Lead", "resolve-question"),
         Candidate(8, "2026-08-01T00:00:00Z", "Lead", "resolve-question"),
         Candidate(7, "2026-08-01T00:00:00Z", "Lead", "resolve-question"),
     ]
-    assert _select(shared, "Lead", same_action) == same_action[2]
+    assert _select(raw, "Lead", same_action) == same_action[2]
 
     invalid = [Candidate(1, "2026-01-01T00:00:00Z", "Executor", "review-openspec")]
-    assert _select(shared, "Executor", invalid) is None
+    assert _select(raw, "Executor", invalid) is None
 
 
 def test_review_and_finalize_skills_preserve_upstream_gate_contracts() -> None:
@@ -267,7 +268,7 @@ def test_pr_linkage_governance_reserves_closing_linkage_for_archive() -> None:
 
 
 def test_persistent_lifecycle_archive_boundary_and_human_admission_are_documented() -> None:
-    shared = _read(AGENTS / "AGENTS.md")
+    shared = " ".join(_read(AGENTS / "AGENTS.md").split())
     labels = _read(AGENTS / "labels.md")
 
     for required in (
