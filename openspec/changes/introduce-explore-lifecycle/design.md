@@ -134,17 +134,19 @@ After the implementation is merged to `main`:
 - deferred research Issues intentionally waiting for Explore may be Human-routed/admitted to the new `Lead / explore-change` action;
 - historical workflow evidence remains interpreted under the governance that was authoritative when it was created.
 
-## Decision 9: Fixed-role and workflow-dynamic discovery
+## Decision 9: Fixed-role and workflow-dynamic discovery share one pre-activation intake winner
 
 Workflow-dynamic remains primary: formal active/terminal-pending workflow first; otherwise the earliest valid pre-activation entry across Explore and direct Propose is selected.
 
-For legacy fixed-role mode, Lead keeps lifecycle/blocker work ahead of new intake. The stable order becomes:
+Legacy fixed-role mode keeps Lead lifecycle/blocker work ahead of new intake:
 
 ```text
-resolve-question > finalize-archive > finalize-change > explore-change > propose-change
+resolve-question > finalize-archive > finalize-change > pre-activation intake
 ```
 
-Within each action use existing created-at/Issue-number ties. This preserves deterministic legacy behavior. It does not make Explore mandatory; direct Propose remains valid whenever it is the selected eligible work.
+If none of those higher-priority Lead actions is eligible, fixed-role pre-activation intake uses the **same combined queue** as workflow-dynamic: valid Human-admitted `Lead / explore-change + Change: unset` and `Lead / propose-change + Change: unset` entries are ordered together by earliest GitHub `created_at`, then lower Issue number. The selected Issue's routing determines whether Lead executes Explore or Propose. There is no `explore-change > propose-change` priority inside pre-activation intake.
+
+Reviewer and Executor retain their existing fixed-role action priorities and stable tie breakers. This preserves deterministic legacy behavior while ensuring the activation/admission contract has one coherent winner rule in both dispatch modes. Explore remains optional: an older direct-Propose Issue wins over a newer Explore Issue, and an older Explore Issue wins over a newer direct-Propose Issue.
 
 ## Bounded blast-radius analysis
 
