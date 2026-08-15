@@ -52,3 +52,39 @@ def test_handoff_is_cross_role_only_and_same_role_needs_no_synthetic_message() -
     assert "source `ACTION_RESULT`" in messages
     assert "same-role" in change.lower()
     assert "without `HANDOFF`" in change
+
+
+def test_openspec_change_observes_only_just_triggered_exact_validation_run() -> None:
+    change = _read("agents/skills/openspec-change/SKILL.md")
+    for required in (
+        "just-triggered exact required run",
+        "`queued` or `in_progress`",
+        "bounded same-invocation observation",
+        "same exact run",
+        "becomes terminal",
+        "continue immediately",
+        "later wake",
+        "fresh-read that exact run",
+    ):
+        assert required in change
+
+
+def test_implementation_observes_only_just_triggered_exact_required_runs() -> None:
+    implementation = _read("agents/skills/implementation/SKILL.md")
+    for required in (
+        "just-triggered exact required run",
+        "Python Quality",
+        "OpenSpec Validate",
+        "`queued` or `in_progress`",
+        "bounded same-invocation observation",
+        "same exact run",
+        "becomes terminal",
+        "continue immediately",
+        "later wake",
+        "fresh-read that exact run",
+        "no timer",
+        "polling counter",
+        "heartbeat",
+        "hidden waiter",
+    ):
+        assert required in implementation
