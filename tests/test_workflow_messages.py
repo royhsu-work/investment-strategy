@@ -167,21 +167,30 @@ def test_intermediate_progress_and_status_noise_are_not_supported_message_types(
         assert unsupported not in headings
 
 
-def test_result_evidence_does_not_complete_required_handoff() -> None:
+def test_cross_role_result_evidence_does_not_complete_required_handoff() -> None:
     shared = _normalized(AGENTS)
+    messages = _normalized(MESSAGES)
     implementation = _normalized(ROOT / "agents" / "skills" / "implementation" / "SKILL.md")
     reviewer = _normalized(ROOT / "agents" / "skills" / "openspec-review" / "SKILL.md")
 
     for required in (
-        "Result evidence does not by itself complete a required routing handoff",
+        "HANDOFF is cross-role",
         "persist result + revision-aware evidence",
         "fresh-read source routing",
-        "mutate routing to the target tuple",
+        "cross-role target tuple",
         "observe successful routing mutation",
         "persist canonical `HANDOFF`",
-        "`HANDOFF` follows successful routing mutation",
+        "end the current invocation",
     ):
         assert required in shared
+
+    for required in (
+        "cross-role routing ownership transfer",
+        "Same-role action transitions MUST NOT emit",
+        "source `ACTION_RESULT`",
+        "target-action reconstruction",
+    ):
+        assert required in messages
 
     for text in (implementation, reviewer):
         for required in (
