@@ -11,10 +11,10 @@ Trace: proposal `What Changes` item 1; delta requirement `Explicit required defe
 
 ## Slice 2 — Same-role action continuation and HANDOFF boundary
 
-- [ ] **RED** Add regression tests proving continuation stays on the same coordination Issue and fixed invocation role, reconstructs the target action before mutation, stops at cross-role/Human/async/stale/unsafe boundaries, and does not require synthetic `HANDOFF` for same-role transitions.
-- [ ] **GREEN** Update shared governance, message presentation, and affected Lead procedures so immediately actionable same-role target actions may continue in the same invocation while cross-role transitions still persist `HANDOFF` and terminate the invocation.
-- [ ] **REFACTOR** Remove duplicated action-boundary wording that conflicts with the shared continuation contract; do not introduce an action-transition message, dispatcher, counter, lease, heartbeat, or second workflow state.
-- [ ] **VERIFY** Run focused tests, full pytest suite, mypy, Ruff, and strict OpenSpec validation for the exact branch revision.
+- [x] **RED** Add regression tests proving continuation stays on the same coordination Issue and fixed invocation role, reconstructs the target action before mutation, stops at cross-role/Human/async/stale/unsafe boundaries, and does not require synthetic `HANDOFF` for same-role transitions.
+- [x] **GREEN** Update shared governance, message presentation, and affected Lead procedures so immediately actionable same-role target actions may continue in the same invocation while cross-role transitions still persist `HANDOFF` and terminate the invocation.
+- [x] **REFACTOR** Remove duplicated action-boundary wording that conflicts with the shared continuation contract; do not introduce an action-transition message, dispatcher, counter, lease, heartbeat, or second workflow state.
+- [x] **VERIFY** Run focused tests, full pytest suite, mypy, Ruff, and strict OpenSpec validation for the exact branch revision.
 
 Trace: proposal `What Changes` items 2–3; modified requirements `Scheduled execution is at-least-once and state reconstructable` and `Routing handoff persists evidence before ownership transfer`; design Decisions 2–3.
 
