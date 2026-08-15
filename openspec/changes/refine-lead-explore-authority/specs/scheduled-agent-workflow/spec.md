@@ -1,12 +1,21 @@
 # scheduled-agent-workflow Delta Specification
 
+## RENAMED Requirements
+
+- FROM: `### Requirement: Workflow admission is explicitly Human-controlled`
+- TO: `### Requirement: Workflow admission is explicitly authority-controlled`
+- FROM: `### Requirement: Lead idle advisory mode is bounded and non-routing`
+- TO: `### Requirement: Lead idle advisory and discovery mode is bounded and non-disruptive`
+
 ## MODIFIED Requirements
 
 ### Requirement: Workflow admission is explicitly authority-controlled
 
 Scheduled agents MUST NOT autonomously admit arbitrary Issues, PRs, repository activity, discussions, discovered requirements, or Agent-authored recommendations into workflow work.
 
-Human admission remains valid through the repository's Human-authority contract. In addition, Lead MAY autonomously materialize one bounded `Lead / explore-change` coordination Issue with `Change: unset` only from the idle-discovery boundary when the admission is independently justified by one of the following:
+Human admission remains valid through the repository's Human-authority contract. An initial Human-admitted coordination Issue is established only through explicit routing attributable to actor `royhsu-work`; other actors cannot satisfy that Human-required admission condition merely by applying routing.
+
+In addition, Lead MAY autonomously materialize one bounded `Lead / explore-change` coordination Issue with `Change: unset` only from the idle-discovery boundary when the admission is independently justified by one of the following:
 
 - an applicable default-branch canonical MUST/SHALL requirement with a concrete material gap;
 - an approved required-deferred obligation with reconstructable source linkage;
@@ -19,11 +28,27 @@ Agent-authored advisory text, Explore conclusions, and prior Agent-created ticke
 
 Autonomous admission MUST NOT add, remove, restore, or manufacture `intake:approved`, MUST NOT persist a formal Change identity, and MUST NOT bypass Propose, Reviewer, implementation, merge, archive, or lifecycle gates.
 
-A Human-admitted or valid repository-authorized `Lead / explore-change` Issue with `Change: unset` is queued pre-Change research. A Human-admitted `Lead / propose-change` Issue MAY remain queued with `Change: unset` as direct-to-Propose work. In workflow-dynamic mode, neither may bypass a formal active or terminal-pending workflow, and eligible pre-activation work continues to follow the deterministic queue contract.
+A Human-admitted or valid repository-authorized `Lead / explore-change` Issue with `Change: unset` is queued pre-Change research. A Human-admitted `Lead / propose-change` Issue MAY remain queued with `Change: unset` as direct-to-Propose work. In workflow-dynamic mode, neither may bypass a formal active or terminal-pending workflow, and both participate in the deterministic pre-activation queue defined by the capability.
 
 Explore admission establishes a bounded authority envelope for the admitted problem. When Explore reaches `PROPOSAL_READY`, Lead MAY route the same Issue to `Lead / propose-change` without a second generic Human proceed decision only when the proposal-ready direction remains within that envelope and introduces no new Human-reserved decision. A new project/product direction, material externally observable behavior choice, material scope trade-off, explicit risk acceptance, materially different security/privacy/cost/operational commitment, contradictory authority evidence, or materially changed governing evidence SHALL require `HUMAN_DECISION_REQUIRED` before Propose.
 
-Scheduled Lead, Reviewer, and Executor MUST NEVER manufacture Human-only `intake:approved`; they MAY only consume valid Human-authored evidence where that capability remains applicable.
+Lead idle advisory admission, where still used, continues to require both an unambiguous selected direction from actor `royhsu-work` and the reserved Human capability marker `intake:approved` applied by that Human actor. Scheduled Lead, Reviewer, and Executor MUST NEVER add, remove, restore, or otherwise manufacture Human-only `intake:approved`; they MAY only consume valid Human-authored evidence where that capability remains applicable.
+
+#### Scenario: Human directly admits fuzzy work to Explore
+
+- GIVEN actor `royhsu-work` creates or explicitly routes a coordination Issue to `Lead / explore-change`
+- AND `Change:` is unset
+- WHEN scheduled workflow reconstructs admission
+- THEN the Issue is valid queued pre-Change research
+- AND Explore does not create a formal Change until an applicable `PROPOSAL_READY` result is authorized within its admitted authority envelope
+
+#### Scenario: Human directly admits concrete work to Propose
+
+- GIVEN actor `royhsu-work` creates or explicitly routes a coordination Issue to `Lead / propose-change`
+- AND `Change:` is unset
+- WHEN scheduled workflow reconstructs admission
+- THEN the Issue is valid queued pre-activation work
+- AND Explore is not mandatory for that Issue
 
 #### Scenario: Canonical requirement authorizes bounded Explore
 
@@ -84,17 +109,46 @@ Scheduled Lead, Reviewer, and Executor MUST NEVER manufacture Human-only `intake
 - THEN Lead records `HUMAN_DECISION_REQUIRED`
 - AND does not route to Propose until valid Human authority is reconstructed
 
+#### Scenario: Non-Human routing is insufficient
+
+- GIVEN an actor other than `royhsu-work` applies apparently valid initial routing
+- AND no independently valid repository-authorized admission evidence satisfies the bounded autonomous Explore contract
+- WHEN scheduled workflow evaluates admission
+- THEN that routing does not satisfy Human-required admission
+- AND scheduled roles fail closed rather than treating actor-applied routing alone as authorized workflow entry
+
 ### Requirement: Lead idle advisory and discovery mode is bounded and non-disruptive
 
 Lead SHALL keep idle discovery/advisory behavior bounded and subordinate to existing workflow work.
 
 Lead may enter idle discovery only when no formal active or terminal-pending workflow requires advancement, no already eligible pre-activation work should be selected first, and no unresolved orphan/governance evidence requires diagnosis. Reviewer and Executor remain silent when they have no eligible workflow work.
 
-One idle invocation MAY either produce no material action, update/create the bounded advisory permitted by governance, or autonomously materialize at most one valid repository-authorized Formal Explore candidate under the admission requirement above. It MUST deduplicate against existing open/reconstructably unresolved Issues and required-deferred trackers before creating a candidate.
+When the idle boundary is reached, Lead MAY create an idle advisory Issue containing at most three current recommendations only if no other open `advisory:idle` Issue exists. An advisory Issue MUST NOT contain `agent:*` or `action:*` routing labels and is not itself a coordination workflow instance. If an open advisory remains without valid Human admission, later Lead runs SHALL no-op rather than create duplicate advisory noise.
+
+When forming bounded advisory recommendations, Lead SHALL consider relevant Issues created or materially active during the preceding seven days and recent durable workflow evidence for Skill-maintenance opportunities such as repeated Agent mistakes or recoverable failures, missing or obsolete action guidance, unnecessary Skill complexity, and materially duplicated Skill guidance. A Skill-maintenance recommendation remains diagnostic/advisory only: it MUST NOT directly mutate governed Skill behavior, bypass Human admission, or create a second maintenance workflow.
+
+One idle invocation MAY instead autonomously materialize at most one valid repository-authorized Formal Explore candidate under the admission requirement above. Before creating that candidate, Lead MUST deduplicate against existing open or reconstructably unresolved Issues and required-deferred trackers.
 
 Idle discovery SHALL use materiality rather than style preference. Repeated materially similar responsibility/knowledge/workaround evidence MAY use Rule-of-Three as sufficient investigation evidence; a clear single-instance structural hazard such as dual authority, circular ownership, dead abstraction, or a known-always-failing normal workflow step MAY also satisfy the threshold when concrete cost/risk/friction and bounded ownership are demonstrated.
 
 Idle discovery MUST NOT introduce a scan cursor, TTL coverage registry, lease, heartbeat, progress counter, global priority score, hidden backlog state, or requirement for exhaustive repository coverage merely to remember what was inspected previously.
+
+#### Scenario: Existing idle advisory has no Human decision
+
+- GIVEN one open `advisory:idle` Issue exists
+- AND no valid Human admission has occurred
+- WHEN Lead runs while workflow is otherwise idle
+- THEN Lead does not create another advisory Issue
+- AND does not repeat the same recommendations as new workflow noise
+
+#### Scenario: Recent workflow evidence suggests a Skill improvement
+
+- GIVEN workflow execution is otherwise idle
+- AND recent durable evidence shows a repeated action mistake or missing/obsolete Skill guidance
+- WHEN Lead forms an eligible bounded idle advisory
+- THEN Lead may recommend the narrowest Skill-maintenance change supported by that evidence
+- AND the recommendation does not itself modify the Skill or create a parallel maintenance workflow
+- AND any governed behavior change still requires normal Human-admitted/OpenSpec lifecycle
 
 #### Scenario: Existing pre-activation work prevents autonomous materialization
 
@@ -120,15 +174,15 @@ Idle discovery MUST NOT introduce a scan cursor, TTL coverage registry, lease, h
 - THEN no workflow mutation is required
 - AND the run does not create repository noise merely to report that nothing material was found
 
-### Requirement: Lead Explore is decision-complete before lifecycle disposition
+### Requirement: Explore exits on decision-complete dispositions
 
-Lead SHALL treat `explore-change` as bounded problem-before-solution research rather than proposal authoring.
+Lead SHALL treat Explore as complete when continued investigation is no longer required to choose the next legal disposition, rather than requiring exhaustive knowledge or a fixed research checklist.
 
 Before exiting Explore, each material unresolved question that could change the selected disposition MUST be resolved by evidence, shown to be non-blocking, identified as a genuine Human intent/authority decision, or sufficient to establish a current no-change/no-go conclusion.
 
 The legal Explore dispositions SHALL be:
 
-- `PROPOSAL_READY`: evidence supports a concrete/buildable direction and formal proposal authoring would not require Lead to invent a material requirement or solution decision; when the direction remains within the valid admission authority envelope and no new Human-reserved decision exists, this disposition authorizes same-Issue routing to Propose without a second generic Human proceed decision;
+- `PROPOSAL_READY`: evidence supports a concrete/buildable direction and formal proposal authoring would not require Lead to invent a material requirement or solution decision; when the direction remains within a valid Human- or repository-authorized admission authority envelope and no new Human-reserved decision exists, this disposition authorizes same-Issue routing to Propose without a second generic Human proceed decision;
 - `NO_CHANGE_REQUIRED`: evidence shows no repository change is required;
 - `NO_GO`: evidence shows the contemplated change is currently infeasible or unjustified;
 - `HUMAN_DECISION_REQUIRED`: a material remaining decision belongs to Human intent/authority and cannot be resolved from repository/technical evidence.
@@ -144,9 +198,25 @@ The legal Explore dispositions SHALL be:
 - THEN the result is `PROPOSAL_READY`
 - AND Lead may transition the same Issue to Propose under the shared same-role continuation contract
 
-#### Scenario: Explore requires genuinely new Human authority
+#### Scenario: Explore finds no change is required
 
-- GIVEN a material unresolved decision falls outside the admitted authority envelope
-- WHEN repository/technical evidence cannot resolve it
-- THEN the result is `HUMAN_DECISION_REQUIRED`
-- AND generic continuation is prohibited until valid Human authority is reconstructed
+- GIVEN repository evidence already satisfies the problem or shows it is informational only
+- WHEN no material question remains that could require a repository change
+- THEN Lead records `NO_CHANGE_REQUIRED`
+- AND may close the research Issue without creating a fake Change
+
+#### Scenario: Explore reaches a current no-go
+
+- GIVEN evidence shows the contemplated direction is currently infeasible or unjustified
+- WHEN that evidence is sufficient to choose the disposition
+- THEN Lead records `NO_GO`
+- AND records a material reconsideration condition when one is identifiable
+- AND may close the research Issue without creating a fake Change
+
+#### Scenario: Remaining decision belongs to Human intent
+
+- GIVEN technical/repository investigation has narrowed the problem and options
+- AND the remaining material choice cannot be resolved without Human intent or authority
+- WHEN Lead exits the current investigation step
+- THEN Lead uses `HUMAN_DECISION_REQUIRED`
+- AND the Issue remains routed to Explore for resumption after authoritative Human input
