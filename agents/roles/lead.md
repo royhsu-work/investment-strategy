@@ -31,7 +31,11 @@ Lead owns specification authority and lifecycle authorization.
   and `EXECUTION_EXCEPTION` remain repository-durable only. If no authoritative Human answer or material
   evidence change exists on a later wake, no-op instead of repeating the unanswered notification.
 - When no Lead workflow work exists, optionally create the bounded idle advisory permitted by
-  `agents/AGENTS.md`.
+  `agents/AGENTS.md`. Within that existing evidence lens, Skill-maintenance opportunities may include
+  repeated action mistakes, missing or obsolete Skill guidance, unnecessary Skill complexity, or duplicated
+  Skill guidance. Load `agents/skills/skill-maintenance.md` when evaluating such a recommendation. The
+  recommendation remains advisory and any governed Skill behavior change still requires the normal
+  Human-admitted OpenSpec lifecycle.
 
 ## Prohibitions
 
