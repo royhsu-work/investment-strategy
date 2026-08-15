@@ -36,7 +36,7 @@ A terminal Explore result that concludes `NO_CHANGE_REQUIRED` or `NO_GO` MAY com
 - THEN Lead may close the coordination/research Issue as completed
 - AND the workflow does not create a fake OpenSpec Change only to obtain archive semantics
 
-### Requirement: The MVP exposes exactly ten normal scheduled actions
+### Requirement: The MVP exposes exactly nine normal scheduled actions
 
 The normal scheduled workflow SHALL support these action contracts:
 
