@@ -25,7 +25,7 @@ def test_shared_exception_capture_contract_applies_to_all_roles_and_actions() ->
     shared = _normalized(AGENTS)
     for required in (
         "Shared exception capture and invocation finalization",
-        "all three Scheduled Agent roles and all nine normal actions",
+        "all three Scheduled Agent roles and all ten normal actions",
         "catchable tool, runtime, and execution failures",
         "persist one canonical `EXECUTION_EXCEPTION`",
         "before relying on a summarized interpretation",
