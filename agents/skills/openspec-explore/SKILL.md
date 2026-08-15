@@ -64,7 +64,7 @@ Do not log chain-of-thought, every query, live progress, fixed option counts, a 
 Explore and direct-to-Propose entries participate in the shared combined pre-activation queue defined by `agents/AGENTS.md`; this skill does not redefine its ordering.
 
 - `PROPOSAL_READY` without Human approval: retain `Lead / explore-change` and wait under the existing Human-decision contract.
-- valid Human approval to proceed: persist the applicable result/decision evidence, fresh-read routing/state, then route the same Issue to `Lead / propose-change` with `Change: unset`.
+- valid Human approval to proceed: persist the applicable result/decision evidence, fresh-read routing/state, route the same Issue to `Lead / propose-change` with `Change: unset`, observe the target tuple, then reconstruct `Lead / propose-change` using its mapped default-branch skill. Because the role remains Lead, continue Propose in the same invocation when immediately actionable under the shared same-role continuation contract; do not emit `HANDOFF` for this same-role transition.
 - `NO_CHANGE_REQUIRED` or `NO_GO`: persist the terminal result and close the research Issue; observe `closed`. No OpenSpec Change or archive lifecycle is created.
 - unresolved Human question: retain Explore and follow the shared escalation/resume semantics.
 
