@@ -26,7 +26,7 @@ def test_skill_maintenance_uses_progressive_disclosure_without_external_authorit
     assert "progressive disclosure" in guidance
     assert "conditionally needed" in guidance
     assert "genuine cross-Skill reuse" in guidance
-    assert "external mutable" in guidance
+    assert "External mutable" in guidance
     assert "MUST NOT become runtime authority" in guidance
     assert "agents/AGENTS.md" in guidance
     assert "agents/roles/*" in guidance
