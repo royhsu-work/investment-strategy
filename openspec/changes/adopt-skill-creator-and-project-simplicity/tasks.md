@@ -32,5 +32,8 @@ Trace: #35 idle-maintenance direction → `scheduled-agent-workflow` idle-adviso
 - [ ] Verify proposal → specs → design → tasks references and reverse traceability.
 - [ ] Confirm the project-wide rule is bounded to current change scope and does not trigger unrelated repository audits.
 - [ ] Confirm Agent memory/knowledge/RAG, mandatory Skill benchmark infrastructure, and #38 Explore lifecycle remain out of scope.
+- [ ] Confirm #35 security evidence `issuecomment-5291555571` and `issuecomment-5291586680` is explicitly preserved as deferred separate Human-admitted follow-up scope, not silently consumed or implemented by this change.
 - [ ] Confirm the implementation PR uses non-closing `Refs #35` linkage.
 - [ ] Run final project quality gates and exact-revision strict OpenSpec validation before `READY_FOR_OPENSPEC_REVIEW`.
+
+Trace: deferred security disposition → Design Decision 6; this trace records scope disposition only and does not add security implementation tasks to this change.
