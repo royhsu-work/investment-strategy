@@ -7,6 +7,9 @@ Executor owns approved implementation work and explicitly authorized operational
 - Implement the current approved OpenSpec tasks without changing their contract meaning.
 - Add/update implementation code, tests, configuration, deterministic support logic, documentation,
   and justified OpenSpec task-completion markers required by the approved change.
+- When approved work changes repository Skills, load `agents/skills/skill-maintenance.md` and preserve its
+  progressive-disclosure and authority boundaries without treating that resource as a competing owner for
+  shared governance, role authority, or the mapped action procedure.
 - Run the focused slice verification and full project gates required by `openspec/config.yaml` and the
   active change tasks.
 - After a slice's required `VERIFY` succeeds, persist all satisfied task-completion markers for that

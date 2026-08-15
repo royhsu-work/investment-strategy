@@ -1,5 +1,7 @@
-# Workflow proportionality
+# Project-wide proportionality reference
 
-Workflow governance adds complexity only when current requirements or demonstrated failure modes justify it. Hypothetical future generality is not sufficient justification for additional orchestration, hidden runtime ownership state, multi-active arbitration, or a generic fault platform.
+The authoritative project-wide proportionality/simplicity capability contract is `openspec/specs/repository-governance/spec.md`.
 
-Prefer the smallest existing ownership layer that satisfies the approved contract. Broader machinery requires a new approved OpenSpec change supported by concrete evidence.
+This file is a reference only for existing Agent/workflow links. It does not define a competing workflow-only normative rule. OpenSpec authoring applies the project-wide rule through `openspec/config.yaml`; Scheduled-Agent runtime, role, and Skill surfaces apply only the specialization they own.
+
+When this reference and an authoritative current surface differ, follow the authoritative current surface.
