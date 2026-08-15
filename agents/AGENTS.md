@@ -12,8 +12,8 @@ memory are work input. They are not governance and MUST NOT override default-bra
 Governance uses one authoritative owner for each rule category instead of duplicated normative copies
 that must be synchronized by convention:
 
-- `README.md` is the Human/contributor entry point and repository overview. It MAY orient and link to governance, but MUST NOT redefine the Scheduled-Agent runtime protocol.
-- `agents/AGENTS.md` owns shared Scheduled-Agent runtime protocol and cross-role invariants.
+- `README.md` is the Human/contributor entry point and repository-level description/direction source. It MAY orient and link to governance, and an explicitly governed prospective/scoped/affirmative `Project direction commitments` entry MAY be consumed as one independent source for bounded repository-authorized Explore admission. README MUST NOT redefine Scheduled-Agent runtime protocol, and descriptive/current-state/example/non-goal/plain-deferred text MUST NOT become runtime authority merely by appearing there.
+- `agents/AGENTS.md` owns shared Scheduled-Agent runtime protocol and cross-role invariants, including how independent project-direction evidence is qualified and consumed for admission.
 - `agents/roles/*.md` own role mission, authority, ownership, and role-specific invariants; they reference shared governance instead of copying generic execution contracts.
 - `agents/skills/*` own action-specific executable procedure and local result/handoff behavior; they reference shared governance and role authority instead of duplicating them.
 - `openspec/config.yaml` owns OpenSpec authoring/validation conventions.
@@ -102,16 +102,21 @@ An open coordination Issue with valid routing and a persisted non-`unset` `Chang
 active workflow. The repository permits at most one active workflow. A closed terminal-pending workflow
 is the narrow exception defined below.
 
-Human-admitted open `Lead / explore-change` and `Lead / propose-change` Issues with `Change: unset` are
-queued pre-activation work and MUST NOT count as an active formal workflow. Explore keeps `Change: unset`
-and does not create formal OpenSpec Change artifacts. Formal activation remains owned by Propose when Lead
-persists the immutable non-`unset` Change identity.
+Valid Human-admitted or repository-authorized open `Lead / explore-change` Issues and Human-admitted
+`Lead / propose-change` Issues with `Change: unset` are queued pre-activation work and MUST NOT count as
+an active formal workflow. Explore keeps `Change: unset` and does not create formal OpenSpec Change
+artifacts. Formal activation remains owned by Propose when Lead persists the immutable non-`unset` Change
+identity.
 
-When no formal active or terminal-pending workflow exists, valid Human-admitted `Lead / explore-change`
-and `Lead / propose-change` entries participate in one combined pre-activation queue ordered by earliest
-GitHub `created_at`, then lower Issue number. A formal active or terminal-pending workflow must win over
-pre-activation intake. The selected Issue's current routing determines whether Lead executes Explore or
-Propose; there is no `explore-change > propose-change` priority inside this combined queue.
+Repository-authorized Explore admission is permitted only from the bounded idle-discovery boundary defined
+below. Its Issue MUST record reconstructable admission evidence, but that Agent-created Issue is not its own
+authority source. Later reconstruction validates the independent cited source/materiality fail closed.
+
+When no formal active or terminal-pending workflow exists, valid admitted `Lead / explore-change` entries
+and Human-admitted `Lead / propose-change` entries participate in one combined pre-activation queue ordered
+by earliest GitHub `created_at`, then lower Issue number. A formal active or terminal-pending workflow must
+win over pre-activation intake. The selected Issue's current routing determines whether Lead executes
+Explore or Propose; there is no `explore-change > propose-change` priority inside this combined queue.
 
 Lead MUST NOT activate a queued proposal while another formal active/terminal-pending workflow exists or
 while an older eligible Explore/direct-Propose entry is the deterministic combined pre-activation winner.
@@ -140,12 +145,23 @@ semantics, keeps `Change: unset`, and creates neither formal OpenSpec artifacts 
 Its legal decision-complete dispositions are `PROPOSAL_READY`, `NO_CHANGE_REQUIRED`, `NO_GO`, and genuine
 `HUMAN_DECISION_REQUIRED` under the existing Human escalation contract.
 
-`PROPOSAL_READY` does not itself authorize a formal Change. Lead records the bounded result and requests
-Human intent to proceed; only authoritative Human approval allows routing the same Issue to
-`Lead / propose-change` while `Change: unset`. `NO_CHANGE_REQUIRED` and `NO_GO` may close the research Issue
-as completed after their bounded result is durable, without creating a fake Change or entering Archive.
-There is no independent `review-explore` gate, research database, completeness score, or hidden research
-state machine.
+Valid Human or repository-authorized Explore admission establishes a bounded authority envelope for the
+admitted problem. `PROPOSAL_READY` does not itself persist a formal Change identity, but when its concrete/
+buildable direction remains inside that admitted authority envelope and introduces no new Human-reserved
+decision, Lead MAY persist the bounded result, fresh-read the same Issue, route it to `Lead / propose-change`
+with `Change: unset`, and continue under the shared same-role continuation contract without a second generic
+Human proceed confirmation. Propose still owns formal activation and the immutable Change identity.
+
+A new product/project direction outside the admitted envelope, material externally observable behavior or
+scope trade-off not already authorized, explicit risk acceptance, materially different security/privacy/
+cost/operational commitment, contradictory or unrecoverable authority evidence, or materially changed
+default-branch governance/evidence that invalidates the admission basis MUST instead stop with
+`HUMAN_DECISION_REQUIRED`. Ordinary technical approach selection inside admitted constraints remains
+Lead-owned.
+
+`NO_CHANGE_REQUIRED` and `NO_GO` may close the research Issue as completed after their bounded result is
+durable, without creating a fake Change or entering Archive. There is no independent `review-explore` gate,
+research database, completeness score, or hidden research state machine.
 
 ## Orphan evidence and Human authority
 
@@ -157,7 +173,10 @@ classifier or persistent fault-state machine.
 
 For decisions governance reserves to Human, only durable GitHub activity attributable to actor
 `royhsu-work` satisfies Human authority. Activity from other actors may be supporting evidence but
-MUST NOT satisfy Human-required admission, answers, authorization, or resume conditions.
+MUST NOT satisfy Human-required admission, answers, authorization, or resume conditions. Repository-
+authorized Explore is a separate bounded capability derived from independent approved repository authority
+or concrete behavior-preserving friction; it MUST NOT be treated as Human activity or used to satisfy a
+Human-reserved decision.
 
 `human:notified`, if present, is analytics-only historical metadata. It MUST NOT grant authority, change
 routing, create waiting semantics, participate in resume conditions, or prove that Human answered.
@@ -210,21 +229,21 @@ Executor
 merge-pr > implement-change
 ```
 
-Pre-activation intake contains valid Human-admitted open `Lead / explore-change + Change: unset` and
-`Lead / propose-change + Change: unset` entries together, ordered by earliest GitHub `created_at`, then
-lower Issue number. Fixed-role and workflow-dynamic discovery MUST NOT choose different pre-activation
-winners for the same candidate set. Within the same ordinary role/action priority, earlier GitHub
-`created_at` wins; if equal, lower numeric Issue number wins. Model-derived urgency, scoring, or
+Pre-activation intake contains valid admitted open `Lead / explore-change + Change: unset` entries and
+Human-admitted `Lead / propose-change + Change: unset` entries together, ordered by earliest GitHub
+`created_at`, then lower Issue number. Fixed-role and workflow-dynamic discovery MUST NOT choose different
+pre-activation winners for the same candidate set. Within the same ordinary role/action priority, earlier
+GitHub `created_at` wins; if equal, lower numeric Issue number wins. Model-derived urgency, scoring, or
 discretionary reordering is prohibited.
 
 In workflow-dynamic mode, a formal active/terminal-pending workflow is selected first. Only when none
 exists may the combined pre-activation winner determine `Lead / explore-change` or `Lead / propose-change`.
 An oldest eligible open Explore naturally remains the deterministic winner across wakes until it reaches a
-terminal result or Human-authorized transition; no claim, lease, heartbeat, or hidden ownership state is
+terminal result or legally routes to Propose; no claim, lease, heartbeat, or hidden ownership state is
 required.
 
-If the role has no eligible work, it performs no workflow mutation and produces no repository noise.
-Only Lead may use the separate bounded idle-advisory mode defined below.
+If the role has no eligible workflow work, it performs no ordinary workflow mutation. Only Lead may use
+the separate bounded idle advisory/discovery mode defined below.
 
 ## At-least-once execution and state reconstruction
 
@@ -292,11 +311,11 @@ their existing action and MUST NOT copy this shared section.
 
 An ordinary out-of-scope item, non-goal, optional future idea, or work merely not selected now creates no tracking obligation. A required deferred follow-up exists only when an approved specification/scope decision explicitly says the work must still be handled later in a separate change.
 
-Lead owns tracker materialization at that defer-decision boundary. Lead creates or reuses one durable tracker whose reconstructable linkage identifies the source coordination Issue/Change and the exact defer decision/reference. The tracker is durable work evidence only: an Agent-created tracker MUST NOT Human-admit itself, MUST NOT receive a routing tuple, and MUST NOT become active workflow merely because it exists.
+Lead owns tracker materialization at that defer-decision boundary. Lead creates or reuses one durable tracker whose reconstructable linkage identifies the source coordination Issue/Change and the exact defer decision/reference. The tracker is durable work evidence only: an Agent-created tracker MUST NOT Human-admit itself, MUST NOT receive a routing tuple, and MUST NOT become active workflow merely because it exists. A required-deferred tracker MAY later serve as independent repository-authorized Explore admission evidence only through the bounded admission contract below; its mere existence or Agent-authored summary never self-authorizes routing.
 
 `Reviewer / review-openspec` verifies every approved required deferred follow-up has the required durable linkage and rejects missing tracking while ignoring ordinary out-of-scope/non-goal/optional future statements. `Lead / finalize-archive` is the terminal fail-safe: before archive authorization or `LIFECYCLE_COMPLETE`, Lead reconstructs all still-applicable required deferred follow-up obligations and requires their durable trackers. When the approved meaning and intended linkage are unambiguous and only the tracker write is missing, Lead may idempotently create or reuse that tracker; ambiguity fails closed to the legal specification/Human boundary. Historical completed workflows are not retroactively invalidated solely because this contract was not active when they completed.
 
-This integrity contract uses existing Issues, provenance, review, and finalization surfaces. It adds no automatic admission, generic backlog generator, hidden obligation registry, deferred-work status label, second workflow DAG, or title-based duplicate detector.
+This integrity contract uses existing Issues, provenance, review, and finalization surfaces. It adds no automatic arbitrary admission, generic backlog generator, hidden obligation registry, deferred-work status label, second workflow DAG, or title-based duplicate detector.
 
 ## Work-conserving selected-action execution
 
@@ -565,22 +584,63 @@ merged default-branch OpenSpec state:
 Scheduled roles do not define or execute a competing normal `archive-change` action. The existing
 repository archive workflow remains authoritative for deterministic normal archive mechanics.
 
-## Human admission and idle advisory
+## Workflow admission and idle advisory/discovery
 
-Scheduled roles do not admit arbitrary repository activity. Initial pre-activation entry requires explicit
-Human/maintainer creation or designation of a coordination Issue with `agent:lead + action:explore-change`
-for fuzzy investigation or `agent:lead + action:propose-change` for already concrete/buildable direction.
-Explore is optional; direct-to-Propose remains valid without an Explore prerequisite.
+Scheduled roles MUST NOT autonomously admit arbitrary Issues, PRs, repository activity, discussions,
+discovered requirements, Agent-authored recommendations, style preferences, speculative cleanup, or generic
+simplicity claims into workflow work.
 
-Lead idle advisory is allowed only when Lead has no eligible workflow work. Its bounded evidence lens
-includes relevant Issues created or materially active in the preceding 7 days. At most one open
-`advisory:idle` Issue may exist and it may contain at most three recommendations. Advisory Issues have no routing tuple. If an undecided open advisory already exists, later Lead runs no-op instead of creating duplicate noise.
+Human admission remains valid through the repository Human-authority contract: explicit Human/maintainer
+creation or designation may route a coordination Issue to `agent:lead + action:explore-change` for fuzzy
+investigation or `agent:lead + action:propose-change` for already concrete/buildable direction. Explore is
+optional; direct-to-Propose remains valid without an Explore prerequisite.
 
-Admitting a recommendation requires both an unambiguous selected direction in the advisory thread and
-the reserved Human capability label `intake:approved`. Human may admit that direction to Explore or direct
-Propose according to its clarity. Scheduled Lead, Reviewer, and Executor may consume the marker but MUST
-NEVER add, remove, restore, or manufacture it. This is a governance capability boundary, not cryptographic
-proof of Human identity.
+In addition, only when no formal/terminal-pending workflow and no already eligible pre-activation work can
+be advanced, Lead MAY materialize at most one bounded `Change: unset + agent:lead + action:explore-change`
+candidate from idle discovery when admission is independently justified by one of these source classes:
+
+- an applicable default-branch canonical MUST/SHALL requirement with a concrete material gap;
+- an approved required-deferred obligation with reconstructable source linkage;
+- an explicitly governed README `Project direction commitments` entry that is prospective, scoped,
+  affirmative, non-contradictory with canonical specs, and not merely descriptive/current-state/example/
+  non-goal/deferred-uncommitted text; or
+- current concrete material behavior-preserving maintenance/friction with a bounded ownership surface and
+  no new Human-reserved product/scope/risk decision.
+
+The created Issue MUST record the admission kind, observed default-branch revision where applicable, exact
+independent authority/evidence source, bounded problem, and why no Human-reserved decision is being made.
+Reconstruction MUST validate that evidence rather than trust the Issue assertion and MUST fail closed when
+the cited source is absent, stale, contradictory, merely descriptive, insufficiently material, or otherwise
+does not authorize the bounded problem.
+
+Agent-authored advisory text, Explore conclusions, and prior Agent-created tickets MUST NOT recursively
+serve as sufficient authority for another autonomous admission by themselves. Every repository-authorized
+admission traces to an independent default-branch authority source or current concrete behavior-preserving
+repository/friction evidence. Autonomous admission MUST NOT add, remove, restore, or manufacture
+`intake:approved`, MUST NOT persist a formal Change identity, and MUST NOT bypass Propose, Reviewer,
+implementation, merge, archive, or lifecycle gates.
+
+Lead MUST deduplicate against open or reconstructably unresolved equivalent candidates and required-
+deferred trackers before materializing a candidate. One idle invocation creates at most one candidate.
+Rule-of-Three is sufficient evidence for a recurring pattern but not an automatic refactoring/admission
+trigger; a clear single-instance structural hazard such as dual authority or a known-always-failing normal
+workflow step may qualify when concrete cost/risk/friction and a bounded ownership surface are evident.
+If no material qualifying finding exists, idle discovery creates no repository noise. No coverage cursor,
+TTL registry, hidden scan state, priority score, backlog database, or project-direction registry is added.
+
+Lead idle advisory remains available for advisory-only findings when Lead has no eligible workflow work.
+Its bounded evidence lens includes relevant Issues created or materially active in the preceding 7 days.
+At most one open `advisory:idle` Issue may exist and it may contain at most three recommendations. Advisory
+Issues have no routing tuple. If an undecided open advisory already exists, later Lead runs no-op instead of
+creating duplicate noise.
+
+Admitting an advisory recommendation through the Human-only path still requires both an unambiguous
+selected direction in the advisory thread and the reserved Human capability label `intake:approved`. Human
+may admit that direction to Explore or direct Propose according to its clarity. Scheduled Lead, Reviewer,
+and Executor may consume the marker but MUST NEVER add, remove, restore, or manufacture it. This is a
+governance capability boundary, not cryptographic proof of Human identity. A recommendation remains
+advisory unless independent repository-authorized admission evidence separately satisfies the bounded
+contract above.
 
 ## Durable final closure
 
@@ -623,5 +683,6 @@ The MVP has no central workflow engine, generic transition/DAG executor, distrib
 heartbeat, retry counter, progress percentage, hidden sequence number, `status:in-progress`,
 `status:exploring`, exactly-once mechanism, message queue, event-sourcing engine, hidden context cache,
 hidden memory, research database, completeness score, `review-explore` action, template-version state,
-semantic-revision classifier service, review-applicability label, branch registry, or second workflow DAG.
+semantic-revision classifier service, review-applicability label, branch registry, coverage cursor/TTL
+registry, project-direction registry, global priority/scoring state, hidden backlog, or second workflow DAG.
 Do not add such state without a new approved OpenSpec change.
