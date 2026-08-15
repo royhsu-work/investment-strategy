@@ -50,15 +50,16 @@ Legal outcomes:
 3. If accepted, revise only Lead-owned OpenSpec specification artifacts needed to resolve it; do not modify implementation code to make a gate pass.
 4. If OpenSpec artifacts changed materially, repeat the same required-artifact, required trace declarations/references authoring, and exact-revision strict-validation readiness checks used by `propose-change`. The semantic bidirectional PASS gate remains independent Reviewer work.
 5. If the same implementation or correction PR remains in use, keep its coordination-Issue reference non-closing; resolving a specification question never authorizes adding Issue-closing linkage to an implementation PR.
-6. Persist the resolution and current revision before handoff.
+6. Persist the resolution and current revision before routing.
 
-Legal handoff depends on the gate/blocker being resolved:
+Legal target action depends on the gate/blocker being resolved:
 
 - revised OpenSpec requiring independent review → `Reviewer / review-openspec`;
 - implementation may continue under unchanged approved meaning → `Executor / implement-change`;
-- lifecycle/archive question → return to the appropriate Lead finalize action only when the approved
-  contract makes that legal;
+- lifecycle/archive question → route to the appropriate Lead finalize action only when the approved contract makes that legal;
 - unresolved ambiguity or failed readiness evidence → retain Lead.
+
+When the legal target is another Lead action on the same coordination Issue, perform the source `ACTION_RESULT`, fresh-read and replace the action routing, observe the target tuple, then reconstruct that target action using its mapped default-branch skill. If it is immediately actionable, continue in the same invocation under the shared fixed-role contract without `HANDOFF`. Cross-role targets still use canonical `HANDOFF` and end the invocation.
 
 ## Human escalation producer
 
@@ -78,8 +79,9 @@ The already-durable escalation remains authoritative even when label production 
 
 Use `agents/templates/messages.md` for recurring durable presentation. Lead readiness/resolution outcomes
 use the applicable `ACTION_RESULT`; a genuine unresolved Human authority/intent decision uses Lead-only
-`HUMAN_DECISION_REQUIRED`; and a completed ownership transfer uses canonical `HANDOFF` only after the
-routing mutation succeeds. Do not copy private template bodies into this skill.
+`HUMAN_DECISION_REQUIRED`; a cross-role completed ownership transfer uses canonical `HANDOFF` only after
+the routing mutation succeeds. Same-role action transitions continue from the source result and routing
+mutation without `HANDOFF`; do not add an action-transition message type.
 
 ## Safety
 
