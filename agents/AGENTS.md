@@ -285,6 +285,16 @@ engine, hidden context cache, sequence number/label, pending-review state, consu
 second workflow DAG. Role and skill documents specialize only the provenance or review baseline needed by
 their existing action and MUST NOT copy this shared section.
 
+## Required deferred follow-up integrity
+
+An ordinary out-of-scope item, non-goal, optional future idea, or work merely not selected now creates no tracking obligation. A required deferred follow-up exists only when an approved specification/scope decision explicitly says the work must still be handled later in a separate change.
+
+Lead owns tracker materialization at that defer-decision boundary. Lead creates or reuses one durable tracker whose reconstructable linkage identifies the source coordination Issue/Change and the exact defer decision/reference. The tracker is durable work evidence only: an Agent-created tracker MUST NOT Human-admit itself, MUST NOT receive a routing tuple, and MUST NOT become active workflow merely because it exists.
+
+`Reviewer / review-openspec` verifies every approved required deferred follow-up has the required durable linkage and rejects missing tracking while ignoring ordinary out-of-scope/non-goal/optional future statements. `Lead / finalize-archive` is the terminal fail-safe: before archive authorization or `LIFECYCLE_COMPLETE`, Lead reconstructs all still-applicable required deferred follow-up obligations and requires their durable trackers. When the approved meaning and intended linkage are unambiguous and only the tracker write is missing, Lead may idempotently create or reuse that tracker; ambiguity fails closed to the legal specification/Human boundary. Historical completed workflows are not retroactively invalidated solely because this contract was not active when they completed.
+
+This integrity contract uses existing Issues, provenance, review, and finalization surfaces. It adds no automatic admission, generic backlog generator, hidden obligation registry, deferred-work status label, second workflow DAG, or title-based duplicate detector.
+
 ## Work-conserving selected-action execution
 
 Once an invocation selects a role/action, execution is work-conserving: it MUST continue all immediately
