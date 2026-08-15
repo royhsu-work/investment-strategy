@@ -21,7 +21,8 @@ def test_explore_is_tenth_lead_action_with_one_owned_skill() -> None:
     lead = _normalized(LEAD)
 
     assert "Exactly ten normal actions are supported" in shared
-    assert "| Lead | `explore-change` | `agents/skills/openspec-explore/SKILL.md` |" in _read(AGENTS)
+    action_row = "| Lead | `explore-change` | `agents/skills/openspec-explore/SKILL.md` |"
+    assert action_row in _read(AGENTS)
     assert "Legal tuples are exactly the ten role/action pairs" in shared
     assert "`explore-change` uses `agents/skills/openspec-explore/SKILL.md`" in lead
     assert EXPLORE.is_file()
@@ -82,7 +83,9 @@ def test_explore_has_no_research_state_machine_or_review_gate() -> None:
         "research database",
         "hidden memory",
     ):
-        assert f"does not require `{forbidden}`" in explore or f"MUST NOT introduce `{forbidden}`" in explore
+        absent_state = f"does not require `{forbidden}`"
+        absent_mechanism = f"MUST NOT introduce `{forbidden}`"
+        assert absent_state in explore or absent_mechanism in explore
 
 
 def test_explore_terminal_results_can_close_without_fake_change() -> None:
