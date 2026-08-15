@@ -9,6 +9,7 @@ AGENTS = ROOT / "agents"
 
 ROLE_ACTIONS = {
     "Lead": (
+        "explore-change",
         "propose-change",
         "resolve-question",
         "finalize-change",
@@ -27,13 +28,14 @@ EXPECTED_PRIORITY = {
         "resolve-question",
         "finalize-archive",
         "finalize-change",
-        "propose-change",
+        "pre-activation intake",
     ),
     "Reviewer": ("review-archive", "review-implementation", "review-openspec"),
     "Executor": ("merge-pr", "implement-change"),
 }
 
 EXPECTED_SKILLS = {
+    ("Lead", "explore-change"): "agents/skills/openspec-explore/SKILL.md",
     ("Lead", "propose-change"): "agents/skills/openspec-change/SKILL.md",
     ("Lead", "resolve-question"): "agents/skills/openspec-change/SKILL.md",
     ("Lead", "finalize-change"): "agents/skills/lifecycle-finalize/SKILL.md",
@@ -87,7 +89,9 @@ def _select(text: str, role: str, candidates: list[Candidate]) -> Candidate | No
     eligible = [
         candidate
         for candidate in candidates
-        if candidate.role == role and (candidate.role, candidate.action) in mapping
+        if candidate.role == role
+        and (candidate.role, candidate.action) in mapping
+        and candidate.action in rank
     ]
     if not eligible:
         return None
@@ -125,44 +129,48 @@ def test_shared_governance_and_role_files_exist_with_authority_boundaries() -> N
     assert not (AGENTS / "roles/base.md").exists()
 
 
-def test_nine_actions_map_once_to_a_reduced_reusable_skill_set() -> None:
+def test_ten_actions_map_once_to_a_reduced_reusable_skill_set() -> None:
     shared = _read(AGENTS / "AGENTS.md")
     mapping = _mapping(shared)
     assert mapping == EXPECTED_SKILLS
-    assert len(mapping) == 9
+    assert len(mapping) == 10
     assert set(mapping) == {
         (role, action) for role, actions in ROLE_ACTIONS.items() for action in actions
     }
     skills = {skill for skill in mapping.values()}
-    assert len(skills) == 7
+    assert len(skills) == 8
     assert len(skills) < len(mapping)
     for skill in skills:
         assert (ROOT / skill).is_file()
     assert "archive-change" not in {action for _, action in mapping}
+    assert "review-explore" not in {action for _, action in mapping}
 
 
 def test_deterministic_discovery_uses_fixed_priority_and_stable_tie_breakers() -> None:
-    shared = _read(AGENTS / "AGENTS.md")
-    assert _priority(shared) == EXPECTED_PRIORITY
+    shared = " ".join(_read(AGENTS / "AGENTS.md").split())
+    assert _priority(_read(AGENTS / "AGENTS.md")) == EXPECTED_PRIORITY
     assert "earlier GitHub `created_at` wins" in shared
     assert "lower numeric Issue" in shared
     assert "Model-derived urgency" in shared
+    assert "combined pre-activation queue" in shared
+    assert "there is no `explore-change > propose-change` priority" in shared
 
+    raw = _read(AGENTS / "AGENTS.md")
     candidates = [
         Candidate(5, "2026-08-01T00:00:00Z", "Executor", "implement-change"),
         Candidate(30, "2026-08-10T00:00:00Z", "Executor", "merge-pr"),
     ]
-    assert _select(shared, "Executor", candidates) == candidates[1]
+    assert _select(raw, "Executor", candidates) == candidates[1]
 
     same_action = [
         Candidate(9, "2026-08-02T00:00:00Z", "Lead", "resolve-question"),
         Candidate(8, "2026-08-01T00:00:00Z", "Lead", "resolve-question"),
         Candidate(7, "2026-08-01T00:00:00Z", "Lead", "resolve-question"),
     ]
-    assert _select(shared, "Lead", same_action) == same_action[2]
+    assert _select(raw, "Lead", same_action) == same_action[2]
 
     invalid = [Candidate(1, "2026-01-01T00:00:00Z", "Executor", "review-openspec")]
-    assert _select(shared, "Executor", invalid) is None
+    assert _select(raw, "Executor", invalid) is None
 
 
 def test_review_and_finalize_skills_preserve_upstream_gate_contracts() -> None:
@@ -260,7 +268,7 @@ def test_pr_linkage_governance_reserves_closing_linkage_for_archive() -> None:
 
 
 def test_persistent_lifecycle_archive_boundary_and_human_admission_are_documented() -> None:
-    shared = _read(AGENTS / "AGENTS.md")
+    shared = " ".join(_read(AGENTS / "AGENTS.md").split())
     labels = _read(AGENTS / "labels.md")
 
     for required in (
@@ -282,6 +290,7 @@ def test_persistent_lifecycle_archive_boundary_and_human_admission_are_documente
         "agent:lead",
         "agent:reviewer",
         "agent:executor",
+        "action:explore-change",
         "advisory:idle",
         "intake:approved",
         "Human/maintainer",
@@ -333,6 +342,7 @@ def test_governance_does_not_add_parallel_workflow_engine_state() -> None:
     assert "no central workflow engine" in shared
     assert "exactly-once mechanism" in shared
     assert "status:in-progress" in shared
+    assert "status:exploring" in shared
     assert "generic DAG executor" in implementation
     assert "normal OpenSpec archive mutation" in implementation
 

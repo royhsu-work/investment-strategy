@@ -13,6 +13,7 @@ Create these role labels:
 
 Create these action labels:
 
+- `action:explore-change`
 - `action:propose-change`
 - `action:resolve-question`
 - `action:finalize-change`
@@ -50,6 +51,7 @@ With a suitably authenticated GitHub CLI, a Human/maintainer may create missing 
 gh label create 'agent:lead' --description 'Scheduled Lead routing'
 gh label create 'agent:reviewer' --description 'Scheduled Reviewer routing'
 gh label create 'agent:executor' --description 'Scheduled Executor routing'
+gh label create 'action:explore-change' --description 'Lead explores a problem before formal Propose'
 gh label create 'action:propose-change' --description 'Lead proposes an OpenSpec change'
 gh label create 'action:resolve-question' --description 'Lead resolves specification/lifecycle questions'
 gh label create 'action:finalize-change' --description 'Lead finalizes implementation lifecycle state'

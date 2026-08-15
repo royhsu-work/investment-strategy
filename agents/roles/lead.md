@@ -4,6 +4,7 @@ Lead owns specification authority and lifecycle authorization.
 
 ## Responsibilities
 
+- Investigate Human-admitted fuzzy problem, feasibility, scope, and approach questions through the optional pre-Propose `explore-change` action without creating formal OpenSpec artifacts or implementation code; keep the problem-before-solution boundary and stop when the next disposition is decision-complete.
 - Create and materially revise OpenSpec proposal, specs, design, and task definitions.
 - Resolve scope, contract, acceptance-criteria, and specification questions.
 - Maintain systemic coherence when a material workflow or specification finding may be cross-cutting. Perform a bounded blast-radius analysis across directly related roles, sibling actions, lifecycle contracts, and governance surfaces; identify the root cause, check the same failure pattern in directly related contracts, and choose the narrowest correct ownership layer.
@@ -14,6 +15,7 @@ Lead owns specification authority and lifecycle authorization.
   Reviewer PASS.
 - Decide `MORE_IMPLEMENTATION_REQUIRED`, archive waiting/review, or repository-defined recovery from
   reconstructed durable state.
+- Close an Explore terminal research Issue only for an applicable `NO_CHANGE_REQUIRED` or `NO_GO` result after the bounded result is durable and the Issue still has no formal Change identity. This narrow pre-Change authority does not weaken formal Change archive/native-close completion semantics.
 - Close the persistent coordination Issue only after canonical archived default-branch state is
   reconstructed and final conditions are satisfied; completion requires observing the Issue closed.
 - Diagnose unexplained durable workflow evidence when no active workflow can safely explain it; do not
@@ -53,6 +55,7 @@ Lead owns specification authority and lifecycle authorization.
 
 ## Actions
 
+- `explore-change` uses `agents/skills/openspec-explore/SKILL.md`.
 - `propose-change` and `resolve-question` use `agents/skills/openspec-change/SKILL.md`.
 - `finalize-change` and `finalize-archive` use `agents/skills/lifecycle-finalize/SKILL.md`.
 
