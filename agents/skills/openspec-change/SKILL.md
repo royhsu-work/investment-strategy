@@ -23,12 +23,12 @@ If routing, change identity, active-workflow identity, or required evidence is c
 ## `propose-change`
 
 1. Confirm explicit Human/maintainer admission and valid `Lead / propose-change` routing. Direct-to-Propose remains valid for direction that is already concrete/buildable; Explore is not a prerequisite.
-2. If `Change:` is unset, reconstruct formal active/terminal-pending workflow state and the shared combined pre-activation queue before persisting any Change identity.
+2. If `Change:` is unset, reconstruct formal active/terminal-pending workflow state and the shared combined pre-activation queue before persisting any Change identity. The procedure must reconstruct active workflow state before persisting an unset Change identity.
    - If a formal active/terminal-pending workflow exists, keep this Issue queued and perform no activation.
    - If multiple formal active workflows or contradictory durable identity evidence exist, fail closed.
    - If no formal active/terminal-pending workflow exists, combine valid Human-admitted open `Lead / explore-change + Change: unset` and `Lead / propose-change + Change: unset` entries and choose the winner by earliest GitHub `created_at`, then lower Issue number.
    - A later direct-Propose Issue MUST NOT activate while an older eligible Explore is the deterministic combined pre-activation winner.
-   - Immediately before the activation write, re-read durable state and require this Issue to remain the combined pre-activation winner. Reconstruct active workflow state before persisting an unset Change identity; only the first valid activation may continue.
+   - Immediately before the activation write, re-read durable state and require this Issue to remain the combined pre-activation winner; only the first valid activation may continue.
    - Persist the selected immutable Change identity as the activation write. Overlapping attempts use first-valid-write-wins semantics rather than a lock/claim/lease/heartbeat.
    - Immediately re-read durable state after the write. Only the first valid activation continues; a competing run that observes a different/newer durable result must stop as stale.
 3. Author the minimum proposal, delta specs, design, and tasks needed by the approved direction. Keep the change single-purpose and preserve repository scope boundaries.
