@@ -43,9 +43,11 @@ MUST NOT introduce model-derived global urgency, cross-role priority scoring, or
 
 If workflow-dynamic reconstruction finds multiple active workflows, invalid routing, or otherwise
 cannot identify one legal active workflow, it MUST fail closed and MUST NOT guess an owner. Once
-selected, the invocation role MUST remain fixed for the remainder of that run. A legal handoff may
-persist a different next routing tuple, but the current invocation MUST end and does not redispatch
-to the new role in the same run.
+selected, the invocation role becomes the fixed invocation role for the remainder of that run and the
+selected coordination Issue remains fixed. A cross-role handoff may persist a different next routing
+tuple, but the current invocation MUST then end and does not redispatch to the new role. A same-role
+action transition is different: after the source result and legal routing mutation are durable, the run
+may continue on the same coordination Issue under the shared same-role continuation contract below.
 
 ## Roles and authority
 
@@ -231,13 +233,14 @@ Every run behaves as if it may be the first run to see the work item:
 ```text
 wake
 → load default-branch AGENTS.md + role + mapped skill
-→ select at most one eligible Issue deterministically
+→ select at most one eligible Issue and one fixed invocation role deterministically
 → reconstruct Issue / PR / OpenSpec / Actions / default-branch state
 → re-evaluate action preconditions
 → perform only remaining authorized work
 → persist durable artifact/result and revision-aware evidence
 → fresh-read current Issue routing
-→ hand off only if routing still permits it
+→ if cross-role target: complete HANDOFF and end
+→ if same-role target and immediately actionable: reconstruct target action and continue
 ```
 
 Previous conversation memory is never required for correctness. A partial run, tool failure, or missing
@@ -297,39 +300,36 @@ This integrity contract uses existing Issues, provenance, review, and finalizati
 
 ## Work-conserving selected-action execution
 
-Once an invocation selects a role/action, execution is work-conserving: it MUST continue all immediately
-actionable work within that same authorized action while routing, revision/preconditions, authority, and
-execution context remain current. A verified Slice checkpoint with more approved local work, a failed-but-actionable validation, a recoverable same-role failure, or another ordinary intermediate checkpoint is not a legal voluntary yield point.
+Once an invocation selects a workflow Issue and fixed invocation role, execution is work-conserving. It MUST continue all immediately actionable work within the current action while routing, revision/preconditions, authority, and execution context remain current. A verified Slice checkpoint with more approved local work, a failed-but-actionable validation, a recoverable same-role failure, or another ordinary intermediate checkpoint is not a legal voluntary yield point.
 
-Legal termination or yield is limited to action completion with handoff or terminal result, a boundary
-that requires a different role or Human authority, a real external asynchronous wait, genuine ambiguity
-or unsafe state, stale/concurrency loss, or an actual tool or hard-runtime interruption. Handoff still
-ends the current invocation; this rule does not authorize same-run role switching or redispatch.
+After action A persists its result and legally mutates routing on the same coordination Issue, the invocation fresh-reads that Issue. If the target role equals the fixed invocation role and the target action is immediately actionable, the invocation MUST load the target action's mapped default-branch skill, reconstruct the target action from current Issue/PR/OpenSpec/Actions/default-branch state, re-evaluate the target action's own preconditions, and continue. The target action receives no inherited authority from action A; every unsafe mutation remains subject to its own current preconditions.
 
-Role and skill documents define only action-specific blockers, results, recovery details, and handoffs.
-They MUST NOT introduce a competing generic continuation policy or weaken this shared termination rule.
+Multiple same-role action transitions may continue while they stay on the same coordination Issue, target the fixed invocation role, and remain immediately actionable. A same-role transition MUST NOT become a mechanism to process another workflow Issue or to redispatch globally.
+
+Legal termination or yield is limited to action completion with a cross-role transfer or terminal result, a boundary that requires Human authority, a real external asynchronous wait, genuine ambiguity or unsafe state, stale/concurrency loss, or an actual tool/hard-runtime interruption. A cross-role transition persists the required ownership handoff and ends the invocation. A same-role transition does not end the invocation merely because the action label changed.
+
+Role and skill documents define only action-specific blockers, results, recovery details, and target actions. They MUST NOT introduce a competing generic continuation policy or weaken this shared termination rule.
 
 ## Handoff ordering and concurrency safety
 
-Ownership transfer occurs only after durable work is persisted. Result evidence does not by itself
-complete a required routing handoff. When an action-defined result requires another owner, the required
-order is:
+HANDOFF is cross-role ownership-transfer evidence. Same-role action transitions use the source result, legal routing mutation, and target-action reconstruction instead; they do not fabricate a handoff.
+
+When an action-defined result requires a different role, ownership transfer occurs only after durable work is persisted. Result evidence does not by itself complete that cross-role routing handoff. The required order is:
 
 ```text
 persist result + revision-aware evidence
 → fresh-read source routing
-→ mutate routing to the target tuple
+→ mutate routing to the cross-role target tuple
 → observe successful routing mutation
 → persist canonical `HANDOFF`
 → end the current invocation
 ```
 
-`HANDOFF` follows successful routing mutation. If a prior invocation already persisted the result but
-source routing still matches the completed source action, a later eligible invocation preserves the
-already-durable result, performs only the missing routing mutation, observes the target tuple, persists
-canonical `HANDOFF`, and does not repeat completed implementation/review work or fabricate another result.
+`HANDOFF` follows successful cross-role routing mutation. If a prior invocation already persisted the result but source routing still matches the completed source action, a later eligible invocation preserves the already-durable result, performs only the missing cross-role routing mutation, observes the target tuple, persists canonical `HANDOFF`, and does not repeat completed implementation/review work or fabricate another result.
 
-A normal handoff MUST NOT intentionally expose two role owners or two action owners.
+For a same-role target, persist the source action's required result first, fresh-read and legally mutate routing, observe the target tuple, then reconstruct and continue the target action under the fixed invocation role. Do not emit canonical `HANDOFF` for that same-role boundary.
+
+A normal cross-role handoff MUST NOT intentionally expose two role owners or two action owners. A same-role action transition likewise replaces the source action label rather than exposing two action owners.
 
 `fresh-read routing → update labels` is **not** a mutex, compare-and-swap primitive, or single-flight
 guarantee. Two same-role runs may observe the same tuple concurrently. Safety therefore depends on
@@ -355,9 +355,9 @@ exception meaning.
 
 A canonical typed message that directly represents a covered lifecycle transition satisfies the required
 lifecycle journal for that same boundary. The workflow MUST NOT add a duplicate generic
-`LIFECYCLE_JOURNAL` or recursive meta-comment merely to restate it. Routing transfer uses `HANDOFF`, PR
+`LIFECYCLE_JOURNAL` or recursive meta-comment merely to restate it. Cross-role routing ownership transfer uses `HANDOFF`, PR
 merge uses `MERGE_RESULT`, applicable non-review lifecycle completion uses `ACTION_RESULT`, and Human
-escalation uses `HUMAN_DECISION_REQUIRED`.
+escalation uses `HUMAN_DECISION_REQUIRED`. Same-role action transitions use the already-required source result plus routing/target reconstruction and add no synthetic transition message.
 
 ## Shared exception capture and invocation finalization
 
@@ -420,8 +420,8 @@ second orchestration layer.
 A material workflow lifecycle transition that changes durable workflow ownership or lifecycle state
 requires one bounded comment on the persistent coordination Issue. The journal identifies the transition,
 resulting durable state or evidence, and next action or terminal result. Covered boundaries include
-routing handoff, PR merge, Archive native close/post-merge terminal handoff, Lead `LIFECYCLE_COMPLETE`,
-Explore terminal research closure, and Human escalation/specification-resolution. Related low-level writes
+cross-role routing handoff, PR merge, Archive native close/post-merge terminal handoff, Lead `LIFECYCLE_COMPLETE`,
+Explore terminal research closure, and Human escalation/specification-resolution. Same-role action transitions are represented by their source result and routing mutation and do not require a duplicate journal message merely because the action changed. Related low-level writes
 inside one legal transition may be represented by that one journal entry, and the journal comment itself
 does not recursively require another meta-comment.
 
