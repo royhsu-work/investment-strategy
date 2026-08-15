@@ -11,12 +11,12 @@
 
 ## Slice 1 — Add the Lead Explore action and authority boundary
 
-- [ ] **RED:** add/extend governance tests proving the authoritative normal action map accepts `Lead / explore-change`, maps it to one repository Explore skill, and still rejects unknown/contradictory role/action tuples.
-- [ ] **RED:** add behavioral governance tests proving Explore cannot create formal OpenSpec Change artifacts or modify implementation code, while direct Human-admitted `Lead / propose-change` remains valid without an Explore prerequisite.
-- [ ] **GREEN:** update `agents/AGENTS.md` to expose exactly ten normal actions and map `Lead / explore-change` to the new Explore skill without changing Reviewer/Executor authority or archive automation ownership.
-- [ ] **GREEN:** update `agents/roles/lead.md` with the minimum Explore responsibility/authority and map the new action; do not duplicate shared runtime invariants.
-- [ ] **GREEN:** create `agents/skills/openspec-explore/SKILL.md` using current upstream OpenSpec Explore semantics as design input while keeping repository default-branch governance authoritative. The skill must preserve problem-before-solution investigation, allow repository/external evidence inspection and bounded blast-radius analysis, and prohibit formal artifacts/code during Explore.
-- [ ] **REFACTOR/VERIFY:** remove duplicate wording across AGENTS/Lead/Explore skill so shared invariants retain one owner; run targeted governance tests, full regression suite, lint, and type checks.
+- [x] **RED:** add/extend governance tests proving the authoritative normal action map accepts `Lead / explore-change`, maps it to one repository Explore skill, and still rejects unknown/contradictory role/action tuples.
+- [x] **RED:** add behavioral governance tests proving Explore cannot create formal OpenSpec Change artifacts or modify implementation code, while direct Human-admitted `Lead / propose-change` remains valid without an Explore prerequisite.
+- [x] **GREEN:** update `agents/AGENTS.md` to expose exactly ten normal actions and map `Lead / explore-change` to the new Explore skill without changing Reviewer/Executor authority or archive automation ownership.
+- [x] **GREEN:** update `agents/roles/lead.md` with the minimum Explore responsibility/authority and map the new action; do not duplicate shared runtime invariants.
+- [x] **GREEN:** create `agents/skills/openspec-explore/SKILL.md` using current upstream OpenSpec Explore semantics as design input while keeping repository default-branch governance authoritative. The skill must preserve problem-before-solution investigation, allow repository/external evidence inspection and bounded blast-radius analysis, and prohibit formal artifacts/code during Explore.
+- [x] **REFACTOR/VERIFY:** remove duplicate wording across AGENTS/Lead/Explore skill so shared invariants retain one owner; run targeted governance tests, full regression suite, lint, and type checks.
 
 ## Slice 2 — Define decision-complete Explore outcomes and Human proposal boundary
 
