@@ -75,12 +75,16 @@ def test_dynamic_dispatch_fails_closed_for_invalid_or_multiple_active_workflows(
         assert required in text
 
 
-def test_invocation_role_is_immutable_after_dynamic_dispatch() -> None:
+def test_invocation_role_is_fixed_but_same_role_actions_may_continue() -> None:
     text = _normalized(AGENTS)
     for required in (
-        "invocation role MUST remain fixed",
-        "current invocation MUST end",
-        "does not redispatch",
+        "fixed invocation role",
+        "selected coordination Issue remains fixed",
+        "cross-role handoff",
+        "current invocation MUST then end",
+        "does not redispatch to the new role",
+        "same-role action transition",
+        "may continue on the same coordination Issue",
     ):
         assert required in text
 
@@ -312,20 +316,22 @@ def test_closed_terminal_pending_work_blocks_activation_until_lifecycle_complete
         assert required in finalize
 
 
-def test_selected_action_is_work_conserving_until_a_legal_termination_boundary() -> None:
+def test_selected_workflow_is_work_conserving_until_a_legal_termination_boundary() -> None:
     shared = _normalized(AGENTS)
     implementation = _normalized(IMPLEMENTATION)
 
     for required in (
         "work-conserving",
         "all immediately actionable work",
-        "same authorized action",
+        "current action",
         "failed-but-actionable validation",
         "verified Slice checkpoint",
         "not a legal voluntary yield point",
+        "target role equals the fixed invocation role",
+        "reconstruct the target action",
         "real external asynchronous wait",
         "stale/concurrency loss",
-        "handoff",
+        "cross-role",
     ):
         assert required in shared
 

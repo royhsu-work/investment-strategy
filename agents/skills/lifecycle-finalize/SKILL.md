@@ -47,6 +47,8 @@ Lead performs the cleanup reconstruction before archive `MERGE_AUTHORIZED`: it m
 exact archive gate and any known terminal cleanup obligations that would become unreachable after the
 final Archive PR native-closes the coordination Issue.
 
+Before any archive `MERGE_AUTHORIZED` or `LIFECYCLE_COMPLETE`, Lead also reconstructs every still-applicable approved required deferred follow-up obligation. Each such obligation must have a durable tracker linked to the source coordination Issue/Change and exact defer decision/reference. If the obligation meaning is unambiguous and the only missing work is the tracker write, Lead may idempotently create or reuse that tracker using the same Lead-owned tracking contract; the tracker MUST NOT be Human-admitted or receive workflow routing. If scope meaning, applicability, or linkage is ambiguous, fail closed to the legal specification/Human boundary instead of inventing a tracker. Missing still-applicable required deferred follow-up tracking blocks lifecycle completion. Ordinary out-of-scope/non-goal/optional future work creates no such obligation.
+
 1. Identify the exact current archive PR head revision R.
 2. Require an unambiguous Reviewer archive `PASS` for R.
 3. Recheck current head and gate state.
@@ -78,7 +80,7 @@ The normal path first observes the expected native Issue completion and requires
 
 When final conditions are satisfied, Lead persists one bounded `LIFECYCLE_COMPLETE` result that
 identifies the Archive PR exact head, merge commit, canonical archived default-branch state, observed
-native Issue closure, and the reconstructed pre-merge temporary-branch cleanup/retention outcome. Lead
+native Issue closure, the reconstructed required deferred follow-up tracker state, and the reconstructed pre-merge temporary-branch cleanup/retention outcome. Lead
 verifies the terminal invariant but does not replay an Executor-owned deletion after native close, and
 does not reopen or redundantly close the Issue when native closure is already present.
 

@@ -61,6 +61,12 @@ For each approved feature slice:
     correction, independent `Reviewer / review-openspec` must PASS the new semantic target before Executor
     resumes implementation.
 
+## Exact required run observation
+
+When current implementation or task-checkpoint work has just caused a just-triggered exact required run such as Python Quality or OpenSpec Validate for the current branch/revision, the first observation of that run as `queued` or `in_progress` does not force a yield. While bounded execution opportunity remains and no different role/Human boundary is required, observe only the same exact run through bounded same-invocation observation. If the same exact run becomes terminal, consume its terminal result and continue immediately with the current `implement-change` procedure, including actionable failure correction or the next verified checkpoint/handoff step.
+
+If bounded execution opportunity ends while the same exact run remains nonterminal, the run is a real external asynchronous wait. A later wake must fresh-read that exact run before concluding the wait remains. Historical waiting evidence is not current status authority. This specialization uses no timer, sleep policy, polling counter, heartbeat, retry counter, background waiter, or hidden waiter; shared async semantics remain owned by `agents/AGENTS.md`.
+
 ## Constrained branch integration recovery
 
 When the implementation PR needs branch integration but ordinary local git merge/rebase is unavailable,

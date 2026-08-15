@@ -49,9 +49,10 @@ that same target revision:
 5. Confirm required strict OpenSpec validation evidence is mechanically current for the checkout used as
    evidence and proves validator `HEAD == validation target` before strict validation. Mechanical exact-
    revision validation does not by itself determine semantic target applicability.
-6. Convert each material problem into an actionable finding that identifies the violated contract and
+6. Reconstruct every approved decision that explicitly classifies work as a required deferred follow-up. Require a durable linked tracker that identifies the source coordination Issue/Change and exact defer decision/reference. Missing required tracker linkage is a finding. Ordinary out-of-scope, non-goal, optional future work, or work merely not selected now is not a tracking obligation and MUST NOT be promoted into one by Reviewer inference.
+7. Convert each material problem into an actionable finding that identifies the violated contract and
    supporting evidence.
-7. Confirm no task or implementation detail is being used as the sole source of normative governance
+8. Confirm no task or implementation detail is being used as the sole source of normative governance
    that belongs upstream in proposal/spec/design.
 
 Reverse-first is an inspection order only. It does not replace bidirectional traceability; both directions must be complete before PASS.
