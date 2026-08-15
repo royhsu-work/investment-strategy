@@ -50,4 +50,5 @@ def test_lead_idle_advisory_can_recommend_skill_maintenance_without_mutation_aut
         assert phrase in lead
 
     assert "recommendation remains advisory" in lead
-    assert "normal Human-admitted OpenSpec lifecycle" in lead
+    assert "independent repository-authorized admission evidence" in lead
+    assert "Advisory-only findings remain non-routing" not in lead
