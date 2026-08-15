@@ -20,7 +20,7 @@ A valid Explore entry remains `Change: unset` with `agent:lead + action:explore-
 
 ## Authority boundary
 
-Explore MUST NOT create `openspec/changes/` artifacts, choose or persist a formal Change id, author proposal/specs/design/tasks as an Explore output, or modify implementation code. `Change: unset` remains unchanged for the whole Explore action.
+Explore MUST NOT create `openspec/changes/` artifacts, choose or persist a formal Change id, or author proposal/specs/design/tasks as an Explore output. Explore MUST NOT modify implementation code. `Change: unset` remains unchanged for the whole Explore action.
 
 Explore does not require `status:exploring`; Explore does not require `review-explore`; Explore does not require `completeness score`; Explore does not require `research database`; Explore does not require `hidden memory`. It also MUST NOT introduce a claim, lease, heartbeat, retry/progress counter, hidden ownership state, or second workflow DAG.
 
