@@ -25,6 +25,14 @@
 
 以 OpenSpec 驅動的 Python 投資策略研究專案。Strategy Engine 已建立為 repository 的 canonical analytical baseline，提供可重現、無 look-ahead 的正式 Decision 與歷史 analytical Backtest，且兩者共用同一份 Strategy 實作。對 externally observable contract 的後續變更應透過新的 OpenSpec change lifecycle 進行。
 
+## Project direction commitments
+
+本節是 README 中唯一可表達 **prospective project-direction commitment** 的明確 presentation surface。只有刻意放在本節、且同時是 **prospective、scoped、affirmative、non-contradictory** 的承諾，才可能作為 repository-authorized bounded Explore 的 project-direction evidence；實際 admission 與 runtime 判斷仍由 default-branch `agents/AGENTS.md` 擁有。
+
+其他 README 內容，包括 descriptive/current-state 說明、example、non-goal，以及一般 `Deferred work` 清單，都不因出現在 README 就自動成為 workflow admission authority。Plain deferred / uncommitted 項目仍需後續明確治理決策後，才能升格為本節 commitment。
+
+目前沒有額外的 autonomous project-direction commitment。既有 production Strategy、workflow activation、prediction、execution 等 deferred 項目維持未承諾狀態。
+
 ## Taiwan EOD market-data support
 
 Taiwan EOD market-data infrastructure 已合併至 `main`，目前作為 repository 的 Taiwan daily market-data baseline，涵蓋 provider-neutral identity、source-native EOD acquisition、Taiwan trading calendar，以及 Decision / Backtest composition。這代表資料基礎設施已可用，但不代表 production Strategy 或排程 workflow 已啟用；production strategy/workflow activation 仍維持 deferred。
@@ -224,7 +232,7 @@ Decision / Backtest artifact builders produce Python mappings, and the public se
 
 ## Current-only intraday overlay
 
-若 current trading session 尚未完成，而且 request 是 omitted `as_of` 或 explicitly current date，formal StrategyResult 仍以 previous completed trading day 為 `resolved_as_of`。若 current snapshot 有效，可另外附加：
+若 current trading session 尚未完成，而且 request 是 omitted `as_of` 或 explicitly current date，formal StrategyResult 仍以 previous completed trading day為 `resolved_as_of`。若 current snapshot 有效，可另外附加：
 
 - session date
 - open
