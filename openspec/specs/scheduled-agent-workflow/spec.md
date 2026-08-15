@@ -512,6 +512,8 @@ Lead SHALL keep idle advisory mode bounded and non-routing.
 
 When no active or terminal-pending workflow requires work, no queued Human-admitted proposal is eligible for activation, and no unresolved orphan evidence requires diagnosis, Lead MAY create an idle advisory Issue containing at most three current recommendations only if no other open `advisory:idle` Issue exists.
 
+When forming those bounded recommendations, Lead SHALL consider recent durable workflow evidence for Skill-maintenance opportunities such as repeated Agent mistakes or recoverable failures, missing or obsolete action guidance, unnecessary Skill complexity, and materially duplicated Skill guidance. A Skill-maintenance recommendation remains diagnostic/advisory only: it MUST NOT directly mutate governed Skill behavior, bypass Human admission, or create a second maintenance workflow.
+
 An advisory Issue MUST NOT contain `agent:*` or `action:*` routing labels and is not itself a coordination workflow instance.
 
 If an open advisory remains without valid Human admission, later Lead runs SHALL no-op rather than create duplicate advisory noise. Recommendation formation SHALL consider relevant Issues created or materially active during the preceding seven days.
@@ -523,6 +525,15 @@ If an open advisory remains without valid Human admission, later Lead runs SHALL
 - WHEN Lead runs while workflow is otherwise idle
 - THEN Lead does not create another advisory Issue
 - AND does not repeat the same recommendations as new workflow noise
+
+#### Scenario: Recent workflow evidence suggests a Skill improvement
+
+- GIVEN workflow execution is otherwise idle
+- AND recent durable evidence shows a repeated action mistake or missing/obsolete Skill guidance
+- WHEN Lead forms an eligible bounded idle advisory
+- THEN Lead may recommend the narrowest Skill-maintenance change supported by that evidence
+- AND the recommendation does not itself modify the Skill or create a parallel maintenance workflow
+- AND any governed behavior change still requires normal Human-admitted/OpenSpec lifecycle
 
 ### Requirement: Each scheduled run processes at most one actionable work item using a fixed stable order
 
@@ -1290,18 +1301,6 @@ When forming bounded idle recommendations, Lead SHALL consider relevant reposito
 - WHEN Lead forms an idle advisory
 - THEN that Issue is considered as current exploration evidence
 - AND the advisory remains bounded to at most three recommendations
-
-### Requirement: Workflow governance applies a simplicity and proportionality constraint
-
-Repository workflow design SHALL add complexity only when justified by current approved requirements or demonstrated failure modes. Hypothetical future generality MUST NOT by itself justify a central workflow engine, multi-active arbitration platform, generic fault classifier, generic exception/retry platform, message bus/template engine, semantic-revision classifier service, generic context/event processor, or hidden runtime ownership state.
-
-#### Scenario: A generalized dispatcher framework is proposed without current need
-
-- GIVEN current workflow requirements are satisfied by the thin workflow-first dispatcher, shared execution/context contracts, gate-specific review applicability, and shared Markdown message contract
-- AND no demonstrated failure requires a generalized orchestration, messaging, semantic-revision classification, context/event-processing, exception-classification, or retry subsystem
-- WHEN an implementation or later proposal considers such machinery
-- THEN the additional machinery is out of scope
-- AND a new approved OpenSpec change with concrete evidence is required before adding it
 
 ### Requirement: External asynchronous waits are revalidated from the awaited resource
 
