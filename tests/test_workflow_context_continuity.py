@@ -21,11 +21,11 @@ def _normalized(path: Path) -> str:
     return " ".join(path.read_text(encoding="utf-8").split())
 
 
-def test_shared_context_continuity_applies_to_all_nine_actions() -> None:
+def test_shared_context_continuity_applies_to_all_ten_actions() -> None:
     shared = _normalized(AGENTS)
     for required in (
         "Authoritative context continuity and evidence consumption",
-        "all nine normal actions",
+        "all ten normal actions",
         "still-applicable durable evidence",
         "Simple recency does not consume evidence",
         "authoritative supersession",
