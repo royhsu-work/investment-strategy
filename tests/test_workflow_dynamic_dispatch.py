@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents" / "AGENTS.md"
 LEAD = ROOT / "agents" / "roles" / "lead.md"
 OPEN_SPEC_CHANGE = ROOT / "agents" / "skills" / "openspec-change" / "SKILL.md"
+EXPLORE = ROOT / "agents" / "skills" / "openspec-explore" / "SKILL.md"
 IMPLEMENTATION = ROOT / "agents" / "skills" / "implementation" / "SKILL.md"
 MERGE_PR = ROOT / "agents" / "skills" / "merge-pr" / "SKILL.md"
 LIFECYCLE_FINALIZE = ROOT / "agents" / "skills" / "lifecycle-finalize" / "SKILL.md"
@@ -36,14 +37,16 @@ def test_dispatch_mode_has_one_authoritative_marker() -> None:
     assert markers == ["workflow-dynamic"]
 
 
-def test_fixed_role_mode_preserves_legacy_role_local_discovery() -> None:
+def test_fixed_role_mode_preserves_lifecycle_priority_then_combined_intake() -> None:
     text = _normalized(AGENTS)
     for required in (
         "fixed-role",
         "legacy externally assigned role",
-        "role-local action priority",
-        "earlier GitHub `created_at` wins",
-        "lower numeric Issue number wins",
+        "resolve-question > finalize-archive > finalize-change > pre-activation intake",
+        "combined pre-activation queue",
+        "earliest GitHub `created_at`",
+        "lower Issue number",
+        "MUST NOT choose different pre-activation winners",
     ):
         assert required in text
 
@@ -82,28 +85,42 @@ def test_invocation_role_is_immutable_after_dynamic_dispatch() -> None:
         assert required in text
 
 
-def test_change_identity_defines_single_active_workflow_and_queued_proposals() -> None:
+def test_change_identity_defines_active_workflow_and_combined_pre_activation_intake() -> None:
     text = _normalized(AGENTS)
     for required in (
         "persisted non-`unset` `Change:` identity",
         "active workflow",
-        "at most one",
+        "at most one active workflow",
+        "`Lead / explore-change`",
+        "`Lead / propose-change`",
         "`Change: unset`",
-        "queued pre-activation",
-        "MUST NOT count as an active workflow",
+        "queued pre-activation work",
+        "MUST NOT count as an active formal workflow",
+        "Formal activation remains owned by Propose",
     ):
         assert required in text
 
 
-def test_queued_activation_is_deterministic_and_refuses_second_active_change() -> None:
+def test_combined_intake_is_deterministic_and_refuses_later_propose_activation() -> None:
     text = _normalized(AGENTS)
+    change = _normalized(OPEN_SPEC_CHANGE)
     for required in (
-        "MUST NOT activate a queued proposal while another active workflow exists",
+        "combined pre-activation queue",
         "earliest GitHub `created_at`",
         "lower Issue number",
-        "persists its immutable Change identity",
+        "there is no `explore-change > propose-change` priority",
+        "MUST NOT activate a queued proposal",
+        "older eligible Explore/direct-Propose entry",
+        "formal active or terminal-pending workflow must win over pre-activation intake",
     ):
         assert required in text
+    for required in (
+        "combine valid Human-admitted open `Lead / explore-change + Change: unset`",
+        "`Lead / propose-change + Change: unset`",
+        "A later direct-Propose Issue MUST NOT activate while an older eligible Explore",
+        "re-read durable state and require this Issue to remain the combined pre-activation winner",
+    ):
+        assert required in change
 
 
 def test_activation_overlap_uses_first_valid_write_and_stale_run_termination() -> None:
@@ -128,11 +145,25 @@ def test_activation_overlap_uses_first_valid_write_and_stale_run_termination() -
         assert required in change
 
 
+def test_oldest_explore_stays_winner_without_claim_or_status_state() -> None:
+    shared = _normalized(AGENTS)
+    explore = _normalized(EXPLORE)
+
+    for required in (
+        "oldest eligible open Explore naturally remains the deterministic winner across wakes",
+        "no claim, lease, heartbeat, or hidden ownership state",
+        "`status:exploring`",
+    ):
+        assert required in shared
+    assert "Change: unset" in explore
+    assert "does not require `status:exploring`" in explore
+
+
 def test_orphan_evidence_blocks_new_activation_and_routes_to_bounded_lead_diagnosis() -> None:
     text = _normalized(AGENTS)
     for required in (
         "unexplained durable workflow evidence",
-        "MUST NOT activate queued proposal work",
+        "MUST NOT activate or execute queued pre-activation work",
         "Lead diagnosis",
         "decision-ready escalation",
         "repository-wide fault classifier",
@@ -265,7 +296,7 @@ def test_closed_terminal_pending_work_blocks_activation_until_lifecycle_complete
         "`agent:lead + action:finalize-archive`",
         "authorized merged Archive PR",
         "no valid Lead `LIFECYCLE_COMPLETE`",
-        "MUST NOT activate a queued proposal",
+        "MUST NOT activate or execute queued pre-activation intake",
         "terminal history",
         "MUST NOT block later workflow admission",
     ):
