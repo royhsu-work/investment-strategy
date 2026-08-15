@@ -162,6 +162,74 @@ The model MUST NOT substitute its own urgency or preference for either mode's de
 - AND Lead is the fixed invocation role
 - AND queued pre-activation work remains queued
 
+### Requirement: Persisted Change identity defines the single active workflow boundary
+
+An open coordination Issue with a valid routing tuple and a persisted non-`unset` `Change:` identity SHALL be an active workflow. The repository MUST allow at most one such active workflow at a time.
+
+A closed coordination Issue SHALL also remain terminal-pending active workflow work only when all of the following hold:
+
+- it has a persisted non-`unset` `Change:` identity;
+- its routing tuple is exactly `agent:lead + action:finalize-archive`;
+- the repository-approved Archive PR for that Change is durably merged and the Issue is natively closed by the approved closing linkage; and
+- no durable Lead `LIFECYCLE_COMPLETE` result bound to that archive merge exists yet.
+
+Once Lead records valid `LIFECYCLE_COMPLETE` evidence after terminal reconstruction, that closed tuple SHALL be terminal history, MUST NOT be selected as active work, and MUST NOT block later workflow admission.
+
+Open Human-admitted `Lead / explore-change` and `Lead / propose-change` coordination Issues with `Change: unset` SHALL be queued pre-activation work and MUST NOT count as active workflows before Propose persists an immutable Change identity.
+
+Lead MUST NOT activate a queued proposal while another active or terminal-pending workflow exists. If no active or terminal-pending workflow exists, deterministic pre-activation admission SHALL be evaluated across the single combined set of valid Human-admitted open `Lead / explore-change + Change: unset` and `Lead / propose-change + Change: unset` candidates using earliest GitHub `created_at`, then lower Issue number. Only that combined-queue winner may proceed. A `propose-change` runner MUST re-check that its Issue is still that same winner immediately before persisting a non-`unset` Change identity; if an older eligible Explore remains the winner, Propose MUST stay queued and MUST NOT activate.
+
+A proposal-ready Explore remains pre-activation until valid Human intent authorizes routing that same Issue to `Lead / propose-change`. After that authorized routing, the same Issue retains its original queue position and may activate only if it remains the deterministic combined-queue winner under the current active/terminal-pending preconditions.
+
+#### Scenario: Queued pre-activation work exists while another workflow is active
+
+- GIVEN Change A is an active workflow
+- AND Issue B is an open Human-admitted `Lead / explore-change` or `Lead / propose-change` Issue with `Change: unset`
+- WHEN workflow-dynamic dispatch reconstructs work
+- THEN Change A remains the only active workflow
+- AND Issue B is not activated or globally arbitrated against Change A
+
+#### Scenario: Closed terminal handoff still blocks new activation
+
+- GIVEN Change A has an authorized merged Archive PR and its coordination Issue is natively closed
+- AND that Issue is routed `Lead / finalize-archive`
+- AND no valid Lead `LIFECYCLE_COMPLETE` evidence exists for the archive merge
+- AND queued Explore or Propose work exists with `Change: unset`
+- WHEN workflow-dynamic dispatch reconstructs work
+- THEN Change A is selected as terminal-pending workflow work
+- AND the queued pre-activation work is not activated
+
+#### Scenario: Older Explore prevents later direct-Propose activation
+
+- GIVEN no open active workflow exists
+- AND no closed terminal-pending workflow exists
+- AND an older valid Human-admitted `Lead / explore-change + Change: unset` Issue exists
+- AND a newer valid Human-admitted `Lead / propose-change + Change: unset` Issue exists
+- WHEN Lead evaluates whether the newer Propose Issue may persist a Change identity
+- THEN the older Explore Issue is the deterministic combined-queue winner
+- AND the newer Propose Issue remains queued
+- AND no non-`unset` Change identity is persisted for the newer Propose Issue
+
+#### Scenario: Proposal-ready Explore keeps its queue position when Human authorizes Propose
+
+- GIVEN an Explore Issue is the deterministic combined-queue winner
+- AND Lead has persisted `PROPOSAL_READY`
+- AND valid Human intent authorizes that same Issue to transition to `Lead / propose-change`
+- WHEN the routing transition succeeds while `Change:` remains unset
+- THEN the same Issue retains its original GitHub `created_at` and queue position
+- AND Propose may persist the immutable Change identity only after re-checking that this Issue remains the combined-queue winner
+
+#### Scenario: Oldest eligible Propose activates after older Explore terminates
+
+- GIVEN no open active workflow exists
+- AND no closed terminal-pending workflow exists because any prior closed terminal tuple has valid Lead `LIFECYCLE_COMPLETE` evidence
+- AND an older Explore Issue has reached a terminal `NO_CHANGE_REQUIRED` or `NO_GO` result and is no longer eligible pre-activation work
+- AND at least one valid Human-admitted `Lead / propose-change + Change: unset` Issue remains queued
+- WHEN Lead selects pre-activation work
+- THEN the earliest remaining eligible candidate across the combined queue is selected
+- AND lower Issue number breaks an equal-time tie
+- AND only a selected Propose candidate may persist its Change identity and activate the workflow
+
 ## ADDED Requirements
 
 ### Requirement: Optional pre-Propose Explore preserves upstream investigation semantics
