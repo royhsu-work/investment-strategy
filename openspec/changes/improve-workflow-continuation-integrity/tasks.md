@@ -2,10 +2,10 @@
 
 ## Slice 1 — Required deferred follow-up integrity
 
-- [ ] **RED** Add focused regression tests proving ordinary out-of-scope/non-goal text creates no tracking obligation, while an explicit approved required-defer decision without reconstructable tracker linkage is rejected by OpenSpec review and terminal lifecycle completion.
-- [ ] **GREEN** Update canonical workflow governance and Lead/Reviewer/finalize procedures so Lead creates or reuses a tracker at the defer-decision boundary, the tracker is not auto-admitted/routed, Reviewer verifies required tracker linkage, and finalization blocks missing still-applicable trackers.
-- [ ] **REFACTOR** Consolidate shared required-defer semantics into the authoritative shared ownership layer and leave role/skill files with only their action-specific specialization.
-- [ ] **VERIFY** Run focused tests, full pytest suite, mypy, Ruff, and strict OpenSpec validation for the exact branch revision.
+- [x] **RED** Add focused regression tests proving ordinary out-of-scope/non-goal text creates no tracking obligation, while an explicit approved required-defer decision without reconstructable tracker linkage is rejected by OpenSpec review and terminal lifecycle completion.
+- [x] **GREEN** Update canonical workflow governance and Lead/Reviewer/finalize procedures so Lead creates or reuses a tracker at the defer-decision boundary, the tracker is not auto-admitted/routed, Reviewer verifies required tracker linkage, and finalization blocks missing still-applicable trackers.
+- [x] **REFACTOR** Consolidate shared required-defer semantics into the authoritative shared ownership layer and leave role/skill files with only their action-specific specialization.
+- [x] **VERIFY** Run focused tests, full pytest suite, mypy, Ruff, and strict OpenSpec validation for the exact branch revision.
 
 Trace: proposal `What Changes` item 1; delta requirement `Explicit required deferred follow-up becomes durable before lifecycle completion`; design Decision 1.
 
