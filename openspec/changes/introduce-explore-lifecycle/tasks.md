@@ -32,11 +32,12 @@
 
 - [ ] **RED:** add tests for workflow-dynamic selection where a formal active/terminal-pending workflow always wins over queued Explore/Propose entries.
 - [ ] **RED:** add tests proving that, with no formal active workflow, Human-admitted open `explore-change + Change: unset` and `propose-change + Change: unset` participate in one queue ordered by GitHub `created_at`, then lower Issue number.
+- [ ] **RED:** add fixed-role tests proving lifecycle/blocker actions remain ahead of new intake, but once fixed-role Lead reaches pre-activation intake it uses the same combined Explore/direct-Propose queue; cover both older Explore + newer Propose and **older Propose + newer Explore**.
 - [ ] **RED:** add reconstruction tests proving an oldest open Explore remains the deterministic winner across wakes without `status:exploring`, claim, lease, heartbeat, or hidden ownership state.
 - [ ] **RED:** add concurrency/activation tests proving a later direct-Propose runner cannot persist a Change id while an older eligible Explore is the deterministic pre-activation winner.
 - [ ] **GREEN:** update shared discovery/admission contracts and any deterministic helper/tests so the pre-activation queue includes both Explore and direct Propose while preserving one selected work item per invocation.
-- [ ] **GREEN:** update legacy fixed-role Lead ordering to `resolve-question > finalize-archive > finalize-change > explore-change > propose-change`; keep existing stable tie breakers.
-- [ ] **REFACTOR/VERIFY:** verify no global urgency scoring, second workflow DAG, or additional persistent queue state was introduced; run targeted selection/concurrency tests plus full regression, lint, and type checks.
+- [ ] **GREEN:** update legacy fixed-role Lead selection so `resolve-question > finalize-archive > finalize-change` remains ahead of new intake, then select Explore/Propose from the same combined pre-activation queue rather than applying `explore-change > propose-change` priority.
+- [ ] **REFACTOR/VERIFY:** verify fixed-role and workflow-dynamic cannot choose different winners for the same pre-activation candidate set; verify no global urgency scoring, second workflow DAG, or additional persistent queue state was introduced; run targeted selection/concurrency tests plus full regression, lint, and type checks.
 
 ## Slice 4 — Make Explore evidence reconstructable but bounded
 
