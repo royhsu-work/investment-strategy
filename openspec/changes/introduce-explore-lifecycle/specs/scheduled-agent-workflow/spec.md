@@ -111,17 +111,19 @@ Scheduled Lead, Reviewer, and Executor MUST NEVER add, remove, restore, or other
 
 A scheduled invocation SHALL process at most one eligible actionable coordination Issue per run.
 
-In `fixed-role` mode, selection SHALL retain deterministic role-local priority with the new Lead action:
+In `fixed-role` mode, role-local lifecycle/blocker priority SHALL remain deterministic:
 
-- Lead: `resolve-question` > `finalize-archive` > `finalize-change` > `explore-change` > `propose-change`;
+- Lead: `resolve-question` > `finalize-archive` > `finalize-change` > pre-activation intake;
 - Reviewer: `review-archive` > `review-implementation` > `review-openspec`;
 - Executor: `merge-pr` > `implement-change`.
 
-Within the same fixed-role role/action priority, selection SHALL choose earliest GitHub `created_at`, then lower Issue number.
+For Reviewer, Executor, and the three higher-priority Lead actions above, selection within the same fixed-role role/action priority SHALL choose earliest GitHub `created_at`, then lower Issue number.
+
+If fixed-role Lead has no eligible `resolve-question`, `finalize-archive`, or `finalize-change` work, valid Human-admitted open `Lead / explore-change + Change: unset` and `Lead / propose-change + Change: unset` entries SHALL form one combined pre-activation intake queue ordered by earliest GitHub `created_at`, then lower Issue number. The selected Issue's routing determines whether Lead executes Explore or Propose. Fixed-role mode MUST NOT apply an `explore-change > propose-change` priority inside that combined intake queue.
 
 In `workflow-dynamic` mode, a formal active workflow or terminal-pending workflow SHALL be selected before pre-activation work; its valid routing tuple determines the role/action. The only closed-Issue active exception remains a terminal-pending `closed + agent:lead + action:finalize-archive` workflow with matching authorized merged Archive PR/native close and no valid Lead `LIFECYCLE_COMPLETE` evidence.
 
-If no formal active or terminal-pending workflow exists, valid Human-admitted open `Lead / explore-change + Change: unset` and `Lead / propose-change + Change: unset` entries SHALL form one deterministic pre-activation queue ordered by earliest GitHub `created_at`, then lower Issue number. Only that winner may proceed. An open Explore winner remains the deterministic winner across later wakes until it reaches a terminal Explore result or valid Human intent authorizes its transition to Propose.
+If no formal active or terminal-pending workflow exists, valid Human-admitted open `Lead / explore-change + Change: unset` and `Lead / propose-change + Change: unset` entries SHALL form the same deterministic pre-activation queue ordered by earliest GitHub `created_at`, then lower Issue number. Only that winner may proceed. An open Explore winner remains the deterministic winner across later wakes until it reaches a terminal Explore result or valid Human intent authorizes its transition to Propose.
 
 The model MUST NOT substitute its own urgency or preference for either mode's deterministic selection rules.
 
@@ -143,6 +145,17 @@ The model MUST NOT substitute its own urgency or preference for either mode's de
 - WHEN Scheduled workflow selects pre-activation work
 - THEN the Explore Issue is selected
 - AND the newer direct-Propose Issue remains queued
+
+#### Scenario: Fixed-role Lead uses the same combined pre-activation winner
+
+- GIVEN dispatch mode is `fixed-role`
+- AND the scheduled role is Lead
+- AND no eligible `resolve-question`, `finalize-archive`, or `finalize-change` work exists
+- AND an older Human-admitted direct-Propose Issue and a newer Human-admitted Explore Issue are both valid with `Change: unset`
+- WHEN Lead selects pre-activation intake
+- THEN the older direct-Propose Issue is selected
+- AND the newer Explore Issue remains queued
+- AND action type does not override the combined queue's creation-order winner
 
 #### Scenario: Open Explore remains selected without an in-progress marker
 
