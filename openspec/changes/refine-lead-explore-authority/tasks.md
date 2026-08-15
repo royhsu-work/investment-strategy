@@ -7,7 +7,7 @@
 - [ ] **REFACTOR** Consolidate admission-source/materiality validation in the narrowest authoritative ownership layer; remove duplicated Human-only assumptions without adding a new approval token, routing label, registry, priority engine, or hidden backlog state.
 - [ ] **VERIFY** Run focused tests, full pytest suite, mypy, Ruff, and strict OpenSpec validation for the exact branch revision.
 
-Trace: proposal `What Changes` items 1–3 and 6; modified requirement `Workflow admission is explicitly authority-controlled`; design Decisions 1, 3, 4, and 6.
+Trace: proposal `What Changes` items 1–3 and 6; renamed+modified requirement `Workflow admission is explicitly authority-controlled`; design Decisions 1, 3, 4, and 6.
 
 ## Slice 2 — README project-direction SSOT qualification
 
@@ -16,7 +16,7 @@ Trace: proposal `What Changes` items 1–3 and 6; modified requirement `Workflow
 - [ ] **REFACTOR** Keep behavioral contract authority in canonical OpenSpec specs and runtime authority in `agents/AGENTS.md`; do not introduce a second project-direction registry or duplicate project direction into role/Skill files.
 - [ ] **VERIFY** Run focused tests, full regression suite, mypy, Ruff, and strict OpenSpec validation for the exact branch revision.
 
-Trace: proposal `What Changes` item 4; modified requirement `Workflow admission is explicitly authority-controlled`; design Decision 2.
+Trace: proposal `What Changes` item 4; renamed+modified requirement `Workflow admission is explicitly authority-controlled`; design Decision 2.
 
 ## Slice 3 — Explore → Propose authority continuity
 
@@ -25,7 +25,7 @@ Trace: proposal `What Changes` item 4; modified requirement `Workflow admission 
 - [ ] **REFACTOR** Preserve direct-to-Propose, `NO_CHANGE_REQUIRED`, `NO_GO`, Reviewer independence, and all later lifecycle gates; introduce no new transition message or second Explore lifecycle.
 - [ ] **VERIFY** Run focused tests, full regression suite, mypy, Ruff, and strict OpenSpec validation for the exact branch revision.
 
-Trace: proposal `What Changes` item 5; modified requirement `Lead Explore is decision-complete before lifecycle disposition`; design Decision 5.
+Trace: proposal `What Changes` item 5; modified requirement `Explore exits on decision-complete dispositions`; design Decision 5.
 
 ## Slice 4 — Idle discovery noise/self-feeding controls
 
@@ -34,7 +34,7 @@ Trace: proposal `What Changes` item 5; modified requirement `Lead Explore is dec
 - [ ] **REFACTOR** Keep Rule-of-Three as evidence guidance rather than an automatic refactoring rule and retain support for clear single-instance structural hazards with concrete cost/risk/friction.
 - [ ] **VERIFY** Run focused tests, full regression suite, mypy, Ruff, and strict OpenSpec validation for the exact branch revision.
 
-Trace: proposal `What Changes` item 6; modified requirement `Lead idle advisory and discovery mode is bounded and non-disruptive`; design Decisions 3–4.
+Trace: proposal `What Changes` item 6; renamed+modified requirement `Lead idle advisory and discovery mode is bounded and non-disruptive`; design Decisions 3–4.
 
 ## Final verification
 
