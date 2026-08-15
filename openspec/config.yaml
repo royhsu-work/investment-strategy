@@ -14,6 +14,7 @@ rules:
   proposal:
     - Keep one clear change intent and state scope boundaries explicitly.
     - List affected capabilities and identify deferred work instead of expanding the change opportunistically.
+    - Before retaining added complexity within the current change's relevant scope, identify the current requirement, safety property, or demonstrated failure mode that requires it.
     - Do not include implementation details that belong in design.md.
     - When a change adds or modifies public Decision or analytical Backtest artifacts, include the public-output disclaimer requirement in scope and impact.
 
@@ -27,6 +28,7 @@ rules:
 
   design:
     - Trace major design decisions to requirements and call out trade-offs and deferred decisions.
+    - Prefer the smallest sufficient design. For concepts within the current change's relevant scope, identify the current requirement, safety property, or demonstrated failure mode that needs retained complexity; when required capabilities and safety properties still hold without it, prefer removal, consolidation, or an existing ownership layer.
     - Prefer stateless, reproducible strategy evaluation and explicit inputs over hidden persisted state.
     - Keep strategy-specific internals out of common framework abstractions unless multiple strategies require them.
     - Do not expand a framework change with execution, portfolio, or strategy-specific algorithms unless required by its specs.
