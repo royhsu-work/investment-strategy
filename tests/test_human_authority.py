@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from investment_strategy.human_authority import (
     DecisionComment,
     LabelEvent,
+    decision_comment_from_raw,
     is_human_decision_approved,
+    label_event_from_raw,
 )
 
 
@@ -158,11 +162,79 @@ def test_post_approval_edit_invalidates_until_later_approval_event() -> None:
     )
 
 
-def test_current_approval_label_presence_is_required() -> None:
+def test_current_approval_label_and_qualifying_labeled_event_are_required() -> None:
     decision_ref = "issue:47:advisory-admission"
+    comments = (_comment(id=10, minute=1, decision_ref=decision_ref),)
+    events = (_event(id=20, minute=2),)
     assert not _approved(
         decision_ref,
-        comments=(_comment(id=10, minute=1, decision_ref=decision_ref),),
-        events=(_event(id=20, minute=2),),
+        comments=comments,
+        events=events,
         label_present=False,
     )
+    assert not _approved(decision_ref, comments=comments, events=())
+
+
+def test_raw_adapter_preserves_missing_provenance_as_fail_closed_evidence() -> None:
+    decision_ref = "issue:47:admission:lead:explore-change"
+    raw_comment: dict[str, object] = {
+        "id": 10,
+        "created_at": "2026-08-16T07:01:00Z",
+        "updated_at": "2026-08-16T07:01:00Z",
+        "user": {"login": "royhsu-work"},
+        "body": f"decision\nHuman-Decision-For: {decision_ref}",
+    }
+    raw_event: dict[str, object] = {
+        "id": 20,
+        "created_at": "2026-08-16T07:02:00Z",
+        "actor": {"login": "royhsu-work"},
+        "event": "labeled",
+        "label": {"name": "human:approved"},
+        "performed_via_github_app": None,
+    }
+
+    comment = decision_comment_from_raw(raw_comment)
+    event = label_event_from_raw(raw_event)
+    assert not comment.provenance_available
+    assert not _approved(decision_ref, comments=(comment,), events=(event,))
+
+
+def test_raw_adapter_distinguishes_human_and_app_provenance() -> None:
+    decision_ref = "issuecomment:999"
+    raw_comment: dict[str, object] = {
+        "id": 10,
+        "created_at": "2026-08-16T07:01:00Z",
+        "updated_at": "2026-08-16T07:01:00Z",
+        "user": {"login": "royhsu-work"},
+        "body": f"decision\nHuman-Decision-For: {decision_ref}",
+        "performed_via_github_app": None,
+    }
+    raw_event: dict[str, object] = {
+        "id": 20,
+        "created_at": "2026-08-16T07:02:00Z",
+        "actor": {"login": "royhsu-work"},
+        "event": "labeled",
+        "label": {"name": "human:approved"},
+        "performed_via_github_app": {"id": 1, "slug": "connector"},
+    }
+
+    comment = decision_comment_from_raw(raw_comment)
+    event = label_event_from_raw(raw_event)
+    assert comment.provenance_available
+    assert comment.performed_via_github_app is None
+    assert event.provenance_available
+    assert event.performed_via_github_app == "github_app"
+    assert not _approved(decision_ref, comments=(comment,), events=(event,))
+
+
+def test_unlabeled_event_never_establishes_authority() -> None:
+    raw_event: dict[str, object] = {
+        "id": 20,
+        "created_at": "2026-08-16T07:02:00Z",
+        "actor": {"login": "royhsu-work"},
+        "event": "unlabeled",
+        "label": {"name": "human:approved"},
+        "performed_via_github_app": None,
+    }
+    with pytest.raises(ValueError, match="only labeled events"):
+        label_event_from_raw(raw_event)
