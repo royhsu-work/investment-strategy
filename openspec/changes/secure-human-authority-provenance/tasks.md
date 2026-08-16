@@ -16,11 +16,11 @@ Trace: proposal items 1–3, 5–6; spec requirement `Human-required authority i
 
 ## Slice 2 — Reserved approval capability and raw provenance evidence
 
-- [ ] **RED** Add tests proving `human:approved` current presence without a qualifying Human-only `labeled` event is insufficient and `unlabeled` provenance never establishes authority.
-- [ ] **RED** Add tests proving normalized reads without `performed_via_github_app` cannot silently degrade to actor-only authority.
-- [ ] **GREEN** Add the narrow raw GitHub provenance adapter required for comment creation and label-event evidence.
-- [ ] **GREEN** Add/document the exact reserved `human:approved` capability and prohibit Scheduled roles from adding/restoring/manufacturing it.
-- [ ] **REFACTOR/VERIFY** Keep provenance reading separate from routing/lifecycle ownership and run focused/full gates.
+- [x] **RED** Add tests proving `human:approved` current presence without a qualifying Human-only `labeled` event is insufficient and `unlabeled` provenance never establishes authority.
+- [x] **RED** Add tests proving normalized reads without `performed_via_github_app` cannot silently degrade to actor-only authority.
+- [x] **GREEN** Add the narrow raw GitHub provenance adapter required for comment creation and label-event evidence.
+- [x] **GREEN** Add/document the exact reserved `human:approved` capability and prohibit Scheduled roles from adding/restoring/manufacturing it.
+- [x] **REFACTOR/VERIFY** Keep provenance reading separate from routing/lifecycle ownership and run focused/full gates.
 
 Trace: proposal items 2, 5; spec approval/provenance clauses; design D2/D3.
 
