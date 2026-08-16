@@ -45,11 +45,7 @@ def _is_human_provenance(
     provenance_available: bool,
     performed_via_github_app: str | None,
 ) -> bool:
-    return (
-        actor == HUMAN_ACTOR
-        and provenance_available
-        and performed_via_github_app is None
-    )
+    return actor == HUMAN_ACTOR and provenance_available and performed_via_github_app is None
 
 
 def _qualifying_comments(comments: tuple[DecisionComment, ...]) -> tuple[DecisionComment, ...]:
