@@ -2,6 +2,17 @@
 
 Mapped action: `Executor / implement-change`.
 
+## Spec-driven semantic adapter
+
+When default-branch `openspec/config.yaml` declares `schema: spec-driven`, load
+`agents/skills/openspec-semantic-adapter.md` before implementation. Executor consumes only the adapter's
+closed approved Apply context: approved proposal, applicable delta specs, design, tasks, canonical specs
+needed to interpret modified behavior, and materially applicable default-branch config context/rules.
+Missing, contradictory, materially ambiguous, or represented-baseline-inconsistent required context is a
+`SPEC_BLOCKER`; return it to Lead rather than choosing which upstream/config semantics count, resolving
+spec/design ambiguity, inventing requirements, or reinterpreting task meaning. The adapter does not grant
+Executor specification authority or runtime-routing authority.
+
 ## Reconstruct before acting
 
 Read default-branch governance and Executor role, the coordination Issue, immutable `Change:` identity,
@@ -12,6 +23,10 @@ repository quality/OpenSpec gate evidence.
 Implementation begins only from a valid `Executor / implement-change` route supported by an applicable
 approved OpenSpec gate. If the approved specification is ambiguous or contradictory, stop rather than
 inventing contract meaning.
+
+Under `spec-driven`, before entering RED work, reconstruct every required Apply-context member from the
+loaded semantic adapter and current approved artifacts. Do not begin implementation if a required member
+is absent, contradictory, materially ambiguous, or inconsistent with the represented schema/baseline.
 
 ## Procedure
 
