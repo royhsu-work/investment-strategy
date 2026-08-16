@@ -12,7 +12,7 @@ def test_archive_automation_stops_at_validated_branch_readiness() -> None:
 
     assert "pull-requests: read" in workflow
     assert "pull-requests: write" not in workflow
-    assert "git push -u origin HEAD:\"$target_branch\"" in workflow
+    assert 'git push -u origin HEAD:"$target_branch"' in workflow
     assert "gh pr create" not in workflow
     assert "Create final Archive PR with closing linkage" not in workflow
 
