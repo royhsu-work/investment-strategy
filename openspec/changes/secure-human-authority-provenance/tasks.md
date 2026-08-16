@@ -39,19 +39,19 @@ Trace: proposal items 3, 6; spec exact-anchor and repository-authorized Explore 
 
 ## Slice 4 — Preserve `intake:approved` semantics and migration
 
-- [ ] **RED** Add tests proving `intake:approved` remains distinct from `human:approved`, its snapshot alone is insufficient Human proof, and Scheduled roles still cannot manufacture either reserved capability.
-- [ ] **RED** Add migration tests proving completed historical workflows remain terminal while still-pending Human-reserved evidence consumed after activation must satisfy the stronger predicate including the exact current mapped `decision_ref`.
-- [ ] **GREEN** Update shared governance/role/skill wording and any label fixtures needed for the exact two-capability relationship, decision-reference presentation, and prospective activation boundary.
-- [ ] **REFACTOR/VERIFY** Ensure historical evidence is not retroactively reopened and no approval token/database/cursor is introduced; run full gates.
+- [x] **RED** Add tests proving `intake:approved` remains distinct from `human:approved`, its snapshot alone is insufficient Human proof, and Scheduled roles still cannot manufacture either reserved capability.
+- [x] **RED** Add migration tests proving completed historical workflows remain terminal while still-pending Human-reserved evidence consumed after activation must satisfy the stronger predicate including the exact current mapped `decision_ref`.
+- [x] **GREEN** Update shared governance/role/skill wording and any label fixtures needed for the exact two-capability relationship, decision-reference presentation, and prospective activation boundary.
+- [x] **REFACTOR/VERIFY** Ensure historical evidence is not retroactively reopened and no approval token/database/cursor is introduced; run full gates.
 
 Trace: proposal items 4, 7; spec intake/migration scenarios; design D2/D5.
 
 ## Final verification
 
-- [ ] Verify proposal → spec → design → tasks forward traceability and tasks → design → spec → proposal reverse traceability.
-- [ ] Verify the MODIFIED canonical requirement preserves the still-applicable existing `Non-Human actor answers a Human-required question` and `Notification metadata exists` scenarios.
-- [ ] Verify `human:approved` is explicit normative meaning and not delegated to Executor implementation choice.
-- [ ] Verify current Human-reserved consumers have exact serialized anchors and unmapped future consumers fail closed.
-- [ ] Verify every qualifying approval event binds to at most one Human decision comment before boundary comparison and cannot fan out across unrelated decision refs.
-- [ ] Verify Ruff `S`, prompt-security regression framework, cryptography, external approval services, generic IAM, and unrelated workflow redesign remain out of scope.
+- [x] Verify proposal → spec → design → tasks forward traceability and tasks → design → spec → proposal reverse traceability.
+- [x] Verify the MODIFIED canonical requirement preserves the still-applicable existing `Non-Human actor answers a Human-required question` and `Notification metadata exists` scenarios.
+- [x] Verify `human:approved` is explicit normative meaning and not delegated to Executor implementation choice.
+- [x] Verify current Human-reserved consumers have exact serialized anchors and unmapped future consumers fail closed.
+- [x] Verify every qualifying approval event binds to at most one Human decision comment before boundary comparison and cannot fan out across unrelated decision refs.
+- [x] Verify Ruff `S`, prompt-security regression framework, cryptography, external approval services, generic IAM, and unrelated workflow redesign remain out of scope.
 - [ ] Run strict OpenSpec validation for the exact handoff revision and record checkout-identity evidence before Reviewer handoff.
