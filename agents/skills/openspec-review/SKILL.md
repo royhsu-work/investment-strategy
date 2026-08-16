@@ -2,6 +2,16 @@
 
 Mapped action: `Reviewer / review-openspec`.
 
+## Spec-driven semantic adapter
+
+When default-branch `openspec/config.yaml` declares `schema: spec-driven`, load
+`agents/skills/openspec-semantic-adapter.md` independently as part of this gate. Verify the reviewed
+artifact set against its dependency/readiness, applicable config/context, complete delta-authoring,
+canonicalization-readiness, Apply-context, and provenance/fail-closed semantics. The adapter is semantic
+input only and does not replace reverse-first/forward traceability, exact-revision validation, or
+Reviewer independence. A configured schema or material baseline mismatch is a finding/fail-closed
+condition; do not substitute model memory or mutable upstream `main`.
+
 ## Reconstruct before acting
 
 Read default-branch governance, the coordination Issue, immutable `Change:` identity, current OpenSpec
@@ -46,14 +56,12 @@ that same target revision:
 2. Verify forward traceability `proposal → specs → design → tasks`.
 3. Verify scope and contract coherence.
 4. Verify compatibility with applicable README and OpenSpec config governance.
-5. Confirm required strict OpenSpec validation evidence is mechanically current for the checkout used as
-   evidence and proves validator `HEAD == validation target` before strict validation. Mechanical exact-
-   revision validation does not by itself determine semantic target applicability.
-6. Reconstruct every approved decision that explicitly classifies work as a required deferred follow-up. Require a durable linked tracker that identifies the source coordination Issue/Change and exact defer decision/reference. Missing required tracker linkage is a finding. Ordinary out-of-scope, non-goal, optional future work, or work merely not selected now is not a tracking obligation and MUST NOT be promoted into one by Reviewer inference.
-7. Convert each material problem into an actionable finding that identifies the violated contract and
-   supporting evidence.
-8. Confirm no task or implementation detail is being used as the sole source of normative governance
-   that belongs upstream in proposal/spec/design.
+5. Under `spec-driven`, independently verify the loaded semantic adapter contract. In particular: NEW capability deltas have exactly one non-empty canonicalization-ready `## Purpose`; ADDED identifiers are genuinely new; MODIFIED targets use the exact canonical header and preserve every still-applicable scenario/content in the complete future block; REMOVED targets exist and carry required rationale/migration treatment; RENAMED uses exact FROM/TO and rename-plus-behavior-change also carries a complete MODIFIED block under the new identifier. Missing, duplicate, ambiguous, unsupported, or baseline-mismatched semantics are findings even when strict validation passes.
+6. Confirm required strict OpenSpec validation evidence is mechanically current for the checkout used as evidence and proves validator `HEAD == validation target` before strict validation. Mechanical exact-revision validation does not by itself determine semantic target applicability.
+7. Reconstruct every approved decision that explicitly classifies work as a required deferred follow-up. Require a durable linked tracker that identifies the source coordination Issue/Change and exact defer decision/reference. Missing required tracker linkage is a finding. Ordinary out-of-scope, non-goal, optional future work, or work merely not selected now is not a tracking obligation and MUST NOT be promoted into one by Reviewer inference.
+8. Convert each material problem into an actionable finding that identifies the violated contract and supporting evidence.
+9. Confirm no task or implementation detail is being used as the sole source of normative governance that belongs upstream in proposal/spec/design.
+10. Confirm the approved Apply context is closed and reconstructable for Executor: proposal, applicable delta specs, design, tasks, canonical specs needed to interpret modified behavior, and materially applicable default-branch config context/rules. If required context is absent, contradictory, materially ambiguous, or unsupported by the represented baseline, the change cannot PASS to implementation.
 
 Reverse-first is an inspection order only. It does not replace bidirectional traceability; both directions must be complete before PASS.
 
