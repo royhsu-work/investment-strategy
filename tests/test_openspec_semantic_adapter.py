@@ -24,7 +24,10 @@ def test_spec_driven_actions_share_one_adapter_without_new_runtime_authority() -
     adapter = _normalized(ADAPTER)
     assert "schema: spec-driven" in config
     assert "not runtime routing authority" in adapter
-    assert "agents/AGENTS.md` remains the sole Scheduled runtime workflow/routing authority" in adapter
+    runtime_authority = (
+        "agents/AGENTS.md` remains the sole Scheduled runtime workflow/routing authority"
+    )
+    assert runtime_authority in adapter
 
     for skill in (CHANGE, REVIEW, IMPLEMENTATION):
         text = _normalized(skill)
