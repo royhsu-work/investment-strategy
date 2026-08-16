@@ -19,6 +19,7 @@ def test_archive_automation_stops_at_validated_branch_readiness() -> None:
 
 def test_finalize_change_owns_normal_archive_pr_presentation() -> None:
     skill = _read("agents/skills/lifecycle-finalize/SKILL.md")
+    governance = _read("agents/AGENTS.md")
 
     for required in (
         "validated `agent/archive-<change>` branch is durably ready",
@@ -29,6 +30,15 @@ def test_finalize_change_owns_normal_archive_pr_presentation() -> None:
         "`Reviewer / review-archive`",
     ):
         assert required in skill
+
+    for required in (
+        "validated archive-branch push",
+        "`Lead / finalize-change` owns normal final Archive PR presentation",
+        "normal repository-automation success",
+        "MUST NOT be classified as archive failure or `RECOVERY_DECISION_REQUIRED`",
+        "durable final Archive PR ready → route `Reviewer / review-archive`",
+    ):
+        assert required in governance
 
 
 def test_normal_archive_pr_path_preserves_independent_final_gates() -> None:
@@ -44,4 +54,11 @@ def test_normal_archive_pr_path_preserves_independent_final_gates() -> None:
     ):
         assert required in skill
 
-    assert "Scheduled roles do not define or execute a competing normal `archive-change` action" in governance
+    for required in (
+        "Scheduled roles do not define or execute a competing normal `archive-change` action",
+        "does not authorize merge or weaken independent archive review",
+        "Executor merge",
+        "native close",
+        "terminal `finalize-archive` reconstruction",
+    ):
+        assert required in governance
