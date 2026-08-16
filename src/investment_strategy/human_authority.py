@@ -3,10 +3,19 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 
 HUMAN_ACTOR = "royhsu-work"
 APPROVAL_LABEL = "human:approved"
+INTAKE_APPROVAL_LABEL = "intake:approved"
 DECISION_REF_PREFIX = "Human-Decision-For: "
+
+
+class HumanDecisionBoundary(StrEnum):
+    EXPLORE_ADMISSION = "explore-admission"
+    PROPOSE_ADMISSION = "propose-admission"
+    ADVISORY_ADMISSION = "advisory-admission"
+    ESCALATION_RESPONSE = "escalation-response"
 
 
 @dataclass(frozen=True)
@@ -28,6 +37,58 @@ class LabelEvent:
     label: str
     provenance_available: bool
     performed_via_github_app: str | None
+
+
+def explore_admission_ref(issue_number: int) -> str:
+    return f"issue:{_positive_id(issue_number, 'issue_number')}:admission:lead:explore-change"
+
+
+def propose_admission_ref(issue_number: int) -> str:
+    return f"issue:{_positive_id(issue_number, 'issue_number')}:admission:lead:propose-change"
+
+
+def advisory_admission_ref(issue_number: int) -> str:
+    return f"issue:{_positive_id(issue_number, 'issue_number')}:advisory-admission"
+
+
+def escalation_response_ref(comment_id: int) -> str:
+    return f"issuecomment:{_positive_id(comment_id, 'comment_id')}"
+
+
+def decision_ref_for_boundary(
+    boundary: HumanDecisionBoundary | str,
+    *,
+    issue_number: int | None = None,
+    escalation_comment_id: int | None = None,
+) -> str:
+    try:
+        boundary = HumanDecisionBoundary(boundary)
+    except ValueError as exc:
+        raise ValueError("unmapped Human-reserved boundary") from exc
+
+    if boundary is HumanDecisionBoundary.EXPLORE_ADMISSION:
+        return explore_admission_ref(_required_id(issue_number, "issue_number"))
+    if boundary is HumanDecisionBoundary.PROPOSE_ADMISSION:
+        return propose_admission_ref(_required_id(issue_number, "issue_number"))
+    if boundary is HumanDecisionBoundary.ADVISORY_ADMISSION:
+        return advisory_admission_ref(_required_id(issue_number, "issue_number"))
+    if boundary is HumanDecisionBoundary.ESCALATION_RESPONSE:
+        return escalation_response_ref(
+            _required_id(escalation_comment_id, "escalation_comment_id")
+        )
+    raise AssertionError("all HumanDecisionBoundary members must be mapped")
+
+
+def _required_id(value: int | None, field: str) -> int:
+    if value is None:
+        raise ValueError(f"{field} is required for this Human-reserved boundary")
+    return _positive_id(value, field)
+
+
+def _positive_id(value: int, field: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError(f"{field} must be a positive integer")
+    return value
 
 
 def _mapping(value: object, field: str) -> Mapping[str, object]:
@@ -179,3 +240,22 @@ def is_human_decision_approved(
         return True
 
     return False
+
+
+def is_human_advisory_admission_approved(
+    *,
+    issue_number: int,
+    intake_approval_label_present: bool,
+    human_approval_label_present: bool,
+    comments: tuple[DecisionComment, ...],
+    label_events: tuple[LabelEvent, ...],
+) -> bool:
+    """Advisory admission needs both the distinct intake capability and Human proof."""
+    if not intake_approval_label_present:
+        return False
+    return is_human_decision_approved(
+        expected_ref=advisory_admission_ref(issue_number),
+        approval_label_present=human_approval_label_present,
+        comments=comments,
+        label_events=label_events,
+    )
