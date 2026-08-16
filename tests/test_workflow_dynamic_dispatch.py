@@ -175,12 +175,16 @@ def test_orphan_evidence_blocks_new_activation_and_routes_to_bounded_lead_diagno
         assert required in text
 
 
-def test_human_authority_is_actor_bound_and_notification_metadata_is_analytics_only() -> None:
+def test_human_authority_is_provenance_bound_and_notification_metadata_is_analytics_only() -> None:
     text = _normalized(AGENTS)
     for required in (
-        "actor `royhsu-work`",
-        "other actors",
+        "durable GitHub actor identity alone MUST NOT satisfy Human authority",
+        "actors other than `royhsu-work`",
         "MUST NOT satisfy Human-required admission, answers, authorization, or resume conditions",
+        "`performed_via_github_app == null`",
+        "`Human-Decision-For: <decision_ref>`",
+        "`human:approved`",
+        "event-first",
         "`human:notified`",
         "analytics-only",
         "historical metadata",
