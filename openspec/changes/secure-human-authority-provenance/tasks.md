@@ -54,4 +54,4 @@ Trace: proposal items 4, 7; spec intake/migration scenarios; design D2/D5.
 - [x] Verify current Human-reserved consumers have exact serialized anchors and unmapped future consumers fail closed.
 - [x] Verify every qualifying approval event binds to at most one Human decision comment before boundary comparison and cannot fan out across unrelated decision refs.
 - [x] Verify Ruff `S`, prompt-security regression framework, cryptography, external approval services, generic IAM, and unrelated workflow redesign remain out of scope.
-- [ ] Run strict OpenSpec validation for the exact handoff revision and record checkout-identity evidence before Reviewer handoff.
+- [x] Run strict OpenSpec validation for the exact handoff revision and record checkout-identity evidence before Reviewer handoff.
