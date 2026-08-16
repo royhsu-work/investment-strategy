@@ -222,9 +222,7 @@ def is_human_decision_approved(
         reverse=True,
     ):
         candidates = tuple(
-            comment
-            for comment in qualifying_comments
-            if comment.created_at < event.created_at
+            comment for comment in qualifying_comments if comment.created_at < event.created_at
         )
         if not candidates:
             continue
