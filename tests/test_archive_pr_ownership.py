@@ -56,7 +56,8 @@ def test_normal_archive_pr_path_preserves_independent_final_gates() -> None:
 
     for required in (
         "Scheduled roles do not define or execute a competing normal `archive-change` action",
-        "does not authorize merge or weaken independent archive review",
+        "independent archive review",
+        "exact-head Lead authorization",
         "Executor merge",
         "native close",
         "terminal `finalize-archive` reconstruction",
