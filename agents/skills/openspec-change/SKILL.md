@@ -26,7 +26,7 @@ If routing, change identity, active-workflow identity, or required evidence is c
 2. If `Change:` is unset, reconstruct formal active/terminal-pending workflow state and the shared combined pre-activation queue before persisting any Change identity. The procedure must reconstruct active workflow state before persisting an unset Change identity.
    - If a formal active/terminal-pending workflow exists, keep this Issue queued and perform no activation.
    - If multiple formal active workflows or contradictory durable identity evidence exist, fail closed.
-   - If no formal active/terminal-pending workflow exists, combine valid admitted open `Lead / explore-change + Change: unset` and valid Human-admitted `Lead / propose-change + Change: unset` entries and choose the winner by earliest GitHub `created_at`, then lower Issue number.
+   - If no formal active/terminal-pending workflow exists, combine valid Human-admitted open `Lead / explore-change + Change: unset`, valid repository-authorized open `Lead / explore-change + Change: unset`, and valid Human-admitted `Lead / propose-change + Change: unset` entries, then choose the winner by earliest GitHub `created_at`, then lower Issue number.
    - A later direct-Propose Issue MUST NOT activate while an older eligible Explore is the deterministic combined pre-activation winner.
    - Immediately before the activation write, re-read durable state and require this Issue to remain the combined pre-activation winner; only the first valid activation may continue.
    - Persist the selected immutable Change identity as the activation write. Overlapping attempts use first-valid-write-wins semantics rather than a lock/claim/lease/heartbeat.
