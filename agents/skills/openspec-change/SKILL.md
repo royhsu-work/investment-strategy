@@ -5,6 +5,16 @@ Mapped actions: `Lead / propose-change`, `Lead / resolve-question`.
 This skill operationalizes approved OpenSpec authoring and specification-question resolution. It does
 not replace the repository OpenSpec proposal/specs/design/tasks lifecycle.
 
+## Spec-driven semantic adapter
+
+When default-branch `openspec/config.yaml` declares `schema: spec-driven`, load
+`agents/skills/openspec-semantic-adapter.md` before authoring or materially revising OpenSpec artifacts.
+Consume its artifact-readiness, applicable config/context, delta-authoring, canonicalization-readiness,
+and provenance contracts together with applicable canonical specs. If the configured schema or material
+represented baseline is unsupported/mismatched, fail closed rather than substituting model memory,
+mutable upstream `main`, or an inferred rule. The adapter is semantic input only; it does not change
+runtime routing or Lead authority.
+
 ## Reconstruct before acting
 
 Read from durable state:
@@ -31,9 +41,9 @@ If routing, change identity, active-workflow identity, or required evidence is c
    - Immediately before the activation write, re-read durable state and require this Issue to remain the combined pre-activation winner; only the first valid activation may continue.
    - Persist the selected immutable Change identity as the activation write. Overlapping attempts use first-valid-write-wins semantics rather than a lock/claim/lease/heartbeat.
    - Immediately re-read durable state after the write. Only the first valid activation continues; a competing run that observes a different/newer durable result must stop as stale.
-3. Author the minimum proposal, delta specs, design, and tasks needed by the approved direction. Keep the change single-purpose and preserve repository scope boundaries.
+3. Author the minimum proposal, delta specs, design, and tasks needed by the approved direction. Keep the change single-purpose and preserve repository scope boundaries. Under `spec-driven`, satisfy the loaded semantic adapter's dependency/readiness and applicable config/context rules; for delta specs, apply its complete ADDED/MODIFIED/REMOVED/RENAMED and canonicalization-readiness contract rather than relying on strict validation alone.
 4. Any proposal/implementation PR associated with the persistent coordination Issue must use a non-closing reference to the coordination Issue (for example `Refs #N`). It must not establish Issue-closing linkage. Closing linkage is reserved for the final Archive PR lifecycle boundary.
-5. Before handoff, verify required artifacts exist and author/maintain the required trace declarations/references across proposal, specs, design, and tasks. These authoring references must be present and mechanically consistent enough to hand to independent review, but the semantic bidirectional PASS gate belongs to `Reviewer / review-openspec`; Lead MUST NOT execute or claim that independent PASS gate.
+5. Before handoff, verify required artifacts exist and author/maintain the required trace declarations/references across proposal, specs, design, and tasks. These authoring references must be present and mechanically consistent enough to hand to independent review, but the semantic bidirectional PASS gate belongs to `Reviewer / review-openspec`; Lead MUST NOT execute or claim that independent PASS gate. For a NEW capability, require exactly one non-empty canonicalization-ready `## Purpose`; for existing capabilities, verify delta targets against canonical requirement identities and preserve all still-applicable MODIFIED scenarios/content.
 6. Obtain strict OpenSpec validation for the exact handoff revision R. CI is sufficient only when durable validator evidence proves checkout `HEAD == R` before strict validation; `run.head_sha == R` alone is association metadata and is not checkout proof. If valid exact-head CI evidence is unavailable, use the repository-pinned local CLI directly against checkout R. Stale, missing, failed, revision-mismatched, or checkout-mismatched evidence fails closed.
 7. Persist revision-aware readiness evidence before routing to `Reviewer / review-openspec` for the semantic bidirectional gate.
 
@@ -48,7 +58,7 @@ Legal outcomes:
 1. Reconstruct the finding/blocker and the exact currently governed OpenSpec state.
 2. Decide whether the finding is accepted, rejected, or already resolved using approved scope and evidence. Explain the decision durably.
 3. If the unresolved blocker is explicitly Human-reserved, only a valid provenance-bound Human decision may resolve it. For a canonical `HUMAN_DECISION_REQUIRED` escalation comment C, the exact expected reference is `issuecomment:<C>`; the qualifying Human-created answer comment must declare exactly `Human-Decision-For: issuecomment:<C>` and be bound by a later qualifying Human-only `human:approved` label event while that label is currently present. Actor identity, `human:notified`, or label snapshot alone does not resume the workflow.
-4. If accepted, revise only Lead-owned OpenSpec specification artifacts needed to resolve it; do not modify implementation code to make a gate pass.
+4. If accepted, revise only Lead-owned OpenSpec specification artifacts needed to resolve it; do not modify implementation code to make a gate pass. Under `spec-driven`, materially revised artifacts must continue to satisfy the loaded adapter contract; do not let a correction drop surviving canonical scenarios/content or other canonicalization-ready information.
 5. If OpenSpec artifacts changed materially, repeat the same required-artifact, required trace declarations/references authoring, and exact-revision strict-validation readiness checks used by `propose-change`. The semantic bidirectional PASS gate remains independent Reviewer work.
 6. If the same implementation or correction PR remains in use, keep its coordination-Issue reference non-closing; resolving a specification question never authorizes adding Issue-closing linkage to an implementation PR.
 7. Persist the resolution and current revision before routing.
@@ -64,7 +74,7 @@ When the legal target is another Lead action on the same coordination Issue, per
 
 ## Exact validation run observation
 
-When `propose-change` or a materially revised `resolve-question` has just caused a just-triggered exact required run for OpenSpec validation, the first observation of that run as `queued` or `in_progress` is not by itself a reason to yield. While bounded execution opportunity remains and no different authority boundary is required, observe only the same exact run using bounded same-invocation observation. If the same exact run becomes terminal, consume that terminal result and continue immediately with the current action's next legal step. If it remains nonterminal when bounded execution opportunity is exhausted, that is a real external asynchronous wait.
+When `propose-change` or a materially revised `resolve-question` has just caused a just-triggered exact required run for OpenSpec validation, the first observation of that run as `queued` or `in_progress` is not by itself a reason to yield. While bounded execution opportunity remains and no different authority boundary is required, observe only the same exact run using bounded same-invocation observation. If the same exact run becomes terminal, consume its terminal result and continue immediately with the current action's next legal step. If it remains nonterminal when bounded execution opportunity is exhausted, that is a real external asynchronous wait.
 
 A later wake does not trust the earlier nonterminal observation. It must fresh-read that exact run before deciding that waiting still applies. This specialization adds no timer, sleep policy, polling counter, heartbeat, retry counter, background service, or hidden waiter; the shared asynchronous-resource contract remains authoritative in `agents/AGENTS.md`.
 
