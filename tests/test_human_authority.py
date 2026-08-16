@@ -337,5 +337,8 @@ def test_provenance_migration_is_prospective_not_retroactive() -> None:
     assert "activates prospectively on default-branch merge" in shared
     assert "Workflows already\nterminal before activation" in shared
     assert "MUST NOT be retroactively reopened or invalidated" in shared
-    assert "A still-pending Human-reserved decision first consumed after activation MUST satisfy" in shared
+    assert (
+        "A still-pending Human-reserved decision first consumed after activation MUST satisfy"
+        in shared
+    )
     assert "fresh Human decision carrying the exact expected `decision_ref`" in shared
