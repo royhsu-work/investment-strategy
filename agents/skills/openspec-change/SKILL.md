@@ -22,11 +22,11 @@ If routing, change identity, active-workflow identity, or required evidence is c
 
 ## `propose-change`
 
-1. Confirm explicit Human/maintainer admission and valid `Lead / propose-change` routing. Direct-to-Propose remains valid for direction that is already concrete/buildable; Explore is not a prerequisite.
+1. Confirm valid `Lead / propose-change` routing and the admission authority that legally produced it. Human direct-to-Propose admission MUST satisfy the provenance-bound Human-decision predicate for exactly `issue:<issue-number>:admission:lead:propose-change`. A same-Issue transition from a valid already-admitted Explore may instead rely on that Explore authority envelope when current governance authorizes direct continuation; do not manufacture a second Human admission requirement. Direct-to-Propose remains valid for Human direction that is already concrete/buildable; Explore is not a prerequisite.
 2. If `Change:` is unset, reconstruct formal active/terminal-pending workflow state and the shared combined pre-activation queue before persisting any Change identity. The procedure must reconstruct active workflow state before persisting an unset Change identity.
    - If a formal active/terminal-pending workflow exists, keep this Issue queued and perform no activation.
    - If multiple formal active workflows or contradictory durable identity evidence exist, fail closed.
-   - If no formal active/terminal-pending workflow exists, combine valid Human-admitted open `Lead / explore-change + Change: unset` and `Lead / propose-change + Change: unset` entries and choose the winner by earliest GitHub `created_at`, then lower Issue number.
+   - If no formal active/terminal-pending workflow exists, combine valid admitted open `Lead / explore-change + Change: unset` and valid Human-admitted `Lead / propose-change + Change: unset` entries and choose the winner by earliest GitHub `created_at`, then lower Issue number.
    - A later direct-Propose Issue MUST NOT activate while an older eligible Explore is the deterministic combined pre-activation winner.
    - Immediately before the activation write, re-read durable state and require this Issue to remain the combined pre-activation winner; only the first valid activation may continue.
    - Persist the selected immutable Change identity as the activation write. Overlapping attempts use first-valid-write-wins semantics rather than a lock/claim/lease/heartbeat.
@@ -47,10 +47,11 @@ Legal outcomes:
 
 1. Reconstruct the finding/blocker and the exact currently governed OpenSpec state.
 2. Decide whether the finding is accepted, rejected, or already resolved using approved scope and evidence. Explain the decision durably.
-3. If accepted, revise only Lead-owned OpenSpec specification artifacts needed to resolve it; do not modify implementation code to make a gate pass.
-4. If OpenSpec artifacts changed materially, repeat the same required-artifact, required trace declarations/references authoring, and exact-revision strict-validation readiness checks used by `propose-change`. The semantic bidirectional PASS gate remains independent Reviewer work.
-5. If the same implementation or correction PR remains in use, keep its coordination-Issue reference non-closing; resolving a specification question never authorizes adding Issue-closing linkage to an implementation PR.
-6. Persist the resolution and current revision before routing.
+3. If the unresolved blocker is explicitly Human-reserved, only a valid provenance-bound Human decision may resolve it. For a canonical `HUMAN_DECISION_REQUIRED` escalation comment C, the exact expected reference is `issuecomment:<C>`; the qualifying Human-created answer comment must declare exactly `Human-Decision-For: issuecomment:<C>` and be bound by a later qualifying Human-only `human:approved` label event while that label is currently present. Actor identity, `human:notified`, or label snapshot alone does not resume the workflow.
+4. If accepted, revise only Lead-owned OpenSpec specification artifacts needed to resolve it; do not modify implementation code to make a gate pass.
+5. If OpenSpec artifacts changed materially, repeat the same required-artifact, required trace declarations/references authoring, and exact-revision strict-validation readiness checks used by `propose-change`. The semantic bidirectional PASS gate remains independent Reviewer work.
+6. If the same implementation or correction PR remains in use, keep its coordination-Issue reference non-closing; resolving a specification question never authorizes adding Issue-closing linkage to an implementation PR.
+7. Persist the resolution and current revision before routing.
 
 Legal target action depends on the gate/blocker being resolved:
 
@@ -70,10 +71,13 @@ A later wake does not trust the earlier nonterminal observation. It must fresh-r
 ## Human escalation producer
 
 A genuine unresolved Human authority/intent decision uses canonical `HUMAN_DECISION_REQUIRED`. Lead first
-persists the durable escalation evidence. After that write succeeds, Lead MUST idempotently ensure the
-`human:notified` label. The label is historical analytics-only observability: it does not participate in
-routing, waiting, authorization, resume conditions, or proof of Human response, and ordinary resolution
-does not remove it.
+persists the durable escalation evidence. The exact persisted escalation comment id C defines the current
+Human-response anchor `issuecomment:<C>`. A later response does not satisfy the boundary until the Human-created
+decision comment declares exactly `Human-Decision-For: issuecomment:<C>` and the provenance-bound approval
+predicate succeeds with a later qualifying Human-only `human:approved` event and current label presence.
+After the escalation write succeeds, Lead MUST idempotently ensure the `human:notified` label. The label is
+historical analytics-only observability: it does not participate in routing, waiting, authorization, resume
+conditions, or proof of Human response, and ordinary resolution does not remove it.
 
 If `human:notified` is already present, the ensure is a no-op. If the label mutation fails while the
 escalation evidence is already durable, capture the observable failure through the shared exception
@@ -96,5 +100,7 @@ mutation without `HANDOFF`; do not add an action-transition message type.
   exact-head proof for revision R.
 - Do not require a duplicate local CLI run solely because valid exact-head CI validation already passed.
 - Do not perform the Reviewer-owned semantic bidirectional PASS gate while authoring or revising OpenSpec artifacts.
+- Do not treat actor identity, `human:approved`, `intake:approved`, or `human:notified` snapshots alone as sufficient Human authority.
+- Scheduled roles MUST NOT add, remove, restore, or manufacture `human:approved` or `intake:approved`.
 - Persist durable result/evidence before routing and fresh-read routing before the label mutation.
 - A routing update is not a mutex/CAS; overlapping Lead runs must tolerate repeated observation and stop on stale/contradictory state.
