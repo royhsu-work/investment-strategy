@@ -56,7 +56,7 @@ The MVP defines exactly three scheduled roles:
 - `Lead`: specification decisions and OpenSpec specification artifacts; pre-Propose Explore; scope/contract resolution; lifecycle authorization. Lead does not modify implementation code and does not execute PR merges.
 - `Reviewer`: independent OpenSpec, implementation, and archive gates. Reviewer records findings and gate evidence but does not modify governed artifacts to make its own review pass.
 - `Executor`: implementation code/tests/configuration, justified OpenSpec task-completion markers, and explicitly authorized PR merge mutations. Executor does not redefine requirements, contracts, or task meaning.
-- Repository automation remains authoritative for deterministic normal OpenSpec archive mechanics.
+- Repository automation remains authoritative for deterministic normal OpenSpec archive mechanics through validated archive-branch push; `Lead / finalize-change` owns normal final Archive PR presentation after that branch-ready boundary.
 
 Role-specific judgment boundaries are in `agents/roles/*.md`.
 
@@ -462,8 +462,7 @@ merge authorization, resolved clarification/finalize evidence, handoffs, and exc
 repository-durable only.
 
 Only Lead may produce a Human-decision-required escalation, and only that message is Human-facing
-delivery-eligible when current approved contract and durable evidence cannot legally resolve a decision
-that genuinely requires Human authority or intent. Otherwise the wake remains Human-silent. Actual
+delivery-eligible when current approved contract and durable evidence cannot legally resolve a decision that genuinely requires Human authority or intent. Otherwise the wake remains Human-silent. Actual
 notification and associated-conversation/result surfacing are external product configuration and MUST NOT
 become repository routing, waiting, authorization, or completion state.
 
@@ -574,15 +573,20 @@ ownership state, or other live runtime machinery.
 ## Multi-PR implementation and archive boundary
 
 A change may require multiple implementation PRs. After each implementation merge, Lead reconstructs
-merged default-branch OpenSpec state:
+merged default-branch OpenSpec, archive automation, archive-branch, and Archive-PR state:
 
 - merged but active change incomplete and approved work remains → `MORE_IMPLEMENTATION_REQUIRED` and route `Executor / implement-change`;
-- merged and Complete/eligible under the README archive contract → Lead may wait for existing archive automation;
-- durable Archive PR ready → route `Reviewer / review-archive`;
-- archive automation failed/unsupported → Lead chooses only repository-defined recovery/manual behavior.
+- merged and Complete/eligible under the README archive contract while repository automation is still progressing → Lead waits without creating competing archive mutation work;
+- validated `agent/archive-<change>` branch durably ready → normal repository-automation success; `Lead / finalize-change` creates or reuses the final Archive PR with deterministic repository-approved closing linkage to the persistent coordination Issue;
+- successful validated branch readiness awaiting that Lead PR presentation MUST NOT be classified as archive failure or `RECOVERY_DECISION_REQUIRED`;
+- durable final Archive PR ready → route `Reviewer / review-archive`;
+- archive classification, mutation, validation, commit, push, contradictory branch state, or unreconstructable ownership failure → fail closed under repository-defined diagnosis/recovery behavior.
 
 Scheduled roles do not define or execute a competing normal `archive-change` action. The existing
-repository archive workflow remains authoritative for deterministic normal archive mechanics.
+repository archive workflow remains authoritative for deterministic normal archive mechanics through
+validated archive-branch push. Final Archive PR creation is ordinary Lead lifecycle continuation and does
+not authorize merge or weaken independent archive review, exact-head Lead authorization, Executor merge,
+native close, or terminal `finalize-archive` reconstruction.
 
 ## Workflow admission and idle advisory/discovery
 

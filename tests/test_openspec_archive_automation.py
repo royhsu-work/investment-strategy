@@ -411,8 +411,12 @@ def test_archive_workflow_keeps_reviewed_lifecycle_guards() -> None:
         "git ls-remote --exit-code --heads",
         "openspec archive",
         "agent/archive-$CHANGE",
+        'git push -u origin HEAD:"$target_branch"',
     ):
         assert required in workflow
+    assert "pull-requests: write" not in workflow
+    assert "Create final Archive PR with closing linkage" not in workflow
+    assert "gh pr create" not in workflow
     assert "cancel-in-progress:" not in workflow
     assert "ref: main" not in workflow
     assert "git push --force" not in workflow

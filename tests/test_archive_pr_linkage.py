@@ -123,19 +123,31 @@ def test_render_archive_pr_body_contains_only_expected_closing_linkage(tmp_path:
     assert "MERGE_AUTHORIZED" not in rendered
 
 
-def test_archive_workflow_and_merge_skill_enforce_archive_linkage_boundary() -> None:
+def test_archive_workflow_and_lead_skill_split_archive_pr_linkage_ownership() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
+    lifecycle_skill = LIFECYCLE_SKILL.read_text(encoding="utf-8")
     merge_skill = MERGE_SKILL.read_text(encoding="utf-8")
 
     for required in (
         "issues: read",
+        "pull-requests: read",
+        'git push -u origin HEAD:"$target_branch"',
+    ):
+        assert required in workflow
+    for removed in (
         "pull-requests: write",
         "archive_pr_linkage.py resolve",
         "archive_pr_linkage.py render",
         "gh pr create",
-        "Closes #",
     ):
-        assert required in workflow
+        assert removed not in workflow
+
+    for required in (
+        "create or reuse the final Archive PR as ordinary lifecycle continuation",
+        "Closes #<coordination-issue>",
+        "`Reviewer / review-archive`",
+    ):
+        assert required in lifecycle_skill
 
     for required in (
         "final Archive PR",
