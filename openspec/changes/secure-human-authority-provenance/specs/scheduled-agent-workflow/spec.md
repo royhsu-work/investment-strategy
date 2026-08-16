@@ -12,7 +12,14 @@ Each Human-reserved consumer SHALL reconstruct exactly one expected durable `dec
 Human-Decision-For: <decision_ref>
 ```
 
-The `decision_ref` is a correlation reference to already-durable workflow evidence, not a secret, approval token, hidden state, or authorization database. A Lead `HUMAN_DECISION_REQUIRED` answer SHALL use that exact escalation comment reference. Other Human-only admission, authorization, or resume consumers SHALL use the exact durable boundary reference already required by their governing contract, such as the coordination-Issue admission boundary or exact PR/revision authorization target. A consumer MUST NOT invent a reference by interpreting arbitrary prose.
+The `decision_ref` is a correlation reference to already-durable workflow evidence, not a secret, approval token, hidden state, or authorization database. Current consumers SHALL use only these exact forms:
+
+- Human admission of a coordination Issue directly to Explore: `issue:<issue-number>:admission:lead:explore-change`.
+- Human admission of a coordination Issue directly to Propose: `issue:<issue-number>:admission:lead:propose-change`.
+- Human-only advisory admission guarded by `intake:approved`: `issue:<issue-number>:advisory-admission`.
+- A Human answer, authorization, or resume decision produced from canonical `HUMAN_DECISION_REQUIRED`: `issuecomment:<escalation-comment-id>`, where the id is the exact durable escalation comment being answered.
+
+A later Human-reserved consumer MUST define its exact `decision_ref` form in its canonical governing requirement before it may use this predicate. If a current boundary cannot map to exactly one form above, or a future boundary lacks an explicit canonical mapping, evaluation MUST fail closed. The shared evaluator MUST NOT invent a reference by interpreting arbitrary prose, PR descriptions, routing history, or model inference.
 
 A Human-reserved decision SHALL be valid only when all of the following current evidence holds:
 
@@ -21,17 +28,20 @@ A Human-reserved decision SHALL be valid only when all of the following current 
 - the decision comment author is `royhsu-work`;
 - raw GitHub creation provenance for that comment establishes `performed_via_github_app == null`;
 - the reserved Human approval capability label is exactly `human:approved` and is currently present on the coordination Issue;
-- a qualifying `labeled` event for `human:approved` occurs after at least one matching candidate comment exists and has `actor.login == royhsu-work` plus `performed_via_github_app == null`;
-- for the latest such qualifying approval event, the selected comment is the latest matching qualifying Human-created comment preceding that event, ordered by GitHub `created_at` and then numeric comment id as the stable tie-breaker; and
+- a qualifying `labeled` event for `human:approved` has `actor.login == royhsu-work` plus `performed_via_github_app == null`;
+- that approval event binds to exactly one qualifying Human decision comment across all decision references: the latest qualifying Human-created comment on the same coordination Issue that precedes the event and contains exactly one syntactically valid `Human-Decision-For:` line, ordered by GitHub `created_at` and then numeric comment id as the stable tie-breaker;
+- the single comment bound to that event declares the exact expected `decision_ref`; and
 - `decision_comment.updated_at <= approval_event.created_at`.
 
-A later matching decision comment for the same `decision_ref` replaces an earlier matching comment for subsequent approval evaluation; unrelated Human comments with a missing or different `decision_ref` are not candidates. Missing ids/timestamps/provenance, a non-unique expected boundary reference, reference mismatch, or ordering that cannot be reconstructed MUST fail closed rather than allowing model selection.
+Boundary evaluation MUST first derive the event→comment binding without filtering by the boundary's expected `decision_ref`; only after one comment is bound to the event may the workflow compare that comment's declared reference with the expected boundary reference. Therefore one qualifying `human:approved` labeled event can authorize at most one decision comment and at most one `decision_ref`. The same event MUST NOT be independently reused to authorize R1 and R2 by filtering the candidate set differently for each boundary.
+
+When multiple qualifying Human-only approval events exist, evaluate them from newest to oldest and use the newest event whose uniquely bound comment is current and whose declared reference equals the expected `decision_ref`. An event bound to another reference is not authority for the current boundary. A later matching decision comment for the same `decision_ref` requires a later qualifying approval event to approve that replacement comment; an older event MUST NOT float forward to the replacement. Missing ids/timestamps/provenance, malformed or multiple `Human-Decision-For` lines in the bound comment, a non-unique expected boundary reference, reference mismatch, or ordering that cannot be reconstructed MUST fail closed rather than allowing model selection.
 
 A later edit to the selected decision comment SHALL invalidate prior approval for that revision. The workflow MUST fail closed until a later qualifying Human approval event re-approves the current comment revision. `unlabeled` event provenance MAY invalidate current-label state but MUST NOT establish Human authority.
 
 Where normalized connector reads omit `performed_via_github_app`, the workflow MUST inspect the raw GitHub object/event provenance required by this contract. Missing, inaccessible, ambiguous, or contradictory provenance MUST fail closed and MUST NOT degrade to actor-only authority.
 
-The existing `intake:approved` label SHALL remain the distinct Human-only advisory-admission capability marker. Its current presence or actor attribution alone MUST NOT prove Human identity or approval. When advisory admission consumes a Human decision, the expected admission `decision_ref` and intended Human decision evidence SHALL satisfy the provenance-bound contract above. Scheduled roles MUST NOT add, remove, restore, or manufacture either `human:approved` or `intake:approved` when those labels are reserved Human capabilities.
+The existing `intake:approved` label SHALL remain the distinct Human-only advisory-admission capability marker. Its current presence or actor attribution alone MUST NOT prove Human identity or approval. When advisory admission consumes a Human decision, the expected reference is exactly `issue:<issue-number>:advisory-admission` and the intended Human decision evidence SHALL satisfy the provenance-bound contract above. Scheduled roles MUST NOT add, remove, restore, or manufacture either `human:approved` or `intake:approved` when those labels are reserved Human capabilities.
 
 Repository-authorized Explore admission SHALL remain a separate non-Human authority path governed by its independent canonical source/materiality evidence. It MUST NOT be represented as Human activity and MUST NOT require `human:approved` solely because the admission is repository-authorized rather than Human-admitted.
 
@@ -66,46 +76,65 @@ This stronger authority rule SHALL activate prospectively on the default-branch 
 
 #### Scenario: Human comment plus later Human approval is valid
 
-- GIVEN the current Human-reserved consumer reconstructs one expected `decision_ref`
-- AND the latest matching Human decision comment declares `Human-Decision-For: <decision_ref>`
-- AND that comment is authored by `royhsu-work`
+- GIVEN the current Human-reserved consumer reconstructs one expected `decision_ref` using the exact canonical mapping
+- AND a qualifying Human-only `human:approved` labeled event uniquely binds to one qualifying Human-created decision comment
+- AND that bound comment declares the expected `Human-Decision-For: <decision_ref>`
 - AND raw creation provenance has `performed_via_github_app == null`
 - AND `human:approved` is currently present
-- AND the latest qualifying later `human:approved` labeled event has actor `royhsu-work` and `performed_via_github_app == null`
 - AND the comment has not been edited after that approval event
 - WHEN the workflow evaluates the intended Human-reserved decision
 - THEN the provenance-bound decision satisfies Human authority
 
+#### Scenario: One approval event cannot authorize two decision references
+
+- GIVEN Human-created comments for R1 and R2 both precede one qualifying Human-only `human:approved` labeled event E
+- AND the R2 comment is later than the R1 comment by `created_at`, then numeric comment id
+- WHEN the workflow derives E's approval target
+- THEN E binds only to the R2 comment
+- AND E may satisfy boundary R2 when all other evidence is valid
+- AND E MUST NOT also satisfy boundary R1 by re-filtering candidates for R1
+
 #### Scenario: Multiple Human comments do not require model disambiguation
 
-- GIVEN the current Human-reserved boundary has expected `decision_ref` R
-- AND multiple Human-created comments exist on the coordination Issue
-- AND zero or more comments are unrelated or declare a different decision reference
-- WHEN a qualifying Human-only `human:approved` event is evaluated
-- THEN only comments declaring `Human-Decision-For: R` are candidates
-- AND the latest matching qualifying comment preceding the latest qualifying approval event is selected by `created_at`, then numeric comment id
-- AND the workflow does not ask the model to infer which unrelated Human prose was intended
+- GIVEN multiple qualifying Human-created decision comments precede approval event E
+- WHEN E is evaluated
+- THEN the latest qualifying comment across all decision references is selected by `created_at`, then numeric comment id
+- AND E binds to that one comment before any boundary reference comparison
+- AND the workflow does not ask the model to infer which Human prose was intended
 
-#### Scenario: Replacement decision for the same boundary
+#### Scenario: Replacement decision for the same boundary requires reapproval
 
-- GIVEN an earlier Human-created decision comment declares `Human-Decision-For: R`
+- GIVEN an earlier Human-created decision comment for R was approved by event E1
 - AND a later Human-created decision comment also declares `Human-Decision-For: R`
-- AND a qualifying Human-only `human:approved` event occurs after the later comment
-- WHEN the workflow evaluates boundary R
-- THEN the later matching comment is the approved candidate
-- AND the earlier matching comment is superseded for that approval evaluation
+- WHEN boundary R is evaluated before any qualifying approval event after the later comment
+- THEN E1 does not approve the replacement comment
+- AND the workflow fails closed until a later qualifying Human-only approval event binds to the replacement comment
 
-#### Scenario: Missing or mismatched decision reference fails closed
+#### Scenario: Exact current admission anchors are deterministic
 
-- GIVEN a Human-reserved consumer expects `decision_ref` R
-- AND the available Human comment has no `Human-Decision-For` line or declares a different reference
+- GIVEN Issue 47 is Human-admitted directly to `Lead / explore-change`
+- WHEN the Human admission decision is evaluated
+- THEN the expected reference is exactly `issue:47:admission:lead:explore-change`
+- AND a comment or approval event for any other reference cannot satisfy that admission
+
+#### Scenario: Escalation answer anchor is deterministic
+
+- GIVEN Lead persisted canonical `HUMAN_DECISION_REQUIRED` as issue comment id 12345
+- WHEN a later Human answer or resume decision is evaluated for that escalation
+- THEN the expected reference is exactly `issuecomment:12345`
+- AND no PR/revision or generic Issue reference may substitute for that anchor
+
+#### Scenario: Missing or unmapped decision reference fails closed
+
+- GIVEN a Human-reserved consumer has no exact canonical `decision_ref` mapping
+- OR the available Human comment has no valid `Human-Decision-For` line or declares a different reference
 - WHEN Human authority is evaluated
-- THEN that comment is not a candidate for R
-- AND the workflow fails closed if no qualifying matching comment remains
+- THEN the workflow does not invent an anchor or reinterpret prose
+- AND the Human authority condition fails closed
 
 #### Scenario: Approved comment is edited afterward
 
-- GIVEN a Human decision comment previously had a qualifying `human:approved` event
+- GIVEN a Human decision comment previously had a qualifying `human:approved` event bound to it
 - AND the comment is later edited so `comment.updated_at > approval_event.created_at`
 - WHEN the workflow evaluates the prior approval
 - THEN the prior approval is invalid for the edited revision
@@ -121,11 +150,12 @@ This stronger authority rule SHALL activate prospectively on the default-branch 
 
 #### Scenario: Advisory intake marker remains distinct
 
-- GIVEN an advisory recommendation is being admitted through the Human-only advisory path
+- GIVEN an advisory recommendation on Issue N is being admitted through the Human-only advisory path
 - AND `intake:approved` is currently present
 - WHEN the workflow determines whether Human authority exists
 - THEN the label snapshot alone is insufficient Human proof
-- AND the expected admission `decision_ref` plus intended Human decision must satisfy the provenance-bound approval contract
+- AND the expected reference is exactly `issue:<N>:advisory-admission`
+- AND the intended Human decision must satisfy the provenance-bound approval contract
 - AND `intake:approved` remains distinct from `human:approved`
 
 #### Scenario: Repository-authorized Explore does not impersonate Human admission
@@ -149,4 +179,4 @@ This stronger authority rule SHALL activate prospectively on the default-branch 
 - AND that decision has not yet been legally consumed
 - WHEN a workflow attempts to consume it after default-branch activation
 - THEN the current provenance-bound requirement applies
-- AND insufficient prior evidence fails closed for a fresh Human decision carrying the expected `decision_ref` and a later qualifying approval
+- AND insufficient prior evidence fails closed for a fresh Human decision carrying the exact expected `decision_ref` and a later qualifying approval
