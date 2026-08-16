@@ -6,10 +6,17 @@ import pytest
 
 from investment_strategy.human_authority import (
     DecisionComment,
+    HumanDecisionBoundary,
     LabelEvent,
+    advisory_admission_ref,
     decision_comment_from_raw,
+    decision_ref_for_boundary,
+    escalation_response_ref,
+    explore_admission_ref,
+    is_human_advisory_admission_approved,
     is_human_decision_approved,
     label_event_from_raw,
+    propose_admission_ref,
 )
 
 
@@ -70,7 +77,7 @@ def _approved(
 
 
 def test_actor_identity_alone_is_not_human_authority() -> None:
-    decision_ref = "issue:47:admission:lead:explore-change"
+    decision_ref = explore_admission_ref(47)
     assert not _approved(
         decision_ref,
         comments=(_comment(id=1, minute=1, decision_ref=decision_ref, app="chatgpt"),),
@@ -96,7 +103,7 @@ def test_actor_identity_alone_is_not_human_authority() -> None:
 
 
 def test_valid_human_comment_and_later_human_approval_event_pass() -> None:
-    decision_ref = "issue:47:admission:lead:propose-change"
+    decision_ref = propose_admission_ref(47)
     assert _approved(
         decision_ref,
         comments=(_comment(id=10, minute=1, decision_ref=decision_ref),),
@@ -105,14 +112,14 @@ def test_valid_human_comment_and_later_human_approval_event_pass() -> None:
 
 
 def test_missing_or_mismatched_decision_ref_cannot_satisfy_boundary() -> None:
-    comments = (_comment(id=10, minute=1, decision_ref="issue:47:advisory-admission"),)
+    comments = (_comment(id=10, minute=1, decision_ref=advisory_admission_ref(47)),)
     events = (_event(id=20, minute=2),)
-    assert not _approved("issue:47:admission:lead:explore-change", comments=comments, events=events)
+    assert not _approved(explore_admission_ref(47), comments=comments, events=events)
 
 
 def test_event_first_binding_prevents_one_event_from_fanning_out() -> None:
-    ref_one = "issue:47:admission:lead:explore-change"
-    ref_two = "issue:47:admission:lead:propose-change"
+    ref_one = explore_admission_ref(47)
+    ref_two = propose_admission_ref(47)
     comments = (
         _comment(id=10, minute=1, decision_ref=ref_one),
         _comment(id=11, minute=2, decision_ref=ref_two),
@@ -124,7 +131,7 @@ def test_event_first_binding_prevents_one_event_from_fanning_out() -> None:
 
 
 def test_replacement_comment_requires_a_later_approval_event() -> None:
-    decision_ref = "issuecomment:1234"
+    decision_ref = escalation_response_ref(1234)
     original = _comment(id=10, minute=1, decision_ref=decision_ref)
     first_event = _event(id=20, minute=2)
     replacement = _comment(id=30, minute=3, decision_ref=decision_ref)
@@ -142,7 +149,7 @@ def test_replacement_comment_requires_a_later_approval_event() -> None:
 
 
 def test_post_approval_edit_invalidates_until_later_approval_event() -> None:
-    decision_ref = "issuecomment:5678"
+    decision_ref = escalation_response_ref(5678)
     edited = _comment(
         id=10,
         minute=1,
@@ -163,7 +170,7 @@ def test_post_approval_edit_invalidates_until_later_approval_event() -> None:
 
 
 def test_current_approval_label_and_qualifying_labeled_event_are_required() -> None:
-    decision_ref = "issue:47:advisory-admission"
+    decision_ref = advisory_admission_ref(47)
     comments = (_comment(id=10, minute=1, decision_ref=decision_ref),)
     events = (_event(id=20, minute=2),)
     assert not _approved(
@@ -176,7 +183,7 @@ def test_current_approval_label_and_qualifying_labeled_event_are_required() -> N
 
 
 def test_raw_adapter_preserves_missing_provenance_as_fail_closed_evidence() -> None:
-    decision_ref = "issue:47:admission:lead:explore-change"
+    decision_ref = explore_admission_ref(47)
     raw_comment: dict[str, object] = {
         "id": 10,
         "created_at": "2026-08-16T07:01:00Z",
@@ -200,7 +207,7 @@ def test_raw_adapter_preserves_missing_provenance_as_fail_closed_evidence() -> N
 
 
 def test_raw_adapter_distinguishes_human_and_app_provenance() -> None:
-    decision_ref = "issuecomment:999"
+    decision_ref = escalation_response_ref(999)
     raw_comment: dict[str, object] = {
         "id": 10,
         "created_at": "2026-08-16T07:01:00Z",
@@ -238,3 +245,68 @@ def test_unlabeled_event_never_establishes_authority() -> None:
     }
     with pytest.raises(ValueError, match="only labeled events"):
         label_event_from_raw(raw_event)
+
+
+def test_current_human_reserved_boundaries_use_exact_serialized_anchors() -> None:
+    assert explore_admission_ref(52) == "issue:52:admission:lead:explore-change"
+    assert propose_admission_ref(52) == "issue:52:admission:lead:propose-change"
+    assert advisory_admission_ref(52) == "issue:52:advisory-admission"
+    assert escalation_response_ref(5303804185) == "issuecomment:5303804185"
+
+    assert decision_ref_for_boundary(
+        HumanDecisionBoundary.EXPLORE_ADMISSION,
+        issue_number=52,
+    ) == explore_admission_ref(52)
+    assert decision_ref_for_boundary(
+        HumanDecisionBoundary.PROPOSE_ADMISSION,
+        issue_number=52,
+    ) == propose_admission_ref(52)
+    assert decision_ref_for_boundary(
+        HumanDecisionBoundary.ADVISORY_ADMISSION,
+        issue_number=52,
+    ) == advisory_admission_ref(52)
+    assert decision_ref_for_boundary(
+        HumanDecisionBoundary.ESCALATION_RESPONSE,
+        escalation_comment_id=5303804185,
+    ) == escalation_response_ref(5303804185)
+
+
+def test_unmapped_human_reserved_boundary_fails_closed() -> None:
+    with pytest.raises(ValueError, match="unmapped Human-reserved boundary"):
+        decision_ref_for_boundary("future-authorization", issue_number=47)
+
+
+def test_boundary_anchor_requires_the_correct_durable_identity() -> None:
+    with pytest.raises(ValueError, match="issue_number is required"):
+        decision_ref_for_boundary(HumanDecisionBoundary.EXPLORE_ADMISSION)
+    with pytest.raises(ValueError, match="escalation_comment_id is required"):
+        decision_ref_for_boundary(HumanDecisionBoundary.ESCALATION_RESPONSE)
+    with pytest.raises(ValueError, match="positive integer"):
+        explore_admission_ref(0)
+
+
+def test_human_advisory_admission_requires_distinct_intake_capability() -> None:
+    decision_ref = advisory_admission_ref(47)
+    comments = (_comment(id=10, minute=1, decision_ref=decision_ref),)
+    events = (_event(id=20, minute=2),)
+
+    assert not is_human_advisory_admission_approved(
+        issue_number=47,
+        intake_approval_label_present=False,
+        human_approval_label_present=True,
+        comments=comments,
+        label_events=events,
+    )
+    assert is_human_advisory_admission_approved(
+        issue_number=47,
+        intake_approval_label_present=True,
+        human_approval_label_present=True,
+        comments=comments,
+        label_events=events,
+    )
+
+
+def test_repository_authorized_explore_does_not_need_human_predicate() -> None:
+    # Repository-authorized Explore uses independent canonical/deferred/direction/friction evidence.
+    # This module deliberately exposes no helper that converts that path into Human authority.
+    assert HumanDecisionBoundary.EXPLORE_ADMISSION.value == "explore-admission"
