@@ -8,7 +8,7 @@ This is an optional pre-Propose investigation action. It preserves the OpenSpec 
 
 Read default-branch governance and the Lead role, the coordination Issue, current routing, current repository/default-branch/OpenSpec/PR/Actions state, still-applicable durable Issue evidence, and relevant external evidence when needed.
 
-A valid Explore entry remains `Change: unset` with `agent:lead + action:explore-change`. It may be Human-admitted or repository-authorized under the shared admission contract. For repository-authorized admission, reconstruct the independent source rather than trusting the Agent-authored Issue assertion: admission kind, observed default-branch revision where applicable, exact authority/evidence source, bounded problem, materiality, and why no Human-reserved decision is being made. Missing, stale, contradictory, merely descriptive, insufficient, or self-referential authority fails closed.
+A valid Explore entry remains `Change: unset` with `agent:lead + action:explore-change`. It may be Human-admitted or repository-authorized under the shared admission contract. Human admission MUST satisfy the provenance-bound Human-decision predicate for exactly `issue:<issue-number>:admission:lead:explore-change`; actor identity or routing/label snapshots alone are insufficient. Repository-authorized Explore instead reconstructs the independent source rather than pretending to be Human authority: admission kind, observed default-branch revision where applicable, exact authority/evidence source, bounded problem, materiality, and why no Human-reserved decision is being made. Missing, stale, contradictory, merely descriptive, insufficient, or self-referential authority fails closed.
 
 Human may still use the existing direct-to-Propose path for direction that is already concrete and buildable. Explore does not itself persist the formal Change identity.
 
@@ -28,7 +28,7 @@ Before materializing or consuming autonomous admission, deduplicate against open
 ## Investigation procedure
 
 1. Start with the problem before solution. Reconstruct the current system and evidence before treating a proposed mechanism, familiar pattern, or implementation-shaped request as a requirement.
-2. Validate the admitted authority envelope before relying on it. The Issue body is not the authority source for repository-authorized work.
+2. Validate the admitted authority envelope before relying on it. The Issue body is not the authority source for repository-authorized work; for Human admission, require the exact mapped decision reference and qualifying Human comment/approval event evidence.
 3. Investigate only what is needed to choose the next legal disposition: root cause, feasibility, scope boundary, relevant constraints, and meaningful alternatives/trade-offs when they can change the decision.
 4. Read/search repository evidence and relevant external evidence as needed. Use Lead's existing bounded blast-radius analysis for directly related contracts/surfaces, but do not turn Explore into a repository-wide correctness audit.
 5. Keep the work conversation-first and bounded. Explore MAY use simple diagrams or compact comparisons when useful, but it does not create a parallel artifact DAG or research-state machine.
@@ -64,7 +64,7 @@ Use when current evidence shows the proposed direction is infeasible or unjustif
 
 ### `HUMAN_DECISION_REQUIRED`
 
-Use only when technical/repository evidence cannot resolve a genuine Human intent, authority, material scope/behavior trade-off, explicit risk acceptance, materially different commitment, or invalidated authority basis. Reuse the shared bounded/no-repeat Human escalation contract; keep the Issue routed to Explore and resume after authoritative Human input.
+Use only when technical/repository evidence cannot resolve a genuine Human intent, authority, material scope/behavior trade-off, explicit risk acceptance, materially different commitment, or invalidated authority basis. Reuse the shared bounded/no-repeat Human escalation contract; keep the Issue routed to Explore and resume only when a provenance-bound Human decision comment declares exactly `Human-Decision-For: issuecomment:<escalation-comment-id>` and a later qualifying Human-only `human:approved` event validates that exact comment. The `human:notified` label is not response evidence.
 
 `SPECIFICATION_BLOCKED` is not a terminal Explore no-go substitute. It remains part of formal Propose/Resolve semantics after a Change/specification boundary exists.
 
@@ -90,6 +90,6 @@ Explore and direct-to-Propose entries participate in the shared combined pre-act
 - in-envelope `PROPOSAL_READY`: persist result, fresh-read current evidence/routing, route the same Issue to `Lead / propose-change` with `Change: unset`, observe target routing, reload the mapped Propose skill, and continue when immediately actionable under shared same-role continuation; no synthetic `HANDOFF` and no second generic Human proceed boundary.
 - `PROPOSAL_READY` with a new Human-reserved decision: retain `Lead / explore-change` and use canonical `HUMAN_DECISION_REQUIRED`.
 - `NO_CHANGE_REQUIRED` or `NO_GO`: persist the terminal result and close the research Issue; observe `closed`. No OpenSpec Change or archive lifecycle is created.
-- unresolved Human question: retain Explore and follow the shared escalation/resume semantics.
+- unresolved Human question: retain Explore and follow the shared provenance-bound escalation/resume semantics.
 
 A terminal Explore close is a pre-Change research completion path. It does not weaken or replace the final Archive PR/native-close semantics used by formal OpenSpec Changes.
