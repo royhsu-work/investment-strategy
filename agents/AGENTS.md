@@ -108,6 +108,12 @@ an active formal workflow. Explore keeps `Change: unset` and does not create for
 artifacts. Formal activation remains owned by Propose when Lead persists the immutable non-`unset` Change
 identity.
 
+Human-admitted Explore and direct-Propose entries are valid only when the corresponding Human-reserved
+admission decision satisfies the provenance-bound Human authority contract below. Their exact expected
+references are `issue:<issue-number>:admission:lead:explore-change` and
+`issue:<issue-number>:admission:lead:propose-change`, respectively. Actor identity or routing state alone
+MUST NOT satisfy Human admission.
+
 Repository-authorized Explore admission is permitted only from the bounded idle-discovery boundary defined
 below. Its Issue MUST record reconstructable admission evidence, but that Agent-created Issue is not its own
 authority source. Later reconstruction validates the independent cited source/materiality fail closed.
@@ -171,12 +177,58 @@ pre-activation work by ignoring that evidence. The bounded response is Lead diag
 input is legally required, a decision-ready escalation. This rule does not create a repository-wide fault
 classifier or persistent fault-state machine.
 
-For decisions governance reserves to Human, only durable GitHub activity attributable to actor
-`royhsu-work` satisfies Human authority. Activity from other actors may be supporting evidence but
-MUST NOT satisfy Human-required admission, answers, authorization, or resume conditions. Repository-
-authorized Explore is a separate bounded capability derived from independent approved repository authority
-or concrete behavior-preserving friction; it MUST NOT be treated as Human activity or used to satisfy a
-Human-reserved decision.
+For decisions governance reserves to Human, durable GitHub actor identity alone MUST NOT satisfy Human
+authority. Activity from actors other than `royhsu-work` may be supporting evidence but MUST NOT satisfy
+Human-required admission, answers, authorization, or resume conditions. Activity attributed to
+`royhsu-work` is also insufficient when raw creation/event provenance shows a GitHub App or when required
+provenance is unavailable.
+
+Each Human-reserved consumer MUST reconstruct exactly one expected `decision_ref` from durable workflow
+state. Current mappings are exhaustive: Human Explore admission uses
+`issue:<issue-number>:admission:lead:explore-change`; Human direct-Propose admission uses
+`issue:<issue-number>:admission:lead:propose-change`; Human-only advisory admission uses
+`issue:<issue-number>:advisory-admission`; and an answer, authorization, or resume produced from canonical
+`HUMAN_DECISION_REQUIRED` uses `issuecomment:<escalation-comment-id>` for the exact escalation comment being
+answered. A future Human-reserved consumer without an explicit canonical mapping fails closed; roles MUST
+NOT invent an anchor from prose, PR descriptions, routing history, or model inference.
+
+The Human decision comment MUST be on the same coordination Issue, contain exactly one canonical
+`Human-Decision-For: <decision_ref>` line matching the expected reference, be authored by `royhsu-work`,
+and have raw creation provenance with `performed_via_github_app == null`. The reserved approval capability
+is exactly `human:approved`; its current presence is necessary but never sufficient by itself. A qualifying
+`labeled` event for `human:approved` MUST have `actor.login == royhsu-work` and raw event provenance
+`performed_via_github_app == null`.
+
+Approval binding is event-first. For each qualifying Human-only `human:approved` event, derive exactly one
+bound comment before comparing the current boundary reference: select the latest qualifying Human-created
+decision comment across all decision references that precedes the event, ordered by GitHub `created_at`
+then numeric comment id. Only after that one comment is bound may its declared `decision_ref` be compared
+with the current expected boundary. One approval event therefore authorizes at most one decision comment
+and MUST NOT fan out to multiple decision refs through boundary-specific filtering. When multiple approval
+events exist, evaluate newest to oldest and accept only the newest event whose one bound current comment
+matches the expected reference. A later replacement comment requires a later qualifying approval event;
+an older event MUST NOT float forward.
+
+A selected comment edited after its approval event is not approved for the edited revision:
+`decision_comment.updated_at > approval_event.created_at` fails closed until a later qualifying Human-only
+approval event re-approves the current comment. Missing, inaccessible, ambiguous, contradictory, malformed,
+unorderable, or reference-mismatched provenance fails closed. `unlabeled` events may invalidate current
+label state but never establish Human authority. Normalized connector reads that omit
+`performed_via_github_app` MUST be supplemented by raw GitHub provenance or the Human authority condition
+fails closed.
+
+Repository-authorized Explore is a separate bounded capability derived from independent approved
+repository authority or concrete behavior-preserving friction. It MUST NOT be treated as Human activity,
+MUST NOT require `human:approved` merely to impersonate Human admission, and MUST NOT satisfy a later
+genuinely Human-reserved decision.
+
+This stronger Human authority contract activates prospectively on default-branch merge. Workflows already
+terminal before activation and Human authority already legally consumed before activation remain historical
+evidence and MUST NOT be retroactively reopened or invalidated solely because they predate this contract.
+A still-pending Human-reserved decision first consumed after activation MUST satisfy the current
+provenance-bound contract even when its Issue or earlier evidence predates activation; insufficient prior
+evidence fails closed for a fresh Human decision carrying the exact expected `decision_ref` plus a later
+qualifying Human-only approval event.
 
 `human:notified`, if present, is analytics-only historical metadata. It MUST NOT grant authority, change
 routing, create waiting semantics, participate in resume conditions, or prove that Human answered.
@@ -189,6 +241,10 @@ When Lead requires Human input, the durable escalation contains at most three ac
 states the material impact and risk/trade-off for the decision, and identifies the Lead recommendation.
 Lead MUST NOT repeat materially equivalent unanswered notifications while the durable question and
 available evidence remain unchanged.
+
+Scheduled Lead, Reviewer, and Executor MUST NEVER add, remove, restore, or manufacture either
+`human:approved` or `intake:approved`. Neither reserved label snapshot nor actor identity alone is Human
+proof.
 
 ## PR linkage lifecycle boundary
 
@@ -594,10 +650,14 @@ Scheduled roles MUST NOT autonomously admit arbitrary Issues, PRs, repository ac
 discovered requirements, Agent-authored recommendations, style preferences, speculative cleanup, or generic
 simplicity claims into workflow work.
 
-Human admission remains valid through the repository Human-authority contract: explicit Human/maintainer
-creation or designation may route a coordination Issue to `agent:lead + action:explore-change` for fuzzy
-investigation or `agent:lead + action:propose-change` for already concrete/buildable direction. Explore is
-optional; direct-to-Propose remains valid without an Explore prerequisite.
+Human admission remains available, but Human-reserved admission MUST satisfy the provenance-bound Human
+authority contract. Human admission to Explore expects exactly
+`issue:<issue-number>:admission:lead:explore-change`; Human direct-to-Propose expects exactly
+`issue:<issue-number>:admission:lead:propose-change`. A qualifying Human-created decision comment, raw Human
+creation provenance, current `human:approved` presence, and the qualifying Human-only approval event are
+required; explicit routing or actor identity alone is insufficient. Explore remains optional and a valid
+already-admitted Explore may continue to Propose inside its admitted authority envelope without a second
+generic Human proceed decision.
 
 In addition, only when no formal/terminal-pending workflow and no already eligible pre-activation work can
 be advanced, Lead MAY materialize at most one bounded `Change: unset + agent:lead + action:explore-change`
@@ -621,8 +681,8 @@ Agent-authored advisory text, Explore conclusions, and prior Agent-created ticke
 serve as sufficient authority for another autonomous admission by themselves. Every repository-authorized
 admission traces to an independent default-branch authority source or current concrete behavior-preserving
 repository/friction evidence. Autonomous admission MUST NOT add, remove, restore, or manufacture
-`intake:approved`, MUST NOT persist a formal Change identity, and MUST NOT bypass Propose, Reviewer,
-implementation, merge, archive, or lifecycle gates.
+`human:approved` or `intake:approved`, MUST NOT persist a formal Change identity, and MUST NOT bypass
+Propose, Reviewer, implementation, merge, archive, or lifecycle gates.
 
 Lead MUST deduplicate against open or reconstructably unresolved equivalent candidates and required-
 deferred trackers before materializing a candidate. One idle invocation creates at most one candidate.
@@ -638,11 +698,12 @@ At most one open `advisory:idle` Issue may exist and it may contain at most thre
 Issues have no routing tuple. If an undecided open advisory already exists, later Lead runs no-op instead of
 creating duplicate noise.
 
-Admitting an advisory recommendation through the Human-only path still requires both an unambiguous
-selected direction in the advisory thread and the reserved Human capability label `intake:approved`. Human
-may admit that direction to Explore or direct Propose according to its clarity. Scheduled Lead, Reviewer,
-and Executor may consume the marker but MUST NEVER add, remove, restore, or manufacture it. This is a
-governance capability boundary, not cryptographic proof of Human identity. A recommendation remains
+Admitting an advisory recommendation through the Human-only path requires both the distinct reserved
+Human intake capability `intake:approved` and a provenance-bound Human decision with expected reference
+exactly `issue:<issue-number>:advisory-admission`. `intake:approved` remains distinct from
+`human:approved`; its presence or actor attribution alone is insufficient Human proof. Human may admit that
+direction to Explore or direct Propose according to its clarity. Scheduled Lead, Reviewer, and Executor
+MUST NEVER add, remove, restore, or manufacture either reserved capability. A recommendation remains
 advisory unless independent repository-authorized admission evidence separately satisfies the bounded
 contract above.
 
