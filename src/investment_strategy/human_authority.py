@@ -73,9 +73,7 @@ def decision_ref_for_boundary(
     if boundary is HumanDecisionBoundary.ADVISORY_ADMISSION:
         return advisory_admission_ref(_required_id(issue_number, "issue_number"))
     if boundary is HumanDecisionBoundary.ESCALATION_RESPONSE:
-        return escalation_response_ref(
-            _required_id(escalation_comment_id, "escalation_comment_id")
-        )
+        return escalation_response_ref(_required_id(escalation_comment_id, "escalation_comment_id"))
     raise AssertionError("all HumanDecisionBoundary members must be mapped")
 
 
