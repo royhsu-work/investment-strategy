@@ -2,15 +2,15 @@
 
 ## Slice 1 — Provenance-bound Human decision predicate
 
-- [ ] **RED** Add deterministic tests proving actor `royhsu-work` alone is insufficient when raw comment creation or approval-label provenance shows a GitHub App.
-- [ ] **RED** Add tests for a valid Human-created decision comment carrying the expected `Human-Decision-For: <decision_ref>` plus later Human-only `human:approved` event and unchanged comment revision.
-- [ ] **RED** Add tests proving missing/mismatched `decision_ref` cannot satisfy the current Human-reserved boundary.
-- [ ] **RED** Add tests proving one qualifying `human:approved` event binds to exactly one latest qualifying Human decision comment across all decision references before expected-boundary comparison.
-- [ ] **RED** Add tests proving one generic approval event cannot satisfy R1 and R2 independently by filtering candidates differently for each boundary.
-- [ ] **RED** Add tests proving a later replacement comment for the same `decision_ref` requires a later qualifying approval event; an older event does not float forward.
-- [ ] **RED** Add tests proving a post-approval comment edit invalidates prior approval until a later qualifying Human approval event exists.
-- [ ] **GREEN** Implement the minimum reusable Human-authority evaluator from explicit expected boundary reference, comment/event evidence, event-first one-comment binding, and stable ordering without hidden authorization state or a generic IAM layer.
-- [ ] **REFACTOR/VERIFY** Run focused tests plus the full repository regression, type, lint, and format gates.
+- [x] **RED** Add deterministic tests proving actor `royhsu-work` alone is insufficient when raw comment creation or approval-label provenance shows a GitHub App.
+- [x] **RED** Add tests for a valid Human-created decision comment carrying the expected `Human-Decision-For: <decision_ref>` plus later Human-only `human:approved` event and unchanged comment revision.
+- [x] **RED** Add tests proving missing/mismatched `decision_ref` cannot satisfy the current Human-reserved boundary.
+- [x] **RED** Add tests proving one qualifying `human:approved` event binds to exactly one latest qualifying Human decision comment across all decision references before expected-boundary comparison.
+- [x] **RED** Add tests proving one generic approval event cannot satisfy R1 and R2 independently by filtering candidates differently for each boundary.
+- [x] **RED** Add tests proving a later replacement comment for the same `decision_ref` requires a later qualifying approval event; an older event does not float forward.
+- [x] **RED** Add tests proving a post-approval comment edit invalidates prior approval until a later qualifying Human approval event exists.
+- [x] **GREEN** Implement the minimum reusable Human-authority evaluator from explicit expected boundary reference, comment/event evidence, event-first one-comment binding, and stable ordering without hidden authorization state or a generic IAM layer.
+- [x] **REFACTOR/VERIFY** Run focused tests plus the full repository regression, type, lint, and format gates.
 
 Trace: proposal items 1–3, 5–6; spec requirement `Human-required authority is bound to provenance-validated repository Human decisions`; design D1/D3/D4.
 
