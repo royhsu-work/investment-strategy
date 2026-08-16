@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -18,6 +19,12 @@ from investment_strategy.human_authority import (
     label_event_from_raw,
     propose_admission_ref,
 )
+
+ROOT = Path(__file__).resolve().parents[1]
+AGENTS = ROOT / "agents" / "AGENTS.md"
+LEAD = ROOT / "agents" / "roles" / "lead.md"
+REVIEWER = ROOT / "agents" / "roles" / "reviewer.md"
+EXECUTOR = ROOT / "agents" / "roles" / "executor.md"
 
 
 def _ts(minute: int) -> datetime:
@@ -310,3 +317,25 @@ def test_repository_authorized_explore_does_not_need_human_predicate() -> None:
     # Repository-authorized Explore uses independent canonical/deferred/direction/friction evidence.
     # This module deliberately exposes no helper that converts that path into Human authority.
     assert HumanDecisionBoundary.EXPLORE_ADMISSION.value == "explore-admission"
+
+
+def test_reserved_human_capabilities_are_distinct_and_role_protected() -> None:
+    shared = AGENTS.read_text()
+    assert "`human:approved`" in shared
+    assert "`intake:approved`" in shared
+    assert "`intake:approved` remains distinct from" in shared
+    assert "its presence or actor attribution alone is insufficient Human proof" in shared
+    for role in (LEAD, REVIEWER, EXECUTOR):
+        text = role.read_text()
+        assert "`human:approved`" in text
+        assert "`intake:approved`" in text
+        assert "Do not add, remove, restore, or manufacture" in text
+
+
+def test_provenance_migration_is_prospective_not_retroactive() -> None:
+    shared = AGENTS.read_text()
+    assert "activates prospectively on default-branch merge" in shared
+    assert "Workflows already\nterminal before activation" in shared
+    assert "MUST NOT be retroactively reopened or invalidated" in shared
+    assert "A still-pending Human-reserved decision first consumed after activation MUST satisfy" in shared
+    assert "fresh Human decision carrying the exact expected `decision_ref`" in shared
