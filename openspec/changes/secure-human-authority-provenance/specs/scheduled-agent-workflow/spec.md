@@ -2,7 +2,7 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Human-required authority is bound to provenance-validated repository Human decisions
+### Requirement: Human-required authority is bound to the repository Human actor
 
 For workflow decisions that governance reserves to Human, durable GitHub actor identity alone MUST NOT satisfy Human authority. Activity from actors other than `royhsu-work` MAY be supporting evidence but MUST NOT satisfy Human-required admission, answers, authorization, or resume conditions.
 
