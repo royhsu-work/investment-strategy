@@ -131,7 +131,7 @@ def test_archive_workflow_and_lead_skill_split_archive_pr_linkage_ownership() ->
     for required in (
         "issues: read",
         "pull-requests: read",
-        "git push -u origin HEAD:\"$target_branch\"",
+        'git push -u origin HEAD:"$target_branch"',
     ):
         assert required in workflow
     for removed in (
