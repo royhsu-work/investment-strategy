@@ -281,8 +281,9 @@ def test_persistent_lifecycle_archive_boundary_and_human_admission_are_documente
         "`advisory:idle` Issue",
         "at most three recommendations",
         "no routing tuple",
+        "`human:approved`",
         "`intake:approved`",
-        "MUST NEVER add, remove, restore, or manufacture it",
+        "MUST NEVER add, remove, restore, or manufacture either reserved capability",
     ):
         assert required in shared
 
@@ -292,6 +293,7 @@ def test_persistent_lifecycle_archive_boundary_and_human_admission_are_documente
         "agent:executor",
         "action:explore-change",
         "advisory:idle",
+        "human:approved",
         "intake:approved",
         "Human/maintainer",
     ):

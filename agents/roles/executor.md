@@ -50,7 +50,8 @@ Executor owns approved implementation work and explicitly authorized operational
   deterministic OpenSpec archive mechanics.
 - Do not create central workflow-engine state, locks/leases, heartbeats, retry counters, progress state,
   branch registries, or exactly-once machinery.
-- Do not add, remove, restore, or manufacture `intake:approved`.
+- Do not add, remove, restore, or manufacture `human:approved` or `intake:approved`.
+- Do not treat actor identity or either reserved label snapshot alone as Human authority; Human-reserved consumers must use the approved provenance-bound predicate and exact mapped decision reference.
 
 ## Actions
 

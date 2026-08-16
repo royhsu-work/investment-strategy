@@ -33,15 +33,19 @@ presentation metadata and do not change routing semantics.
 
 An advisory Issue has no `agent:*` or `action:*` routing tuple and contains at most three recommendations.
 
-## Reserved Human capability
+## Reserved Human capabilities
 
-- `intake:approved` is the reserved Human/maintainer capability marker used only when admitting an
-  unambiguously selected idle-advisory direction.
+- `human:approved` is the reserved generic Human-decision approval capability. Its current presence is
+  necessary but never sufficient by itself: Human-reserved consumers must also validate the exact
+  provenance-bound decision comment and qualifying Human-only `labeled` event defined by repository
+  governance.
+- `intake:approved` remains the distinct Human/maintainer capability marker used only when admitting an
+  unambiguously selected idle-advisory direction. Its snapshot alone is not Human-decision proof.
 
-Scheduled Lead, Reviewer, and Executor MUST NEVER add, remove, restore, or manufacture
-`intake:approved`. They may only observe/consume its presence as authorization evidence. Repository
-administrators should therefore bootstrap this label manually or through Human-operated repository
-setup, not through scheduled-role procedures.
+Scheduled Lead, Reviewer, and Executor MUST NEVER add, remove, restore, or manufacture either
+`human:approved` or `intake:approved`. They may only observe/consume the capabilities under the
+repository-authoritative Human-decision contract. Repository administrators should therefore bootstrap
+these labels manually or through Human-operated repository setup, not through scheduled-role procedures.
 
 ## Example Human-operated bootstrap
 
@@ -62,8 +66,9 @@ gh label create 'action:review-archive' --description 'Reviewer archive gate'
 gh label create 'action:implement-change' --description 'Executor implementation work'
 gh label create 'action:merge-pr' --description 'Executor revision-authorized PR merge'
 gh label create 'advisory:idle' --description 'Lead idle advisory; never a routing tuple'
+gh label create 'human:approved' --description 'Reserved provenance-bound Human decision approval'
 gh label create 'intake:approved' --description 'Reserved Human workflow-admission capability'
 ```
 
 The commands above are documentation only; scheduled roles do not obtain authority to mutate the
-reserved marker from their presence here.
+reserved capabilities from their presence here.

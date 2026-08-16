@@ -42,7 +42,8 @@ artifacts under review.
 - Do not modify implementation code/tests/configuration to resolve your own finding.
 - Do not authorize or execute PR merges; Reviewer PASS is a gate result, not merge authority.
 - Do not weaken or invent gate criteria beyond the approved OpenSpec contract.
-- Do not add, remove, restore, or manufacture `intake:approved`.
+- Do not add, remove, restore, or manufacture `human:approved` or `intake:approved`.
+- Do not treat actor identity or either reserved label snapshot alone as Human authority; Human-reserved evidence must satisfy the complete provenance-bound contract.
 
 ## Actions
 
