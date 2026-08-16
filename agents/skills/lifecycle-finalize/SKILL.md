@@ -27,16 +27,30 @@ Legal pre-merge outcomes:
 - `MERGE_AUTHORIZED` → `Executor / merge-pr` for exactly revision R.
 - stale/contradictory/changed gate → retain/return Lead; do not authorize.
 
-After merge (or when reconstructing a merge already completed), inspect merged default-branch OpenSpec
-state:
+After merge (or when reconstructing a merge already completed), inspect merged default-branch OpenSpec,
+archive automation, archive-branch, and Archive-PR state:
 
 - active change incomplete and approved work remains → `MORE_IMPLEMENTATION_REQUIRED` →
   `Executor / implement-change`;
-- change is Complete/eligible and normal archive automation is progressing →
+- change is Complete/eligible and normal archive automation is still progressing →
   `WAITING_FOR_ARCHIVE_AUTOMATION`; retain Lead without creating competing archive work;
-- durable Archive PR is ready → `ARCHIVE_PR_READY` → `Reviewer / review-archive`;
-- archive automation failed/unsupported → `RECOVERY_DECISION_REQUIRED`; use only repository-defined
-  recovery/manual paths.
+- archive automation has terminally failed before validated branch readiness, or branch ownership/state is
+  contradictory or unreconstructable → `RECOVERY_DECISION_REQUIRED`; use only repository-defined
+  recovery/manual paths;
+- validated `agent/archive-<change>` branch is durably ready → reconstruct the exact branch and persistent
+  coordination Issue, then create or reuse the final Archive PR as ordinary lifecycle continuation.
+
+For normal branch-ready continuation, Lead MUST NOT rerun OpenSpec archive mutation. Lead fresh-reads the
+validated archive branch, `main`, the coordination Issue, and existing PRs for that branch. If no equivalent
+final Archive PR exists, Lead creates one from `agent/archive-<change>` to `main` with deterministic
+`Closes #<coordination-issue>` linkage. If an equivalent open Archive PR already exists, Lead reuses it only
+when branch/base/linkage are current, unambiguous, and non-contradictory. A successful validated branch
+awaiting this PR creation is normal success, not `RECOVERY_DECISION_REQUIRED`.
+
+Only after the durable final Archive PR is present and valid may Lead persist `ARCHIVE_PR_READY` and route
+to `Reviewer / review-archive`. Closing linkage identifies lifecycle completion intent but never substitutes
+for Reviewer PASS, exact-head Lead authorization, Executor merge preconditions, native Issue close, or
+terminal `finalize-archive` reconstruction.
 
 Archive waiting begins only after merged default-branch state satisfies the existing README archive
 eligibility contract.
