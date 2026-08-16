@@ -26,14 +26,14 @@ Trace: proposal items 2, 5; spec approval/provenance clauses; design D2/D3.
 
 ## Slice 3 — Exact Human-reserved consumer anchors
 
-- [ ] **RED** Add Human-admitted Explore tests requiring exactly `issue:<N>:admission:lead:explore-change`.
-- [ ] **RED** Add Human-admitted direct-Propose tests requiring exactly `issue:<N>:admission:lead:propose-change`.
-- [ ] **RED** Add Human-only advisory-admission tests requiring exactly `issue:<N>:advisory-admission` in addition to valid `intake:approved` semantics.
-- [ ] **RED** Add Human-answer/authorization/resume tests proving canonical `HUMAN_DECISION_REQUIRED` comment id C maps exactly to `issuecomment:<C>` and only that provenance-bound Human decision can resolve the boundary.
-- [ ] **RED** Add tests proving an unmapped future Human-reserved consumer fails closed instead of letting the evaluator/model synthesize an anchor.
-- [ ] **RED** Add tests proving repository-authorized Explore continues to use its independent repository authority path and does not require or manufacture Human approval.
-- [ ] **GREEN** Replace duplicated actor-only Human checks with the shared predicate only at Human-reserved consumers and make each current consumer provide its exact canonical mapped anchor.
-- [ ] **REFACTOR/VERIFY** Confirm no role authority, Reviewer independence, merge gate, or workflow DAG changes were introduced; run full gates.
+- [x] **RED** Add Human-admitted Explore tests requiring exactly `issue:<N>:admission:lead:explore-change`.
+- [x] **RED** Add Human-admitted direct-Propose tests requiring exactly `issue:<N>:admission:lead:propose-change`.
+- [x] **RED** Add Human-only advisory-admission tests requiring exactly `issue:<N>:advisory-admission` in addition to valid `intake:approved` semantics.
+- [x] **RED** Add Human-answer/authorization/resume tests proving canonical `HUMAN_DECISION_REQUIRED` comment id C maps exactly to `issuecomment:<C>` and only that provenance-bound Human decision can resolve the boundary.
+- [x] **RED** Add tests proving an unmapped future Human-reserved consumer fails closed instead of letting the evaluator/model synthesize an anchor.
+- [x] **RED** Add tests proving repository-authorized Explore continues to use its independent repository authority path and does not require or manufacture Human approval.
+- [x] **GREEN** Replace duplicated actor-only Human checks with the shared predicate only at Human-reserved consumers and make each current consumer provide its exact canonical mapped anchor.
+- [x] **REFACTOR/VERIFY** Confirm no role authority, Reviewer independence, merge gate, or workflow DAG changes were introduced; run full gates.
 
 Trace: proposal items 3, 6; spec exact-anchor and repository-authorized Explore scenarios; design D4.
 
