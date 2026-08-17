@@ -138,7 +138,7 @@ def test_project_kanban_projection_cannot_substitute_for_repository_authority() 
     for required in (
         "GitHub Project/Kanban",
         "presentation only",
-        "does not participate in Scheduled-Agent dispatch, routing, authority, or gate decisions",
-        "repository durable workflow state remains authoritative",
+        "do not participate in Scheduled-Agent dispatch, routing, authority, or gate decisions",
+        "Repository durable workflow state remains authoritative",
     ):
         assert required in orientation
