@@ -20,9 +20,9 @@
 
 ## Slice 4 — Pre-activation Propose fallback to Explore
 
-- [ ] RED: add regressions for valid `Change: unset + Lead / propose-change` intake that is not proposal-ready, proving same-Issue fallback to Explore is legal without a second Human admission and proving a non-`unset` Change cannot take that backward path. Trace: requirement `Pre-activation Propose may conservatively fall back to Explore`; design Decision 5.
-- [ ] GREEN: implement the minimum Lead/Propose/Explore contract changes for `propose-change → explore-change → PROPOSAL_READY → propose-change` inside one authority envelope, using existing same-role continuation and no synthetic `HANDOFF`. Trace: design Decision 5.
-- [ ] REFACTOR/VERIFY: prevent ordinary loops and keep formal post-activation ambiguity on `resolve-question`; run focused/full quality gates and strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
+- [x] RED: add regressions for valid `Change: unset + Lead / propose-change` intake that is not proposal-ready, proving same-Issue fallback to Explore is legal without a second Human admission and proving a non-`unset` Change cannot take that backward path. Trace: requirement `Pre-activation Propose may conservatively fall back to Explore`; design Decision 5.
+- [x] GREEN: implement the minimum Lead/Propose/Explore contract changes for `propose-change → explore-change → PROPOSAL_READY → propose-change` inside one authority envelope, using existing same-role continuation and no synthetic `HANDOFF`. Trace: design Decision 5.
+- [x] REFACTOR/VERIFY: prevent ordinary loops and keep formal post-activation ambiguity on `resolve-question`; run focused/full quality gates and strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
 
 ## Slice 5 — Derived flow visualization boundary
 
