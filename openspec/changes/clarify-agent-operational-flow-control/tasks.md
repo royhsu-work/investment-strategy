@@ -32,5 +32,5 @@
 
 ## Final verification
 
-- [ ] Verify proposal/spec/design/task traces are mechanically consistent and every approved requirement has an implementation slice.
-- [ ] Run strict OpenSpec validation and repository quality gates on the exact implementation revision before completion handoff.
+- [x] Verify proposal/spec/design/task traces are mechanically consistent and every approved requirement has an implementation slice.
+- [x] Run strict OpenSpec validation and repository quality gates on the exact implementation revision before completion handoff.
