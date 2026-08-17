@@ -26,14 +26,17 @@ Representative work input attempts to grant Executor specification authority, as
 
 ### Slice C — Security-suppression semantic invariants
 
-The current baseline contains three equivalent `S603` exceptions in test helpers. Each currently calls a repository-owned fixed script through `sys.executable`, with `shell` not enabled. The exception rationale is safe only while those properties remain true.
+The current baseline contains three equivalent `S603` exceptions in test helpers. Each currently calls a repository-owned fixed script through `sys.executable`, with `shell` not enabled. The exception rationale is safe only while those properties and the trusted argument boundary remain true.
 
 Add focused deterministic assertions over the concrete helper source/structure or an equally narrow reusable test representation so a later edit fails if a suppressed site stops satisfying the justified boundary. For the current sites the guarded properties are:
 
 - executable is `sys.executable`;
 - target script is the repository-owned helper constant, not a caller-selected executable/path;
 - shell execution is absent/not enabled;
-- the subprocess command shape does not gain an arbitrary externally controlled command/script slot behind the suppression.
+- ordinary argument values do not expand to arbitrary unvalidated external-derived values behind the suppression;
+- if a specific external-derived argument is required, its validation boundary is explicit and deterministic rather than inferred from the suppression.
+
+The regression must therefore fail when a call retains the same fixed interpreter/script and `shell=False` but starts forwarding an arbitrary unvalidated external-derived value as an ordinary argument. This remains a concrete structural/semantic contract for the three demonstrated suppressed sites, not general taint inference.
 
 The tests should detect semantic drift in the current justified sites, not infer general taint safety. If a future suppression has materially different safety assumptions, it needs its own demonstrated requirement before being brought under this contract.
 
