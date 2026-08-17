@@ -5,6 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents" / "AGENTS.md"
 LEAD = ROOT / "agents" / "roles" / "lead.md"
+OPEN_SPEC_CHANGE = ROOT / "agents" / "skills" / "openspec-change" / "SKILL.md"
 
 
 def _normalized(path: Path) -> str:
@@ -56,3 +57,45 @@ def test_ambiguous_or_human_terminated_premature_close_stays_fail_closed() -> No
         "generic fault state machine",
     ):
         assert required in text
+
+
+def test_required_separate_follow_up_is_directly_routed_to_explore() -> None:
+    shared = _normalized(AGENTS)
+    lead = _normalized(LEAD)
+    change = _normalized(OPEN_SPEC_CHANGE)
+    for required in (
+        "required separate follow-up",
+        "`Change: unset + agent:lead + action:explore-change`",
+        "source coordination Issue/Change",
+        "exact defer decision/reference",
+        "combined pre-activation queue",
+        "MUST NOT require a second idle-discovery admission step",
+    ):
+        assert required in shared
+    for required in (
+        "required deferred follow-up",
+        "route it directly to `Lead / explore-change`",
+        "Change: unset",
+        "source coordination Issue/Change",
+        "exact defer decision/reference",
+    ):
+        assert required in lead
+    for required in (
+        "required deferred follow-up",
+        "create or reuse",
+        "`agent:lead + action:explore-change`",
+        "without Human admission",
+    ):
+        assert required in change
+
+
+def test_optional_or_plain_deferred_work_does_not_create_queue_admission() -> None:
+    shared = _normalized(AGENTS)
+    for required in (
+        "ordinary out-of-scope item",
+        "non-goal",
+        "optional future idea",
+        "creates no tracking obligation",
+        "MUST NOT receive workflow routing",
+    ):
+        assert required in shared
