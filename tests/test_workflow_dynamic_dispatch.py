@@ -99,7 +99,7 @@ def test_change_identity_defines_active_workflow_and_combined_pre_activation_int
         "`Lead / propose-change`",
         "`Change: unset`",
         "queued pre-activation work",
-        "MUST NOT count as an active formal workflow",
+        "None of these entries count as an active formal workflow",
         "Formal activation remains owned by Propose",
     ):
         assert required in text
