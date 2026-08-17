@@ -45,7 +45,12 @@ def _contains_unvalidated_external_source(node: ast.AST) -> bool:
                 ("os", "environ", "get"),
             }:
                 return True
-            if path is not None and path[-1] in {"read_text", "read_bytes"}:
+            if path is not None and path[-1] in {
+                "parse_args",
+                "parse_known_args",
+                "read_text",
+                "read_bytes",
+            }:
                 return True
             if isinstance(child.func, ast.Name) and child.func.id in {"input", "open"}:
                 return True
@@ -180,27 +185,34 @@ def test_current_s603_helpers_preserve_fixed_execution_and_trust_boundaries() ->
 def test_external_argument_detector_rejects_direct_and_indirect_unvalidated_sources() -> None:
     fixture = ast.parse(
         """
+import argparse
 import os
 import sys
 from pathlib import Path
 
 def direct() -> None:
+    parser = argparse.ArgumentParser()
     _run(os.environ["ISSUE_VALUE"])
     _run(os.getenv("REQUEST_VALUE"))
     _run(sys.argv[1])
+    _run(parser.parse_args().value)
     _run(input())
     _run(open("external.txt").read())
     _run(Path("external.txt").read_text())
     _run(issue.body)
 
 def indirect() -> None:
+    parser = argparse.ArgumentParser()
     value = os.getenv("REQUEST_VALUE")
     alias = value
     filesystem_value = Path("external.txt").read_text()
     issue_value = issue.body
+    cli_args = parser.parse_args()
+    cli_value = cli_args.value
     _run(alias)
     _run(filesystem_value)
     _run(issue_value)
+    _run(cli_value)
 """
     )
     functions = [node for node in fixture.body if isinstance(node, ast.FunctionDef)]
