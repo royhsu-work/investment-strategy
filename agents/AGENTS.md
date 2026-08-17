@@ -119,6 +119,29 @@ eligible. Normal nonterminal routed workflow work also requires an open coordina
 nonterminal routing is contradictory durable state except for the existing narrow terminal-pending
 `Lead / finalize-archive` shape.
 
+A closed nonterminal Issue MAY be recovered automatically only as a bounded premature-close recovery
+candidate when durable reconstruction proves all of the following: it has a persisted non-`unset` Change
+identity and exactly one otherwise legal nonterminal routing tuple; matching lifecycle evidence proves the
+Change is unfinished; no authorized final Archive/native-close completion or `LIFECYCLE_COMPLETE` exists;
+no qualifying provenance-bound Human decision requires termination or non-resumption; and repository-wide
+reconstruction finds no other formal/terminal-pending workflow or second premature-close recovery
+candidate. A bare close event or actor identity is not qualifying Human termination authority.
+
+When exactly one premature-close recovery candidate satisfies those predicates, it blocks pre-activation
+intake and normal lifecycle execution. The governed recovery owner/action is `Lead / resolve-question`.
+The stale routed action MUST NOT execute its stale routed action while closed. Lead MAY reopen that same
+coordination Issue while preserving its immutable Change identity and pre-close nonterminal routing tuple.
+After reopening, Lead MUST fresh-read Issue state, routing, matching OpenSpec/PR lifecycle evidence, and
+repository-wide active cardinality. Recovery is complete only when the reopened Issue reconstructs as the
+single coherent formal active workflow and the preserved routing remains legal. The recovery invocation
+MUST NOT execute the preserved normal lifecycle action; a later wake dispatches from the freshly
+reconstructed preserved tuple.
+
+If any premature-close recovery predicate is missing, contradictory, Human-reserved, or would create
+multiple-active ambiguity, Scheduled roles MUST remain fail closed and MUST NOT reopen by inference. This
+bounded rule does not create a generic fault state machine, hidden recovery registry, cancellation
+lifecycle, or authority to undo a qualifying Human decision.
+
 Valid Human-admitted or repository-authorized open `Lead / explore-change` Issues and Human-admitted
 `Lead / propose-change` Issues with `Change: unset` are queued pre-activation work and MUST NOT count as
 an active formal workflow. Explore keeps `Change: unset` and does not create formal OpenSpec Change
