@@ -342,3 +342,29 @@ def test_selected_workflow_is_work_conserving_until_a_legal_termination_boundary
     assert "continue on a later run" not in implementation
     assert "remaining approved implementation work" in implementation
     assert "same invocation" in implementation
+
+
+def test_active_workflow_remains_wip_while_next_action_is_blocked() -> None:
+    text = _normalized(AGENTS)
+    for required in (
+        "execution eligibility",
+        "same formal active workflow",
+        "single formal WIP slot",
+        "active/terminal-pending workflow first",
+        "pre-activation intake",
+        "universal `blocked` result",
+    ):
+        assert required in text
+
+
+def test_dispatch_requires_complete_active_cardinality_before_queue_selection() -> None:
+    text = _normalized(AGENTS)
+    for required in (
+        "complete cardinality",
+        "terminal-pending and formal active workflows",
+        "before evaluating pre-activation queue",
+        "partial enumeration",
+        "MUST NOT",
+        "queued work",
+    ):
+        assert required in text
