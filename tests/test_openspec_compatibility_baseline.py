@@ -52,7 +52,7 @@ def test_validation_runs_executable_compatibility_harness() -> None:
         "complete-modified",
         "openspec validate",
         "surviving scenario",
-        "UPSTREAM_RELEASE = \"v1.9.0\"",
+        'UPSTREAM_RELEASE = "v1.9.0"',
         "2826b8889e5223a9a8095d4428b60b56597e1020",
     ):
         assert required in harness
