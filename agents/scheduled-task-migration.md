@@ -8,7 +8,7 @@ Current deployment note: the external product may retain multiple wake slots dur
 
 ## Flow visualization orientation
 
-GitHub Project/Kanban status, blocker views, and aging fields are presentation only. They may project durable repository workflow evidence for Human visibility, but GitHub Project/Kanban does not participate in Scheduled-Agent dispatch, routing, authority, or gate decisions. repository durable workflow state remains authoritative when a Project/Kanban projection disagrees with Issue routing/identity, PR/OpenSpec state, or exact gate evidence.
+GitHub Project/Kanban status, blocker views, and aging fields are presentation only. They may project durable repository workflow evidence for Human visibility, but they do not participate in Scheduled-Agent dispatch, routing, authority, or gate decisions. Repository durable workflow state remains authoritative when a Project/Kanban projection disagrees with Issue routing/identity, PR/OpenSpec state, or exact gate evidence.
 
 This orientation does not add Project-backed dispatch state, a blocker state machine, priority scoring, KPI supervision, or another synchronization surface.
 
