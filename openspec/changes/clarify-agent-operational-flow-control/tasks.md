@@ -26,9 +26,9 @@
 
 ## Slice 5 — Derived flow visualization boundary
 
-- [ ] RED: add or extend a governance regression proving Project/Kanban status cannot substitute for repository routing/identity/gate authority. Trace: requirement `Flow visualization is derived and non-authoritative`; design Decision 6.
-- [ ] GREEN: add only the minimum non-normative orientation needed to make the projection boundary explicit; do not create Project-backed dispatch state or KPI machinery. Trace: design Decision 6.
-- [ ] REFACTOR/VERIFY: confirm no new lifecycle state, blocker enum, priority engine, lease/heartbeat, hidden backlog, generic recovery state, or merge-authorization redesign entered the Change; run focused/full quality gates and strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
+- [x] RED: add or extend a governance regression proving Project/Kanban status cannot substitute for repository routing/identity/gate authority. Trace: requirement `Flow visualization is derived and non-authoritative`; design Decision 6.
+- [x] GREEN: add only the minimum non-normative orientation needed to make the projection boundary explicit; do not create Project-backed dispatch state or KPI machinery. Trace: design Decision 6.
+- [x] REFACTOR/VERIFY: confirm no new lifecycle state, blocker enum, priority engine, lease/heartbeat, hidden backlog, generic recovery state, or merge-authorization redesign entered the Change; run focused/full quality gates and strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
 
 ## Final verification
 
