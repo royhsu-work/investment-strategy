@@ -40,7 +40,9 @@ def test_no_governed_workflow_independently_pins_openspec() -> None:
 
 
 def test_validation_runs_executable_compatibility_harness() -> None:
-    assert COMPATIBILITY_HARNESS.is_file(), "qualified baseline needs executable compatibility fixtures"
+    assert COMPATIBILITY_HARNESS.is_file(), (
+        "qualified baseline needs executable compatibility fixtures"
+    )
     workflow = _read(VALIDATE_WORKFLOW)
     assert ".github/scripts/openspec_compatibility.py" in workflow
 
