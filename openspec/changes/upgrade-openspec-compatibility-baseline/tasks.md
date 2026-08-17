@@ -20,10 +20,10 @@ Trace: proposal `Why`, `What Changes` 3; R1 scenario `Modified requirement would
 
 ## 3. Slice: preserve exact Purpose safety across the upgrade
 
-- [ ] 3.1 RED: add/extend compatibility regression cases proving unexpected generated/blank/drifted Purpose results fail the repository archive postcondition and that valid new/existing capability Purpose outcomes remain accepted.
-- [ ] 3.2 GREEN: retain `purpose-snapshot` / `purpose-preserve` as the exact repository postcondition under 1.9.0 and adjust only version-specific implementation details that the compatibility cases prove obsolete.
-- [ ] 3.3 REFACTOR: remove duplicated workaround branches only where the exact Purpose invariant remains fully covered; keep unknown transformations fail-closed.
-- [ ] 3.4 VERIFY: run focused archive/Purpose tests, full Python Quality, exact OpenSpec validation, and the executable compatibility harness.
+- [x] 3.1 RED: add/extend compatibility regression cases proving unexpected generated/blank/drifted Purpose results fail the repository archive postcondition and that valid new/existing capability Purpose outcomes remain accepted.
+- [x] 3.2 GREEN: retain `purpose-snapshot` / `purpose-preserve` as the exact repository postcondition under 1.9.0 and adjust only version-specific implementation details that the compatibility cases prove obsolete.
+- [x] 3.3 REFACTOR: remove duplicated workaround branches only where the exact Purpose invariant remains fully covered; keep unknown transformations fail-closed.
+- [x] 3.4 VERIFY: run focused archive/Purpose tests, full Python Quality, exact OpenSpec validation, and the executable compatibility harness.
 
 Trace: proposal `What Changes` 3–4; R1 scenarios `Archive canonicalization changes Purpose unexpectedly`, `Upstream adds overlapping safety validation`; design D3.
 
