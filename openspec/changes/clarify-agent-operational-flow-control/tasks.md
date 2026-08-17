@@ -6,11 +6,11 @@
 - [ ] GREEN: make the minimum shared-governance/dispatcher contract changes needed to express formal WIP=1, finish-first scheduling, blocker-as-derived evidence, and cardinality-before-queue reconstruction without a global blocked state/label/result. Trace: design Decisions 1–3.
 - [ ] REFACTOR/VERIFY: keep Human/async/execution-exception reasons owned by their existing contracts; run focused tests, full pytest, Ruff, mypy, and strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
 
-## Slice 2 — Issue-state coherence and fail-closed contradiction
+## Slice 2 — Issue-state coherence and bounded premature-close recovery
 
-- [ ] RED: add regression coverage for the #40 failure class where a closed coordination Issue carries nonterminal routing, and prove only the existing terminal-pending `Lead / finalize-archive` closed shape is actionable. Trace: requirement `Active-workflow cardinality and Issue-state coherence precede queue selection`; design Decision 3.
-- [ ] GREEN: implement the smallest reconstruction guard that rejects closed/nonterminal workflow routing to the governed diagnosis/recovery owner without adding a new workflow fault state. Trace: design Decision 3.
-- [ ] REFACTOR/VERIFY: reuse existing routing/terminal-pending ownership and run focused/full quality gates plus strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
+- [ ] RED: add regression coverage for the #40 failure class where a closed coordination Issue carries nonterminal formal routing. Prove the stale routed action is not executable while closed; the existing terminal-pending `Lead / finalize-archive` closed shape remains the only normal closed actionable shape; one unambiguous unfinished premature-close candidate blocks pre-activation and selects bounded `Lead / resolve-question` recovery; and ambiguous/Human-terminated/multiple-candidate cases remain fail closed. Trace: requirement `Active-workflow cardinality and Issue-state coherence precede queue selection`; design Decision 3.
+- [ ] GREEN: implement the smallest reconstruction/recovery contract that (a) recognizes only the demonstrated closed-nonterminal formal-workflow predicate, (b) assigns its bounded diagnosis/reopen owner to `Lead / resolve-question`, (c) reopens only when durable unfinished-lifecycle, nonterminal routing, no-terminal-completion, no qualifying Human termination, and repository-wide uniqueness/cardinality preconditions all hold, and (d) preserves Change/routing then forces a fresh reconstruction before any later wake resumes the normal routed action. Do not add a generic workflow fault/recovery state. Trace: design Decision 3.
+- [ ] REFACTOR/VERIFY: reuse existing routing, Human-authority, terminal-pending, diagnosis, and same-Issue lifecycle evidence rather than adding recovery registries/tokens; prove the recovery invocation itself does not execute the preserved stale normal action; run focused/full quality gates plus strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
 
 ## Slice 3 — Required deferred follow-up becomes runnable pre-activation work
 
@@ -28,7 +28,7 @@
 
 - [ ] RED: add or extend a governance regression proving Project/Kanban status cannot substitute for repository routing/identity/gate authority. Trace: requirement `Flow visualization is derived and non-authoritative`; design Decision 6.
 - [ ] GREEN: add only the minimum non-normative orientation needed to make the projection boundary explicit; do not create Project-backed dispatch state or KPI machinery. Trace: design Decision 6.
-- [ ] REFACTOR/VERIFY: confirm no new lifecycle state, blocker enum, priority engine, lease/heartbeat, hidden backlog, or merge-authorization redesign entered the Change; run focused/full quality gates and strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
+- [ ] REFACTOR/VERIFY: confirm no new lifecycle state, blocker enum, priority engine, lease/heartbeat, hidden backlog, generic recovery state, or merge-authorization redesign entered the Change; run focused/full quality gates and strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
 
 ## Final verification
 
