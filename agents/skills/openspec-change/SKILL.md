@@ -33,7 +33,9 @@ If routing, change identity, active-workflow identity, or required evidence is c
 ## `propose-change`
 
 1. Confirm valid `Lead / propose-change` routing and the admission authority that legally produced it. Human direct-to-Propose admission MUST satisfy the provenance-bound Human-decision predicate for exactly `issue:<issue-number>:admission:lead:propose-change`. A same-Issue transition from a valid already-admitted Explore may instead rely on that Explore authority envelope when current governance authorizes direct continuation; do not manufacture a second Human admission requirement. Direct-to-Propose remains valid for Human direction that is already concrete/buildable; Explore is not a prerequisite.
-2. If `Change:` is unset, reconstruct formal active/terminal-pending workflow state and the shared combined pre-activation queue before persisting any Change identity. The procedure must reconstruct active workflow state before persisting an unset Change identity.
+   - If `Change: unset` and the admitted problem is valid but current evidence is not yet proposal-ready without inventing material requirements or approach meaning, persist that pre-activation readiness disposition and route the same Issue to `Lead / explore-change`. Keep `Change: unset`, preserve the same admission authority envelope, use the existing same-role continuation contract, and continue without a second Human admission or `HANDOFF` when immediately actionable.
+   - This fallback is pre-activation only. With a non-`unset` Change, Lead MUST NOT route backward to Explore; material specification ambiguity uses `Lead / resolve-question`.
+2. If `Change:` is unset and Propose remains proposal-ready, reconstruct formal active/terminal-pending workflow state and the shared combined pre-activation queue before persisting any Change identity. The procedure must reconstruct active workflow state before persisting an unset Change identity.
    - If a formal active/terminal-pending workflow exists, keep this Issue queued and perform no activation.
    - If multiple formal active workflows or contradictory durable identity evidence exist, fail closed.
    - If no formal active/terminal-pending workflow exists, combine valid Human-admitted open `Lead / explore-change + Change: unset`, valid repository-authorized open `Lead / explore-change + Change: unset`, and valid Human-admitted `Lead / propose-change + Change: unset` entries, then choose the winner by earliest GitHub `created_at`, then lower Issue number.
@@ -50,6 +52,7 @@ If routing, change identity, active-workflow identity, or required evidence is c
 Legal outcomes:
 
 - `READY_FOR_OPENSPEC_REVIEW` → hand off to `Reviewer / review-openspec`.
+- valid pre-activation direct-Propose that is not yet proposal-ready → retain the same Issue and authority envelope, route to `Lead / explore-change` with `Change: unset`, and use same-role continuation without `HANDOFF` or a second Human admission.
 - queued behind a formal active/terminal-pending workflow or an older combined pre-activation winner → retain `Lead / propose-change` without activation noise.
 - `SPECIFICATION_BLOCKED` or invalid/stale evidence → retain Lead; do not hand off as ready.
 
