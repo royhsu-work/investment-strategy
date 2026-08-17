@@ -57,7 +57,7 @@ The repository specification SHALL define the minimum checks and legal result ca
 - AND records revision-bound `PASS` or actionable `FINDINGS`
 - AND the procedural skill does not invent additional contract meaning to make the gate pass
 
-#### Scenario: Implementation review PASS routes directly to merge
+#### Scenario: Lead evaluates implementation merge authorization
 
 - GIVEN Reviewer recorded an unambiguous implementation PASS for exact revision R
 - AND the implementation PR is still at R
@@ -101,7 +101,7 @@ For implementation and implementation-correction PRs associated with a persisten
 
 For the final Archive PR, Executor SHALL verify before merge that the PR establishes the repository-approved closing linkage to the same persistent coordination Issue. That linkage is a final-lifecycle side effect only and MUST NOT substitute for Reviewer PASS, unchanged-head verification, current checks, pre-review lifecycle preparation, or any other merge precondition.
 
-#### Scenario: Accepted implementation revision remains current without closing linkage
+#### Scenario: Authorized implementation revision remains current without closing linkage
 
 - GIVEN Reviewer PASS exists for implementation revision R
 - AND the target PR head is still R
@@ -130,7 +130,7 @@ For the final Archive PR, Executor SHALL verify before merge that the PR establi
 - THEN Executor may execute the archive merge without a separate Lead authorization token
 - AND GitHub native Issue completion caused by that merge is treated only as the expected final lifecycle side effect
 
-#### Scenario: PR head changes after Reviewer PASS
+#### Scenario: PR head changes after authorization
 
 - GIVEN Reviewer accepted revision R1
 - AND the PR head is now R2
@@ -171,7 +171,7 @@ The normal validated `agent/archive-<change>` branch is a lifecycle artifact and
 - AND it does not require an attempted GitHub Actions PR-creation mutation
 - AND the branch is not a temporary recovery artifact
 
-#### Scenario: Lead creates and prepares the final Archive PR from a ready branch
+#### Scenario: Lead creates the final Archive PR from a ready branch
 
 - GIVEN the validated archive branch for the active Change is durably ready
 - AND no equivalent final Archive PR already exists
@@ -211,7 +211,7 @@ For an Archive PR merge, `Executor / merge-pr` SHALL fresh-read only the explici
 
 The workflow SHALL prefer this pre-close ordering over adding a generic post-close Executor route. The change MUST NOT introduce a new post-close action, broad Issue reopen lifecycle, hidden cleanup state, branch registry, or normal-archive-branch cleanup rule.
 
-#### Scenario: Safely deletable temporary branch exists before Archive review
+#### Scenario: Safely deletable temporary branch exists before Archive merge
 
 - GIVEN Lead reconstructs an explicitly provenance-owned temporary correction/recovery branch while preparing the final Archive PR
 - AND the branch is no longer an open PR head/base or active recovery input
