@@ -14,7 +14,7 @@ AGENTS = ROOT / "agents/AGENTS.md"
 
 
 def _run(*args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return subprocess.run(  # noqa: S603 - fixed interpreter and repository-owned script
         [sys.executable, str(SCRIPT), *args],
         cwd=ROOT,
         check=False,

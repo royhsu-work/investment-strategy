@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
+from typing import Any, cast
 
 from investment_strategy.configuration.resolver import StrategyConfigResolver
 from investment_strategy.data.calendar import TradingCalendar
@@ -60,12 +60,10 @@ class BacktestService:
             if request.mode is AssignmentMode.ACTIVE:
                 strategy, config = self._resolver.resolve_active(request.symbol)
             else:
-                assert request.strategy is not None
-                assert request.parameter_set is not None
                 strategy, config = self._resolver.resolve_explicit(
                     request.symbol,
-                    request.strategy,
-                    request.parameter_set,
+                    cast(str, request.strategy),
+                    cast(str, request.parameter_set),
                 )
 
             requirement = strategy.requirements()
