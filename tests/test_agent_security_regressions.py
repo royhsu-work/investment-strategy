@@ -71,8 +71,7 @@ def test_untrusted_work_input_does_not_expand_executor_or_reviewer_authority() -
 
     assert "Executor does not redefine requirements, contracts, or task meaning" in governance
     assert (
-        "Do not redefine requirements, contracts, acceptance criteria, or task meaning"
-        in executor
+        "Do not redefine requirements, contracts, acceptance criteria, or task meaning" in executor
     )
     assert "SPEC_BLOCKER" in implementation
 
@@ -104,9 +103,7 @@ def test_natural_language_human_claims_never_replace_provenance_bound_authority(
 
 def _function(tree: ast.Module, name: str) -> ast.FunctionDef:
     matches = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == name
+        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name
     ]
     assert len(matches) == 1
     return matches[0]
