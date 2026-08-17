@@ -102,6 +102,23 @@ An open coordination Issue with valid routing and a persisted non-`unset` `Chang
 active workflow. The repository permits at most one active workflow. A closed terminal-pending workflow
 is the narrow exception defined below.
 
+Execution eligibility is orthogonal to lifecycle state. A formal workflow whose next legal action cannot
+currently complete because required Human authority, exact CI/gate evidence, environment capability,
+dependency/conflict resolution, or another action-owned precondition is absent remains the same formal
+active workflow and continues to consume the single formal WIP slot. Existing action-specific wait,
+exception, escalation, result, and routing evidence explains the blocker; the repository does not create a
+universal `blocked` result, waiting taxonomy, or capacity-release lifecycle state. Formal scheduling remains
+finish-first: an active/terminal-pending workflow first, and pre-activation intake only when formal WIP is
+absent.
+
+Before evaluating pre-activation queue order or any derived blocker/priority/Project projection, dispatch
+MUST establish the complete cardinality of terminal-pending and formal active workflows from repository-
+wide durable state. A partial enumeration is not proof of zero. If complete cardinality cannot be
+established as exactly zero or one, dispatch MUST fail closed and MUST NOT infer that queued work is
+eligible. Normal nonterminal routed workflow work also requires an open coordination Issue; closed
+nonterminal routing is contradictory durable state except for the existing narrow terminal-pending
+`Lead / finalize-archive` shape.
+
 Valid Human-admitted or repository-authorized open `Lead / explore-change` Issues and Human-admitted
 `Lead / propose-change` Issues with `Change: unset` are queued pre-activation work and MUST NOT count as
 an active formal workflow. Explore keeps `Change: unset` and does not create formal OpenSpec Change
