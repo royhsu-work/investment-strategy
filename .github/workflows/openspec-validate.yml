@@ -5,11 +5,13 @@ on:
     paths:
       - "openspec/**"
       - ".github/openspec-version"
+      - ".github/scripts/openspec_compatibility.py"
       - ".github/workflows/openspec-validate.yml"
   pull_request:
     paths:
       - "openspec/**"
       - ".github/openspec-version"
+      - ".github/scripts/openspec_compatibility.py"
       - ".github/workflows/openspec-validate.yml"
   workflow_dispatch:
 
@@ -60,6 +62,9 @@ jobs:
 
       - name: Show OpenSpec version
         run: openspec --version
+
+      - name: Qualify executable compatibility
+        run: python .github/scripts/openspec_compatibility.py
 
       - name: Show active changes
         run: openspec list
