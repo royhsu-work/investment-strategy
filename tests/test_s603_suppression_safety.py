@@ -46,7 +46,10 @@ def _contains_unvalidated_external_source(node: ast.AST) -> bool:
 
 
 def _find_run_helper(tree: ast.Module) -> ast.FunctionDef:
-    helpers = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_run"]
+    helpers: list[ast.FunctionDef] = []
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "_run":
+            helpers.append(node)
     assert len(helpers) == 1
     return helpers[0]
 
