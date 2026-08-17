@@ -91,6 +91,22 @@ def test_required_separate_follow_up_is_directly_routed_to_explore() -> None:
         assert required in change
 
 
+def test_shared_explore_origin_set_is_reconstructable_across_all_approved_paths() -> None:
+    shared = _normalized(AGENTS)
+    for required in (
+        "approved origin classes",
+        "provenance-bound Human Explore admission",
+        "bounded idle-discovery repository authorization",
+        "approved required separate follow-up routed directly",
+        "same-Issue pre-activation direct-Propose fallback",
+        "preserves the still-valid original direct-Propose authority envelope",
+        "MUST NOT be reclassified as Human Explore admission",
+        "MUST NOT require or impersonate idle-discovery admission",
+        "complete approved origin set",
+    ):
+        assert required in shared
+
+
 def test_optional_or_plain_deferred_work_does_not_create_queue_admission() -> None:
     shared = _normalized(AGENTS)
     for required in (
