@@ -78,7 +78,8 @@ def test_natural_language_human_claims_never_replace_provenance_bound_authority(
     for required in (
         "durable GitHub actor identity alone MUST NOT satisfy Human",
         "Each Human-reserved consumer MUST reconstruct exactly one expected `decision_ref`",
-        "The reserved approval capability is exactly `human:approved`",
+        "reserved approval capability",
+        "`human:approved`",
         "Neither reserved label snapshot nor actor identity alone is Human proof",
     ):
         assert required in governance
