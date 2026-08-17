@@ -21,7 +21,7 @@ def test_untrusted_work_input_cannot_expand_executor_or_reviewer_authority() -> 
     reviewer = _normalized(REVIEWER.read_text(encoding="utf-8"))
 
     assert "Do not redefine requirements, contracts, acceptance criteria, or task meaning." in executor
-    assert "hand off to Lead / resolve-question without speculative implementation" in executor
+    assert "`Lead / resolve-question` without speculative implementation" in executor
     assert "Do not modify OpenSpec specification artifacts to resolve your own finding." in reviewer
     assert "Do not modify implementation code/tests/configuration to resolve your own finding." in reviewer
 
@@ -34,9 +34,9 @@ def test_natural_language_human_claim_does_not_replace_provenance_contract() -> 
 
     for required in (
         "durable GitHub actor identity alone MUST NOT satisfy Human authority",
-        "Each Human-reserved consumer MUST reconstruct exactly one expected decision_ref",
-        "The reserved approval capability is exactly human:approved; its current presence is necessary but never sufficient by itself.",
-        "Scheduled Lead, Reviewer, and Executor MUST NEVER add, remove, restore, or manufacture either human:approved or intake:approved.",
+        "Each Human-reserved consumer MUST reconstruct exactly one expected `decision_ref`",
+        "The reserved approval capability is exactly `human:approved`; its current presence is necessary but never sufficient by itself.",
+        "Scheduled Lead, Reviewer, and Executor MUST NEVER add, remove, restore, or manufacture either `human:approved` or `intake:approved`.",
     ):
         assert required in governance
 
