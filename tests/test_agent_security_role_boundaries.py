@@ -47,8 +47,8 @@ def test_natural_language_human_claim_does_not_replace_provenance_contract() -> 
             "is necessary but never sufficient by itself."
         ),
         (
-            "Scheduled Lead, Reviewer, and Executor MUST NEVER add, remove, restore, or manufacture "
-            "either `human:approved` or `intake:approved`."
+            "Scheduled Lead, Reviewer, and Executor MUST NEVER add, remove, restore, "
+            "or manufacture either `human:approved` or `intake:approved`."
         ),
     )
 
