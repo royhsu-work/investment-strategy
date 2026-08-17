@@ -10,7 +10,7 @@ The regression suite MUST verify role separation remains fail-closed when untrus
 
 When a security-lint suppression is retained because a concrete call site is safe only under explicit execution or trust assumptions that the enabled static rule cannot itself preserve, the repository MUST maintain deterministic regression evidence for the material assumptions needed to keep that suppression justified. Such evidence MUST remain scoped to demonstrated security-relevant suppressions and MUST NOT establish a generic suppression registry or a parallel static-security policy.
 
-For the current Ruff `S603` suppressed subprocess helpers introduced by the Ruff security change, deterministic regression evidence MUST preserve the current safety boundary that the executable is `sys.executable`, the invoked script is a repository-owned fixed target rather than caller-selected command/path input, shell execution is not introduced, and the suppressed command shape does not gain an arbitrary externally controlled command or script slot without a separately validated boundary.
+For the current Ruff `S603` suppressed subprocess helpers introduced by the Ruff security change, deterministic regression evidence MUST preserve the current safety boundary that the executable is `sys.executable`, the invoked script is a repository-owned fixed target rather than caller-selected command/path input, shell execution is not introduced, and ordinary subprocess argument values do not expand to arbitrary unvalidated request, Issue, environment, filesystem, CLI, or other external input behind the suppression. A separately validated boundary MAY permit a specific external argument only when that validation remains explicit and deterministic; the regression contract MUST fail when an unvalidated external argument is introduced even if the executable and script slots remain fixed.
 
 #### Scenario: Feature-branch governance cannot govern the current invocation
 
@@ -49,7 +49,9 @@ For the current Ruff `S603` suppressed subprocess helpers introduced by the Ruff
 - THEN the executable remains `sys.executable`
 - AND the script target remains repository-owned and fixed rather than caller-selected command or path input
 - AND shell execution is not enabled
-- AND an arbitrary externally controlled command or script slot cannot be introduced behind the suppression without causing the regression evidence to fail or requiring a separately validated boundary
+- AND ordinary subprocess argument values do not accept arbitrary unvalidated request, Issue, environment, filesystem, CLI, or other external input behind the suppression
+- AND introducing such an unvalidated external argument causes the regression evidence to fail even when the executable and script target remain unchanged
+- AND a specific external argument is allowed only through a separately explicit deterministic validation boundary
 
 #### Scenario: Ordinary lint suppressions do not create a registry obligation
 
