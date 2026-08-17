@@ -46,11 +46,7 @@ def _contains_unvalidated_external_source(node: ast.AST) -> bool:
 
 
 def _find_run_helper(tree: ast.Module) -> ast.FunctionDef:
-    helpers = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "_run"
-    ]
+    helpers = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_run"]
     assert len(helpers) == 1
     return helpers[0]
 
@@ -59,8 +55,7 @@ def _find_subprocess_run(helper: ast.FunctionDef) -> ast.Call:
     calls = [
         node
         for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and _attribute_path(node.func) == ("subprocess", "run")
+        if isinstance(node, ast.Call) and _attribute_path(node.func) == ("subprocess", "run")
     ]
     assert len(calls) == 1
     return calls[0]
@@ -132,9 +127,7 @@ def example() -> None:
     run_calls = [
         node
         for node in ast.walk(fixture)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "_run"
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_run"
     ]
 
     assert len(run_calls) == 4
