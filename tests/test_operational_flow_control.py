@@ -69,7 +69,7 @@ def test_required_separate_follow_up_is_directly_routed_to_explore() -> None:
         "source coordination Issue/Change",
         "exact defer decision/reference",
         "combined pre-activation queue",
-        "MUST NOT require a second idle-discovery admission step",
+        "MUST NOT require Human admission or a second idle-discovery admission step",
     ):
         assert required in shared
     for required in (
