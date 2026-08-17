@@ -56,3 +56,16 @@ def test_validation_runs_executable_compatibility_harness() -> None:
         "2826b8889e5223a9a8095d4428b60b56597e1020",
     ):
         assert required in harness
+
+
+def test_compatibility_harness_exercises_repository_purpose_postcondition() -> None:
+    harness = _read(COMPATIBILITY_HARNESS)
+    for required in (
+        "purpose-snapshot",
+        "purpose-preserve",
+        "valid-new-purpose",
+        "valid-existing-purpose",
+        "blank-purpose",
+        "drifted-purpose",
+    ):
+        assert required in harness
