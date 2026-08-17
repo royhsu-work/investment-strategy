@@ -8,13 +8,15 @@ This is an optional pre-Propose investigation action. It preserves the OpenSpec 
 
 Read default-branch governance and the Lead role, the coordination Issue, current routing, current repository/default-branch/OpenSpec/PR/Actions state, still-applicable durable Issue evidence, and relevant external evidence when needed.
 
-A valid Explore entry remains `Change: unset` with `agent:lead + action:explore-change`. It may be Human-admitted or repository-authorized under the shared admission contract. Human admission MUST satisfy the provenance-bound Human-decision predicate for exactly `issue:<issue-number>:admission:lead:explore-change`; actor identity or routing/label snapshots alone are insufficient. Repository-authorized Explore instead reconstructs the independent source rather than pretending to be Human authority: admission kind, observed default-branch revision where applicable, exact authority/evidence source, bounded problem, materiality, and why no Human-reserved decision is being made. Missing, stale, contradictory, merely descriptive, insufficient, or self-referential authority fails closed.
+A valid Explore entry remains `Change: unset` with `agent:lead + action:explore-change`. It may be Human-admitted, repository-authorized under the shared admission contract, or reached through the approved pre-activation Propose fallback. Human admission MUST satisfy the provenance-bound Human-decision predicate for exactly `issue:<issue-number>:admission:lead:explore-change`; actor identity or routing/label snapshots alone are insufficient. Repository-authorized Explore instead reconstructs the independent source rather than pretending to be Human authority: admission kind, observed default-branch revision where applicable, exact authority/evidence source, bounded problem, materiality, and why no Human-reserved decision is being made. Missing, stale, contradictory, merely descriptive, insufficient, or self-referential authority fails closed.
+
+For a pre-activation Propose fallback, reconstruct the same admitted authority envelope that legally admitted the `Change: unset + Lead / propose-change` entry. The fallback creates no new admission. It therefore needs no second Human admission, and Explore remains bounded to the same problem/authority envelope. When Explore later reaches in-envelope `PROPOSAL_READY`, it returns to `Lead / propose-change` under the normal same-role continuation contract.
 
 Human may still use the existing direct-to-Propose path for direction that is already concrete and buildable. Explore does not itself persist the formal Change identity.
 
 ## Repository-authorized admission evidence
 
-Repository-authorized Formal Explore is legal only at the bounded idle-discovery boundary and only when the shared governance independently supports one of these source classes:
+Repository-authorized Formal Explore is legal only when the shared governance independently supports one of these source classes and the applicable admission boundary permits consumption:
 
 - an applicable default-branch canonical MUST/SHALL requirement with a concrete material gap;
 - an approved required deferred follow-up with reconstructable source linkage;
@@ -28,7 +30,7 @@ Before materializing or consuming autonomous admission, deduplicate against open
 ## Investigation procedure
 
 1. Start with the problem before solution. Reconstruct the current system and evidence before treating a proposed mechanism, familiar pattern, or implementation-shaped request as a requirement.
-2. Validate the admitted authority envelope before relying on it. The Issue body is not the authority source for repository-authorized work; for Human admission, require the exact mapped decision reference and qualifying Human comment/approval event evidence.
+2. Validate the admitted authority envelope before relying on it. The Issue body is not the authority source for repository-authorized work; for Human admission, require the exact mapped decision reference and qualifying Human comment/approval event evidence. A valid pre-activation Propose fallback reuses, rather than recreates, the already admitted direct-Propose authority envelope.
 3. Investigate only what is needed to choose the next legal disposition: root cause, feasibility, scope boundary, relevant constraints, and meaningful alternatives/trade-offs when they can change the decision.
 4. Read/search repository evidence and relevant external evidence as needed. Use Lead's existing bounded blast-radius analysis for directly related contracts/surfaces, but do not turn Explore into a repository-wide correctness audit.
 5. Keep the work conversation-first and bounded. Explore MAY use simple diagrams or compact comparisons when useful, but it does not create a parallel artifact DAG or research-state machine.
@@ -38,7 +40,7 @@ Before materializing or consuming autonomous admission, deduplicate against open
 
 Explore MUST NOT create `openspec/changes/` artifacts, choose or persist a formal Change id, or author proposal/specs/design/tasks as an Explore output. Explore MUST NOT modify implementation code. `Change: unset` remains unchanged for the whole Explore action.
 
-Explore admission establishes a bounded authority envelope for the admitted problem. If decision-complete Explore reaches `PROPOSAL_READY` inside that envelope and introduces no new Human-reserved decision, Lead may route the same Issue to `Lead / propose-change` without a second generic Human proceed confirmation. Propose still owns formal activation and the immutable Change id.
+Explore admission establishes a bounded authority envelope for the admitted problem. If decision-complete Explore reaches `PROPOSAL_READY` inside that envelope and introduces no new Human-reserved decision, Lead may route the same Issue to `Lead / propose-change` without a second generic Human proceed confirmation. This includes Explore reached from the pre-activation Propose fallback: it returns to `Lead / propose-change` within the same admitted authority envelope and with no second Human admission. Propose still owns formal activation and the immutable Change id.
 
 Lead MUST instead use `HUMAN_DECISION_REQUIRED` for a new product/project direction outside the envelope, a material externally observable behavior or scope trade-off not already authorized, explicit risk acceptance, a materially different security/privacy/cost/operational commitment, contradictory/unrecoverable authority evidence, or materially changed default-branch governance/evidence that invalidates the admission basis. Ordinary technical approach selection within admitted constraints remains Lead-owned.
 
