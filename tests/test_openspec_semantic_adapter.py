@@ -9,6 +9,7 @@ CHANGE = AGENTS / "skills/openspec-change/SKILL.md"
 REVIEW = AGENTS / "skills/openspec-review/SKILL.md"
 IMPLEMENTATION = AGENTS / "skills/implementation/SKILL.md"
 CONFIG = ROOT / "openspec/config.yaml"
+VERSION = ROOT / ".github/openspec-version"
 
 
 def _read(path: Path) -> str:
@@ -38,9 +39,12 @@ def test_spec_driven_actions_share_one_adapter_without_new_runtime_authority() -
 
 def test_adapter_records_immutable_semantic_and_executable_provenance() -> None:
     adapter = _normalized(ADAPTER)
+    executable_version = _read(VERSION).strip()
+    assert executable_version == "1.9.0"
     assert "Fission-AI/OpenSpec@2826b8889e5223a9a8095d4428b60b56597e1020" in adapter
     assert "schemas/spec-driven/schema.yaml" in adapter
-    assert "@fission-ai/openspec@1.3.1" in adapter
+    assert f"@fission-ai/openspec@{executable_version}" in adapter
+    assert "@fission-ai/openspec@1.3.1" not in adapter
     assert "mutable upstream `main`" in adapter
     assert "material represented semantic contract no longer matches this baseline" in adapter
 
