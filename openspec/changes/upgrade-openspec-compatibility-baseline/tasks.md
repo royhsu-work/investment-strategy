@@ -29,15 +29,15 @@ Trace: proposal `What Changes` 3–4; R1 scenarios `Archive canonicalization cha
 
 ## 4. Slice: align executable compatibility provenance
 
-- [ ] 4.1 RED: add regression coverage proving the Scheduled-Agent semantic adapter records the qualified executable baseline distinctly from its immutable represented-schema provenance and fails if repository version references drift.
-- [ ] 4.2 GREEN: update the adapter's executable-baseline provenance to `1.9.0` while retaining represented upstream/schema provenance `2826b8889e5223a9a8095d4428b60b56597e1020` and existing semantic/runtime-authority boundaries.
-- [ ] 4.3 REFACTOR: remove stale `1.3.1` compatibility references in the bounded upgrade scope without rewriting historical archived provenance.
-- [ ] 4.4 VERIFY: run focused governance tests, full Python Quality, compatibility fixtures, and `openspec validate --all --strict --json --no-interactive` using the qualified baseline.
+- [x] 4.1 RED: add regression coverage proving the Scheduled-Agent semantic adapter records the qualified executable baseline distinctly from its immutable represented-schema provenance and fails if repository version references drift.
+- [x] 4.2 GREEN: update the adapter's executable-baseline provenance to `1.9.0` while retaining represented upstream/schema provenance `2826b8889e5223a9a8095d4428b60b56597e1020` and existing semantic/runtime-authority boundaries.
+- [x] 4.3 REFACTOR: remove stale `1.3.1` compatibility references in the bounded upgrade scope without rewriting historical archived provenance.
+- [x] 4.4 VERIFY: run focused governance tests, full Python Quality, compatibility fixtures, and `openspec validate --all --strict --json --no-interactive` using the qualified baseline.
 
 Trace: proposal `What Changes` 5; R1 executable-provenance paragraph and future-release scenario; design D4/D5.
 
 ## 5. Completion
 
-- [ ] 5.1 Confirm no implementation/archive workflow uses an independently hard-coded OpenSpec version outside the repository-owned qualified baseline.
-- [ ] 5.2 Confirm Human authority, role separation, exact-head validation, fail-closed archive behavior, and validated archive-branch ownership are unchanged.
-- [ ] 5.3 Run the full required verification set and resolve all OpenSpec strict-validation issues before declaring the Change ready for implementation review.
+- [x] 5.1 Confirm no implementation/archive workflow uses an independently hard-coded OpenSpec version outside the repository-owned qualified baseline.
+- [x] 5.2 Confirm Human authority, role separation, exact-head validation, fail-closed archive behavior, and validated archive-branch ownership are unchanged.
+- [x] 5.3 Run the full required verification set and resolve all OpenSpec strict-validation issues before declaring the Change ready for implementation review.
