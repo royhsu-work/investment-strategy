@@ -2,9 +2,9 @@
 
 ## Slice 1 — Active WIP and execution-eligibility reconstruction
 
-- [ ] RED: add focused regressions proving a formal active workflow remains the winner while its next action waits for required durable evidence, and proving incomplete active-workflow enumeration cannot fall through to pre-activation queue work. Trace: proposal `What Changes`; requirements `Operational execution eligibility remains orthogonal to lifecycle state` and `Active-workflow cardinality and Issue-state coherence precede queue selection`; design Decisions 1–3.
-- [ ] GREEN: make the minimum shared-governance/dispatcher contract changes needed to express formal WIP=1, finish-first scheduling, blocker-as-derived evidence, and cardinality-before-queue reconstruction without a global blocked state/label/result. Trace: design Decisions 1–3.
-- [ ] REFACTOR/VERIFY: keep Human/async/execution-exception reasons owned by their existing contracts; run focused tests, full pytest, Ruff, mypy, and strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
+- [x] RED: add focused regressions proving a formal active workflow remains the winner while its next action waits for required durable evidence, and proving incomplete active-workflow enumeration cannot fall through to pre-activation queue work. Trace: proposal `What Changes`; requirements `Operational execution eligibility remains orthogonal to lifecycle state` and `Active-workflow cardinality and Issue-state coherence precede queue selection`; design Decisions 1–3.
+- [x] GREEN: make the minimum shared-governance/dispatcher contract changes needed to express formal WIP=1, finish-first scheduling, blocker-as-derived evidence, and cardinality-before-queue reconstruction without a global blocked state/label/result. Trace: design Decisions 1–3.
+- [x] REFACTOR/VERIFY: keep Human/async/execution-exception reasons owned by their existing contracts; run focused tests, full pytest, Ruff, mypy, and strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
 
 ## Slice 2 — Issue-state coherence and bounded premature-close recovery
 
