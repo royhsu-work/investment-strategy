@@ -347,7 +347,7 @@ def test_selected_workflow_is_work_conserving_until_a_legal_termination_boundary
 def test_active_workflow_remains_wip_while_next_action_is_blocked() -> None:
     text = _normalized(AGENTS)
     for required in (
-        "execution eligibility",
+        "Execution eligibility",
         "same formal active workflow",
         "single formal WIP slot",
         "active/terminal-pending workflow first",
@@ -362,7 +362,7 @@ def test_dispatch_requires_complete_active_cardinality_before_queue_selection() 
     for required in (
         "complete cardinality",
         "terminal-pending and formal active workflows",
-        "before evaluating pre-activation queue",
+        "Before evaluating pre-activation queue",
         "partial enumeration",
         "MUST NOT",
         "queued work",
