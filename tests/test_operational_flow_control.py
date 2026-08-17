@@ -109,9 +109,8 @@ def test_unset_direct_propose_may_fall_back_to_explore_without_second_admission(
         "Change: unset",
         "not yet proposal-ready",
         "route the same Issue to `Lead / explore-change`",
-        "without a second Human admission",
+        "without a second Human admission or `HANDOFF`",
         "same-role continuation",
-        "no `HANDOFF`",
     ):
         assert required in change
     for required in (
