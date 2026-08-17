@@ -11,8 +11,11 @@ REQUIREMENT = "Preserve surviving scenarios"
 
 
 def _run(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603 - fixed OpenSpec executable with repository-owned fixture arguments
-        ["openspec", *args],
+    executable = shutil.which("openspec")
+    if executable is None:
+        raise SystemExit("openspec executable is not installed")
+    return subprocess.run(  # noqa: S603 - resolved executable and repository-owned fixture args
+        [executable, *args],
         cwd=root,
         check=False,
         capture_output=True,
@@ -46,12 +49,16 @@ The system SHALL preserve every still-applicable scenario when a requirement is 
 
 
 def _delta(*, complete: bool) -> str:
-    surviving = """
+    surviving = (
+        """
 
 #### Scenario: Surviving scenario
 - **WHEN** a MODIFIED delta changes the requirement
 - **THEN** this surviving scenario remains present
-""" if complete else ""
+"""
+        if complete
+        else ""
+    )
     return f"""## Purpose
 
 Executable compatibility fixture.
@@ -75,10 +82,14 @@ def _artifact_files(change: Path) -> None:
         "## What Changes\n\n- Preserve all scenarios in a MODIFIED requirement.\n\n"
         "## Impact\n\n- Test fixture only.\n",
     )
-    _write(change / "design.md", "# Design\n\nUse the smallest executable compatibility fixture.\n")
+    _write(
+        change / "design.md",
+        "# Design\n\nUse the smallest executable compatibility fixture.\n",
+    )
     _write(
         change / "tasks.md",
-        "# Tasks\n\n## 1. Compatibility\n\n- [x] 1.1 Validate the executable compatibility fixture.\n",
+        "# Tasks\n\n## 1. Compatibility\n\n"
+        "- [x] 1.1 Validate the executable compatibility fixture.\n",
     )
 
 
@@ -97,10 +108,10 @@ def _fixture(root: Path) -> tuple[Path, Path]:
 
 
 def main() -> int:
-    # The qualification intentionally executes `openspec validate` rather than reproducing OpenSpec parsing.
+    # Execute `openspec validate`; do not reproduce OpenSpec parsing in repository code.
     with tempfile.TemporaryDirectory(prefix="openspec-compat-") as directory:
         root = Path(directory)
-        incomplete, complete = _fixture(root)
+        incomplete, _complete = _fixture(root)
 
         rejected = _run(
             root,
@@ -115,7 +126,7 @@ def main() -> int:
         rejected_output = f"{rejected.stdout}\n{rejected.stderr}".lower()
         if rejected.returncode == 0 or "scenario" not in rejected_output:
             raise SystemExit(
-                "incomplete-modified must be rejected specifically for dropping a surviving scenario; "
+                "incomplete-modified must be rejected for dropping a surviving scenario; "
                 f"exit={rejected.returncode}\n{rejected.stdout}\n{rejected.stderr}"
             )
 
@@ -143,12 +154,15 @@ def main() -> int:
                 f"exit={archived.returncode}\n{archived.stdout}\n{archived.stderr}"
             )
 
-        canonical = (root / "openspec/specs/compatibility/spec.md").read_text(encoding="utf-8")
-        if canonical.count("#### Scenario:") != 2 or "#### Scenario: Surviving scenario" not in canonical:
+        canonical_path = root / "openspec/specs/compatibility/spec.md"
+        canonical = canonical_path.read_text(encoding="utf-8")
+        surviving = "#### Scenario: Surviving scenario"
+        if canonical.count("#### Scenario:") != 2 or surviving not in canonical:
             raise SystemExit("archive canonicalization lost the surviving scenario")
         if (root / "openspec/changes/complete-modified").exists():
             raise SystemExit("archive left the complete-modified change active")
-        if not list((root / "openspec/changes/archive").glob("*-complete-modified")):
+        archive_root = root / "openspec/changes/archive"
+        if not list(archive_root.glob("*-complete-modified")):
             raise SystemExit("archive did not produce the expected archived change directory")
 
     print(f"qualified OpenSpec {UPSTREAM_RELEASE} at {UPSTREAM_COMMIT}")
