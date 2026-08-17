@@ -29,7 +29,13 @@ The repository MUST NOT introduce a universal `blocked` result, waiting-state ta
 
 Scheduled dispatch SHALL establish the complete cardinality of terminal-pending and formal active workflows before evaluating pre-activation queue order, blocker projection, priority, or Project/Kanban state.
 
-If active-workflow cardinality cannot be established as exactly zero or one, dispatch MUST fail closed and MUST NOT infer that queued work is eligible. Normal nonterminal routed workflow work MUST have an open coordination Issue. A closed Issue with nonterminal routing is contradictory durable state except for the existing narrow terminal-pending `Lead / finalize-archive` shape and MUST fail closed to the governed diagnosis/recovery owner.
+If active-workflow cardinality cannot be established as exactly zero or one, dispatch MUST fail closed and MUST NOT infer that queued work is eligible. Normal nonterminal routed workflow work MUST have an open coordination Issue. A closed Issue with nonterminal routing is contradictory durable state except for the existing narrow terminal-pending `Lead / finalize-archive` shape and MUST NOT execute its stale routed action while closed.
+
+A closed nonterminal Issue MAY be recovered automatically only for the demonstrated premature-close class when durable reconstruction proves all of the following: the Issue has a persisted non-`unset` Change and exactly one otherwise legal nonterminal routing tuple; matching durable lifecycle evidence proves the Change is unfinished; no authorized final Archive/native-close completion or `LIFECYCLE_COMPLETE` exists; no qualifying provenance-bound Human decision requires termination/non-resumption; and repository-wide reconstruction finds no other normal formal/terminal-pending workflow or second premature-close recovery candidate. A bare Issue close event or actor identity MUST NOT by itself count as qualifying Human termination authority.
+
+When exactly one such premature-close recovery candidate exists, it MUST block pre-activation intake and normal lifecycle execution. The governed recovery owner/action SHALL be `Lead / resolve-question`. Lead MAY reopen that same coordination Issue while preserving its immutable Change identity and pre-close nonterminal routing tuple. After reopening, Lead MUST fresh-read Issue state, routing, matching OpenSpec/PR lifecycle evidence, and repository-wide active cardinality. Recovery is complete only when the reopened Issue reconstructs as the single coherent formal active workflow and the preserved routing tuple remains legal. The recovery invocation MUST NOT execute the preserved normal lifecycle action; a later wake MUST dispatch from the freshly reconstructed normal tuple.
+
+If any recovery predicate is missing, contradictory, Human-reserved, or would create multiple-active ambiguity, Scheduled roles MUST remain fail closed and MUST NOT reopen by inference. This bounded recovery MUST NOT create a generic fault state machine, hidden recovery registry, cancellation lifecycle, or authority to undo a qualifying Human decision.
 
 #### Scenario: One active workflow is missed by a partial search
 
@@ -39,14 +45,28 @@ If active-workflow cardinality cannot be established as exactly zero or one, dis
 - THEN dispatch does not treat the partial query as proof of zero active workflows
 - AND pre-activation work cannot be selected until repository-wide active cardinality is established
 
-#### Scenario: Nonterminal workflow Issue is closed prematurely
+#### Scenario: Nonterminal workflow Issue is closed prematurely and safely recoverable
 
-- GIVEN a coordination Issue has nonterminal formal routing
+- GIVEN a coordination Issue has a persisted non-`unset` Change and exactly one otherwise legal nonterminal routing tuple
 - AND the Issue is closed outside the authorized terminal Archive boundary
+- AND durable lifecycle evidence proves the Change remains unfinished
+- AND no qualifying provenance-bound Human decision requires termination or non-resumption
+- AND repository-wide reconstruction finds no other formal/terminal-pending workflow or premature-close recovery candidate
 - WHEN scheduled dispatch reconstructs workflow state
-- THEN the state is contradictory
-- AND scheduled roles do not continue normal lifecycle mutation on that closed Issue
-- AND the condition fails closed to governed diagnosis/recovery
+- THEN the stale routed action is not executed while the Issue is closed
+- AND pre-activation work is not selected
+- AND `Lead / resolve-question` owns the bounded recovery
+- AND Lead may reopen the same Issue without changing its immutable Change identity or preserved nonterminal routing tuple
+- AND Lead fresh-reconstructs repository-wide cardinality and routing after reopening before any normal lifecycle action may resume
+- AND the recovery invocation does not execute the preserved normal action
+
+#### Scenario: Premature close cannot be recovered unambiguously
+
+- GIVEN a closed nonterminal coordination Issue has missing or contradictory lifecycle evidence, a qualifying Human termination decision, another formal/terminal-pending workflow, or another premature-close recovery candidate
+- WHEN recovery eligibility is evaluated
+- THEN Scheduled roles remain fail closed
+- AND Lead does not reopen the Issue by inference
+- AND the repository uses existing diagnosis or Human-escalation semantics rather than creating a generic recovery state
 
 ### Requirement: Required separate follow-up is directly queueable for fresh Explore revalidation
 
