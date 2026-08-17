@@ -2,9 +2,9 @@
 
 ## Slice 1 — Default-branch authority and untrusted-input fixtures
 
-- [ ] RED: add focused deterministic tests proving current default-branch governance/role/skill authority wins over representative conflicting feature-branch, Issue/PR/comment/source/external/prior-conversation/Scheduled-Task fixture text. Trace: proposal `What Changes`; spec `Agent security boundaries have deterministic regression coverage`; design `Slice A — Authority-source boundary`.
-- [ ] GREEN: add the minimum fixture/helper/test structure needed to express those authority-source cases without introducing runtime policy code or a second governance source. Trace: design `Test model` and `Ownership boundary`.
-- [ ] REFACTOR/VERIFY: keep assertions anchored to canonical default-branch ownership surfaces; run focused tests, full pytest, Ruff, mypy, and strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
+- [x] RED: add focused deterministic tests proving current default-branch governance/role/skill authority wins over representative conflicting feature-branch, Issue/PR/comment/source/external/prior-conversation/Scheduled-Task fixture text. Trace: proposal `What Changes`; spec `Agent security boundaries have deterministic regression coverage`; design `Slice A — Authority-source boundary`.
+- [x] GREEN: add the minimum fixture/helper/test structure needed to express those authority-source cases without introducing runtime policy code or a second governance source. Trace: design `Test model` and `Ownership boundary`.
+- [x] REFACTOR/VERIFY: keep assertions anchored to canonical default-branch ownership surfaces; run focused tests, full pytest, Ruff, mypy, and strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
 
 ## Slice 2 — Role and Human authority under conflicting work input
 
