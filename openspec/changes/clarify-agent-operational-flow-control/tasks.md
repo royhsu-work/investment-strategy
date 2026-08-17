@@ -14,9 +14,9 @@
 
 ## Slice 3 — Required deferred follow-up becomes runnable pre-activation work
 
-- [ ] RED: add regressions proving an explicit approved required-separate defer decision creates/reuses one source-linked `Change: unset + Lead / explore-change` tracker, while optional/non-goal/deferred prose does not create workflow admission. Trace: requirement `Required separate follow-up is directly queueable for fresh Explore revalidation`; design Decision 4.
-- [ ] GREEN: update the Lead-owned defer-tracking path to materialize/reuse and route the required tracker idempotently into the existing combined pre-activation queue; do not create another backlog/status vocabulary. Trace: design Decision 4.
-- [ ] REFACTOR/VERIFY: deduplicate the later idle-discovery/re-admission handling that becomes unnecessary for newly created required trackers while preserving reconstruction of historical trackers; run focused/full quality gates and strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
+- [x] RED: add regressions proving an explicit approved required-separate defer decision creates/reuses one source-linked `Change: unset + Lead / explore-change` tracker, while optional/non-goal/deferred prose does not create workflow admission. Trace: requirement `Required separate follow-up is directly queueable for fresh Explore revalidation`; design Decision 4.
+- [x] GREEN: update the Lead-owned defer-tracking path to materialize/reuse and route the required tracker idempotently into the existing combined pre-activation queue; do not create another backlog/status vocabulary. Trace: design Decision 4.
+- [x] REFACTOR/VERIFY: deduplicate the later idle-discovery/re-admission handling that becomes unnecessary for newly created required trackers while preserving reconstruction of historical trackers; run focused/full quality gates and strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
 
 ## Slice 4 — Pre-activation Propose fallback to Explore
 
