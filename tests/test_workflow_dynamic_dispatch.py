@@ -123,7 +123,10 @@ def test_combined_intake_is_deterministic_and_refuses_later_propose_activation()
         "every legally reconstructed open `Lead / explore-change + Change: unset` entry",
         "approved Explore-origin set",
         "`Lead / propose-change + Change: unset` entry participates in the same combined queue",
-        "A later proposal-ready direct-Propose Issue MUST NOT activate while an older valid Explore candidate",
+        (
+            "A later proposal-ready direct-Propose Issue MUST NOT activate while an older "
+            "valid Explore candidate"
+        ),
         "same-Issue direct-Propose fallback preserving its original authority envelope",
         "re-read durable state and require this Issue to remain the combined pre-activation winner",
     ):
