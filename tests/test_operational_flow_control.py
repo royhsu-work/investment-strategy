@@ -107,6 +107,21 @@ def test_shared_explore_origin_set_is_reconstructable_across_all_approved_paths(
         assert required in shared
 
 
+def test_propose_activation_consumes_complete_shared_explore_origin_set() -> None:
+    change = _normalized(OPEN_SPEC_CHANGE)
+    for required in (
+        "complete shared pre-activation candidate-set contract",
+        "every legally reconstructed open `Lead / explore-change + Change: unset` entry",
+        "approved Explore-origin set",
+        "Do not maintain or infer a narrower action-local Explore-origin enumeration",
+        "same-Issue direct-Propose fallback preserving its original authority envelope",
+        "MUST NOT activate while an older valid Explore candidate",
+        "deterministic combined pre-activation winner",
+    ):
+        assert required in change
+    assert "combine valid Human-admitted open `Lead / explore-change + Change: unset`" not in change
+
+
 def test_optional_or_plain_deferred_work_does_not_create_queue_admission() -> None:
     shared = _normalized(AGENTS)
     for required in (
