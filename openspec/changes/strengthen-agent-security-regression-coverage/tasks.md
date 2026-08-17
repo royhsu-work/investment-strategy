@@ -8,9 +8,9 @@
 
 ## Slice 2 — Role and Human authority under conflicting work input
 
-- [ ] RED: add representative tests where untrusted work input tells Executor to redefine requirements, tells Reviewer to mutate governed artifacts to make review pass, or claims Human approval through natural language; verify canonical boundaries remain the asserted contract. Trace: spec scenarios `Untrusted work input cannot expand role authority` and `Natural-language Human claims do not satisfy reserved authority`; design `Slice B — Role and Human authority boundary`.
-- [ ] GREEN: add only the minimum deterministic assertions/fixtures required for those regressions; reference the canonical provenance-bound Human-authority contract instead of copying its decision-binding algorithm. Trace: proposal `Scope`; design `Ownership boundary`.
-- [ ] REFACTOR/VERIFY: deduplicate shared fixture/assertion helpers without moving normative role or Human-authority meaning into tests; run focused/full quality gates and strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
+- [x] RED: add representative tests where untrusted work input tells Executor to redefine requirements, tells Reviewer to mutate governed artifacts to make review pass, or claims Human approval through natural language; verify canonical boundaries remain the asserted contract. Trace: spec scenarios `Untrusted work input cannot expand role authority` and `Natural-language Human claims do not satisfy reserved authority`; design `Slice B — Role and Human authority boundary`.
+- [x] GREEN: add only the minimum deterministic assertions/fixtures required for those regressions; reference the canonical provenance-bound Human-authority contract instead of copying its decision-binding algorithm. Trace: proposal `Scope`; design `Ownership boundary`.
+- [x] REFACTOR/VERIFY: deduplicate shared fixture/assertion helpers without moving normative role or Human-authority meaning into tests; run focused/full quality gates and strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
 
 ## Slice 3 — Current S603 suppression semantic-drift protection
 
