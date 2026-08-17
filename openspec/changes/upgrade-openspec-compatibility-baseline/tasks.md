@@ -11,10 +11,10 @@ Trace: proposal `What Changes` 1–2; R1 scenarios `Validation and archive use t
 
 ## 2. Slice: qualify MODIFIED and archive semantics under 1.9.0
 
-- [ ] 2.1 RED: add executable compatibility fixtures that demonstrate the target safety expectations for incomplete versus complete `MODIFIED` requirements and archive/canonical-spec shape; prove the new compatibility assertions fail before their harness/behavior is present rather than from fixture/setup errors.
-- [ ] 2.2 GREEN: implement the smallest deterministic compatibility harness using the repository-pinned OpenSpec CLI and make the 1.9.0 cases pass, including rejection of a surviving-scenario omission before successful archive.
-- [ ] 2.3 REFACTOR: keep fixtures minimal and behavior-oriented; do not reproduce OpenSpec parsing/schema logic in repository code.
-- [ ] 2.4 VERIFY: run compatibility cases plus full Python Quality and strict OpenSpec validation; record immutable upstream release/commit provenance used by the qualification.
+- [x] 2.1 RED: add executable compatibility fixtures that demonstrate the target safety expectations for incomplete versus complete `MODIFIED` requirements and archive/canonical-spec shape; prove the new compatibility assertions fail before their harness/behavior is present rather than from fixture/setup errors.
+- [x] 2.2 GREEN: implement the smallest deterministic compatibility harness using the repository-pinned OpenSpec CLI and make the 1.9.0 cases pass, including rejection of a surviving-scenario omission before successful archive.
+- [x] 2.3 REFACTOR: keep fixtures minimal and behavior-oriented; do not reproduce OpenSpec parsing/schema logic in repository code.
+- [x] 2.4 VERIFY: run compatibility cases plus full Python Quality and strict OpenSpec validation; record immutable upstream release/commit provenance used by the qualification.
 
 Trace: proposal `Why`, `What Changes` 3; R1 scenario `Modified requirement would lose a surviving scenario`; design D2/D4.
 
