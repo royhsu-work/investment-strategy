@@ -4,10 +4,14 @@ on:
   push:
     paths:
       - "openspec/**"
+      - ".github/openspec-version"
+      - ".github/scripts/openspec_compatibility.py"
       - ".github/workflows/openspec-validate.yml"
   pull_request:
     paths:
       - "openspec/**"
+      - ".github/openspec-version"
+      - ".github/scripts/openspec_compatibility.py"
       - ".github/workflows/openspec-validate.yml"
   workflow_dispatch:
 
@@ -46,11 +50,21 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install OpenSpec
-        run: npm install -g @fission-ai/openspec@1.3.1
+      - name: Install qualified OpenSpec baseline
+        shell: bash
+        run: |
+          openspec_version="$(tr -d '[:space:]' < .github/openspec-version)"
+          [[ "$openspec_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::Invalid .github/openspec-version: $openspec_version"
+            exit 1
+          }
+          npm install -g "@fission-ai/openspec@$openspec_version"
 
       - name: Show OpenSpec version
         run: openspec --version
+
+      - name: Qualify executable compatibility
+        run: python .github/scripts/openspec_compatibility.py
 
       - name: Show active changes
         run: openspec list

@@ -9,7 +9,7 @@ Load this reference only from the default branch after the Change that introduce
 - Configured repository schema: `spec-driven`.
 - Represented upstream source: `Fission-AI/OpenSpec@2826b8889e5223a9a8095d4428b60b56597e1020`.
 - Represented schema source: `schemas/spec-driven/schema.yaml`.
-- Executable OpenSpec baseline observed when this adapter was adopted: `@fission-ai/openspec@1.3.1`.
+- Qualified executable OpenSpec baseline: `@fission-ai/openspec@1.9.0`.
 
 The upstream commit/path above is immutable provenance. Do not substitute mutable upstream `main`, model memory, or a different schema. If the configured schema or a material represented semantic contract no longer matches this baseline, fail closed until a governed reassessment updates this reference. Executable-version upgrade/compatibility work remains separate from this semantic adapter.
 
