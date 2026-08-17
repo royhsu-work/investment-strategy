@@ -6,6 +6,12 @@ Each external Scheduled Task uses a common bootstrap prompt: read `README.md` an
 
 Current deployment note: the external product may retain multiple wake slots during migration, but that is informational deployment history rather than repository governance. Exact slot count/topology/cadence is external product configuration, outside repository capability/runtime state, and is not modeled as durable workflow state or a permanent minimum-slot requirement.
 
+## Flow visualization orientation
+
+GitHub Project/Kanban status, blocker views, and aging fields are presentation only. They may project durable repository workflow evidence for Human visibility, but they do not participate in Scheduled-Agent dispatch, routing, authority, or gate decisions. Repository durable workflow state remains authoritative when a Project/Kanban projection disagrees with Issue routing/identity, PR/OpenSpec state, or exact gate evidence.
+
+This orientation does not add Project-backed dispatch state, a blocker state machine, priority scoring, KPI supervision, or another synchronization surface.
+
 ## Canonical message activation
 
 Repository execution authority comes only from the default branch. The default-branch merge is the activation boundary for canonical workflow-message presentation. An unmerged governance PR that introduces `agents/templates/messages.md` or role/skill references is review target/input and must not govern its own current invocation; bootstrap continues to load the then-authoritative default-branch governance.

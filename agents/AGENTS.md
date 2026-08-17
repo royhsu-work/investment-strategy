@@ -102,27 +102,76 @@ An open coordination Issue with valid routing and a persisted non-`unset` `Chang
 active workflow. The repository permits at most one active workflow. A closed terminal-pending workflow
 is the narrow exception defined below.
 
-Valid Human-admitted or repository-authorized open `Lead / explore-change` Issues and Human-admitted
-`Lead / propose-change` Issues with `Change: unset` are queued pre-activation work and MUST NOT count as
-an active formal workflow. Explore keeps `Change: unset` and does not create formal OpenSpec Change
-artifacts. Formal activation remains owned by Propose when Lead persists the immutable non-`unset` Change
-identity.
+Execution eligibility is orthogonal to lifecycle state. A formal workflow whose next legal action cannot
+currently complete because required Human authority, exact CI/gate evidence, environment capability,
+dependency/conflict resolution, or another action-owned precondition is absent remains the same formal
+active workflow and continues to consume the single formal WIP slot. Existing action-specific wait,
+exception, escalation, result, and routing evidence explains the blocker; the repository does not create a
+universal `blocked` result, waiting taxonomy, or capacity-release lifecycle state. Formal scheduling remains
+finish-first: an active/terminal-pending workflow first, and pre-activation intake only when formal WIP is
+absent.
+
+Before evaluating pre-activation queue order or any derived blocker/priority/Project projection, dispatch
+MUST establish the complete cardinality of terminal-pending and formal active workflows from repository-
+wide durable state. A partial enumeration is not proof of zero. If complete cardinality cannot be
+established as exactly zero or one, dispatch MUST fail closed and MUST NOT infer that queued work is
+eligible. Normal nonterminal routed workflow work also requires an open coordination Issue; closed
+nonterminal routing is contradictory durable state except for the existing narrow terminal-pending
+`Lead / finalize-archive` shape.
+
+A closed nonterminal Issue MAY be recovered automatically only as a bounded premature-close recovery
+candidate when durable reconstruction proves all of the following: it has a persisted non-`unset` Change
+identity and exactly one otherwise legal nonterminal routing tuple; matching lifecycle evidence proves the
+Change is unfinished; no authorized final Archive/native-close completion or `LIFECYCLE_COMPLETE` exists;
+no qualifying provenance-bound Human decision requires termination or non-resumption; and repository-wide
+reconstruction finds no other formal/terminal-pending workflow or second premature-close recovery
+candidate. A bare close event or actor identity is not qualifying Human termination authority.
+
+When exactly one premature-close recovery candidate satisfies those predicates, it blocks pre-activation
+intake and normal lifecycle execution. The governed recovery owner/action is `Lead / resolve-question`.
+The stale routed action MUST NOT execute its stale routed action while closed. Lead MAY reopen that same
+coordination Issue while preserving its immutable Change identity and pre-close nonterminal routing tuple.
+After reopening, Lead MUST fresh-read Issue state, routing, matching OpenSpec/PR lifecycle evidence, and
+repository-wide active cardinality. Recovery is complete only when the reopened Issue reconstructs as the
+single coherent formal active workflow and the preserved routing remains legal. The recovery invocation
+MUST NOT execute the preserved normal lifecycle action; a later wake dispatches from the freshly
+reconstructed preserved tuple.
+
+If any premature-close recovery predicate is missing, contradictory, Human-reserved, or would create
+multiple-active ambiguity, Scheduled roles MUST remain fail closed and MUST NOT reopen by inference. This
+bounded rule does not create a generic fault state machine, hidden recovery registry, cancellation
+lifecycle, or authority to undo a qualifying Human decision.
+
+Open `Lead / explore-change + Change: unset` entries are legal queued pre-activation work only when their
+origin is reconstructable as exactly one of the approved origin classes: provenance-bound Human Explore
+admission; bounded idle-discovery repository authorization; an approved required separate follow-up routed
+directly from its source-linked defer decision; or a same-Issue pre-activation direct-Propose fallback that
+preserves the still-valid original direct-Propose authority envelope. Human-admitted `Lead / propose-change`
+Issues with `Change: unset` are also queued pre-activation work. None of these entries count as an active
+formal workflow. Explore keeps `Change: unset` and creates no formal OpenSpec Change artifacts. Formal
+activation remains owned by Propose when Lead persists the immutable non-`unset` Change identity.
 
 Human-admitted Explore and direct-Propose entries are valid only when the corresponding Human-reserved
 admission decision satisfies the provenance-bound Human authority contract below. Their exact expected
 references are `issue:<issue-number>:admission:lead:explore-change` and
 `issue:<issue-number>:admission:lead:propose-change`, respectively. Actor identity or routing state alone
-MUST NOT satisfy Human admission.
+MUST NOT satisfy Human admission. A same-Issue direct-Propose fallback to Explore preserves the already
+validated direct-Propose authority envelope and MUST NOT be reclassified as Human Explore admission or
+require a second `issue:<issue-number>:admission:lead:explore-change` decision.
 
-Repository-authorized Explore admission is permitted only from the bounded idle-discovery boundary defined
-below. Its Issue MUST record reconstructable admission evidence, but that Agent-created Issue is not its own
-authority source. Later reconstruction validates the independent cited source/materiality fail closed.
+Idle-discovery repository-authorized Explore admission is permitted only from the bounded idle-discovery
+boundary defined below. Its Issue MUST record reconstructable admission evidence, but that Agent-created
+Issue is not its own authority source. Later reconstruction validates the independent cited
+source/materiality fail closed. Required-separate-follow-up direct routing is a distinct repository-
+authorized origin governed by the approved source defer decision and exact linkage contract below; it
+MUST NOT require or impersonate idle-discovery admission.
 
-When no formal active or terminal-pending workflow exists, valid admitted `Lead / explore-change` entries
-and Human-admitted `Lead / propose-change` entries participate in one combined pre-activation queue ordered
-by earliest GitHub `created_at`, then lower Issue number. A formal active or terminal-pending workflow must
-win over pre-activation intake. The selected Issue's current routing determines whether Lead executes
-Explore or Propose; there is no `explore-change > propose-change` priority inside this combined queue.
+When no formal active or terminal-pending workflow exists, every valid `Lead / explore-change` entry from
+the complete approved origin set above and every Human-admitted `Lead / propose-change` entry participate
+in one combined pre-activation queue ordered by earliest GitHub `created_at`, then lower Issue number. A
+formal active or terminal-pending workflow must win over pre-activation intake. The selected Issue's
+current routing determines whether Lead executes Explore or Propose; there is no
+`explore-change > propose-change` priority inside this combined queue.
 
 Lead MUST NOT activate a queued proposal while another formal active/terminal-pending workflow exists or
 while an older eligible Explore/direct-Propose entry is the deterministic combined pre-activation winner.
@@ -151,12 +200,16 @@ semantics, keeps `Change: unset`, and creates neither formal OpenSpec artifacts 
 Its legal decision-complete dispositions are `PROPOSAL_READY`, `NO_CHANGE_REQUIRED`, `NO_GO`, and genuine
 `HUMAN_DECISION_REQUIRED` under the existing Human escalation contract.
 
-Valid Human or repository-authorized Explore admission establishes a bounded authority envelope for the
-admitted problem. `PROPOSAL_READY` does not itself persist a formal Change identity, but when its concrete/
-buildable direction remains inside that admitted authority envelope and introduces no new Human-reserved
-decision, Lead MAY persist the bounded result, fresh-read the same Issue, route it to `Lead / propose-change`
-with `Change: unset`, and continue under the shared same-role continuation contract without a second generic
-Human proceed confirmation. Propose still owns formal activation and the immutable Change identity.
+Every legally reconstructed Explore origin above establishes or preserves one bounded authority envelope
+for the admitted problem. Human Explore and idle-discovery origins establish their own approved envelope;
+required-separate-follow-up routing derives its envelope from the exact approved defer decision/linkage;
+and pre-activation Propose fallback preserves the original direct-Propose authority envelope without
+creating a second admission. `PROPOSAL_READY` does not itself persist a formal Change identity, but when
+its concrete/buildable direction remains inside the applicable envelope and introduces no new Human-
+reserved decision, Lead MAY persist the bounded result, fresh-read the same Issue, route it to
+`Lead / propose-change` with `Change: unset`, and continue under the shared same-role continuation contract
+without a second generic Human proceed confirmation. Propose still owns formal activation and the immutable
+Change identity.
 
 A new product/project direction outside the admitted envelope, material externally observable behavior or
 scope trade-off not already authorized, explicit risk acceptance, materially different security/privacy/
@@ -285,12 +338,12 @@ Executor
 merge-pr > implement-change
 ```
 
-Pre-activation intake contains valid admitted open `Lead / explore-change + Change: unset` entries and
-Human-admitted `Lead / propose-change + Change: unset` entries together, ordered by earliest GitHub
-`created_at`, then lower Issue number. Fixed-role and workflow-dynamic discovery MUST NOT choose different
-pre-activation winners for the same candidate set. Within the same ordinary role/action priority, earlier
-GitHub `created_at` wins; if equal, lower numeric Issue number wins. Model-derived urgency, scoring, or
-discretionary reordering is prohibited.
+Pre-activation intake contains every legally reconstructed open `Lead / explore-change + Change: unset`
+entry from the approved origin set above and Human-admitted `Lead / propose-change + Change: unset` entries
+together, ordered by earliest GitHub `created_at`, then lower Issue number. Fixed-role and workflow-dynamic
+discovery MUST NOT choose different pre-activation winners for the same candidate set. Within the same
+ordinary role/action priority, earlier GitHub `created_at` wins; if equal, lower numeric Issue number wins.
+Model-derived urgency, scoring, or discretionary reordering is prohibited.
 
 In workflow-dynamic mode, a formal active/terminal-pending workflow is selected first. Only when none
 exists may the combined pre-activation winner determine `Lead / explore-change` or `Lead / propose-change`.
@@ -365,13 +418,15 @@ their existing action and MUST NOT copy this shared section.
 
 ## Required deferred follow-up integrity
 
-An ordinary out-of-scope item, non-goal, optional future idea, or work merely not selected now creates no tracking obligation. A required deferred follow-up exists only when an approved specification/scope decision explicitly says the work must still be handled later in a separate change.
+An ordinary out-of-scope item, non-goal, optional future idea, or work merely not selected now creates no tracking obligation and MUST NOT receive workflow routing. A required separate follow-up exists only when an approved specification/scope decision explicitly says the work must still be handled later in a separate change.
 
-Lead owns tracker materialization at that defer-decision boundary. Lead creates or reuses one durable tracker whose reconstructable linkage identifies the source coordination Issue/Change and the exact defer decision/reference. The tracker is durable work evidence only: an Agent-created tracker MUST NOT Human-admit itself, MUST NOT receive a routing tuple, and MUST NOT become active workflow merely because it exists. A required-deferred tracker MAY later serve as independent repository-authorized Explore admission evidence only through the bounded admission contract below; its mere existence or Agent-authored summary never self-authorizes routing.
+Lead owns tracker materialization at that defer-decision boundary. Lead creates or reuses one durable source-linked tracker whose reconstructable linkage identifies the source coordination Issue/Change and the exact defer decision/reference. The tracker MUST NOT Human-admit itself. For a required separate follow-up, Lead keeps `Change: unset` and routes the tracker immediately as `Change: unset + agent:lead + action:explore-change`. That routing is repository-authorized by the approved defer decision itself, places the tracker in the existing combined pre-activation queue, and MUST NOT require Human admission or a second idle-discovery admission step. The tracker remains pre-activation work and does not become a formal active workflow until Propose later persists a non-`unset` Change identity.
 
-`Reviewer / review-openspec` verifies every approved required deferred follow-up has the required durable linkage and rejects missing tracking while ignoring ordinary out-of-scope/non-goal/optional future statements. `Lead / finalize-archive` is the terminal fail-safe: before archive authorization or `LIFECYCLE_COMPLETE`, Lead reconstructs all still-applicable required deferred follow-up obligations and requires their durable trackers. When the approved meaning and intended linkage are unambiguous and only the tracker write is missing, Lead may idempotently create or reuse that tracker; ambiguity fails closed to the legal specification/Human boundary. Historical completed workflows are not retroactively invalidated solely because this contract was not active when they completed.
+Historical required-deferred trackers created before this direct-routing contract may still be reconstructed from their source linkage and admitted through the bounded repository-authorized Explore path; they need not be rewritten merely for migration. Agent-authored summaries or tracker existence alone never authorize unrelated routing.
 
-This integrity contract uses existing Issues, provenance, review, and finalization surfaces. It adds no automatic arbitrary admission, generic backlog generator, hidden obligation registry, deferred-work status label, second workflow DAG, or title-based duplicate detector.
+`Reviewer / review-openspec` verifies every approved required deferred follow-up has the required durable linkage and rejects missing tracking while ignoring ordinary out-of-scope/non-goal/optional future statements. `Lead / finalize-archive` is the terminal fail-safe: before archive authorization or `LIFECYCLE_COMPLETE`, Lead reconstructs all still-applicable required deferred follow-up obligations and requires their durable trackers. When the approved meaning and intended linkage are unambiguous and only the tracker write/routing is missing, Lead may idempotently create or reuse the required tracker with the same `Change: unset + agent:lead + action:explore-change` pre-activation routing; ambiguity fails closed to the legal specification/Human boundary. Historical completed workflows are not retroactively invalidated solely because this contract was not active when they completed.
+
+This integrity contract uses existing Issues, provenance, review, Explore, and finalization surfaces. It adds no automatic arbitrary admission, generic backlog generator, hidden obligation registry, deferred-work status label, second workflow DAG, or title-based duplicate detector.
 
 ## Work-conserving selected-action execution
 
@@ -657,7 +712,8 @@ authority contract. Human admission to Explore expects exactly
 creation provenance, current `human:approved` presence, and the qualifying Human-only approval event are
 required; explicit routing or actor identity alone is insufficient. Explore remains optional and a valid
 already-admitted Explore may continue to Propose inside its admitted authority envelope without a second
-generic Human proceed decision.
+generic Human proceed decision. A direct-Propose Issue that legally falls back to Explore keeps the same
+validated direct-Propose authority envelope; it does not fabricate or require a new Human Explore admission.
 
 In addition, only when no formal/terminal-pending workflow and no already eligible pre-activation work can
 be advanced, Lead MAY materialize at most one bounded `Change: unset + agent:lead + action:explore-change`

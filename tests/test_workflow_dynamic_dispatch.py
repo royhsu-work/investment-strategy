@@ -99,7 +99,7 @@ def test_change_identity_defines_active_workflow_and_combined_pre_activation_int
         "`Lead / propose-change`",
         "`Change: unset`",
         "queued pre-activation work",
-        "MUST NOT count as an active formal workflow",
+        "None of these entries count as an active formal workflow",
         "Formal activation remains owned by Propose",
     ):
         assert required in text
@@ -119,9 +119,15 @@ def test_combined_intake_is_deterministic_and_refuses_later_propose_activation()
     ):
         assert required in text
     for required in (
-        "combine valid Human-admitted open `Lead / explore-change + Change: unset`",
-        "`Lead / propose-change + Change: unset`",
-        "A later direct-Propose Issue MUST NOT activate while an older eligible Explore",
+        "complete shared pre-activation candidate-set contract",
+        "every legally reconstructed open `Lead / explore-change + Change: unset` entry",
+        "approved Explore-origin set",
+        "`Lead / propose-change + Change: unset` entry participates in the same combined queue",
+        (
+            "A later proposal-ready direct-Propose Issue MUST NOT activate while an older "
+            "valid Explore candidate"
+        ),
+        "same-Issue direct-Propose fallback preserving its original authority envelope",
         "re-read durable state and require this Issue to remain the combined pre-activation winner",
     ):
         assert required in change
@@ -342,3 +348,29 @@ def test_selected_workflow_is_work_conserving_until_a_legal_termination_boundary
     assert "continue on a later run" not in implementation
     assert "remaining approved implementation work" in implementation
     assert "same invocation" in implementation
+
+
+def test_active_workflow_remains_wip_while_next_action_is_blocked() -> None:
+    text = _normalized(AGENTS)
+    for required in (
+        "Execution eligibility",
+        "same formal active workflow",
+        "single formal WIP slot",
+        "active/terminal-pending workflow first",
+        "pre-activation intake",
+        "universal `blocked` result",
+    ):
+        assert required in text
+
+
+def test_dispatch_requires_complete_active_cardinality_before_queue_selection() -> None:
+    text = _normalized(AGENTS)
+    for required in (
+        "complete cardinality",
+        "terminal-pending and formal active workflows",
+        "Before evaluating pre-activation queue",
+        "partial enumeration",
+        "MUST NOT",
+        "queued work",
+    ):
+        assert required in text
