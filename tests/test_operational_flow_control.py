@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents" / "AGENTS.md"
 LEAD = ROOT / "agents" / "roles" / "lead.md"
 OPEN_SPEC_CHANGE = ROOT / "agents" / "skills" / "openspec-change" / "SKILL.md"
+EXPLORE = ROOT / "agents" / "skills" / "openspec-explore" / "SKILL.md"
 
 
 def _normalized(path: Path) -> str:
@@ -99,3 +100,34 @@ def test_optional_or_plain_deferred_work_does_not_create_queue_admission() -> No
         "MUST NOT receive workflow routing",
     ):
         assert required in shared
+
+
+def test_unset_direct_propose_may_fall_back_to_explore_without_second_admission() -> None:
+    change = _normalized(OPEN_SPEC_CHANGE)
+    explore = _normalized(EXPLORE)
+    for required in (
+        "Change: unset",
+        "not yet proposal-ready",
+        "route the same Issue to `Lead / explore-change`",
+        "without a second Human admission",
+        "same-role continuation",
+        "no `HANDOFF`",
+    ):
+        assert required in change
+    for required in (
+        "pre-activation Propose fallback",
+        "same admitted authority envelope",
+        "returns to `Lead / propose-change`",
+        "no second Human admission",
+    ):
+        assert required in explore
+
+
+def test_activated_change_cannot_fall_back_from_propose_to_explore() -> None:
+    change = _normalized(OPEN_SPEC_CHANGE)
+    for required in (
+        "non-`unset` Change",
+        "MUST NOT route backward to Explore",
+        "`Lead / resolve-question`",
+    ):
+        assert required in change
