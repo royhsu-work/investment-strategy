@@ -7,6 +7,7 @@ AGENTS = ROOT / "agents" / "AGENTS.md"
 LEAD = ROOT / "agents" / "roles" / "lead.md"
 OPEN_SPEC_CHANGE = ROOT / "agents" / "skills" / "openspec-change" / "SKILL.md"
 EXPLORE = ROOT / "agents" / "skills" / "openspec-explore" / "SKILL.md"
+MIGRATION = ROOT / "agents" / "scheduled-task-migration.md"
 
 
 def _normalized(path: Path) -> str:
@@ -130,3 +131,14 @@ def test_activated_change_cannot_fall_back_from_propose_to_explore() -> None:
         "`Lead / resolve-question`",
     ):
         assert required in change
+
+
+def test_project_kanban_projection_cannot_substitute_for_repository_authority() -> None:
+    orientation = _normalized(MIGRATION)
+    for required in (
+        "GitHub Project/Kanban",
+        "presentation only",
+        "does not participate in Scheduled-Agent dispatch, routing, authority, or gate decisions",
+        "repository durable workflow state remains authoritative",
+    ):
+        assert required in orientation
