@@ -1,0 +1,36 @@
+# Tasks
+
+## Slice 1 — Active WIP and execution-eligibility reconstruction
+
+- [ ] RED: add focused regressions proving a formal active workflow remains the winner while its next action waits for required durable evidence, and proving incomplete active-workflow enumeration cannot fall through to pre-activation queue work. Trace: proposal `What Changes`; requirements `Operational execution eligibility remains orthogonal to lifecycle state` and `Active-workflow cardinality and Issue-state coherence precede queue selection`; design Decisions 1–3.
+- [ ] GREEN: make the minimum shared-governance/dispatcher contract changes needed to express formal WIP=1, finish-first scheduling, blocker-as-derived evidence, and cardinality-before-queue reconstruction without a global blocked state/label/result. Trace: design Decisions 1–3.
+- [ ] REFACTOR/VERIFY: keep Human/async/execution-exception reasons owned by their existing contracts; run focused tests, full pytest, Ruff, mypy, and strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
+
+## Slice 2 — Issue-state coherence and fail-closed contradiction
+
+- [ ] RED: add regression coverage for the #40 failure class where a closed coordination Issue carries nonterminal routing, and prove only the existing terminal-pending `Lead / finalize-archive` closed shape is actionable. Trace: requirement `Active-workflow cardinality and Issue-state coherence precede queue selection`; design Decision 3.
+- [ ] GREEN: implement the smallest reconstruction guard that rejects closed/nonterminal workflow routing to the governed diagnosis/recovery owner without adding a new workflow fault state. Trace: design Decision 3.
+- [ ] REFACTOR/VERIFY: reuse existing routing/terminal-pending ownership and run focused/full quality gates plus strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
+
+## Slice 3 — Required deferred follow-up becomes runnable pre-activation work
+
+- [ ] RED: add regressions proving an explicit approved required-separate defer decision creates/reuses one source-linked `Change: unset + Lead / explore-change` tracker, while optional/non-goal/deferred prose does not create workflow admission. Trace: requirement `Required separate follow-up is directly queueable for fresh Explore revalidation`; design Decision 4.
+- [ ] GREEN: update the Lead-owned defer-tracking path to materialize/reuse and route the required tracker idempotently into the existing combined pre-activation queue; do not create another backlog/status vocabulary. Trace: design Decision 4.
+- [ ] REFACTOR/VERIFY: deduplicate the later idle-discovery/re-admission handling that becomes unnecessary for newly created required trackers while preserving reconstruction of historical trackers; run focused/full quality gates and strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
+
+## Slice 4 — Pre-activation Propose fallback to Explore
+
+- [ ] RED: add regressions for valid `Change: unset + Lead / propose-change` intake that is not proposal-ready, proving same-Issue fallback to Explore is legal without a second Human admission and proving a non-`unset` Change cannot take that backward path. Trace: requirement `Pre-activation Propose may conservatively fall back to Explore`; design Decision 5.
+- [ ] GREEN: implement the minimum Lead/Propose/Explore contract changes for `propose-change → explore-change → PROPOSAL_READY → propose-change` inside one authority envelope, using existing same-role continuation and no synthetic `HANDOFF`. Trace: design Decision 5.
+- [ ] REFACTOR/VERIFY: prevent ordinary loops and keep formal post-activation ambiguity on `resolve-question`; run focused/full quality gates and strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
+
+## Slice 5 — Derived flow visualization boundary
+
+- [ ] RED: add or extend a governance regression proving Project/Kanban status cannot substitute for repository routing/identity/gate authority. Trace: requirement `Flow visualization is derived and non-authoritative`; design Decision 6.
+- [ ] GREEN: add only the minimum non-normative orientation needed to make the projection boundary explicit; do not create Project-backed dispatch state or KPI machinery. Trace: design Decision 6.
+- [ ] REFACTOR/VERIFY: confirm no new lifecycle state, blocker enum, priority engine, lease/heartbeat, hidden backlog, or merge-authorization redesign entered the Change; run focused/full quality gates and strict OpenSpec validation. Trace: `openspec/config.yaml` task rules.
+
+## Final verification
+
+- [ ] Verify proposal/spec/design/task traces are mechanically consistent and every approved requirement has an implementation slice.
+- [ ] Run strict OpenSpec validation and repository quality gates on the exact implementation revision before completion handoff.
