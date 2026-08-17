@@ -16,13 +16,25 @@ The scheduling policy is therefore finish-first for formal work: active/terminal
 
 Trace: requirements `Operational execution eligibility remains orthogonal to lifecycle state` and `Active-workflow cardinality and Issue-state coherence precede queue selection`.
 
-## Decision 3 — Reconstruct authoritative cardinality before derived flow decisions
+## Decision 3 — Reconstruct authoritative cardinality before derived flow decisions, with one bounded premature-close recovery
 
 Dispatch must first establish `0 / 1 / >1` formal/terminal-pending workflow cardinality from repository durable state. Queue selection, blocker projection, aging/priority presentation, and Project fields are evaluated only after that result. A failed/partial enumeration is not equivalent to zero.
 
 Normal nonterminal workflow routing requires an open Issue. Closed nonterminal state is fail-closed contradiction; the existing closed `Lead / finalize-archive` terminal-pending exception remains unchanged.
 
-Trace: requirement `Active-workflow cardinality and Issue-state coherence precede queue selection`; #40 premature-close and #63/#65 partial-reconstruction incidents.
+The demonstrated #40 premature-close class gets one narrow recovery rule rather than a general fault state machine. A closed Issue is a **premature-close recovery candidate** only when all of the following are reconstructable from durable repository evidence:
+
+1. it has a persisted non-`unset` Change identity and exactly one otherwise legal nonterminal routing tuple;
+2. the formal lifecycle is demonstrably unfinished (for example an active OpenSpec Change or other matching nonterminal lifecycle evidence still exists);
+3. there is no authorized final Archive merge/native-close completion and no durable `LIFECYCLE_COMPLETE` for that Change;
+4. the closure is not backed by a qualifying provenance-bound Human decision explicitly requiring termination/non-resumption; a bare Issue close event or actor identity alone is not such authority;
+5. repository-wide reconstruction finds no other normal formal/terminal-pending workflow and no second contradictory recovery candidate, so reopening cannot create multiple-active ambiguity.
+
+When exactly one candidate satisfies those predicates, normal lifecycle execution remains stopped and pre-activation intake remains blocked. Governance deterministically assigns the bounded recovery to `Lead / resolve-question`; the stale nonterminal routing on the closed Issue is evidence to preserve, not an action to execute while closed. Lead may reopen that same coordination Issue without changing its immutable Change identity or its pre-close nonterminal routing tuple. Lead then immediately fresh-reads Issue state, routing, OpenSpec/PR evidence, and repository-wide active cardinality. Recovery succeeds only if the reopened Issue now reconstructs as the single coherent formal active workflow and its preserved routing is still legal. No normal lifecycle mutation is executed in that recovery invocation; a later wake dispatches from the freshly reconstructed preserved tuple.
+
+If any predicate is missing, contradictory, Human-reserved, or would produce more than one formal/recovery candidate, Lead does not reopen by inference. The state remains fail closed under existing diagnosis/Human-escalation semantics. This rule is intentionally limited to premature external closure of an otherwise coherent formal workflow; it does not create a generic recovery registry, new routing state, cancellation lifecycle, or authority to undo a qualifying Human decision.
+
+Trace: requirement `Active-workflow cardinality and Issue-state coherence precede queue selection`; #40 premature-close and #63/#65 partial-reconstruction incidents; Reviewer finding `issuecomment-5317087714`.
 
 ## Decision 4 — Required deferred follow-up materializes directly as queued Explore
 
@@ -52,15 +64,17 @@ Trace: requirement `Flow visualization is derived and non-authoritative`.
 - `blocked` label or universal blocker result: rejected because action-specific durable evidence already owns the reason and recovery path.
 - Releasing WIP for blocked work: rejected because it defeats the single-active safety invariant.
 - Global priority/expedite scoring: rejected without a demonstrated need that survives finish-first + FIFO.
+- Human-only reopening for every premature close: rejected because a bare close event is not provenance-bound Human lifecycle authority; requiring Human for a mechanically provable nonterminal contradiction would add avoidable blockage. A qualifying Human decision still prevents automatic reopen.
+- Generic automatic reopen of any closed routed Issue: rejected because it could override terminal or Human-authorized state and become a fault-recovery engine.
 - Removing Lead `MERGE_AUTHORIZED`: deferred; archive finalization still owns material deferred-obligation and cleanup judgment, and changing merge authority is not required to solve the operational eligibility/WIP problem.
 - External scheduler enable/disable remediation: outside repository execution authority; workflow-dynamic remains independent of legacy task names but cannot create a wake source when all external tasks are disabled.
 
 ## Blast radius
 
 Expected implementation is governance/tests only:
-- `agents/AGENTS.md` for shared eligibility/WIP/cardinality/coherence semantics;
-- `agents/roles/lead.md` and `agents/skills/openspec-change/SKILL.md` / `openspec-explore/SKILL.md` for required-defer materialization and pre-activation fallback ownership;
-- focused regression tests for cardinality-before-queue, closed/nonterminal fail-closed, required-follow-up queueing, and Propose→Explore fallback;
+- `agents/AGENTS.md` for shared eligibility/WIP/cardinality/coherence and bounded premature-close recovery semantics;
+- `agents/roles/lead.md` and `agents/skills/openspec-change/SKILL.md` / `openspec-explore/SKILL.md` for recovery, required-defer materialization, and pre-activation fallback ownership;
+- focused regression tests for cardinality-before-queue, closed/nonterminal fail-closed + deterministic reopen recovery, required-follow-up queueing, and Propose→Explore fallback;
 - optional README/Project orientation only where non-normative navigation needs clarification.
 
 No strategy/runtime investment behavior changes.
