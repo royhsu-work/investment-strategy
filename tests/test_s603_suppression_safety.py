@@ -45,6 +45,66 @@ def _contains_unvalidated_external_source(node: ast.AST) -> bool:
     return False
 
 
+def _contains_tainted_name(node: ast.AST, tainted_names: set[str]) -> bool:
+    return any(
+        isinstance(child, ast.Name) and child.id in tainted_names for child in ast.walk(node)
+    )
+
+
+def _function_has_unvalidated_run_arguments(function: ast.FunctionDef) -> bool:
+    tainted_names: set[str] = set()
+    assignments = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
+    ]
+
+    changed = True
+    while changed:
+        changed = False
+        for assignment in assignments:
+            if isinstance(assignment, ast.Assign):
+                value = assignment.value
+                targets = assignment.targets
+            elif isinstance(assignment, ast.AnnAssign):
+                if assignment.value is None:
+                    continue
+                value = assignment.value
+                targets = [assignment.target]
+            else:
+                value = assignment.value
+                targets = [assignment.target]
+
+            if not (
+                _contains_unvalidated_external_source(value)
+                or _contains_tainted_name(value, tainted_names)
+            ):
+                continue
+
+            assigned_names = {
+                child.id
+                for target in targets
+                for child in ast.walk(target)
+                if isinstance(child, ast.Name)
+            }
+            new_names = assigned_names - tainted_names
+            if new_names:
+                tainted_names.update(new_names)
+                changed = True
+
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Name) or node.func.id != "_run":
+            continue
+        for arg in node.args:
+            if _contains_unvalidated_external_source(arg) or _contains_tainted_name(
+                arg, tainted_names
+            ):
+                return True
+    return False
+
+
 def _find_run_helper(tree: ast.Module) -> ast.FunctionDef:
     helpers: list[ast.FunctionDef] = []
     for node in tree.body:
@@ -101,12 +161,8 @@ def _assert_fixed_s603_helper(path: Path, expected_script: str) -> None:
         for keyword in shell_keywords
     )
 
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if not isinstance(node.func, ast.Name) or node.func.id != "_run":
-            continue
-        assert all(not _contains_unvalidated_external_source(arg) for arg in node.args)
+    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+    assert all(not _function_has_unvalidated_run_arguments(function) for function in functions)
 
 
 def test_current_s603_helpers_preserve_fixed_execution_and_trust_boundaries() -> None:
@@ -114,24 +170,25 @@ def test_current_s603_helpers_preserve_fixed_execution_and_trust_boundaries() ->
         _assert_fixed_s603_helper(ROOT / relative_path, expected_script)
 
 
-def test_external_argument_detector_rejects_direct_unvalidated_sources() -> None:
+def test_external_argument_detector_rejects_direct_and_indirect_unvalidated_sources() -> None:
     fixture = ast.parse(
         """
 import os
 import sys
 
-def example() -> None:
+def direct() -> None:
     _run(os.environ["ISSUE_VALUE"])
     _run(os.getenv("REQUEST_VALUE"))
     _run(sys.argv[1])
     _run(input())
+
+def indirect() -> None:
+    value = os.getenv("REQUEST_VALUE")
+    alias = value
+    _run(alias)
 """
     )
-    run_calls = [
-        node
-        for node in ast.walk(fixture)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_run"
-    ]
+    functions = [node for node in fixture.body if isinstance(node, ast.FunctionDef)]
 
-    assert len(run_calls) == 4
-    assert all(_contains_unvalidated_external_source(call.args[0]) for call in run_calls)
+    assert len(functions) == 2
+    assert all(_function_has_unvalidated_run_arguments(function) for function in functions)
