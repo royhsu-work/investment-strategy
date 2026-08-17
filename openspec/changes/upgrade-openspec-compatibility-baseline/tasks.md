@@ -2,10 +2,10 @@
 
 ## 1. Slice: one qualified executable OpenSpec baseline
 
-- [ ] 1.1 RED: add regression coverage proving validation and archive automation must resolve the same repository-owned executable OpenSpec version and demonstrate failure against the current duplicated hard-coded pins.
-- [ ] 1.2 GREEN: introduce the minimal executable-version SSOT pinned to `1.9.0` and make both OpenSpec workflows consume it without changing their ownership or trigger semantics.
-- [ ] 1.3 REFACTOR: remove obsolete duplicated version literals while keeping installation/readability simple.
-- [ ] 1.4 VERIFY: run focused tests, full Python Quality, and strict OpenSpec validation; confirm both workflows deterministically resolve `1.9.0`.
+- [x] 1.1 RED: add regression coverage proving validation and archive automation must resolve the same repository-owned executable OpenSpec version and demonstrate failure against the current duplicated hard-coded pins.
+- [x] 1.2 GREEN: introduce the minimal executable-version SSOT pinned to `1.9.0` and make both OpenSpec workflows consume it without changing their ownership or trigger semantics.
+- [x] 1.3 REFACTOR: remove obsolete duplicated version literals while keeping installation/readability simple.
+- [x] 1.4 VERIFY: run focused tests, full Python Quality, and strict OpenSpec validation; confirm both workflows deterministically resolve `1.9.0`.
 
 Trace: proposal `What Changes` 1–2; R1 scenarios `Validation and archive use the qualified baseline`, `Future OpenSpec release becomes available`; design D1.
 
