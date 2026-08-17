@@ -26,7 +26,7 @@ def _attribute_path(node: ast.AST) -> tuple[str, ...] | None:
 
 def _contains_unvalidated_external_source(node: ast.AST) -> bool:
     for child in ast.walk(node):
-        if isinstance(child, ast.Name) and child.id in {"request", "event"}:
+        if isinstance(child, ast.Name) and child.id in {"request", "event", "issue"}:
             return True
         if isinstance(child, ast.Attribute):
             path = _attribute_path(child)
@@ -36,11 +36,18 @@ def _contains_unvalidated_external_source(node: ast.AST) -> bool:
                 ("sys", "stdin"),
             }:
                 return True
+            if path is not None and path[0] in {"request", "event", "issue"}:
+                return True
         if isinstance(child, ast.Call):
             path = _attribute_path(child.func)
-            if path in {("os", "getenv"), ("os", "environ", "get")}:
+            if path in {
+                ("os", "getenv"),
+                ("os", "environ", "get"),
+            }:
                 return True
-            if isinstance(child.func, ast.Name) and child.func.id == "input":
+            if path is not None and path[-1] in {"read_text", "read_bytes"}:
+                return True
+            if isinstance(child.func, ast.Name) and child.func.id in {"input", "open"}:
                 return True
     return False
 
@@ -175,17 +182,25 @@ def test_external_argument_detector_rejects_direct_and_indirect_unvalidated_sour
         """
 import os
 import sys
+from pathlib import Path
 
 def direct() -> None:
     _run(os.environ["ISSUE_VALUE"])
     _run(os.getenv("REQUEST_VALUE"))
     _run(sys.argv[1])
     _run(input())
+    _run(open("external.txt").read())
+    _run(Path("external.txt").read_text())
+    _run(issue.body)
 
 def indirect() -> None:
     value = os.getenv("REQUEST_VALUE")
     alias = value
+    filesystem_value = Path("external.txt").read_text()
+    issue_value = issue.body
     _run(alias)
+    _run(filesystem_value)
+    _run(issue_value)
 """
     )
     functions = [node for node in fixture.body if isinstance(node, ast.FunctionDef)]
