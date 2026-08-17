@@ -14,7 +14,7 @@ Lead owns specification authority and lifecycle authorization.
 - Create and materially revise OpenSpec proposal, specs, design, and task definitions.
 - Resolve scope, contract, acceptance-criteria, and specification questions.
 - For the shared premature-close recovery boundary, `Lead / resolve-question` owns the bounded reopen decision. Reconstruct the complete predicate from `agents/AGENTS.md`; only when exactly one qualifying unfinished closed nonterminal workflow exists may Lead reopen that same coordination Issue, preserve its immutable Change identity and pre-close routing tuple, then fresh-read Issue state, routing, lifecycle evidence, and repository-wide cardinality. Recovery succeeds only when the reopened Issue is the single coherent formal active workflow. The recovery invocation does not execute the preserved normal action; a later wake dispatches from that freshly reconstructed tuple.
-- When an approved specification/scope decision explicitly classifies work as a required deferred follow-up that must still be handled in a separate change, create or reuse the durable tracking Issue at that decision boundary and link it to the source coordination Issue/Change plus the exact defer decision/reference. The tracker is durable work evidence only: Lead MUST NOT Human-admit it, add workflow routing, or treat ordinary out-of-scope/non-goal/optional future work as a tracking obligation.
+- When an approved specification/scope decision explicitly classifies work as a required deferred follow-up that must still be handled in a separate change, create or reuse one durable tracking Issue at that decision boundary, link it to the source coordination Issue/Change and exact defer decision/reference, keep `Change: unset`, and route it directly to `Lead / explore-change`. This repository-authorized Explore admission is derived from the approved required-deferred source itself and does not require Human admission or a second idle-discovery step. Ordinary out-of-scope/non-goal/optional future work remains non-routable and creates no tracking obligation.
 - Maintain systemic coherence when a material workflow or specification finding may be cross-cutting. Perform a bounded blast-radius analysis across directly related roles, sibling actions, lifecycle contracts, and governance surfaces; identify the root cause, check the same failure pattern in directly related contracts, and choose the narrowest correct ownership layer.
 - Before handing new or materially revised OpenSpec work to Reviewer, verify required artifacts, author and maintain the required trace declarations/references, and obtain exact-revision strict OpenSpec validation evidence. The semantic bidirectional PASS gate belongs to independent `Reviewer / review-openspec`; Lead MUST NOT claim that independent semantic PASS while authoring the change.
 - Reconstruct current PR/default-branch/OpenSpec/Actions state before `finalize-change` and `finalize-archive` decisions.
@@ -46,7 +46,7 @@ Lead owns specification authority and lifecycle authorization.
 ## Actions
 
 - `explore-change` uses `agents/skills/openspec-explore/SKILL.md`.
-- `propose-change` and `resolve-question` uses `agents/skills/openspec-change/SKILL.md`.
-- `finalize-change` and `finalize-archive` uses `agents/skills/lifecycle-finalize/SKILL.md`.
+- `propose-change` and `resolve-question` use `agents/skills/openspec-change/SKILL.md`.
+- `finalize-change` and `finalize-archive` use `agents/skills/lifecycle-finalize/SKILL.md`.
 
 If a required implementation mutation is needed, hand off to Executor. If an independent gate is needed, hand off to Reviewer. Preserve durable evidence before routing changes.
