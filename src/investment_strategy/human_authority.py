@@ -55,6 +55,13 @@ class IssueCreation:
     performed_via_github_app: str | None
 
 
+@dataclass(frozen=True)
+class IssueDeclarationHistory:
+    creation_body: str
+    complete: bool
+    declaration_mutated: bool
+
+
 def explore_admission_ref(issue_number: int) -> str:
     return f"issue:{_positive_id(issue_number, 'issue_number')}:admission:lead:explore-change"
 
@@ -181,6 +188,47 @@ def issue_creation_from_raw(raw: Mapping[str, object]) -> IssueCreation:
     )
 
 
+def issue_declaration_history_from_raw(raw: Mapping[str, object]) -> IssueDeclarationHistory:
+    """Parse durable declaration-specific Issue history evidence.
+
+    The evidence envelope is produced by the acquisition boundary, not by the
+    admission predicate. ``complete`` means the acquisition surface has supplied
+    the full relevant Issue edit history for the creation declaration. Ordinary
+    routing/comment activity is ignored. An edited event without concrete
+    ``changes`` is contradictory/incomplete evidence and therefore fails closed.
+    """
+    complete = raw.get("complete")
+    if not isinstance(complete, bool):
+        raise ValueError("complete must be a boolean")
+
+    opened = _mapping(raw.get("opened"), "opened")
+    opened_issue = _mapping(opened.get("issue"), "opened.issue")
+    creation_body = _string(opened_issue.get("body"), "opened.issue.body")
+
+    events = raw.get("events")
+    if not isinstance(events, list):
+        raise ValueError("events must be an array")
+
+    declaration_mutated = False
+    evidence_complete = complete
+    for index, item in enumerate(events):
+        event = _mapping(item, f"events[{index}]")
+        if event.get("action") != "edited":
+            continue
+        changes = event.get("changes")
+        if not isinstance(changes, Mapping):
+            evidence_complete = False
+            continue
+        if "body" in changes or "title" in changes:
+            declaration_mutated = True
+
+    return IssueDeclarationHistory(
+        creation_body=creation_body,
+        complete=evidence_complete,
+        declaration_mutated=declaration_mutated,
+    )
+
+
 def parse_decision_ref(body: str) -> str | None:
     refs = [
         line.removeprefix(DECISION_REF_PREFIX).strip()
@@ -215,17 +263,13 @@ def is_human_created_explore_admission(
     creation: IssueCreation,
     current_agent_label: str,
     current_action_label: str,
-    declaration_history_unambiguous: bool,
+    declaration_history: IssueDeclarationHistory,
 ) -> bool:
-    """Evaluate only the narrow initial Human-created Formal Explore admission path.
-
-    ``creation.body`` must be reconstructed creation-time content. The caller must
-    separately derive ``declaration_history_unambiguous`` from durable mutation
-    history; current Issue ``updated_at`` is deliberately not accepted as a proxy
-    because comments and routing-label changes also update it.
-    """
+    """Evaluate only the narrow initial Human-created Formal Explore admission path."""
     return (
-        declaration_history_unambiguous
+        declaration_history.complete
+        and not declaration_history.declaration_mutated
+        and declaration_history.creation_body == creation.body
         and current_agent_label == EXPLORE_AGENT_LABEL
         and current_action_label == EXPLORE_ACTION_LABEL
         and _is_human_provenance(
@@ -310,7 +354,7 @@ def is_human_explore_admission_approved(
     creation: IssueCreation,
     current_agent_label: str,
     current_action_label: str,
-    declaration_history_unambiguous: bool,
+    declaration_history: IssueDeclarationHistory,
     approval_label_present: bool,
     comments: tuple[DecisionComment, ...],
     label_events: tuple[LabelEvent, ...],
@@ -320,7 +364,7 @@ def is_human_explore_admission_approved(
         creation=creation,
         current_agent_label=current_agent_label,
         current_action_label=current_action_label,
-        declaration_history_unambiguous=declaration_history_unambiguous,
+        declaration_history=declaration_history,
     ):
         return True
     return is_human_decision_approved(
