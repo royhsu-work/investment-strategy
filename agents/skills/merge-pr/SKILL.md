@@ -17,8 +17,7 @@ unambiguous `Reviewer / review-implementation` `PASS` bound to R.
 For the final Archive PR, the applicable normal acceptance evidence is an unambiguous
 `Reviewer / review-archive` `PASS` bound to R and the materially reviewed Lead preparation evidence. Also
 reconstruct the expected persistent coordination Issue, verify the PR body establishes the
-repository-approved closing linkage to that same Issue, and reconstruct only the explicitly
-provenance-owned temporary correction/recovery branches and dispositions reviewed with the Archive target.
+repository-approved closing linkage to that same Issue, and reconstruct only the explicitly provenance-owned temporary correction/recovery branches and dispositions reviewed with the Archive target.
 The normal `agent/archive-<change>` branch is the final PR source lifecycle artifact and is never a temporary
 cleanup target merely because of its name. Closing linkage is structural lifecycle evidence only and never
 substitutes for Reviewer PASS or the other merge preconditions.
