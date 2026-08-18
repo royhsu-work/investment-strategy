@@ -218,9 +218,7 @@ def test_incomplete_exact_identity_or_unbound_descendant_fails_closed() -> None:
         is RecoveryDisposition.FAIL_CLOSED
     )
     assert (
-        merge_recovery_disposition_from_evidence(
-            _implementation_evidence(unbound_descendant)
-        )
+        merge_recovery_disposition_from_evidence(_implementation_evidence(unbound_descendant))
         is RecoveryDisposition.FAIL_CLOSED
     )
 
