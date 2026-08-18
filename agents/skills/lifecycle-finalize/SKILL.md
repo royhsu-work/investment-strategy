@@ -104,8 +104,7 @@ temporary-branch cleanup/retention outcome. Lead verifies the terminal invariant
 Executor-owned deletion after native close, and does not reopen or redundantly close the Issue when native
 closure is already present.
 
-Only when the authorized Archive PR is merged, canonical archive state is correct, and native completion is
-missing may Lead use explicit Issue-close recovery. In that recovery-only path, Lead may perform the GitHub coordination Issue close mutation; that is the only path allowed to perform the GitHub coordination Issue close mutation, and it must re-observe `closed` before persisting `LIFECYCLE_COMPLETE`.
+Only when the authorized Archive PR is merged, canonical archive state is correct, and native completion is missing may Lead use explicit Issue-close recovery. In that recovery-only path, Lead may perform the GitHub coordination Issue close mutation; that is the only path allowed to perform the GitHub coordination Issue close mutation, and it must re-observe `closed` before persisting `LIFECYCLE_COMPLETE`.
 
 If a recovery run is interrupted after archive completion but before the recovery close, the next Lead run
 reconstructs the completed archive and idempotently performs the missing close recovery only when native
