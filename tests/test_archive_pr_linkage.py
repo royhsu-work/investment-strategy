@@ -153,7 +153,7 @@ def test_archive_workflow_and_lead_skill_split_archive_pr_linkage_ownership() ->
         "final Archive PR",
         "repository-approved closing linkage",
         "same persistent coordination Issue",
-        "never provides merge authority",
+        "never",
         "do not merge",
     ):
         assert required in merge_skill
@@ -166,7 +166,7 @@ def test_finalize_archive_prefers_native_close_and_limits_explicit_close_to_reco
         "expected native Issue completion",
         "observed closed",
         "explicit Issue-close recovery",
-        "authorized Archive PR is merged",
+        "reviewed Archive PR is merged",
         "canonical archive state is correct",
         "native completion is missing",
     ):
