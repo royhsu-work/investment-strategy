@@ -22,18 +22,18 @@ Trace: proposal fallback rule -> spec ambiguous/mutated scenario -> design D3.
 
 ## Slice 3 — Governance admission consumption
 
-- [ ] RED: add governance/behavior tests proving initial `Lead / explore-change` admission accepts either the new qualifying Human-created Issue path or the existing provenance-bound Human decision path.
-- [ ] RED: add regression tests proving direct Propose, advisory admission, escalation answers/resume, and later Human-reserved decisions do not consume the creation-bound shortcut.
-- [ ] GREEN: update the narrow shared governance/Lead Explore-Propose reconstruction surfaces required to consume the new alternative while preserving repository-authorized Explore origins unchanged.
-- [ ] GREEN: define/present the exact Human intake declaration `Admission: Lead / explore-change` + `Change: unset` in the existing appropriate Human-facing repository guidance surface without creating a second authority owner.
-- [ ] REFACTOR: remove any duplicated authority wording introduced during implementation; keep one owner for predicate semantics and references elsewhere.
-- [ ] VERIFY: run focused tests, full regression suite, type checks, lint checks, and strict OpenSpec validation.
+- [x] RED: add governance/behavior tests proving initial `Lead / explore-change` admission accepts either the new qualifying Human-created Issue path or the existing provenance-bound Human decision path.
+- [x] RED: add regression tests proving direct Propose, advisory admission, escalation answers/resume, and later Human-reserved decisions do not consume the creation-bound shortcut.
+- [x] GREEN: update the narrow shared governance/Lead Explore-Propose reconstruction surfaces required to consume the new alternative while preserving repository-authorized Explore origins unchanged.
+- [x] GREEN: define/present the exact Human intake declaration `Admission: Lead / explore-change` + `Change: unset` in the existing appropriate Human-facing repository guidance surface without creating a second authority owner.
+- [x] REFACTOR: remove any duplicated authority wording introduced during implementation; keep one owner for predicate semantics and references elsewhere.
+- [x] VERIFY: run focused tests, full regression suite, type checks, lint checks, and strict OpenSpec validation.
 
 Trace: proposal scope boundaries -> both modified requirements -> design D2/D4.
 
 ## Completion verification
 
-- [ ] Confirm proposal -> specs -> design -> tasks forward traceability and tasks -> design -> specs -> proposal reverse traceability.
-- [ ] Confirm no production strategy/data/execution behavior changed.
-- [ ] Confirm no new Human shortcut exists outside initial Formal Explore admission.
-- [ ] Confirm strict OpenSpec validation passes on the exact final PR head revision.
+- [x] Confirm proposal -> specs -> design -> tasks forward traceability and tasks -> design -> specs -> proposal reverse traceability.
+- [x] Confirm no production strategy/data/execution behavior changed.
+- [x] Confirm no new Human shortcut exists outside initial Formal Explore admission.
+- [x] Confirm strict OpenSpec validation passes on the exact final PR head revision.
