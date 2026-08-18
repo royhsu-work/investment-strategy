@@ -205,23 +205,25 @@ def test_review_and_finalize_skills_preserve_upstream_gate_contracts() -> None:
         "archive history",
         "unrelated repository changes",
         "strict OpenSpec validation",
+        "Lead preparation evidence",
     ):
         assert required in archive_review
 
     for required in (
         "Reviewer implementation `PASS`",
-        "MERGE_AUTHORIZED",
         "MORE_IMPLEMENTATION_REQUIRED",
         "WAITING_FOR_ARCHIVE_AUTOMATION",
         "Reviewer archive `PASS`",
+        "preparation evidence",
         "observed `closed` state",
     ):
         assert required in finalize
+    assert "MERGE_AUTHORIZED" not in finalize
 
 
 def test_routing_concurrency_revision_and_crash_recovery_fail_closed() -> None:
     shared = _read(AGENTS / "AGENTS.md")
-    merge = _read(AGENTS / "skills/merge-pr/SKILL.md")
+    merge = " ".join(_read(AGENTS / "skills/merge-pr/SKILL.md").split())
 
     for required in (
         "Zero, multiple, contradictory, or illegal routing labels",
@@ -234,19 +236,19 @@ def test_routing_concurrency_revision_and_crash_recovery_fail_closed() -> None:
 
     for required in (
         "Reviewer `PASS` exists for the exact revision R",
-        "Lead `MERGE_AUTHORIZED` exists for the exact same revision R",
         "target PR current head still equals R",
-        "Reviewer PASS alone is insufficient",
+        "Required gates/checks remain valid",
         "Before attempting the mutation",
         "do not retry the merge",
     ):
         assert required in merge
+    assert "MERGE_AUTHORIZED" not in merge
 
 
 def test_pr_linkage_governance_reserves_closing_linkage_for_archive() -> None:
     shared = " ".join(_read(AGENTS / "AGENTS.md").split())
     openspec_change = _read(AGENTS / "skills/openspec-change/SKILL.md")
-    merge = _read(AGENTS / "skills/merge-pr/SKILL.md")
+    merge = " ".join(_read(AGENTS / "skills/merge-pr/SKILL.md").split())
 
     for required in (
         "Implementation and implementation-correction PRs MUST use non-closing references",
@@ -302,7 +304,7 @@ def test_persistent_lifecycle_archive_boundary_and_human_admission_are_documente
 
 def test_final_completion_requires_observed_issue_closure_and_supports_recovery() -> None:
     shared = _read(AGENTS / "AGENTS.md")
-    finalize = _read(AGENTS / "skills/lifecycle-finalize/SKILL.md")
+    finalize = " ".join(_read(AGENTS / "skills/lifecycle-finalize/SKILL.md").split())
 
     for required in (
         'PASS, completion comment, or statement that an Issue "may be closed" is not completion',

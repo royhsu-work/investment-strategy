@@ -7,6 +7,10 @@ def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+def _normalized(path: str) -> str:
+    return " ".join(_read(path).split())
+
+
 def test_archive_automation_stops_at_validated_branch_readiness() -> None:
     workflow = _read(".github/workflows/openspec-archive.yml")
 
@@ -42,24 +46,24 @@ def test_finalize_change_owns_normal_archive_pr_presentation() -> None:
 
 
 def test_normal_archive_pr_path_preserves_independent_final_gates() -> None:
-    skill = _read("agents/skills/lifecycle-finalize/SKILL.md")
-    governance = _read("agents/AGENTS.md")
+    skill = _normalized("agents/skills/lifecycle-finalize/SKILL.md")
+    archive_review = _normalized("agents/skills/archive-review/SKILL.md")
+    merge_skill = _normalized("agents/skills/merge-pr/SKILL.md")
 
     for required in (
-        "Reviewer PASS",
-        "exact-head Lead authorization",
+        "preparation evidence",
+        "independent Reviewer PASS",
         "Executor merge preconditions",
         "native Issue close",
         "terminal `finalize-archive` reconstruction",
     ):
         assert required in skill
 
+    assert "`PASS` → `Executor / merge-pr`" in archive_review
     for required in (
-        "Scheduled roles do not define or execute a competing normal `archive-change` action",
-        "independent archive review",
-        "exact-head Lead authorization",
-        "Executor merge",
-        "native close",
-        "terminal `finalize-archive` reconstruction",
+        "Reviewer `PASS` exists for the exact revision R",
+        "Lead preparation evidence",
+        "repository-approved closing linkage",
+        "predeclared safely deletable",
     ):
-        assert required in governance
+        assert required in merge_skill

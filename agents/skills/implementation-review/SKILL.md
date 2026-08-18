@@ -9,9 +9,15 @@ approved semantic OpenSpec gate that remains applicable, the current implementat
 revision, current task completion markers, relevant diff/tests, project quality checks, and strict
 OpenSpec validation evidence.
 
-Reconstruct the action-specific accepted baseline B from the last valid independent `review-implementation` gate that remains applicable to this implementation stream, and the current target R as the exact current implementation PR head. Inspect all material unreviewed changes in `(B, R]` and evaluate the complete current state at R; an older accepted result is only the coverage baseline and never substitutes for a current exact-head gate.
+Reconstruct the action-specific accepted baseline B from the last valid independent `review-implementation`
+gate that remains applicable to this implementation stream, and the current target R as the exact current
+implementation PR head. Inspect all material unreviewed changes in `(B, R]` and evaluate the complete current
+state at R; an older accepted result is only the coverage baseline and never substitutes for a current
+exact-head gate.
 
-This action is an exact-current-head gate. The semantic OpenSpec bookkeeping exception does not weaken this gate: task-marker-only OpenSpec revisions may leave the approved semantic contract applicable, but Reviewer still evaluates the exact current implementation PR head R.
+This action is an exact-current-head gate. The semantic OpenSpec bookkeeping exception does not weaken this
+gate: task-marker-only OpenSpec revisions may leave the approved semantic contract applicable, but Reviewer
+still evaluates the exact current implementation PR head R.
 
 ## Minimum gate
 
@@ -31,11 +37,14 @@ For the exact current implementation PR head R:
 
 ## Legal results and handoff
 
-- `PASS` → `Lead / finalize-change`.
+- `PASS` → `Executor / merge-pr`.
 - `IMPLEMENTATION_FINDINGS` → `Executor / implement-change`.
 - `SPEC_FINDINGS` → `Lead / resolve-question`.
 
-A later PR head does not inherit the prior result. Contradictory current evidence fails closed.
+For implementation PRs, exact-head `PASS` is the normal acceptance evidence consumed by `Executor / merge-pr`.
+It does not waive mutation-time safety: Executor must fresh-read the unchanged head, current required checks,
+non-closing coordination linkage, and contradictory evidence immediately before merge. A later PR head does
+not inherit the prior result; contradictory current evidence fails closed.
 
 ## Durable messages
 

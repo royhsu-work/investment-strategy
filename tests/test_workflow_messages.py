@@ -29,7 +29,6 @@ CANONICAL_TYPES = (
     "ACTION_RESULT",
     "REVIEW_RESULT",
     "SLICE_CHECKPOINT",
-    "MERGE_AUTHORIZATION",
     "MERGE_RESULT",
     "HANDOFF",
     "HUMAN_DECISION_REQUIRED",
@@ -56,7 +55,7 @@ def _template_section(message_type: str) -> str:
     return " ".join(match.group("body").split())
 
 
-def test_shared_message_source_defines_exactly_eight_canonical_types() -> None:
+def test_shared_message_source_defines_exactly_seven_canonical_types() -> None:
     text = _read(MESSAGES)
     headings = tuple(re.findall(r"^## `([A-Z_]+)`$", text, flags=re.MULTILINE))
     assert headings == CANONICAL_TYPES
@@ -98,11 +97,6 @@ def test_canonical_templates_preserve_event_specific_evidence() -> None:
             "remaining work",
             "routing",
         ),
-        "MERGE_AUTHORIZATION": (
-            "authorized revision",
-            "gate evidence",
-            "merge preconditions",
-        ),
         "MERGE_RESULT": ("PR", "exact head", "merge commit", "result", "next"),
         "HANDOFF": (
             "From",
@@ -140,7 +134,7 @@ def test_canonical_templates_preserve_event_specific_evidence() -> None:
 
 def test_roles_and_skills_reference_shared_templates_without_private_template_bodies() -> None:
     heading_pattern = re.compile(
-        r"^## `(ACTION_RESULT|REVIEW_RESULT|SLICE_CHECKPOINT|MERGE_AUTHORIZATION|"
+        r"^## `(ACTION_RESULT|REVIEW_RESULT|SLICE_CHECKPOINT|"
         r"MERGE_RESULT|HANDOFF|HUMAN_DECISION_REQUIRED|EXECUTION_EXCEPTION)`$",
         re.MULTILINE,
     )
@@ -163,6 +157,7 @@ def test_intermediate_progress_and_status_noise_are_not_supported_message_types(
         "LEAD_PROGRESS_POLL",
         "NO_HUMAN_ACTION_REQUIRED",
         "LIFECYCLE_JOURNAL",
+        "MERGE_AUTHORIZATION",
     ):
         assert unsupported not in headings
 

@@ -1,6 +1,6 @@
 # Executor
 
-Executor owns approved implementation work and explicitly authorized operational merge mutations.
+Executor owns approved implementation work and governed operational merge mutations.
 
 ## Responsibilities
 
@@ -23,15 +23,18 @@ Executor owns approved implementation work and explicitly authorized operational
   task state, and durable evidence; previously persisted verified-slice markers remain authoritative
   completion evidence.
 - Stop and route to Lead when implementation requires inventing or changing specification meaning.
-- For `merge-pr`, reconstruct Reviewer PASS, Lead authorization, current PR head, and current gate
-  state before the merge mutation; merge only the exact authorized unchanged revision.
+- For an implementation `merge-pr`, reconstruct the exact-head Reviewer implementation PASS, current PR
+  head, current required gate/check state, non-closing coordination linkage, and contradictory evidence
+  immediately before the merge mutation; merge only the exact accepted unchanged revision.
+- For an Archive `merge-pr`, reconstruct the archive acceptance/preparation evidence required by the
+  current default-branch archive contract in addition to the common mutation-time safety checks.
 - After a successful or already-completed merge, persist/reconstruct durable state and perform only the
   remaining legal handoff.
 - Own constrained branch integration when ordinary local git merge/rebase is unavailable but a
   repository-governed semantics-preserving integration correction remains possible. Before such a
   correction, fresh-read the implementation PR head and default-branch head, require a non-force path,
   and verify the resulting tree remains within the approved OpenSpec meaning. A new head invalidates
-  exact-head readiness evidence and requires current gates before later review or merge authorization.
+  exact-head readiness evidence and requires current gates before later review or merge.
 - Before `review-implementation` handoff, own the implementation PR Draft-to-Ready transition and
   fresh-read the same current head as non-Draft; a Draft PR is not implementation-review ready.
 - Clean workflow-owned temporary integration/recovery branches created or adopted by Executor only when
@@ -41,7 +44,8 @@ Executor owns approved implementation work and explicitly authorized operational
 ## Prohibitions
 
 - Do not redefine requirements, contracts, acceptance criteria, or task meaning.
-- Do not treat Reviewer PASS alone as merge authorization.
+- Do not treat implementation Reviewer PASS as permission to ignore unchanged-head, current-check,
+  linkage, or contradictory-evidence merge preconditions.
 - Do not merge a changed/stale PR head or merge under contradictory current evidence.
 - Do not perform a force update as branch-integration recovery or hide unintegrated commits.
 - Do not force-delete a temporary branch to hide unique commits or perform broad `agent/*` garbage collection.
@@ -51,7 +55,8 @@ Executor owns approved implementation work and explicitly authorized operational
 - Do not create central workflow-engine state, locks/leases, heartbeats, retry counters, progress state,
   branch registries, or exactly-once machinery.
 - Do not add, remove, restore, or manufacture `human:approved` or `intake:approved`.
-- Do not treat actor identity or either reserved label snapshot alone as Human authority; Human-reserved consumers must use the approved provenance-bound predicate and exact mapped decision reference.
+- Do not treat actor identity or either reserved label snapshot alone as Human authority; Human-reserved
+  consumers must use the approved provenance-bound predicate and exact mapped decision reference.
 
 ## Actions
 

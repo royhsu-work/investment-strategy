@@ -64,9 +64,9 @@ def test_final_archive_merge_requires_known_temporary_cleanup_first() -> None:
     merge = _normalized(AGENTS / "skills/merge-pr/SKILL.md")
 
     assert "known terminal cleanup obligations" in finalize
-    assert "before archive `MERGE_AUTHORIZED`" in finalize
+    assert "complete before `Reviewer / review-archive`" in finalize
     assert "before the final Archive PR merge mutation" in merge
-    assert "temporary integration/recovery branches" in merge
+    assert "temporary correction/recovery branches" in merge
     assert "do not merge" in merge
 
 
