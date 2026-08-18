@@ -40,7 +40,7 @@ Trace: requirements `Normal OpenSpec archive mechanics remain owned by repositor
 
 Trace: proposal scope/relationship to #80; design D1–D5; `openspec/config.yaml` governance.
 
-- [ ] 5.1 RED: add/adjust repository governance regression coverage that detects a remaining normal dependency on `MERGE_AUTHORIZED` or duplicate current merge/recovery semantics in directly governed runtime surfaces.
-- [ ] 5.2 GREEN: update only necessary README/orientation, canonical message/template references, and directly affected role/skill traces so one current contract remains authoritative; do not pre-implement #80 `agents/workflow.md` extraction.
-- [ ] 5.3 REFACTOR: verify the Change introduces no replacement authorization token, second workflow DAG, hidden state, broad branch cleanup rule, or duplicate lifecycle owner.
-- [ ] 5.4 VERIFY: run all project tests, Ruff lint/format, mypy, exact-head OpenSpec validation, and confirm proposal/spec/design/task traceability and all approved task markers are complete before implementation-review handoff.
+- [x] 5.1 RED: add/adjust repository governance regression coverage that detects a remaining normal dependency on `MERGE_AUTHORIZED` or duplicate current merge/recovery semantics in directly governed runtime surfaces.
+- [x] 5.2 GREEN: update only necessary README/orientation, canonical message/template references, and directly affected role/skill traces so one current contract remains authoritative; do not pre-implement #80 `agents/workflow.md` extraction.
+- [x] 5.3 REFACTOR: verify the Change introduces no replacement authorization token, second workflow DAG, hidden state, broad branch cleanup rule, or duplicate lifecycle owner.
+- [x] 5.4 VERIFY: run all project tests, Ruff lint/format, mypy, exact-head OpenSpec validation, and confirm proposal/spec/design/task traceability and all approved task markers are complete before implementation-review handoff.
