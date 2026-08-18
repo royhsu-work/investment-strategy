@@ -31,6 +31,7 @@ AGENTS = ROOT / "agents" / "AGENTS.md"
 LEAD = ROOT / "agents" / "roles" / "lead.md"
 REVIEWER = ROOT / "agents" / "roles" / "reviewer.md"
 EXECUTOR = ROOT / "agents" / "roles" / "executor.md"
+DEFAULT_CREATION_BODY = "Admission: Lead / explore-change\nChange: unset\n\nInvestigate the issue."
 
 
 def _ts(minute: int) -> datetime:
@@ -91,7 +92,7 @@ def _approved(
 
 def _raw_issue(
     *,
-    body: str = "Admission: Lead / explore-change\nChange: unset\n\nInvestigate the issue.",
+    body: str = DEFAULT_CREATION_BODY,
     app: object = None,
     include_provenance: bool = True,
     actor: str = "royhsu-work",
@@ -112,7 +113,7 @@ def _raw_issue(
 
 def _raw_history(
     *,
-    creation_body: str = "Admission: Lead / explore-change\nChange: unset\n\nInvestigate the issue.",
+    creation_body: str = DEFAULT_CREATION_BODY,
     complete: bool = True,
     events: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
@@ -125,7 +126,7 @@ def _raw_history(
 
 def _history(
     *,
-    creation_body: str = "Admission: Lead / explore-change\nChange: unset\n\nInvestigate the issue.",
+    creation_body: str = DEFAULT_CREATION_BODY,
     complete: bool = True,
     events: list[dict[str, object]] | None = None,
 ) -> IssueDeclarationHistory:
