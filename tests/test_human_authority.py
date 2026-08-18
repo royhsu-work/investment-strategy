@@ -112,9 +112,7 @@ def test_actor_identity_alone_is_not_human_authority() -> None:
     decision_ref = explore_admission_ref(47)
     assert not _approved(
         decision_ref,
-        comments=(
-            _comment(id=1, minute=1, decision_ref=decision_ref, app="chatgpt"),
-        ),
+        comments=(_comment(id=1, minute=1, decision_ref=decision_ref, app="chatgpt"),),
         events=(_event(id=2, minute=2),),
     )
     assert not _approved(
@@ -359,9 +357,7 @@ def test_provenance_migration_is_prospective_not_retroactive() -> None:
 
 
 def test_human_created_formal_explore_requires_exact_raw_creation_contract() -> None:
-    creation = issue_creation_from_raw(
-        _raw_issue(updated_at="2026-08-16T07:20:00Z")
-    )
+    creation = issue_creation_from_raw(_raw_issue(updated_at="2026-08-16T07:20:00Z"))
     assert isinstance(creation, IssueCreation)
     assert is_human_created_explore_admission(
         creation=creation,
@@ -372,9 +368,7 @@ def test_human_created_formal_explore_requires_exact_raw_creation_contract() -> 
 
 
 def test_issue_updated_at_is_not_used_as_creation_declaration_history_proxy() -> None:
-    creation = issue_creation_from_raw(
-        _raw_issue(updated_at="2026-08-16T08:00:00Z")
-    )
+    creation = issue_creation_from_raw(_raw_issue(updated_at="2026-08-16T08:00:00Z"))
     assert is_human_created_explore_admission(
         creation=creation,
         current_agent_label="agent:lead",
@@ -461,9 +455,7 @@ def test_human_created_formal_explore_requires_one_unset_change_declaration() ->
 def test_human_explore_admission_falls_back_to_existing_general_predicate() -> None:
     issue_number = 88
     decision_ref = explore_admission_ref(issue_number)
-    connector_creation = issue_creation_from_raw(
-        _raw_issue(app={"id": 1, "slug": "connector"})
-    )
+    connector_creation = issue_creation_from_raw(_raw_issue(app={"id": 1, "slug": "connector"}))
     assert is_human_explore_admission_approved(
         issue_number=issue_number,
         creation=connector_creation,
