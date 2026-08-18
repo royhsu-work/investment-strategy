@@ -208,10 +208,11 @@ def _has_exact_explore_creation_declaration(body: str) -> bool:
 def _creation_declaration_history_is_reconstructable(creation: IssueCreation) -> bool:
     """Conservatively prove the current body is still the raw creation-time body.
 
-    GitHub's normal Issue object exposes the current body but not historical body revisions. Until a
-    stronger immutable creation-history surface is supplied, any post-creation Issue update makes the
-    creation-bound shortcut non-qualifying. This intentionally prefers a false negative plus the existing
-    Human-decision fallback over trusting a caller assertion about mutation history.
+    GitHub's normal Issue object exposes the current body but not historical body
+    revisions. Until a stronger immutable creation-history surface is supplied,
+    any post-creation Issue update makes the creation-bound shortcut non-qualifying.
+    This intentionally prefers a false negative plus the existing Human-decision
+    fallback over trusting a caller assertion about mutation history.
     """
     return creation.updated_at == creation.created_at
 
@@ -233,8 +234,9 @@ def is_human_created_explore_admission(
 ) -> bool:
     """Evaluate only the narrow initial Human-created Formal Explore admission path.
 
-    The optional legacy history argument may only tighten qualification. Passing True cannot override
-    the evidence-derived creation/update check, so callers cannot manufacture admission by assertion.
+    The optional legacy history argument may only tighten qualification. Passing
+    True cannot override the evidence-derived creation/update check, so callers
+    cannot manufacture admission by assertion.
     """
     return (
         declaration_history_unambiguous is not False
