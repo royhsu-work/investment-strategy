@@ -47,3 +47,23 @@ def test_shared_merge_contract_consumes_reviewer_pass_without_lead_token() -> No
     assert "Lead MERGE_AUTHORIZED for revision R" not in shared
     assert "current PR head == R" in shared
     assert "required gate remains valid and non-contradictory" in shared
+
+
+def test_shared_linkage_contract_has_no_second_lead_merge_token() -> None:
+    shared = _read("agents/AGENTS.md")
+    linkage = shared.split("## PR linkage lifecycle boundary", 1)[1].split(
+        "## Routing validity", 1
+    )[0]
+
+    assert "Lead authorization" not in linkage
+    assert "MERGE_AUTHORIZED" not in linkage
+
+
+def test_merge_skill_keeps_path_specific_fresh_read_preconditions() -> None:
+    merge_pr = _read("agents/skills/merge-pr/SKILL.md")
+
+    assert "The target PR current head still equals R" in merge_pr
+    assert "Required gates/checks remain valid" in merge_pr
+    assert "does not establish GitHub Issue-closing" in merge_pr
+    assert "Lead preparation evidence reviewed with PASS remains materially current" in merge_pr
+    assert "No separate Lead merge-authorization token" in merge_pr
