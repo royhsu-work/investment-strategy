@@ -61,6 +61,17 @@ Repository 使用 OpenSpec + GitHub Issue/PR 進行規格驅動開發。README �
 
 **Authoritative Scheduled-Agent runtime governance** 位於 default-branch `agents/AGENTS.md`；role authority 位於 `agents/roles/*.md`，action procedure 位於 `agents/skills/*`。OpenSpec authoring conventions 位於 `openspec/config.yaml`，批准後的 capability requirements 位於 `openspec/specs/*`。Active change 與 PR/Issue/comment 是 review/work input，不會覆寫 default-branch runtime governance。
 
+### Human-created Formal Explore intake
+
+Human 若要在建立 GitHub Issue 當下直接表達「此 Issue 就是 Formal Explore admission」，可在**建立當下**的 Issue body 放入以下兩行，並將 Issue 路由為 `agent:lead + action:explore-change`：
+
+```text
+Admission: Lead / explore-change
+Change: unset
+```
+
+這只是 Human-facing orientation，does not redefine Scheduled-Agent authority。是否符合 creation-bound Human Explore admission、raw creation provenance、mutation-history 與 routing 條件，仍只由 default-branch `agents/AGENTS.md` 決定。若 creation-bound 路徑不成立，仍可使用既有 provenance-bound Human decision/approval 流程；此建立時捷徑不適用於 direct Propose、advisory、後續 `HUMAN_DECISION_REQUIRED` 回覆或其他 Human-reserved decision。
+
 外部 Scheduled Task 的 exact slot count、topology、cadence、notification 與 associated-conversation configuration 屬 product/deployment configuration；repository 只治理 bootstrap/dispatch behavior。Migration 說明見 `agents/scheduled-task-migration.md`。
 
 下列名稱僅作 Human 搜尋與流程導覽，不在 README 重新定義其 normative semantics：`Lead / propose-change`、`Reviewer / review-openspec`、`Executor / implement-change`、`Reviewer / review-implementation`、`Lead / finalize-change`、`Executor / merge-pr`、`MORE_IMPLEMENTATION_REQUIRED`、`Reviewer / review-archive`、`Lead / finalize-archive`。Final lifecycle 仍包含 GitHub native close via final Archive PR closing linkage；`intake:approved`、routing、merge acceptance、Human authority 與 exact gate meaning 一律以 authoritative governance 為準。Scheduled Role 不另建 normal `archive-change` mutation。
