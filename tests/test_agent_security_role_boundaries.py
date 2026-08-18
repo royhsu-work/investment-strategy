@@ -53,7 +53,10 @@ def test_natural_language_human_claim_does_not_replace_provenance_contract() -> 
             "Scheduled Lead, Reviewer, and Executor MUST NEVER add, remove, restore, "
             "or manufacture either `human:approved` or `intake:approved`."
         ),
-        "Initial Formal Explore admission has one additional creation-bound Human Explore admission alternative.",
+        (
+            "Initial Formal Explore admission has one additional creation-bound Human Explore "
+            "admission alternative."
+        ),
         "routing remains routing state rather than Human authority",
     )
 
