@@ -172,10 +172,11 @@ def label_event_from_raw(raw: Mapping[str, object]) -> LabelEvent:
 def issue_creation_from_raw(raw: Mapping[str, object]) -> IssueCreation:
     user = _mapping(raw.get("user"), "user")
     provenance_available, app = _raw_app_provenance(raw)
+    created_at_raw = raw.get("created_at")
     return IssueCreation(
         id=_integer(raw.get("id"), "id"),
-        created_at=_timestamp(raw.get("created_at"), "created_at"),
-        updated_at=_timestamp(raw.get("updated_at"), "updated_at"),
+        created_at=_timestamp(created_at_raw, "created_at"),
+        updated_at=_timestamp(raw.get("updated_at", created_at_raw), "updated_at"),
         author=_string(user.get("login"), "user.login"),
         body=_string(raw.get("body"), "body"),
         provenance_available=provenance_available,
@@ -228,10 +229,16 @@ def is_human_created_explore_admission(
     creation: IssueCreation,
     current_agent_label: str,
     current_action_label: str,
+    declaration_history_unambiguous: bool | None = None,
 ) -> bool:
-    """Evaluate only the narrow initial Human-created Formal Explore admission path."""
+    """Evaluate only the narrow initial Human-created Formal Explore admission path.
+
+    The optional legacy history argument may only tighten qualification. Passing True cannot override
+    the evidence-derived creation/update check, so callers cannot manufacture admission by assertion.
+    """
     return (
-        _creation_declaration_history_is_reconstructable(creation)
+        declaration_history_unambiguous is not False
+        and _creation_declaration_history_is_reconstructable(creation)
         and current_agent_label == EXPLORE_AGENT_LABEL
         and current_action_label == EXPLORE_ACTION_LABEL
         and _is_human_provenance(
@@ -316,6 +323,7 @@ def is_human_explore_admission_approved(
     creation: IssueCreation,
     current_agent_label: str,
     current_action_label: str,
+    declaration_history_unambiguous: bool | None = None,
     approval_label_present: bool,
     comments: tuple[DecisionComment, ...],
     label_events: tuple[LabelEvent, ...],
@@ -325,6 +333,7 @@ def is_human_explore_admission_approved(
         creation=creation,
         current_agent_label=current_agent_label,
         current_action_label=current_action_label,
+        declaration_history_unambiguous=declaration_history_unambiguous,
     ):
         return True
     return is_human_decision_approved(
