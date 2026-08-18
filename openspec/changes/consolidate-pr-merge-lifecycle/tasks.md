@@ -4,10 +4,10 @@
 
 Trace: proposal `What Changes` direct PASS-to-merge; requirement `Executor merges only an explicitly authorized unchanged revision`; design D1/D5.
 
-- [ ] 1.1 RED: add focused governance regression coverage proving `review-implementation` PASS routes directly to `Executor / merge-pr`, while a stale head, contradictory gate/check state, or implementation closing linkage still fails closed.
-- [ ] 1.2 GREEN: update shared governance, directly affected role/skill contracts, and recurring message presentation so normal implementation merge consumes exact-head Reviewer PASS without Lead `MERGE_AUTHORIZED` or a replacement token.
-- [ ] 1.3 REFACTOR: remove duplicate implementation authorization wording while keeping post-merge `Lead / finalize-change`, current Draft-to-Ready-before-review semantics, and cross-role handoff reconstruction coherent.
-- [ ] 1.4 VERIFY: run focused Slice 1 tests, full regression suite, Ruff lint/format, mypy, and strict OpenSpec validation; persist verified slice completion before continuing.
+- [x] 1.1 RED: add focused governance regression coverage proving `review-implementation` PASS routes directly to `Executor / merge-pr`, while a stale head, contradictory gate/check state, or implementation closing linkage still fails closed.
+- [x] 1.2 GREEN: update shared governance, directly affected role/skill contracts, and recurring message presentation so normal implementation merge consumes exact-head Reviewer PASS without Lead `MERGE_AUTHORIZED` or a replacement token.
+- [x] 1.3 REFACTOR: remove duplicate implementation authorization wording while keeping post-merge `Lead / finalize-change`, current Draft-to-Ready-before-review semantics, and cross-role handoff reconstruction coherent.
+- [x] 1.4 VERIFY: run focused Slice 1 tests, full regression suite, Ruff lint/format, mypy, and strict OpenSpec validation; persist verified slice completion before continuing.
 
 ## Slice 2 — Archive lifecycle preparation moves before review
 
