@@ -49,6 +49,7 @@ class LabelEvent:
 class IssueCreation:
     id: int
     created_at: datetime
+    updated_at: datetime
     author: str
     body: str
     provenance_available: bool
@@ -174,6 +175,7 @@ def issue_creation_from_raw(raw: Mapping[str, object]) -> IssueCreation:
     return IssueCreation(
         id=_integer(raw.get("id"), "id"),
         created_at=_timestamp(raw.get("created_at"), "created_at"),
+        updated_at=_timestamp(raw.get("updated_at"), "updated_at"),
         author=_string(user.get("login"), "user.login"),
         body=_string(raw.get("body"), "body"),
         provenance_available=provenance_available,
@@ -202,6 +204,17 @@ def _has_exact_explore_creation_declaration(body: str) -> bool:
     ]
 
 
+def _creation_declaration_history_is_reconstructable(creation: IssueCreation) -> bool:
+    """Conservatively prove the current body is still the raw creation-time body.
+
+    GitHub's normal Issue object exposes the current body but not historical body revisions. Until a
+    stronger immutable creation-history surface is supplied, any post-creation Issue update makes the
+    creation-bound shortcut non-qualifying. This intentionally prefers a false negative plus the existing
+    Human-decision fallback over trusting a caller assertion about mutation history.
+    """
+    return creation.updated_at == creation.created_at
+
+
 def _is_human_provenance(
     actor: str,
     provenance_available: bool,
@@ -215,11 +228,10 @@ def is_human_created_explore_admission(
     creation: IssueCreation,
     current_agent_label: str,
     current_action_label: str,
-    declaration_history_unambiguous: bool,
 ) -> bool:
     """Evaluate only the narrow initial Human-created Formal Explore admission path."""
     return (
-        declaration_history_unambiguous
+        _creation_declaration_history_is_reconstructable(creation)
         and current_agent_label == EXPLORE_AGENT_LABEL
         and current_action_label == EXPLORE_ACTION_LABEL
         and _is_human_provenance(
@@ -304,7 +316,6 @@ def is_human_explore_admission_approved(
     creation: IssueCreation,
     current_agent_label: str,
     current_action_label: str,
-    declaration_history_unambiguous: bool,
     approval_label_present: bool,
     comments: tuple[DecisionComment, ...],
     label_events: tuple[LabelEvent, ...],
@@ -314,7 +325,6 @@ def is_human_explore_admission_approved(
         creation=creation,
         current_agent_label=current_agent_label,
         current_action_label=current_action_label,
-        declaration_history_unambiguous=declaration_history_unambiguous,
     ):
         return True
     return is_human_decision_approved(
