@@ -363,7 +363,8 @@ def test_provenance_migration_is_prospective_not_retroactive() -> None:
         "A still-pending Human-reserved decision first consumed after activation MUST satisfy"
         in shared
     )
-    assert "fresh Human decision carrying the exact expected `decision_ref`" in shared
+    assert "current applicable\nHuman-authority path" in shared
+    assert "creation-bound alternative" in shared
 
 
 def test_human_created_formal_explore_requires_exact_raw_creation_contract() -> None:
