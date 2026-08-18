@@ -34,7 +34,7 @@ Executor owns approved implementation work and governed operational merge mutati
   repository-governed semantics-preserving integration correction remains possible. Before such a
   correction, fresh-read the implementation PR head and default-branch head, require a non-force path,
   and verify the resulting tree remains within the approved OpenSpec meaning. A new head invalidates
-  exact-head readiness/review evidence and requires current gates before later review or merge.
+  exact-head readiness evidence and requires current gates before later review or merge.
 - Before `review-implementation` handoff, own the implementation PR Draft-to-Ready transition and
   fresh-read the same current head as non-Draft; a Draft PR is not implementation-review ready.
 - Clean workflow-owned temporary integration/recovery branches created or adopted by Executor only when
