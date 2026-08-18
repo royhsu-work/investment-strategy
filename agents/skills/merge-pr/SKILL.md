@@ -26,12 +26,10 @@ provenance. The linkage is structural lifecycle evidence only and never provides
 Execute a merge mutation only when all applicable conditions are simultaneously true and unambiguous:
 
 1. Reviewer `PASS` exists for the exact revision R under the required implementation/archive gate.
-2. For the final Archive PR under the current archive boundary, Lead archive `MERGE_AUTHORIZED` exists for
-   the exact same revision R. This condition does not apply to normal implementation PR merges.
+2. For the final Archive PR under the current archive boundary, Lead `MERGE_AUTHORIZED` exists for the exact same revision R. This condition does not apply to normal implementation PR merges.
 3. The target PR current head still equals R.
 4. Required gates/checks remain valid and there is no contradictory current evidence.
-5. For an implementation or implementation-correction PR, the PR does not establish GitHub Issue-closing
-   linkage to its persistent coordination Issue; it uses only a non-closing reference.
+5. For an implementation or implementation-correction PR, the PR does not establish GitHub Issue-closing linkage to its persistent coordination Issue; it uses only a non-closing reference.
 6. For the final Archive PR, the PR establishes exactly the repository-approved closing linkage to the same
    persistent coordination Issue reconstructed for the immutable change identity.
 7. For the final Archive PR, all known pre-native-close temporary integration/recovery branch obligations
@@ -40,7 +38,9 @@ Execute a merge mutation only when all applicable conditions are simultaneously 
    cleanup mutation.
 
 An implementation PASS for an earlier head is insufficient. A current implementation PASS never waives the
-unchanged-head, current-check, non-closing-linkage, or contradiction checks above.
+unchanged-head, current-check, non-closing-linkage, or contradiction checks above. For the current Archive
+path, Reviewer PASS alone is insufficient until the approved archive slices replace that archive-only
+acceptance boundary.
 
 A closing linkage on an implementation or implementation-correction PR is a lifecycle-contract violation.
 Even when every other gate is current, do not merge that PR; persist the violation and hand control to Lead
