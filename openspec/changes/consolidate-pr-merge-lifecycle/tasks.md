@@ -13,10 +13,10 @@ Trace: proposal `What Changes` direct PASS-to-merge; requirement `Executor merge
 
 Trace: proposal Archive preparation boundary; requirement `Review and finalize actions have Lead-owned minimum gate contracts`; design D2/D3/D5.
 
-- [ ] 2.1 RED: add focused regression coverage proving final Archive PR review handoff is blocked until required separate-follow-up tracker state and any explicitly provenance-owned temporary correction/recovery disposition are reconstructable.
-- [ ] 2.2 GREEN: move those Lead-owned judgments into `finalize-change` Archive-PR preparation, teach `review-archive` to inspect applicable preparation evidence, and route archive PASS directly to `Executor / merge-pr`.
-- [ ] 2.3 REFACTOR: reduce `finalize-archive` to post-merge/native-close terminal reconstruction plus genuine close recovery, without retaining a hidden pre-merge authorization phase.
-- [ ] 2.4 VERIFY: run focused Slice 2 tests, full regression suite, Ruff lint/format, mypy, and strict OpenSpec validation; persist verified slice completion before continuing.
+- [x] 2.1 RED: add focused regression coverage proving final Archive PR review handoff is blocked until required separate-follow-up tracker state and any explicitly provenance-owned temporary correction/recovery disposition are reconstructable.
+- [x] 2.2 GREEN: move those Lead-owned judgments into `finalize-change` Archive-PR preparation, teach `review-archive` to inspect applicable preparation evidence, and route archive PASS directly to `Executor / merge-pr`.
+- [x] 2.3 REFACTOR: reduce `finalize-archive` to post-merge/native-close terminal reconstruction plus genuine close recovery, without retaining a hidden pre-merge authorization phase.
+- [x] 2.4 VERIFY: run focused Slice 2 tests, full regression suite, Ruff lint/format, mypy, and strict OpenSpec validation; persist verified slice completion before continuing.
 
 ## Slice 3 — Executor enforces one shared fresh-read merge contract
 
