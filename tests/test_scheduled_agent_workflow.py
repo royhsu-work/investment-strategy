@@ -205,18 +205,20 @@ def test_review_and_finalize_skills_preserve_upstream_gate_contracts() -> None:
         "archive history",
         "unrelated repository changes",
         "strict OpenSpec validation",
+        "Lead preparation evidence",
     ):
         assert required in archive_review
 
     for required in (
         "Reviewer implementation `PASS`",
-        "MERGE_AUTHORIZED",
         "MORE_IMPLEMENTATION_REQUIRED",
         "WAITING_FOR_ARCHIVE_AUTOMATION",
         "Reviewer archive `PASS`",
+        "preparation evidence",
         "observed `closed` state",
     ):
         assert required in finalize
+    assert "MERGE_AUTHORIZED" not in finalize
 
 
 def test_routing_concurrency_revision_and_crash_recovery_fail_closed() -> None:
@@ -234,13 +236,13 @@ def test_routing_concurrency_revision_and_crash_recovery_fail_closed() -> None:
 
     for required in (
         "Reviewer `PASS` exists for the exact revision R",
-        "Lead `MERGE_AUTHORIZED` exists for the exact same revision R",
         "target PR current head still equals R",
-        "Reviewer PASS alone is insufficient",
+        "Required gates/checks remain valid",
         "Before attempting the mutation",
         "do not retry the merge",
     ):
         assert required in merge
+    assert "MERGE_AUTHORIZED" not in merge
 
 
 def test_pr_linkage_governance_reserves_closing_linkage_for_archive() -> None:
