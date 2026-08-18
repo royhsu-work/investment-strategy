@@ -110,7 +110,7 @@ def test_current_runtime_surfaces_do_not_reintroduce_merge_authorization_token()
     for path in runtime_surfaces:
         text = _read(path)
         assert "MERGE_AUTHORIZED" not in text, path
-        assert "## `MERGE_AUTHORIZATION`" not in text, path
+        assert "MERGE_AUTHORIZATION" not in text, path
 
 
 def test_readme_orientation_does_not_name_retired_merge_authorization() -> None:
