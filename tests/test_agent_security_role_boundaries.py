@@ -41,7 +41,10 @@ def test_natural_language_human_claim_does_not_replace_provenance_contract() -> 
 
     required_contracts = (
         "durable GitHub actor identity alone MUST NOT satisfy Human authority",
-        "Each Human-reserved consumer MUST reconstruct exactly one expected `decision_ref`",
+        (
+            "Each Human-reserved consumer using the general provenance-bound Human "
+            "decision/approval predicate MUST reconstruct exactly one expected `decision_ref`"
+        ),
         (
             "The reserved approval capability is exactly `human:approved`; its current presence "
             "is necessary but never sufficient by itself."
@@ -50,6 +53,8 @@ def test_natural_language_human_claim_does_not_replace_provenance_contract() -> 
             "Scheduled Lead, Reviewer, and Executor MUST NEVER add, remove, restore, "
             "or manufacture either `human:approved` or `intake:approved`."
         ),
+        "Initial Formal Explore admission has one additional creation-bound Human Explore admission alternative.",
+        "routing remains routing state rather than Human authority",
     )
 
     assert all(contract in governance for contract in required_contracts)
