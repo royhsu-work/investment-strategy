@@ -4,7 +4,7 @@
 
 The repository SHALL provide `agents/skills/skill-creator/SKILL.md` as a reusable default-branch Skill-authoring and Skill-maintenance baseline derived from an immutable upstream Anthropic `skills/skill-creator/` revision. The adopted baseline SHALL preserve the complete upstream package resources required by the pinned Skill's advertised behavior rather than substituting a repository-authored prose approximation.
 
-The repository MUST record immutable source provenance sufficient to reconstruct the adopted upstream repository, path, commit, and package tree. Upstream files copied into the baseline MUST remain distinguishable from repository-authored additions or patches. A later mutable upstream change MUST NOT alter repository runtime behavior until a governed repository change deliberately adopts a new immutable baseline.
+The repository MUST record immutable source provenance sufficient to reconstruct the adopted upstream repository, path, commit, and package tree. Upstream files copied into the baseline MUST remain distinguishable from repository-authored changes. The provenance record MUST contain an explicit Added / Deleted / Modified ledger relative to the pinned upstream subtree; every non-empty entry MUST state the concrete repository reason, and an empty category MUST be recorded as `none` rather than omitted. A later mutable upstream change MUST NOT alter repository runtime behavior until a governed repository change deliberately adopts a new immutable baseline.
 
 The upstream license/attribution file included with the pinned package MUST be preserved with the adopted Skill.
 
@@ -29,6 +29,14 @@ The upstream license/attribution file included with the pinned package MUST be p
 - THEN the repository continues using the currently pinned default-branch Skill package
 - AND the mutable upstream change has no authority over current execution
 
+#### Scenario: Vendored package differs from the pinned upstream subtree
+
+- GIVEN the repository-owned Skill directory contains any file addition, upstream-file deletion, or upstream-file modification relative to the pinned subtree
+- WHEN provenance for that adopted baseline is inspected
+- THEN each Added / Deleted / Modified category is explicitly present
+- AND every difference states why the repository requires it
+- AND a category with no differences is recorded as `none`
+
 #### Scenario: Adopted package is redistributed in the repository
 
 - GIVEN the pinned upstream package includes its license or attribution artifact
@@ -40,7 +48,7 @@ The upstream license/attribution file included with the pinned package MUST be p
 
 Repository-specific authority and integration guidance needed when using the adopted `skill-creator` SHALL remain clearly identified as repository-authored local content and SHALL NOT be represented as unchanged Anthropic upstream content. The repository SHALL preserve the existing authority ownership boundaries: shared Scheduled-Agent runtime invariants remain owned by `agents/AGENTS.md`, role mission/authority remains owned by `agents/roles/*`, and mapped actions retain ownership of their action-specific procedure and result semantics.
 
-Repository-specific guidance MAY be a progressive-disclosure resource beneath `agents/skills/skill-creator/` when it is needed specifically while composing that reusable Skill. The repository MUST record such local additions separately from the pinned upstream file set. A root-level pseudo-skill document MUST NOT be retained solely as a duplicate general Skill-authoring baseline once its material repository-only guidance has a clear local owner under the adopted Skill.
+Repository-specific guidance MAY be a progressive-disclosure resource beneath `agents/skills/skill-creator/` when it is needed specifically while composing that reusable Skill. The repository MUST record such local additions in the Added ledger with their concrete repository reason. A root-level pseudo-skill document MUST NOT be retained solely as a duplicate general Skill-authoring baseline once its material repository-only guidance has a clear local owner under the adopted Skill.
 
 #### Scenario: Local governance must accompany the upstream baseline
 
@@ -53,8 +61,8 @@ Repository-specific guidance MAY be a progressive-disclosure resource beneath `a
 
 - GIVEN a later maintainer needs to compare the vendored Skill with its upstream baseline
 - WHEN they read the repository-owned provenance metadata
-- THEN they can distinguish the pinned upstream files from every repository-authored addition or patch
-- AND an absent declaration cannot silently make a local change appear upstream-authored
+- THEN they can distinguish the pinned upstream files from every repository-authored Added / Deleted / Modified difference
+- AND every difference has a durable reason instead of relying on conversation memory
 
 #### Scenario: Existing root skill-maintenance guidance is superseded as a baseline
 
