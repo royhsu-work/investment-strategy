@@ -38,3 +38,12 @@ def test_archive_pass_routes_directly_to_executor_merge() -> None:
     archive_review = _read("agents/skills/archive-review/SKILL.md")
 
     assert "`PASS` → `Executor / merge-pr`" in archive_review
+
+
+def test_shared_merge_contract_consumes_reviewer_pass_without_lead_token() -> None:
+    shared = _read("agents/AGENTS.md")
+
+    assert "Reviewer PASS for revision R" in shared
+    assert "Lead MERGE_AUTHORIZED for revision R" not in shared
+    assert "current PR head == R" in shared
+    assert "required gate remains valid and non-contradictory" in shared
