@@ -188,7 +188,7 @@ or `status:in-progress` state.
 
 A terminal-pending active workflow is the one narrow exception to the normal open-Issue active-workflow
 shape: a closed coordination Issue carrying `agent:lead + action:finalize-archive`, backed by matching
-authorized merged Archive PR and observed native-close evidence, with no valid Lead `LIFECYCLE_COMPLETE`
+accepted merged Archive PR and observed native-close evidence, with no valid Lead `LIFECYCLE_COMPLETE`
 result. While such terminal-pending work exists, Scheduled roles MUST NOT activate or execute queued
 pre-activation intake. After a valid Lead `LIFECYCLE_COMPLETE` result exists, the closed tuple is terminal
 history and MUST NOT block later workflow admission.
@@ -303,12 +303,12 @@ proof.
 
 Implementation and implementation-correction PRs MUST use non-closing references to their persistent
 coordination Issue and MUST NOT establish GitHub Issue-closing linkage. Closing linkage is reserved for
-the final Archive PR, where it is an expected lifecycle side effect only after the independent archive
-review, Lead authorization, unchanged-head, and current-gate merge preconditions are satisfied.
+the final Archive PR, where it is an expected lifecycle side effect only after independent archive review,
+unchanged-head/current-gate checks, and the reviewed Lead lifecycle-preparation preconditions are satisfied.
 
 A closing linkage on an implementation or implementation-correction PR is a lifecycle-contract violation.
 Executor MUST fail closed rather than merge such a PR. The presence of closing linkage on an Archive PR
-never substitutes for Reviewer PASS, Lead `MERGE_AUTHORIZED`, or any other merge gate.
+never substitutes for Reviewer PASS or any other merge precondition.
 
 ## Routing validity
 
@@ -424,7 +424,7 @@ Lead owns tracker materialization at that defer-decision boundary. Lead creates 
 
 Historical required-deferred trackers created before this direct-routing contract may still be reconstructed from their source linkage and admitted through the bounded repository-authorized Explore path; they need not be rewritten merely for migration. Agent-authored summaries or tracker existence alone never authorize unrelated routing.
 
-`Reviewer / review-openspec` verifies every approved required deferred follow-up has the required durable linkage and rejects missing tracking while ignoring ordinary out-of-scope/non-goal/optional future statements. `Lead / finalize-archive` is the terminal fail-safe: before archive authorization or `LIFECYCLE_COMPLETE`, Lead reconstructs all still-applicable required deferred follow-up obligations and requires their durable trackers. When the approved meaning and intended linkage are unambiguous and only the tracker write/routing is missing, Lead may idempotently create or reuse the required tracker with the same `Change: unset + agent:lead + action:explore-change` pre-activation routing; ambiguity fails closed to the legal specification/Human boundary. Historical completed workflows are not retroactively invalidated solely because this contract was not active when they completed.
+`Reviewer / review-openspec` verifies every approved required deferred follow-up has the required durable linkage and rejects missing tracking while ignoring ordinary out-of-scope/non-goal/optional future statements. `Lead / finalize-change` owns the final Archive pre-review preparation boundary: before routing the final Archive PR to `Reviewer / review-archive`, Lead reconstructs all still-applicable required deferred follow-up obligations and requires their durable trackers. `Lead / finalize-archive` is the terminal fail-safe and rechecks those obligations before `LIFECYCLE_COMPLETE`. When the approved meaning and intended linkage are unambiguous and only the tracker write/routing is missing, Lead may idempotently create or reuse the required tracker with the same `Change: unset + agent:lead + action:explore-change` pre-activation routing; ambiguity fails closed to the legal specification/Human boundary. Historical completed workflows are not retroactively invalidated solely because this contract was not active when they completed.
 
 This integrity contract uses existing Issues, provenance, review, Explore, and finalization surfaces. It adds no automatic arbitrary admission, generic backlog generator, hidden obligation registry, deferred-work status label, second workflow DAG, or title-based duplicate detector.
 
@@ -434,7 +434,7 @@ Once an invocation selects a workflow Issue and fixed invocation role, execution
 
 After action A persists its result and legally mutates routing on the same coordination Issue, the invocation fresh-reads that Issue. If the target role equals the fixed invocation role and the target action is immediately actionable, the invocation MUST load the target action's mapped default-branch skill, reconstruct the target action from current Issue/PR/OpenSpec/Actions/default-branch state, re-evaluate the target action's own preconditions, and continue. The target action receives no inherited authority from action A; every unsafe mutation remains subject to its own current preconditions.
 
-Multiple same-role action transitions may continue while they stay on the same coordination Issue, target the fixed invocation role, and remain immediately actionable. A same-role transition MUST NOT become a mechanism to process another workflow Issue or to redispatch globally.
+Multiple same-role action transitions may continue while they stay on the same coordination Issue, target the fixed invocation role, and remain immediately actionable. A same-role action transition MUST NOT become a mechanism to process another workflow Issue or to redispatch globally.
 
 Legal termination or yield is limited to action completion with a cross-role transfer or terminal result, a boundary that requires Human authority, a real external asynchronous wait, genuine ambiguity or unsafe state, stale/concurrency loss, or an actual tool/hard-runtime interruption. A cross-role transition persists the required ownership handoff and ends the invocation. A same-role transition does not end the invocation merely because the action label changed.
 
@@ -569,8 +569,7 @@ missing journal before performing a further lifecycle transition or handoff.
 Repository-durable workflow evidence and Human-facing Scheduled Task delivery are separate channels.
 Reviewer/Executor review results, Slice checkpoints, merge results, handoffs, ordinary action evidence,
 and all-role execution-exception evidence are repository-durable only. Ordinary Lead action results,
-merge authorization, resolved clarification/finalize evidence, handoffs, and exception evidence are also
-repository-durable only.
+resolved clarification/finalize evidence, handoffs, and exception evidence are also repository-durable only.
 
 Only Lead may produce a Human-decision-required escalation, and only that message is Human-facing
 delivery-eligible when current approved contract and durable evidence cannot legally resolve a decision that genuinely requires Human authority or intent. Otherwise the wake remains Human-silent. Actual
@@ -608,23 +607,25 @@ This distinction is reconstructed from durable artifacts/evidence and MUST NOT i
 revision classifier service, review-applicability label, semantic status flag, or hidden state machine.
 Ambiguous semantic applicability fails closed to the owning specification/review boundary.
 
-## Revision-bound review and merge authorization
+## Revision-bound review and merge acceptance
 
 Every Reviewer result identifies the exact target revision actually reviewed. OpenSpec semantic PASS
 applicability follows the semantic rule above; implementation and archive PASS remain exact-current-head
 and do not apply to a different current PR head.
 
-Executor may execute `merge-pr` only when all of the following are current and unambiguous:
+Executor may execute `merge-pr` only when all applicable conditions are current and unambiguous:
 
 ```text
 Reviewer PASS for revision R
-+ Lead MERGE_AUTHORIZED for revision R
 + current PR head == R
 + required gate remains valid and non-contradictory
++ target-specific linkage/lifecycle preparation remains valid
 ```
 
-Reviewer PASS alone never authorizes a merge. A changed PR head, stale authorization, failed/currently
-contradictory gate, or unresolved material finding fails closed and returns control to Lead.
+Reviewer PASS is the normal durable acceptance authority for the exact reviewed head; it never waives the
+unchanged-head, current-check, linkage, reviewed lifecycle-preparation, cleanup, or contradiction checks.
+A changed PR head, stale PASS, failed/currently contradictory gate, or unresolved material finding fails
+closed to the legal review/correction owner. No separate Lead merge-authorization token is required.
 
 If a merge already succeeded before an interrupted run ended, the next Executor run reconstructs that
 fact and performs only missing evidence/handoff work; it does not attempt a duplicate merge.
@@ -696,8 +697,8 @@ merged default-branch OpenSpec, archive automation, archive-branch, and Archive-
 Scheduled roles do not define or execute a competing normal `archive-change` action. The existing
 repository archive workflow remains authoritative for deterministic normal archive mechanics through
 validated archive-branch push. Final Archive PR creation is ordinary Lead lifecycle continuation and does
-not authorize merge or weaken independent archive review, exact-head Lead authorization, Executor merge,
-native close, or terminal `finalize-archive` reconstruction.
+not authorize merge or weaken independent archive review, reviewed Lead lifecycle preparation, exact-head
+Executor merge checks, native close, or terminal `finalize-archive` reconstruction.
 
 ## Workflow admission and idle advisory/discovery
 
@@ -767,21 +768,21 @@ contract above.
 
 A PASS, completion comment, or statement that an Issue "may be closed" is not completion. Only the observed closed Issue state completes the coordination lifecycle. Issue close is therefore durable lifecycle state rather than a comment convention.
 
-Known workflow-owned temporary integration/recovery cleanup obligations must be reconstructed before the
-final Archive merge can native-close the coordination Issue. `Lead / finalize-archive` identifies these
-obligations before archive `MERGE_AUTHORIZED`; `Executor / merge-pr` fresh-reads and clears every currently
-safe Executor-owned temporary branch immediately before the final Archive PR merge mutation. A blocked,
-unsafe, ambiguous, or unavailable cleanup means do not merge; the Issue remains open and existing
-exception/disposition/Lead-diagnosis semantics apply. This ordering prevents a cleanup obligation from
-first becoming actionable only after the Issue has entered the closed terminal-only routing shape.
+Known workflow-owned temporary correction/recovery cleanup obligations are classified by `Lead / finalize-change`
+during final Archive PR preparation before `Reviewer / review-archive`. Reviewer verifies that preparation
+with the exact Archive target. Immediately before final Archive merge, `Executor / merge-pr` fresh-reads and
+clears every predeclared currently-safe Executor-owned temporary correction/recovery branch, while preserving
+reviewed legal retention dispositions. A new or materially changed obligation/disposition fails closed to Lead
+and requires renewed independent review when the reviewed preparation meaning changed. The normal
+`agent/archive-<change>` lifecycle branch is never inferred to be temporary cleanup input from its name.
 
 The final Archive PR carries the repository-approved closing linkage to the persistent coordination
-Issue. After Executor merges the authorized final Archive PR and fresh-reads the coordination Issue as
+Issue. After Executor merges the accepted final Archive PR and fresh-reads the coordination Issue as
 natively closed, Executor replaces the consumed routing tuple on that closed Issue with exactly
 `agent:lead + action:finalize-archive`, persists one bounded merge/native-close/handoff journal, and ends
 the invocation. Executor MUST NOT execute Lead finalization in the same invocation.
 
-The closed Issue is then the terminal-pending active workflow only while matching authorized merged
+The closed Issue is then the terminal-pending active workflow only while matching accepted merged
 Archive PR/native-close evidence exists and no valid Lead `LIFECYCLE_COMPLETE` result exists. Lead
 reconstructs canonical archived default-branch state plus the pre-merge cleanup/retention evidence and
 records bounded `LIFECYCLE_COMPLETE` evidence without reopening or redundantly closing an already natively
@@ -789,12 +790,12 @@ closed Issue. Once that result exists, the closed tuple is terminal history and 
 admission.
 
 Explicit Issue close is recovery-only. Lead may perform an explicit Issue-close recovery only when the
-authorized Archive PR is merged, canonical archive state is correct, and native completion is missing.
+accepted Archive PR is merged, canonical archive state is correct, and native completion is missing.
 After that mutation Lead re-observes the Issue and requires `closed` before declaring completion.
 
 If archive state is complete but the terminal result is still missing, the next Lead run reconstructs the completed archive and current Issue state; it persists only the missing terminal evidence or applies recovery-only close behavior when native completion is still absent.
 
-If the coordination Issue is observed closed before the authorized Archive PR merge, that state is
+If the coordination Issue is observed closed before the accepted Archive PR merge, that state is
 premature and illegal. Scheduled roles fail closed; the premature close must not be treated as successful
 archive completion, regardless of comments or other completion-looking evidence.
 
