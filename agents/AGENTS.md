@@ -393,6 +393,15 @@ Previous conversation memory is never required for correctness. A partial run, t
 final response does not transfer ownership. A later run reconstructs durable reality and continues only
 the missing legal work.
 
+Crash recovery of a specific already-completed durable mutation or handoff is transition-specific. Before
+a later run may repair routing for that specific recovered transition, it MUST reconstruct same-workflow
+causal-descendant evidence. If valid causal-descendant evidence proves the transition was already consumed
+by a later legal lifecycle action, recovery MUST NOT rewrite canonical routing backward. It may repair only
+missing non-routing journal evidence that remains required and non-contradictory. Ambiguous or
+contradictory descendant evidence fails closed. This guard applies only to recovery of that specific
+completed transition; it preserves legitimate correction loops and does not introduce new routing fields,
+phase/status state, sequence state, or another workflow state machine.
+
 A first nonterminal observation (`absent`, `queued`, or `in_progress`) of an exact external resource just
 created or triggered by the current selected action does not by itself prove a cross-invocation external
 asynchronous wait. While the same invocation still has bounded execution opportunity and no different
@@ -454,7 +463,7 @@ After action A persists its result and legally mutates routing on the same coord
 
 Multiple same-role action transitions may continue while they stay on the same coordination Issue, target the fixed invocation role, and remain immediately actionable. A same-role action transition MUST NOT become a mechanism to process another workflow Issue or to redispatch globally.
 
-Legal termination or yield is limited to action completion with a cross-role transfer or terminal result, a boundary that requires Human authority, a real external asynchronous wait, genuine ambiguity or unsafe state, stale/concurrency loss, or an actual tool/hard-runtime interruption. A cross-role transition persists the required ownership handoff and ends the invocation. A same-role transition does not end the invocation merely because the action label changed.
+Legal termination or yield is limited to action completion with a cross-role transfer or terminal result, a boundary that requires Human authority, a real external asynchronous wait, genuine ambiguity or unsafe state, stale/concurrency loss, or an actual tool/hard-runtime interruption. A cross-role transition persists the required ownership handoff and ends the invocation. A same-role action transition does not end the invocation merely because the action label changed.
 
 Role and skill documents define only action-specific blockers, results, recovery details, and target actions. They MUST NOT introduce a competing generic continuation policy or weaken this shared termination rule.
 
@@ -580,7 +589,9 @@ represented by the exactly-one verified-Slice checkpoint after successful VERIFY
 
 If a lifecycle transition succeeds but its journal write is interrupted, the next eligible run
 reconstructs and preserves the already durable transition rather than replaying it, then persists the
-missing journal before performing a further lifecycle transition or handoff.
+missing journal before performing a further lifecycle transition or handoff. If valid causal-descendant
+evidence proves that specific recovered transition was already consumed, this repair is limited to missing
+non-routing journal evidence and MUST NOT rewrite canonical routing backward.
 
 ## Human-facing delivery eligibility
 
@@ -646,7 +657,8 @@ A changed PR head, stale PASS, failed/currently contradictory gate, or unresolve
 closed to the legal review/correction owner. No separate Lead merge-authorization token is required.
 
 If a merge already succeeded before an interrupted run ended, the next Executor run reconstructs that
-fact and performs only missing evidence/handoff work; it does not attempt a duplicate merge.
+fact and performs only missing evidence/handoff work; it does not attempt a duplicate merge. The shared
+transition-consumption guard above applies before any recovery routing repair.
 
 ## OpenSpec validation evidence
 
