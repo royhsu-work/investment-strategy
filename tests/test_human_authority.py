@@ -443,9 +443,7 @@ def test_human_created_formal_explore_requires_one_unset_change_declaration() ->
 def test_human_explore_admission_falls_back_to_existing_general_predicate() -> None:
     issue_number = 88
     decision_ref = explore_admission_ref(issue_number)
-    connector_creation = issue_creation_from_raw(
-        _raw_issue(app={"id": 1, "slug": "connector"})
-    )
+    connector_creation = issue_creation_from_raw(_raw_issue(app={"id": 1, "slug": "connector"}))
     assert is_human_explore_admission_approved(
         issue_number=issue_number,
         creation=connector_creation,
