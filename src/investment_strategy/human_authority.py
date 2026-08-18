@@ -49,7 +49,6 @@ class LabelEvent:
 class IssueCreation:
     id: int
     created_at: datetime
-    updated_at: datetime
     author: str
     body: str
     provenance_available: bool
@@ -172,11 +171,9 @@ def label_event_from_raw(raw: Mapping[str, object]) -> LabelEvent:
 def issue_creation_from_raw(raw: Mapping[str, object]) -> IssueCreation:
     user = _mapping(raw.get("user"), "user")
     provenance_available, app = _raw_app_provenance(raw)
-    created_at_raw = raw.get("created_at")
     return IssueCreation(
         id=_integer(raw.get("id"), "id"),
-        created_at=_timestamp(created_at_raw, "created_at"),
-        updated_at=_timestamp(raw.get("updated_at", created_at_raw), "updated_at"),
+        created_at=_timestamp(raw.get("created_at"), "created_at"),
         author=_string(user.get("login"), "user.login"),
         body=_string(raw.get("body"), "body"),
         provenance_available=provenance_available,
@@ -205,18 +202,6 @@ def _has_exact_explore_creation_declaration(body: str) -> bool:
     ]
 
 
-def _creation_declaration_history_is_reconstructable(creation: IssueCreation) -> bool:
-    """Conservatively prove the current body is still the raw creation-time body.
-
-    GitHub's normal Issue object exposes the current body but not historical body
-    revisions. Until a stronger immutable creation-history surface is supplied,
-    any post-creation Issue update makes the creation-bound shortcut non-qualifying.
-    This intentionally prefers a false negative plus the existing Human-decision
-    fallback over trusting a caller assertion about mutation history.
-    """
-    return creation.updated_at == creation.created_at
-
-
 def _is_human_provenance(
     actor: str,
     provenance_available: bool,
@@ -230,17 +215,17 @@ def is_human_created_explore_admission(
     creation: IssueCreation,
     current_agent_label: str,
     current_action_label: str,
-    declaration_history_unambiguous: bool | None = None,
+    declaration_history_unambiguous: bool,
 ) -> bool:
     """Evaluate only the narrow initial Human-created Formal Explore admission path.
 
-    The optional legacy history argument may only tighten qualification. Passing
-    True cannot override the evidence-derived creation/update check, so callers
-    cannot manufacture admission by assertion.
+    ``creation.body`` must be reconstructed creation-time content. The caller must
+    separately derive ``declaration_history_unambiguous`` from durable mutation
+    history; current Issue ``updated_at`` is deliberately not accepted as a proxy
+    because comments and routing-label changes also update it.
     """
     return (
-        declaration_history_unambiguous is not False
-        and _creation_declaration_history_is_reconstructable(creation)
+        declaration_history_unambiguous
         and current_agent_label == EXPLORE_AGENT_LABEL
         and current_action_label == EXPLORE_ACTION_LABEL
         and _is_human_provenance(
@@ -325,7 +310,7 @@ def is_human_explore_admission_approved(
     creation: IssueCreation,
     current_agent_label: str,
     current_action_label: str,
-    declaration_history_unambiguous: bool | None = None,
+    declaration_history_unambiguous: bool,
     approval_label_present: bool,
     comments: tuple[DecisionComment, ...],
     label_events: tuple[LabelEvent, ...],
