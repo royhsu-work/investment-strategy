@@ -93,3 +93,28 @@ def test_temporary_cleanup_requires_separate_durable_recovery_provenance() -> No
     assert "explicitly provenance-owned temporary correction/recovery branches" in merge_pr
     assert "dispositions reviewed with the Archive target" in merge_pr
     assert "broad branch garbage collection" in merge_pr
+
+
+def test_current_runtime_surfaces_do_not_reintroduce_merge_authorization_token() -> None:
+    runtime_surfaces = (
+        "agents/AGENTS.md",
+        "agents/roles/lead.md",
+        "agents/roles/executor.md",
+        "agents/skills/implementation-review/SKILL.md",
+        "agents/skills/archive-review/SKILL.md",
+        "agents/skills/lifecycle-finalize/SKILL.md",
+        "agents/skills/merge-pr/SKILL.md",
+        "agents/templates/messages.md",
+    )
+
+    for path in runtime_surfaces:
+        text = _read(path)
+        assert "MERGE_AUTHORIZED" not in text, path
+        assert "## `MERGE_AUTHORIZATION`" not in text, path
+
+
+def test_readme_orientation_does_not_name_retired_merge_authorization() -> None:
+    readme = _read("README.md")
+
+    assert "merge authorization" not in readme
+    assert "merge acceptance" in readme
