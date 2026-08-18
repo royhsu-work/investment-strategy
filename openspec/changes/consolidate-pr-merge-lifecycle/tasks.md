@@ -31,10 +31,10 @@ Trace: requirement `Executor merges only an explicitly authorized unchanged revi
 
 Trace: requirements `Normal OpenSpec archive mechanics remain owned by repository automation` and `Final Archive native-close occurs only after known terminal cleanup obligations are cleared`; design D4.
 
-- [ ] 4.1 RED: add regression coverage proving normal `agent/archive-<change>` is never inferred to be a temporary cleanup branch and that cleanup authority requires separate durable correction/recovery provenance.
-- [ ] 4.2 GREEN: update current authoritative governance/skills/spec-facing documentation to describe validated archive branch + Lead-created final Archive PR as normal lifecycle, while preserving explicit recovery/manual fallback semantics where they are actually supported.
-- [ ] 4.3 REFACTOR: remove obsolete recovery wording or generic branch-discovery language that could classify ordinary archive branches as temporary, without rewriting historical Issue/PR evidence.
-- [ ] 4.4 VERIFY: run focused Slice 4 tests, full regression suite, Ruff lint/format, mypy, and strict OpenSpec validation; persist verified slice completion before continuing.
+- [x] 4.1 RED: add regression coverage proving normal `agent/archive-<change>` is never inferred to be a temporary cleanup branch and that cleanup authority requires separate durable correction/recovery provenance.
+- [x] 4.2 GREEN: update current authoritative governance/skills/spec-facing documentation to describe validated archive branch + Lead-created final Archive PR as normal lifecycle, while preserving explicit recovery/manual fallback semantics where they are actually supported.
+- [x] 4.3 REFACTOR: remove obsolete recovery wording or generic branch-discovery language that could classify ordinary archive branches as temporary, without rewriting historical Issue/PR evidence.
+- [x] 4.4 VERIFY: run focused Slice 4 tests, full regression suite, Ruff lint/format, mypy, and strict OpenSpec validation; persist verified slice completion before continuing.
 
 ## Slice 5 — Completion and SSOT-safe handoff
 
