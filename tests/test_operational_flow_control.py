@@ -95,7 +95,9 @@ def test_shared_explore_origin_set_is_reconstructable_across_all_approved_paths(
     shared = _normalized(AGENTS)
     for required in (
         "approved origin classes",
-        "provenance-bound Human Explore admission",
+        "Human Explore admission satisfying the Human-authority contract below",
+        "creation-bound Human Explore admission alternative",
+        "general provenance-bound Human decision/approval predicate",
         "bounded idle-discovery repository authorization",
         "approved required separate follow-up routed directly",
         "same-Issue pre-activation direct-Propose fallback",

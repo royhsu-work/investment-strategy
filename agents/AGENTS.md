@@ -143,21 +143,22 @@ bounded rule does not create a generic fault state machine, hidden recovery regi
 lifecycle, or authority to undo a qualifying Human decision.
 
 Open `Lead / explore-change + Change: unset` entries are legal queued pre-activation work only when their
-origin is reconstructable as exactly one of the approved origin classes: provenance-bound Human Explore
-admission; bounded idle-discovery repository authorization; an approved required separate follow-up routed
-directly from its source-linked defer decision; or a same-Issue pre-activation direct-Propose fallback that
-preserves the still-valid original direct-Propose authority envelope. Human-admitted `Lead / propose-change`
-Issues with `Change: unset` are also queued pre-activation work. None of these entries count as an active
-formal workflow. Explore keeps `Change: unset` and creates no formal OpenSpec Change artifacts. Formal
-activation remains owned by Propose when Lead persists the immutable non-`unset` Change identity.
+origin is reconstructable as exactly one of the approved origin classes: Human Explore admission satisfying
+the Human-authority contract below; bounded idle-discovery repository authorization; an approved required
+separate follow-up routed directly from its source-linked defer decision; or a same-Issue pre-activation
+direct-Propose fallback that preserves the still-valid original direct-Propose authority envelope. Human-
+admitted `Lead / propose-change` Issues with `Change: unset` are also queued pre-activation work. None of
+these entries count as an active formal workflow. Explore keeps `Change: unset` and creates no formal
+OpenSpec Change artifacts. Formal activation remains owned by Propose when Lead persists the immutable
+non-`unset` Change identity.
 
 Human-admitted Explore and direct-Propose entries are valid only when the corresponding Human-reserved
-admission decision satisfies the provenance-bound Human authority contract below. Their exact expected
-references are `issue:<issue-number>:admission:lead:explore-change` and
-`issue:<issue-number>:admission:lead:propose-change`, respectively. Actor identity or routing state alone
-MUST NOT satisfy Human admission. A same-Issue direct-Propose fallback to Explore preserves the already
-validated direct-Propose authority envelope and MUST NOT be reclassified as Human Explore admission or
-require a second `issue:<issue-number>:admission:lead:explore-change` decision.
+admission satisfies the Human-authority contract below. Initial Human Explore admission may use either the
+creation-bound Human Explore admission alternative or the general provenance-bound Human decision/approval
+predicate. Human direct-Propose admission continues to use only the general predicate with exact reference
+`issue:<issue-number>:admission:lead:propose-change`. A same-Issue direct-Propose fallback to Explore
+preserves the already validated direct-Propose authority envelope and MUST NOT be reclassified as Human
+Explore admission or require a second Explore admission decision.
 
 Idle-discovery repository-authorized Explore admission is permitted only from the bounded idle-discovery
 boundary defined below. Its Issue MUST record reconstructable admission evidence, but that Agent-created
@@ -236,8 +237,9 @@ Human-required admission, answers, authorization, or resume conditions. Activity
 `royhsu-work` is also insufficient when raw creation/event provenance shows a GitHub App or when required
 provenance is unavailable.
 
-Each Human-reserved consumer MUST reconstruct exactly one expected `decision_ref` from durable workflow
-state. Current mappings are exhaustive: Human Explore admission uses
+Each Human-reserved consumer using the general provenance-bound Human decision/approval predicate MUST
+reconstruct exactly one expected `decision_ref` from durable workflow state. Current mappings are
+exhaustive: Human Explore admission through the general path uses
 `issue:<issue-number>:admission:lead:explore-change`; Human direct-Propose admission uses
 `issue:<issue-number>:admission:lead:propose-change`; Human-only advisory admission uses
 `issue:<issue-number>:advisory-admission`; and an answer, authorization, or resume produced from canonical
@@ -245,12 +247,12 @@ state. Current mappings are exhaustive: Human Explore admission uses
 answered. A future Human-reserved consumer without an explicit canonical mapping fails closed; roles MUST
 NOT invent an anchor from prose, PR descriptions, routing history, or model inference.
 
-The Human decision comment MUST be on the same coordination Issue, contain exactly one canonical
-`Human-Decision-For: <decision_ref>` line matching the expected reference, be authored by `royhsu-work`,
-and have raw creation provenance with `performed_via_github_app == null`. The reserved approval capability
-is exactly `human:approved`; its current presence is necessary but never sufficient by itself. A qualifying
-`labeled` event for `human:approved` MUST have `actor.login == royhsu-work` and raw event provenance
-`performed_via_github_app == null`.
+The Human decision comment used by the general predicate MUST be on the same coordination Issue, contain
+exactly one canonical `Human-Decision-For: <decision_ref>` line matching the expected reference, be authored
+by `royhsu-work`, and have raw creation provenance with `performed_via_github_app == null`. The reserved
+approval capability is exactly `human:approved`; its current presence is necessary but never sufficient by
+itself. A qualifying `labeled` event for `human:approved` MUST have `actor.login == royhsu-work` and raw
+event provenance `performed_via_github_app == null`.
 
 Approval binding is event-first. For each qualifying Human-only `human:approved` event, derive exactly one
 bound comment before comparing the current boundary reference: select the latest qualifying Human-created
@@ -270,6 +272,23 @@ label state but never establish Human authority. Normalized connector reads that
 `performed_via_github_app` MUST be supplemented by raw GitHub provenance or the Human authority condition
 fails closed.
 
+Initial Formal Explore admission has one additional creation-bound Human Explore admission alternative.
+It qualifies only when raw Issue creation provenance proves `user.login == royhsu-work` and
+`performed_via_github_app == null`, the creation-time Issue body contains exactly one
+`Admission: Lead / explore-change` declaration and exactly one `Change: unset` declaration, current routing
+is exactly `agent:lead + action:explore-change`, and durable creation/mutation history leaves that original
+declaration reconstructable and unambiguous. For this narrow boundary the Human Issue creation itself is
+the admission decision; a second decision comment and `human:approved` event are not required solely to
+repeat that same initial Explore admission. Later connector- or Agent-applied routing may make an already
+qualifying Issue actionable, but routing remains routing state rather than Human authority.
+
+Missing, inaccessible, ambiguous, replaced, app-created, or contradictory creation evidence makes only the
+creation-bound alternative fail closed. The Issue may still qualify through the general provenance-bound
+Human decision/approval predicate above. This creation-bound alternative applies only to initial
+`Lead / explore-change` admission; Human direct-Propose admission, advisory admission, answers or resume for
+`HUMAN_DECISION_REQUIRED`, and later Human-reserved decisions continue to use their existing general
+predicate and exact canonical references unless a later approved requirement changes them.
+
 Repository-authorized Explore is a separate bounded capability derived from independent approved
 repository authority or concrete behavior-preserving friction. It MUST NOT be treated as Human activity,
 MUST NOT require `human:approved` merely to impersonate Human admission, and MUST NOT satisfy a later
@@ -278,10 +297,9 @@ genuinely Human-reserved decision.
 This stronger Human authority contract activates prospectively on default-branch merge. Workflows already
 terminal before activation and Human authority already legally consumed before activation remain historical
 evidence and MUST NOT be retroactively reopened or invalidated solely because they predate this contract.
-A still-pending Human-reserved decision first consumed after activation MUST satisfy the current
-provenance-bound contract even when its Issue or earlier evidence predates activation; insufficient prior
-evidence fails closed for a fresh Human decision carrying the exact expected `decision_ref` plus a later
-qualifying Human-only approval event.
+A still-pending Human-reserved decision first consumed after activation MUST satisfy the current applicable
+Human-authority path even when its Issue or earlier evidence predates activation; insufficient evidence
+fails closed for fresh qualifying Human evidence rather than being inferred from actor or routing state.
 
 `human:notified`, if present, is analytics-only historical metadata. It MUST NOT grant authority, change
 routing, create waiting semantics, participate in resume conditions, or prove that Human answered.
@@ -706,15 +724,14 @@ Scheduled roles MUST NOT autonomously admit arbitrary Issues, PRs, repository ac
 discovered requirements, Agent-authored recommendations, style preferences, speculative cleanup, or generic
 simplicity claims into workflow work.
 
-Human admission remains available, but Human-reserved admission MUST satisfy the provenance-bound Human
-authority contract. Human admission to Explore expects exactly
-`issue:<issue-number>:admission:lead:explore-change`; Human direct-to-Propose expects exactly
-`issue:<issue-number>:admission:lead:propose-change`. A qualifying Human-created decision comment, raw Human
-creation provenance, current `human:approved` presence, and the qualifying Human-only approval event are
-required; explicit routing or actor identity alone is insufficient. Explore remains optional and a valid
-already-admitted Explore may continue to Propose inside its admitted authority envelope without a second
-generic Human proceed decision. A direct-Propose Issue that legally falls back to Explore keeps the same
-validated direct-Propose authority envelope; it does not fabricate or require a new Human Explore admission.
+Human admission remains available under the authoritative Human-authority contract above. Initial Human
+Explore admission may use either its creation-bound alternative or the general provenance-bound decision
+path; Human direct-to-Propose, advisory admission, escalation answers/resume, and later Human-reserved
+decisions retain the general predicate and their exact canonical references. Explicit routing or actor
+identity alone is insufficient. Explore remains optional and a valid already-admitted Explore may continue
+to Propose inside its admitted authority envelope without a second generic Human proceed decision. A
+direct-Propose Issue that legally falls back to Explore keeps the same validated direct-Propose authority
+envelope; it does not fabricate or require a new Human Explore admission.
 
 In addition, only when no formal/terminal-pending workflow and no already eligible pre-activation work can
 be advanced, Lead MAY materialize at most one bounded `Change: unset + agent:lead + action:explore-change`
