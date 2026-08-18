@@ -97,9 +97,9 @@ OpenSpec meaning.
 3. Verify the resulting tree is a pure integration correction under the approved OpenSpec meaning. If
    conflict resolution requires choosing new product/specification behavior, stop and route to
    `Lead / resolve-question`.
-4. Any successfully moved implementation head is a new head and invalidates exact-head readiness,
-   implementation-review, and merge-authorization evidence that was bound to the prior head. Obtain
-   current quality gates and required exact-head OpenSpec validation before `Reviewer / review-implementation`.
+4. Any successfully moved implementation head is a new head and invalidates exact-head readiness and
+   implementation-review evidence that was bound to the prior head. Obtain current quality gates and
+   required exact-head OpenSpec validation before `Reviewer / review-implementation`.
 5. Do not force update the implementation branch as a recovery shortcut and do not discard unique work.
 6. If the available mutation surface cannot safely complete the correction, persist the raw observable
    failure using `EXECUTION_EXCEPTION` while a repository evidence surface is writable, state whether any
