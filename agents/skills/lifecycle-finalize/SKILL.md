@@ -42,24 +42,24 @@ awaiting this PR creation is normal success, not `RECOVERY_DECISION_REQUIRED`.
 
 ### Archive preparation before independent review
 
-Before `Reviewer / review-archive`, Lead prepares the final Archive target by reconstructing every
-still-applicable approved required deferred follow-up or required separate-follow-up obligation and proving
-that each obligation has a durable tracker linked to the source coordination Issue/Change and exact defer
-decision/reference. If the only missing work is an unambiguous tracker write, Lead may idempotently create
-or reuse that tracker under the existing Lead-owned tracking contract. The tracker MUST NOT be
-Human-admitted or receive workflow routing. Ordinary out-of-scope, non-goal, or optional future work creates
-no such obligation.
+The preparation below is complete before `Reviewer / review-archive`. Lead prepares the final Archive
+target by reconstructing every still-applicable approved required deferred follow-up or required
+separate-follow-up obligation and proving that each obligation has a durable tracker linked to the source
+coordination Issue/Change and exact defer decision/reference. If the only missing work is an unambiguous
+tracker write, Lead may idempotently create or reuse that tracker under the existing Lead-owned tracking
+contract. The tracker MUST NOT be Human-admitted or receive workflow routing. Ordinary out-of-scope,
+non-goal, or optional future work creates no such obligation.
 
 Lead also reconstructs only separately workflow-owned temporary correction/recovery branches identified by
 explicit durable lifecycle, correction, integration, or recovery provenance. The normal validated
 `agent/archive-<change>` branch is a lifecycle artifact and is never inferred to be temporary merely from
-its name. For each provenance-owned temporary correction/recovery branch, Lead classifies the pre-close
-disposition from current durable evidence as exactly one of:
+its name. For each provenance-owned temporary correction/recovery branch, Lead classifies the known
+terminal cleanup obligations and pre-close disposition from current durable evidence as exactly one of:
 
 - safely deletable by Executor immediately before Archive merge because the branch is not an open PR
   head/base, is not active correction/recovery input, and has no unique commits outside canonical `main` or
   an explicitly retained successor;
-- intentionally retained with a durable legal reason and next owner; or
+- intentionally retained with a durable reconstructable reason and legal next owner; or
 - ambiguous/unsafe/unproven, which blocks Archive review readiness and fails closed to the legal diagnosis
   owner.
 
@@ -104,7 +104,8 @@ closed. Lead does not reinterpret such evidence as terminal completion.
 The normal path first observes the expected native Issue completion and requires the Issue to be observed
 closed. The observed closed state and the observed `closed` state are mandatory. If Issue closure is
 observed before the reviewed Archive PR merge, that closure is premature and must fail closed; it must not
-be treated as successful archive completion.
+be treated as successful archive completion. A premature close must not be treated as successful under any
+completion-looking evidence.
 
 When final conditions are satisfied, Lead persists one bounded `LIFECYCLE_COMPLETE` result that identifies
 the Archive PR exact head, merge commit, canonical archived default-branch state, observed native Issue
@@ -115,7 +116,8 @@ closure is already present.
 
 Only when the reviewed Archive PR is merged, canonical archive state is correct, and native completion is
 missing may Lead use explicit Issue-close recovery. In that recovery-only path, Lead may perform the GitHub
-coordination Issue close mutation and must re-observe `closed` before persisting `LIFECYCLE_COMPLETE`.
+coordination Issue close mutation. This is the only path allowed to perform the GitHub coordination Issue
+close mutation, and Lead must re-observe `closed` before persisting `LIFECYCLE_COMPLETE`.
 
 If a recovery run is interrupted after archive completion but before the recovery close, the next Lead run
 reconstructs the completed archive and idempotently performs the missing close recovery only when native
