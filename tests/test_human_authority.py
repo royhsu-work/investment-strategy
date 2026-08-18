@@ -9,6 +9,7 @@ from investment_strategy.human_authority import (
     DecisionComment,
     HumanDecisionBoundary,
     IssueCreation,
+    IssueDeclarationHistory,
     LabelEvent,
     advisory_admission_ref,
     decision_comment_from_raw,
@@ -20,6 +21,7 @@ from investment_strategy.human_authority import (
     is_human_decision_approved,
     is_human_explore_admission_approved,
     issue_creation_from_raw,
+    issue_declaration_history_from_raw,
     label_event_from_raw,
     propose_admission_ref,
 )
@@ -106,6 +108,30 @@ def _raw_issue(
     if include_provenance:
         raw["performed_via_github_app"] = app
     return raw
+
+
+def _raw_history(
+    *,
+    creation_body: str = "Admission: Lead / explore-change\nChange: unset\n\nInvestigate the issue.",
+    complete: bool = True,
+    events: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    return {
+        "complete": complete,
+        "opened": {"action": "opened", "issue": {"body": creation_body}},
+        "events": [] if events is None else events,
+    }
+
+
+def _history(
+    *,
+    creation_body: str = "Admission: Lead / explore-change\nChange: unset\n\nInvestigate the issue.",
+    complete: bool = True,
+    events: list[dict[str, object]] | None = None,
+) -> IssueDeclarationHistory:
+    return issue_declaration_history_from_raw(
+        _raw_history(creation_body=creation_body, complete=complete, events=events)
+    )
 
 
 def test_actor_identity_alone_is_not_human_authority() -> None:
@@ -358,33 +384,55 @@ def test_provenance_migration_is_prospective_not_retroactive() -> None:
 
 def test_human_created_formal_explore_requires_exact_raw_creation_contract() -> None:
     creation = issue_creation_from_raw(_raw_issue(updated_at="2026-08-16T07:20:00Z"))
+    history = _history(
+        creation_body=creation.body,
+        events=[
+            {"action": "labeled"},
+            {"action": "commented"},
+        ],
+    )
     assert isinstance(creation, IssueCreation)
     assert is_human_created_explore_admission(
         creation=creation,
         current_agent_label="agent:lead",
         current_action_label="action:explore-change",
-        declaration_history_unambiguous=True,
+        declaration_history=history,
     )
+
+
+def test_declaration_history_ignores_ordinary_routing_and_comment_activity() -> None:
+    history = _history(events=[{"action": "labeled"}, {"action": "commented"}])
+    assert history.complete
+    assert not history.declaration_mutated
+
+
+def test_declaration_history_detects_body_or_title_mutation() -> None:
+    body_history = _history(events=[{"action": "edited", "changes": {"body": {"from": "old"}}}])
+    title_history = _history(events=[{"action": "edited", "changes": {"title": {"from": "old"}}}])
+    assert body_history.complete and body_history.declaration_mutated
+    assert title_history.complete and title_history.declaration_mutated
+
+
+def test_declaration_history_fails_closed_when_relevant_edit_evidence_is_incomplete() -> None:
+    incomplete = _history(events=[{"action": "edited"}])
+    unavailable = _history(complete=False)
+    assert not incomplete.complete
+    assert not unavailable.complete
 
 
 def test_issue_updated_at_is_not_used_as_creation_declaration_history_proxy() -> None:
     creation = issue_creation_from_raw(_raw_issue(updated_at="2026-08-16T08:00:00Z"))
+    history = _history(creation_body=creation.body, events=[{"action": "labeled"}])
     assert is_human_created_explore_admission(
         creation=creation,
         current_agent_label="agent:lead",
         current_action_label="action:explore-change",
-        declaration_history_unambiguous=True,
-    )
-    assert not is_human_created_explore_admission(
-        creation=creation,
-        current_agent_label="agent:lead",
-        current_action_label="action:explore-change",
-        declaration_history_unambiguous=False,
+        declaration_history=history,
     )
 
 
 @pytest.mark.parametrize(
-    ("raw", "agent", "action", "history_ok"),
+    ("raw", "agent", "action", "history_complete"),
     [
         (
             _raw_issue(app={"id": 1, "slug": "connector"}),
@@ -426,14 +474,31 @@ def test_human_created_formal_explore_fails_closed_for_invalid_evidence(
     raw: dict[str, object],
     agent: str,
     action: str,
-    history_ok: bool,
+    history_complete: bool,
 ) -> None:
     creation = issue_creation_from_raw(raw)
     assert not is_human_created_explore_admission(
         creation=creation,
         current_agent_label=agent,
         current_action_label=action,
-        declaration_history_unambiguous=history_ok,
+        declaration_history=_history(
+            creation_body=creation.body,
+            complete=history_complete,
+        ),
+    )
+
+
+def test_human_created_formal_explore_rejects_mutated_creation_declaration() -> None:
+    creation = issue_creation_from_raw(_raw_issue())
+    history = _history(
+        creation_body=creation.body,
+        events=[{"action": "edited", "changes": {"body": {"from": creation.body}}}],
+    )
+    assert not is_human_created_explore_admission(
+        creation=creation,
+        current_agent_label="agent:lead",
+        current_action_label="action:explore-change",
+        declaration_history=history,
     )
 
 
@@ -448,7 +513,7 @@ def test_human_created_formal_explore_requires_one_unset_change_declaration() ->
             creation=issue_creation_from_raw(_raw_issue(body=body)),
             current_agent_label="agent:lead",
             current_action_label="action:explore-change",
-            declaration_history_unambiguous=True,
+            declaration_history=_history(creation_body=body),
         )
 
 
@@ -461,7 +526,10 @@ def test_human_explore_admission_falls_back_to_existing_general_predicate() -> N
         creation=connector_creation,
         current_agent_label="agent:lead",
         current_action_label="action:explore-change",
-        declaration_history_unambiguous=False,
+        declaration_history=_history(
+            creation_body=connector_creation.body,
+            complete=False,
+        ),
         approval_label_present=True,
         comments=(_comment(id=10, minute=1, decision_ref=decision_ref),),
         label_events=(_event(id=20, minute=2),),
