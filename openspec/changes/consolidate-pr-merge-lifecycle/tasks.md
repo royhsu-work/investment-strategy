@@ -22,10 +22,10 @@ Trace: proposal Archive preparation boundary; requirement `Review and finalize a
 
 Trace: requirement `Executor merges only an explicitly authorized unchanged revision`; design D1/D3.
 
-- [ ] 3.1 RED: add regression coverage for implementation and Archive merge showing current head, applicable PASS, required checks, correct linkage, and path-specific lifecycle preparation are all required immediately before mutation without a Lead authorization token.
-- [ ] 3.2 GREEN: update `merge-pr` and directly related Executor/shared governance contracts to consume Reviewer PASS as normal merge authority and return stale/changed lifecycle evidence to the legal correction owner.
-- [ ] 3.3 REFACTOR: consolidate common implementation/Archive merge checks while keeping Archive-only closing-linkage and pre-close cleanup preconditions explicit rather than creating a second merge action.
-- [ ] 3.4 VERIFY: run focused Slice 3 tests, full regression suite, Ruff lint/format, mypy, and strict OpenSpec validation; persist verified slice completion before continuing.
+- [x] 3.1 RED: add regression coverage for implementation and Archive merge showing current head, applicable PASS, required checks, correct linkage, and path-specific lifecycle preparation are all required immediately before mutation without a Lead authorization token.
+- [x] 3.2 GREEN: update `merge-pr` and directly related Executor/shared governance contracts to consume Reviewer PASS as normal merge authority and return stale/changed lifecycle evidence to the legal correction owner.
+- [x] 3.3 REFACTOR: consolidate common implementation/Archive merge checks while keeping Archive-only closing-linkage and pre-close cleanup preconditions explicit rather than creating a second merge action.
+- [x] 3.4 VERIFY: run focused Slice 3 tests, full regression suite, Ruff lint/format, mypy, and strict OpenSpec validation; persist verified slice completion before continuing.
 
 ## Slice 4 — Normalize normal Archive versus genuine recovery semantics
 
