@@ -130,8 +130,16 @@ def _history(
     complete: bool = True,
     events: list[dict[str, object]] | None = None,
 ) -> IssueDeclarationHistory:
-    return issue_declaration_history_from_raw(
-        _raw_history(creation_body=creation_body, complete=complete, events=events)
+    declaration_mutated = False
+    for event in [] if events is None else events:
+        if event.get("action") != "edited":
+            continue
+        changes = event.get("changes")
+        if not isinstance(changes, dict) or "body" in changes or "title" in changes:
+            declaration_mutated = True
+    return IssueDeclarationHistory(
+        verified_creation_body=creation_body if complete else None,
+        declaration_mutated=declaration_mutated,
     )
 
 
@@ -401,24 +409,39 @@ def test_human_created_formal_explore_requires_exact_raw_creation_contract() -> 
     )
 
 
-def test_declaration_history_ignores_ordinary_routing_and_comment_activity() -> None:
-    history = _history(events=[{"action": "labeled"}, {"action": "commented"}])
-    assert history.complete
+def test_generic_raw_history_projection_never_authenticates_creation_body() -> None:
+    raw = _raw_history(complete=True, events=[{"action": "labeled"}, {"action": "commented"}])
+    history = issue_declaration_history_from_raw(raw)
+    assert history.verified_creation_body is None
     assert not history.declaration_mutated
 
 
-def test_declaration_history_detects_body_or_title_mutation() -> None:
-    body_history = _history(events=[{"action": "edited", "changes": {"body": {"from": "old"}}}])
-    title_history = _history(events=[{"action": "edited", "changes": {"title": {"from": "old"}}}])
-    assert body_history.complete and body_history.declaration_mutated
-    assert title_history.complete and title_history.declaration_mutated
+def test_caller_complete_true_cannot_manufacture_creation_bound_authority() -> None:
+    creation = issue_creation_from_raw(_raw_issue())
+    history = issue_declaration_history_from_raw(
+        _raw_history(creation_body=creation.body, complete=True, events=[])
+    )
+    assert not is_human_created_explore_admission(
+        creation=creation,
+        current_agent_label="agent:lead",
+        current_action_label="action:explore-change",
+        declaration_history=history,
+    )
 
 
-def test_declaration_history_fails_closed_when_relevant_edit_evidence_is_incomplete() -> None:
-    incomplete = _history(events=[{"action": "edited"}])
-    unavailable = _history(complete=False)
-    assert not incomplete.complete
-    assert not unavailable.complete
+def test_generic_raw_history_preserves_negative_mutation_evidence() -> None:
+    body_history = issue_declaration_history_from_raw(
+        _raw_history(events=[{"action": "edited", "changes": {"body": {"from": "old"}}}])
+    )
+    title_history = issue_declaration_history_from_raw(
+        _raw_history(events=[{"action": "edited", "changes": {"title": {"from": "old"}}}])
+    )
+    ambiguous_history = issue_declaration_history_from_raw(
+        _raw_history(events=[{"action": "edited"}])
+    )
+    assert body_history.verified_creation_body is None and body_history.declaration_mutated
+    assert title_history.verified_creation_body is None and title_history.declaration_mutated
+    assert ambiguous_history.verified_creation_body is None and ambiguous_history.declaration_mutated
 
 
 def test_issue_updated_at_is_not_used_as_creation_declaration_history_proxy() -> None:
@@ -531,6 +554,25 @@ def test_human_explore_admission_falls_back_to_existing_general_predicate() -> N
             creation_body=connector_creation.body,
             complete=False,
         ),
+        approval_label_present=True,
+        comments=(_comment(id=10, minute=1, decision_ref=decision_ref),),
+        label_events=(_event(id=20, minute=2),),
+    )
+
+
+def test_generic_raw_history_nonqualification_still_falls_back_to_general_predicate() -> None:
+    issue_number = 88
+    decision_ref = explore_admission_ref(issue_number)
+    creation = issue_creation_from_raw(_raw_issue())
+    raw_history = issue_declaration_history_from_raw(
+        _raw_history(creation_body=creation.body, complete=True, events=[])
+    )
+    assert is_human_explore_admission_approved(
+        issue_number=issue_number,
+        creation=creation,
+        current_agent_label="agent:lead",
+        current_action_label="action:explore-change",
+        declaration_history=raw_history,
         approval_label_present=True,
         comments=(_comment(id=10, minute=1, decision_ref=decision_ref),),
         label_events=(_event(id=20, minute=2),),
