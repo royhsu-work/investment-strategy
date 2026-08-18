@@ -258,6 +258,10 @@ Partial execution, interruption, tool failure, or missing final response MUST NO
 
 When a prior operation failed after only some durable mutations completed, recovery SHALL distinguish observed durable mutations from intended-but-uncompleted work. If the current invocation can still write repository evidence, it SHALL preserve the existing canonical action/result/`EXECUTION_EXCEPTION`/cross-role `HANDOFF` evidence required by the owning action. If no repository evidence surface is writable, the run MUST NOT manufacture a durable workflow transition from external Scheduled Task output; a later wake SHALL reconstruct correctness from the repository state that actually exists.
 
+When recovery evaluates an already-completed durable mutation or handoff, it SHALL also reconstruct whether valid causal-descendant evidence within the same coordination workflow proves that exact transition was already consumed by later lifecycle work. If such descendant evidence exists, recovery MUST NOT overwrite canonical routing to replay the earlier transition. It MAY repair only still-required non-routing journal evidence when that repair is non-contradictory. Ambiguous or contradictory consumption evidence MUST fail closed rather than authorize backward routing repair.
+
+This consumed-transition guard is recovery-specific and MUST NOT be interpreted as a generic forward-only lifecycle rule; normal governed correction loops remain legal.
+
 After a selected action persists its durable result and legally changes routing, the invocation MAY continue to the next action only when all of the following are true:
 
 - the selected coordination Issue is unchanged;
@@ -320,6 +324,24 @@ A first `absent`, `queued`, or `in_progress` observation of the exact required e
 - WHEN a later wake reconstructs the selected action
 - THEN it fresh-reads R itself before concluding the wait still exists
 - AND historical waiting evidence alone cannot justify another yield
+
+#### Scenario: Earlier merge transition already has causal descendants
+
+- GIVEN merge mutation M and its accepted revision are already durable
+- AND valid later lifecycle evidence in the same coordination workflow proves M's handoff was consumed
+- AND a stale recovery attempt reconstructs M as already completed
+- WHEN recovery evaluates whether to repair M's routing transition
+- THEN recovery does not rewrite canonical routing back to M's immediate downstream owner/action
+- AND it may repair only still-required non-routing journal evidence when safe
+- AND legitimate separately governed correction loops remain unaffected
+
+#### Scenario: Consumption evidence is contradictory
+
+- GIVEN recovery reconstructs an already-completed durable mutation
+- AND available same-workflow evidence is contradictory about whether its transition was consumed
+- WHEN recovery evaluates routing repair
+- THEN it fails closed
+- AND it does not choose a lifecycle position by model inference
 
 ### Requirement: Executor persists task completion at verified vertical-slice checkpoints
 
