@@ -441,7 +441,8 @@ def test_generic_raw_history_preserves_negative_mutation_evidence() -> None:
     )
     assert body_history.verified_creation_body is None and body_history.declaration_mutated
     assert title_history.verified_creation_body is None and title_history.declaration_mutated
-    assert ambiguous_history.verified_creation_body is None and ambiguous_history.declaration_mutated
+    assert ambiguous_history.verified_creation_body is None
+    assert ambiguous_history.declaration_mutated
 
 
 def test_issue_updated_at_is_not_used_as_creation_declaration_history_proxy() -> None:
