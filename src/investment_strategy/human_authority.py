@@ -57,8 +57,15 @@ class IssueCreation:
 
 @dataclass(frozen=True)
 class IssueDeclarationHistory:
-    creation_body: str
-    complete: bool
+    """Declaration history already authenticated by a durable acquisition boundary.
+
+    ``verified_creation_body`` is intentionally optional. ``None`` means the
+    available GitHub/tool surface did not prove an authentic creation-time body,
+    so the creation-bound admission shortcut must not qualify. The admission
+    predicate never accepts a caller-supplied completeness boolean.
+    """
+
+    verified_creation_body: str | None
     declaration_mutated: bool
 
 
@@ -189,42 +196,38 @@ def issue_creation_from_raw(raw: Mapping[str, object]) -> IssueCreation:
 
 
 def issue_declaration_history_from_raw(raw: Mapping[str, object]) -> IssueDeclarationHistory:
-    """Parse durable declaration-specific Issue history evidence.
+    """Parse the currently supported generic Issue-history projection fail closed.
 
-    The evidence envelope is produced by the acquisition boundary, not by the
-    admission predicate. ``complete`` means the acquisition surface has supplied
-    the full relevant Issue edit history for the creation declaration. Ordinary
-    routing/comment activity is ignored. An edited event without concrete
-    ``changes`` is contradictory/incomplete evidence and therefore fails closed.
+    The current GitHub REST/tool projection used by this repository does not
+    expose an authenticated creation-time Issue body or a complete body-edit
+    history. Fields such as a caller-provided ``complete`` flag or synthetic
+    ``opened.issue.body`` therefore cannot establish creation-bound authority.
+
+    We still inspect concrete edit records to preserve negative evidence, but
+    this adapter deliberately emits ``verified_creation_body=None``. A future
+    governed acquisition implementation may emit a non-``None`` value only
+    after it can authenticate source identity, creation snapshot, and relevant
+    pagination/edit-history completeness from the actual GitHub evidence
+    surface rather than caller assertions.
     """
-    complete = raw.get("complete")
-    if not isinstance(complete, bool):
-        raise ValueError("complete must be a boolean")
-
-    opened = _mapping(raw.get("opened"), "opened")
-    opened_issue = _mapping(opened.get("issue"), "opened.issue")
-    creation_body = _string(opened_issue.get("body"), "opened.issue.body")
-
     events = raw.get("events")
     if not isinstance(events, list):
         raise ValueError("events must be an array")
 
     declaration_mutated = False
-    evidence_complete = complete
     for index, item in enumerate(events):
         event = _mapping(item, f"events[{index}]")
         if event.get("action") != "edited":
             continue
         changes = event.get("changes")
         if not isinstance(changes, Mapping):
-            evidence_complete = False
+            declaration_mutated = True
             continue
         if "body" in changes or "title" in changes:
             declaration_mutated = True
 
     return IssueDeclarationHistory(
-        creation_body=creation_body,
-        complete=evidence_complete,
+        verified_creation_body=None,
         declaration_mutated=declaration_mutated,
     )
 
@@ -266,10 +269,11 @@ def is_human_created_explore_admission(
     declaration_history: IssueDeclarationHistory,
 ) -> bool:
     """Evaluate only the narrow initial Human-created Formal Explore admission path."""
+    verified_creation_body = declaration_history.verified_creation_body
     return (
-        declaration_history.complete
+        verified_creation_body is not None
         and not declaration_history.declaration_mutated
-        and declaration_history.creation_body == creation.body
+        and verified_creation_body == creation.body
         and current_agent_label == EXPLORE_AGENT_LABEL
         and current_action_label == EXPLORE_ACTION_LABEL
         and _is_human_provenance(
@@ -277,7 +281,7 @@ def is_human_created_explore_admission(
             creation.provenance_available,
             creation.performed_via_github_app,
         )
-        and _has_exact_explore_creation_declaration(creation.body)
+        and _has_exact_explore_creation_declaration(verified_creation_body)
     )
 
 
