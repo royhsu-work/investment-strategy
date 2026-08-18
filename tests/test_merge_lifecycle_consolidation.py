@@ -22,3 +22,19 @@ def test_normal_implementation_merge_has_no_lead_authorization_hop() -> None:
 
     assert "MERGE_AUTHORIZED" not in executor
     assert "Before merge authorization" not in finalize
+
+
+def test_archive_preparation_is_complete_before_reviewer_handoff() -> None:
+    finalize = _read("agents/skills/lifecycle-finalize/SKILL.md")
+    archive_review = _read("agents/skills/archive-review/SKILL.md")
+
+    assert "before `Reviewer / review-archive`" in finalize
+    assert "required deferred follow-up" in finalize
+    assert "temporary correction/recovery" in finalize
+    assert "Lead preparation evidence" in archive_review
+
+
+def test_archive_pass_routes_directly_to_executor_merge() -> None:
+    archive_review = _read("agents/skills/archive-review/SKILL.md")
+
+    assert "`PASS` → `Executor / merge-pr`" in archive_review
