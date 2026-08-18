@@ -2,21 +2,21 @@
 
 ## Slice 1 — Raw Human-created Explore admission predicate
 
-- [ ] RED: add focused tests showing directly Human-created Formal Explore intake is accepted only with raw `performed_via_github_app == null`, exact creation-time `Admission: Lead / explore-change`, `Change: unset`, and legal current routing.
-- [ ] RED: add negative tests for app-created Human-looking Issues, missing raw provenance, missing/duplicate declaration, wrong action, and invalid routing.
-- [ ] GREEN: implement the minimum raw Issue-creation adapter/predicate beside the existing Human decision/approval evaluator without weakening `is_human_decision_approved`.
-- [ ] REFACTOR: keep creation parsing/evaluation deterministic and reusable only at the initial Explore admission boundary; do not introduce hidden approval state.
-- [ ] VERIFY: run focused tests, full regression suite, type checks, lint checks, and strict OpenSpec validation.
+- [x] RED: add focused tests showing directly Human-created Formal Explore intake is accepted only with raw `performed_via_github_app == null`, exact creation-time `Admission: Lead / explore-change`, `Change: unset`, and legal current routing.
+- [x] RED: add negative tests for app-created Human-looking Issues, missing raw provenance, missing/duplicate declaration, wrong action, and invalid routing.
+- [x] GREEN: implement the minimum raw Issue-creation adapter/predicate beside the existing Human decision/approval evaluator without weakening `is_human_decision_approved`.
+- [x] REFACTOR: keep creation parsing/evaluation deterministic and reusable only at the initial Explore admission boundary; do not introduce hidden approval state.
+- [x] VERIFY: run focused tests, full regression suite, type checks, lint checks, and strict OpenSpec validation.
 
 Trace: proposal `What Changes` creation-bound admission -> spec `Human-required authority is bound to the repository Human actor` -> design D1/D2.
 
 ## Slice 2 — Mutation ambiguity and fallback semantics
 
-- [ ] RED: add tests proving ambiguous/unavailable creation declaration history fails closed and does not infer Human admission from current body or routing snapshots.
-- [ ] RED: add tests proving the existing `Human-Decision-For + human:approved` predicate can still authorize Explore when the creation-bound shortcut fails but the full existing predicate passes.
-- [ ] GREEN: implement the minimum durable-history/raw-evidence handling needed to detect supported creation-declaration state and return explicit non-qualification when evidence is incomplete or contradictory.
-- [ ] REFACTOR: avoid duplicating the existing event-first Human-decision evaluator; keep fallback composition at the admission consumer boundary.
-- [ ] VERIFY: run focused tests, full regression suite, type checks, lint checks, and strict OpenSpec validation.
+- [x] RED: add tests proving ambiguous/unavailable creation declaration history fails closed and does not infer Human admission from current body or routing snapshots.
+- [x] RED: add tests proving the existing `Human-Decision-For + human:approved` predicate can still authorize Explore when the creation-bound shortcut fails but the full existing predicate passes.
+- [x] GREEN: implement the minimum durable-history/raw-evidence handling needed to detect supported creation-declaration state and return explicit non-qualification when evidence is incomplete or contradictory.
+- [x] REFACTOR: avoid duplicating the existing event-first Human-decision evaluator; keep fallback composition at the admission consumer boundary.
+- [x] VERIFY: run focused tests, full regression suite, type checks, lint checks, and strict OpenSpec validation.
 
 Trace: proposal fallback rule -> spec ambiguous/mutated scenario -> design D3.
 
