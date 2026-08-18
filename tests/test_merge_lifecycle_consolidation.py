@@ -100,6 +100,7 @@ def test_current_runtime_surfaces_do_not_reintroduce_merge_authorization_token()
         "agents/AGENTS.md",
         "agents/roles/lead.md",
         "agents/roles/executor.md",
+        "agents/skills/implementation/SKILL.md",
         "agents/skills/implementation-review/SKILL.md",
         "agents/skills/archive-review/SKILL.md",
         "agents/skills/lifecycle-finalize/SKILL.md",
