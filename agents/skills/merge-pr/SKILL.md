@@ -2,7 +2,7 @@
 
 Mapped action: `Executor / merge-pr`.
 
-The same operational action executes implementation and archive PR merges. Lifecycle-specific acceptance
+The same operational action executes implementation and archive PR merges. Lifecycle-specific preparation
 and next routing are reconstructed from the target type rather than encoded as a second merge action.
 
 ## Reconstruct before acting
@@ -14,33 +14,36 @@ state, and whether the target is an implementation/implementation-correction PR 
 For an implementation or implementation-correction PR, the applicable normal acceptance evidence is an
 unambiguous `Reviewer / review-implementation` `PASS` bound to R.
 
-For the final Archive PR, current default-branch archive lifecycle still requires the applicable archive
-Reviewer PASS together with the Lead archive `MERGE_AUTHORIZED` evidence until the approved archive slices
-of the active change replace that boundary. Also reconstruct the expected persistent coordination Issue,
-verify the PR body establishes the repository-approved closing linkage to that same Issue, and reconstruct
-any known workflow-owned temporary integration/recovery branches named by durable lifecycle/recovery
-provenance. The linkage is structural lifecycle evidence only and never provides merge authority.
+For the final Archive PR, the applicable normal acceptance evidence is an unambiguous
+`Reviewer / review-archive` `PASS` bound to R and the materially reviewed Lead preparation evidence. Also
+reconstruct the expected persistent coordination Issue, verify the PR body establishes the
+repository-approved closing linkage to that same Issue, and reconstruct only the explicitly
+provenance-owned temporary correction/recovery branches and dispositions reviewed with the Archive target.
+The normal `agent/archive-<change>` branch is the final PR source lifecycle artifact and is never a temporary
+cleanup target merely because of its name. Closing linkage is structural lifecycle evidence only and never
+substitutes for Reviewer PASS or the other merge preconditions.
 
 ## Merge preconditions
 
 Execute a merge mutation only when all applicable conditions are simultaneously true and unambiguous:
 
 1. Reviewer `PASS` exists for the exact revision R under the required implementation/archive gate.
-2. For the final Archive PR under the current archive boundary, Lead `MERGE_AUTHORIZED` exists for the exact same revision R. This condition does not apply to normal implementation PR merges.
-3. The target PR current head still equals R.
-4. Required gates/checks remain valid and there is no contradictory current evidence.
-5. For an implementation or implementation-correction PR, the PR does not establish GitHub Issue-closing linkage to its persistent coordination Issue; it uses only a non-closing reference.
-6. For the final Archive PR, the PR establishes exactly the repository-approved closing linkage to the same
+2. The target PR current head still equals R.
+3. Required gates/checks remain valid and there is no contradictory current evidence.
+4. For an implementation or implementation-correction PR, the PR does not establish GitHub Issue-closing
+   linkage to its persistent coordination Issue; it uses only a non-closing reference.
+5. For the final Archive PR, the PR establishes exactly the repository-approved closing linkage to the same
    persistent coordination Issue reconstructed for the immutable change identity.
-7. For the final Archive PR, all known pre-native-close temporary integration/recovery branch obligations
-   are cleared or have a durable reason they are not safely deletable. Executor fresh-reads branch
-   existence, open PR head/base usage, active recovery/integration references, and containment before any
-   cleanup mutation.
+6. For the final Archive PR, the Lead preparation evidence reviewed with PASS remains materially current:
+   required deferred/separate-follow-up tracker state has not become contradictory, no new required
+   obligation has appeared, and no reviewed cleanup/retention classification has materially changed.
+7. For the final Archive PR, every predeclared safely deletable temporary correction/recovery branch
+   obligation is cleared immediately before merge, while every intentionally retained obligation still has
+   its reviewed legal durable reason and owner.
 
-An implementation PASS for an earlier head is insufficient. A current implementation PASS never waives the
-unchanged-head, current-check, non-closing-linkage, or contradiction checks above. For the current Archive
-path, Reviewer PASS alone is insufficient until the approved archive slices replace that archive-only
-acceptance boundary.
+A PASS for an earlier head is insufficient. A current PASS never waives unchanged-head, current-check,
+linkage, lifecycle-preparation, cleanup, or contradiction checks. No separate Lead merge-authorization token
+is required on either normal implementation or final Archive paths.
 
 A closing linkage on an implementation or implementation-correction PR is a lifecycle-contract violation.
 Even when every other gate is current, do not merge that PR; persist the violation and hand control to Lead
@@ -49,34 +52,41 @@ itself.
 
 A final Archive PR with missing, ambiguous, or wrong-Issue closing linkage also fails closed. Do not merge
 until the Archive PR identifies the same persistent coordination Issue and carries the repository-approved
-closing linkage while all independent revision-bound gates remain current.
+closing linkage while all independent revision-bound gates and reviewed lifecycle preparation remain
+current.
 
 ## Final Archive pre-close temporary branch cleanup
 
-Immediately before the final Archive PR merge mutation, Executor must process only the known workflow-owned
-temporary integration/recovery branches reconstructed for this lifecycle.
+Immediately before the final Archive PR merge mutation, Executor processes only the explicitly identified
+workflow-owned temporary correction/recovery branches whose dispositions were included in the Lead
+preparation evidence independently reviewed with the target.
 
-For each such branch:
+For each branch whose reviewed disposition requires safe deletion:
 
-1. Fresh-read the branch, all open PR head/base usage, durable recovery/integration references, and
-   containment against canonical `main` or an explicitly retained successor.
-2. Delete only when the branch is still the identified workflow-owned temporary branch, is not an open PR
-   head or base, is not active recovery/integration input, and has no unique commits (`ahead_by == 0` or
-   equivalent current containment proof).
-3. After deletion, re-read enough durable state to prove the known obligation is cleared before merging the
-   final Archive PR.
-4. If the branch has unique commits, active use, ambiguous ownership/use, unavailable proof, or a denied
-   cleanup mutation, do not merge. Preserve the observable failure with the shared exception contract and
-   hand bounded diagnosis to Lead when same-action recovery is not legal.
+1. Fresh-read the branch, all open PR head/base usage, active correction/recovery references, and
+   containment against canonical `main` or the explicitly retained successor used by the reviewed
+   disposition.
+2. Delete only when it is still the exact provenance-owned temporary correction/recovery branch, is not an
+   open PR head or base, is not active correction/recovery input, and has no unique commits (`ahead_by == 0`
+   or equivalent current containment proof).
+3. After deletion, re-read enough durable state to prove the reviewed obligation is cleared before merging
+   the final Archive PR.
+4. If the branch has unique commits, active use, ambiguous ownership/use, unavailable proof, a denied
+   cleanup mutation, or a materially changed disposition, do not merge. Preserve the observable failure;
+   changed lifecycle meaning returns to Lead and requires renewed independent review when applicable.
 
 This is pre-close lifecycle hygiene, not broad branch garbage collection. Executor must not force-delete,
-force-update, or infer cleanup ownership merely from an `agent/*` name pattern.
+force-update, classify an arbitrary branch as temporary, or infer cleanup ownership from an `agent/*` name
+pattern.
 
 Legal pre-merge outcomes:
 
-- all applicable preconditions current and final-Archive cleanup obligations cleared → merge exactly R;
-- stale exact-head acceptance or changed/contradictory gate state → do not merge; hand control to the legal
+- all applicable preconditions current and reviewed final-Archive cleanup obligations cleared/retained as
+  prepared → merge exactly R;
+- stale exact-head PASS or changed/contradictory check state → do not merge; return to the legal review or
   correction owner;
+- materially new/changed Archive lifecycle preparation evidence → do not merge; return to Lead and require
+  renewed review when the reviewed meaning changed;
 - implementation PR contains coordination-Issue closing linkage → `LIFECYCLE_CONTRACT_VIOLATION`; do not
   merge and hand control to Lead;
 - final Archive PR has missing/ambiguous/wrong coordination-Issue closing linkage →
