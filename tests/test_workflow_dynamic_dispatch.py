@@ -308,7 +308,7 @@ def test_closed_terminal_pending_work_blocks_activation_until_lifecycle_complete
         "terminal-pending active workflow",
         "closed coordination Issue",
         "`agent:lead + action:finalize-archive`",
-        "authorized merged Archive PR",
+        "accepted merged Archive PR",
         "no valid Lead `LIFECYCLE_COMPLETE`",
         "MUST NOT activate or execute queued pre-activation intake",
         "terminal history",
