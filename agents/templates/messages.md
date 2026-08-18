@@ -61,18 +61,6 @@ Required evidence:
 
 This is completion-boundary observability, not RED/GREEN/refactor/test-trigger/compatibility-correction progress or live progress state.
 
-## `MERGE_AUTHORIZATION`
-
-Use for Lead exact-revision merge authorization.
-
-Required evidence:
-
-- common workflow envelope;
-- PR identity and authorized revision;
-- applicable Reviewer/gate evidence;
-- merge preconditions that must remain current;
-- authorization scope and expected Executor owner.
-
 ## `MERGE_RESULT`
 
 Use for Executor merge success or action-defined merge blocker result.
