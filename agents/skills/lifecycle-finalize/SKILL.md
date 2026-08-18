@@ -42,8 +42,8 @@ awaiting this PR creation is normal success, not `RECOVERY_DECISION_REQUIRED`.
 
 Only after the durable final Archive PR is present and valid may Lead persist `ARCHIVE_PR_READY` and route
 to `Reviewer / review-archive`. Closing linkage identifies lifecycle completion intent but never substitutes
-for Reviewer PASS, exact-head Lead authorization on the still-current archive path, Executor merge
-preconditions, native Issue close, or terminal `finalize-archive` reconstruction.
+for Reviewer PASS, exact-head Lead authorization on the still-current archive path, Executor merge preconditions,
+native Issue close, or terminal `finalize-archive` reconstruction.
 
 Archive waiting begins only after merged default-branch state satisfies the existing README archive
 eligibility contract.
@@ -88,15 +88,14 @@ The archive authorization is revision-bound and cleanup-precondition-bound. It d
 branches without durable workflow provenance.
 
 After archive merge, or when reconstructing the narrow closed-Issue terminal handoff, Lead reconstructs
-canonical archived default-branch state, the accepted Archive PR exact head, its merge commit, observed
+canonical archived default-branch state, the authorized Archive PR exact head, its merge commit, observed
 native Issue closure, and the cleanup evidence produced before that merge. A closed Issue with
 `agent:lead + action:finalize-archive` is eligible only when that matching merged-archive/native-close
 evidence exists and no valid Lead `LIFECYCLE_COMPLETE` result already exists.
 
 The normal path first observes the expected native Issue completion and requires the Issue to be observed
 closed. The observed closed state and the observed `closed` state are mandatory. If Issue closure is
-observed before the accepted Archive PR merge, that closure is premature and must fail closed; it must not
-be treated as successful archive completion.
+observed before the authorized Archive PR merge, that closure is premature and must fail closed; it must not be treated as successful archive completion.
 
 When final conditions are satisfied, Lead persists one bounded `LIFECYCLE_COMPLETE` result that identifies
 the Archive PR exact head, merge commit, canonical archived default-branch state, observed native Issue
@@ -105,10 +104,8 @@ temporary-branch cleanup/retention outcome. Lead verifies the terminal invariant
 Executor-owned deletion after native close, and does not reopen or redundantly close the Issue when native
 closure is already present.
 
-Only when the accepted Archive PR is merged, canonical archive state is correct, and native completion is
-missing may Lead use explicit Issue-close recovery. In that recovery-only path, Lead may perform the GitHub
-coordination Issue close mutation; that is the only path allowed to perform the GitHub coordination Issue
-close mutation, and it must re-observe `closed` before persisting `LIFECYCLE_COMPLETE`.
+Only when the authorized Archive PR is merged, canonical archive state is correct, and native completion is
+missing may Lead use explicit Issue-close recovery. In that recovery-only path, Lead may perform the GitHub coordination Issue close mutation; that is the only path allowed to perform the GitHub coordination Issue close mutation, and it must re-observe `closed` before persisting `LIFECYCLE_COMPLETE`.
 
 If a recovery run is interrupted after archive completion but before the recovery close, the next Lead run
 reconstructs the completed archive and idempotently performs the missing close recovery only when native
