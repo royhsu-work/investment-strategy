@@ -7,6 +7,10 @@ def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+def _flat(text: str) -> str:
+    return " ".join(text.split())
+
+
 def test_implementation_pass_routes_directly_to_executor_merge() -> None:
     implementation_review = _read("agents/skills/implementation-review/SKILL.md")
     merge_pr = _read("agents/skills/merge-pr/SKILL.md")
@@ -70,22 +74,22 @@ def test_merge_skill_keeps_path_specific_fresh_read_preconditions() -> None:
 
 
 def test_normal_archive_branch_is_not_temporary_cleanup_input() -> None:
-    finalize = _read("agents/skills/lifecycle-finalize/SKILL.md")
-    merge_pr = _read("agents/skills/merge-pr/SKILL.md")
-    shared = _read("agents/AGENTS.md")
+    finalize = _flat(_read("agents/skills/lifecycle-finalize/SKILL.md"))
+    merge_pr = _flat(_read("agents/skills/merge-pr/SKILL.md"))
+    shared = _flat(_read("agents/AGENTS.md"))
 
     assert "`agent/archive-<change>` branch is a lifecycle artifact" in finalize
     assert "never inferred to be temporary merely from" in finalize
     assert "The normal `agent/archive-<change>` branch" in merge_pr
-    assert "never a temporary\ncleanup target merely because of its name" in merge_pr
+    assert "never a temporary cleanup target merely because of its name" in merge_pr
     assert "never inferred to be temporary cleanup input from its name" in shared
 
 
 def test_temporary_cleanup_requires_separate_durable_recovery_provenance() -> None:
-    finalize = _read("agents/skills/lifecycle-finalize/SKILL.md")
-    merge_pr = _read("agents/skills/merge-pr/SKILL.md")
+    finalize = _flat(_read("agents/skills/lifecycle-finalize/SKILL.md"))
+    merge_pr = _flat(_read("agents/skills/merge-pr/SKILL.md"))
 
     assert "explicit durable lifecycle, correction, integration, or recovery provenance" in finalize
-    assert "explicitly\nprovenance-owned temporary correction/recovery branches" in merge_pr
+    assert "explicitly provenance-owned temporary correction/recovery branches" in merge_pr
     assert "dispositions reviewed with the Archive target" in merge_pr
     assert "broad branch garbage collection" in merge_pr
