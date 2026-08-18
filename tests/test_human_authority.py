@@ -380,7 +380,12 @@ def test_human_created_formal_explore_requires_exact_raw_creation_contract() -> 
 @pytest.mark.parametrize(
     ("raw", "agent", "action", "history_ok"),
     [
-        (_raw_issue(app={"id": 1, "slug": "connector"}), "agent:lead", "action:explore-change", True),
+        (
+            _raw_issue(app={"id": 1, "slug": "connector"}),
+            "agent:lead",
+            "action:explore-change",
+            True,
+        ),
         (_raw_issue(include_provenance=False), "agent:lead", "action:explore-change", True),
         (_raw_issue(body="Change: unset"), "agent:lead", "action:explore-change", True),
         (
