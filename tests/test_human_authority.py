@@ -8,6 +8,7 @@ import pytest
 from investment_strategy.human_authority import (
     DecisionComment,
     HumanDecisionBoundary,
+    IssueCreation,
     LabelEvent,
     advisory_admission_ref,
     decision_comment_from_raw,
@@ -15,7 +16,10 @@ from investment_strategy.human_authority import (
     escalation_response_ref,
     explore_admission_ref,
     is_human_advisory_admission_approved,
+    is_human_created_explore_admission,
     is_human_decision_approved,
+    is_human_explore_admission_approved,
+    issue_creation_from_raw,
     label_event_from_raw,
     propose_admission_ref,
 )
@@ -81,6 +85,24 @@ def _approved(
         comments=comments,
         label_events=events,
     )
+
+
+def _raw_issue(
+    *,
+    body: str = "Admission: Lead / explore-change\nChange: unset\n\nInvestigate the issue.",
+    app: object = None,
+    include_provenance: bool = True,
+    actor: str = "royhsu-work",
+) -> dict[str, object]:
+    raw: dict[str, object] = {
+        "id": 500,
+        "created_at": "2026-08-16T07:00:00Z",
+        "user": {"login": actor},
+        "body": body,
+    }
+    if include_provenance:
+        raw["performed_via_github_app"] = app
+    return raw
 
 
 def test_actor_identity_alone_is_not_human_authority() -> None:
@@ -342,3 +364,100 @@ def test_provenance_migration_is_prospective_not_retroactive() -> None:
         in shared
     )
     assert "fresh Human decision carrying the exact expected `decision_ref`" in shared
+
+
+def test_human_created_formal_explore_requires_exact_raw_creation_contract() -> None:
+    creation = issue_creation_from_raw(_raw_issue())
+    assert isinstance(creation, IssueCreation)
+    assert is_human_created_explore_admission(
+        creation=creation,
+        current_agent_label="agent:lead",
+        current_action_label="action:explore-change",
+        declaration_history_unambiguous=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("raw", "agent", "action", "history_ok"),
+    [
+        (_raw_issue(app={"id": 1, "slug": "connector"}), "agent:lead", "action:explore-change", True),
+        (_raw_issue(include_provenance=False), "agent:lead", "action:explore-change", True),
+        (_raw_issue(body="Change: unset"), "agent:lead", "action:explore-change", True),
+        (
+            _raw_issue(
+                body=(
+                    "Admission: Lead / explore-change\n"
+                    "Admission: Lead / explore-change\n"
+                    "Change: unset"
+                )
+            ),
+            "agent:lead",
+            "action:explore-change",
+            True,
+        ),
+        (
+            _raw_issue(body="Admission: Lead / propose-change\nChange: unset"),
+            "agent:lead",
+            "action:explore-change",
+            True,
+        ),
+        (_raw_issue(), "agent:reviewer", "action:explore-change", True),
+        (_raw_issue(), "agent:lead", "action:propose-change", True),
+        (_raw_issue(), "agent:lead", "action:explore-change", False),
+    ],
+)
+def test_human_created_formal_explore_fails_closed_for_invalid_evidence(
+    raw: dict[str, object],
+    agent: str,
+    action: str,
+    history_ok: bool,
+) -> None:
+    creation = issue_creation_from_raw(raw)
+    assert not is_human_created_explore_admission(
+        creation=creation,
+        current_agent_label=agent,
+        current_action_label=action,
+        declaration_history_unambiguous=history_ok,
+    )
+
+
+def test_human_created_formal_explore_requires_one_unset_change_declaration() -> None:
+    for body in (
+        "Admission: Lead / explore-change\nChange: active-change",
+        "Admission: Lead / explore-change\nChange: unset\nChange: unset",
+        "Admission: Lead / explore-change\nChange: unset\nChange: another-change",
+    ):
+        assert not is_human_created_explore_admission(
+            creation=issue_creation_from_raw(_raw_issue(body=body)),
+            current_agent_label="agent:lead",
+            current_action_label="action:explore-change",
+            declaration_history_unambiguous=True,
+        )
+
+
+def test_human_explore_admission_falls_back_to_existing_general_predicate() -> None:
+    issue_number = 88
+    decision_ref = explore_admission_ref(issue_number)
+    connector_creation = issue_creation_from_raw(
+        _raw_issue(app={"id": 1, "slug": "connector"})
+    )
+    assert is_human_explore_admission_approved(
+        issue_number=issue_number,
+        creation=connector_creation,
+        current_agent_label="agent:lead",
+        current_action_label="action:explore-change",
+        declaration_history_unambiguous=True,
+        approval_label_present=True,
+        comments=(_comment(id=10, minute=1, decision_ref=decision_ref),),
+        label_events=(_event(id=20, minute=2),),
+    )
+
+
+def test_creation_shortcut_does_not_mutate_general_decision_semantics() -> None:
+    propose_ref = propose_admission_ref(88)
+    assert not _approved(propose_ref, comments=(), events=())
+    assert _approved(
+        propose_ref,
+        comments=(_comment(id=10, minute=1, decision_ref=propose_ref),),
+        events=(_event(id=20, minute=2),),
+    )
