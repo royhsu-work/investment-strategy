@@ -67,3 +67,23 @@ def test_merge_skill_keeps_path_specific_fresh_read_preconditions() -> None:
     assert "does not establish GitHub Issue-closing" in merge_pr
     assert "Lead preparation evidence reviewed with PASS remains materially current" in merge_pr
     assert "No separate Lead merge-authorization token" in merge_pr
+
+
+def test_normal_archive_branch_is_not_temporary_cleanup_input() -> None:
+    finalize = _read("agents/skills/lifecycle-finalize/SKILL.md")
+    merge_pr = _read("agents/skills/merge-pr/SKILL.md")
+    shared = _read("agents/AGENTS.md")
+
+    assert "`agent/archive-<change>` branch is a lifecycle artifact" in finalize
+    assert "never inferred to be temporary merely from its name" in finalize
+    assert "never a temporary cleanup target merely because of its name" in merge_pr
+    assert "never inferred to be temporary cleanup input from its name" in shared
+
+
+def test_temporary_cleanup_requires_separate_durable_recovery_provenance() -> None:
+    finalize = _read("agents/skills/lifecycle-finalize/SKILL.md")
+    merge_pr = _read("agents/skills/merge-pr/SKILL.md")
+
+    assert "explicit durable lifecycle, correction, integration, or recovery provenance" in finalize
+    assert "explicitly provenance-owned temporary correction/recovery branches" in merge_pr
+    assert "broad `agent/*` garbage collection" in merge_pr
