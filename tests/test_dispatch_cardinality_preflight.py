@@ -1,4 +1,4 @@
-"""Fixture-driven RED coverage for #105 dispatch cardinality preflight."""
+"""Fixture-driven regression coverage for #105 dispatch cardinality preflight."""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ from typing import Literal
 
 ROOT = Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents" / "AGENTS.md"
+EXPLORE = ROOT / "agents" / "skills" / "openspec-explore" / "SKILL.md"
+CHANGE = ROOT / "agents" / "skills" / "openspec-change" / "SKILL.md"
 
 
 @dataclass(frozen=True)
@@ -129,5 +131,31 @@ def test_shared_governance_exposes_concrete_complete_preflight_procedure() -> No
         "indeterminate",
         "only then",
         "mapped Skill",
+    ):
+        assert required in text
+
+
+def test_explore_revalidates_shared_preflight_before_substantive_research() -> None:
+    text = " ".join(EXPLORE.read_text(encoding="utf-8").split())
+    for required in (
+        "shared pre-dispatch",
+        "complete-cardinality",
+        "zero formal/terminal",
+        "deterministic combined pre-activation winner",
+        "Before substantive Explore research",
+    ):
+        assert required in text
+
+
+def test_propose_activation_consumes_shared_preflight_pre_and_post_write() -> None:
+    text = " ".join(CHANGE.read_text(encoding="utf-8").split())
+    for required in (
+        "shared pre-dispatch",
+        "complete-cardinality",
+        "Immediately before the activation write",
+        "re-read durable state and require this Issue to remain the combined pre-activation winner",
+        "Immediately re-read durable state after the write",
+        "multiple-active state",
+        "indeterminate enumeration",
     ):
         assert required in text
