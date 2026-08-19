@@ -152,7 +152,7 @@ A proposal-ready Explore remains pre-activation until Lead legally routes that s
 - AND the newer Propose Issue remains queued
 - AND no non-`unset` Change identity is persisted for the newer Propose Issue
 
-#### Scenario: Proposal-ready Explore keeps its queue position when Lead continues to Propose
+#### Scenario: Proposal-ready Explore keeps its queue position when Human authorizes Propose
 
 - GIVEN an Explore Issue is the deterministic combined-queue winner
 - AND Lead has persisted in-envelope `PROPOSAL_READY`
@@ -280,12 +280,14 @@ This stronger authority rule SHALL activate prospectively on the default-branch 
 - THEN E1 does not approve the replacement comment
 - AND the workflow fails closed until a later qualifying Human-only approval event binds to the replacement comment
 
-#### Scenario: Direct Propose admission anchor is deterministic
+#### Scenario: Exact current admission anchors are deterministic
 
-- GIVEN Issue 47 is Human-admitted directly to `Lead / propose-change`
-- WHEN the Human admission decision is evaluated
-- THEN the expected reference is exactly `issue:47:admission:lead:propose-change`
-- AND a comment or approval event for any other reference cannot satisfy that admission path
+- GIVEN a workflow boundary is currently reserved to Human and consumes the general provenance-bound predicate
+- WHEN its exact decision anchor is reconstructed
+- THEN direct Propose admission uses exactly `issue:<N>:admission:lead:propose-change`
+- AND advisory admission uses exactly `issue:<N>:advisory-admission`
+- AND an answer or resume from canonical `HUMAN_DECISION_REQUIRED` uses exactly `issuecomment:<C>`
+- AND ordinary `Lead / explore-change` execution requires no Explore-admission anchor
 
 #### Scenario: Escalation answer anchor is deterministic
 
@@ -328,6 +330,46 @@ This stronger authority rule SHALL activate prospectively on the default-branch 
 - AND the intended Human decision must satisfy the provenance-bound approval contract
 - AND `intake:approved` remains distinct from `human:approved`
 
+#### Scenario: Repository-authorized Explore does not impersonate Human admission
+
+- GIVEN an Explore candidate was created from independently reconstructable repository-authorized evidence
+- WHEN dispatch evaluates ordinary Formal Explore execution
+- THEN the candidate may be queue-eligible without manufacturing Human evidence
+- AND `human:approved` is not required merely to relabel repository authority as Human authority
+- AND that repository evidence does not satisfy any later Human-reserved decision
+
+#### Scenario: Human-created Formal Explore Issue is sufficient admission
+
+- GIVEN Issue N was created directly by `royhsu-work`
+- AND it is coherently routed as `Change: unset + agent:lead + action:explore-change`
+- WHEN dispatch evaluates ordinary Formal Explore execution
+- THEN the Issue may be queue-eligible without a separate Human admission predicate
+- AND Human creation provenance or a legacy `Admission: Lead / explore-change` declaration is not required solely for Explore execution
+- AND Issue creation does not authorize a later Human-reserved commitment
+
+#### Scenario: Connector-created Human-looking Issue is not Human admission
+
+- GIVEN an Issue displays `user.login == royhsu-work`
+- AND raw Issue creation provenance identifies a GitHub App
+- WHEN dispatch evaluates ordinary Formal Explore execution and later Human-reserved boundaries
+- THEN coherent Explore routing may still make the Issue queue-eligible under the normal deterministic Explore rules
+- AND connector/App provenance is not Human admission or Human authority for any boundary that remains Human-reserved
+
+#### Scenario: Later connector routing can route but not authorize
+
+- GIVEN repository tooling applies `agent:lead + action:explore-change` to an open `Change: unset` Issue
+- WHEN dispatch evaluates ordinary Formal Explore execution
+- THEN those routing labels may make the Issue queue-eligible under the deterministic pre-activation rules
+- AND the label mutation itself does not establish Human authority for direct Propose, advisory admission, escalation answer/resume, or another Human-reserved boundary
+
+#### Scenario: Ambiguous or mutated creation declaration falls back to existing predicate
+
+- GIVEN a legacy creation-time Explore admission declaration is absent, mutated, ambiguous, or cannot be reconstructed
+- WHEN dispatch evaluates ordinary Formal Explore execution after this contract activates
+- THEN dispatch does not use that declaration as an Explore authorization predicate
+- AND coherent routing and deterministic queue rules govern ordinary Explore eligibility
+- AND any later Human-reserved decision still requires the existing full provenance-bound Human decision predicate
+
 #### Scenario: Routed Explore is not Human authority
 
 - GIVEN an open Issue has coherent `Change: unset + agent:lead + action:explore-change` routing
@@ -342,7 +384,7 @@ This stronger authority rule SHALL activate prospectively on the default-branch 
 - THEN the completed workflow remains historical terminal evidence
 - AND the new provenance rule does not reopen or invalidate that completed lifecycle solely because older Human evidence used the prior contract
 
-#### Scenario: Pending Human-reserved evidence is consumed after activation
+#### Scenario: Pending pre-activation evidence is consumed after activation
 
 - GIVEN a Human-reserved decision was recorded before this contract became authoritative
 - AND that decision has not yet been legally consumed
