@@ -1,0 +1,31 @@
+# Tasks
+
+## Slice 1 — Executable substantive-Human-input boundary fixtures
+
+- [ ] 1.1 RED: add executable repository-state fixtures that model coordination-Issue comments with actor, raw creation provenance, comment id, ordering relative to relied-upon workflow evidence, materiality/disposition state, and current role/action boundary. Trace: proposal `What Changes`; requirement `Consequential workflow boundaries disposition newer substantive direct-Human input`; design D1/D2/D3/D5.
+- [ ] 1.2 RED: prove a material direct-Human comment posted after Executor's relied-upon snapshot prevents `READY` until exact-comment disposition exists. Trace: scenario `Human input arrives while Executor is preparing READY`; design D5.
+- [ ] 1.3 RED: prove a material direct-Human comment posted before Reviewer gate completion prevents `PASS`, and a post-PASS/pre-merge material comment prevents merge consumption of the older PASS until disposition and resulting preconditions are current. Trace: scenarios `Human asks material question before implementation review PASS` and `Human input arrives after Reviewer PASS but before merge`; design D5.
+- [ ] 1.4 RED: prove clearly non-substantive direct-Human input can be explicitly classified non-blocking without new lifecycle state, while missing/ambiguous raw provenance fails closed rather than treating actor identity alone as sufficient classification. Trace: scenarios `Clearly non-substantive Human comment does not create lifecycle waiting state` and `Connector-authored workflow message is not reclassified as direct-Human input`; design D3/D6.
+- [ ] 1.5 GREEN/REFACTOR/VERIFY: implement the smallest deterministic test seam/helpers required by these fixtures without creating a production comment queue/dispatcher engine; run focused tests and required full gates. Trace: config tasks rules; design D1/D6.
+
+## Slice 2 — Shared governance and action-boundary consumption
+
+- [ ] 2.1 RED: add structural/behavioral assertions showing shared governance is the single owner of direct-Human freshness/disposition semantics, preserves the separate Human-reserved provenance predicate, and forbids comment queue/unread/ack state. Trace: requirement normative text; design D1-D4.
+- [ ] 2.2 GREEN: update `agents/AGENTS.md` with one shared consequential-boundary freshness/disposition invariant and exact-comment reconstructability rules. Keep direct-Human raw provenance classification separate from Human authority. Trace: design D2/D3/D6.
+- [ ] 2.3 GREEN: update only the minimum affected role/action procedures so they consume the shared invariant at existing boundaries: Executor before `READY` and merge mutation; Reviewer before gate results; Lead before materially affected lifecycle/specification results/handoffs. Do not duplicate the global classifier or expand role authority. Trace: design D2/D4/D5.
+- [ ] 2.4 GREEN: if presentation needs an explicit field/orientation, minimally update `agents/templates/messages.md` so an applicable result/finding may identify exact Human comment disposition evidence without creating a new result/message type. Trace: design D6.
+- [ ] 2.5 REFACTOR: inspect changed mapped Skills with default-branch `skill-creator` + repository integration guidance; confirm global behavior remains in shared governance and Skill edits are only action-local consumers. Record any Add/Delete/Modify rationale required by repository Skill provenance conventions. Trace: design affected surfaces; #85 repository Skill anatomy/provenance baseline.
+- [ ] 2.6 VERIFY: rerun focused fixtures, full Python Quality gates, and strict OpenSpec validation. Trace: config tasks rules.
+
+## Slice 3 — Cross-role and idempotent disposition semantics
+
+- [ ] 3.1 RED/GREEN: executable fixtures prove a specification/scope question encountered by Executor/Reviewer routes through the existing legal Lead/finding path rather than being answered outside authority, and a true Human-reserved decision remains subject to its existing exact-reference provenance-bound approval predicate. Trace: scenarios `Question belongs to another role authority` and `Human-reserved decision remains provenance-bound`; design D3/D4.
+- [ ] 3.2 RED/GREEN: executable fixture proves a prior durable exact-comment disposition is recognized on a repeated wake without duplicate acknowledgement while a newer unresolved material direct-Human comment remains actionable evidence. Trace: scenario `Repeated wake recognizes prior exact-comment disposition`; design D1/D6.
+- [ ] 3.3 REFACTOR: remove duplicated action-local wording that restates the shared classifier; retain only local consumption/outcome details necessary for each mapped action. Trace: design D2.
+- [ ] 3.4 VERIFY: run focused tests, `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy src tests`, and strict OpenSpec validation; resolve all failures before handoff. Trace: `openspec/config.yaml` tasks rules.
+
+## Completion gate
+
+- [ ] 4.1 Confirm proposal → spec → design → tasks forward trace declarations and tasks → design → spec → proposal reverse traceability are mechanically reconstructable for independent Reviewer inspection.
+- [ ] 4.2 Confirm no new Human authority, comment-processing lifecycle, hidden state, or unrelated #105/#83 scope was introduced.
+- [ ] 4.3 Obtain exact-revision strict OpenSpec validation evidence for the handoff revision before routing to `Reviewer / review-openspec`.
