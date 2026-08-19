@@ -32,7 +32,7 @@ Trace: proposal `What Changes` items 3, 5, 7; design Decisions 2 and 4; `schedul
 
 ## Completion
 
-- [ ] Confirm proposal → specs → design → tasks trace declarations are mechanically consistent and reverse traceability is reconstructable.
-- [ ] Confirm no implementation/PR uses Issue-closing linkage before the final Archive PR.
-- [ ] Obtain strict OpenSpec validation for the exact proposal handoff revision and record the checkout identity evidence.
-- [ ] Hand the exact semantic revision to `Reviewer / review-openspec`; do not claim the independent semantic PASS as Lead.
+- [x] Confirm proposal → specs → design → tasks trace declarations are mechanically consistent and reverse traceability is reconstructable.
+- [x] Confirm no implementation/PR uses Issue-closing linkage before the final Archive PR.
+- [x] Obtain strict OpenSpec validation for the exact proposal handoff revision and record the checkout identity evidence.
+- [x] Hand the exact semantic revision to `Reviewer / review-openspec`; do not claim the independent semantic PASS as Lead.
