@@ -41,13 +41,51 @@ workflow with a valid routing tuple determines the invocation role/action and ma
 legacy externally assigned role does not override that repository-selected role. The dispatcher
 MUST NOT introduce model-derived global urgency, cross-role priority scoring, or a second workflow DAG.
 
+### Workflow-dynamic cardinality preflight
+
+Before selecting any role/action or loading its mapped Skill, a workflow-dynamic wake MUST obtain a
+complete repository-wide durable Issue snapshot sufficient to classify every candidate relevant to formal
+active, terminal-pending, and bounded premature-close recovery semantics. The wake MUST establish
+observable enumeration completeness for every read/query surface whose incompleteness could hide such a
+candidate. A partial page, bounded result limit, first-page/search projection, role-local query, or
+candidate-local read is not proof of completeness merely because it returns one plausible Issue or none.
+When the surface exposes completeness metadata, consume it; when pagination is required, exhaust the
+required pages. If completeness cannot be established, classification is `indeterminate` and dispatch
+fails closed.
+
+From that one complete current reconstruction, classify formal active and terminal-pending workflows and
+apply this canonical decision table before mapped action execution:
+
+| formal/terminal cardinality | legal result |
+| --- | --- |
+| `0` | evaluate bounded premature-close recovery candidates, then the deterministic combined pre-activation queue when no recovery candidate blocks it |
+| `1` | select only that formal/terminal workflow and derive role/action from its valid routing tuple |
+| `>1` | fail closed before any normal mapped action executes |
+| `indeterminate` | fail closed before any normal mapped action executes |
+
+A selected action consumes this shared pre-dispatch classification as an execution precondition. Before a
+formal lifecycle/review/implementation action proceeds, its current coordination Issue MUST still be the
+sole formal/terminal workflow selected by the shared preflight. Before substantive `explore-change` work
+begins, a fresh current reconstruction MUST still prove formal/terminal cardinality `0` and selected-Issue
+equality with the deterministic combined pre-activation winner. `propose-change` additionally performs its
+existing immediate pre-activation and post-write checks using the same complete-cardinality evidence. If
+routing, Issue state, Change identity, repository enumeration, or winner identity is stale, incomplete, or
+contradictory at action entry, fail closed and reconstruct rather than proceeding from candidate-local
+context.
+
 If workflow-dynamic reconstruction finds multiple active workflows, invalid routing, or otherwise
-cannot identify one legal active workflow, it MUST fail closed and MUST NOT guess an owner. Once
-selected, the invocation role becomes the fixed invocation role for the remainder of that run and the
-selected coordination Issue remains fixed. A cross-role handoff may persist a different next routing
-tuple, but the current invocation MUST then end and does not redispatch to the new role. A same-role
-action transition is different: after the source result and legal routing mutation are durable, the run
-may continue on the same coordination Issue under the shared same-role continuation contract below.
+cannot identify one legal active workflow, it MUST fail closed and MUST NOT guess an owner. Multiple formal
+workflows MUST NOT be reduced by age, role/action priority, Issue number, model judgment, automatic Change
+clearing, or routing rewrites. Human/maintainer administrative durable-state repair remains outside normal
+Scheduled-Agent lifecycle execution; a later wake reconstructs the repaired current repository from
+scratch and does not inherit a guessed winner or stale PASS/readiness in place of current evidence.
+
+Only then, after this shared preflight identifies a legal selected Issue, the invocation role becomes the
+fixed invocation role for the remainder of that run and the selected coordination Issue remains fixed. A
+cross-role handoff may persist a different next routing tuple, but the current invocation MUST then end and
+does not redispatch to the new role. A same-role action transition is different: after the source result
+and legal routing mutation are durable, the run may continue on the same coordination Issue under the
+shared same-role continuation contract below.
 
 ## Roles and authority
 
@@ -112,12 +150,12 @@ finish-first: an active/terminal-pending workflow first, and pre-activation inta
 absent.
 
 Before evaluating pre-activation queue order or any derived blocker/priority/Project projection, dispatch
-MUST establish the complete cardinality of terminal-pending and formal active workflows from repository-
-wide durable state. A partial enumeration is not proof of zero. If complete cardinality cannot be
-established as exactly zero or one, dispatch MUST fail closed and MUST NOT infer that queued work is
-eligible. Normal nonterminal routed workflow work also requires an open coordination Issue; closed
-nonterminal routing is contradictory durable state except for the existing narrow terminal-pending
-`Lead / finalize-archive` shape.
+MUST use the workflow-dynamic cardinality preflight above to establish the complete cardinality of
+terminal-pending and formal active workflows from repository-wide durable state. A partial enumeration is
+not proof of zero. If complete cardinality cannot be established as exactly zero or one, dispatch MUST fail
+closed and MUST NOT infer that queued work is eligible. Normal nonterminal routed workflow work also
+requires an open coordination Issue; closed nonterminal routing is contradictory durable state except for
+the existing narrow terminal-pending `Lead / finalize-archive` shape.
 
 A closed nonterminal Issue MAY be recovered automatically only as a bounded premature-close recovery
 candidate when durable reconstruction proves all of the following: it has a persisted non-`unset` Change
@@ -172,15 +210,15 @@ or Propose; there is no `explore-change > propose-change` priority inside this c
 Lead MUST NOT activate a queued proposal while another formal active/terminal-pending workflow exists or
 while an older eligible Explore/direct-Propose entry is the deterministic combined pre-activation winner.
 Immediately before persisting a non-`unset` Change identity, Propose MUST re-read durable state and confirm
-its Issue is still the combined pre-activation winner. The selected Lead persists its immutable Change
-identity; that durable write is the formal activation boundary.
+its Issue is still the combined pre-activation winner using the shared complete-cardinality preflight. The
+selected Lead persists its immutable Change identity; that durable write is the formal activation boundary.
 
 Overlapping activation attempts remain at-least-once. Before the activation write, Lead re-read checks
 that no active workflow has appeared and that the candidate is still the deterministic winner. The
-activation contract is first-valid-write-wins: after writing, the run MUST re-read durable state and
-stop as stale if another valid activation or newer contradictory state won. This safety model uses
-reconstruction and preconditions, not a lock, claim, lease, heartbeat, hidden sequence, `status:exploring`,
-or `status:in-progress` state.
+activation contract is first-valid-write-wins: after writing, the run MUST re-read complete repository-wide
+durable state and stop as stale if another valid activation, multiple-active state, indeterminate
+enumeration, or newer contradictory state won. This safety model uses reconstruction and preconditions, not
+a lock, claim, lease, heartbeat, hidden sequence, `status:exploring`, or `status:in-progress` state.
 
 A terminal-pending active workflow is the one narrow exception to the normal open-Issue active-workflow
 shape: a closed coordination Issue carrying `agent:lead + action:finalize-archive`, backed by matching
@@ -339,11 +377,12 @@ same candidate set. Within the same ordinary role/action priority, earlier GitHu
 equal, lower numeric Issue number wins. Model-derived urgency, scoring, or discretionary reordering is
 prohibited.
 
-In workflow-dynamic mode, a formal active/terminal-pending workflow is selected first. Only when none
-exists may the combined pre-activation winner determine `Lead / explore-change` or `Lead / propose-change`.
-An oldest eligible open Explore naturally remains the deterministic winner across wakes until it reaches a
-terminal result or legally routes to Propose; no claim, lease, heartbeat, or hidden ownership state is
-required.
+In workflow-dynamic mode, the shared cardinality preflight above runs first. A sole formal active/terminal-
+pending workflow is selected before pre-activation work. Only after complete cardinality `0` and no bounded
+recovery candidate blocks intake may the combined pre-activation winner determine `Lead / explore-change`
+or `Lead / propose-change`. An oldest eligible open Explore naturally remains the deterministic winner
+across wakes until it reaches a terminal result or legally routes to Propose; no claim, lease, heartbeat,
+or hidden ownership state is required.
 
 If the role has no eligible workflow work, it performs no ordinary workflow mutation. Only Lead may use
 the separate bounded idle advisory/discovery mode defined below.
@@ -354,8 +393,12 @@ Every run behaves as if it may be the first run to see the work item:
 
 ```text
 wake
-→ load default-branch AGENTS.md + role + mapped skill
-→ select at most one eligible Issue and one fixed invocation role deterministically
+→ load default-branch AGENTS.md
+→ obtain complete repository-wide durable Issue snapshot
+→ establish observable enumeration completeness
+→ apply the shared formal/terminal cardinality preflight
+→ only then select one eligible Issue and one fixed invocation role
+→ load role + mapped Skill
 → reconstruct Issue / PR / OpenSpec / Actions / default-branch state
 → re-evaluate action preconditions
 → perform only remaining authorized work

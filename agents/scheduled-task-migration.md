@@ -6,6 +6,8 @@ Each external Scheduled Task uses a common bootstrap prompt: read `README.md` an
 
 Current deployment note: the external product may retain multiple wake slots during migration, but that is informational deployment history rather than repository governance. Exact slot count/topology/cadence is external product configuration, outside repository capability/runtime state, and is not modeled as durable workflow state or a permanent minimum-slot requirement.
 
+When Human/maintainer administrative repair parks or resets work while a controlling dependency is completed, a later wake treats that parked/reset work as ordinary fresh input to the authoritative bootstrap above. It compares the work against then-current `main` and performs a fresh repository-wide reconstruction before deriving any legal role/action. Former PASS/readiness evidence remains historical evidence only; it does not become current authority merely because the same Issue, Change name, branch, or Scheduled Task slot is reused. This is an application note for the shared default-branch reconstruction contract, not a second recovery or dispatch rule.
+
 ## Flow visualization orientation
 
 GitHub Project/Kanban status, blocker views, and aging fields are presentation only. They may project durable repository workflow evidence for Human visibility, but they do not participate in Scheduled-Agent dispatch, routing, authority, or gate decisions. Repository durable workflow state remains authoritative when a Project/Kanban projection disagrees with Issue routing/identity, PR/OpenSpec state, or exact gate evidence.
