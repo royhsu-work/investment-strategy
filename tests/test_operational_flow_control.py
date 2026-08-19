@@ -91,36 +91,37 @@ def test_required_separate_follow_up_is_directly_routed_to_explore() -> None:
         assert required in change
 
 
-def test_shared_explore_origin_set_is_reconstructable_across_all_approved_paths() -> None:
+def test_routed_explore_is_origin_neutral_but_creation_remains_bounded() -> None:
     shared = _normalized(AGENTS)
     for required in (
-        "approved origin classes",
-        "Human Explore admission satisfying the Human-authority contract below",
-        "creation-bound Human Explore admission alternative",
-        "general provenance-bound Human decision/approval predicate",
-        "bounded idle-discovery repository authorization",
-        "approved required separate follow-up routed directly",
-        "same-Issue pre-activation direct-Propose fallback",
-        "preserves the still-valid original direct-Propose authority envelope",
-        "MUST NOT be reclassified as Human Explore admission",
-        "MUST NOT require or impersonate idle-discovery admission",
-        "complete approved origin set",
+        "ordinary routed Explore eligibility does not require Human approval",
+        "origin does not control dispatcher eligibility",
+        "Scheduled Agents MUST NOT create arbitrary routed Explore work",
+        "deduplication and one-candidate limits",
+        "required separate follow-up routing remains derived from its exact approved source defer decision/linkage",
+        "direct-Propose fallback preserves the original Propose authority envelope",
     ):
         assert required in shared
+    for obsolete in (
+        "approved origin classes",
+        "creation-bound Human Explore admission alternative",
+        "complete approved origin set",
+    ):
+        assert obsolete not in shared
 
 
-def test_propose_activation_consumes_complete_shared_explore_origin_set() -> None:
+def test_propose_activation_consumes_origin_neutral_shared_queue() -> None:
     change = _normalized(OPEN_SPEC_CHANGE)
     for required in (
         "complete shared pre-activation candidate-set contract",
-        "every legally reconstructed open `Lead / explore-change + Change: unset` entry",
-        "approved Explore-origin set",
-        "Do not maintain or infer a narrower action-local Explore-origin enumeration",
+        "every coherent open `Lead / explore-change + Change: unset` entry",
+        "Do not maintain or infer an action-local Explore-origin admission enumeration",
         "same-Issue direct-Propose fallback preserving its original authority envelope",
-        "MUST NOT activate while an older valid Explore candidate",
+        "MUST NOT activate while an older eligible Explore candidate",
         "deterministic combined pre-activation winner",
     ):
         assert required in change
+    assert "approved Explore-origin set" not in change
     assert "combine valid Human-admitted open `Lead / explore-change + Change: unset`" not in change
 
 
