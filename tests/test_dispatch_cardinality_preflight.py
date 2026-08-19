@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents" / "AGENTS.md"
 EXPLORE = ROOT / "agents" / "skills" / "openspec-explore" / "SKILL.md"
 CHANGE = ROOT / "agents" / "skills" / "openspec-change" / "SKILL.md"
+MIGRATION = ROOT / "agents" / "scheduled-task-migration.md"
 
 
 @dataclass(frozen=True)
@@ -191,12 +192,18 @@ def test_multiple_active_state_has_no_scheduled_winner_or_identity_repair() -> N
 
 
 def test_parked_or_reset_work_restarts_from_current_main_not_old_readiness() -> None:
-    text = " ".join(AGENTS.read_text(encoding="utf-8").split())
+    governance = " ".join(AGENTS.read_text(encoding="utf-8").split())
+    orientation = " ".join(MIGRATION.read_text(encoding="utf-8").split())
+    for required in (
+        "later wake reconstructs the repaired current repository from scratch",
+        "stale PASS/readiness",
+    ):
+        assert required in governance
     for required in (
         "parked/reset work",
         "then-current `main`",
-        "former PASS/readiness evidence",
-        "historical evidence",
+        "former PASS/readiness evidence remains historical evidence only",
         "fresh repository-wide reconstruction",
+        "not a second recovery or dispatch rule",
     ):
-        assert required in text
+        assert required in orientation
