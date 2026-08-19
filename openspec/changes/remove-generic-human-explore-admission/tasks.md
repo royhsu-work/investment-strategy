@@ -24,11 +24,11 @@ Trace: proposal `What Changes` items 4–6; design Decision 3; `scheduled-agent-
 
 Trace: proposal `What Changes` items 3, 5, 7; design Decisions 2 and 4; `scheduled-agent-workflow` workflow-admission requirement.
 
-- [ ] **RED:** Add governance/flow regressions proving Scheduled Agents still cannot create arbitrary routed Explore work; idle discovery and required-separate-follow-up producers remain independently bounded/deduplicated; a valid in-scope `PROPOSAL_READY` continues automatically; and a new Human-reserved product/scope/risk/security/privacy/cost/operational commitment still stops with `HUMAN_DECISION_REQUIRED`.
-- [ ] Run the focused RED tests and verify failures correspond to the changed admission/continuation semantics.
-- [ ] **GREEN:** Update governance/role/skill/spec wording so creation authority remains producer-owned while dispatcher Explore eligibility is origin-neutral; preserve direct-Propose authority and Human escalation/resume semantics.
-- [ ] **REFACTOR:** Remove stale #88 compatibility wording and any redundant Explore-origin taxonomy that no longer controls execution eligibility, without deleting source-linkage/materiality rules still needed by producers.
-- [ ] **VERIFY:** Run focused flow/governance tests, full regression suite, Ruff, Mypy, and strict OpenSpec validation; persist satisfied Slice 3 task markers only after VERIFY succeeds.
+- [x] **RED:** Add governance/flow regressions proving Scheduled Agents still cannot create arbitrary routed Explore work; idle discovery and required-separate-follow-up producers remain independently bounded/deduplicated; a valid in-scope `PROPOSAL_READY` continues automatically; and a new Human-reserved product/scope/risk/security/privacy/cost/operational commitment still stops with `HUMAN_DECISION_REQUIRED`.
+- [x] Run the focused RED tests and verify failures correspond to the changed admission/continuation semantics.
+- [x] **GREEN:** Update governance/role/skill/spec wording so creation authority remains producer-owned while dispatcher Explore eligibility is origin-neutral; preserve direct-Propose authority and Human escalation/resume semantics.
+- [x] **REFACTOR:** Remove stale #88 compatibility wording and any redundant Explore-origin taxonomy that no longer controls execution eligibility, without deleting source-linkage/materiality rules still needed by producers.
+- [x] **VERIFY:** Run focused flow/governance tests, full regression suite, Ruff, Mypy, and strict OpenSpec validation; persist satisfied Slice 3 task markers only after VERIFY succeeds.
 
 ## Completion
 
