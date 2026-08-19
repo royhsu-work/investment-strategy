@@ -104,6 +104,21 @@ def test_two_formal_workflows_fail_closed_without_winner_selection() -> None:
     assert classify(snapshot) == ("fail-closed", None)
 
 
+def test_two_formal_workflows_fail_closed_independent_of_order_or_priority() -> None:
+    snapshot = Snapshot(
+        issues=(
+            WorkflowIssue(2, "newer", ("lead", "finalize-change"), created_order=99),
+            WorkflowIssue(1, "older", ("executor", "merge-pr"), created_order=1),
+        ),
+        complete=True,
+    )
+    assert classify(snapshot) == ("fail-closed", None)
+    assert classify(Snapshot(tuple(reversed(snapshot.issues)), complete=True)) == (
+        "fail-closed",
+        None,
+    )
+
+
 def test_terminal_pending_work_wins_over_pre_activation_queue() -> None:
     snapshot = Snapshot(
         issues=(
@@ -157,5 +172,31 @@ def test_propose_activation_consumes_shared_preflight_pre_and_post_write() -> No
         "Immediately re-read durable state after the write",
         "multiple-active state",
         "indeterminate enumeration",
+    ):
+        assert required in text
+
+
+def test_multiple_active_state_has_no_scheduled_winner_or_identity_repair() -> None:
+    text = " ".join(AGENTS.read_text(encoding="utf-8").split())
+    for required in (
+        "MUST NOT be reduced by age",
+        "role/action priority",
+        "Issue number",
+        "model judgment",
+        "automatic Change clearing",
+        "routing rewrites",
+        "Human/maintainer administrative durable-state repair remains outside normal Scheduled-Agent lifecycle execution",
+    ):
+        assert required in text
+
+
+def test_parked_or_reset_work_restarts_from_current_main_not_old_readiness() -> None:
+    text = " ".join(AGENTS.read_text(encoding="utf-8").split())
+    for required in (
+        "parked/reset work",
+        "then-current `main`",
+        "former PASS/readiness evidence",
+        "historical evidence",
+        "fresh repository-wide reconstruction",
     ):
         assert required in text
