@@ -4,7 +4,6 @@ from pathlib import Path
 
 import yaml
 
-
 MAPPED_REPOSITORY_SKILLS = (
     "archive-review",
     "implementation-review",
