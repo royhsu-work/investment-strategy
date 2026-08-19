@@ -21,7 +21,7 @@ A valid ordinary Explore entry remains `Change: unset` with `agent:lead + action
 
 For repository-authorized creation, reconstruct the independent producer/source evidence rather than pretending it is Human authority: creation kind, observed default-branch revision where applicable, exact authority/evidence source, bounded problem, materiality, and why no Human-reserved decision is being made. Missing, stale, contradictory, merely descriptive, insufficient, or self-referential producer authority fails closed for autonomous creation. It does not create a generic dispatcher requirement to re-authorize every already coherent routed Explore.
 
-For a pre-activation Propose fallback, reconstruct the same Human direct-Propose authority envelope that legally admitted the `Change: unset + Lead / propose-change` entry. The fallback creates no new Human authority. Explore remains bounded to that preserved authority envelope, returns to `Lead / propose-change` after in-scope `PROPOSAL_READY`, and requires no second Human admission.
+For a pre-activation Propose fallback, reconstruct the same admitted authority envelope that legally admitted the `Change: unset + Lead / propose-change` entry. The fallback creates no new Human authority. Explore remains bounded to that preserved authority envelope, returns to `Lead / propose-change` after in-scope `PROPOSAL_READY`, and requires no second Human admission.
 
 Human may still use the existing direct-to-Propose path for direction that is already concrete and buildable. That direct-Propose admission remains provenance-bound. Explore itself does not persist the formal Change identity.
 
