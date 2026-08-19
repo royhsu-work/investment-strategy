@@ -24,16 +24,16 @@ Trace: proposal `What Changes` items 2–4; design Decision 3 and Skill modifica
 
 Trace: proposal `What Changes` items 5–7; design Decisions 4–6; modified requirement scenarios `Two active workflows fail closed before a mapped action executes`, `Indeterminate enumeration cannot authorize work`, and `Human or maintainer repairs a multiple-active repository state`.
 
-- [ ] **RED:** Add regressions proving two formal active workflows prevent every normal mapped action; age, role/action priority, Issue number, or model choice cannot select a winner; Scheduled roles do not clear Change identities or rewrite routing to manufacture cardinality one; and after external Human/maintainer administrative repair a later wake derives state only from a fresh repository-wide reconstruction.
-- [ ] Add regression coverage proving parked/reset work resumed after a controlling dependency completes must compare then-current `main` and cannot inherit former PASS/readiness evidence as current authority.
-- [ ] Run the focused RED tests and verify failures correspond to unauthorized automatic winner/recovery assumptions rather than valid premature-close recovery behavior.
-- [ ] **GREEN:** Update shared governance/canonical implementation-facing wording and tests so multiple or indeterminate active state remains fail closed, administrative repair stays outside normal Scheduled-Agent lifecycle actions, and the next wake starts from repaired current durable state without a hidden recovery registry or new action/state.
-- [ ] **REFACTOR:** Remove any speculative winner-selection, automatic identity-reset, or duplicated external Scheduled Task routing logic introduced by the implementation; keep Scheduled Task prompts bootstrap-only and slot topology external.
-- [ ] **VERIFY:** Run focused recovery/dispatch tests, the full regression suite, Ruff, Mypy, and strict OpenSpec validation; persist satisfied Slice 3 task markers only after VERIFY succeeds.
+- [x] **RED:** Add regressions proving two formal active workflows prevent every normal mapped action; age, role/action priority, Issue number, or model choice cannot select a winner; Scheduled roles do not clear Change identities or rewrite routing to manufacture cardinality one; and after external Human/maintainer administrative repair a later wake derives state only from a fresh repository-wide reconstruction.
+- [x] Add regression coverage proving parked/reset work resumed after a controlling dependency completes must compare then-current `main` and cannot inherit former PASS/readiness evidence as current authority.
+- [x] Run the focused RED tests and verify failures correspond to unauthorized automatic winner/recovery assumptions rather than valid premature-close recovery behavior.
+- [x] **GREEN:** Update shared governance/canonical implementation-facing wording and tests so multiple or indeterminate active state remains fail closed, administrative repair stays outside normal Scheduled-Agent lifecycle actions, and the next wake starts from repaired current durable state without a hidden recovery registry or new action/state.
+- [x] **REFACTOR:** Remove any speculative winner-selection, automatic identity-reset, or duplicated external Scheduled Task routing logic introduced by the implementation; keep Scheduled Task prompts bootstrap-only and slot topology external.
+- [x] **VERIFY:** Run focused recovery/dispatch tests, the full regression suite, Ruff, Mypy, and strict OpenSpec validation; persist satisfied Slice 3 task markers only after VERIFY succeeds.
 
 ## Completion
 
-- [ ] Confirm proposal → specs → design → tasks trace declarations are mechanically consistent and reverse traceability `tasks → design → specs → proposal` is reconstructable with no intentional orphan scope.
-- [ ] Confirm the proposal PR uses only non-closing `Refs #105` linkage; final Issue-closing linkage remains reserved for the final Archive PR.
-- [ ] Obtain strict OpenSpec validation for the exact proposal handoff revision and record checkout-identity evidence proving validator `HEAD` equals that revision.
-- [ ] Hand the exact semantic revision to `Reviewer / review-openspec`; Lead does not claim the independent semantic bidirectional PASS.
+- [x] Confirm proposal → specs → design → tasks trace declarations are mechanically consistent and reverse traceability `tasks → design → specs → proposal` is reconstructable with no intentional orphan scope.
+- [x] Confirm the proposal PR uses only non-closing `Refs #105` linkage; final Issue-closing linkage remains reserved for the final Archive PR.
+- [x] Obtain strict OpenSpec validation for the exact proposal handoff revision and record checkout-identity evidence proving validator `HEAD` equals that revision.
+- [x] Hand the exact semantic revision to `Reviewer / review-openspec`; Lead does not claim the independent semantic bidirectional PASS.
