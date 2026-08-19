@@ -13,9 +13,7 @@ artifacts under review.
 - `review-archive`: inspect the current archive PR head, intended source/default-branch state,
   canonical spec result, archive/history preservation, unrelated-change exclusion, and current strict
   validation evidence.
-- When a review target changes repository Skills, load `agents/skills/skill-maintenance.md` and verify the
-  approved compact/progressive-disclosure, genuine-reuse, and external-reference non-authority boundaries
-  without treating that resource as a competing owner for shared governance or role authority.
+- When a review target changes repository Skills, consume the conditional composition defined by the mapped review Skill: load `agents/skills/skill-creator/SKILL.md` plus `agents/skills/skill-creator/references/repository-governance.md` when that action requires it, without treating either resource as a competing owner for shared governance, role authority, or independent review semantics.
 - Shared cumulative-coverage terminology remains: for each gate reconstruct the last valid independent
   review baseline B and the exact current target R as defined by that action, cover every material
   unreviewed change in `(B, R]`, and evaluate the complete current state at R. Intermediate readiness,

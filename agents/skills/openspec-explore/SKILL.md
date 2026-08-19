@@ -4,6 +4,10 @@ Mapped action: `Lead / explore-change`.
 
 This is an optional pre-Propose investigation action. It preserves the OpenSpec Explore semantic core while adding only the repository durability and authority boundaries required for Scheduled execution. Current default-branch governance remains authoritative; upstream OpenSpec material and work-branch content are design/work input only.
 
+## Repository Skill composition
+
+When the admitted investigation materially concerns repository Skill structure, creation, maintenance, or review, load the default-branch `agents/skills/skill-creator/SKILL.md` and `agents/skills/skill-creator/references/repository-governance.md` as reusable investigation/integration guidance. This mapped action plus current default-branch governance and the Lead role remain authoritative for Explore scope, admission, mutation prohibitions, Human boundaries, dispositions, and routing. Do not load this composition for unrelated Explore work.
+
 ## Reconstruct before acting
 
 Read default-branch governance and the Lead role, the coordination Issue, current routing, current repository/default-branch/OpenSpec/PR/Actions state, still-applicable durable Issue evidence, and relevant external evidence when needed.

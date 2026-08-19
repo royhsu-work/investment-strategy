@@ -2,6 +2,10 @@
 
 Mapped action: `Reviewer / review-openspec`.
 
+## Repository Skill composition
+
+When the reviewed OpenSpec target materially concerns repository Skills, load the default-branch `agents/skills/skill-creator/SKILL.md` and `agents/skills/skill-creator/references/repository-governance.md` before reviewing those Skill artifacts and their integration contract. They are reusable semantic/procedural input only; this mapped action plus current default-branch governance and the Reviewer role retain independent review authority, traceability, exact-revision validation, findings, and routing semantics. Do not load this composition for unrelated OpenSpec review.
+
 ## Spec-driven semantic adapter
 
 When default-branch `openspec/config.yaml` declares `schema: spec-driven`, load

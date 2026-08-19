@@ -2,6 +2,10 @@
 
 Mapped action: `Reviewer / review-implementation`.
 
+## Repository Skill composition
+
+When the reviewed implementation materially creates or modifies repository Skills, load the default-branch `agents/skills/skill-creator/SKILL.md` and `agents/skills/skill-creator/references/repository-governance.md` before judging those Skill artifacts. Treat them as reusable procedural/integration input only: this mapped action and current default-branch governance/Reviewer role retain review authority, exact-head gate semantics, findings ownership, and routing. Do not load this composition for unrelated implementation review.
+
 ## Reconstruct before acting
 
 Read default-branch governance and Reviewer role, the coordination Issue and immutable `Change:`, the

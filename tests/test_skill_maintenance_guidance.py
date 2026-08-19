@@ -4,6 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents"
+LOCAL_SKILL_GOVERNANCE = AGENTS / "skills/skill-creator/references/repository-governance.md"
 
 
 def _text(path: Path) -> str:
@@ -21,21 +22,26 @@ def test_project_wide_proportionality_has_one_runtime_reference() -> None:
 
 
 def test_skill_maintenance_uses_progressive_disclosure_without_external_authority() -> None:
-    guidance = _text(AGENTS / "skills/skill-maintenance.md")
+    guidance = _text(LOCAL_SKILL_GOVERNANCE)
 
+    assert "only when the current governed action materially" in guidance
     assert "progressive disclosure" in guidance
-    assert "conditionally needed" in guidance
-    assert "genuine cross-Skill reuse" in guidance
-    assert "External mutable" in guidance
-    assert "MUST NOT become runtime authority" in guidance
+    assert "demonstrated cross-Skill reuse" in guidance
+    assert "External or mutable" in guidance
+    assert "never Scheduled-Agent runtime authority by itself" in guidance
     assert "agents/AGENTS.md" in guidance
     assert "agents/roles/*" in guidance
     assert "hypothetical future reuse" in guidance
+    assert not (AGENTS / "skills/skill-maintenance.md").exists()
 
 
 def test_skill_maintenance_resource_has_demonstrated_cross_role_reuse() -> None:
+    expected = "agents/skills/skill-creator/references/repository-governance.md"
+    legacy = "agents/skills/skill-maintenance.md"
     for role in ("lead.md", "executor.md", "reviewer.md"):
-        assert "agents/skills/skill-maintenance.md" in _text(AGENTS / "roles" / role)
+        text = _text(AGENTS / "roles" / role)
+        assert expected in text
+        assert legacy not in text
 
 
 def test_lead_idle_advisory_can_recommend_skill_maintenance_without_mutation_authority() -> None:

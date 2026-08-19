@@ -5,6 +5,10 @@ Mapped actions: `Lead / propose-change`, `Lead / resolve-question`.
 This skill operationalizes approved OpenSpec authoring and specification-question resolution. It does
 not replace the repository OpenSpec proposal/specs/design/tasks lifecycle.
 
+## Repository Skill composition
+
+When proposal or specification-resolution work materially specifies creation or modification of repository Skills, load the default-branch `agents/skills/skill-creator/SKILL.md` and `agents/skills/skill-creator/references/repository-governance.md` before authoring or revising that Skill-related OpenSpec meaning. Use them as reusable procedural/integration guidance only; this mapped action plus current default-branch governance and the Lead role retain specification authority, scope, routing, validation, escalation, and result semantics. Do not load this composition for unrelated OpenSpec changes.
+
 ## Spec-driven semantic adapter
 
 When default-branch `openspec/config.yaml` declares `schema: spec-driven`, load
