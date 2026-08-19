@@ -14,11 +14,11 @@ Trace: proposal `What Changes` items 1–2; design Decisions 1 and 5; `scheduled
 
 Trace: proposal `What Changes` items 4–6; design Decision 3; `scheduled-agent-workflow` Human-authority requirement.
 
-- [ ] **RED:** Add/update Human-authority regressions proving Explore admission no longer needs an Explore decision ref or creation-bound Issue shortcut, while direct Propose, advisory admission, and canonical `HUMAN_DECISION_REQUIRED` responses still require provenance-bound Human approval and reject GitHub-App/Connector provenance.
-- [ ] Run the focused RED tests and verify failures specifically expose the obsolete Explore-admission API/contracts.
-- [ ] **GREEN:** Remove Explore-only Human decision boundary/mapping, creation-bound Explore constants/adapters/predicates/composition, and unused README Human-created Explore ceremony; preserve the general raw comment/event provenance evaluator and all remaining Human-only consumers.
-- [ ] **REFACTOR:** Remove dead imports/tests/helpers created solely for #88 and keep the remaining Human-authority API minimal and explicit.
-- [ ] **VERIFY:** Run focused Human-authority tests, full regression suite, Ruff, Mypy, and strict OpenSpec validation; persist satisfied Slice 2 task markers only after VERIFY succeeds.
+- [x] **RED:** Add/update Human-authority regressions proving Explore admission no longer needs an Explore decision ref or creation-bound Issue shortcut, while direct Propose, advisory admission, and canonical `HUMAN_DECISION_REQUIRED` responses still require provenance-bound Human approval and reject GitHub-App/Connector provenance.
+- [x] Run the focused RED tests and verify failures specifically expose the obsolete Explore-admission API/contracts.
+- [x] **GREEN:** Remove Explore-only Human decision boundary/mapping, creation-bound Explore constants/adapters/predicates/composition, and unused README Human-created Explore ceremony; preserve the general raw comment/event provenance evaluator and all remaining Human-only consumers.
+- [x] **REFACTOR:** Remove dead imports/tests/helpers created solely for #88 and keep the remaining Human-authority API minimal and explicit.
+- [x] **VERIFY:** Run focused Human-authority tests, full regression suite, Ruff, Mypy, and strict OpenSpec validation; persist satisfied Slice 2 task markers only after VERIFY succeeds.
 
 ## Slice 3 — Preserve bounded creation and Human commitment boundaries through Explore→Propose
 
