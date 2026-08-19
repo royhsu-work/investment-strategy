@@ -15,6 +15,17 @@ MAPPED_REPOSITORY_SKILLS = (
     "openspec-review",
 )
 
+UPSTREAM_REVISION = "2826b8889e5223a9a8095d4428b60b56597e1020"
+UPSTREAM_DERIVED_SKILLS = {
+    "archive-review": "skills/openspec-archive-change/",
+    "implementation-review": "skills/openspec-verify-change/",
+    "implementation": "skills/openspec-apply-change/",
+    "lifecycle-finalize": "skills/openspec-archive-change/",
+    "merge-pr": "skills/openspec-archive-change/",
+    "openspec-change": "skills/openspec-propose/",
+    "openspec-explore": "skills/openspec-explore/",
+}
+
 
 def _frontmatter(path: Path) -> dict[str, object]:
     text = path.read_text(encoding="utf-8")
@@ -41,3 +52,24 @@ def test_mapped_repository_skills_have_standard_frontmatter() -> None:
         names.append(name)
 
     assert len(names) == len(set(names)), "mapped repository Skill names must be unique"
+
+
+def test_openspec_derived_skills_have_reconstructable_upstream_ledgers() -> None:
+    root = Path("agents/skills")
+
+    for skill, upstream_path in UPSTREAM_DERIVED_SKILLS.items():
+        ledger_path = root / skill / "UPSTREAM.md"
+        assert ledger_path.is_file(), f"{skill} requires Skill-local UPSTREAM.md provenance"
+        ledger = ledger_path.read_text(encoding="utf-8")
+        assert "Fission-AI/OpenSpec" in ledger
+        assert UPSTREAM_REVISION in ledger
+        assert upstream_path in ledger
+        assert "## Relationship" in ledger
+        assert "## Added responsibilities" in ledger
+        assert "## Deleted or omitted responsibilities" in ledger
+        assert "## Modified responsibilities" in ledger
+        assert "Maintenance implication" in ledger
+
+
+def test_repository_original_openspec_review_does_not_fabricate_upstream_mapping() -> None:
+    assert not Path("agents/skills/openspec-review/UPSTREAM.md").exists()
