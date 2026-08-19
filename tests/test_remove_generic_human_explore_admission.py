@@ -76,7 +76,7 @@ def test_agent_creation_remains_bounded_and_non_recursive() -> None:
     assert "Scheduled Agents MUST NOT create arbitrary routed Explore work" in shared
     assert "deduplication and one-candidate limits" in shared
     assert "MUST NOT recursively authorize another routed Issue" in lead
-    assert "one idle invocation materializes at most one candidate" in explore
+    assert "One idle invocation materializes at most one candidate" in explore
 
 
 def test_explore_dispatch_no_longer_retains_obsolete_human_origin_taxonomy() -> None:
