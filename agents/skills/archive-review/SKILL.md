@@ -1,3 +1,8 @@
+---
+name: archive-review
+description: Review the exact current final Archive PR and its Lead-prepared lifecycle evidence for Reviewer / review-archive without changing archive artifacts or workflow authority.
+---
+
 # Archive Review Skill
 
 Mapped action: `Reviewer / review-archive`.
