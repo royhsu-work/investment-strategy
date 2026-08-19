@@ -4,9 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents"
-LOCAL_SKILL_GOVERNANCE = (
-    AGENTS / "skills/skill-creator/references/repository-governance.md"
-)
+LOCAL_SKILL_GOVERNANCE = AGENTS / "skills/skill-creator/references/repository-governance.md"
 
 
 def _text(path: Path) -> str:
