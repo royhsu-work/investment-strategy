@@ -15,6 +15,17 @@ MAPPED_REPOSITORY_SKILLS = (
     "openspec-review",
 )
 
+EXPECTED_ACTION_DECLARATIONS = {
+    "archive-review": "Mapped action: `Reviewer / review-archive`.",
+    "implementation-review": "Mapped action: `Reviewer / review-implementation`.",
+    "implementation": "Mapped action: `Executor / implement-change`.",
+    "lifecycle-finalize": "Mapped actions: `Lead / finalize-change`, `Lead / finalize-archive`.",
+    "merge-pr": "Mapped action: `Executor / merge-pr`.",
+    "openspec-change": "Mapped actions: `Lead / propose-change`, `Lead / resolve-question`.",
+    "openspec-explore": "Mapped action: `Lead / explore-change`.",
+    "openspec-review": "Mapped action: `Reviewer / review-openspec`.",
+}
+
 UPSTREAM_REVISION = "2826b8889e5223a9a8095d4428b60b56597e1020"
 UPSTREAM_DERIVED_SKILLS = {
     "archive-review": "skills/openspec-archive-change/",
@@ -73,3 +84,17 @@ def test_openspec_derived_skills_have_reconstructable_upstream_ledgers() -> None
 
 def test_repository_original_openspec_review_does_not_fabricate_upstream_mapping() -> None:
     assert not Path("agents/skills/openspec-review/UPSTREAM.md").exists()
+
+
+def test_standard_metadata_and_provenance_preserve_existing_action_ownership() -> None:
+    root = Path("agents/skills")
+
+    for skill, expected in EXPECTED_ACTION_DECLARATIONS.items():
+        body = (root / skill / "SKILL.md").read_text(encoding="utf-8")
+        assert expected in body, f"{skill} must preserve its mapped role/action declaration"
+
+
+def test_semantic_adapter_remains_a_separate_follow_up_resource() -> None:
+    root = Path("agents/skills")
+    assert (root / "openspec-semantic-adapter.md").is_file()
+    assert not (root / "openspec-semantic-adapter" / "SKILL.md").exists()
