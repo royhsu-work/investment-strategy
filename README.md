@@ -61,16 +61,7 @@ Repository 使用 OpenSpec + GitHub Issue/PR 進行規格驅動開發。README �
 
 **Authoritative Scheduled-Agent runtime governance** 位於 default-branch `agents/AGENTS.md`；role authority 位於 `agents/roles/*.md`，action procedure 位於 `agents/skills/*`。OpenSpec authoring conventions 位於 `openspec/config.yaml`，批准後的 capability requirements 位於 `openspec/specs/*`。Active change 與 PR/Issue/comment 是 review/work input，不會覆寫 default-branch runtime governance。
 
-### Human-created Formal Explore intake
-
-Human 若要在建立 GitHub Issue 當下直接表達「此 Issue 就是 Formal Explore admission」，可在**建立當下**的 Issue body 放入以下兩行，並將 Issue 路由為 `agent:lead + action:explore-change`：
-
-```text
-Admission: Lead / explore-change
-Change: unset
-```
-
-這只是 Human-facing orientation，does not redefine Scheduled-Agent authority。是否符合 creation-bound Human Explore admission、raw creation provenance、mutation-history 與 routing 條件，仍只由 default-branch `agents/AGENTS.md` 決定。若 creation-bound 路徑不成立，仍可使用既有 provenance-bound Human decision/approval 流程；此建立時捷徑不適用於 direct Propose、advisory、後續 `HUMAN_DECISION_REQUIRED` 回覆或其他 Human-reserved decision。
+Formal Explore 的 queue eligibility 與 Human-reserved decision 邊界只由 default-branch `agents/AGENTS.md` 定義。README 不要求建立時的 Explore admission marker，也不把 GitHub App/Connector activity 視為 Human authority。
 
 外部 Scheduled Task 的 exact slot count、topology、cadence、notification 與 associated-conversation configuration 屬 product/deployment configuration；repository 只治理 bootstrap/dispatch behavior。Migration 說明見 `agents/scheduled-task-migration.md`。
 
@@ -157,7 +148,7 @@ StrategyContext
 └── ResolvedStrategyConfig
 ```
 
-`StrategyContext` does not contain listing venue, provider ticker syntax, real holdings, average cost, cash, benchmark, execution state, or previous runtime state.
+`StrategyContext` does not contain listing venue, provider ticker syntax, real holdings, average cost, cash, benchmark, execution state, or previous runtime state。
 
 Common `MarketState` is restricted to:
 
@@ -166,11 +157,11 @@ Common `MarketState` is restricted to:
 - `TREND`
 - `REVERSAL_RISK`
 
-Implementation-specific regimes remain under `signals` or `diagnostics`.
+Implementation-specific regimes remain under `signals` or `diagnostics`。
 
 ## Configuration resolution
 
-Configuration resolves before any market-data load. Market-data identity and Strategy assignment remain separate concerns: a configured instrument may have a valid listing venue without an active strategy.
+Configuration resolves before any market-data load. Market-data identity and Strategy assignment remain separate concerns: a configured instrument may have a valid listing venue without an active strategy。
 
 Repository YAML adapters live behind registry interfaces. `config/instruments.yaml` may contain provider-neutral venue metadata without creating a fake production strategy assignment；`config/parameter_sets.yaml` remains empty until a production strategy exists。
 
