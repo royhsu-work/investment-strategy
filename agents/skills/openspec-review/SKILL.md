@@ -1,3 +1,8 @@
+---
+name: openspec-review
+description: Independently review the current semantic OpenSpec target for Reviewer / review-openspec using reverse-first and forward traceability, repository governance, and exact validation evidence.
+---
+
 # OpenSpec Review Skill
 
 Mapped action: `Reviewer / review-openspec`.
