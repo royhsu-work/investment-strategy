@@ -48,11 +48,7 @@ def _load_module(path: Path) -> ModuleType:
 
 def test_pinned_skill_creator_package_and_provenance() -> None:
     assert SKILL_ROOT.is_dir()
-    actual = {
-        str(path.relative_to(SKILL_ROOT))
-        for path in SKILL_ROOT.rglob("*")
-        if path.is_file()
-    }
+    actual = {str(path.relative_to(SKILL_ROOT)) for path in SKILL_ROOT.rglob("*") if path.is_file()}
     assert actual >= UPSTREAM_FILES
 
     for relative_path, expected_sha in UPSTREAM_BLOBS.items():
