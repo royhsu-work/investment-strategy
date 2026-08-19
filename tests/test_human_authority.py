@@ -8,20 +8,13 @@ import pytest
 from investment_strategy.human_authority import (
     DecisionComment,
     HumanDecisionBoundary,
-    IssueCreation,
-    IssueDeclarationHistory,
     LabelEvent,
     advisory_admission_ref,
     decision_comment_from_raw,
     decision_ref_for_boundary,
     escalation_response_ref,
-    explore_admission_ref,
     is_human_advisory_admission_approved,
-    is_human_created_explore_admission,
     is_human_decision_approved,
-    is_human_explore_admission_approved,
-    issue_creation_from_raw,
-    issue_declaration_history_from_raw,
     label_event_from_raw,
     propose_admission_ref,
 )
@@ -31,7 +24,6 @@ AGENTS = ROOT / "agents" / "AGENTS.md"
 LEAD = ROOT / "agents" / "roles" / "lead.md"
 REVIEWER = ROOT / "agents" / "roles" / "reviewer.md"
 EXECUTOR = ROOT / "agents" / "roles" / "executor.md"
-DEFAULT_CREATION_BODY = "Admission: Lead / explore-change\nChange: unset\n\nInvestigate the issue."
 
 
 def _ts(minute: int) -> datetime:
@@ -90,61 +82,8 @@ def _approved(
     )
 
 
-def _raw_issue(
-    *,
-    body: str = DEFAULT_CREATION_BODY,
-    app: object = None,
-    include_provenance: bool = True,
-    actor: str = "royhsu-work",
-    updated_at: str | None = None,
-) -> dict[str, object]:
-    raw: dict[str, object] = {
-        "id": 500,
-        "created_at": "2026-08-16T07:00:00Z",
-        "user": {"login": actor},
-        "body": body,
-    }
-    if updated_at is not None:
-        raw["updated_at"] = updated_at
-    if include_provenance:
-        raw["performed_via_github_app"] = app
-    return raw
-
-
-def _raw_history(
-    *,
-    creation_body: str = DEFAULT_CREATION_BODY,
-    complete: bool = True,
-    events: list[dict[str, object]] | None = None,
-) -> dict[str, object]:
-    return {
-        "complete": complete,
-        "opened": {"action": "opened", "issue": {"body": creation_body}},
-        "events": [] if events is None else events,
-    }
-
-
-def _history(
-    *,
-    creation_body: str = DEFAULT_CREATION_BODY,
-    complete: bool = True,
-    events: list[dict[str, object]] | None = None,
-) -> IssueDeclarationHistory:
-    declaration_mutated = False
-    for event in [] if events is None else events:
-        if event.get("action") != "edited":
-            continue
-        changes = event.get("changes")
-        if not isinstance(changes, dict) or "body" in changes or "title" in changes:
-            declaration_mutated = True
-    return IssueDeclarationHistory(
-        verified_creation_body=creation_body if complete else None,
-        declaration_mutated=declaration_mutated,
-    )
-
-
 def test_actor_identity_alone_is_not_human_authority() -> None:
-    decision_ref = explore_admission_ref(47)
+    decision_ref = propose_admission_ref(47)
     assert not _approved(
         decision_ref,
         comments=(_comment(id=1, minute=1, decision_ref=decision_ref, app="chatgpt"),),
@@ -181,11 +120,11 @@ def test_valid_human_comment_and_later_human_approval_event_pass() -> None:
 def test_missing_or_mismatched_decision_ref_cannot_satisfy_boundary() -> None:
     comments = (_comment(id=10, minute=1, decision_ref=advisory_admission_ref(47)),)
     events = (_event(id=20, minute=2),)
-    assert not _approved(explore_admission_ref(47), comments=comments, events=events)
+    assert not _approved(propose_admission_ref(47), comments=comments, events=events)
 
 
 def test_event_first_binding_prevents_one_event_from_fanning_out() -> None:
-    ref_one = explore_admission_ref(47)
+    ref_one = advisory_admission_ref(47)
     ref_two = propose_admission_ref(47)
     comments = (
         _comment(id=10, minute=1, decision_ref=ref_one),
@@ -201,11 +140,7 @@ def test_replacement_comment_requires_a_later_approval_event() -> None:
     original = _comment(id=10, minute=1, decision_ref=decision_ref)
     first_event = _event(id=20, minute=2)
     replacement = _comment(id=30, minute=3, decision_ref=decision_ref)
-    assert not _approved(
-        decision_ref,
-        comments=(original, replacement),
-        events=(first_event,),
-    )
+    assert not _approved(decision_ref, comments=(original, replacement), events=(first_event,))
     assert _approved(
         decision_ref,
         comments=(original, replacement),
@@ -216,11 +151,7 @@ def test_replacement_comment_requires_a_later_approval_event() -> None:
 def test_post_approval_edit_invalidates_until_later_approval_event() -> None:
     decision_ref = escalation_response_ref(5678)
     edited = _comment(id=10, minute=1, updated_minute=3, decision_ref=decision_ref)
-    assert not _approved(
-        decision_ref,
-        comments=(edited,),
-        events=(_event(id=20, minute=2),),
-    )
+    assert not _approved(decision_ref, comments=(edited,), events=(_event(id=20, minute=2),))
     assert _approved(
         decision_ref,
         comments=(edited,),
@@ -232,17 +163,12 @@ def test_current_approval_label_and_qualifying_labeled_event_are_required() -> N
     decision_ref = advisory_admission_ref(47)
     comments = (_comment(id=10, minute=1, decision_ref=decision_ref),)
     events = (_event(id=20, minute=2),)
-    assert not _approved(
-        decision_ref,
-        comments=comments,
-        events=events,
-        label_present=False,
-    )
+    assert not _approved(decision_ref, comments=comments, events=events, label_present=False)
     assert not _approved(decision_ref, comments=comments, events=())
 
 
 def test_raw_adapter_preserves_missing_provenance_as_fail_closed_evidence() -> None:
-    decision_ref = explore_admission_ref(47)
+    decision_ref = propose_admission_ref(47)
     raw_comment: dict[str, object] = {
         "id": 10,
         "created_at": "2026-08-16T07:01:00Z",
@@ -305,14 +231,9 @@ def test_unlabeled_event_never_establishes_authority() -> None:
 
 
 def test_current_human_reserved_boundaries_use_exact_serialized_anchors() -> None:
-    assert explore_admission_ref(52) == "issue:52:admission:lead:explore-change"
     assert propose_admission_ref(52) == "issue:52:admission:lead:propose-change"
     assert advisory_admission_ref(52) == "issue:52:advisory-admission"
     assert escalation_response_ref(5303804185) == "issuecomment:5303804185"
-    assert decision_ref_for_boundary(
-        HumanDecisionBoundary.EXPLORE_ADMISSION,
-        issue_number=52,
-    ) == explore_admission_ref(52)
     assert decision_ref_for_boundary(
         HumanDecisionBoundary.PROPOSE_ADMISSION,
         issue_number=52,
@@ -327,18 +248,15 @@ def test_current_human_reserved_boundaries_use_exact_serialized_anchors() -> Non
     ) == escalation_response_ref(5303804185)
 
 
-def test_unmapped_human_reserved_boundary_fails_closed() -> None:
+def test_unmapped_or_incomplete_human_reserved_boundary_fails_closed() -> None:
     with pytest.raises(ValueError, match="unmapped Human-reserved boundary"):
-        decision_ref_for_boundary("future-authorization", issue_number=47)
-
-
-def test_boundary_anchor_requires_the_correct_durable_identity() -> None:
+        decision_ref_for_boundary("explore-admission", issue_number=47)
     with pytest.raises(ValueError, match="issue_number is required"):
-        decision_ref_for_boundary(HumanDecisionBoundary.EXPLORE_ADMISSION)
+        decision_ref_for_boundary(HumanDecisionBoundary.PROPOSE_ADMISSION)
     with pytest.raises(ValueError, match="escalation_comment_id is required"):
         decision_ref_for_boundary(HumanDecisionBoundary.ESCALATION_RESPONSE)
     with pytest.raises(ValueError, match="positive integer"):
-        explore_admission_ref(0)
+        propose_admission_ref(0)
 
 
 def test_human_advisory_admission_requires_distinct_intake_capability() -> None:
@@ -359,10 +277,6 @@ def test_human_advisory_admission_requires_distinct_intake_capability() -> None:
         comments=comments,
         label_events=events,
     )
-
-
-def test_repository_authorized_explore_does_not_need_human_predicate() -> None:
-    assert HumanDecisionBoundary.EXPLORE_ADMISSION.value == "explore-admission"
 
 
 def test_reserved_human_capabilities_are_distinct_and_role_protected() -> None:
@@ -388,203 +302,3 @@ def test_provenance_migration_is_prospective_not_retroactive() -> None:
         in shared
     )
     assert "current applicable\nHuman-authority path" in shared
-    assert "creation-bound alternative" in shared
-
-
-def test_human_created_formal_explore_requires_exact_raw_creation_contract() -> None:
-    creation = issue_creation_from_raw(_raw_issue(updated_at="2026-08-16T07:20:00Z"))
-    history = _history(
-        creation_body=creation.body,
-        events=[
-            {"action": "labeled"},
-            {"action": "commented"},
-        ],
-    )
-    assert isinstance(creation, IssueCreation)
-    assert is_human_created_explore_admission(
-        creation=creation,
-        current_agent_label="agent:lead",
-        current_action_label="action:explore-change",
-        declaration_history=history,
-    )
-
-
-def test_generic_raw_history_projection_never_authenticates_creation_body() -> None:
-    raw = _raw_history(complete=True, events=[{"action": "labeled"}, {"action": "commented"}])
-    history = issue_declaration_history_from_raw(raw)
-    assert history.verified_creation_body is None
-    assert not history.declaration_mutated
-
-
-def test_caller_complete_true_cannot_manufacture_creation_bound_authority() -> None:
-    creation = issue_creation_from_raw(_raw_issue())
-    history = issue_declaration_history_from_raw(
-        _raw_history(creation_body=creation.body, complete=True, events=[])
-    )
-    assert not is_human_created_explore_admission(
-        creation=creation,
-        current_agent_label="agent:lead",
-        current_action_label="action:explore-change",
-        declaration_history=history,
-    )
-
-
-def test_generic_raw_history_preserves_negative_mutation_evidence() -> None:
-    body_history = issue_declaration_history_from_raw(
-        _raw_history(events=[{"action": "edited", "changes": {"body": {"from": "old"}}}])
-    )
-    title_history = issue_declaration_history_from_raw(
-        _raw_history(events=[{"action": "edited", "changes": {"title": {"from": "old"}}}])
-    )
-    ambiguous_history = issue_declaration_history_from_raw(
-        _raw_history(events=[{"action": "edited"}])
-    )
-    assert body_history.verified_creation_body is None and body_history.declaration_mutated
-    assert title_history.verified_creation_body is None and title_history.declaration_mutated
-    assert ambiguous_history.verified_creation_body is None
-    assert ambiguous_history.declaration_mutated
-
-
-def test_issue_updated_at_is_not_used_as_creation_declaration_history_proxy() -> None:
-    creation = issue_creation_from_raw(_raw_issue(updated_at="2026-08-16T08:00:00Z"))
-    history = _history(creation_body=creation.body, events=[{"action": "labeled"}])
-    assert is_human_created_explore_admission(
-        creation=creation,
-        current_agent_label="agent:lead",
-        current_action_label="action:explore-change",
-        declaration_history=history,
-    )
-
-
-@pytest.mark.parametrize(
-    ("raw", "agent", "action", "history_complete"),
-    [
-        (
-            _raw_issue(app={"id": 1, "slug": "connector"}),
-            "agent:lead",
-            "action:explore-change",
-            True,
-        ),
-        (
-            _raw_issue(include_provenance=False),
-            "agent:lead",
-            "action:explore-change",
-            True,
-        ),
-        (_raw_issue(body="Change: unset"), "agent:lead", "action:explore-change", True),
-        (
-            _raw_issue(
-                body=(
-                    "Admission: Lead / explore-change\n"
-                    "Admission: Lead / explore-change\n"
-                    "Change: unset"
-                )
-            ),
-            "agent:lead",
-            "action:explore-change",
-            True,
-        ),
-        (
-            _raw_issue(body="Admission: Lead / propose-change\nChange: unset"),
-            "agent:lead",
-            "action:explore-change",
-            True,
-        ),
-        (_raw_issue(), "agent:reviewer", "action:explore-change", True),
-        (_raw_issue(), "agent:lead", "action:propose-change", True),
-        (_raw_issue(), "agent:lead", "action:explore-change", False),
-    ],
-)
-def test_human_created_formal_explore_fails_closed_for_invalid_evidence(
-    raw: dict[str, object],
-    agent: str,
-    action: str,
-    history_complete: bool,
-) -> None:
-    creation = issue_creation_from_raw(raw)
-    assert not is_human_created_explore_admission(
-        creation=creation,
-        current_agent_label=agent,
-        current_action_label=action,
-        declaration_history=_history(
-            creation_body=creation.body,
-            complete=history_complete,
-        ),
-    )
-
-
-def test_human_created_formal_explore_rejects_mutated_creation_declaration() -> None:
-    creation = issue_creation_from_raw(_raw_issue())
-    history = _history(
-        creation_body=creation.body,
-        events=[{"action": "edited", "changes": {"body": {"from": creation.body}}}],
-    )
-    assert not is_human_created_explore_admission(
-        creation=creation,
-        current_agent_label="agent:lead",
-        current_action_label="action:explore-change",
-        declaration_history=history,
-    )
-
-
-def test_human_created_formal_explore_requires_one_unset_change_declaration() -> None:
-    bodies = (
-        "Admission: Lead / explore-change\nChange: active-change",
-        "Admission: Lead / explore-change\nChange: unset\nChange: unset",
-        "Admission: Lead / explore-change\nChange: unset\nChange: another-change",
-    )
-    for body in bodies:
-        assert not is_human_created_explore_admission(
-            creation=issue_creation_from_raw(_raw_issue(body=body)),
-            current_agent_label="agent:lead",
-            current_action_label="action:explore-change",
-            declaration_history=_history(creation_body=body),
-        )
-
-
-def test_human_explore_admission_falls_back_to_existing_general_predicate() -> None:
-    issue_number = 88
-    decision_ref = explore_admission_ref(issue_number)
-    connector_creation = issue_creation_from_raw(_raw_issue(app={"id": 1, "slug": "connector"}))
-    assert is_human_explore_admission_approved(
-        issue_number=issue_number,
-        creation=connector_creation,
-        current_agent_label="agent:lead",
-        current_action_label="action:explore-change",
-        declaration_history=_history(
-            creation_body=connector_creation.body,
-            complete=False,
-        ),
-        approval_label_present=True,
-        comments=(_comment(id=10, minute=1, decision_ref=decision_ref),),
-        label_events=(_event(id=20, minute=2),),
-    )
-
-
-def test_generic_raw_history_nonqualification_still_falls_back_to_general_predicate() -> None:
-    issue_number = 88
-    decision_ref = explore_admission_ref(issue_number)
-    creation = issue_creation_from_raw(_raw_issue())
-    raw_history = issue_declaration_history_from_raw(
-        _raw_history(creation_body=creation.body, complete=True, events=[])
-    )
-    assert is_human_explore_admission_approved(
-        issue_number=issue_number,
-        creation=creation,
-        current_agent_label="agent:lead",
-        current_action_label="action:explore-change",
-        declaration_history=raw_history,
-        approval_label_present=True,
-        comments=(_comment(id=10, minute=1, decision_ref=decision_ref),),
-        label_events=(_event(id=20, minute=2),),
-    )
-
-
-def test_creation_shortcut_does_not_mutate_general_decision_semantics() -> None:
-    propose_ref = propose_admission_ref(88)
-    assert not _approved(propose_ref, comments=(), events=())
-    assert _approved(
-        propose_ref,
-        comments=(_comment(id=10, minute=1, decision_ref=propose_ref),),
-        events=(_event(id=20, minute=2),),
-    )
