@@ -398,3 +398,124 @@ This stronger authority rule SHALL activate prospectively on the default-branch 
 - WHEN dispatch evaluates Human authority
 - THEN ordinary Explore eligibility does not satisfy that direct-Propose boundary
 - AND the exact `issue:<N>:admission:lead:propose-change` provenance-bound decision/approval predicate remains required
+
+### Requirement: Workflow admission is explicitly authority-controlled
+
+Scheduled agents MUST NOT autonomously create or route arbitrary Issues, PRs, repository activity, discussions, discovered requirements, or Agent-authored recommendations into workflow work. This requirement governs producer/materialization authority; it MUST NOT be used to require generic Human approval merely to execute an already-existing coherent Formal Explore Issue.
+
+Direct Human admission to `Lead / propose-change` remains governed by the repository Human-authority contract. Ordinary `Lead / explore-change` execution is not a Human-reserved boundary: an open Issue with `Change: unset + agent:lead + action:explore-change` may participate in deterministic pre-activation selection without a generic Human admission predicate, subject to coherent routing, dependencies/evidence, formal-WIP finish-first behavior, and the shared queue contract. Routing or Explore execution MUST NOT become Human authority for a later Human-reserved commitment.
+
+Lead MAY autonomously materialize one bounded `Lead / explore-change` coordination Issue with `Change: unset` only from the idle-discovery boundary when creation is independently justified by one of the following:
+
+- an applicable default-branch canonical MUST/SHALL requirement with a concrete material gap;
+- an approved required-deferred obligation with reconstructable source linkage;
+- an explicitly governed README project-direction commitment that is prospective, scoped, affirmative, non-contradictory with canonical specs, and not merely descriptive/current-state/non-goal/example/deferred-uncommitted text; or
+- concrete material behavior-preserving maintenance/friction evidence with a bounded ownership surface and no new Human-reserved product/scope/risk decision.
+
+An autonomous materialization MUST contain reconstructable evidence identifying the creation/source kind, exact observed default-branch revision where applicable, exact authority/evidence source, bounded problem statement, and why no Human-reserved decision is being made. Later reconstruction MUST validate that evidence and MUST fail closed when the cited source is absent, stale, contradictory, merely descriptive, insufficiently material, or otherwise does not authorize that producer action.
+
+Agent-authored advisory text, Explore conclusions, and prior Agent-created tickets MUST NOT recursively serve as sufficient authority for another autonomous materialization by themselves. Every autonomous creation SHALL trace to an independent default-branch authority source or current concrete repository/friction evidence.
+
+Autonomous creation MUST NOT add, remove, restore, or manufacture `intake:approved` or `human:approved`, MUST NOT persist a formal Change identity, and MUST NOT bypass Propose, Reviewer, implementation, merge, archive, or lifecycle gates.
+
+Approved required-separate-follow-up creation remains a distinct source-linked producer path. Its tracker MUST preserve the exact source defer decision/linkage required by governance; the tracker does not self-authorize from its own prose. Direct-Propose fallback to Explore may preserve its already-valid Propose authority envelope for scope/continuation purposes, but ordinary Explore dispatcher eligibility does not require reclassification into a special admission origin.
+
+When an existing Explore reaches `PROPOSAL_READY`, Lead MAY route the same Issue to `Lead / propose-change` without a generic second Human proceed decision only when formalization remains within the bounded researched problem/current canonical evidence and introduces no new Human-reserved decision. A new project/product direction, material externally observable behavior choice, material scope trade-off, explicit risk acceptance, materially different security/privacy/cost/operational commitment, contradictory authority evidence, or materially changed governing evidence SHALL require `HUMAN_DECISION_REQUIRED` before Propose.
+
+Lead idle advisory admission, where still used, continues to require its distinct Human-only advisory contract and `intake:approved` capability. Scheduled Lead, Reviewer, and Executor MUST NEVER add, remove, restore, or otherwise manufacture Human-only approval capabilities; they MAY only consume qualifying Human evidence where that capability remains applicable.
+
+#### Scenario: Existing routed Explore executes without generic Human admission
+
+- GIVEN an open coordination Issue has `Change: unset`
+- AND current routing is exactly `Lead / explore-change`
+- AND its dependencies/evidence and repository-wide cardinality are coherent
+- AND deterministic pre-activation ordering selects it
+- WHEN scheduled workflow dispatches ordinary Formal Explore
+- THEN the Issue is valid queued pre-Change research without a generic Human admission ceremony
+- AND Explore does not create a formal Change identity
+- AND the Issue/routing/execution does not satisfy any later Human-reserved decision
+
+#### Scenario: Human directly admits concrete work to Propose
+
+- GIVEN Human admission satisfies the existing full provenance-bound direct-Propose predicate for `Lead / propose-change`
+- AND `Change:` is unset
+- WHEN scheduled workflow reconstructs direct-Propose admission
+- THEN the Issue is valid queued pre-activation work
+- AND Explore is not mandatory for that Issue
+- AND ordinary Explore eligibility does not satisfy direct-Propose admission
+
+#### Scenario: Canonical requirement authorizes bounded Explore creation
+
+- GIVEN no active/terminal-pending workflow or already eligible pre-activation work should be advanced first
+- AND default-branch canonical requirement R contains an applicable MUST/SHALL obligation
+- AND Lead observes a concrete material gap against R that introduces no new Human-reserved decision
+- WHEN Lead performs bounded idle discovery
+- THEN Lead may materialize at most one `Change: unset + Lead / explore-change` Issue
+- AND the Issue records reconstructable source evidence that cites R and the observed default-branch revision
+- AND no Human approval capability or formal Change identity is created
+
+#### Scenario: Arbitrary README prose cannot authorize autonomous creation
+
+- GIVEN README contains descriptive/current-state text, an example, a non-goal, or work marked merely deferred/uncommitted
+- WHEN Lead evaluates autonomous Explore creation
+- THEN that text alone is insufficient producer authority
+- AND Lead does not infer roadmap permission from arbitrary prose
+
+#### Scenario: Explicit README commitment can authorize bounded Explore creation
+
+- GIVEN README contains an explicitly governed prospective project-direction commitment
+- AND the commitment is scoped, affirmative, non-contradictory with canonical specs, and not merely deferred/uncommitted
+- AND a concrete material gap remains within that direction without introducing a Human-reserved decision
+- WHEN Lead evaluates bounded idle discovery
+- THEN that commitment may serve as source authority for one bounded Explore candidate
+- AND runtime routing semantics remain governed by `agents/AGENTS.md` rather than README prose
+
+#### Scenario: Recurring material workflow friction authorizes bounded maintenance Explore creation
+
+- GIVEN current repository evidence demonstrates a behavior-preserving recurring workflow failure or equivalent material structural friction
+- AND the problem has a bounded ownership surface
+- AND resolving the problem does not choose new product scope or require Human risk acceptance
+- WHEN Lead reaches the idle-discovery boundary
+- THEN Lead may autonomously materialize one bounded Formal Explore candidate
+- AND style preference or speculative cleanup alone would not satisfy the same threshold
+
+#### Scenario: Agent-created ticket cannot self-feed another creation
+
+- GIVEN an earlier Agent-created advisory or Explore Issue recommends additional work
+- AND no independent default-branch authority source or current concrete material friction evidence supports that additional work
+- WHEN Lead evaluates another autonomous creation
+- THEN the earlier Agent-authored artifact alone is insufficient authority
+- AND no recursive workflow ticket is materialized
+
+#### Scenario: Required separate follow-up preserves source authority
+
+- GIVEN an approved Lead-owned decision explicitly requires work W in a separate later Change
+- AND Lead materializes or repairs the required tracker under the source-defer contract
+- WHEN later workflow reconstructs that tracker
+- THEN its producer authority derives from the exact approved source decision/linkage
+- AND the tracker body does not self-authorize unrelated work
+- AND ordinary Explore execution does not require a second generic Human approval
+
+#### Scenario: Proposal-ready Explore proceeds without a generic second approval
+
+- GIVEN an existing Explore has a decision-complete `PROPOSAL_READY`
+- AND the proposed direction remains within the bounded researched problem and current canonical/repository evidence
+- AND no new Human-reserved decision is required
+- WHEN Lead completes Explore
+- THEN Lead may route the same Issue to `Lead / propose-change` without a generic second Human proceed decision
+- AND same-role continuation follows the existing reconstruction contract
+
+#### Scenario: Proposal-ready Explore exposes a new Human decision
+
+- GIVEN Explore discovers a material new product direction, scope/behavior trade-off, risk acceptance, or materially different security/privacy/cost/operational commitment
+- WHEN Lead evaluates the next disposition
+- THEN Lead records `HUMAN_DECISION_REQUIRED`
+- AND does not route to Propose until valid Human authority is reconstructed
+
+#### Scenario: Routing is eligibility but not downstream Human authority
+
+- GIVEN an open Issue has coherent `Change: unset + agent:lead + action:explore-change` routing
+- WHEN scheduled workflow evaluates ordinary Explore execution
+- THEN the routing may make the Issue queue-eligible under the deterministic pre-activation contract
+- AND routing alone does not authorize Scheduled Agents to create arbitrary additional work
+- AND routing or successful Explore execution does not establish Human authority for direct Propose, advisory admission, escalation answers/resume, or any other Human-reserved boundary
