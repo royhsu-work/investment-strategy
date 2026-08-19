@@ -24,6 +24,7 @@ Action = Literal[
     "merge-pr",
 ]
 Routing = tuple[Role, Action]
+RecoveryEvidence = Literal["not-candidate", "qualifying", "indeterminate"]
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class WorkflowIssue:
     routing: Routing | None
     state: Literal["open", "closed"] = "open"
     created_order: int = 0
+    premature_close_recovery: RecoveryEvidence = "not-candidate"
 
 
 @dataclass(frozen=True)
@@ -49,7 +51,7 @@ class ActivationAttempt:
 
 
 def classify(snapshot: Snapshot) -> tuple[str, int | None]:
-    """Test-only model of the approved four-way dispatch decision table."""
+    """Test-only model of the approved dispatch and recovery decision table."""
     if not snapshot.complete:
         return ("indeterminate", None)
 
@@ -71,6 +73,32 @@ def classify(snapshot: Snapshot) -> tuple[str, int | None]:
     if len(active) == 1:
         return ("formal", active[0].number)
 
+    recovery_indeterminate = [
+        issue
+        for issue in snapshot.issues
+        if issue.state == "closed"
+        and issue.change != "unset"
+        and issue.routing is not None
+        and issue.routing != ("lead", "finalize-archive")
+        and issue.premature_close_recovery == "indeterminate"
+    ]
+    if recovery_indeterminate:
+        return ("fail-closed", None)
+
+    recovery = [
+        issue
+        for issue in snapshot.issues
+        if issue.state == "closed"
+        and issue.change != "unset"
+        and issue.routing is not None
+        and issue.routing != ("lead", "finalize-archive")
+        and issue.premature_close_recovery == "qualifying"
+    ]
+    if len(recovery) > 1:
+        return ("fail-closed", None)
+    if len(recovery) == 1:
+        return ("recovery", recovery[0].number)
+
     queued = sorted(
         (
             issue
@@ -87,6 +115,8 @@ def classify(snapshot: Snapshot) -> tuple[str, int | None]:
 def action_entry_allowed(snapshot: Snapshot, issue_number: int, routing: Routing) -> bool:
     """Model the mapped-action defense after a wake selected an Issue."""
     disposition, selected = classify(snapshot)
+    if disposition == "recovery":
+        return selected == issue_number and routing == ("lead", "resolve-question")
     if routing in {("lead", "explore-change"), ("lead", "propose-change")}:
         return disposition == "pre-activation" and selected == issue_number
     return disposition == "formal" and selected == issue_number
@@ -162,29 +192,111 @@ def test_partial_enumeration_is_indeterminate_even_when_only_queue_is_visible() 
     assert classify(snapshot) == ("indeterminate", None)
 
 
+def test_one_qualifying_premature_close_blocks_queue_for_lead_recovery() -> None:
+    stale_route: Routing = ("executor", "implement-change")
+    snapshot = Snapshot(
+        issues=(
+            WorkflowIssue(
+                43,
+                "unfinished-change",
+                stale_route,
+                state="closed",
+                premature_close_recovery="qualifying",
+            ),
+            WorkflowIssue(44, "unset", ("lead", "explore-change"), created_order=1),
+        ),
+        complete=True,
+    )
+    assert classify(snapshot) == ("recovery", 43)
+    assert action_entry_allowed(snapshot, 43, ("lead", "resolve-question"))
+    assert not action_entry_allowed(snapshot, 43, stale_route)
+    assert not action_entry_allowed(snapshot, 44, ("lead", "explore-change"))
+
+
+def test_two_premature_close_recovery_candidates_fail_closed() -> None:
+    snapshot = Snapshot(
+        issues=(
+            WorkflowIssue(
+                45,
+                "first-unfinished",
+                ("reviewer", "review-implementation"),
+                state="closed",
+                premature_close_recovery="qualifying",
+            ),
+            WorkflowIssue(
+                46,
+                "second-unfinished",
+                ("executor", "merge-pr"),
+                state="closed",
+                premature_close_recovery="qualifying",
+            ),
+            WorkflowIssue(47, "unset", ("lead", "explore-change")),
+        ),
+        complete=True,
+    )
+    assert classify(snapshot) == ("fail-closed", None)
+    assert not action_entry_allowed(snapshot, 45, ("lead", "resolve-question"))
+    assert not action_entry_allowed(snapshot, 47, ("lead", "explore-change"))
+
+
+def test_indeterminate_premature_close_evidence_fails_closed() -> None:
+    snapshot = Snapshot(
+        issues=(
+            WorkflowIssue(
+                48,
+                "possibly-unfinished",
+                ("lead", "finalize-change"),
+                state="closed",
+                premature_close_recovery="indeterminate",
+            ),
+            WorkflowIssue(49, "unset", ("lead", "explore-change")),
+        ),
+        complete=True,
+    )
+    assert classify(snapshot) == ("fail-closed", None)
+    assert not action_entry_allowed(snapshot, 49, ("lead", "explore-change"))
+
+
+def test_non_candidate_closed_history_does_not_block_queue() -> None:
+    snapshot = Snapshot(
+        issues=(
+            WorkflowIssue(
+                52,
+                "completed-or-inapplicable",
+                ("executor", "implement-change"),
+                state="closed",
+                premature_close_recovery="not-candidate",
+            ),
+            WorkflowIssue(53, "unset", ("lead", "explore-change")),
+        ),
+        complete=True,
+    )
+    assert classify(snapshot) == ("pre-activation", 53)
+
+
 def test_propose_pre_write_refuses_activation_when_active_work_appears() -> None:
-    candidate = WorkflowIssue(45, "unset", ("lead", "propose-change"), created_order=1)
+    candidate = WorkflowIssue(55, "unset", ("lead", "propose-change"), created_order=1)
     initial = Snapshot(issues=(candidate,), complete=True)
-    assert activate(initial, ActivationAttempt(45, "candidate-change")) is not None
+    assert activate(initial, ActivationAttempt(55, "candidate-change")) is not None
 
     fresh = Snapshot(
         issues=(
             candidate,
-            WorkflowIssue(44, "existing-change", ("reviewer", "review-openspec")),
+            WorkflowIssue(54, "existing-change", ("reviewer", "review-openspec")),
         ),
         complete=True,
     )
-    assert activate(fresh, ActivationAttempt(45, "candidate-change")) is None
+    assert activate(fresh, ActivationAttempt(55, "candidate-change")) is None
     assert fresh.issues[0].change == "unset"
 
 
 def test_propose_post_write_stops_when_competing_activation_creates_two_actives() -> None:
-    first = WorkflowIssue(47, "unset", ("lead", "propose-change"), created_order=1)
-    second = WorkflowIssue(48, "unset", ("lead", "propose-change"), created_order=2)
+    first = WorkflowIssue(57, "unset", ("lead", "propose-change"), created_order=1)
+    second = WorkflowIssue(58, "unset", ("lead", "propose-change"), created_order=2)
     initial = Snapshot(issues=(first, second), complete=True)
-    activated = activate(initial, ActivationAttempt(47, "first-change"))
+    activated = activate(initial, ActivationAttempt(57, "first-change"))
     assert activated is not None
-    assert activation_still_valid(activated, 47)
+    assert activation_still_valid(activated, 57)
 
     contradicted = Snapshot(
         issues=(
@@ -194,14 +306,14 @@ def test_propose_post_write_stops_when_competing_activation_creates_two_actives(
         complete=True,
     )
     assert classify(contradicted) == ("fail-closed", None)
-    assert not activation_still_valid(contradicted, 47)
+    assert not activation_still_valid(contradicted, 57)
 
 
 def test_two_formal_workflows_fail_closed_without_winner_selection() -> None:
     snapshot = Snapshot(
         issues=(
-            WorkflowIssue(50, "first", ("executor", "implement-change"), created_order=1),
-            WorkflowIssue(51, "second", ("reviewer", "review-openspec"), created_order=2),
+            WorkflowIssue(60, "first", ("executor", "implement-change"), created_order=1),
+            WorkflowIssue(61, "second", ("reviewer", "review-openspec"), created_order=2),
         ),
         complete=True,
     )
@@ -224,12 +336,12 @@ def test_two_formal_workflows_prevent_every_normal_mapped_action() -> None:
     for route in routes:
         snapshot = Snapshot(
             issues=(
-                WorkflowIssue(60, "first", route),
-                WorkflowIssue(61, "second", ("executor", "implement-change")),
+                WorkflowIssue(70, "first", route),
+                WorkflowIssue(71, "second", ("executor", "implement-change")),
             ),
             complete=True,
         )
-        assert not action_entry_allowed(snapshot, 60, route)
+        assert not action_entry_allowed(snapshot, 70, route)
 
 
 def test_two_formal_workflows_fail_closed_independent_of_order_or_priority() -> None:
@@ -249,8 +361,8 @@ def test_two_formal_workflows_fail_closed_independent_of_order_or_priority() -> 
 
 def test_multiple_active_failure_does_not_mutate_change_or_routing() -> None:
     issues = (
-        WorkflowIssue(70, "first", ("executor", "implement-change")),
-        WorkflowIssue(71, "second", ("reviewer", "review-openspec")),
+        WorkflowIssue(80, "first", ("executor", "implement-change")),
+        WorkflowIssue(81, "second", ("reviewer", "review-openspec")),
     )
     snapshot = Snapshot(issues=issues, complete=True)
     before = snapshot
@@ -262,16 +374,16 @@ def test_terminal_pending_work_wins_over_pre_activation_queue() -> None:
     snapshot = Snapshot(
         issues=(
             WorkflowIssue(
-                80,
+                90,
                 "archiving",
                 ("lead", "finalize-archive"),
                 state="closed",
             ),
-            WorkflowIssue(81, "unset", ("lead", "explore-change")),
+            WorkflowIssue(91, "unset", ("lead", "explore-change")),
         ),
         complete=True,
     )
-    assert classify(snapshot) == ("formal", 80)
+    assert classify(snapshot) == ("formal", 90)
 
 
 def test_shared_governance_exposes_concrete_complete_preflight_procedure() -> None:
