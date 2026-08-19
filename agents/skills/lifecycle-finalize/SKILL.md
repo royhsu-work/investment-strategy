@@ -1,3 +1,8 @@
+---
+name: lifecycle-finalize
+description: Reconstruct and advance post-merge and terminal OpenSpec lifecycle state for Lead / finalize-change and Lead / finalize-archive without performing PR merges or normal archive mutation.
+---
+
 # Lifecycle Finalize Skill
 
 Mapped actions: `Lead / finalize-change`, `Lead / finalize-archive`.
