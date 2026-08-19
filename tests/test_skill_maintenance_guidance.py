@@ -26,13 +26,13 @@ def test_project_wide_proportionality_has_one_runtime_reference() -> None:
 def test_skill_maintenance_uses_progressive_disclosure_without_external_authority() -> None:
     guidance = _text(LOCAL_SKILL_GOVERNANCE)
 
+    assert "only when the current governed action materially" in guidance
     assert "progressive disclosure" in guidance
-    assert "conditionally" in guidance
-    assert "cross-Skill" in guidance
-    assert "External mutable" in guidance
-    assert "runtime authority" in guidance
+    assert "demonstrated cross-Skill reuse" in guidance
+    assert "External or mutable" in guidance
+    assert "never Scheduled-Agent runtime authority by itself" in guidance
     assert "agents/AGENTS.md" in guidance
-    assert "agents/roles/" in guidance
+    assert "agents/roles/*" in guidance
     assert "hypothetical future reuse" in guidance
     assert not (AGENTS / "skills/skill-maintenance.md").exists()
 
