@@ -43,15 +43,24 @@ def test_explore_only_human_authority_api_is_removed() -> None:
 
 
 def test_remaining_human_boundaries_keep_provenance_bound_refs() -> None:
-    assert human_authority.decision_ref_for_boundary(
-        human_authority.HumanDecisionBoundary.PROPOSE_ADMISSION,
-        issue_number=93,
-    ) == "issue:93:admission:lead:propose-change"
-    assert human_authority.decision_ref_for_boundary(
-        human_authority.HumanDecisionBoundary.ADVISORY_ADMISSION,
-        issue_number=93,
-    ) == "issue:93:advisory-admission"
-    assert human_authority.decision_ref_for_boundary(
-        human_authority.HumanDecisionBoundary.ESCALATION_RESPONSE,
-        escalation_comment_id=123,
-    ) == "issuecomment:123"
+    assert (
+        human_authority.decision_ref_for_boundary(
+            human_authority.HumanDecisionBoundary.PROPOSE_ADMISSION,
+            issue_number=93,
+        )
+        == "issue:93:admission:lead:propose-change"
+    )
+    assert (
+        human_authority.decision_ref_for_boundary(
+            human_authority.HumanDecisionBoundary.ADVISORY_ADMISSION,
+            issue_number=93,
+        )
+        == "issue:93:advisory-admission"
+    )
+    assert (
+        human_authority.decision_ref_for_boundary(
+            human_authority.HumanDecisionBoundary.ESCALATION_RESPONSE,
+            escalation_comment_id=123,
+        )
+        == "issuecomment:123"
+    )
