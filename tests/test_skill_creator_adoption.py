@@ -53,7 +53,7 @@ def test_pinned_skill_creator_package_and_provenance() -> None:
         for path in SKILL_ROOT.rglob("*")
         if path.is_file()
     }
-    assert UPSTREAM_FILES <= actual
+    assert actual >= UPSTREAM_FILES
 
     for relative_path, expected_sha in UPSTREAM_BLOBS.items():
         assert _git_blob_sha(SKILL_ROOT / relative_path) == expected_sha
