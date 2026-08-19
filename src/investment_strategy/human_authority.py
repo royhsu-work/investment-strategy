@@ -9,16 +9,9 @@ HUMAN_ACTOR = "royhsu-work"
 APPROVAL_LABEL = "human:approved"
 INTAKE_APPROVAL_LABEL = "intake:approved"
 DECISION_REF_PREFIX = "Human-Decision-For: "
-EXPLORE_ADMISSION_PREFIX = "Admission: "
-EXPLORE_ADMISSION_DECLARATION = "Admission: Lead / explore-change"
-CHANGE_PREFIX = "Change: "
-CHANGE_UNSET_DECLARATION = "Change: unset"
-EXPLORE_AGENT_LABEL = "agent:lead"
-EXPLORE_ACTION_LABEL = "action:explore-change"
 
 
 class HumanDecisionBoundary(StrEnum):
-    EXPLORE_ADMISSION = "explore-admission"
     PROPOSE_ADMISSION = "propose-admission"
     ADVISORY_ADMISSION = "advisory-admission"
     ESCALATION_RESPONSE = "escalation-response"
@@ -45,34 +38,6 @@ class LabelEvent:
     performed_via_github_app: str | None
 
 
-@dataclass(frozen=True)
-class IssueCreation:
-    id: int
-    created_at: datetime
-    author: str
-    body: str
-    provenance_available: bool
-    performed_via_github_app: str | None
-
-
-@dataclass(frozen=True)
-class IssueDeclarationHistory:
-    """Declaration history already authenticated by a durable acquisition boundary.
-
-    ``verified_creation_body`` is intentionally optional. ``None`` means the
-    available GitHub/tool surface did not prove an authentic creation-time body,
-    so the creation-bound admission shortcut must not qualify. The admission
-    predicate never accepts a caller-supplied completeness boolean.
-    """
-
-    verified_creation_body: str | None
-    declaration_mutated: bool
-
-
-def explore_admission_ref(issue_number: int) -> str:
-    return f"issue:{_positive_id(issue_number, 'issue_number')}:admission:lead:explore-change"
-
-
 def propose_admission_ref(issue_number: int) -> str:
     return f"issue:{_positive_id(issue_number, 'issue_number')}:admission:lead:propose-change"
 
@@ -96,8 +61,6 @@ def decision_ref_for_boundary(
     except ValueError as exc:
         raise ValueError("unmapped Human-reserved boundary") from exc
 
-    if boundary is HumanDecisionBoundary.EXPLORE_ADMISSION:
-        return explore_admission_ref(_required_id(issue_number, "issue_number"))
     if boundary is HumanDecisionBoundary.PROPOSE_ADMISSION:
         return propose_admission_ref(_required_id(issue_number, "issue_number"))
     if boundary is HumanDecisionBoundary.ADVISORY_ADMISSION:
@@ -182,56 +145,6 @@ def label_event_from_raw(raw: Mapping[str, object]) -> LabelEvent:
     )
 
 
-def issue_creation_from_raw(raw: Mapping[str, object]) -> IssueCreation:
-    user = _mapping(raw.get("user"), "user")
-    provenance_available, app = _raw_app_provenance(raw)
-    return IssueCreation(
-        id=_integer(raw.get("id"), "id"),
-        created_at=_timestamp(raw.get("created_at"), "created_at"),
-        author=_string(user.get("login"), "user.login"),
-        body=_string(raw.get("body"), "body"),
-        provenance_available=provenance_available,
-        performed_via_github_app=app,
-    )
-
-
-def issue_declaration_history_from_raw(raw: Mapping[str, object]) -> IssueDeclarationHistory:
-    """Parse the currently supported generic Issue-history projection fail closed.
-
-    The current GitHub REST/tool projection used by this repository does not
-    expose an authenticated creation-time Issue body or a complete body-edit
-    history. Fields such as a caller-provided ``complete`` flag or synthetic
-    ``opened.issue.body`` therefore cannot establish creation-bound authority.
-
-    We still inspect concrete edit records to preserve negative evidence, but
-    this adapter deliberately emits ``verified_creation_body=None``. A future
-    governed acquisition implementation may emit a non-``None`` value only
-    after it can authenticate source identity, creation snapshot, and relevant
-    pagination/edit-history completeness from the actual GitHub evidence
-    surface rather than caller assertions.
-    """
-    events = raw.get("events")
-    if not isinstance(events, list):
-        raise ValueError("events must be an array")
-
-    declaration_mutated = False
-    for index, item in enumerate(events):
-        event = _mapping(item, f"events[{index}]")
-        if event.get("action") != "edited":
-            continue
-        changes = event.get("changes")
-        if not isinstance(changes, Mapping):
-            declaration_mutated = True
-            continue
-        if "body" in changes or "title" in changes:
-            declaration_mutated = True
-
-    return IssueDeclarationHistory(
-        verified_creation_body=None,
-        declaration_mutated=declaration_mutated,
-    )
-
-
 def parse_decision_ref(body: str) -> str | None:
     refs = [
         line.removeprefix(DECISION_REF_PREFIX).strip()
@@ -243,46 +156,12 @@ def parse_decision_ref(body: str) -> str | None:
     return refs[0]
 
 
-def _has_exact_explore_creation_declaration(body: str) -> bool:
-    admission_lines = [
-        line.strip() for line in body.splitlines() if line.startswith(EXPLORE_ADMISSION_PREFIX)
-    ]
-    change_lines = [line.strip() for line in body.splitlines() if line.startswith(CHANGE_PREFIX)]
-    return admission_lines == [EXPLORE_ADMISSION_DECLARATION] and change_lines == [
-        CHANGE_UNSET_DECLARATION
-    ]
-
-
 def _is_human_provenance(
     actor: str,
     provenance_available: bool,
     performed_via_github_app: str | None,
 ) -> bool:
     return actor == HUMAN_ACTOR and provenance_available and performed_via_github_app is None
-
-
-def is_human_created_explore_admission(
-    *,
-    creation: IssueCreation,
-    current_agent_label: str,
-    current_action_label: str,
-    declaration_history: IssueDeclarationHistory,
-) -> bool:
-    """Evaluate only the narrow initial Human-created Formal Explore admission path."""
-    verified_creation_body = declaration_history.verified_creation_body
-    return (
-        verified_creation_body is not None
-        and not declaration_history.declaration_mutated
-        and verified_creation_body == creation.body
-        and current_agent_label == EXPLORE_AGENT_LABEL
-        and current_action_label == EXPLORE_ACTION_LABEL
-        and _is_human_provenance(
-            creation.author,
-            creation.provenance_available,
-            creation.performed_via_github_app,
-        )
-        and _has_exact_explore_creation_declaration(verified_creation_body)
-    )
 
 
 def _qualifying_comments(comments: tuple[DecisionComment, ...]) -> tuple[DecisionComment, ...]:
@@ -350,33 +229,6 @@ def is_human_decision_approved(
         return True
 
     return False
-
-
-def is_human_explore_admission_approved(
-    *,
-    issue_number: int,
-    creation: IssueCreation,
-    current_agent_label: str,
-    current_action_label: str,
-    declaration_history: IssueDeclarationHistory,
-    approval_label_present: bool,
-    comments: tuple[DecisionComment, ...],
-    label_events: tuple[LabelEvent, ...],
-) -> bool:
-    """Initial Explore admission accepts creation-bound proof or the existing general proof."""
-    if is_human_created_explore_admission(
-        creation=creation,
-        current_agent_label=current_agent_label,
-        current_action_label=current_action_label,
-        declaration_history=declaration_history,
-    ):
-        return True
-    return is_human_decision_approved(
-        expected_ref=explore_admission_ref(issue_number),
-        approval_label_present=approval_label_present,
-        comments=comments,
-        label_events=label_events,
-    )
 
 
 def is_human_advisory_admission_approved(
