@@ -424,7 +424,7 @@ When an existing Explore reaches `PROPOSAL_READY`, Lead MAY route the same Issue
 
 Lead idle advisory admission, where still used, continues to require its distinct Human-only advisory contract and `intake:approved` capability. Scheduled Lead, Reviewer, and Executor MUST NEVER add, remove, restore, or otherwise manufacture Human-only approval capabilities; they MAY only consume qualifying Human evidence where that capability remains applicable.
 
-#### Scenario: Existing routed Explore executes without generic Human admission
+#### Scenario: Human directly admits fuzzy work to Explore
 
 - GIVEN an open coordination Issue has `Change: unset`
 - AND current routing is exactly `Lead / explore-change`
@@ -444,7 +444,7 @@ Lead idle advisory admission, where still used, continues to require its distinc
 - AND Explore is not mandatory for that Issue
 - AND ordinary Explore eligibility does not satisfy direct-Propose admission
 
-#### Scenario: Canonical requirement authorizes bounded Explore creation
+#### Scenario: Canonical requirement authorizes bounded Explore
 
 - GIVEN no active/terminal-pending workflow or already eligible pre-activation work should be advanced first
 - AND default-branch canonical requirement R contains an applicable MUST/SHALL obligation
@@ -454,14 +454,14 @@ Lead idle advisory admission, where still used, continues to require its distinc
 - AND the Issue records reconstructable source evidence that cites R and the observed default-branch revision
 - AND no Human approval capability or formal Change identity is created
 
-#### Scenario: Arbitrary README prose cannot authorize autonomous creation
+#### Scenario: Arbitrary README prose cannot authorize admission
 
 - GIVEN README contains descriptive/current-state text, an example, a non-goal, or work marked merely deferred/uncommitted
 - WHEN Lead evaluates autonomous Explore creation
 - THEN that text alone is insufficient producer authority
 - AND Lead does not infer roadmap permission from arbitrary prose
 
-#### Scenario: Explicit README commitment can authorize bounded Explore creation
+#### Scenario: Explicit README commitment can authorize bounded Explore
 
 - GIVEN README contains an explicitly governed prospective project-direction commitment
 - AND the commitment is scoped, affirmative, non-contradictory with canonical specs, and not merely deferred/uncommitted
@@ -470,7 +470,7 @@ Lead idle advisory admission, where still used, continues to require its distinc
 - THEN that commitment may serve as source authority for one bounded Explore candidate
 - AND runtime routing semantics remain governed by `agents/AGENTS.md` rather than README prose
 
-#### Scenario: Recurring material workflow friction authorizes bounded maintenance Explore creation
+#### Scenario: Recurring material workflow friction authorizes bounded maintenance Explore
 
 - GIVEN current repository evidence demonstrates a behavior-preserving recurring workflow failure or equivalent material structural friction
 - AND the problem has a bounded ownership surface
@@ -479,7 +479,7 @@ Lead idle advisory admission, where still used, continues to require its distinc
 - THEN Lead may autonomously materialize one bounded Formal Explore candidate
 - AND style preference or speculative cleanup alone would not satisfy the same threshold
 
-#### Scenario: Agent-created ticket cannot self-feed another creation
+#### Scenario: Agent-created ticket cannot self-feed another admission
 
 - GIVEN an earlier Agent-created advisory or Explore Issue recommends additional work
 - AND no independent default-branch authority source or current concrete material friction evidence supports that additional work
@@ -496,7 +496,7 @@ Lead idle advisory admission, where still used, continues to require its distinc
 - AND the tracker body does not self-authorize unrelated work
 - AND ordinary Explore execution does not require a second generic Human approval
 
-#### Scenario: Proposal-ready Explore proceeds without a generic second approval
+#### Scenario: Proposal-ready Explore proceeds inside admitted authority
 
 - GIVEN an existing Explore has a decision-complete `PROPOSAL_READY`
 - AND the proposed direction remains within the bounded researched problem and current canonical/repository evidence
@@ -512,7 +512,7 @@ Lead idle advisory admission, where still used, continues to require its distinc
 - THEN Lead records `HUMAN_DECISION_REQUIRED`
 - AND does not route to Propose until valid Human authority is reconstructed
 
-#### Scenario: Routing is eligibility but not downstream Human authority
+#### Scenario: Non-Human routing is insufficient
 
 - GIVEN an open Issue has coherent `Change: unset + agent:lead + action:explore-change` routing
 - WHEN scheduled workflow evaluates ordinary Explore execution
