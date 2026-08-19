@@ -21,10 +21,10 @@ Trace: proposal upstream-maintainability scope → provenance/decomposition scen
 
 ## Slice 3 — Behavior-preserving final regression and boundaries
 
-- [ ] 3.1 RED/GREEN: add or refine regression assertions that standard metadata/provenance does not add dispatcher actions, alter mapped role/action ownership, or require fabricated provenance for `openspec-review` and other repository-original Skills.
-- [ ] 3.2 Verify `agents/skills/openspec-semantic-adapter.md` remains a separate root-level follow-up finding rather than being converted in this Change; #83/#80/#86 scope remains untouched.
-- [ ] 3.3 Run the full test suite, Ruff lint, Ruff format check, mypy, adopted Skill validation checks, and strict OpenSpec validation.
-- [ ] 3.4 Confirm all proposal → spec → design → task and task → design → spec → proposal trace declarations remain coherent and that no material behavior/routing/Human-authority semantics changed.
-- [ ] 3.5 Mark the Change implementation-ready only when exact-head required gates are green.
+- [x] 3.1 RED/GREEN: add or refine regression assertions that standard metadata/provenance does not add dispatcher actions, alter mapped role/action ownership, or require fabricated provenance for `openspec-review` and other repository-original Skills.
+- [x] 3.2 Verify `agents/skills/openspec-semantic-adapter.md` remains a separate root-level follow-up finding rather than being converted in this Change; #83/#80/#86 scope remains untouched.
+- [x] 3.3 Run the full test suite, Ruff lint, Ruff format check, mypy, adopted Skill validation checks, and strict OpenSpec validation.
+- [x] 3.4 Confirm all proposal → spec → design → task and task → design → spec → proposal trace declarations remain coherent and that no material behavior/routing/Human-authority semantics changed.
+- [x] 3.5 Mark the Change implementation-ready only when exact-head required gates are green.
 
 Trace: proposal scope boundaries → repository-governance requirement → Design D3/D4.
