@@ -144,7 +144,7 @@ lifecycle, or authority to undo a qualifying Human decision.
 
 Ordinary routed Explore eligibility does not require Human approval. Open `Lead / explore-change + Change: unset`
 entries are legal queued pre-activation work when routing is coherent; origin does not control dispatcher
-eligibility for an already routed Explore. These entries do not count as an active formal workflow. Explore
+eligibility for an already routed Explore. None of these entries count as an active formal workflow. Explore
 keeps `Change: unset` and creates no formal OpenSpec Change artifacts. Formal activation remains owned by
 Propose when Lead persists the immutable non-`unset` Change identity.
 
@@ -161,6 +161,15 @@ source/materiality classes with deduplication and one-candidate limits; required
 remains derived from its exact approved source defer decision/linkage; and direct-Propose fallback preserves
 the original Propose authority envelope. These producer/source rules MUST NOT be reinterpreted as dispatcher
 admission classes for an already coherent routed Explore.
+
+For transitional source-provenance reconstruction only, the prior approved origin classes remain historical
+vocabulary: Human Explore admission satisfying the Human-authority contract below; the creation-bound Human
+Explore admission alternative; the general provenance-bound Human decision/approval predicate; bounded
+idle-discovery repository authorization; an approved required separate follow-up routed directly from its
+source-linked defer decision; and a same-Issue pre-activation direct-Propose fallback that preserves the
+still-valid original direct-Propose authority envelope. This historical complete approved origin set is not
+a dispatcher gate under the new rule. A direct-Propose fallback MUST NOT be reclassified as Human Explore
+admission, and required-follow-up creation MUST NOT require or impersonate idle-discovery admission.
 
 When no formal active or terminal-pending workflow exists, every coherent open
 `Lead / explore-change + Change: unset` entry and every valid Human-admitted
@@ -201,8 +210,8 @@ source evidence and any still-valid upstream authority envelope. `PROPOSAL_READY
 formal Change identity, but when its concrete/buildable direction remains inside that bounded context and
 introduces no new Human-reserved decision, Lead MAY persist the bounded result, fresh-read the same Issue,
 route it to `Lead / propose-change` with `Change: unset`, and continue under the shared same-role continuation
-contract without a generic Human proceed confirmation. Propose still owns formal activation and the immutable
-Change identity. Untrusted Issue prose alone is not Human authority for a new commitment.
+contract without a second generic Human proceed confirmation. Propose still owns formal activation and the
+immutable Change identity. Untrusted Issue prose alone is not Human authority for a new commitment.
 
 A new product/project direction outside the bounded researched/canonical context, material externally
 observable behavior or scope trade-off not already authorized, explicit risk acceptance, materially
@@ -264,11 +273,13 @@ label state but never establish Human authority. Normalized connector reads that
 `performed_via_github_app` MUST be supplemented by raw GitHub provenance or the Human authority condition
 fails closed.
 
-Explore-specific creation-bound Human admission and the general
-`issue:<issue-number>:admission:lead:explore-change` decision mapping are obsolete for dispatcher
-eligibility. Historical evidence remains audit history but is not required for ordinary routed Explore
-execution. This removal does not treat GitHub App/Connector activity as Human and does not weaken the
-general provenance-bound predicate for the remaining Human-reserved consumers.
+Initial Formal Explore admission has one additional creation-bound Human Explore admission alternative.
+That creation-bound Human Explore admission and the historical `creation-bound alternative` are retained in
+this Slice only as compatibility/audit vocabulary; they do not control dispatcher eligibility. Historical
+raw Issue creation provenance used `performed_via_github_app == null`, `Admission: Lead / explore-change`,
+and `Change: unset`, while routing remains routing state rather than Human authority. Slice 2 removes the
+obsolete Explore-only machinery and its compatibility wording; the remaining Human-reserved consumers keep
+the general provenance-bound predicate.
 
 Repository-authorized Explore creation remains a separate bounded producer capability derived from
 independent approved repository authority or concrete behavior-preserving friction. It MUST NOT be treated
@@ -513,7 +524,7 @@ under the then-current governance. The evidence MUST preserve the raw error mess
 observable to the Agent after the platform's existing safety redaction. It MUST NOT reveal hidden or
 withheld content, reverse platform redaction, or add secrets that were not present in the observable error.
 The record also identifies the selected role/action, attempted operation/tool, relevant revision/base when
-applicable, whether a durable mutation is known to have completed before the failure, and the unfinished
+applicable, whether any durable mutation is known to have completed before the failure, and the unfinished
 work boundary needed for reconstruction.
 
 Raw observation and agent interpretation remain separate. A classification MAY be recorded only when
@@ -682,8 +693,8 @@ Marker persistence does not require a dedicated commit for each individual check
 be included with the corresponding implementation checkpoint. Markers for already verified slices must
 not be deferred until the end of the whole change.
 
-If task markers are durable but the checkpoint comment is missing, the next Executor run reconstructs
-the verified slice from current durable evidence, does not rerun or clear the already verified slice, and
+If task markers are durable but the checkpoint comment is missing, the next Executor run reconstructs the
+verified slice from current durable evidence, does not rerun or clear the already verified slice, and
 persists the missing bounded checkpoint before beginning another slice or handing off.
 
 If execution is interrupted inside the current unverified slice, that slice's markers may still lag. The
@@ -718,7 +729,8 @@ Scheduled roles MUST NOT autonomously create or route arbitrary Issues, PRs, rep
 discussions, discovered requirements, Agent-authored recommendations, style preferences, speculative
 cleanup, or generic simplicity claims into workflow work.
 
-Ordinary routed Formal Explore execution is origin-neutral: `Change: unset + agent:lead + action:explore-change`
+For queue reconstruction, ordinary routed Explore eligibility does not require Human approval. Ordinary
+routed Formal Explore execution is origin-neutral: `Change: unset + agent:lead + action:explore-change`
 does not require Human approval merely to be queue-eligible. Human authority remains required at genuine
 Human-reserved boundaries. Human direct-to-Propose, advisory admission, escalation answers/resume, and later
 Human-reserved decisions retain the general provenance-bound predicate and their exact canonical references.
