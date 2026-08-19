@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import runpy
+from collections.abc import Callable
 from pathlib import Path
 
 import yaml
@@ -47,6 +49,13 @@ def _frontmatter(path: Path) -> dict[str, object]:
     return parsed
 
 
+def _adopted_validator() -> Callable[[Path], tuple[bool, str]]:
+    namespace = runpy.run_path("agents/skills/skill-creator/scripts/quick_validate.py")
+    validate = namespace["validate_skill"]
+    assert callable(validate)
+    return validate
+
+
 def test_mapped_repository_skills_have_standard_frontmatter() -> None:
     root = Path("agents/skills")
     names: list[str] = []
@@ -63,6 +72,15 @@ def test_mapped_repository_skills_have_standard_frontmatter() -> None:
         names.append(name)
 
     assert len(names) == len(set(names)), "mapped repository Skill names must be unique"
+
+
+def test_mapped_repository_skills_pass_adopted_quick_validation() -> None:
+    root = Path("agents/skills")
+    validate = _adopted_validator()
+
+    for skill in MAPPED_REPOSITORY_SKILLS:
+        valid, message = validate(root / skill)
+        assert valid, f"{skill} failed adopted skill-creator validation: {message}"
 
 
 def test_openspec_derived_skills_have_reconstructable_upstream_ledgers() -> None:
