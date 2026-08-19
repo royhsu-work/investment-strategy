@@ -4,11 +4,11 @@
 
 Trace: proposal `What Changes` items 1–3; design Decisions 1, 2, and 5; `scheduled-agent-workflow` modified requirement `Active-workflow cardinality and Issue-state coherence precede queue selection`.
 
-- [ ] **RED:** Add fixture-driven workflow regressions for complete repository-wide dispatch classification covering formal/terminal cardinality `0`, `1`, `>1`, and indeterminate; include a partial/limited enumeration that omits an active workflow and prove formal WIP still wins over queued Explore/Propose work.
-- [ ] Run the focused RED tests and verify failures expose missing executable complete-cardinality/preflight enforcement rather than fixture or search-setup errors.
-- [ ] **GREEN:** Update shared `agents/AGENTS.md` dispatch procedure so a wake obtains repository-wide durable Issue state, establishes observable enumeration completeness, classifies formal active/terminal-pending/bounded recovery candidates, and applies the canonical `0 / 1 / >1 / indeterminate` decision table before selecting/loading a mapped normal action.
-- [ ] **REFACTOR:** Keep the complete-cardinality algorithm and decision table in the shared governance owner; remove or consolidate duplicated global dispatch wording rather than introducing a runtime dispatcher engine, second DAG, lock, lease, or hidden state.
-- [ ] **VERIFY:** Run focused dispatch/workflow tests, the full regression suite, Ruff, Mypy, and strict OpenSpec validation; persist satisfied Slice 1 task markers only after VERIFY succeeds.
+- [x] **RED:** Add fixture-driven workflow regressions for complete repository-wide dispatch classification covering formal/terminal cardinality `0`, `1`, `>1`, and indeterminate; include a partial/limited enumeration that omits an active workflow and prove formal WIP still wins over queued Explore/Propose work.
+- [x] Run the focused RED tests and verify failures expose missing executable complete-cardinality/preflight enforcement rather than fixture or search-setup errors.
+- [x] **GREEN:** Update shared `agents/AGENTS.md` dispatch procedure so a wake obtains repository-wide durable Issue state, establishes observable enumeration completeness, classifies formal active/terminal-pending/bounded recovery candidates, and applies the canonical `0 / 1 / >1 / indeterminate` decision table before selecting/loading a mapped normal action.
+- [x] **REFACTOR:** Keep the complete-cardinality algorithm and decision table in the shared governance owner; remove or consolidate duplicated global dispatch wording rather than introducing a runtime dispatcher engine, second DAG, lock, lease, or hidden state.
+- [x] **VERIFY:** Run focused dispatch/workflow tests, the full regression suite, Ruff, Mypy, and strict OpenSpec validation; persist satisfied Slice 1 task markers only after VERIFY succeeds.
 
 ## Slice 2 — Defend pre-activation Explore and Propose action entry
 
