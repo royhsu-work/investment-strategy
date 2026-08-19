@@ -2,6 +2,10 @@
 
 Mapped action: `Executor / implement-change`.
 
+## Repository Skill composition
+
+When approved tasks materially create or modify repository Skills, load the default-branch `agents/skills/skill-creator/SKILL.md` and `agents/skills/skill-creator/references/repository-governance.md` before implementing those Skill artifacts. Use them as reusable procedural/integration guidance only; this mapped action plus current default-branch governance and the Executor role remain authoritative for mutation scope, approved Apply context, tests, routing, results, and handoff. Do not load this composition for unrelated implementation work.
+
 ## Spec-driven semantic adapter
 
 When default-branch `openspec/config.yaml` declares `schema: spec-driven`, load
