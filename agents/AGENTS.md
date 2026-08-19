@@ -162,15 +162,6 @@ remains derived from its exact approved source defer decision/linkage; and direc
 the original Propose authority envelope. These producer/source rules MUST NOT be reinterpreted as dispatcher
 admission classes for an already coherent routed Explore.
 
-For transitional source-provenance reconstruction only, the prior approved origin classes remain historical
-vocabulary: Human Explore admission satisfying the Human-authority contract below; the creation-bound Human
-Explore admission alternative; the general provenance-bound Human decision/approval predicate; bounded
-idle-discovery repository authorization; an approved required separate follow-up routed directly from its
-source-linked defer decision; and a same-Issue pre-activation direct-Propose fallback that preserves the
-still-valid original direct-Propose authority envelope. This historical complete approved origin set is not
-a dispatcher gate under the new rule. A direct-Propose fallback MUST NOT be reclassified as Human Explore
-admission, and required-follow-up creation MUST NOT require or impersonate idle-discovery admission.
-
 When no formal active or terminal-pending workflow exists, every coherent open
 `Lead / explore-change + Change: unset` entry and every valid Human-admitted
 `Lead / propose-change + Change: unset` entry participate in one combined pre-activation queue ordered by
@@ -272,14 +263,6 @@ unorderable, or reference-mismatched provenance fails closed. `unlabeled` events
 label state but never establish Human authority. Normalized connector reads that omit
 `performed_via_github_app` MUST be supplemented by raw GitHub provenance or the Human authority condition
 fails closed.
-
-Initial Formal Explore admission has one additional creation-bound Human Explore admission alternative.
-That creation-bound Human Explore admission and the historical `creation-bound alternative` are retained in
-this Slice only as compatibility/audit vocabulary; they do not control dispatcher eligibility. Historical
-raw Issue creation provenance used `performed_via_github_app == null`, `Admission: Lead / explore-change`,
-and `Change: unset`, while routing remains routing state rather than Human authority. Slice 2 removes the
-obsolete Explore-only machinery and its compatibility wording; the remaining Human-reserved consumers keep
-the general provenance-bound predicate.
 
 Repository-authorized Explore creation remains a separate bounded producer capability derived from
 independent approved repository authority or concrete behavior-preserving friction. It MUST NOT be treated
