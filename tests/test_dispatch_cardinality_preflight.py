@@ -97,9 +97,7 @@ def activate(snapshot: Snapshot, attempt: ActivationAttempt) -> Snapshot | None:
     if not action_entry_allowed(snapshot, attempt.issue_number, attempt.routing):
         return None
     issues = tuple(
-        replace(issue, change=attempt.change)
-        if issue.number == attempt.issue_number
-        else issue
+        replace(issue, change=attempt.change) if issue.number == attempt.issue_number else issue
         for issue in snapshot.issues
     )
     return Snapshot(issues=issues, complete=snapshot.complete)
