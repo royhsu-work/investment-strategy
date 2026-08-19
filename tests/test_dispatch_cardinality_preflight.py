@@ -186,7 +186,10 @@ def test_multiple_active_state_has_no_scheduled_winner_or_identity_repair() -> N
         "model judgment",
         "automatic Change clearing",
         "routing rewrites",
-        "Human/maintainer administrative durable-state repair remains outside normal Scheduled-Agent lifecycle execution",
+        (
+            "Human/maintainer administrative durable-state repair remains outside normal "
+            "Scheduled-Agent lifecycle execution"
+        ),
     ):
         assert required in text
 
