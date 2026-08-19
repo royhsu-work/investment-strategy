@@ -97,7 +97,8 @@ def test_mapped_actions_conditionally_compose_skill_creator() -> None:
     for path in paths:
         text = (ROOT / path).read_text()
         assert "agents/skills/skill-creator/SKILL.md" in text
-        assert "repository Skills" in text or "Skill artifacts" in text
+        assert "agents/skills/skill-creator/references/repository-governance.md" in text
+        assert "repository Skill" in text
 
     agents = (ROOT / "agents" / "AGENTS.md").read_text()
     assert "action:skill-creator" not in agents
