@@ -98,7 +98,10 @@ def test_routed_explore_is_origin_neutral_but_creation_remains_bounded() -> None
         "origin does not control dispatcher eligibility",
         "Scheduled Agents MUST NOT create arbitrary routed Explore work",
         "deduplication and one-candidate limits",
-        "required separate follow-up routing remains derived from its exact approved source defer decision/linkage",
+        (
+            "required separate follow-up routing remains derived from its exact approved "
+            "source defer decision/linkage"
+        ),
         "direct-Propose fallback preserves the original Propose authority envelope",
     ):
         assert required in shared
