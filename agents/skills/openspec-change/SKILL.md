@@ -35,7 +35,7 @@ Read from durable state:
 - relevant durable Issue/review findings;
 - exact current repository/branch revision and strict OpenSpec validation evidence.
 
-For `propose-change`, consume the shared pre-dispatch complete-cardinality classification from `agents/AGENTS.md`; candidate-local or partial enumeration is never sufficient activation evidence. The immediate pre-write check and the post-write fresh-read below both use that same shared pre-dispatch contract.
+For `propose-change`, consume the shared pre-dispatch complete-cardinality classification from `agents/AGENTS.md`; candidate-local or partial enumeration is never sufficient activation evidence. The check immediately before the activation write and the post-write fresh-read below both use that same shared pre-dispatch contract.
 
 If the coordination Issue or current OpenSpec artifacts contain declared upstream authoritative decision/gate references, Lead MUST dereference those sources during `propose-change` and any materially revised `resolve-question`. A cross-Issue summary is orientation only and is not replacement authority for the declared source evidence.
 
@@ -51,7 +51,7 @@ If routing, change identity, active-workflow identity, or required evidence is c
    - If multiple formal active workflows, indeterminate enumeration, or contradictory durable identity evidence exist, fail closed.
    - If no formal active/terminal-pending workflow exists, consume the complete shared pre-activation candidate-set contract from default-branch `agents/AGENTS.md`: every coherent open `Lead / explore-change + Change: unset` entry plus every legally admitted `Lead / propose-change + Change: unset` entry participates in the same combined queue. Do not maintain or infer an action-local Explore-origin admission enumeration.
    - Choose the combined-queue winner by earliest GitHub `created_at`, then lower Issue number. A later proposal-ready direct-Propose Issue MUST NOT activate while an older eligible Explore candidate—including a same-Issue direct-Propose fallback preserving its original authority envelope—is the deterministic combined pre-activation winner.
-   - Immediately before the activation write, re-read durable state, re-establish shared pre-dispatch complete-cardinality evidence, and require this Issue to remain the combined pre-activation winner; only the first valid activation may continue.
+   - Immediately before the activation write, re-read durable state and require this Issue to remain the combined pre-activation winner; re-establish shared pre-dispatch complete-cardinality evidence in that same read. Only the first valid activation may continue.
    - Persist the selected immutable Change identity as the activation write. Overlapping attempts use first-valid-write-wins semantics rather than a lock/claim/lease/heartbeat.
    - Immediately re-read durable state after the write using the same complete-cardinality semantics. If a competing activation, multiple-active state, indeterminate enumeration, or newer contradictory state is observed, stop as stale; do not choose a winner or rewrite another Change/routing tuple.
 3. Author the minimum proposal, delta specs, design, and tasks needed by the approved direction. Keep the change single-purpose and preserve repository scope boundaries. Under `spec-driven`, satisfy the loaded semantic adapter's dependency/readiness and applicable config/context rules; for delta specs, apply its complete ADDED/MODIFIED/REMOVED/RENAMED and canonicalization-readiness contract rather than relying on strict validation alone.
