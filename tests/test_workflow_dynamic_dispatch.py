@@ -120,17 +120,18 @@ def test_combined_intake_is_deterministic_and_refuses_later_propose_activation()
         assert required in text
     for required in (
         "complete shared pre-activation candidate-set contract",
-        "every legally reconstructed open `Lead / explore-change + Change: unset` entry",
-        "approved Explore-origin set",
-        "`Lead / propose-change + Change: unset` entry participates in the same combined queue",
+        "every coherent open `Lead / explore-change + Change: unset` entry",
+        "every legally admitted `Lead / propose-change + Change: unset` entry",
+        "Do not maintain or infer an action-local Explore-origin admission enumeration",
         (
             "A later proposal-ready direct-Propose Issue MUST NOT activate while an older "
-            "valid Explore candidate"
+            "eligible Explore candidate"
         ),
         "same-Issue direct-Propose fallback preserving its original authority envelope",
         "re-read durable state and require this Issue to remain the combined pre-activation winner",
     ):
         assert required in change
+    assert "approved Explore-origin set" not in change
 
 
 def test_activation_overlap_uses_first_valid_write_and_stale_run_termination() -> None:
