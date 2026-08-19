@@ -1,3 +1,8 @@
+---
+name: merge-pr
+description: Execute an exact accepted implementation or Archive PR merge for Executor / merge-pr after reconstructing current Reviewer PASS, checks, linkage, lifecycle preparation, and crash-recovery safety.
+---
+
 # Merge PR Skill
 
 Mapped action: `Executor / merge-pr`.

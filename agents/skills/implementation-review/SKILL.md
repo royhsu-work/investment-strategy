@@ -1,3 +1,8 @@
+---
+name: implementation-review
+description: Independently review the exact current implementation PR against approved OpenSpec behavior for Reviewer / review-implementation and classify revision-bound findings or PASS.
+---
+
 # Implementation Review Skill
 
 Mapped action: `Reviewer / review-implementation`.

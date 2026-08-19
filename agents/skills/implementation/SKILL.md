@@ -1,3 +1,8 @@
+---
+name: implementation
+description: Implement approved OpenSpec tasks for Executor / implement-change using RED-GREEN-REFACTOR-VERIFY slice checkpoints without redefining specification meaning.
+---
+
 # Implementation Skill
 
 Mapped action: `Executor / implement-change`.

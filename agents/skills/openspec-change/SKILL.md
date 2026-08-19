@@ -1,3 +1,8 @@
+---
+name: openspec-change
+description: Author or materially revise OpenSpec proposal/spec/design/tasks for Lead / propose-change and Lead / resolve-question while preserving admission, traceability, validation, and specification-authority boundaries.
+---
+
 # OpenSpec Change Skill
 
 Mapped actions: `Lead / propose-change`, `Lead / resolve-question`.

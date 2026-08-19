@@ -1,3 +1,8 @@
+---
+name: openspec-explore
+description: Investigate a legally admitted pre-Propose problem for Lead / explore-change until a bounded decision-complete disposition is available without creating formal OpenSpec artifacts or implementation code.
+---
+
 # OpenSpec Explore Skill
 
 Mapped action: `Lead / explore-change`.
