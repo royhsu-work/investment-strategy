@@ -11,11 +11,11 @@ Trace: proposal standard-anatomy scope → repository-governance requirement `Re
 
 ## Slice 2 — Immutable upstream responsibility provenance
 
-- [ ] 2.1 RED: add regression assertions that every OpenSpec-derived/adapted mapped Skill has reconstructable Skill-local upstream repository/path/revision and explicit Added / Delete-or-omit / Modified responsibility categories, while repository-original Skills are not required to fabricate an upstream mapping.
-- [ ] 2.2 GREEN: add Skill-local provenance/delta ledgers for the actual upstream relationships identified by #85 using immutable `Fission-AI/OpenSpec@2826b8889e5223a9a8095d4428b60b56597e1020` baselines.
-- [ ] 2.3 GREEN: explicitly document repository role/stage decomposition for Propose/Resolve, Apply, independent implementation verification, and Archive lifecycle ownership; identify alternative local owners for intentionally moved upstream responsibilities.
-- [ ] 2.4 REFACTOR: keep provenance maintenance-only and progressively disclosed; do not duplicate runtime governance, role authority, or full upstream Skill bodies.
-- [ ] 2.5 VERIFY: run focused provenance tests plus full repository quality gates and persist the verified Slice checkpoint.
+- [x] 2.1 RED: add regression assertions that every OpenSpec-derived/adapted mapped Skill has reconstructable Skill-local upstream repository/path/revision and explicit Added / Delete-or-omit / Modified responsibility categories, while repository-original Skills are not required to fabricate an upstream mapping.
+- [x] 2.2 GREEN: add Skill-local provenance/delta ledgers for the actual upstream relationships identified by #85 using immutable `Fission-AI/OpenSpec@2826b8889e5223a9a8095d4428b60b56597e1020` baselines.
+- [x] 2.3 GREEN: explicitly document repository role/stage decomposition for Propose/Resolve, Apply, independent implementation verification, and Archive lifecycle ownership; identify alternative local owners for intentionally moved upstream responsibilities.
+- [x] 2.4 REFACTOR: keep provenance maintenance-only and progressively disclosed; do not duplicate runtime governance, role authority, or full upstream Skill bodies.
+- [x] 2.5 VERIFY: run focused provenance tests plus full repository quality gates and persist the verified Slice checkpoint.
 
 Trace: proposal upstream-maintainability scope → provenance/decomposition scenarios → Design D2/D3.
 
