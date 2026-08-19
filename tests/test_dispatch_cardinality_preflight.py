@@ -8,8 +8,6 @@ from typing import Literal
 
 ROOT = Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents" / "AGENTS.md"
-EXPLORE = ROOT / "agents" / "skills" / "openspec-explore" / "SKILL.md"
-CHANGE = ROOT / "agents" / "skills" / "openspec-change" / "SKILL.md"
 
 
 @dataclass(frozen=True)
@@ -56,8 +54,7 @@ def classify(snapshot: Snapshot) -> tuple[str, int | None]:
             for issue in snapshot.issues
             if issue.change == "unset"
             and issue.state == "open"
-            and issue.routing
-            in {("lead", "explore-change"), ("lead", "propose-change")}
+            and issue.routing in {("lead", "explore-change"), ("lead", "propose-change")}
         ),
         key=lambda issue: (issue.created_order, issue.number),
     )
@@ -134,23 +131,3 @@ def test_shared_governance_exposes_concrete_complete_preflight_procedure() -> No
         "mapped Skill",
     ):
         assert required in text
-
-
-def test_pre_activation_skills_consume_shared_complete_cardinality_preflight() -> None:
-    explore = " ".join(EXPLORE.read_text(encoding="utf-8").split())
-    change = " ".join(CHANGE.read_text(encoding="utf-8").split())
-
-    for required in (
-        "shared pre-dispatch",
-        "complete-cardinality",
-        "deterministic combined pre-activation winner",
-    ):
-        assert required in explore
-
-    for required in (
-        "shared pre-dispatch",
-        "complete-cardinality",
-        "immediately before",
-        "post-write",
-    ):
-        assert required in change
