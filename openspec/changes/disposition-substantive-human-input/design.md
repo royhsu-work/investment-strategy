@@ -8,7 +8,9 @@ This change must preserve the existing distinction between ordinary Human input 
 
 ## Requirements trace
 
-- R1 `Consequential workflow boundaries disposition newer substantive direct-Human input` → D1-D6 → Tasks 1-3.
+- `Scheduled execution is at-least-once and state reconstructable` → D1-D6 → Tasks 1-3; owns the shared freshness/disposition and reconstructability invariant.
+- `Review and finalize actions have Lead-owned minimum gate contracts` → D2/D4/D5 → Tasks 1.3, 2.3, 3.1; integrates the shared invariant into Reviewer and Lead consequential gates.
+- `Executor merges only an explicitly authorized unchanged revision` → D2/D5 → Tasks 1.3, 2.3; integrates mutation-time disposition into merge preconditions.
 - #105 regression timing cases → D2/D5 → Tasks 1.1-1.4, 3.1.
 - Human-authority non-forgeability → D3 → Tasks 2.1, 3.1.
 - Role separation → D4 → Tasks 2.1-2.3, 3.1.
@@ -23,6 +25,8 @@ Why: the requirement is reconstructability, not message-delivery bookkeeping. Du
 ## D2 — Put one freshness invariant in shared governance
 
 `agents/AGENTS.md` owns the invariant that immediately before a consequential result, routing ownership transfer, or unsafe merge mutation, the acting role fresh-reads newer direct-Human coordination-Issue activity relevant to the evidence it is relying on.
+
+The canonical capability remains split by existing responsibility instead of adding a parallel requirement identifier: `Scheduled execution is at-least-once and state reconstructable` owns the shared invariant; the existing review/finalize and merge requirements consume it at their specialized boundaries.
 
 Mapped Skills do not redefine classification semantics. They only state where their existing action boundary consumes the shared invariant, for example:
 
