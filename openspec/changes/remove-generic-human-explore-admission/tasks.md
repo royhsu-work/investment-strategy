@@ -4,11 +4,11 @@
 
 Trace: proposal `What Changes` items 1–2; design Decisions 1 and 5; `scheduled-agent-workflow` queue/active-workflow requirements.
 
-- [ ] **RED:** Add dispatcher/governance regressions proving an open `Change: unset + agent:lead + action:explore-change` Issue is pre-activation eligible without `human:approved`, for both connector-created and directly Human-created intake, while active/terminal-pending work still wins and `created_at` then Issue number remains deterministic.
-- [ ] Run the focused RED tests and verify failures are caused by the current Human-admission eligibility requirement rather than fixture/setup errors.
-- [ ] **GREEN:** Update shared governance, Lead/Explore procedure wording, and any workflow reconstruction helpers so ordinary routed Explore eligibility no longer consumes Human admission/origin classification; keep direct Propose Human admission and WIP/order semantics unchanged.
-- [ ] **REFACTOR:** Remove duplicated origin-specific dispatcher wording while retaining producer/source provenance where it constrains creation/scope.
-- [ ] **VERIFY:** Run focused workflow tests, full regression suite, Ruff, Mypy, and strict OpenSpec validation; persist satisfied Slice 1 task markers only after VERIFY succeeds.
+- [x] **RED:** Add dispatcher/governance regressions proving an open `Change: unset + agent:lead + action:explore-change` Issue is pre-activation eligible without `human:approved`, for both connector-created and directly Human-created intake, while active/terminal-pending work still wins and `created_at` then Issue number remains deterministic.
+- [x] Run the focused RED tests and verify failures are caused by the current Human-admission eligibility requirement rather than fixture/setup errors.
+- [x] **GREEN:** Update shared governance, Lead/Explore procedure wording, and any workflow reconstruction helpers so ordinary routed Explore eligibility no longer consumes Human admission/origin classification; keep direct Propose Human admission and WIP/order semantics unchanged.
+- [x] **REFACTOR:** Remove duplicated origin-specific dispatcher wording while retaining producer/source provenance where it constrains creation/scope.
+- [x] **VERIFY:** Run focused workflow tests, full regression suite, Ruff, Mypy, and strict OpenSpec validation; persist satisfied Slice 1 task markers only after VERIFY succeeds.
 
 ## Slice 2 — Remove obsolete Explore-only Human authority machinery
 
