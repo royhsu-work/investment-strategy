@@ -14,11 +14,11 @@ Trace: proposal `What Changes` items 1–3; design Decisions 1, 2, and 5; `sched
 
 Trace: proposal `What Changes` items 2–4; design Decision 3 and Skill modification rationale; modified requirement scenarios `Pre-activation Explore revalidates zero formal WIP before substantive research` and existing activation safety semantics.
 
-- [ ] **RED:** Add regressions proving a previously selected Explore cannot begin substantive research if formal/terminal work appears or completeness becomes indeterminate before action entry; Propose cannot persist a Change when its immediate pre-write complete-cardinality check sees another active workflow; and a post-write competing/contradictory activation causes stale stop rather than continued lifecycle execution.
-- [ ] Run the focused RED tests and verify failures distinguish stale/partial preflight evidence from valid deterministic queue selection.
-- [ ] **GREEN:** Modify `agents/skills/openspec-explore/SKILL.md` to consume the shared pre-dispatch evidence and require zero formal/terminal WIP plus deterministic combined-queue winner before substantive Explore; modify `agents/skills/openspec-change/SKILL.md` so Propose's existing immediate pre/post activation checks explicitly consume the same complete-cardinality contract.
-- [ ] **REFACTOR:** Keep only action-local consumption/precondition wording in the two Skills and reference shared governance for the global procedure; preserve upstream OpenSpec Explore/Propose semantics and do not copy the dispatcher algorithm into Skills.
-- [ ] **VERIFY:** Run focused Explore/Propose workflow tests, the full regression suite, Ruff, Mypy, and strict OpenSpec validation; persist satisfied Slice 2 task markers only after VERIFY succeeds.
+- [x] **RED:** Add regressions proving a previously selected Explore cannot begin substantive research if formal/terminal work appears or completeness becomes indeterminate before action entry; Propose cannot persist a Change when its immediate pre-write complete-cardinality check sees another active workflow; and a post-write competing/contradictory activation causes stale stop rather than continued lifecycle execution.
+- [x] Run the focused RED tests and verify failures distinguish stale/partial preflight evidence from valid deterministic queue selection.
+- [x] **GREEN:** Modify `agents/skills/openspec-explore/SKILL.md` to consume the shared pre-dispatch evidence and require zero formal/terminal WIP plus deterministic combined-queue winner before substantive Explore; modify `agents/skills/openspec-change/SKILL.md` so Propose's existing immediate pre/post activation checks explicitly consume the same complete-cardinality contract.
+- [x] **REFACTOR:** Keep only action-local consumption/precondition wording in the two Skills and reference shared governance for the global procedure; preserve upstream OpenSpec Explore/Propose semantics and do not copy the dispatcher algorithm into Skills.
+- [x] **VERIFY:** Run focused Explore/Propose workflow tests, the full regression suite, Ruff, Mypy, and strict OpenSpec validation; persist satisfied Slice 2 task markers only after VERIFY succeeds.
 
 ## Slice 3 — Preserve fail-closed multiple-active recovery boundary
 
