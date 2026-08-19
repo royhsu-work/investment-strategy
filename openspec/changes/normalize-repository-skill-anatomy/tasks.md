@@ -2,10 +2,10 @@
 
 ## Slice 1 — Standard mapped-Skill anatomy
 
-- [ ] 1.1 RED: add focused regression coverage enumerating the eight repository-authored mapped Skills and proving the current branch fails because their `SKILL.md` files lack required YAML frontmatter with non-empty `name` and `description`.
-- [ ] 1.2 GREEN: add minimal stable YAML frontmatter to `archive-review`, `implementation-review`, `implementation`, `lifecycle-finalize`, `merge-pr`, `openspec-change`, `openspec-explore`, and `openspec-review` without changing their existing procedure/authority meaning.
-- [ ] 1.3 REFACTOR: remove any test duplication and keep metadata descriptions bounded to the existing mapped responsibility; do not introduce new routing or role semantics.
-- [ ] 1.4 VERIFY: run focused Skill anatomy tests, adopted `skill-creator` quick validation where applicable, full pytest, Ruff lint/format, and mypy; persist the verified Slice checkpoint before proceeding.
+- [x] 1.1 RED: add focused regression coverage enumerating the eight repository-authored mapped Skills and proving the current branch fails because their `SKILL.md` files lack required YAML frontmatter with non-empty `name` and `description`.
+- [x] 1.2 GREEN: add minimal stable YAML frontmatter to `archive-review`, `implementation-review`, `implementation`, `lifecycle-finalize`, `merge-pr`, `openspec-change`, `openspec-explore`, and `openspec-review` without changing their existing procedure/authority meaning.
+- [x] 1.3 REFACTOR: remove any test duplication and keep metadata descriptions bounded to the existing mapped responsibility; do not introduce new routing or role semantics.
+- [x] 1.4 VERIFY: run focused Skill anatomy tests, adopted `skill-creator` quick validation where applicable, full pytest, Ruff lint/format, and mypy; persist the verified Slice checkpoint before proceeding.
 
 Trace: proposal standard-anatomy scope → repository-governance requirement `Repository Skills use standard anatomy and explicit provenance` → Design D1/D3.
 
