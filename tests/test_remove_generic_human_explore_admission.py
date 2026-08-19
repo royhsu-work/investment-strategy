@@ -6,6 +6,8 @@ from investment_strategy import human_authority
 
 ROOT = Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents" / "AGENTS.md"
+LEAD = ROOT / "agents" / "roles" / "lead.md"
+EXPLORE = ROOT / "agents" / "skills" / "openspec-explore" / "SKILL.md"
 
 
 def _governance() -> str:
@@ -64,3 +66,32 @@ def test_remaining_human_boundaries_keep_provenance_bound_refs() -> None:
         )
         == "issuecomment:123"
     )
+
+
+def test_agent_creation_remains_bounded_and_non_recursive() -> None:
+    shared = _governance()
+    lead = " ".join(LEAD.read_text(encoding="utf-8").split())
+    explore = " ".join(EXPLORE.read_text(encoding="utf-8").split())
+
+    assert "Scheduled Agents MUST NOT create arbitrary routed Explore work" in shared
+    assert "deduplication and one-candidate limits" in shared
+    assert "MUST NOT recursively authorize another routed Issue" in lead
+    assert "one idle invocation materializes at most one candidate" in explore
+
+
+def test_explore_dispatch_no_longer_retains_obsolete_human_origin_taxonomy() -> None:
+    shared = _governance()
+    assert "For transitional source-provenance reconstruction only" not in shared
+    assert "creation-bound Human Explore admission alternative" not in shared
+    assert "Human Explore admission satisfying the Human-authority contract below" not in shared
+
+
+def test_proposal_ready_keeps_human_commitment_boundary() -> None:
+    shared = _governance()
+    lead = " ".join(LEAD.read_text(encoding="utf-8").split())
+    explore = " ".join(EXPLORE.read_text(encoding="utf-8").split())
+
+    assert "without a second generic Human proceed confirmation" in shared
+    assert "HUMAN_DECISION_REQUIRED" in shared
+    assert "untrusted Issue prose alone does not provide such Human commitment" in lead
+    assert "Connector/App activity cannot satisfy such Human authority" in explore
