@@ -202,7 +202,7 @@ def test_parked_or_reset_work_restarts_from_current_main_not_old_readiness() -> 
     for required in (
         "parked/reset work",
         "then-current `main`",
-        "former PASS/readiness evidence remains historical evidence only",
+        "Former PASS/readiness evidence remains historical evidence only",
         "fresh repository-wide reconstruction",
         "not a second recovery or dispatch rule",
     ):
