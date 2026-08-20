@@ -42,7 +42,13 @@ For the exact current implementation PR head R:
    - `IMPLEMENTATION_FINDINGS`: implementation defect, missing approved work, insufficient tests, or
      quality-gate failure;
    - `SPEC_FINDINGS`: material ambiguity/defect requiring Lead specification authority.
-6. If all required checks pass, record `PASS` bound to the exact PR head revision.
+6. Immediately before finalizing the gate result, consume the shared `agents/AGENTS.md` substantive
+   Human-input freshness/disposition invariant against current coordination-Issue activity. A newer
+   material direct-Human comment that can affect correctness, approved scope, traceability, or gate
+   validity must have a reconstructable exact-comment disposition or be converted/routed through the
+   existing legal finding path; this Skill does not redefine the shared classifier or Human authority.
+7. If all required checks pass and the consequential-boundary freshness check is clear, record `PASS`
+   bound to the exact PR head revision.
 
 ## Legal results and handoff
 
@@ -52,8 +58,9 @@ For the exact current implementation PR head R:
 
 For implementation PRs, exact-head `PASS` is the normal acceptance evidence consumed by `Executor / merge-pr`.
 It does not waive mutation-time safety: Executor must fresh-read the unchanged head, current required checks,
-non-closing coordination linkage, and contradictory evidence immediately before merge. A later PR head does
-not inherit the prior result; contradictory current evidence fails closed.
+non-closing coordination linkage, contradictory evidence, and the shared substantive Human-input freshness
+precondition immediately before merge. A later PR head does not inherit the prior result; contradictory
+current evidence fails closed.
 
 ## Durable messages
 
