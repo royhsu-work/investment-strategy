@@ -44,10 +44,15 @@ Execute a merge mutation only when all applicable conditions are simultaneously 
 7. For the final Archive PR, every predeclared safely deletable temporary correction/recovery branch
    obligation is cleared immediately before merge, while every intentionally retained obligation still has
    its reviewed legal durable reason and owner.
+8. Immediately before the merge mutation, consume the shared `agents/AGENTS.md` substantive Human-input
+   freshness/disposition invariant against the current coordination Issue. A newer material direct-Human
+   comment that can affect the accepted gate, linkage, lifecycle preparation, or mutation assumptions must
+   have a reconstructable exact-comment disposition; this Skill does not redefine the shared classifier or
+   grant Human authority.
 
 A PASS for an earlier head is insufficient. A current PASS never waives unchanged-head, current-check,
-linkage, lifecycle-preparation, cleanup, or contradiction checks. No separate Lead merge-authorization token
-is required on either normal implementation or final Archive paths.
+linkage, lifecycle-preparation, cleanup, contradiction, or substantive-Human-input freshness checks. No
+separate Lead merge-authorization token is required on either normal implementation or final Archive paths.
 
 A closing linkage on an implementation or implementation-correction PR is a lifecycle-contract violation.
 Even when every other gate is current, do not merge that PR; persist the violation and hand control to Lead
