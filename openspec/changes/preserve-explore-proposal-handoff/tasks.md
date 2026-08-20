@@ -2,10 +2,10 @@
 
 ## Slice 1 — Encode the handoff invariant
 
-- [ ] RED: add focused regressions proving an Explore-originated Change must carry an exact durable `PROPOSAL_READY` Explore-result reference and direct Propose does not require one.
-- [ ] GREEN: update shared Scheduled-Agent governance and canonical workflow contract with the minimum Explore → Propose preservation invariant.
-- [ ] REFACTOR: remove duplicate local wording and keep one authoritative owner per rule category.
-- [ ] VERIFY: run focused tests, full quality gates, and strict OpenSpec validation before marking the slice complete.
+- [x] RED: add focused regressions proving an Explore-originated Change must carry an exact durable `PROPOSAL_READY` Explore-result reference and direct Propose does not require one.
+- [x] GREEN: update shared Scheduled-Agent governance and canonical workflow contract with the minimum Explore → Propose preservation invariant.
+- [x] REFACTOR: remove duplicate local wording and keep one authoritative owner per rule category.
+- [x] VERIFY: run focused tests, full quality gates, and strict OpenSpec validation before marking the slice complete.
 
 Trace: proposal `What Changes`; requirement `Explore-originated Propose preserves the exact decision-complete Explore result`; design `Decision`, `Ownership`, `Human boundary`.
 
