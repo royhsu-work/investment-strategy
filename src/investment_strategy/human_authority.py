@@ -17,6 +17,13 @@ class HumanDecisionBoundary(StrEnum):
     ESCALATION_RESPONSE = "escalation-response"
 
 
+class HumanInputDispositionKind(StrEnum):
+    ANSWERED = "answered"
+    NON_BLOCKING = "non-blocking"
+    FINDING = "finding"
+    ESCALATED = "escalated"
+
+
 @dataclass(frozen=True)
 class DecisionComment:
     id: int
@@ -36,6 +43,29 @@ class LabelEvent:
     label: str
     provenance_available: bool
     performed_via_github_app: str | None
+
+
+@dataclass(frozen=True)
+class HumanInputDisposition:
+    comment_id: int
+    kind: HumanInputDispositionKind
+    rationale: str
+
+    def __post_init__(self) -> None:
+        _positive_id(self.comment_id, "comment_id")
+        if not self.rationale.strip():
+            raise ValueError("rationale must be a non-empty string")
+
+
+@dataclass(frozen=True)
+class HumanInputFreshnessResult:
+    blocking_comment_ids: tuple[int, ...]
+    fail_closed_comment_ids: tuple[int, ...]
+    dispositioned_comment_ids: tuple[int, ...]
+
+    @property
+    def clear(self) -> bool:
+        return not self.blocking_comment_ids and not self.fail_closed_comment_ids
 
 
 def propose_admission_ref(issue_number: int) -> str:
@@ -174,6 +204,43 @@ def _qualifying_comments(comments: tuple[DecisionComment, ...]) -> tuple[Decisio
             comment.performed_via_github_app,
         )
         and parse_decision_ref(comment.body) is not None
+    )
+
+
+def evaluate_human_input_freshness(
+    *,
+    comments: tuple[DecisionComment, ...],
+    relied_upon_at: datetime,
+    dispositions: tuple[HumanInputDisposition, ...],
+) -> HumanInputFreshnessResult:
+    """Classify newer direct-Human input against exact durable dispositions."""
+    disposition_by_comment: dict[int, HumanInputDisposition] = {}
+    for disposition in dispositions:
+        if disposition.comment_id in disposition_by_comment:
+            raise ValueError(f"duplicate disposition for comment {disposition.comment_id}")
+        disposition_by_comment[disposition.comment_id] = disposition
+
+    blocking: list[int] = []
+    fail_closed: list[int] = []
+    dispositioned: list[int] = []
+
+    for comment in sorted(comments, key=lambda item: (item.created_at, item.id)):
+        if comment.created_at <= relied_upon_at or comment.author != HUMAN_ACTOR:
+            continue
+        if not comment.provenance_available:
+            fail_closed.append(comment.id)
+            continue
+        if comment.performed_via_github_app is not None:
+            continue
+        if comment.id in disposition_by_comment:
+            dispositioned.append(comment.id)
+        else:
+            blocking.append(comment.id)
+
+    return HumanInputFreshnessResult(
+        blocking_comment_ids=tuple(blocking),
+        fail_closed_comment_ids=tuple(fail_closed),
+        dispositioned_comment_ids=tuple(dispositioned),
     )
 
 
