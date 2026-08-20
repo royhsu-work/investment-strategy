@@ -30,6 +30,8 @@ that mechanical evidence is required.
 
 If the coordination Issue or current OpenSpec artifacts contain declared upstream authoritative decision/gate references, Reviewer MUST dereference those sources before deciding the gate. A cross-Issue summary is orientation only and is not replacement authority for the declared source evidence.
 
+Before ordinary traceability review, determine whether the Change is Explore-originated. If it is, require the proposal/readiness evidence to identify the exact Explore `ACTION_RESULT` that established `PROPOSAL_READY`, dereference that exact durable result, and verify that the formalized Proposal / Specs / Design / Tasks preserve every still-applicable material decided scope, constraint, exclusion, and selected direction. A material contradiction or omission is `FINDINGS` even when the formal artifacts are internally bidirectionally consistent. This is preservation verification only: Reviewer MUST NOT re-run Explore, repeat Explore research, reconstruct conversation intent, or infer undocumented Human intent. A valid direct-to-Propose Change has no preceding Explore result and MUST NOT be required to fabricate a synthetic Explore reference.
+
 For continuity terminology, the action-specific accepted baseline B is the last independently accepted
 semantic OpenSpec state that remains applicable, and the current target R is the exact semantic target
 that now requires review. Reviewer covers material unreviewed changes in `(B, R]` as material semantic
@@ -59,7 +61,7 @@ Do not rely on a previous conversation or a prior PASS for materially changed Op
 ## Minimum gate
 
 For the exact semantic target R, inspection is reverse-first and PASS still requires both directions on
-that same target revision:
+that same target revision. For an Explore-originated Change, the exact Explore-result preservation check above runs first; only after that upstream semantic boundary is verified does Reviewer apply the ordinary gate:
 
 1. Verify reverse traceability `tasks → design → specs → proposal`.
 2. Verify forward traceability `proposal → specs → design → tasks`.
@@ -79,7 +81,7 @@ Reverse-first is an inspection order only. It does not replace bidirectional tra
 
 - `PASS` — all minimum semantic checks are satisfied for the exact reviewed revision, which is the exact
   semantic target actually inspected, and the consequential-boundary Human-input freshness check is clear.
-- `FINDINGS` — one or more actionable material findings exist.
+- `FINDINGS` — one or more actionable material findings exist, including any Explore-result preservation contradiction or omission for an Explore-originated Change.
 
 The result MUST identify the exact reviewed revision and semantic target. A later material semantic
 OpenSpec change requires a new gate; a bookkeeping-only OpenSpec revision does not stale an applicable
