@@ -15,10 +15,11 @@ The local Skill preserves the upstream Apply responsibility of implementing appr
 - RED→GREEN→REFACTOR→VERIFY vertical-slice execution and verified task/checkpoint persistence.
 - Exact CI/OpenSpec evidence handling, constrained branch-integration recovery, and Draft-to-Ready ownership.
 - Explicit routing to Lead when implementation would require new specification meaning.
+- Consumption of the repository-owned substantive Human-input freshness/disposition invariant immediately before implementation `READY` and review handoff.
 
-Reason: repository quality policy and at-least-once scheduled execution require durable implementation checkpoints and strict role boundaries.
+Reason: repository quality policy and at-least-once scheduled execution require durable implementation checkpoints, strict role boundaries, and prevention of READY/handoff from silently skipping newer material Human input.
 
-Maintenance implication: preserve these Executor-owned verification and recovery integrations when assessing upstream Apply updates; they are not incidental prose.
+Maintenance implication: preserve these Executor-owned verification, recovery, and consequential-boundary integrations when assessing upstream Apply updates; they are not incidental prose. The Human-input classifier itself remains owned by shared repository governance rather than this Skill.
 
 ## Deleted or omitted responsibilities
 
@@ -34,7 +35,8 @@ Maintenance implication: upstream Apply behavior that combines these responsibil
 
 - Upstream task application is restricted to a reconstructable closed Apply context and verified slice checkpoints.
 - Completion is a revision-aware handoff to independent review rather than an implicit end of the workflow.
+- Completion now consumes shared current coordination-Issue Human-input freshness/disposition evidence before `READY`; the Skill does not independently define provenance classification or Human authority.
 
-Reason: scheduled execution must resume safely after interruption and preserve exact-review boundaries.
+Reason: scheduled execution must resume safely after interruption, preserve exact-review boundaries, and avoid consuming stale completion assumptions after newer material Human input.
 
-Maintenance implication: future upstream task/progress semantics must be reconciled with verified-slice durability rather than copied as live progress state.
+Maintenance implication: future upstream task/progress semantics must be reconciled with verified-slice durability and the repository-owned consequential-boundary invariant rather than copied as live progress or duplicated classifier state.
