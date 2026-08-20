@@ -690,7 +690,7 @@ openspec validate --all --strict --json --no-interactive
 ```
 
 GitHub Actions `run.head_sha` is association metadata and is insufficient checkout proof by itself. In
-particular, a `pull_request` run that validates a synthetic merge revision M where `M != R` does not
+particular, a `pull_request` run that validates a synthetic merge revision M where M != R does not
 satisfy an exact-head mechanical gate for PR head R merely because its metadata reports `head_sha == R`.
 
 The repository `OpenSpec Validate` workflow determines an exact validation target, checks out that target,
@@ -856,3 +856,34 @@ hidden memory, research database, completeness score, `review-explore` action, t
 semantic-revision classifier service, review-applicability label, branch registry, coverage cursor/TTL
 registry, project-direction registry, global priority/scoring state, hidden backlog, or second workflow DAG.
 Do not add such state without a new approved OpenSpec change.
+
+## Consequential-boundary substantive Human input freshness and disposition
+
+Before a Scheduled role persists a consequential workflow result, completes a routing ownership transfer,
+finalizes a Reviewer or Lead gate, emits implementation `READY`, or performs an unsafe merge mutation, it
+MUST fresh-read coordination-Issue activity newer than the durable evidence boundary the action is relying
+on. The check is bounded to workflow-relevant Human-attributed activity that could affect correctness,
+approved scope, traceability, gate validity, or mutation assumptions; it is not a general-purpose comment
+processor or continuous inbox poll.
+
+A candidate direct-Human comment is qualified only when raw creation provenance is available, the actor is
+the designated Human, and `performed_via_github_app == null`. Missing or ambiguous raw provenance for a
+Human-attributed candidate fails closed at the consequential boundary. This direct-Human freshness
+classification does not grant Human authority. A comment that expresses a Human-reserved decision,
+authorization, answer, or resume condition remains subject to the separate provenance-bound Human decision
+contract and its exact reference/approval-event requirements.
+
+Material newer direct-Human input MUST be explicitly and durably dispositioned by exact comment id before
+the consequential boundary proceeds. A legal disposition is one of: addressed within the current role's
+existing authority; classified non-blocking with a concrete rationale; converted into an existing
+finding/blocker/correction result; or routed/escalated to the legal owner or Human boundary. A disposition
+MUST NOT expand the acting role's authority. Clearly non-substantive commentary may be dispositioned as
+non-blocking without creating lifecycle waiting state. A newer undispositioned material comment keeps the
+boundary fail closed until a legal disposition makes the relied-upon state coherent again.
+
+A later wake reconstructs prior exact-comment dispositions and MUST NOT emit duplicate acknowledgement for
+the same already handled comment. A newer unresolved material direct-Human comment remains actionable even
+when older comment ids were dispositioned. The repository MUST NOT introduce a comment queue, unread
+counter, acknowledgement label/state, cursor, hidden registry, lock, lease, heartbeat, or second workflow
+DAG to implement this contract. Existing coordination-Issue comments, action results/findings, routing, and
+other durable workflow evidence remain sufficient for reconstructability.
