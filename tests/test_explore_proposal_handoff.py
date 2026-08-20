@@ -16,8 +16,19 @@ def _normalized(path: Path) -> str:
     return " ".join(_read(path).split())
 
 
-def test_explore_originated_propose_requires_exact_durable_result_reference() -> None:
+def test_shared_governance_owns_explore_to_propose_handoff_invariant() -> None:
     shared = _normalized(AGENTS)
+
+    for required in (
+        "exact durable Explore",
+        "ACTION_RESULT",
+        "PROPOSAL_READY",
+        "preserve",
+    ):
+        assert required in shared
+
+
+def test_explore_originated_propose_requires_exact_durable_result_reference() -> None:
     change = _normalized(CHANGE)
 
     for required in (
@@ -26,15 +37,14 @@ def test_explore_originated_propose_requires_exact_durable_result_reference() ->
         "PROPOSAL_READY",
         "preserve",
     ):
-        assert required in shared or required in change
+        assert required in change
 
 
 def test_direct_propose_does_not_fabricate_explore_reference() -> None:
-    shared = _normalized(AGENTS)
     change = _normalized(CHANGE)
 
-    assert "direct-to-Propose" in shared or "Direct-to-Propose" in change
-    assert "synthetic Explore" in shared or "synthetic Explore" in change
+    assert "Direct-to-Propose" in change
+    assert "synthetic Explore" in change
 
 
 def test_review_dereferences_explore_result_before_bidirectional_gate() -> None:
