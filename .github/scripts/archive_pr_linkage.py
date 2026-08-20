@@ -85,10 +85,10 @@ def _render(args: argparse.Namespace) -> None:
     body = (
         f"Archive OpenSpec change `{change}`.\n\n"
         "This pull request is the repository-owned final archive snapshot. "
-        "Its closing linkage is a lifecycle side effect only; independent Reviewer PASS, "
-        "Lead exact-revision authorization, unchanged-head verification, and current gates "
-        "remain required before merge.\n\n"
-        f"Closes #{args.issue_number}\n"
+        "Its non-closing linkage preserves traceability while the coordination Issue remains open; "
+        "independent Reviewer PASS, unchanged-head verification, current gates, and Lead terminal "
+        "finalization remain required.\n\n"
+        f"Refs #{args.issue_number}\n"
     )
     Path(args.body_file).write_text(body, encoding="utf-8")
 

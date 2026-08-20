@@ -19,7 +19,6 @@ def _normalized(path: Path) -> str:
 def test_explore_is_tenth_lead_action_with_one_owned_skill() -> None:
     shared = _normalized(AGENTS)
     lead = _normalized(LEAD)
-
     assert "Exactly ten normal actions are supported" in shared
     action_row = "| Lead | `explore-change` | `agents/skills/openspec-explore/SKILL.md` |"
     assert action_row in _read(AGENTS)
@@ -30,7 +29,6 @@ def test_explore_is_tenth_lead_action_with_one_owned_skill() -> None:
 
 def test_explore_is_optional_and_cannot_create_formal_change_or_code() -> None:
     explore = _normalized(EXPLORE)
-
     for required in (
         "optional pre-Propose",
         "problem before solution",
@@ -44,7 +42,6 @@ def test_explore_is_optional_and_cannot_create_formal_change_or_code() -> None:
 
 def test_explore_uses_decision_complete_outcomes_and_human_boundary() -> None:
     explore = _normalized(EXPLORE)
-
     for required in (
         "decision-complete",
         "PROPOSAL_READY",
@@ -60,22 +57,20 @@ def test_explore_uses_decision_complete_outcomes_and_human_boundary() -> None:
 
 def test_explore_and_direct_propose_share_one_pre_activation_queue() -> None:
     shared = _normalized(AGENTS)
-
     for required in (
         "combined pre-activation queue",
         "`Lead / explore-change`",
         "`Lead / propose-change`",
         "earliest GitHub `created_at`",
         "lower Issue number",
-        "formal active or terminal-pending workflow",
-        "must win over pre-activation intake",
+        "formal active workflow must win over pre-activation intake",
+        "bounded premature-close recovery candidate",
     ):
         assert required in shared
 
 
 def test_explore_has_no_research_state_machine_or_review_gate() -> None:
     explore = _normalized(EXPLORE)
-
     for forbidden in (
         "status:exploring",
         "review-explore",
@@ -91,7 +86,6 @@ def test_explore_has_no_research_state_machine_or_review_gate() -> None:
 def test_explore_terminal_results_can_close_without_fake_change() -> None:
     lead = _normalized(LEAD)
     explore = _normalized(EXPLORE)
-
     assert "terminal research Issue" in lead
     assert "NO_CHANGE_REQUIRED" in explore
     assert "NO_GO" in explore

@@ -115,7 +115,8 @@ def test_combined_intake_is_deterministic_and_refuses_later_propose_activation()
         "there is no `explore-change > propose-change` priority",
         "MUST NOT activate a queued proposal",
         "older eligible Explore/direct-Propose entry",
-        "formal active or terminal-pending workflow must win over pre-activation intake",
+        "formal active workflow must win over pre-activation intake",
+        "bounded premature-close recovery candidate",
     ):
         assert required in text
     for required in (
@@ -159,7 +160,6 @@ def test_activation_overlap_uses_first_valid_write_and_stale_run_termination() -
 def test_oldest_explore_stays_winner_without_claim_or_status_state() -> None:
     shared = _normalized(AGENTS)
     explore = _normalized(EXPLORE)
-
     for required in (
         "oldest eligible open Explore naturally remains the deterministic winner across wakes",
         "no claim, lease, heartbeat, or hidden ownership state",
@@ -279,50 +279,48 @@ def test_lifecycle_transitions_use_bounded_journal_without_per_mutation_logging(
         assert required in shared
 
 
-def test_archive_native_close_hands_off_to_terminal_lead_without_role_switch() -> None:
+def test_archive_merge_keeps_issue_open_and_hands_to_terminal_lead() -> None:
     shared = _normalized(AGENTS)
     merge = _normalized(MERGE_PR)
     for required in (
         "final Archive PR",
-        "natively closed",
+        "non-closing",
         "`agent:lead + action:finalize-archive`",
-        "closed Issue",
-        "bounded merge/native-close/handoff journal",
+        "Issue remains open",
+        "merge/handoff journal",
         "MUST NOT execute Lead finalization in the same invocation",
     ):
         assert required in shared
     for required in (
-        "Archive PR is durably merged",
-        "coordination Issue is observed natively `closed`",
-        "replace the consumed routing tuple with exactly `agent:lead + action:finalize-archive`",
-        "bounded merge/native-close/handoff journal",
+        "Archive PR to be durably merged",
+        "coordination Issue to remain open",
+        ("replace the consumed routing tuple with exactly `agent:lead + action:finalize-archive`"),
+        "merge/handoff journal",
         "do not re-merge",
         "repair only the missing terminal routing and journal evidence",
     ):
         assert required in merge
 
 
-def test_closed_terminal_pending_work_blocks_activation_until_lifecycle_complete() -> None:
+def test_lifecycle_complete_precedes_issue_close_and_closed_is_terminal_history() -> None:
     shared = _normalized(AGENTS)
     finalize = _normalized(LIFECYCLE_FINALIZE)
     for required in (
-        "terminal-pending active workflow",
-        "closed coordination Issue",
-        "`agent:lead + action:finalize-archive`",
-        "accepted merged Archive PR",
-        "no valid Lead `LIFECYCLE_COMPLETE`",
-        "MUST NOT activate or execute queued pre-activation intake",
+        "Normal path therefore has no closed terminal-pending workflow",
+        "LIFECYCLE_COMPLETE",
+        "Issue close is missing",
+        "observed closed Issue",
         "terminal history",
-        "MUST NOT block later workflow admission",
+        "excluded from formal WIP",
     ):
         assert required in shared
     for required in (
         "LIFECYCLE_COMPLETE",
         "Archive PR exact head",
         "merge commit",
-        "does not reopen or redundantly close the Issue",
-        "canonical archived default-branch state",
-        "observed native Issue closure",
+        "Issue is open",
+        "Only after `LIFECYCLE_COMPLETE` is durable",
+        "requires observed `closed`",
     ):
         assert required in finalize
 
@@ -330,7 +328,6 @@ def test_closed_terminal_pending_work_blocks_activation_until_lifecycle_complete
 def test_selected_workflow_is_work_conserving_until_a_legal_termination_boundary() -> None:
     shared = _normalized(AGENTS)
     implementation = _normalized(IMPLEMENTATION)
-
     for required in (
         "work-conserving",
         "all immediately actionable work",
@@ -345,7 +342,6 @@ def test_selected_workflow_is_work_conserving_until_a_legal_termination_boundary
         "cross-role",
     ):
         assert required in shared
-
     assert "continue on a later run" not in implementation
     assert "remaining approved implementation work" in implementation
     assert "same invocation" in implementation
@@ -357,7 +353,7 @@ def test_active_workflow_remains_wip_while_next_action_is_blocked() -> None:
         "Execution eligibility",
         "same formal active workflow",
         "single formal WIP slot",
-        "active/terminal-pending workflow first",
+        "active workflow first",
         "pre-activation intake",
         "universal `blocked` result",
     ):
@@ -368,10 +364,11 @@ def test_dispatch_requires_complete_active_cardinality_before_queue_selection() 
     text = _normalized(AGENTS)
     for required in (
         "complete cardinality",
-        "terminal-pending and formal active workflows",
+        "formal active workflows",
         "Before evaluating pre-activation queue",
         "partial enumeration",
         "MUST NOT",
         "queued work",
+        "premature-close recovery",
     ):
         assert required in text

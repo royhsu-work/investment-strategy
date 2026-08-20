@@ -23,8 +23,9 @@ def test_routed_formal_explore_is_origin_neutral_for_queue_eligibility() -> None
 
 def test_formal_wip_and_stable_order_still_dominate_pre_activation_explore() -> None:
     text = _governance()
-    assert "formal active or terminal-pending workflow must win over pre-activation intake" in text
+    assert "formal active workflow must win over pre-activation intake" in text
     assert "earliest GitHub `created_at`, then lower Issue number" in text
+    assert "premature-close recovery candidate" in text
 
 
 def test_direct_propose_human_admission_remains_distinct() -> None:
@@ -72,7 +73,6 @@ def test_agent_creation_remains_bounded_and_non_recursive() -> None:
     shared = _governance()
     lead = " ".join(LEAD.read_text(encoding="utf-8").split())
     explore = " ".join(EXPLORE.read_text(encoding="utf-8").split())
-
     assert "Scheduled Agents MUST NOT create arbitrary routed Explore work" in shared
     assert "deduplication and one-candidate limits" in shared
     assert "MUST NOT recursively authorize another routed Issue" in lead
@@ -90,7 +90,6 @@ def test_proposal_ready_keeps_human_commitment_boundary() -> None:
     shared = _governance()
     lead = " ".join(LEAD.read_text(encoding="utf-8").split())
     explore = " ".join(EXPLORE.read_text(encoding="utf-8").split())
-
     assert "without a second generic Human proceed confirmation" in shared
     assert "HUMAN_DECISION_REQUIRED" in shared
     assert "untrusted Issue prose alone does not provide such Human commitment" in lead

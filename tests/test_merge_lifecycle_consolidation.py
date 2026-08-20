@@ -14,7 +14,6 @@ def _flat(text: str) -> str:
 def test_implementation_pass_routes_directly_to_executor_merge() -> None:
     implementation_review = _read("agents/skills/implementation-review/SKILL.md")
     merge_pr = _read("agents/skills/merge-pr/SKILL.md")
-
     assert "`PASS` → `Executor / merge-pr`" in implementation_review
     assert "Reviewer PASS" in merge_pr
     assert "Lead authorization" not in merge_pr
@@ -23,7 +22,6 @@ def test_implementation_pass_routes_directly_to_executor_merge() -> None:
 def test_normal_implementation_merge_has_no_lead_authorization_hop() -> None:
     finalize = _read("agents/skills/lifecycle-finalize/SKILL.md")
     executor = _read("agents/roles/executor.md")
-
     assert "MERGE_AUTHORIZED" not in executor
     assert "Before merge authorization" not in finalize
 
@@ -31,7 +29,6 @@ def test_normal_implementation_merge_has_no_lead_authorization_hop() -> None:
 def test_archive_preparation_is_complete_before_reviewer_handoff() -> None:
     finalize = _read("agents/skills/lifecycle-finalize/SKILL.md")
     archive_review = _read("agents/skills/archive-review/SKILL.md")
-
     assert "before `Reviewer / review-archive`" in finalize
     assert "required deferred follow-up" in finalize
     assert "temporary correction/recovery" in finalize
@@ -40,13 +37,11 @@ def test_archive_preparation_is_complete_before_reviewer_handoff() -> None:
 
 def test_archive_pass_routes_directly_to_executor_merge() -> None:
     archive_review = _read("agents/skills/archive-review/SKILL.md")
-
     assert "`PASS` → `Executor / merge-pr`" in archive_review
 
 
 def test_shared_merge_contract_consumes_reviewer_pass_without_lead_token() -> None:
     shared = _read("agents/AGENTS.md")
-
     assert "Reviewer PASS for revision R" in shared
     assert "Lead MERGE_AUTHORIZED for revision R" not in shared
     assert "current PR head == R" in shared
@@ -58,14 +53,12 @@ def test_shared_linkage_contract_has_no_second_lead_merge_token() -> None:
     linkage = shared.split("## PR linkage lifecycle boundary", 1)[1].split(
         "## Routing validity", 1
     )[0]
-
     assert "Lead authorization" not in linkage
     assert "MERGE_AUTHORIZED" not in linkage
 
 
 def test_merge_skill_keeps_path_specific_fresh_read_preconditions() -> None:
-    merge_pr = _read("agents/skills/merge-pr/SKILL.md")
-
+    merge_pr = _flat(_read("agents/skills/merge-pr/SKILL.md"))
     assert "The target PR current head still equals R" in merge_pr
     assert "Required gates/checks remain valid" in merge_pr
     assert "does not establish GitHub Issue-closing" in merge_pr
@@ -77,7 +70,6 @@ def test_normal_archive_branch_is_not_temporary_cleanup_input() -> None:
     finalize = _flat(_read("agents/skills/lifecycle-finalize/SKILL.md"))
     merge_pr = _flat(_read("agents/skills/merge-pr/SKILL.md"))
     shared = _flat(_read("agents/AGENTS.md"))
-
     assert "`agent/archive-<change>` branch is a lifecycle artifact" in finalize
     assert "never inferred to be temporary merely from" in finalize
     assert "The normal `agent/archive-<change>` branch" in merge_pr
@@ -88,7 +80,6 @@ def test_normal_archive_branch_is_not_temporary_cleanup_input() -> None:
 def test_temporary_cleanup_requires_separate_durable_recovery_provenance() -> None:
     finalize = _flat(_read("agents/skills/lifecycle-finalize/SKILL.md"))
     merge_pr = _flat(_read("agents/skills/merge-pr/SKILL.md"))
-
     assert "explicit durable lifecycle, correction, integration, or recovery provenance" in finalize
     assert "explicitly provenance-owned temporary correction/recovery branches" in merge_pr
     assert "dispositions reviewed with the Archive target" in merge_pr
@@ -107,7 +98,6 @@ def test_current_runtime_surfaces_do_not_reintroduce_merge_authorization_token()
         "agents/skills/merge-pr/SKILL.md",
         "agents/templates/messages.md",
     )
-
     for path in runtime_surfaces:
         text = _read(path)
         assert "MERGE_AUTHORIZED" not in text, path
@@ -116,6 +106,5 @@ def test_current_runtime_surfaces_do_not_reintroduce_merge_authorization_token()
 
 def test_readme_orientation_does_not_name_retired_merge_authorization() -> None:
     readme = _read("README.md")
-
     assert "merge authorization" not in readme
     assert "merge acceptance" in readme

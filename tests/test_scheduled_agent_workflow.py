@@ -22,7 +22,6 @@ ROLE_ACTIONS = {
     ),
     "Executor": ("implement-change", "merge-pr"),
 }
-
 EXPECTED_PRIORITY = {
     "Lead": (
         "resolve-question",
@@ -33,7 +32,6 @@ EXPECTED_PRIORITY = {
     "Reviewer": ("review-archive", "review-implementation", "review-openspec"),
     "Executor": ("merge-pr", "implement-change"),
 }
-
 EXPECTED_SKILLS = {
     ("Lead", "explore-change"): "agents/skills/openspec-explore/SKILL.md",
     ("Lead", "propose-change"): "agents/skills/openspec-change/SKILL.md",
@@ -113,11 +111,9 @@ def test_shared_governance_and_role_files_exist_with_authority_boundaries() -> N
         "OpenSpec Validate",
     ):
         assert required in shared
-
     lead = _read(AGENTS / "roles/lead.md")
     reviewer = _read(AGENTS / "roles/reviewer.md")
     executor = _read(AGENTS / "roles/executor.md")
-
     assert "specification authority" in lead
     assert "Do not modify implementation code" in lead
     assert "Do not execute PR merge mutations" in lead
@@ -154,21 +150,18 @@ def test_deterministic_discovery_uses_fixed_priority_and_stable_tie_breakers() -
     assert "Model-derived urgency" in shared
     assert "combined pre-activation queue" in shared
     assert "there is no `explore-change > propose-change` priority" in shared
-
     raw = _read(AGENTS / "AGENTS.md")
     candidates = [
         Candidate(5, "2026-08-01T00:00:00Z", "Executor", "implement-change"),
         Candidate(30, "2026-08-10T00:00:00Z", "Executor", "merge-pr"),
     ]
     assert _select(raw, "Executor", candidates) == candidates[1]
-
     same_action = [
         Candidate(9, "2026-08-02T00:00:00Z", "Lead", "resolve-question"),
         Candidate(8, "2026-08-01T00:00:00Z", "Lead", "resolve-question"),
         Candidate(7, "2026-08-01T00:00:00Z", "Lead", "resolve-question"),
     ]
     assert _select(raw, "Lead", same_action) == same_action[2]
-
     invalid = [Candidate(1, "2026-01-01T00:00:00Z", "Executor", "review-openspec")]
     assert _select(raw, "Executor", invalid) is None
 
@@ -178,7 +171,6 @@ def test_review_and_finalize_skills_preserve_upstream_gate_contracts() -> None:
     implementation_review = _read(AGENTS / "skills/implementation-review/SKILL.md")
     archive_review = _read(AGENTS / "skills/archive-review/SKILL.md")
     finalize = _read(AGENTS / "skills/lifecycle-finalize/SKILL.md")
-
     for required in (
         "proposal → specs → design → tasks",
         "tasks → design → specs → proposal",
@@ -189,7 +181,6 @@ def test_review_and_finalize_skills_preserve_upstream_gate_contracts() -> None:
         "exact reviewed revision",
     ):
         assert required in openspec_review
-
     for required in (
         "exact current implementation PR head",
         "project gates",
@@ -198,7 +189,6 @@ def test_review_and_finalize_skills_preserve_upstream_gate_contracts() -> None:
         "approved OpenSpec contract",
     ):
         assert required in implementation_review
-
     for required in (
         "correct merged default-branch source state",
         "canonical specs",
@@ -208,23 +198,22 @@ def test_review_and_finalize_skills_preserve_upstream_gate_contracts() -> None:
         "Lead preparation evidence",
     ):
         assert required in archive_review
-
+    normalized_finalize = " ".join(finalize.split())
     for required in (
         "Reviewer implementation `PASS`",
         "MORE_IMPLEMENTATION_REQUIRED",
         "WAITING_FOR_ARCHIVE_AUTOMATION",
         "Reviewer archive `PASS`",
         "preparation evidence",
-        "observed `closed` state",
+        "requires observed `closed`",
     ):
-        assert required in finalize
+        assert required in normalized_finalize
     assert "MERGE_AUTHORIZED" not in finalize
 
 
 def test_routing_concurrency_revision_and_crash_recovery_fail_closed() -> None:
     shared = _read(AGENTS / "AGENTS.md")
     merge = " ".join(_read(AGENTS / "skills/merge-pr/SKILL.md").split())
-
     for required in (
         "Zero, multiple, contradictory, or illegal routing labels",
         "Unrelated labels are preserved",
@@ -233,7 +222,6 @@ def test_routing_concurrency_revision_and_crash_recovery_fail_closed() -> None:
         "does not attempt a duplicate merge",
     ):
         assert required in shared
-
     for required in (
         "Reviewer `PASS` exists for the exact revision R",
         "target PR current head still equals R",
@@ -245,21 +233,21 @@ def test_routing_concurrency_revision_and_crash_recovery_fail_closed() -> None:
     assert "MERGE_AUTHORIZED" not in merge
 
 
-def test_pr_linkage_governance_reserves_closing_linkage_for_archive() -> None:
+def test_pr_linkage_governance_requires_non_closing_linkage_for_archive() -> None:
     shared = " ".join(_read(AGENTS / "AGENTS.md").split())
     openspec_change = _read(AGENTS / "skills/openspec-change/SKILL.md")
     merge = " ".join(_read(AGENTS / "skills/merge-pr/SKILL.md").split())
-
     for required in (
-        "Implementation and implementation-correction PRs MUST use non-closing references",
+        (
+            "Implementation, implementation-correction, and final Archive PRs MUST "
+            "use non-closing references"
+        ),
         "MUST NOT establish GitHub Issue-closing linkage",
-        "reserved for the final Archive PR",
+        "Refs #<coordination-issue>",
     ):
         assert required in shared
-
     assert "non-closing reference to the coordination Issue" in openspec_change
     assert "must not establish Issue-closing linkage" in openspec_change
-
     for required in (
         "implementation or implementation-correction PR",
         "does not establish GitHub Issue-closing linkage",
@@ -272,7 +260,6 @@ def test_pr_linkage_governance_reserves_closing_linkage_for_archive() -> None:
 def test_persistent_lifecycle_archive_boundary_and_human_admission_are_documented() -> None:
     shared = " ".join(_read(AGENTS / "AGENTS.md").split())
     labels = _read(AGENTS / "labels.md")
-
     for required in (
         "one persistent coordination Issue",
         "immutable after Lead persists it",
@@ -288,7 +275,6 @@ def test_persistent_lifecycle_archive_boundary_and_human_admission_are_documente
         "MUST NEVER add, remove, restore, or manufacture either reserved capability",
     ):
         assert required in shared
-
     for required in (
         "agent:lead",
         "agent:reviewer",
@@ -302,20 +288,22 @@ def test_persistent_lifecycle_archive_boundary_and_human_admission_are_documente
         assert required in labels
 
 
-def test_final_completion_requires_observed_issue_closure_and_supports_recovery() -> None:
-    shared = _read(AGENTS / "AGENTS.md")
+def test_final_completion_requires_lifecycle_complete_then_observed_issue_closure() -> None:
+    shared = " ".join(_read(AGENTS / "AGENTS.md").split())
     finalize = " ".join(_read(AGENTS / "skills/lifecycle-finalize/SKILL.md").split())
-
     for required in (
-        'PASS, completion comment, or statement that an Issue "may be closed" is not completion',
-        "Issue close",
-        "Only the observed closed Issue state completes",
-        "next Lead run reconstructs the completed archive",
+        "PASS, completion comment, merge result",
+        "open coordination Issue = formal workflow not yet terminal",
+        "closed coordination Issue = terminal history",
+        "Only after that result is durable may Lead close the coordination Issue",
+        "valid `LIFECYCLE_COMPLETE` plus observed closed Issue",
     ):
         assert required in shared
-
-    assert "perform the GitHub coordination Issue close mutation" in finalize
-    assert "idempotently performs the missing" in finalize
+    assert (
+        "Only after `LIFECYCLE_COMPLETE` is durable may Lead perform the GitHub "
+        "coordination Issue close mutation"
+    ) in finalize
+    assert "requires observed `closed`" in finalize
 
 
 def test_readme_aligns_role_gates_multi_pr_archive_and_final_closure() -> None:
@@ -328,7 +316,8 @@ def test_readme_aligns_role_gates_multi_pr_archive_and_final_closure() -> None:
         "MORE_IMPLEMENTATION_REQUIRED",
         "Reviewer / review-archive",
         "Lead / finalize-archive",
-        "GitHub native close via final Archive PR closing linkage",
+        "final Archive PR non-closing linkage",
+        "LIFECYCLE_COMPLETE",
         "intake:approved",
         "不是** mutex、CAS 或 single-flight",
         "validator checkout `HEAD`",
@@ -342,7 +331,6 @@ def test_readme_aligns_role_gates_multi_pr_archive_and_final_closure() -> None:
 def test_governance_does_not_add_parallel_workflow_engine_state() -> None:
     shared = _read(AGENTS / "AGENTS.md")
     implementation = _read(AGENTS / "skills/implementation/SKILL.md")
-
     assert "no central workflow engine" in shared
     assert "exactly-once mechanism" in shared
     assert "status:in-progress" in shared
@@ -356,7 +344,6 @@ def test_task_completion_markers_persist_at_verified_slice_boundary() -> None:
     executor = " ".join(_read(AGENTS / "roles/executor.md").split())
     implementation = " ".join(_read(AGENTS / "skills/implementation/SKILL.md").split())
     readme = " ".join(_read(ROOT / "README.md").split())
-
     for required in (
         "task checkboxes are durable completion evidence",
         "after the slice's required `VERIFY` succeeds",
@@ -366,10 +353,8 @@ def test_task_completion_markers_persist_at_verified_slice_boundary() -> None:
         "previously verified slices remain durable",
     ):
         assert required in shared
-
     assert "persist all satisfied task-completion markers for that verified slice" in executor
     assert "before starting the next slice or handing off" in executor
-
     for required in (
         "persist all satisfied task markers for that verified slice",
         "Do not defer completed markers across verified slices",
@@ -377,7 +362,6 @@ def test_task_completion_markers_persist_at_verified_slice_boundary() -> None:
         "reconstruct the active slice",
     ):
         assert required in implementation
-
     assert "verified vertical-slice checkpoint" in readme
     assert "`VERIFY` 成功後" in readme
     assert "開始下一個 slice 或 handoff 前更新該 slice 已滿足的 markers" in readme

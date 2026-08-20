@@ -22,9 +22,11 @@ unambiguous `Reviewer / review-implementation` `PASS` bound to R.
 For the final Archive PR, the applicable normal acceptance evidence is an unambiguous
 `Reviewer / review-archive` `PASS` bound to R and the materially reviewed Lead preparation evidence. Also
 reconstruct the expected persistent coordination Issue, verify the PR body establishes the
-repository-approved closing linkage to that same Issue, and reconstruct only the explicitly provenance-owned temporary correction/recovery branches and dispositions reviewed with the Archive target.
-The normal `agent/archive-<change>` branch is the final PR source lifecycle artifact and is never a temporary
-cleanup target merely because of its name. Closing linkage is structural lifecycle evidence only and never
+repository-approved non-closing linkage (`Refs #<coordination-issue>` or its exact repository-approved
+equivalent) to that same Issue, and reconstruct only the explicitly provenance-owned temporary
+correction/recovery branches and dispositions reviewed with the Archive target. The normal
+`agent/archive-<change>` branch is the final PR source lifecycle artifact and is never a temporary cleanup
+target merely because of its name. Non-closing linkage is structural lifecycle evidence only and never
 substitutes for Reviewer PASS or the other merge preconditions.
 
 ## Merge preconditions
@@ -36,8 +38,9 @@ Execute a merge mutation only when all applicable conditions are simultaneously 
 3. Required gates/checks remain valid and there is no contradictory current evidence.
 4. For an implementation or implementation-correction PR, the PR does not establish GitHub Issue-closing
    linkage to its persistent coordination Issue; it uses only a non-closing reference.
-5. For the final Archive PR, the PR establishes exactly the repository-approved closing linkage to the same
-   persistent coordination Issue reconstructed for the immutable change identity.
+5. For the final Archive PR, the PR establishes exactly the repository-approved non-closing linkage to the
+   same persistent coordination Issue reconstructed for the immutable change identity and MUST NOT establish
+   Issue-closing linkage.
 6. For the final Archive PR, the Lead preparation evidence reviewed with PASS remains materially current:
    required deferred/separate-follow-up tracker state has not become contradictory, no new required
    obligation has appeared, and no reviewed cleanup/retention classification has materially changed.
@@ -51,19 +54,18 @@ Execute a merge mutation only when all applicable conditions are simultaneously 
    grant Human authority.
 
 A PASS for an earlier head is insufficient. A current PASS never waives unchanged-head, current-check,
-linkage, lifecycle-preparation, cleanup, contradiction, or substantive-Human-input freshness checks. No separate Lead merge-authorization token is required on either normal implementation or final Archive paths.
+linkage, lifecycle-preparation, cleanup, contradiction, or substantive-Human-input freshness checks. No
+separate Lead merge-authorization token is required on either normal implementation or final Archive paths.
 
-A closing linkage on an implementation or implementation-correction PR is a lifecycle-contract violation.
-Even when every other gate is current, do not merge that PR; persist the violation and hand control to Lead
-for correction. Closing linkage is reserved for the final Archive PR and never provides merge authority by
-itself.
+A closing linkage on an implementation, implementation-correction, or final Archive PR is a lifecycle-contract violation. Even when every other gate is current, do not merge that PR; persist the violation and
+hand control to Lead for correction. Normal PRs in this lifecycle keep the persistent coordination Issue
+open until `Lead / finalize-archive` has durably recorded `LIFECYCLE_COMPLETE` and then closes it.
 
-A final Archive PR with missing, ambiguous, or wrong-Issue closing linkage also fails closed. Do not merge
-until the Archive PR identifies the same persistent coordination Issue and carries the repository-approved
-closing linkage while all independent revision-bound gates and reviewed lifecycle preparation remain
-current.
+A final Archive PR with missing, ambiguous, wrong-Issue, or closing linkage also fails closed. Do not merge
+until the Archive PR identifies the same persistent coordination Issue with the repository-approved non-
+closing linkage while all independent revision-bound gates and reviewed lifecycle preparation remain current.
 
-## Final Archive pre-close temporary branch cleanup
+## Final Archive pre-merge temporary branch cleanup
 
 Immediately before the final Archive PR merge mutation, Executor processes only the explicitly identified
 workflow-owned temporary correction/recovery branches whose dispositions were included in the Lead
@@ -83,7 +85,7 @@ For each branch whose reviewed disposition requires safe deletion:
    cleanup mutation, or a materially changed disposition, do not merge. Preserve the observable failure;
    changed lifecycle meaning returns to Lead and requires renewed independent review when applicable.
 
-This is pre-close lifecycle hygiene, not broad branch garbage collection. Executor must not force-delete,
+This is pre-merge lifecycle hygiene, not broad branch garbage collection. Executor must not force-delete,
 force-update, classify an arbitrary branch as temporary, or infer cleanup ownership from an `agent/*` name
 pattern.
 
@@ -95,9 +97,9 @@ Legal pre-merge outcomes:
   correction owner;
 - materially new/changed Archive lifecycle preparation evidence → do not merge; return to Lead and require
   renewed review when the reviewed meaning changed;
-- implementation PR contains coordination-Issue closing linkage → `LIFECYCLE_CONTRACT_VIOLATION`; do not
-  merge and hand control to Lead;
-- final Archive PR has missing/ambiguous/wrong coordination-Issue closing linkage →
+- implementation/implementation-correction/final Archive PR contains coordination-Issue closing linkage →
+  `LIFECYCLE_CONTRACT_VIOLATION`; do not merge and hand control to Lead;
+- final Archive PR has missing/ambiguous/wrong coordination-Issue non-closing linkage →
   `LIFECYCLE_CONTRACT_VIOLATION`; do not merge and hand control to Lead;
 - final Archive cleanup obligation blocked/unsafe/unavailable → do not merge; keep the coordination Issue
   open and use existing exception/disposition/Lead-diagnosis semantics.
@@ -123,10 +125,9 @@ already consumed, recovery MUST NOT route backward to `Lead / finalize-change`. 
 non-routing journal evidence that remains required and non-contradictory.
 
 For Archive merge recovery, valid causal descendants include `Lead / finalize-archive` evidence materially
-bound to that exact Archive merge, especially a valid `LIFECYCLE_COMPLETE`. Once such evidence exists, the
-closed terminal tuple is terminal history for that transition. Recovery MUST NOT recreate or rewrite
-terminal routing; it may repair only missing non-routing journal evidence that remains required and
-non-contradictory.
+bound to that exact Archive merge, especially a valid `LIFECYCLE_COMPLETE`. A closed Issue with valid
+`LIFECYCLE_COMPLETE` is terminal history for that transition. Recovery MUST NOT recreate or rewrite terminal
+routing; it may repair only missing non-routing journal evidence that remains required and non-contradictory.
 
 When no causal descendant proves consumption and the expected post-merge routing/journal boundary is
 actually incomplete, recovery may repair only that missing boundary after fresh-reading current routing and
@@ -140,22 +141,22 @@ For a final Archive PR, after a successful merge or when reconstructing a merge 
 already consumed by terminal descendants:
 
 1. Fresh-read the Archive PR and persistent coordination Issue.
-2. If the Archive PR is durably merged and the coordination Issue is observed natively `closed` through
-   the repository-approved closing linkage, replace the consumed routing tuple with exactly
-   `agent:lead + action:finalize-archive` on that closed Issue.
-3. Persist one bounded merge/native-close/handoff journal on the coordination Issue identifying the exact
-   accepted head, merge result, observed native closure, and terminal Lead handoff.
-4. End the invocation. Executor MUST NOT execute Lead finalization in the same invocation.
+2. Require the Archive PR to be durably merged at the exact accepted revision and require the coordination
+   Issue to remain open. If the Issue is already closed without valid terminal `LIFECYCLE_COMPLETE`, treat
+   that as premature-close contradiction/recovery input rather than successful Archive merge completion.
+3. replace the consumed routing tuple with exactly `agent:lead + action:finalize-archive` on the open Issue.
+4. Persist one bounded merge/handoff journal identifying the exact accepted head, merge result, observed
+   open coordination Issue, and terminal Lead handoff.
+5. End the invocation. Executor MUST NOT execute Lead finalization in the same invocation.
 
-If an accepted Archive PR is already merged and the Issue is natively closed but a prior Executor run
-stopped before terminal handoff, do not re-merge. Reconstruct the exact accepted merge/native-close evidence
-and repair only the missing terminal routing and journal evidence when the transition-consumption guard
-proves that terminal handoff is still incomplete.
+If an accepted Archive PR is already merged and the Issue remains open but a prior Executor run stopped
+before terminal handoff, do not re-merge. Reconstruct the exact accepted merge evidence and repair only the
+missing terminal routing and journal evidence when the transition-consumption guard proves that terminal
+handoff is still incomplete.
 
-If the Archive PR is durably merged but native closure is not observed, do not infer lifecycle completion.
-Journal the durable merge/result and hand to `Lead / finalize-archive` for repository-defined native-close
-recovery/final reconstruction, unless valid later causal descendants already prove that exact transition
-was consumed.
+If an accepted Archive PR is durably merged but the Issue is already closed without valid
+`LIFECYCLE_COMPLETE`, do not infer lifecycle completion and do not silently reopen it from this action.
+Preserve the contradictory evidence for the bounded repository-defined premature-close recovery owner.
 
 Do not infer downstream completion merely from a successful merge response; Lead owns lifecycle judgment
 after merged default-branch state is reconstructed.

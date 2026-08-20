@@ -47,9 +47,9 @@ default-branch OpenSpec, archive automation, archive-branch, and Archive-PR stat
 For normal branch-ready continuation, Lead MUST NOT rerun OpenSpec archive mutation. Lead fresh-reads the
 validated archive branch, `main`, the coordination Issue, and existing PRs for that branch. If no equivalent
 final Archive PR exists, Lead creates one from `agent/archive-<change>` to `main` with deterministic
-`Closes #<coordination-issue>` linkage. If an equivalent open Archive PR already exists, Lead reuses it only
-when branch/base/linkage are current, unambiguous, and non-contradictory. A successful validated branch
-awaiting this PR creation is normal success, not `RECOVERY_DECISION_REQUIRED`.
+non-closing `Refs #<coordination-issue>` linkage. If an equivalent open Archive PR already exists, Lead
+reuses it only when branch/base/linkage are current, unambiguous, non-closing, and non-contradictory. A
+successful validated branch awaiting this PR creation is normal success, not `RECOVERY_DECISION_REQUIRED`.
 
 ### Archive preparation before independent review
 
@@ -65,7 +65,7 @@ Lead also reconstructs only separately workflow-owned temporary correction/recov
 explicit durable lifecycle, correction, integration, or recovery provenance. The normal validated
 `agent/archive-<change>` branch is a lifecycle artifact and is never inferred to be temporary merely from
 its name. For each provenance-owned temporary correction/recovery branch, Lead classifies the known
-terminal cleanup obligations and pre-close disposition from current durable evidence as exactly one of:
+terminal cleanup obligations and pre-merge disposition from current durable evidence as exactly one of:
 
 - safely deletable by Executor immediately before Archive merge because the branch is not an open PR
   head/base, is not active correction/recovery input, and has no unique commits outside canonical `main` or
@@ -81,22 +81,23 @@ preparation means the final Archive PR is not review-ready.
 
 Only after the final Archive PR and all applicable preparation evidence are current and reconstructable,
 and the shared substantive Human-input freshness/disposition check is clear, may Lead persist
-`ARCHIVE_PR_READY` and route to `Reviewer / review-archive`. Closing linkage identifies lifecycle completion
-intent but never substitutes for independent Reviewer PASS, Executor merge preconditions, native Issue
-close, or terminal `finalize-archive` reconstruction.
+`ARCHIVE_PR_READY` and route to `Reviewer / review-archive`. The Archive PR's non-closing linkage preserves
+traceability while intentionally keeping the persistent coordination Issue open; it never substitutes for
+independent Reviewer PASS, Executor merge preconditions, or terminal `finalize-archive` reconstruction.
 
 Archive waiting begins only after merged default-branch state satisfies the existing README archive
 eligibility contract.
 
 ## `finalize-archive`
 
-`finalize-archive` is a post-merge/native-close terminal reconstruction action. It does not perform a hidden
-pre-merge acceptance or authorization phase. Archive lifecycle preparation already occurred before
+`finalize-archive` is a post-merge terminal reconstruction action. It does not perform a hidden pre-merge
+acceptance or authorization phase. Archive lifecycle preparation already occurred before
 `Reviewer / review-archive`; Reviewer PASS then routed the exact reviewed Archive revision to
 `Executor / merge-pr`, which owns the final fresh-read operational merge and any predeclared safe cleanup
-mutation.
+mutation. Normal Archive merge leaves the persistent coordination Issue open and hands this action that
+same open Issue.
 
-After Archive merge, or when reconstructing the narrow closed-Issue terminal handoff, Lead reconstructs:
+After Archive merge, or when reconstructing interrupted finalization, Lead reconstructs:
 
 1. the exact Archive PR head revision R that received the applicable Reviewer archive `PASS`, including the
    materially reviewed preparation meaning;
@@ -104,41 +105,48 @@ After Archive merge, or when reconstructing the narrow closed-Issue terminal han
    head;
 3. canonical archived default-branch state, removal of the active Change as intended, and the preserved
    dated archive history;
-4. observed native Issue closure through the repository-approved final closing linkage;
+4. the persistent coordination Issue and its current open/closed state;
 5. every still-applicable required deferred follow-up tracker that was prepared before review; and
 6. the pre-merge cleanup/retention outcome for every explicitly prepared temporary correction/recovery
-   obligation, including Executor evidence for any safe deletion that had to occur before native close.
+   obligation, including Executor evidence for any safe deletion that had to occur before Archive merge.
 
 Discovery after PASS of a new required obligation, contradictory tracker state, materially changed
 cleanup/retention classification, or other preparation meaning that was not independently reviewed fails
 closed. Lead does not reinterpret such evidence as terminal completion.
 
-The normal path first observes the expected native Issue completion and requires the Issue to be observed
-closed. The observed closed state and the observed `closed` state are mandatory. If Issue closure is
-observed before the reviewed Archive PR merge, that closure is premature and must fail closed; it must not
-be treated as successful archive completion. A premature close must not be treated as successful under any
-completion-looking evidence.
+The normal terminal invariant is `open coordination Issue = formal workflow not yet terminal` and
+`closed coordination Issue = terminal history`. Archive merge alone therefore cannot make the workflow
+terminal. If the Issue is observed closed before a valid terminal `LIFECYCLE_COMPLETE` result exists, that
+closure is premature and must fail closed into the repository's bounded premature-close recovery contract;
+it must not be accepted as successful archive completion.
 
-When final conditions are satisfied and the shared substantive Human-input freshness/disposition check is
-clear for any newer activity that could affect terminal judgment, Lead persists one bounded
-`LIFECYCLE_COMPLETE` result that identifies the Archive PR exact head, merge commit, canonical archived
-default-branch state, observed native Issue closure, reconstructed required deferred follow-up tracker state,
-and reconstructed pre-merge temporary correction/recovery cleanup/retention outcome. Lead verifies the
-terminal invariant but does not replay an Executor-owned deletion after native close, and does not reopen or
-redundantly close the Issue when native closure is already present.
+When the reviewed Archive PR is merged, canonical archive state and prepared obligations are correct, the
+coordination Issue is open, and the shared substantive Human-input freshness/disposition check is clear,
+Lead first persists one bounded `LIFECYCLE_COMPLETE` result. That result identifies the Archive PR exact
+head, merge commit, canonical archived default-branch state, reconstructed required deferred follow-up
+tracker state, reconstructed pre-merge temporary correction/recovery cleanup/retention outcome, and states
+that terminal verification succeeded while the Issue was still open.
 
-Only when the reviewed Archive PR is merged, canonical archive state is correct, and native completion is
-missing may Lead use explicit Issue-close recovery. In that recovery-only path, Lead may perform the GitHub
-coordination Issue close mutation. This is the only path allowed to perform the GitHub coordination Issue
-close mutation, and Lead must re-observe `closed` before persisting `LIFECYCLE_COMPLETE`.
+Only after `LIFECYCLE_COMPLETE` is durable may Lead perform the GitHub coordination Issue close mutation.
+Lead then fresh-reads the same Issue and requires observed `closed` before declaring the workflow terminal.
+The close is the durable final lifecycle transition; a successful close without re-observation is an
+interrupted-finalization boundary, not permission to invent another completion result.
 
-If a recovery run is interrupted after archive completion but before the recovery close, the next Lead run
-reconstructs the completed archive and idempotently performs the missing close recovery only when native
-completion is still absent. Normal native-close finalization never performs that redundant close.
+Crash/interruption recovery is idempotent and reconstruction-based:
 
-If the run stops after archive merge/native close but before the bounded completion result, a later Lead
-run reconstructs the same terminal evidence and persists only the missing result. A valid existing
-`LIFECYCLE_COMPLETE` makes the closed tuple terminal history rather than eligible work.
+- Archive merged but `LIFECYCLE_COMPLETE` absent and Issue open → reconstruct terminal conditions, persist
+  the one missing completion result, then continue to close.
+- valid `LIFECYCLE_COMPLETE` already durable but Issue still open → do not rewrite the result; perform only
+  the missing close mutation, then re-observe `closed`.
+- valid `LIFECYCLE_COMPLETE` durable and Issue already closed → terminal history; do not reopen, rewrite the
+  result, or replay the close mutation.
+- Issue closed without valid `LIFECYCLE_COMPLETE` → premature-close contradiction; use only the shared
+  bounded recovery predicate and never treat the closed state itself as terminal success.
+
+If the close mutation succeeds and the invocation stops before re-observation, a later Lead run reconstructs
+the existing `LIFECYCLE_COMPLETE` plus current Issue state and performs only the missing observation/journal
+work. This action does not introduce terminal-pending happy-path state, a completion label, or hidden
+finalization registry.
 
 ## Durable messages
 
