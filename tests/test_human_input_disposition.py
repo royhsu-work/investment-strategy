@@ -77,7 +77,11 @@ def test_exact_comment_disposition_clears_only_that_late_human_input() -> None:
         relied_upon_at=_ts(2),
         comments=(
             _comment(id=102, minute=3, body="Does this implementation change the approved scope?"),
-            _comment(id=103, minute=4, body="Also clarify whether the test seam is production state."),
+            _comment(
+                id=103,
+                minute=4,
+                body="Also clarify whether the test seam is production state.",
+            ),
         ),
         dispositions=(
             HumanInputDisposition(
@@ -109,7 +113,11 @@ def test_material_human_input_blocks_reviewer_gate_and_post_pass_merge() -> None
         action="merge-pr",
         relied_upon_at=_ts(8),
         comments=(
-            _comment(id=202, minute=9, body="Please do not merge until this assumption is checked."),
+            _comment(
+                id=202,
+                minute=9,
+                body="Please do not merge until this assumption is checked.",
+            ),
         ),
     )
 
