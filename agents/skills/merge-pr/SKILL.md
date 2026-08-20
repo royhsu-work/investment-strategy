@@ -57,8 +57,7 @@ A PASS for an earlier head is insufficient. A current PASS never waives unchange
 linkage, lifecycle-preparation, cleanup, contradiction, or substantive-Human-input freshness checks. No
 separate Lead merge-authorization token is required on either normal implementation or final Archive paths.
 
-A closing linkage on an implementation, implementation-correction, or final Archive PR is a lifecycle-
-contract violation. Even when every other gate is current, do not merge that PR; persist the violation and
+A closing linkage on an implementation, implementation-correction, or final Archive PR is a lifecycle-contract violation. Even when every other gate is current, do not merge that PR; persist the violation and
 hand control to Lead for correction. Normal PRs in this lifecycle keep the persistent coordination Issue
 open until `Lead / finalize-archive` has durably recorded `LIFECYCLE_COMPLETE` and then closes it.
 
@@ -145,7 +144,7 @@ already consumed by terminal descendants:
 2. Require the Archive PR to be durably merged at the exact accepted revision and require the coordination
    Issue to remain open. If the Issue is already closed without valid terminal `LIFECYCLE_COMPLETE`, treat
    that as premature-close contradiction/recovery input rather than successful Archive merge completion.
-3. Replace the consumed routing tuple with exactly `agent:lead + action:finalize-archive` on the open Issue.
+3. replace the consumed routing tuple with exactly `agent:lead + action:finalize-archive` on the open Issue.
 4. Persist one bounded merge/handoff journal identifying the exact accepted head, merge result, observed
    open coordination Issue, and terminal Lead handoff.
 5. End the invocation. Executor MUST NOT execute Lead finalization in the same invocation.
