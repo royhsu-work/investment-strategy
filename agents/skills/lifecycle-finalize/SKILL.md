@@ -18,6 +18,12 @@ and applicable durable lifecycle evidence.
 
 Stale, missing, contradictory, or revision-mismatched gate evidence fails closed.
 
+Before either action persists a materially consequential lifecycle result or transfers ownership, consume
+the shared `agents/AGENTS.md` substantive Human-input freshness/disposition invariant. Newer material
+direct-Human input that could affect lifecycle judgment, preparation, scope, or terminal assumptions must
+have a reconstructable exact-comment disposition or be routed to the legal owner/Human boundary. This
+Skill does not redefine the shared classifier or expand Lead authority.
+
 ## `finalize-change`
 
 Normal implementation acceptance no longer enters this action before merge. Reviewer implementation `PASS`
@@ -73,10 +79,11 @@ existing durable Issue/PR/recovery/tracker evidence and classifications themselv
 acceptance token or hidden authorization record. Missing, contradictory, or materially ambiguous required
 preparation means the final Archive PR is not review-ready.
 
-Only after the final Archive PR and all applicable preparation evidence are current and reconstructable may
-Lead persist `ARCHIVE_PR_READY` and route to `Reviewer / review-archive`. Closing linkage identifies
-lifecycle completion intent but never substitutes for independent Reviewer PASS, Executor merge
-preconditions, native Issue close, or terminal `finalize-archive` reconstruction.
+Only after the final Archive PR and all applicable preparation evidence are current and reconstructable,
+and the shared substantive Human-input freshness/disposition check is clear, may Lead persist
+`ARCHIVE_PR_READY` and route to `Reviewer / review-archive`. Closing linkage identifies lifecycle completion
+intent but never substitutes for independent Reviewer PASS, Executor merge preconditions, native Issue
+close, or terminal `finalize-archive` reconstruction.
 
 Archive waiting begins only after merged default-branch state satisfies the existing README archive
 eligibility contract.
@@ -112,12 +119,13 @@ observed before the reviewed Archive PR merge, that closure is premature and mus
 be treated as successful archive completion. A premature close must not be treated as successful under any
 completion-looking evidence.
 
-When final conditions are satisfied, Lead persists one bounded `LIFECYCLE_COMPLETE` result that identifies
-the Archive PR exact head, merge commit, canonical archived default-branch state, observed native Issue
-closure, reconstructed required deferred follow-up tracker state, and reconstructed pre-merge temporary
-correction/recovery cleanup/retention outcome. Lead verifies the terminal invariant but does not replay an
-Executor-owned deletion after native close, and does not reopen or redundantly close the Issue when native
-closure is already present.
+When final conditions are satisfied and the shared substantive Human-input freshness/disposition check is
+clear for any newer activity that could affect terminal judgment, Lead persists one bounded
+`LIFECYCLE_COMPLETE` result that identifies the Archive PR exact head, merge commit, canonical archived
+default-branch state, observed native Issue closure, reconstructed required deferred follow-up tracker state,
+and reconstructed pre-merge temporary correction/recovery cleanup/retention outcome. Lead verifies the
+terminal invariant but does not replay an Executor-owned deletion after native close, and does not reopen or
+redundantly close the Issue when native closure is already present.
 
 Only when the reviewed Archive PR is merged, canonical archive state is correct, and native completion is
 missing may Lead use explicit Issue-close recovery. In that recovery-only path, Lead may perform the GitHub
