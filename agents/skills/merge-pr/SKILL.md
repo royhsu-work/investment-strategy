@@ -51,8 +51,7 @@ Execute a merge mutation only when all applicable conditions are simultaneously 
    grant Human authority.
 
 A PASS for an earlier head is insufficient. A current PASS never waives unchanged-head, current-check,
-linkage, lifecycle-preparation, cleanup, contradiction, or substantive-Human-input freshness checks. No
-separate Lead merge-authorization token is required on either normal implementation or final Archive paths.
+linkage, lifecycle-preparation, cleanup, contradiction, or substantive-Human-input freshness checks. No separate Lead merge-authorization token is required on either normal implementation or final Archive paths.
 
 A closing linkage on an implementation or implementation-correction PR is a lifecycle-contract violation.
 Even when every other gate is current, do not merge that PR; persist the violation and hand control to Lead
