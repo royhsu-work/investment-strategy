@@ -94,9 +94,21 @@ Legal target action depends on the gate/blocker being resolved:
 
 When the legal target is another Lead action on the same coordination Issue, perform the source `ACTION_RESULT`, fresh-read and replace the action routing, observe the target tuple, then reconstruct that target action using its mapped default-branch skill. If it is immediately actionable, continue in the same invocation under the shared fixed-role contract without `HANDOFF`. Cross-role targets still use canonical `HANDOFF` and end the invocation.
 
+Before returning after a same-role action transition, consume the shared Invocation Exit Proof invariant.
+Action completion or an action-label change alone is not Exit Proof. When the reconstructed target remains
+Lead-owned and immediately actionable and no shared legal Exit is positively proven, continue that target
+action in the same invocation. For a cross-role target, only the completed routing transfer and canonical
+handoff evidence support the normal cross-role Exit; do not copy the shared taxonomy into this Skill.
+
 ## Exact validation run observation
 
 When `propose-change` or a materially revised `resolve-question` has just caused a just-triggered exact required run for OpenSpec validation, the first observation of that run as `queued` or `in_progress` is not by itself a reason to yield. While bounded execution opportunity remains and no different authority boundary is required, observe only the same exact run using bounded same-invocation observation. If the same exact run becomes terminal, consume its terminal result and continue immediately with the current action's next legal step. If it remains nonterminal when bounded execution opportunity is exhausted, that is a real external asynchronous wait.
+
+Before returning from an exact-validation boundary, consume the shared Invocation Exit Proof invariant. A
+first absent/queued/in-progress observation is non-exit evidence while the exact run remains legally
+consumable in this invocation. Treat the run as a real asynchronous-wait Exit only when current evidence
+proves further same-invocation consumption is unavailable and preserve the exact run identity for later
+fresh reconstruction.
 
 A later wake does not trust the earlier nonterminal observation. It must fresh-read that exact run before deciding that waiting still applies. This specialization adds no timer, sleep policy, polling counter, heartbeat, retry counter, background service, or hidden waiter; the shared asynchronous-resource contract remains authoritative in `agents/AGENTS.md`.
 
