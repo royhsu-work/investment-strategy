@@ -104,9 +104,7 @@ def test_material_human_input_blocks_reviewer_gate_and_post_pass_merge() -> None
         role="Reviewer",
         action="review-implementation",
         relied_upon_at=_ts(5),
-        comments=(
-            _comment(id=201, minute=6, body="This traceability claim looks incomplete."),
-        ),
+        comments=(_comment(id=201, minute=6, body="This traceability claim looks incomplete."),),
     )
     merge = BoundaryFixture(
         role="Executor",
@@ -130,9 +128,7 @@ def test_explicit_non_blocking_disposition_does_not_create_lifecycle_state() -> 
         role="Reviewer",
         action="review-openspec",
         relied_upon_at=_ts(10),
-        comments=(
-            _comment(id=301, minute=11, body="Thanks, acknowledged."),
-        ),
+        comments=(_comment(id=301, minute=11, body="Thanks, acknowledged."),),
         dispositions=(
             HumanInputDisposition(
                 comment_id=301,
