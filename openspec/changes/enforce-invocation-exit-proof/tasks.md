@@ -9,10 +9,10 @@
 
 ## Slice 2 — Action-boundary consumers
 
-- [ ] **RED** — Add executable cases for first absent/queued/in-progress exact resource observation, genuine unconsumable async wait, immediately actionable Lead same-role successor, completed Reviewer cross-role handoff, stale/precondition loss, and hard unrecoverable execution boundary. Verify the intended RED is attributable to missing Exit classification/consumption rather than unrelated workflow behavior.
-- [ ] **GREEN** — Apply only the minimum mapped-Skill procedure changes needed so implementation/async, same-role continuation, and cross-role handoff boundaries consume the shared Exit Proof invariant without copying its taxonomy. Preserve #111 mechanical recovery ownership and #115 terminal semantics.
-- [ ] **REFACTOR** — Keep mapped Skills action-local and progressively disclosed; remove duplicated termination wording only where the shared contract is now authoritative and no action-specific meaning is lost.
-- [ ] **VERIFY** — Run focused Slice tests, full regression suite, Ruff lint/format checks, mypy, and strict OpenSpec validation; persist task completion only after the Slice is green.
+- [x] **RED** — Add executable cases for first absent/queued/in-progress exact resource observation, genuine unconsumable async wait, immediately actionable Lead same-role successor, completed Reviewer cross-role handoff, stale/precondition loss, and hard unrecoverable execution boundary. Verify the intended RED is attributable to missing Exit classification/consumption rather than unrelated workflow behavior.
+- [x] **GREEN** — Apply only the minimum mapped-Skill procedure changes needed so implementation/async, same-role continuation, and cross-role handoff boundaries consume the shared Exit Proof invariant without copying its taxonomy. Preserve #111 mechanical recovery ownership and #115 terminal semantics.
+- [x] **REFACTOR** — Keep mapped Skills action-local and progressively disclosed; remove duplicated termination wording only where the shared contract is now authoritative and no action-specific meaning is lost.
+- [x] **VERIFY** — Run focused Slice tests, full regression suite, Ruff lint/format checks, mypy, and strict OpenSpec validation; persist task completion only after the Slice is green.
 
 ## Slice 3 — Invocation Exit regression closure
 
