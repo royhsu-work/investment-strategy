@@ -50,7 +50,9 @@ def test_shared_merge_contract_consumes_reviewer_pass_without_lead_token() -> No
 
 def test_shared_linkage_contract_has_no_second_lead_merge_token() -> None:
     shared = _read("agents/AGENTS.md")
-    linkage = shared.split("## PR linkage lifecycle boundary", 1)[1].split("## Routing validity", 1)[0]
+    linkage = shared.split("## PR linkage lifecycle boundary", 1)[1].split(
+        "## Routing validity", 1
+    )[0]
     assert "Lead authorization" not in linkage
     assert "MERGE_AUTHORIZED" not in linkage
 
