@@ -15,10 +15,11 @@ The local Skill carries upstream Propose responsibility for creating the proposa
 - Persistent Change activation, single-active admission checks, and combined pre-activation queue handling.
 - `Lead / resolve-question` for Reviewer/specification findings and Human-reserved clarification.
 - Exact-revision validation readiness, non-closing PR linkage, and durable cross-role handoff evidence.
+- Consumption of the repository-owned substantive Human-input freshness/disposition invariant before consequential specification/readiness/resolution results and ownership transfers.
 
-Reason: OpenSpec authoring is embedded in a scheduled multi-role repository workflow with explicit Human/Lead authority and revision-bound gates.
+Reason: OpenSpec authoring is embedded in a scheduled multi-role repository workflow with explicit Human/Lead authority and revision-bound gates, and consequential handoffs must not silently skip newer material Human input.
 
-Maintenance implication: these additions are repository governance integrations; future upstream Propose changes must not erase them unless the owning repository contracts change.
+Maintenance implication: these additions are repository governance integrations; future upstream Propose changes must not erase them unless the owning repository contracts change. The shared Human-input classifier remains owned by `agents/AGENTS.md`.
 
 ## Deleted or omitted responsibilities
 
@@ -33,7 +34,8 @@ Maintenance implication: if upstream moves semantic checks into Propose, evaluat
 
 - Upstream Propose is constrained by repository admission, immutable Change identity, exact validation, and traceability/handoff contracts.
 - Proposal correction is decomposed: Lead authors/revises meaning; Reviewer independently re-gates material semantic changes.
+- Readiness/resolution completion additionally consumes shared current coordination-Issue Human-input freshness/disposition evidence without redefining provenance classification or Human authority.
 
-Reason: repository role separation and at-least-once execution require durable authority and revision boundaries beyond the upstream single-agent flow.
+Reason: repository role separation and at-least-once execution require durable authority, revision, and newer-material-input boundaries beyond the upstream single-agent flow.
 
-Maintenance implication: future upstream revisions must be compared responsibility-by-responsibility so role decomposition is preserved intentionally rather than appearing as drift.
+Maintenance implication: future upstream revisions must be compared responsibility-by-responsibility so role decomposition and shared consequential-boundary consumption are preserved intentionally rather than appearing as drift.

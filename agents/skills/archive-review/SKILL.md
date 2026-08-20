@@ -46,7 +46,12 @@ For the exact current Archive PR head R:
 6. Verify the applicable Lead preparation evidence is complete and consistent with the current Archive
    target and durable lifecycle state. Reviewer independently inspects the evidence but does not recreate
    Lead's lifecycle judgment or mutate trackers/branches.
-7. Record actionable findings for any material deviation; otherwise record PASS bound to R and the
+7. Immediately before finalizing the gate result, consume the shared `agents/AGENTS.md` substantive
+   Human-input freshness/disposition invariant. Newer material direct-Human input that can affect archive
+   correctness, lifecycle preparation, or gate validity must have a reconstructable exact-comment
+   disposition or be converted/routed through the existing legal finding path; this Skill does not
+   redefine the shared classifier or Human authority.
+8. Record actionable findings for any material deviation; otherwise record PASS bound to R and the
    reviewed preparation meaning.
 
 ## Legal results and handoff

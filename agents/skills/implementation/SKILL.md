@@ -114,6 +114,16 @@ OpenSpec meaning.
    failure using `EXECUTION_EXCEPTION` while a repository evidence surface is writable, state whether any
    durable mutation completed, and hand bounded unresolved diagnosis to `Lead / resolve-question`.
 
+## Consequential READY freshness
+
+Immediately before persisting implementation `READY` or transferring ownership to Reviewer, consume the
+shared `agents/AGENTS.md` substantive Human-input freshness/disposition invariant against the current
+coordination Issue. This action does not redefine the shared classifier. If newer material direct-Human
+input is already dispositioned within Executor authority, preserve that exact-comment evidence; if it
+requires specification/scope judgment, persist the existing blocker outcome and route to Lead. Do not emit
+`READY` from an older evidence snapshot while a newer relevant Human comment remains undispositioned or
+fail-closed for unavailable provenance.
+
 ## Implementation-review readiness
 
 Before `READY` and the handoff to `Reviewer / review-implementation`, Executor owns the PR Draft-to-Ready
