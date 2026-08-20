@@ -242,6 +242,17 @@ route it to `Lead / propose-change` with `Change: unset`, and continue under the
 contract without a second generic Human proceed confirmation. Propose still owns formal activation and the
 immutable Change identity. Untrusted Issue prose alone is not Human authority for a new commitment.
 
+For an Explore-originated `Lead / propose-change`, the exact durable Explore `ACTION_RESULT` that established
+`PROPOSAL_READY` on the same coordination Issue is the upstream semantic baseline for formalization. Lead MUST
+identify and dereference that exact result in proposal/readiness evidence and MUST preserve every still-applicable
+material decided scope, constraint, exclusion, and selected direction. Internal Proposal / Specs / Design / Tasks
+consistency does not authorize replacing or omitting that already-decided boundary.
+
+`Reviewer / review-openspec` MUST dereference that exact Explore result before its ordinary reverse-first and
+forward semantic gate and verify preservation of the already-decided boundary. Reviewer does not re-run Explore,
+reconstruct conversation history, or infer undocumented Human intent. A legally admitted direct-to-Propose
+workflow has no preceding Explore result and MUST NOT fabricate a synthetic Explore reference.
+
 A new product/project direction outside the bounded researched/canonical context, material externally
 observable behavior or scope trade-off not already authorized, explicit risk acceptance, materially
 different security/privacy/cost/operational commitment, contradictory or unrecoverable authority evidence,

@@ -16,10 +16,11 @@ The local Skill carries upstream Propose responsibility for creating the proposa
 - `Lead / resolve-question` for Reviewer/specification findings and Human-reserved clarification.
 - Exact-revision validation readiness, non-closing PR linkage, and durable cross-role handoff evidence.
 - Consumption of the repository-owned substantive Human-input freshness/disposition invariant before consequential specification/readiness/resolution results and ownership transfers.
+- For Explore-originated Propose, exact durable `PROPOSAL_READY` Explore-result provenance plus faithful preservation of its still-applicable material decided boundary; direct-to-Propose remains exempt from any synthetic Explore reference.
 
-Reason: OpenSpec authoring is embedded in a scheduled multi-role repository workflow with explicit Human/Lead authority and revision-bound gates, and consequential handoffs must not silently skip newer material Human input.
+Reason: OpenSpec authoring is embedded in a scheduled multi-role repository workflow with explicit Human/Lead authority and revision-bound gates, consequential handoffs must not silently skip newer material Human input, and an Explore-originated formalization must not silently reinterpret a decision-complete upstream result while remaining internally consistent.
 
-Maintenance implication: these additions are repository governance integrations; future upstream Propose changes must not erase them unless the owning repository contracts change. The shared Human-input classifier remains owned by `agents/AGENTS.md`.
+Maintenance implication: these additions are repository governance integrations; future upstream Propose changes must not erase them unless the owning repository contracts change. The shared Human-input classifier and Explore-to-Propose preservation invariant remain owned by `agents/AGENTS.md` / canonical workflow requirements rather than this provenance ledger.
 
 ## Deleted or omitted responsibilities
 
@@ -35,7 +36,8 @@ Maintenance implication: if upstream moves semantic checks into Propose, evaluat
 - Upstream Propose is constrained by repository admission, immutable Change identity, exact validation, and traceability/handoff contracts.
 - Proposal correction is decomposed: Lead authors/revises meaning; Reviewer independently re-gates material semantic changes.
 - Readiness/resolution completion additionally consumes shared current coordination-Issue Human-input freshness/disposition evidence without redefining provenance classification or Human authority.
+- Explore-originated Propose now treats the exact durable Explore `ACTION_RESULT` establishing `PROPOSAL_READY` as upstream semantic provenance that must be dereferenced and preserved; a materially different Human-reserved commitment returns through the governed decision path instead of being silently formalized.
 
-Reason: repository role separation and at-least-once execution require durable authority, revision, and newer-material-input boundaries beyond the upstream single-agent flow.
+Reason: repository role separation and at-least-once execution require durable authority, revision, newer-material-input, and pre-Propose semantic-boundary preservation beyond the upstream single-agent flow.
 
-Maintenance implication: future upstream revisions must be compared responsibility-by-responsibility so role decomposition and shared consequential-boundary consumption are preserved intentionally rather than appearing as drift.
+Maintenance implication: future upstream revisions must be compared responsibility-by-responsibility so role decomposition, shared consequential-boundary consumption, and Explore-result preservation are preserved intentionally rather than appearing as drift.
