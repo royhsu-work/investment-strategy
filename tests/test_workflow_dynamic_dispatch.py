@@ -143,26 +143,18 @@ def test_lifecycle_transitions_use_bounded_journal_without_per_mutation_logging(
 def test_archive_merge_keeps_issue_open_and_hands_to_terminal_lead() -> None:
     shared = _normalized(AGENTS)
     merge = _normalized(MERGE_PR)
-    for required in (
-        "final Archive PR", "non-closing", "`agent:lead + action:finalize-archive`", "Issue remains open", "merge/handoff journal", "MUST NOT execute Lead finalization in the same invocation",
-    ):
+    for required in ("final Archive PR", "non-closing", "`agent:lead + action:finalize-archive`", "Issue remains open", "merge/handoff journal", "MUST NOT execute Lead finalization in the same invocation"):
         assert required in shared
-    for required in (
-        "Archive PR to be durably merged", "coordination Issue to remain open", "replace the consumed routing tuple with exactly `agent:lead + action:finalize-archive`", "merge/handoff journal", "do not re-merge", "repair only the missing terminal routing and journal evidence",
-    ):
+    for required in ("Archive PR to be durably merged", "coordination Issue to remain open", "replace the consumed routing tuple with exactly `agent:lead + action:finalize-archive`", "merge/handoff journal", "do not re-merge", "repair only the missing terminal routing and journal evidence"):
         assert required in merge
 
 
 def test_lifecycle_complete_precedes_issue_close_and_closed_is_terminal_history() -> None:
     shared = _normalized(AGENTS)
     finalize = _normalized(LIFECYCLE_FINALIZE)
-    for required in (
-        "normal path therefore has no closed terminal-pending workflow", "LIFECYCLE_COMPLETE", "Issue close is missing", "observed closed Issue", "terminal history", "excluded from formal WIP",
-    ):
+    for required in ("Normal path therefore has no closed terminal-pending workflow", "LIFECYCLE_COMPLETE", "Issue close is missing", "observed closed Issue", "terminal history", "excluded from formal WIP"):
         assert required in shared
-    for required in (
-        "LIFECYCLE_COMPLETE", "Archive PR exact head", "merge commit", "Issue is open", "Only after `LIFECYCLE_COMPLETE` is durable", "requires observed `closed`",
-    ):
+    for required in ("LIFECYCLE_COMPLETE", "Archive PR exact head", "merge commit", "Issue is open", "Only after `LIFECYCLE_COMPLETE` is durable", "requires observed `closed`"):
         assert required in finalize
 
 
