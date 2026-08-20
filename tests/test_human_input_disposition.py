@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 
 from investment_strategy.human_authority import (
     DecisionComment,
@@ -10,6 +11,8 @@ from investment_strategy.human_authority import (
     HumanInputFreshnessResult,
     evaluate_human_input_freshness,
 )
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,19 @@ def _evaluate(fixture: BoundaryFixture) -> HumanInputFreshnessResult:
         relied_upon_at=fixture.relied_upon_at,
         dispositions=fixture.dispositions,
     )
+
+
+def _governance() -> str:
+    return (ROOT / "agents" / "AGENTS.md").read_text()
+
+
+def _human_input_section() -> str:
+    governance = _governance()
+    heading = "## Consequential-boundary substantive Human input freshness and disposition"
+    start = governance.index(heading)
+    rest = governance[start:]
+    next_heading = rest.find("\n## ", len(heading))
+    return rest if next_heading == -1 else rest[:next_heading]
 
 
 def test_material_direct_human_input_after_executor_snapshot_blocks_ready() -> None:
@@ -207,3 +223,32 @@ def test_non_human_actor_is_outside_direct_human_freshness_classifier() -> None:
     )
 
     assert _evaluate(fixture).clear
+
+
+def test_shared_governance_owns_consequential_human_input_freshness() -> None:
+    section = _human_input_section()
+
+    assert "fresh-read" in section
+    assert "consequential" in section
+    assert "exact comment id" in section
+    assert "correctness" in section
+    assert "traceability" in section
+    assert "gate validity" in section
+    assert "mutation assumptions" in section
+
+
+def test_direct_human_freshness_classifier_does_not_grant_human_authority() -> None:
+    section = _human_input_section()
+
+    assert "performed_via_github_app == null" in section
+    assert "does not grant Human authority" in section
+    assert "provenance-bound Human" in section
+
+
+def test_shared_contract_forbids_comment_processing_state() -> None:
+    section = _human_input_section()
+
+    assert "comment queue" in section
+    assert "unread" in section
+    assert "acknowledgement" in section
+    assert "MUST NOT" in section
