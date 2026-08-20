@@ -13,9 +13,13 @@ class Evidence:
     exact_resource_unconsumable: bool = False
     same_role_successor: bool = False
     cross_role_handoff_completed: bool = False
+    workflow_terminal: bool = False
+    human_authority_boundary: bool = False
     stale_precondition: bool = False
+    ambiguous_or_contradictory_state: bool = False
     hard_execution_boundary: bool = False
     same_authority_recovery_available: bool = False
+    attempted_return: bool = False
 
 
 def _read(path: str) -> str:
@@ -130,3 +134,16 @@ def test_hard_boundary_requires_unavailable_same_authority_recovery() -> None:
         == "CONTINUE"
     )
     assert _classify(Evidence(hard_execution_boundary=True)) == "HARD_BOUNDARY"
+
+
+def test_attempted_return_without_positive_exit_is_rejected() -> None:
+    assert _classify(Evidence(attempted_return=True)) == "RETURN_REJECTED"
+
+
+def test_terminal_and_human_exit_require_positive_evidence() -> None:
+    assert _classify(Evidence(workflow_terminal=True)) == "TERMINAL"
+    assert _classify(Evidence(human_authority_boundary=True)) == "HUMAN_BOUNDARY"
+
+
+def test_ambiguous_state_exit_requires_positive_evidence() -> None:
+    assert _classify(Evidence(ambiguous_or_contradictory_state=True)) == "AMBIGUOUS"
