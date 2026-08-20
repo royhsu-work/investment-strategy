@@ -486,15 +486,32 @@ This integrity contract uses existing Issues, provenance, review, Explore, and f
 
 ## Work-conserving selected-action execution
 
-Once an invocation selects a workflow Issue and fixed invocation role, execution is work-conserving. It MUST continue all immediately actionable work within the current action while routing, revision/preconditions, authority, and execution context remain current. A verified Slice checkpoint with more approved local work, a failed-but-actionable validation, a recoverable same-role failure, or another ordinary intermediate checkpoint is not a legal voluntary yield point.
+After a Scheduled Agent invocation selects one legal workflow Issue and fixed invocation role, continuation is the default. The selected action MUST continue all immediately actionable work while routing still matches the selected action, required revision/preconditions and authority remain current, and no legal blocking condition exists.
+
+Before the invocation returns, it MUST positively classify and prove from current evidence one legal Invocation Exit. If no legal Exit class is proven, the invocation MUST continue the selected workflow under the fixed invocation role while routing, authority, revision/preconditions, and execution capability remain current.
+
+A durable checkpoint, remaining approved local work, a recoverable same-role failure, a failed-but-actionable validation, or another ordinary intermediate checkpoint MUST NOT by itself be treated as a voluntary yield point. When the correction is inside the selected role/action authority and approved contract, the invocation performs that correction and continues instead of deferring it solely to a later wake.
+
+A selected action MAY end before its normal completion only when current evidence positively proves at least one bounded Invocation Exit class:
+
+- a completed cross-role handoff with the target routing durably observed, or a true workflow/action terminal result under the authoritative lifecycle topology;
+- a genuine Human-reserved authority boundary whose current contract prevents further same-invocation work;
+- a genuine external asynchronous wait that cannot be further consumed within the current legal execution opportunity and identifies the exact awaited resource/evidence;
+- stale routing, revision, concurrency, or precondition loss that makes continued execution unsafe;
+- materially ambiguous or contradictory durable state requiring fail-closed disposition; or
+- a hard tool, permission, runtime, or execution boundary after any applicable same-authority recovery/disposition procedure has been evaluated from current evidence and no legal local continuation remains.
+
+Exit Proof is an internal execution precondition. It MUST NOT require a new lifecycle action, workflow status, progress comment, timer, retry counter, heartbeat, lease, hidden runtime cursor, durable waiter state, or second workflow DAG. Existing action results, review results, handoffs, execution exceptions, exact-resource observations, and lifecycle journals remain the durable evidence surfaces.
+
+The following intermediate facts MUST NOT independently constitute Exit Proof: an intended RED is established; GREEN or REFACTOR completes; validation fails but correction is actionable within current authority; a commit or push completes; the first observation of an exact external resource is absent, queued, or in progress; a verified Slice checkpoint exists while approved same-action work remains; an action completes with an immediately actionable successor owned by the fixed invocation role; or the exact next legal step is already known and executable.
 
 After action A persists its result and legally mutates routing on the same coordination Issue, the invocation fresh-reads that Issue. If the target role equals the fixed invocation role and the target action is immediately actionable, the invocation MUST load the target action's mapped default-branch skill, reconstruct the target action from current Issue/PR/OpenSpec/Actions/default-branch state, re-evaluate the target action's own preconditions, and continue. The target action receives no inherited authority from action A; every unsafe mutation remains subject to its own current preconditions.
 
-Multiple same-role action transitions may continue while they stay on the same coordination Issue, target the fixed invocation role, and remain immediately actionable. A same-role action transition MUST NOT become a mechanism to process another workflow Issue or to redispatch globally.
+Multiple same-role action transitions may continue while they stay on the same coordination Issue, target the fixed invocation role, and remain immediately actionable. A same-role action transition MUST NOT become a mechanism to process another workflow Issue or to redispatch globally. A same-role action transition does not prove Invocation Exit merely because the action label changed.
 
-Legal termination or yield is limited to action completion with a cross-role transfer or terminal result, a boundary that requires Human authority, a real external asynchronous wait, genuine ambiguity or unsafe state, stale/concurrency loss, or an actual tool/hard-runtime interruption. A cross-role transition persists the required ownership handoff and ends the invocation. A same-role action transition does not end the invocation merely because the action label changed.
+A catchable tool/runtime/execution failure does not become a hard-boundary Exit merely because an exception occurred. If execution opportunity remains, the current role first preserves the required raw exception evidence and applies the existing action-specific recovery/disposition contract. When legal same-authority recovery is immediately actionable, it MUST recover and continue within the same selected role/action. Only when current evidence proves that applicable same-authority recovery/disposition cannot legally continue may the failure support a hard execution-boundary Exit. A genuinely uncatchable hard termination may prevent current-run persistence and is handled by later at-least-once reconstruction.
 
-Role and skill documents define only action-specific blockers, results, recovery details, and target actions. They MUST NOT introduce a competing generic continuation policy or weaken this shared termination rule.
+Role and skill documents define only action-specific blockers, results, recovery details, waits, and target actions. They MUST NOT duplicate the generic Invocation Exit taxonomy, introduce a competing continuation policy, or weaken this shared termination-by-proof rule.
 
 ## Handoff ordering and concurrency safety
 
