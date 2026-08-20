@@ -294,10 +294,7 @@ def test_archive_merge_keeps_issue_open_and_hands_to_terminal_lead() -> None:
     for required in (
         "Archive PR to be durably merged",
         "coordination Issue to remain open",
-        (
-            "replace the consumed routing tuple with exactly `agent:lead + "
-            "action:finalize-archive`"
-        ),
+        ("replace the consumed routing tuple with exactly `agent:lead + action:finalize-archive`"),
         "merge/handoff journal",
         "do not re-merge",
         "repair only the missing terminal routing and journal evidence",
