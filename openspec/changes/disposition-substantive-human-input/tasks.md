@@ -19,13 +19,13 @@
 
 ## Slice 3 — Cross-role and idempotent disposition semantics
 
-- [ ] 3.1 RED/GREEN: executable fixtures prove a specification/scope question encountered by Executor/Reviewer routes through the existing legal Lead/finding path rather than being answered outside authority, and a true Human-reserved decision remains subject to its existing exact-reference provenance-bound approval predicate. Trace: scenarios `Question belongs to another role authority` and `Human-reserved decision remains provenance-bound`; requirement `Scheduled execution is at-least-once and state reconstructable`; design D3/D4.
-- [ ] 3.2 RED/GREEN: executable fixture proves a prior durable exact-comment disposition is recognized on a repeated wake without duplicate acknowledgement while a newer unresolved material direct-Human comment remains actionable evidence. Trace: scenario `Repeated wake recognizes prior exact-comment disposition`; requirement `Scheduled execution is at-least-once and state reconstructable`; design D1/D6.
-- [ ] 3.3 REFACTOR: remove duplicated action-local wording that restates the shared classifier; retain only local consumption/outcome details necessary for each mapped action. Trace: design D2.
-- [ ] 3.4 VERIFY: run focused tests, `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy src tests`, and strict OpenSpec validation; resolve all failures before handoff. Trace: `openspec/config.yaml` tasks rules.
+- [x] 3.1 RED/GREEN: executable fixtures prove a specification/scope question encountered by Executor/Reviewer routes through the existing legal Lead/finding path rather than being answered outside authority, and a true Human-reserved decision remains subject to its existing exact-reference provenance-bound approval predicate. Trace: scenarios `Question belongs to another role authority` and `Human-reserved decision remains provenance-bound`; requirement `Scheduled execution is at-least-once and state reconstructable`; design D3/D4.
+- [x] 3.2 RED/GREEN: executable fixture proves a prior durable exact-comment disposition is recognized on a repeated wake without duplicate acknowledgement while a newer unresolved material direct-Human comment remains actionable evidence. Trace: scenario `Repeated wake recognizes prior exact-comment disposition`; requirement `Scheduled execution is at-least-once and state reconstructable`; design D1/D6.
+- [x] 3.3 REFACTOR: remove duplicated action-local wording that restates the shared classifier; retain only local consumption/outcome details necessary for each mapped action. Trace: design D2.
+- [x] 3.4 VERIFY: run focused tests, `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy src tests`, and strict OpenSpec validation; resolve all failures before handoff. Trace: `openspec/config.yaml` tasks rules.
 
 ## Completion gate
 
-- [ ] 4.1 Confirm proposal → spec → design → tasks forward trace declarations and tasks → design → spec → proposal reverse traceability are mechanically reconstructable for independent Reviewer inspection.
-- [ ] 4.2 Confirm no new Human authority, comment-processing lifecycle, hidden state, or unrelated #105/#83 scope was introduced.
-- [ ] 4.3 Obtain exact-revision strict OpenSpec validation evidence for the handoff revision before routing to `Reviewer / review-openspec`.
+- [x] 4.1 Confirm proposal → spec → design → tasks forward trace declarations and tasks → design → spec → proposal reverse traceability are mechanically reconstructable for independent Reviewer inspection.
+- [x] 4.2 Confirm no new Human authority, comment-processing lifecycle, hidden state, or unrelated #105/#83 scope was introduced.
+- [x] 4.3 Obtain exact-revision strict OpenSpec validation evidence for the handoff revision before routing to `Reviewer / review-openspec`.
