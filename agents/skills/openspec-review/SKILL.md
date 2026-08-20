@@ -68,16 +68,17 @@ that same target revision:
 5. Under `spec-driven`, independently verify the loaded semantic adapter contract. In particular: NEW capability deltas have exactly one non-empty canonicalization-ready `## Purpose`; ADDED identifiers are genuinely new; MODIFIED targets use the exact canonical header and preserve every still-applicable scenario/content in the complete future block; REMOVED targets exist and carry required rationale/migration treatment; RENAMED uses exact FROM/TO and rename-plus-behavior-change also carries a complete MODIFIED block under the new identifier. Missing, duplicate, ambiguous, unsupported, or baseline-mismatched semantics are findings even when strict validation passes.
 6. Confirm required strict OpenSpec validation evidence is mechanically current for the checkout used as evidence and proves validator `HEAD == validation target` before strict validation. Mechanical exact-revision validation does not by itself determine semantic target applicability.
 7. Reconstruct every approved decision that explicitly classifies work as a required deferred follow-up. Require a durable linked tracker that identifies the source coordination Issue/Change and exact defer decision/reference. Missing required tracker linkage is a finding. Ordinary out-of-scope, non-goal, optional future work, or work merely not selected now is not a tracking obligation and MUST NOT be promoted into one by Reviewer inference.
-8. Convert each material problem into an actionable finding that identifies the violated contract and supporting evidence.
-9. Confirm no task or implementation detail is being used as the sole source of normative governance that belongs upstream in proposal/spec/design.
-10. Confirm the approved Apply context is closed and reconstructable for Executor: proposal, applicable delta specs, design, tasks, canonical specs needed to interpret modified behavior, and materially applicable default-branch config context/rules. If required context is absent, contradictory, materially ambiguous, or unsupported by the represented baseline, the change cannot PASS to implementation.
+8. Immediately before finalizing `PASS` or `FINDINGS`, consume the shared `agents/AGENTS.md` substantive Human-input freshness/disposition invariant. Newer material direct-Human input that can affect scope, traceability, contract coherence, or gate validity must have a reconstructable exact-comment disposition or be converted/routed through the existing legal finding path. This Skill does not redefine the shared classifier or Human authority.
+9. Convert each material problem into an actionable finding that identifies the violated contract and supporting evidence.
+10. Confirm no task or implementation detail is being used as the sole source of normative governance that belongs upstream in proposal/spec/design.
+11. Confirm the approved Apply context is closed and reconstructable for Executor: proposal, applicable delta specs, design, tasks, canonical specs needed to interpret modified behavior, and materially applicable default-branch config context/rules. If required context is absent, contradictory, materially ambiguous, or unsupported by the represented baseline, the change cannot PASS to implementation.
 
 Reverse-first is an inspection order only. It does not replace bidirectional traceability; both directions must be complete before PASS.
 
 ## Legal results
 
 - `PASS` — all minimum semantic checks are satisfied for the exact reviewed revision, which is the exact
-  semantic target actually inspected.
+  semantic target actually inspected, and the consequential-boundary Human-input freshness check is clear.
 - `FINDINGS` — one or more actionable material findings exist.
 
 The result MUST identify the exact reviewed revision and semantic target. A later material semantic
