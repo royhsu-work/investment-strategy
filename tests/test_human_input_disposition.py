@@ -7,6 +7,7 @@ from investment_strategy.human_authority import (
     DecisionComment,
     HumanInputDisposition,
     HumanInputDispositionKind,
+    HumanInputFreshnessResult,
     evaluate_human_input_freshness,
 )
 
@@ -44,7 +45,7 @@ def _comment(
     )
 
 
-def _evaluate(fixture: BoundaryFixture):
+def _evaluate(fixture: BoundaryFixture) -> HumanInputFreshnessResult:
     return evaluate_human_input_freshness(
         comments=fixture.comments,
         relied_upon_at=fixture.relied_upon_at,
