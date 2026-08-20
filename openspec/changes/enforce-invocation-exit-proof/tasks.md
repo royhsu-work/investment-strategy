@@ -2,10 +2,10 @@
 
 ## Slice 1 — Shared positive Exit Proof contract
 
-- [ ] **RED** — Add focused executable regression cases proving that an invocation with no positively proven legal Exit must continue, including RED→GREEN, failed-but-actionable validation, and a verified Slice with remaining approved same-action work. Run the focused tests and verify the failures are caused by the missing positive Exit Proof behavior rather than fixture/setup/import errors.
-- [ ] **GREEN** — Implement the minimum shared `agents/AGENTS.md` continuation-by-default / termination-by-proof contract and deterministic bounded test seam needed to satisfy the approved requirement. Keep Exit Proof internal and reuse existing durable evidence surfaces.
-- [ ] **REFACTOR** — Remove or consolidate only directly redundant local wording when the shared owner makes it unnecessary; do not move workflow topology, recovery algorithms, or role authority into the Exit contract.
-- [ ] **VERIFY** — Run the focused Slice tests, full regression suite, Ruff lint/format checks, mypy, and strict OpenSpec validation; persist task completion only after the Slice is green.
+- [x] **RED** — Add focused executable regression cases proving that an invocation with no positively proven legal Exit must continue, including RED→GREEN, failed-but-actionable validation, and a verified Slice with remaining approved same-action work. Run the focused tests and verify the failures are caused by the missing positive Exit Proof behavior rather than fixture/setup/import errors.
+- [x] **GREEN** — Implement the minimum shared `agents/AGENTS.md` continuation-by-default / termination-by-proof contract and deterministic bounded test seam needed to satisfy the approved requirement. Keep Exit Proof internal and reuse existing durable evidence surfaces.
+- [x] **REFACTOR** — Remove or consolidate only directly redundant local wording when the shared owner makes it unnecessary; do not move workflow topology, recovery algorithms, or role authority into the Exit contract.
+- [x] **VERIFY** — Run the focused Slice tests, full regression suite, Ruff lint/format checks, mypy, and strict OpenSpec validation; persist task completion only after the Slice is green.
 
 ## Slice 2 — Action-boundary consumers
 
