@@ -76,9 +76,7 @@ def _priority(text: str) -> dict[str, tuple[str, ...]]:
     assert match is not None
     return {
         role: tuple(value.split(" > "))
-        for role, value in zip(
-            ("Lead", "Reviewer", "Executor"), match.groups(), strict=True
-        )
+        for role, value in zip(("Lead", "Reviewer", "Executor"), match.groups(), strict=True)
     }
 
 
