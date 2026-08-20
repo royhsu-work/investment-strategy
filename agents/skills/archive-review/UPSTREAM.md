@@ -15,10 +15,11 @@ The local Skill carries independent verification of the final Archive PR and the
 - Exact-current-head Archive PR review with revision-bound PASS/findings.
 - Independent validation of Lead preparation evidence, canonical spec preservation, active-change removal, and unrelated-change absence.
 - Explicit handoff to Executor merge or Lead correction owners.
+- Consumption of the repository-owned substantive Human-input freshness/disposition invariant before finalizing the Archive gate.
 
-Reason: repository separation of duties requires Archive acceptance to be independent from both lifecycle preparation and merge mutation.
+Reason: repository separation of duties requires Archive acceptance to be independent from both lifecycle preparation and merge mutation, while the gate must not silently ignore newer material Human input that changes archive correctness or lifecycle assumptions.
 
-Maintenance implication: preserve the Reviewer gate when adopting future upstream Archive checks; upstream checks may enrich this gate but do not transfer artifact mutation authority.
+Maintenance implication: preserve the Reviewer gate and its consequential-boundary consumption when adopting future upstream Archive checks; upstream checks may enrich this gate but do not transfer artifact mutation authority. The classifier remains owned by shared governance.
 
 ## Deleted or omitted responsibilities
 
@@ -35,7 +36,8 @@ Maintenance implication: future upstream archive-and-verify behavior must be map
 
 - Archive verification is an exact-head independent gate over an already prepared final Archive PR rather than part of the archive mutation itself.
 - PASS is bound both to revision and materially reviewed preparation meaning.
+- Gate completion additionally consumes shared current coordination-Issue Human-input freshness/disposition evidence without redefining Human authority.
 
-Reason: at-least-once execution and lifecycle side effects require stale-review and changed-preparation protection.
+Reason: at-least-once execution and lifecycle side effects require stale-review, changed-preparation, and newer-material-input protection.
 
-Maintenance implication: evaluate upstream verification changes against the repository's revision/preparation binding when refreshing this ledger.
+Maintenance implication: evaluate upstream verification changes against the repository's revision/preparation binding and shared consequential-boundary invariant when refreshing this ledger.
