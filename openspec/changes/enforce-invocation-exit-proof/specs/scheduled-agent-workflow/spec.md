@@ -1,22 +1,64 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
-### Requirement: Invocation exit requires positive proof
+### Requirement: Selected Scheduled Agent actions are work-conserving within an invocation
 
-After a Scheduled Agent invocation selects a legal workflow/action, continuation SHALL be the default. Before the invocation returns, it MUST positively classify and prove from current evidence one legal Invocation Exit. If no legal Exit class is proven, the invocation MUST continue the selected workflow under the fixed invocation role while routing, authority, revision/preconditions, and execution capability remain current.
+After a Scheduled Agent invocation selects one legal role/action, continuation SHALL be the default and that selected action SHALL continue all immediately actionable work within the same invocation while the routing still matches the selected action, required revision/preconditions and authority remain current, and no legal blocking condition exists.
 
-Legal Invocation Exit classes SHALL be limited to:
+Before the invocation returns, it MUST positively classify and prove from current evidence one legal Invocation Exit. If no legal Exit class is proven, the invocation MUST continue the selected workflow under the fixed invocation role while routing, authority, revision/preconditions, and execution capability remain current.
 
-- a completed cross-role handoff with the target routing durably observed;
-- a true workflow/action terminal result under the authoritative lifecycle topology;
+A durable checkpoint, remaining approved local work, a recoverable same-role failure, or a failed-but-actionable validation MUST NOT by itself be treated as a voluntary yield point. When the correction is within the selected role/action authority and approved contract, the invocation SHALL perform that correction and continue the action instead of deferring it solely to a later wake.
+
+A selected action MAY end before its normal completion only when current evidence positively proves at least one of these bounded Invocation Exit classes:
+
+- a completed cross-role handoff with the target routing durably observed, or a true workflow/action terminal result under the authoritative lifecycle topology;
 - a genuine Human-reserved authority boundary whose current contract prevents further same-invocation work;
 - a genuine external asynchronous wait that cannot be further consumed within the current legal execution opportunity and identifies the exact awaited resource/evidence;
 - stale routing, revision, concurrency, or precondition loss that makes continued execution unsafe;
 - materially ambiguous or contradictory durable state requiring fail-closed disposition; or
-- a hard tool, permission, or runtime boundary after applicable same-authority recovery is unavailable or cannot legally proceed from current evidence.
+- a hard tool, permission, runtime, or execution boundary after any applicable same-authority recovery/disposition procedure has been evaluated from current evidence and no legal local continuation remains.
 
 Exit Proof SHALL be an internal execution precondition and MUST NOT require a new lifecycle action, workflow status, progress comment, timer, retry counter, heartbeat, lease, hidden runtime cursor, durable waiter state, or second workflow DAG. Existing action results, review results, handoffs, execution exceptions, exact-resource observations, and lifecycle journals remain the durable evidence surfaces.
 
 The following intermediate facts MUST NOT independently constitute Exit Proof: an intended RED is established; GREEN or REFACTOR completes; validation fails but correction is actionable within current authority; a commit or push completes; the first observation of an exact external resource is absent, queued, or in progress; a verified Slice checkpoint exists while approved same-action work remains; an action completes with an immediately actionable successor owned by the fixed invocation role; or the exact next legal step is already known and executable.
+
+A catchable tool/runtime/execution failure does not by itself waive exception capture or invocation finalization and does not become a hard-boundary Exit merely because an exception occurred. If the invocation still has execution opportunity, it MUST first preserve the required raw exception evidence, then apply the existing action-specific recovery/disposition contract. When legal same-authority recovery is immediately actionable, it MUST recover and continue within the same selected role/action. Only when current evidence proves that applicable same-authority recovery/disposition cannot legally continue may the failure support a hard execution-boundary Exit. A genuinely uncatchable hard termination MAY prevent current-run persistence and is handled by later at-least-once reconstruction.
+
+The generic continuation/termination, catchable-exception, and normal-finalization contracts SHALL be owned once by shared governance in `agents/AGENTS.md`. Role and skill documents MUST NOT duplicate or weaken these shared rules; they MAY define only action-specific results, authority boundaries, waits, local recovery, blockers, and handoffs.
+
+#### Scenario: Failed validation is locally actionable
+
+- GIVEN a selected action still owns the current routing
+- AND its validation fails for a clear correction inside that same action's approved authority
+- AND the execution revision/preconditions remain current
+- WHEN the invocation evaluates whether to stop
+- THEN the validation failure is not a voluntary yield point
+- AND the invocation corrects the failure and reruns the required validation in the same invocation
+
+#### Scenario: Verified implementation checkpoint has more approved work
+
+- GIVEN Executor is selected for `implement-change`
+- AND one approved Slice reaches successful VERIFY and its required checkpoint is persisted
+- AND another approved Slice is immediately actionable under the same current routing and approved contract
+- WHEN Executor completes the checkpoint boundary
+- THEN the checkpoint is a durable recovery boundary rather than a scheduled-run termination boundary
+- AND Executor continues the next approved Slice in the same invocation
+
+#### Scenario: External asynchronous evidence is genuinely pending
+
+- GIVEN Lead is selected for a finalize action
+- AND the action has completed all immediately actionable Lead work
+- AND legal continuation depends on repository automation that is still running and whose exact result is not yet available
+- AND current evidence proves that exact resource cannot be further consumed within the current legal execution opportunity
+- WHEN Lead evaluates continuation
+- THEN retaining the current routing and ending the invocation is a legal external-wait outcome
+- AND the Exit Proof identifies the exact awaited resource/evidence for later reconstruction
+
+#### Scenario: Competing durable state invalidates the execution base
+
+- GIVEN an invocation selected a role/action from durable revision R
+- AND another run wins a competing durable mutation so the required base/preconditions are no longer current
+- WHEN the first invocation rechecks its preconditions
+- THEN it stops as stale rather than rebasing or continuing speculative work inside the same invocation
 
 #### Scenario: RED with immediately actionable GREEN cannot exit
 
@@ -46,7 +88,7 @@ The following intermediate facts MUST NOT independently constitute Exit Proof: a
 #### Scenario: Genuine unconsumable external wait may exit
 
 - GIVEN an exact required external resource remains nonterminal
-- AND the current legal execution opportunity cannot further consume it without inventing waiter state or crossing an authority boundary
+- AND current evidence proves the current legal execution opportunity cannot further consume it without inventing waiter state or crossing an authority boundary
 - WHEN the invocation evaluates Exit Proof
 - THEN it MAY classify a genuine external asynchronous wait
 - AND the Exit Proof identifies the exact awaited resource/evidence for later reconstruction
@@ -79,9 +121,9 @@ The following intermediate facts MUST NOT independently constitute Exit Proof: a
 
 #### Scenario: Hard execution boundary may exit only after legal local recovery is unavailable
 
-- GIVEN a tool, permission, or runtime failure prevents the next required mutation
-- AND any applicable same-authority recovery procedure has been evaluated from current evidence
-- AND no legal local recovery can proceed without weakening a gate or crossing role authority
+- GIVEN a tool, permission, runtime, or execution failure prevents the next required operation
+- AND any applicable same-authority recovery/disposition procedure has been evaluated from current evidence
+- AND no legal local continuation can proceed without weakening a gate or crossing role authority
 - WHEN the invocation evaluates Exit Proof
 - THEN the hard execution boundary is a legal Exit
 - AND the invocation preserves the existing exception/disposition evidence rather than inventing new workflow state
