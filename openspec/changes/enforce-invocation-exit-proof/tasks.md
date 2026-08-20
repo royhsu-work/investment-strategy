@@ -16,13 +16,13 @@
 
 ## Slice 3 — Invocation Exit regression closure
 
-- [ ] **RED** — Add/complete an executable case proving an attempted invocation return is rejected when none of the bounded legal Exit classes is proven, while each accepted representative Exit class requires its positive evidence.
-- [ ] **GREEN** — Complete the minimum deterministic regression fixture/classification behavior needed to cover the approved legal and non-exit cases without adding production dispatcher state or a second workflow engine.
-- [ ] **REFACTOR** — Ensure tests encode behavior rather than Markdown substring presence where behavioral enforcement is required; retain lightweight structural checks only for genuine ownership/integration assertions.
-- [ ] **VERIFY** — Run the focused Slice tests, full regression suite, Ruff lint/format checks, mypy, and strict OpenSpec validation.
+- [x] **RED** — Add/complete an executable case proving an attempted invocation return is rejected when none of the bounded legal Exit classes is proven, while each accepted representative Exit class requires its positive evidence.
+- [x] **GREEN** — Complete the minimum deterministic regression fixture/classification behavior needed to cover the approved legal and non-exit cases without adding production dispatcher state or a second workflow engine.
+- [x] **REFACTOR** — Ensure tests encode behavior rather than Markdown substring presence where behavioral enforcement is required; retain lightweight structural checks only for genuine ownership/integration assertions.
+- [x] **VERIFY** — Run the focused Slice tests, full regression suite, Ruff lint/format checks, mypy, and strict OpenSpec validation.
 
 ## Completion
 
-- [ ] Confirm every material behavior in `issuecomment-5360318078` is represented by proposal, capability requirement/scenarios, design, and executable tasks without redefining #111, #115, or #80 ownership.
-- [ ] Confirm no new workflow action/status, timer/counter, heartbeat, lease, durable waiter, hidden cursor, central dispatcher engine, or second DAG was introduced.
-- [ ] Run final Python Quality and exact-revision strict OpenSpec validation for the implementation head before `READY`.
+- [x] Confirm every material behavior in `issuecomment-5360318078` is represented by proposal, capability requirement/scenarios, design, and executable tasks without redefining #111, #115, or #80 ownership.
+- [x] Confirm no new workflow action/status, timer/counter, heartbeat, lease, durable waiter, hidden cursor, central dispatcher engine, or second DAG was introduced.
+- [x] Run final Python Quality and exact-revision strict OpenSpec validation for the implementation head before `READY`.
