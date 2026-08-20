@@ -15,10 +15,11 @@ For the Archive path, this local Skill carries only the final accepted PR merge 
 - Exact-head Reviewer PASS/current-check/linkage reconstruction before any merge mutation.
 - Shared implementation/Archive PR merge operation with target-specific preconditions.
 - Crash-safe merge recovery, causal-descendant consumption guards, and reviewed pre-close temporary-branch cleanup.
+- Consumption of the repository-owned substantive Human-input freshness/disposition invariant immediately before unsafe merge mutation.
 
-Reason: repository merge mutation is isolated under Executor and must be safely reconstructable across interrupted scheduled runs.
+Reason: repository merge mutation is isolated under Executor, must be safely reconstructable across interrupted scheduled runs, and must not consume an older accepted snapshot while newer material Human input changes the mutation assumptions.
 
-Maintenance implication: preserve exact acceptance and recovery safeguards when upstream Archive changes; implementation-merge composition remains repository-owned and must be assessed separately from upstream Archive semantics.
+Maintenance implication: preserve exact acceptance, recovery, and consequential-boundary safeguards when upstream Archive changes; implementation-merge composition remains repository-owned and must be assessed separately from upstream Archive semantics. The shared Human-input classifier remains owned by `agents/AGENTS.md`.
 
 ## Deleted or omitted responsibilities
 
@@ -34,7 +35,8 @@ Maintenance implication: future upstream Archive behavior that combines mutation
 
 - Upstream archive completion is represented here only as merging an already prepared and independently accepted exact Archive PR revision.
 - Completion after merge becomes a durable handoff/native-close reconstruction boundary rather than final lifecycle judgment by the merger.
+- Merge preconditions additionally consume shared current coordination-Issue Human-input freshness/disposition evidence without defining a new approval or Human-authority token.
 
-Reason: repository lifecycle uses PR review, native closing linkage, and Lead terminal reconstruction as separate safety boundaries.
+Reason: repository lifecycle uses PR review, native closing linkage, Lead terminal reconstruction, and fresh contradictory-evidence checks as separate safety boundaries.
 
 Maintenance implication: compare future upstream completion semantics against all Archive owners (`lifecycle-finalize`, `archive-review`, `merge-pr`, automation), not this Skill alone.
