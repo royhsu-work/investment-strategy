@@ -62,6 +62,13 @@ non-closing coordination linkage, contradictory evidence, and the shared substan
 precondition immediately before merge. A later PR head does not inherit the prior result; contradictory
 current evidence fails closed.
 
+Before returning after a review result, consume the shared Invocation Exit Proof invariant rather than
+creating an action-local termination rule. A review result alone is not sufficient Exit Proof. When the
+result requires another role, persist the result, fresh-read and mutate routing, observe the target routing,
+and persist the canonical `HANDOFF`; only that completed cross-role ownership transfer satisfies this
+action's normal exit boundary. If routing becomes stale or contradictory before transfer completes, use
+the shared fail-closed semantics instead of treating the intended handoff as completed evidence.
+
 ## Durable messages
 
 Use `agents/templates/messages.md` for recurring durable presentation only when that presentation contract
