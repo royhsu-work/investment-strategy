@@ -19,6 +19,14 @@ Unrelated Issue labels MUST be preserved during routing changes.
 - WHEN Reviewer discovers eligible work
 - THEN the Issue is eligible for the Reviewer `review-openspec` action
 
+#### Scenario: Closed terminal-pending Issue has the one legal exception
+
+- GIVEN a coordination Issue is closed
+- AND valid `LIFECYCLE_COMPLETE` evidence for final terminal conditions is absent
+- WHEN scheduled work discovery evaluates routing eligibility
+- THEN the Issue is not eligible as a normal closed terminal-pending happy-path workflow
+- AND only the bounded premature-close recovery or fail-closed contract may apply
+
 #### Scenario: Closed completed Issue is terminal history
 
 - GIVEN a coordination Issue is closed
@@ -27,14 +35,6 @@ Unrelated Issue labels MUST be preserved during routing changes.
 - WHEN scheduled work discovery evaluates routing eligibility
 - THEN the Issue is terminal history
 - AND it does not consume formal WIP or require terminal-pending routing
-
-#### Scenario: Closed unfinished Issue is not normal actionable work
-
-- GIVEN a coordination Issue is closed
-- AND valid terminal completion cannot be reconstructed
-- WHEN scheduled work discovery evaluates it
-- THEN the Issue is not treated as normal actionable closed workflow work
-- AND only the bounded premature-close recovery/fail-closed contract may apply
 
 #### Scenario: Coordination Issue has conflicting role labels
 
@@ -135,6 +135,15 @@ The repository specification SHALL define the minimum checks and legal result ca
 - AND no normal Lead `MERGE_AUTHORIZED` action or replacement authorization token is required between archive review and merge
 - AND Executor still fresh-reads all Archive merge and cleanup preconditions before mutation
 
+#### Scenario: Human asks material question before implementation review PASS
+
+- GIVEN Executor has handed an implementation PR to `Reviewer / review-implementation`
+- AND a newer direct-Human coordination-Issue comment asks a question that may affect approved scope or traceability correctness
+- AND that exact comment has no durable disposition
+- WHEN Reviewer evaluates PASS for the current implementation head
+- THEN Reviewer MUST NOT record PASS while silently ignoring the comment
+- AND Reviewer dispositions it through the legal review finding, bounded answer, or owner-routing path before the gate can complete
+
 #### Scenario: Finalize archive closes only after durable completion
 
 - GIVEN the exact reviewed Archive revision has been merged
@@ -144,15 +153,6 @@ The repository specification SHALL define the minimum checks and legal result ca
 - THEN Lead persists `LIFECYCLE_COMPLETE` first
 - AND closes the Issue only after that evidence is durable
 - AND re-observes `closed` before declaring workflow terminal
-
-#### Scenario: Human asks material question before implementation review PASS
-
-- GIVEN Executor has handed an implementation PR to `Reviewer / review-implementation`
-- AND a newer direct-Human coordination-Issue comment asks a question that may affect approved scope or traceability correctness
-- AND that exact comment has no durable disposition
-- WHEN Reviewer evaluates PASS for the current implementation head
-- THEN Reviewer MUST NOT record PASS while silently ignoring the comment
-- AND Reviewer dispositions it through the legal review finding, bounded answer, or owner-routing path before the gate can complete
 
 ### Requirement: Executor merges only an explicitly authorized unchanged revision
 
@@ -189,6 +189,14 @@ For the final Archive PR, Executor SHALL verify before merge that the PR establi
 - WHEN Executor evaluates `merge-pr`
 - THEN Executor does not merge
 - AND the closing linkage is treated as a lifecycle-contract violation requiring correction
+
+#### Scenario: Archive PR has the approved closing linkage
+
+- GIVEN an Archive PR is otherwise eligible for merge
+- AND the Archive PR establishes GitHub Issue-closing linkage to its persistent coordination Issue
+- WHEN Executor evaluates `merge-pr`
+- THEN Executor does not merge
+- AND the closing linkage is treated as a lifecycle-contract violation requiring correction to the approved non-closing reference
 
 #### Scenario: Archive PR has the approved non-closing linkage
 
@@ -279,6 +287,13 @@ The normal validated `agent/archive-<change>` branch is a lifecycle artifact and
 - THEN the state is not treated as successful branch readiness
 - AND Lead follows the repository-defined fail-closed diagnosis/recovery boundary
 
+#### Scenario: Archive PR closing linkage remains non-authorizing
+
+- GIVEN a final Archive PR establishes legacy Issue-closing linkage
+- WHEN later lifecycle gates evaluate that PR
+- THEN the linkage does not authorize merge or terminal completion
+- AND under the current contract it must be corrected to the approved non-closing reference before merge
+
 #### Scenario: Archive PR linkage remains non-authorizing
 
 - GIVEN Lead creates or reuses the final Archive PR with approved non-closing linkage
@@ -296,6 +311,31 @@ After Archive merge, Lead `finalize-archive` SHALL reconstruct the exact reviewe
 If `LIFECYCLE_COMPLETE` is durable but the Issue close mutation or re-observation is missing, a later Lead run SHALL reconstruct the same terminal evidence and idempotently complete/re-observe the close. If the Issue is observed closed before valid `LIFECYCLE_COMPLETE` and terminal conditions, the lifecycle SHALL fail closed as premature completion and MAY use only the bounded shared premature-close recovery contract when its predicates prove one unambiguous unfinished candidate.
 
 A closed Issue with valid `LIFECYCLE_COMPLETE` and observed close is terminal history and SHALL NOT consume normal formal-workflow cardinality.
+
+#### Scenario: Authorized Archive PR merge completes the Issue natively
+
+- GIVEN an authorized final Archive PR uses the repository-approved non-closing coordination-Issue reference
+- WHEN GitHub merges that Archive PR
+- THEN the coordination Issue remains open
+- AND native Issue completion at Archive merge is no longer the normal lifecycle behavior
+- AND routing continues to `Lead / finalize-archive`
+
+#### Scenario: Archive state is correct but native completion is missing
+
+- GIVEN the authorized Archive PR is merged
+- AND canonical archived default-branch state satisfies final lifecycle conditions
+- AND the coordination Issue remains open
+- WHEN Lead runs `finalize-archive`
+- THEN the open Issue is normal terminal-verification input rather than a missing native-close error
+- AND Lead persists `LIFECYCLE_COMPLETE`, closes the coordination Issue, and re-observes `closed`
+
+#### Scenario: Coordination Issue closes during implementation merge
+
+- GIVEN the final Archive lifecycle has not reached valid `LIFECYCLE_COMPLETE`
+- AND the coordination Issue becomes closed because an implementation PR established closing linkage
+- WHEN a scheduled role reconstructs lifecycle state
+- THEN the closed Issue is treated as premature illegal lifecycle state rather than successful completion
+- AND normal archive completion is not inferred from the premature closure
 
 #### Scenario: Archive merge leaves the Issue open for finalization
 
