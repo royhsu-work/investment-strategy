@@ -330,15 +330,17 @@ def test_selected_workflow_is_work_conserving_until_a_legal_termination_boundary
     implementation = _normalized(IMPLEMENTATION)
     for required in (
         "work-conserving",
+        "continuation is the default",
         "all immediately actionable work",
-        "current action",
+        "positively classify and prove",
+        "If no legal Exit class is proven",
         "failed-but-actionable validation",
         "verified Slice checkpoint",
-        "not a legal voluntary yield point",
+        "Invocation Exit",
         "target role equals the fixed invocation role",
         "reconstruct the target action",
-        "real external asynchronous wait",
-        "stale/concurrency loss",
+        "genuine external asynchronous wait",
+        "stale routing, revision, concurrency, or precondition loss",
         "cross-role",
     ):
         assert required in shared
