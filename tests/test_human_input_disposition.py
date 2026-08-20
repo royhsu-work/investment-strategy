@@ -9,7 +9,9 @@ from investment_strategy.human_authority import (
     HumanInputDisposition,
     HumanInputDispositionKind,
     HumanInputFreshnessResult,
+    LabelEvent,
     evaluate_human_input_freshness,
+    is_human_decision_approved,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -223,6 +225,116 @@ def test_non_human_actor_is_outside_direct_human_freshness_classifier() -> None:
     )
 
     assert _evaluate(fixture).clear
+
+
+def test_cross_role_scope_question_requires_explicit_lead_escalation_disposition() -> None:
+    question = _comment(
+        id=701,
+        minute=19,
+        body="Does this change the approved specification boundary?",
+    )
+    blocked = BoundaryFixture(
+        role="Executor",
+        action="implement-change",
+        relied_upon_at=_ts(18),
+        comments=(question,),
+    )
+    escalated = BoundaryFixture(
+        role="Executor",
+        action="implement-change",
+        relied_upon_at=_ts(18),
+        comments=(question,),
+        dispositions=(
+            HumanInputDisposition(
+                comment_id=701,
+                kind=HumanInputDispositionKind.ESCALATED,
+                rationale="Specification/scope judgment belongs to Lead / resolve-question.",
+            ),
+        ),
+    )
+
+    assert _evaluate(blocked).blocking_comment_ids == (701,)
+    result = _evaluate(escalated)
+    assert result.clear
+    assert result.dispositioned_comment_ids == (701,)
+
+
+def test_human_reserved_decision_still_requires_provenance_bound_approval() -> None:
+    decision = _comment(
+        id=801,
+        minute=21,
+        body="Human-Decision-For: issue:107:admission:lead:propose-change\nProceed.",
+    )
+    freshness = BoundaryFixture(
+        role="Lead",
+        action="propose-change",
+        relied_upon_at=_ts(20),
+        comments=(decision,),
+        dispositions=(
+            HumanInputDisposition(
+                comment_id=801,
+                kind=HumanInputDispositionKind.ANSWERED,
+                rationale="Comment was observed and dispositioned for freshness only.",
+            ),
+        ),
+    )
+
+    assert _evaluate(freshness).clear
+    assert not is_human_decision_approved(
+        expected_ref="issue:107:admission:lead:propose-change",
+        approval_label_present=True,
+        comments=(decision,),
+        label_events=(),
+    )
+
+    approval_event = LabelEvent(
+        id=802,
+        created_at=_ts(22),
+        actor="royhsu-work",
+        label="human:approved",
+        provenance_available=True,
+        performed_via_github_app=None,
+    )
+    assert is_human_decision_approved(
+        expected_ref="issue:107:admission:lead:propose-change",
+        approval_label_present=True,
+        comments=(decision,),
+        label_events=(approval_event,),
+    )
+
+
+def test_repeated_wake_reuses_exact_disposition_but_newer_comment_remains_actionable() -> None:
+    first = _comment(id=901, minute=24, body="Please verify the traceability mapping.")
+    newer = _comment(id=902, minute=25, body="Also verify the replacement responsibility.")
+    disposition = HumanInputDisposition(
+        comment_id=901,
+        kind=HumanInputDispositionKind.ANSWERED,
+        rationale="Traceability mapping was verified against the approved artifacts.",
+    )
+
+    first_wake = BoundaryFixture(
+        role="Reviewer",
+        action="review-implementation",
+        relied_upon_at=_ts(23),
+        comments=(first,),
+        dispositions=(disposition,),
+    )
+    repeated_wake = BoundaryFixture(
+        role="Reviewer",
+        action="review-implementation",
+        relied_upon_at=_ts(23),
+        comments=(first, newer),
+        dispositions=(disposition,),
+    )
+
+    first_result = _evaluate(first_wake)
+    assert first_result.clear
+    assert first_result.dispositioned_comment_ids == (901,)
+
+    repeated_result = _evaluate(repeated_wake)
+    assert not repeated_result.clear
+    assert repeated_result.dispositioned_comment_ids == (901,)
+    assert repeated_result.blocking_comment_ids == (902,)
 
 
 def test_shared_governance_owns_consequential_human_input_freshness() -> None:
