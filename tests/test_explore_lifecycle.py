@@ -29,13 +29,29 @@ def test_explore_is_tenth_lead_action_with_one_owned_skill() -> None:
 
 def test_explore_is_optional_and_cannot_create_formal_change_or_code() -> None:
     explore = _normalized(EXPLORE)
-    for required in ("optional pre-Propose", "problem before solution", "Change: unset", "MUST NOT create `openspec/changes/`", "MUST NOT modify implementation code", "direct-to-Propose"):
+    for required in (
+        "optional pre-Propose",
+        "problem before solution",
+        "Change: unset",
+        "MUST NOT create `openspec/changes/`",
+        "MUST NOT modify implementation code",
+        "direct-to-Propose",
+    ):
         assert required in explore
 
 
 def test_explore_uses_decision_complete_outcomes_and_human_boundary() -> None:
     explore = _normalized(EXPLORE)
-    for required in ("decision-complete", "PROPOSAL_READY", "NO_CHANGE_REQUIRED", "NO_GO", "HUMAN_DECISION_REQUIRED", "SPECIFICATION_BLOCKED", "does not persist a Change id", "Human intent"):
+    for required in (
+        "decision-complete",
+        "PROPOSAL_READY",
+        "NO_CHANGE_REQUIRED",
+        "NO_GO",
+        "HUMAN_DECISION_REQUIRED",
+        "SPECIFICATION_BLOCKED",
+        "does not persist a Change id",
+        "Human intent",
+    ):
         assert required in explore
 
 
@@ -55,7 +71,13 @@ def test_explore_and_direct_propose_share_one_pre_activation_queue() -> None:
 
 def test_explore_has_no_research_state_machine_or_review_gate() -> None:
     explore = _normalized(EXPLORE)
-    for forbidden in ("status:exploring", "review-explore", "completeness score", "research database", "hidden memory"):
+    for forbidden in (
+        "status:exploring",
+        "review-explore",
+        "completeness score",
+        "research database",
+        "hidden memory",
+    ):
         absent_state = f"does not require `{forbidden}`"
         absent_mechanism = f"MUST NOT introduce `{forbidden}`"
         assert absent_state in explore or absent_mechanism in explore
