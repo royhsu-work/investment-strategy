@@ -45,7 +45,7 @@ MUST NOT introduce model-derived global urgency, cross-role priority scoring, or
 
 Before selecting any role/action or loading its mapped Skill, a workflow-dynamic wake MUST obtain a
 complete repository-wide durable Issue snapshot sufficient to classify every candidate relevant to formal
-active, terminal-pending, and bounded premature-close recovery semantics. The wake MUST establish
+active and bounded premature-close/interrupted-finalization recovery semantics. The wake MUST establish
 observable enumeration completeness for every read/query surface whose incompleteness could hide such a
 candidate. A partial page, bounded result limit, first-page/search projection, role-local query, or
 candidate-local read is not proof of completeness merely because it returns one plausible Issue or none.
@@ -53,25 +53,25 @@ When the surface exposes completeness metadata, consume it; when pagination is r
 required pages. If completeness cannot be established, classification is `indeterminate` and dispatch
 fails closed.
 
-From that one complete current reconstruction, classify formal active and terminal-pending workflows and
-apply this canonical decision table before mapped action execution:
+From that one complete current reconstruction, classify formal active workflows and apply this canonical
+decision table before mapped action execution:
 
-| formal/terminal cardinality | legal result |
+| formal cardinality | legal result |
 | --- | --- |
 | `0` | evaluate bounded premature-close recovery candidates, then the deterministic combined pre-activation queue when no recovery candidate blocks it |
-| `1` | select only that formal/terminal workflow and derive role/action from its valid routing tuple |
+| `1` | select only that formal workflow and derive role/action from its valid routing tuple |
 | `>1` | fail closed before any normal mapped action executes |
 | `indeterminate` | fail closed before any normal mapped action executes |
 
 A selected action consumes this shared pre-dispatch classification as an execution precondition. Before a
 formal lifecycle/review/implementation action proceeds, its current coordination Issue MUST still be the
-sole formal/terminal workflow selected by the shared preflight. Before substantive `explore-change` work
-begins, a fresh current reconstruction MUST still prove formal/terminal cardinality `0` and selected-Issue
-equality with the deterministic combined pre-activation winner. `propose-change` additionally performs its
-existing immediate pre-activation and post-write checks using the same complete-cardinality evidence. If
-routing, Issue state, Change identity, repository enumeration, or winner identity is stale, incomplete, or
-contradictory at action entry, fail closed and reconstruct rather than proceeding from candidate-local
-context.
+sole formal workflow selected by the shared preflight. Before substantive `explore-change` work begins, a
+fresh current reconstruction MUST still prove formal cardinality `0`, no bounded recovery candidate, and
+selected-Issue equality with the deterministic combined pre-activation winner. `propose-change`
+additionally performs its existing immediate pre-activation and post-write checks using the same complete-
+cardinality evidence. If routing, Issue state, Change identity, repository enumeration, or winner identity
+is stale, incomplete, or contradictory at action entry, fail closed and reconstruct rather than proceeding
+from candidate-local context.
 
 If workflow-dynamic reconstruction finds multiple active workflows, invalid routing, or otherwise
 cannot identify one legal active workflow, it MUST fail closed and MUST NOT guess an owner. Multiple formal
@@ -136,9 +136,9 @@ stay on the same coordination Issue. Comments are durable evidence, not canonica
 
 ## Single-active workflow activation and pre-activation intake
 
-An open coordination Issue with valid routing and a persisted non-`unset` `Change:` identity is an
-active workflow. The repository permits at most one active workflow. A closed terminal-pending workflow
-is the narrow exception defined below.
+An open coordination Issue with valid routing and a persisted non-`unset` `Change:` identity is an active
+workflow. The repository permits at most one active workflow. Normal formal lifecycle work remains open
+through `Lead / finalize-archive`; there is no closed terminal-pending happy path.
 
 Execution eligibility is orthogonal to lifecycle state. A formal workflow whose next legal action cannot
 currently complete because required Human authority, exact CI/gate evidence, environment capability,
@@ -146,24 +146,23 @@ dependency/conflict resolution, or another action-owned precondition is absent r
 active workflow and continues to consume the single formal WIP slot. Existing action-specific wait,
 exception, escalation, result, and routing evidence explains the blocker; the repository does not create a
 universal `blocked` result, waiting taxonomy, or capacity-release lifecycle state. Formal scheduling remains
-finish-first: an active/terminal-pending workflow first, and pre-activation intake only when formal WIP is
-absent.
+finish-first: an active workflow first, and pre-activation intake only when formal WIP is absent.
 
 Before evaluating pre-activation queue order or any derived blocker/priority/Project projection, dispatch
-MUST use the workflow-dynamic cardinality preflight above to establish the complete cardinality of
-terminal-pending and formal active workflows from repository-wide durable state. A partial enumeration is
-not proof of zero. If complete cardinality cannot be established as exactly zero or one, dispatch MUST fail
-closed and MUST NOT infer that queued work is eligible. Normal nonterminal routed workflow work also
-requires an open coordination Issue; closed nonterminal routing is contradictory durable state except for
-the existing narrow terminal-pending `Lead / finalize-archive` shape.
+MUST use the workflow-dynamic cardinality preflight above to establish the complete cardinality of formal
+active workflows from repository-wide durable state. A partial enumeration is not proof of zero. If
+complete cardinality cannot be established as exactly zero or one, dispatch MUST fail closed and MUST NOT
+infer that queued work is eligible. Normal nonterminal routed workflow work requires an open coordination
+Issue. A closed Issue with valid `LIFECYCLE_COMPLETE` is terminal history; any other closed nonterminal
+workflow-looking state is contradiction/recovery input, not normal eligibility.
 
 A closed nonterminal Issue MAY be recovered automatically only as a bounded premature-close recovery
 candidate when durable reconstruction proves all of the following: it has a persisted non-`unset` Change
 identity and exactly one otherwise legal nonterminal routing tuple; matching lifecycle evidence proves the
-Change is unfinished; no authorized final Archive/native-close completion or `LIFECYCLE_COMPLETE` exists;
-no qualifying provenance-bound Human decision requires termination or non-resumption; and repository-wide
-reconstruction finds no other formal/terminal-pending workflow or second premature-close recovery
-candidate. A bare close event or actor identity is not qualifying Human termination authority.
+Change is unfinished; no valid terminal `LIFECYCLE_COMPLETE` exists; no qualifying provenance-bound Human
+decision requires termination or non-resumption; and repository-wide reconstruction finds no other formal
+workflow or second premature-close recovery candidate. A bare close event or actor identity is not
+qualifying Human termination authority.
 
 When exactly one premature-close recovery candidate satisfies those predicates, it blocks pre-activation
 intake and normal lifecycle execution. The governed recovery owner/action is `Lead / resolve-question`.
@@ -200,18 +199,19 @@ remains derived from its exact approved source defer decision/linkage; and direc
 the original Propose authority envelope. These producer/source rules MUST NOT be reinterpreted as dispatcher
 admission classes for an already coherent routed Explore.
 
-When no formal active or terminal-pending workflow exists, every coherent open
+When no formal active workflow or bounded premature-close recovery candidate exists, every coherent open
 `Lead / explore-change + Change: unset` entry and every valid Human-admitted
 `Lead / propose-change + Change: unset` entry participate in one combined pre-activation queue ordered by
-earliest GitHub `created_at`, then lower Issue number. A formal active or terminal-pending workflow must win
-over pre-activation intake. The selected Issue's current routing determines whether Lead executes Explore
-or Propose; there is no `explore-change > propose-change` priority inside this combined queue.
+earliest GitHub `created_at`, then lower Issue number. A formal active workflow must win over pre-activation
+intake. The selected Issue's current routing determines whether Lead executes Explore or Propose; there is
+no `explore-change > propose-change` priority inside this combined queue.
 
-Lead MUST NOT activate a queued proposal while another formal active/terminal-pending workflow exists or
-while an older eligible Explore/direct-Propose entry is the deterministic combined pre-activation winner.
-Immediately before persisting a non-`unset` Change identity, Propose MUST re-read durable state and confirm
-its Issue is still the combined pre-activation winner using the shared complete-cardinality preflight. The
-selected Lead persists its immutable Change identity; that durable write is the formal activation boundary.
+Lead MUST NOT activate a queued proposal while another formal active workflow exists, while a bounded
+premature-close recovery candidate blocks intake, or while an older eligible Explore/direct-Propose entry
+is the deterministic combined pre-activation winner. Immediately before persisting a non-`unset` Change
+identity, Propose MUST re-read durable state and confirm its Issue is still the combined pre-activation
+winner using the shared complete-cardinality preflight. The selected Lead persists its immutable Change
+identity; that durable write is the formal activation boundary.
 
 Overlapping activation attempts remain at-least-once. Before the activation write, Lead re-read checks
 that no active workflow has appeared and that the candidate is still the deterministic winner. The
@@ -220,12 +220,10 @@ durable state and stop as stale if another valid activation, multiple-active sta
 enumeration, or newer contradictory state won. This safety model uses reconstruction and preconditions, not
 a lock, claim, lease, heartbeat, hidden sequence, `status:exploring`, or `status:in-progress` state.
 
-A terminal-pending active workflow is the one narrow exception to the normal open-Issue active-workflow
-shape: a closed coordination Issue carrying `agent:lead + action:finalize-archive`, backed by matching
-accepted merged Archive PR and observed native-close evidence, with no valid Lead `LIFECYCLE_COMPLETE`
-result. While such terminal-pending work exists, Scheduled roles MUST NOT activate or execute queued
-pre-activation intake. After a valid Lead `LIFECYCLE_COMPLETE` result exists, the closed tuple is terminal
-history and MUST NOT block later workflow admission.
+A valid `LIFECYCLE_COMPLETE` result does not by itself remove an open Issue from formal WIP. If terminal
+verification is complete but the close mutation is missing, the same open `Lead / finalize-archive`
+workflow remains actionable only to finish/re-observe that final close. Once the completion result is valid
+and the Issue is observed closed, the Issue is terminal history and MUST NOT block later workflow admission.
 
 ## Explore completion boundary
 
@@ -343,20 +341,21 @@ proof.
 
 ## PR linkage lifecycle boundary
 
-Implementation and implementation-correction PRs MUST use non-closing references to their persistent
-coordination Issue and MUST NOT establish GitHub Issue-closing linkage. Closing linkage is reserved for
-the final Archive PR, where it is an expected lifecycle side effect only after independent archive review,
-unchanged-head/current-gate checks, and the reviewed Lead lifecycle-preparation preconditions are satisfied.
+Implementation, implementation-correction, and final Archive PRs MUST use non-closing references to their
+persistent coordination Issue and MUST NOT establish GitHub Issue-closing linkage. The deterministic final
+Archive form is `Refs #<coordination-issue>` or an exact repository-approved non-closing equivalent. Archive
+merge intentionally leaves the coordination Issue open for `Lead / finalize-archive` terminal verification.
 
-A closing linkage on an implementation or implementation-correction PR is a lifecycle-contract violation.
-Executor MUST fail closed rather than merge such a PR. The presence of closing linkage on an Archive PR
-never substitutes for Reviewer PASS or any other merge precondition.
+A closing linkage on any normal lifecycle PR is a lifecycle-contract violation. Executor MUST fail closed
+rather than merge such a PR. Non-closing linkage preserves traceability but never substitutes for Reviewer
+PASS or any other merge precondition.
 
 ## Routing validity
 
 An Issue is normally actionable only when it is open and has exactly one legal `agent:*` label and
-exactly one legal `action:*` label for the same role. The only closed-Issue eligibility exception is the
-terminal-pending `Lead / finalize-archive` reconstruction defined above.
+exactly one legal `action:*` label for the same role. Closed Issues are not normal routed action candidates.
+A closed Issue without valid terminal `LIFECYCLE_COMPLETE` may be considered only through the bounded
+premature-close recovery classification above; a closed Issue with valid completion is terminal history.
 Zero, multiple, contradictory, or illegal routing labels fail closed; model inference MUST NOT repair them.
 Unrelated labels are preserved during routing changes.
 
@@ -388,12 +387,12 @@ same candidate set. Within the same ordinary role/action priority, earlier GitHu
 equal, lower numeric Issue number wins. Model-derived urgency, scoring, or discretionary reordering is
 prohibited.
 
-In workflow-dynamic mode, the shared cardinality preflight above runs first. A sole formal active/terminal-
-pending workflow is selected before pre-activation work. Only after complete cardinality `0` and no bounded
-recovery candidate blocks intake may the combined pre-activation winner determine `Lead / explore-change`
-or `Lead / propose-change`. An oldest eligible open Explore naturally remains the deterministic winner
-across wakes until it reaches a terminal result or legally routes to Propose; no claim, lease, heartbeat,
-or hidden ownership state is required.
+In workflow-dynamic mode, the shared cardinality preflight above runs first. A sole formal active workflow
+is selected before pre-activation work. Only after complete formal cardinality `0` and no bounded recovery
+candidate blocks intake may the combined pre-activation winner determine `Lead / explore-change` or
+`Lead / propose-change`. An oldest eligible open Explore naturally remains the deterministic winner across
+wakes until it reaches a terminal result or legally routes to Propose; no claim, lease, heartbeat, or hidden
+ownership state is required.
 
 If the role has no eligible workflow work, it performs no ordinary workflow mutation. Only Lead may use
 the separate bounded idle advisory/discovery mode defined below.
@@ -407,7 +406,7 @@ wake
 → load default-branch AGENTS.md
 → obtain complete repository-wide durable Issue snapshot
 → establish observable enumeration completeness
-→ apply the shared formal/terminal cardinality preflight
+→ apply the shared formal cardinality/recovery preflight
 → only then select one eligible Issue and one fixed invocation role
 → load role + mapped Skill
 → reconstruct Issue / PR / OpenSpec / Actions / default-branch state
@@ -607,10 +606,12 @@ second orchestration layer.
 A material workflow lifecycle transition that changes durable workflow ownership or lifecycle state
 requires one bounded comment on the persistent coordination Issue. The journal identifies the transition,
 resulting durable state or evidence, and next action or terminal result. Covered boundaries include
-cross-role routing handoff, PR merge, Archive native close/post-merge terminal handoff, Lead `LIFECYCLE_COMPLETE`,
-Explore terminal research closure, and Human escalation/specification-resolution. Same-role action transitions are represented by their source result and routing mutation and do not require a duplicate journal message merely because the action changed. Related low-level writes
-inside one legal transition may be represented by that one journal entry, and the journal comment itself
-does not recursively require another meta-comment.
+cross-role routing handoff, PR merge, Archive post-merge terminal handoff, Lead `LIFECYCLE_COMPLETE`, final
+coordination-Issue close, Explore terminal research closure, and Human escalation/specification-resolution.
+Same-role action transitions are represented by their source result and routing mutation and do not require
+a duplicate journal message merely because the action changed. Related low-level writes inside one legal
+transition may be represented by that one journal entry, and the journal comment itself does not
+recursively require another meta-comment.
 
 This lifecycle journal is distinct from implementation Slice checkpointing. Ordinary
 RED/GREEN/refactor/test-trigger/compatibility-correction commits and ordinary artifact/task edits inside
@@ -749,7 +750,7 @@ merged default-branch OpenSpec, archive automation, archive-branch, and Archive-
 
 - merged but active change incomplete and approved work remains → `MORE_IMPLEMENTATION_REQUIRED` and route `Executor / implement-change`;
 - merged and Complete/eligible under the README archive contract while repository automation is still progressing → Lead waits without creating competing archive mutation work;
-- validated `agent/archive-<change>` branch durably ready → normal repository-automation success; `Lead / finalize-change` creates or reuses the final Archive PR with deterministic repository-approved closing linkage to the persistent coordination Issue;
+- validated `agent/archive-<change>` branch durably ready → normal repository-automation success; `Lead / finalize-change` creates or reuses the final Archive PR with deterministic repository-approved non-closing `Refs #<coordination-issue>` linkage to the persistent coordination Issue;
 - successful validated branch readiness awaiting that Lead PR presentation MUST NOT be classified as archive failure or `RECOVERY_DECISION_REQUIRED`;
 - durable final Archive PR ready → route `Reviewer / review-archive`;
 - archive classification, mutation, validation, commit, push, contradictory branch state, or unreconstructable ownership failure → fail closed under repository-defined diagnosis/recovery behavior.
@@ -758,7 +759,7 @@ Scheduled roles do not define or execute a competing normal `archive-change` act
 repository archive workflow remains authoritative for deterministic normal archive mechanics through
 validated archive-branch push. Final Archive PR creation is ordinary Lead lifecycle continuation and does
 not authorize merge or weaken independent archive review, reviewed Lead lifecycle preparation, exact-head
-Executor merge checks, native close, or terminal `finalize-archive` reconstruction.
+Executor merge checks, or terminal `finalize-archive` reconstruction.
 
 ## Workflow admission and idle advisory/discovery
 
@@ -775,9 +776,10 @@ Connector/App identity is never globally treated as Human identity. A valid in-s
 Propose without a generic Human proceed decision, while a new Human-reserved commitment must stop with
 `HUMAN_DECISION_REQUIRED`.
 
-Only when no formal/terminal-pending workflow and no already eligible pre-activation work can be advanced,
-Lead MAY materialize at most one bounded `Change: unset + agent:lead + action:explore-change` candidate from
-idle discovery when creation is independently justified by one of these source classes:
+Only when no formal active workflow, no bounded premature-close recovery candidate, and no already eligible
+pre-activation work can be advanced, Lead MAY materialize at most one bounded
+`Change: unset + agent:lead + action:explore-change` candidate from idle discovery when creation is
+independently justified by one of these source classes:
 
 - an applicable default-branch canonical MUST/SHALL requirement with a concrete material gap;
 - an approved required-deferred obligation with reconstructable source linkage;
@@ -825,38 +827,52 @@ contract above.
 
 ## Durable final closure
 
-A PASS, completion comment, or statement that an Issue "may be closed" is not completion. Only the observed closed Issue state completes the coordination lifecycle. Issue close is therefore durable lifecycle state rather than a comment convention.
+A PASS, completion comment, merge result, or statement that an Issue "may be closed" is not terminal
+completion. The normal invariant is:
 
-Known workflow-owned temporary correction/recovery cleanup obligations are classified by `Lead / finalize-change`
-during final Archive PR preparation before `Reviewer / review-archive`. Reviewer verifies that preparation
-with the exact Archive target. Immediately before final Archive merge, `Executor / merge-pr` fresh-reads and
-clears every predeclared currently-safe Executor-owned temporary correction/recovery branch, while preserving
-reviewed legal retention dispositions. A new or materially changed obligation/disposition fails closed to Lead
-and requires renewed independent review when the reviewed preparation meaning changed. The normal
-`agent/archive-<change>` lifecycle branch is never inferred to be temporary cleanup input from its name.
+```text
+open coordination Issue  = formal workflow not yet terminal
+closed coordination Issue = terminal history
+```
 
-The final Archive PR carries the repository-approved closing linkage to the persistent coordination
-Issue. After Executor merges the accepted final Archive PR and fresh-reads the coordination Issue as
-natively closed, Executor replaces the consumed routing tuple on that closed Issue with exactly
-`agent:lead + action:finalize-archive`, persists one bounded merge/native-close/handoff journal, and ends
-the invocation. Executor MUST NOT execute Lead finalization in the same invocation.
+The final Archive PR uses deterministic non-closing `Refs #<coordination-issue>` linkage. After independent
+`Reviewer / review-archive` PASS and all current merge preconditions, Executor merges the exact accepted
+Archive revision while the coordination Issue remains open, replaces routing with exactly
+`agent:lead + action:finalize-archive`, persists the merge/handoff journal, and ends the invocation.
+Executor MUST NOT execute Lead finalization in the same invocation.
 
-The closed Issue is then the terminal-pending active workflow only while matching accepted merged
-Archive PR/native-close evidence exists and no valid Lead `LIFECYCLE_COMPLETE` result exists. Lead
-reconstructs canonical archived default-branch state plus the pre-merge cleanup/retention evidence and
-records bounded `LIFECYCLE_COMPLETE` evidence without reopening or redundantly closing an already natively
-closed Issue. Once that result exists, the closed tuple is terminal history and no longer blocks later
-admission.
+Known workflow-owned temporary correction/recovery cleanup obligations are classified by
+`Lead / finalize-change` during final Archive PR preparation before `Reviewer / review-archive`. Reviewer
+verifies that preparation with the exact Archive target. Immediately before final Archive merge,
+`Executor / merge-pr` fresh-reads and clears every predeclared currently-safe Executor-owned temporary
+correction/recovery branch, while preserving reviewed legal retention dispositions. A new or materially
+changed obligation/disposition fails closed to Lead and requires renewed independent review when the
+reviewed preparation meaning changed. The normal `agent/archive-<change>` lifecycle branch is never inferred
+to be temporary cleanup input from its name.
 
-Explicit Issue close is recovery-only. Lead may perform an explicit Issue-close recovery only when the
-accepted Archive PR is merged, canonical archive state is correct, and native completion is missing.
-After that mutation Lead re-observes the Issue and requires `closed` before declaring completion.
+`Lead / finalize-archive` reconstructs the exact reviewed/merged Archive revision, canonical archived
+default-branch state, required follow-up trackers, reviewed cleanup/retention outcomes, and newer material
+Human input while the Issue is open. When terminal conditions hold, Lead first persists one valid
+`LIFECYCLE_COMPLETE` result. Only after that result is durable may Lead close the coordination Issue. Lead
+then re-observes the same Issue and requires `closed` before declaring the workflow terminal.
 
-If archive state is complete but the terminal result is still missing, the next Lead run reconstructs the completed archive and current Issue state; it persists only the missing terminal evidence or applies recovery-only close behavior when native completion is still absent.
+Normal path therefore has no closed terminal-pending workflow. Interruption is recovered from existing
+durable writes without adding a replacement state machine:
 
-If the coordination Issue is observed closed before the accepted Archive PR merge, that state is
-premature and illegal. Scheduled roles fail closed; the premature close must not be treated as successful
-archive completion, regardless of comments or other completion-looking evidence.
+- Archive merged but `LIFECYCLE_COMPLETE` absent → the open `Lead / finalize-archive` Issue remains the one
+  formal workflow and later reconstruction resumes terminal verification.
+- valid `LIFECYCLE_COMPLETE` persisted but Issue close is missing → the open Lead action performs only the
+  missing close and re-observes `closed`; it does not rewrite completion evidence.
+- close mutation completed but re-observation/journal completion was interrupted → later reconstruction
+  consumes the existing completion result and observed current Issue state; it does not replay a completed
+  close.
+- valid `LIFECYCLE_COMPLETE` plus observed closed Issue → terminal history, excluded from formal WIP and
+  ordinary cardinality.
+
+If the coordination Issue is observed closed without a valid `LIFECYCLE_COMPLETE`, including a manual or
+accidental close before Archive terminal conditions, that state is premature and illegal. It is not terminal
+success and does not enter the normal action path. Only the bounded premature-close recovery predicate may
+reopen one unambiguous unfinished workflow; otherwise Scheduled roles fail closed.
 
 ## Deliberately absent machinery
 
