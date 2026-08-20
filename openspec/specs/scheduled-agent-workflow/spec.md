@@ -955,20 +955,26 @@ The dispatcher MUST NOT introduce model-derived global urgency, cross-role prior
 
 ### Requirement: Selected Scheduled Agent actions are work-conserving within an invocation
 
-After a Scheduled Agent invocation selects one legal role/action, that selected action SHALL continue all immediately actionable work within the same invocation while the routing still matches the selected action, required revision/preconditions and authority remain current, and no legal blocking condition exists.
+After a Scheduled Agent invocation selects one legal role/action, continuation SHALL be the default and that selected action SHALL continue all immediately actionable work within the same invocation while the routing still matches the selected action, required revision/preconditions and authority remain current, and no legal blocking condition exists.
+
+Before the invocation returns, it MUST positively classify and prove from current evidence one legal Invocation Exit. If no legal Exit class is proven, the invocation MUST continue the selected workflow under the fixed invocation role while routing, authority, revision/preconditions, and execution capability remain current.
 
 A durable checkpoint, remaining approved local work, a recoverable same-role failure, or a failed-but-actionable validation MUST NOT by itself be treated as a voluntary yield point. When the correction is within the selected role/action authority and approved contract, the invocation SHALL perform that correction and continue the action instead of deferring it solely to a later wake.
 
-A selected action MAY end before its normal completion only when at least one of these conditions applies:
+A selected action MAY end before its normal completion only when current evidence positively proves at least one of these bounded Invocation Exit classes:
 
-- the action has completed a legal handoff or terminal result;
-- continuing requires a different role or authoritative Human decision;
-- progress genuinely depends on external asynchronous evidence that is not yet available;
-- approved contract/state is genuinely ambiguous, contradictory, or unsafe to continue under the selected authority;
-- stale or competing durable state invalidates the invocation's revision/base/preconditions; or
-- an actual tool failure, hard runtime limit, or other execution interruption prevents continuation.
+- a completed cross-role handoff with the target routing durably observed, or a true workflow/action terminal result under the authoritative lifecycle topology;
+- a genuine Human-reserved authority boundary whose current contract prevents further same-invocation work;
+- a genuine external asynchronous wait that cannot be further consumed within the current legal execution opportunity and identifies the exact awaited resource/evidence;
+- stale routing, revision, concurrency, or precondition loss that makes continued execution unsafe;
+- materially ambiguous or contradictory durable state requiring fail-closed disposition; or
+- a hard tool, permission, runtime, or execution boundary after any applicable same-authority recovery/disposition procedure has been evaluated from current evidence and no legal local continuation remains.
 
-A catchable tool/runtime/execution failure does not by itself waive exception capture or invocation finalization. If the invocation still has execution opportunity, it MUST first preserve the required raw exception evidence, then either recover and continue within the same selected role/action or converge to a legal durable disposition and required handoff before normal exit. A genuinely uncatchable hard termination MAY prevent current-run persistence and is handled by later at-least-once reconstruction.
+Exit Proof SHALL be an internal execution precondition and MUST NOT require a new lifecycle action, workflow status, progress comment, timer, retry counter, heartbeat, lease, hidden runtime cursor, durable waiter state, or second workflow DAG. Existing action results, review results, handoffs, execution exceptions, exact-resource observations, and lifecycle journals remain the durable evidence surfaces.
+
+The following intermediate facts MUST NOT independently constitute Exit Proof: an intended RED is established; GREEN or REFACTOR completes; validation fails but correction is actionable within current authority; a commit or push completes; the first observation of an exact external resource is absent, queued, or in progress; a verified Slice checkpoint exists while approved same-action work remains; an action completes with an immediately actionable successor owned by the fixed invocation role; or the exact next legal step is already known and executable.
+
+A catchable tool/runtime/execution failure does not by itself waive exception capture or invocation finalization and does not become a hard-boundary Exit merely because an exception occurred. If the invocation still has execution opportunity, it MUST first preserve the required raw exception evidence, then apply the existing action-specific recovery/disposition contract. When legal same-authority recovery is immediately actionable, it MUST recover and continue within the same selected role/action. Only when current evidence proves that applicable same-authority recovery/disposition cannot legally continue may the failure support a hard execution-boundary Exit. A genuinely uncatchable hard termination MAY prevent current-run persistence and is handled by later at-least-once reconstruction.
 
 The generic continuation/termination, catchable-exception, and normal-finalization contracts SHALL be owned once by shared governance in `agents/AGENTS.md`. Role and skill documents MUST NOT duplicate or weaken these shared rules; they MAY define only action-specific results, authority boundaries, waits, local recovery, blockers, and handoffs.
 
@@ -994,9 +1000,11 @@ The generic continuation/termination, catchable-exception, and normal-finalizati
 
 - GIVEN Lead is selected for a finalize action
 - AND the action has completed all immediately actionable Lead work
-- AND legal continuation depends on repository automation that is still running and whose result is not yet available
+- AND legal continuation depends on repository automation that is still running and whose exact result is not yet available
+- AND current evidence proves that exact resource cannot be further consumed within the current legal execution opportunity
 - WHEN Lead evaluates continuation
 - THEN retaining the current routing and ending the invocation is a legal external-wait outcome
+- AND the Exit Proof identifies the exact awaited resource/evidence for later reconstruction
 
 #### Scenario: Competing durable state invalidates the execution base
 
@@ -1004,6 +1012,82 @@ The generic continuation/termination, catchable-exception, and normal-finalizati
 - AND another run wins a competing durable mutation so the required base/preconditions are no longer current
 - WHEN the first invocation rechecks its preconditions
 - THEN it stops as stale rather than rebasing or continuing speculative work inside the same invocation
+
+#### Scenario: RED with immediately actionable GREEN cannot exit
+
+- GIVEN Executor has established an intended RED for approved implementation work
+- AND the exact GREEN correction is already known and executable within `Executor / implement-change`
+- WHEN the invocation evaluates whether it may return
+- THEN RED is not valid Exit Proof
+- AND Executor continues into GREEN while current routing and preconditions remain valid
+
+#### Scenario: Failed but actionable validation cannot exit
+
+- GIVEN a required validation fails for a correction that remains inside the selected role/action authority and approved contract
+- AND the failure is actionable from current evidence
+- WHEN the invocation evaluates Exit Proof
+- THEN the failed validation is not a legal Exit by itself
+- AND the invocation corrects and continues under the existing work-conserving contract
+
+#### Scenario: First nonterminal exact-resource observation cannot exit
+
+- GIVEN the selected action has just created or triggered an exact external resource such as a required CI run
+- AND its first current observation is absent, queued, or in progress
+- AND current routing, authority, and execution opportunity still allow bounded consumption of that exact resource
+- WHEN the invocation evaluates Exit Proof
+- THEN that first nonterminal observation is not a genuine asynchronous-wait Exit
+- AND the invocation continues bounded observation of the same exact resource
+
+#### Scenario: Genuine unconsumable external wait may exit
+
+- GIVEN an exact required external resource remains nonterminal
+- AND current evidence proves the current legal execution opportunity cannot further consume it without inventing waiter state or crossing an authority boundary
+- WHEN the invocation evaluates Exit Proof
+- THEN it MAY classify a genuine external asynchronous wait
+- AND the Exit Proof identifies the exact awaited resource/evidence for later reconstruction
+
+#### Scenario: Same-role successor continues
+
+- GIVEN Lead durably completes one action on the selected coordination Issue
+- AND the legal successor action remains Lead-owned on that same Issue
+- AND the successor is immediately actionable under current routing and preconditions
+- WHEN the invocation evaluates Exit Proof
+- THEN action completion alone is not a legal Exit
+- AND Lead continues into the successor action without a cross-role HANDOFF
+
+#### Scenario: Completed cross-role handoff may exit
+
+- GIVEN Reviewer has durably persisted its gate result
+- AND routing has been legally transferred to another role
+- AND the target routing is freshly observed
+- WHEN the invocation evaluates Exit Proof
+- THEN the completed cross-role handoff is a legal Invocation Exit
+- AND Reviewer does not execute the target role's work in the same invocation
+
+#### Scenario: Stale precondition permits fail-closed exit
+
+- GIVEN the selected action fresh-reads routing, revision, or another required precondition
+- AND discovers that the evidence relied on by the current invocation is stale or has been superseded
+- WHEN continued execution would be unsafe
+- THEN stale/precondition loss is a legal fail-closed Exit
+- AND the invocation does not continue from the obsolete snapshot
+
+#### Scenario: Hard execution boundary may exit only after legal local recovery is unavailable
+
+- GIVEN a tool, permission, runtime, or execution failure prevents the next required operation
+- AND any applicable same-authority recovery/disposition procedure has been evaluated from current evidence
+- AND no legal local continuation can proceed without weakening a gate or crossing role authority
+- WHEN the invocation evaluates Exit Proof
+- THEN the hard execution boundary is a legal Exit
+- AND the invocation preserves the existing exception/disposition evidence rather than inventing new workflow state
+
+#### Scenario: No proven Exit class rejects return
+
+- GIVEN the invocation remains on the selected workflow under current routing and authority
+- AND none of the bounded legal Invocation Exit classes is proven from current evidence
+- WHEN the invocation attempts to return
+- THEN return is not authorized
+- AND execution continues with the next immediately actionable legal step
 
 ### Requirement: Catchable execution exceptions preserve raw observable evidence before disposition
 
