@@ -41,6 +41,12 @@ If the coordination Issue or current OpenSpec artifacts contain declared upstrea
 
 If routing, change identity, active-workflow identity, or required evidence is contradictory, fail closed.
 
+Before persisting a consequential specification/readiness/resolution result or transferring ownership,
+consume the shared `agents/AGENTS.md` substantive Human-input freshness/disposition invariant. Newer material
+direct-Human input that can affect scope, contract meaning, traceability, or the handoff assumptions must
+have a reconstructable exact-comment disposition or be routed/escalated through the existing legal owner or
+Human boundary. This Skill does not redefine the shared classifier or expand Lead/Human authority.
+
 ## `propose-change`
 
 1. Confirm valid `Lead / propose-change` routing and the authority that legally produced it. Human direct-to-Propose admission MUST satisfy the provenance-bound Human-decision predicate for exactly `issue:<issue-number>:admission:lead:propose-change`. A same-Issue transition from a valid routed Explore may instead rely on the bounded researched/canonical context and any still-valid upstream authority envelope that made its `PROPOSAL_READY` continuation legal; do not manufacture a second Human admission requirement. Direct-to-Propose remains valid for Human direction that is already concrete/buildable; Explore is not a prerequisite.
@@ -58,7 +64,7 @@ If routing, change identity, active-workflow identity, or required evidence is c
 4. Any proposal/implementation PR associated with the persistent coordination Issue must use a non-closing reference to the coordination Issue (for example `Refs #N`). It must not establish Issue-closing linkage. Closing linkage is reserved for the final Archive PR lifecycle boundary.
 5. Before handoff, verify required artifacts exist and author/maintain the required trace declarations/references across proposal, specs, design, and tasks. These authoring references must be present and mechanically consistent enough to hand to independent review, but the semantic bidirectional PASS gate belongs to `Reviewer / review-openspec`; Lead MUST NOT execute or claim that independent PASS gate. For a NEW capability, require exactly one non-empty canonicalization-ready `## Purpose`; for existing capabilities, verify delta targets against canonical requirement identities and preserve all still-applicable MODIFIED scenarios/content.
 6. Obtain strict OpenSpec validation for the exact handoff revision R. CI is sufficient only when durable validator evidence proves checkout `HEAD == R` before strict validation; `run.head_sha == R` alone is association metadata and is not checkout proof. If valid exact-head CI evidence is unavailable, use the repository-pinned local CLI directly against checkout R. Stale, missing, failed, revision-mismatched, or checkout-mismatched evidence fails closed.
-7. Persist revision-aware readiness evidence before routing to `Reviewer / review-openspec` for the semantic bidirectional gate.
+7. Re-run the shared substantive Human-input freshness/disposition check immediately before the readiness result/handoff, then persist revision-aware readiness evidence before routing to `Reviewer / review-openspec` for the semantic bidirectional gate.
 
 Legal outcomes:
 
@@ -75,7 +81,7 @@ Legal outcomes:
 4. If accepted, revise only Lead-owned OpenSpec specification artifacts needed to resolve it; do not modify implementation code to make a gate pass. Under `spec-driven`, materially revised artifacts must continue to satisfy the loaded adapter contract; do not let a correction drop surviving canonical scenarios/content or other canonicalization-ready information.
 5. If OpenSpec artifacts changed materially, repeat the same required-artifact, required trace declarations/references authoring, and exact-revision strict-validation readiness checks used by `propose-change`. The semantic bidirectional PASS gate remains independent Reviewer work.
 6. If the same implementation or correction PR remains in use, keep its coordination-Issue reference non-closing; resolving a specification question never authorizes adding Issue-closing linkage to an implementation PR.
-7. Persist the resolution and current revision before routing.
+7. Re-run the shared substantive Human-input freshness/disposition check immediately before the resolution result/handoff, then persist the resolution and current revision before routing.
 
 Legal target action depends on the gate/blocker being resolved:
 
