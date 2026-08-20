@@ -89,6 +89,12 @@ For each approved feature slice:
 
 When current implementation or task-checkpoint work has just caused a just-triggered exact required run such as Python Quality or OpenSpec Validate for the current branch/revision, the first observation of that run as `queued` or `in_progress` does not force a yield. While bounded execution opportunity remains and no different role/Human boundary is required, observe only the same exact run through bounded same-invocation observation. If the same exact run becomes terminal, consume its terminal result and continue immediately with the current `implement-change` procedure, including actionable failure correction or the next verified checkpoint/handoff step.
 
+Before returning from this boundary, consume the shared Invocation Exit Proof invariant. A first observation
+of the exact resource as absent, `queued`, or `in_progress` is explicitly non-exit evidence while bounded
+consumption remains legal. Classify a genuine asynchronous-wait Exit only when current evidence proves the
+same exact resource cannot be further consumed within the current legal execution opportunity; identify
+that exact resource for later reconstruction rather than copying the shared Exit taxonomy into this Skill.
+
 If bounded execution opportunity ends while the same exact run remains nonterminal, the run is a real external asynchronous wait. A later wake must fresh-read that exact run before concluding the wait remains. Historical waiting evidence is not current status authority. This specialization uses no timer, sleep policy, polling counter, heartbeat, retry counter, background waiter, or hidden waiter; shared async semantics remain owned by `agents/AGENTS.md`.
 
 ## Constrained branch integration recovery
@@ -113,6 +119,14 @@ OpenSpec meaning.
 6. If the available mutation surface cannot safely complete the correction, persist the raw observable
    failure using `EXECUTION_EXCEPTION` while a repository evidence surface is writable, state whether any
    durable mutation completed, and hand bounded unresolved diagnosis to `Lead / resolve-question`.
+
+Before returning because of stale/precondition loss or an execution failure, consume the shared Invocation
+Exit Proof invariant. Stale routing/head/precondition evidence may support the shared fail-closed Exit only
+when continued work from the obsolete base is unsafe. A catchable tool/capability failure and its
+`EXECUTION_EXCEPTION` do not by themselves establish a hard Exit: evaluate this action's existing
+same-authority recovery/disposition path first, continue when recovery is legal and immediately actionable,
+and rely on the shared hard-boundary Exit only when current evidence proves no legal local continuation
+remains. This consumes #111-style recovery ownership without duplicating its procedure or taxonomy.
 
 ## Consequential READY freshness
 
