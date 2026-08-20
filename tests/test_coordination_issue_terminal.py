@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -20,7 +19,9 @@ def test_archive_merge_uses_non_closing_linkage_and_keeps_issue_open() -> None:
     assert "remains open" in merge_skill
     assert "LIFECYCLE_COMPLETE" in lifecycle
     assert "close" in lifecycle
-    assert lifecycle.index("LIFECYCLE_COMPLETE") < lifecycle.index("close", lifecycle.index("LIFECYCLE_COMPLETE"))
+    complete_at = lifecycle.index("LIFECYCLE_COMPLETE")
+    close_at = lifecycle.index("close", complete_at)
+    assert complete_at < close_at
 
 
 def test_closed_issue_is_terminal_only_after_lifecycle_complete() -> None:
