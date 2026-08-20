@@ -175,6 +175,7 @@ The repository specification SHALL define the minimum checks and legal result ca
 - inspect the current OpenSpec change revision;
 - verify forward traceability `proposal → specs → design → tasks` and reverse traceability `tasks → design → specs → proposal`;
 - verify contract/scope coherence and compatibility with repository `README.md` and `openspec/config.yaml` governance that applies to the change;
+- consume the shared substantive direct-Human input freshness/disposition contract before finalizing the review result when newer coordination-Issue input could affect scope, traceability, or gate validity;
 - produce actionable findings when a material problem exists;
 - produce only `PASS` or `FINDINGS` as the gate result; and
 - bind the result to the reviewed repository/branch revision.
@@ -185,6 +186,7 @@ The repository specification SHALL define the minimum checks and legal result ca
 - compare implementation and task-completion state with the approved OpenSpec contract;
 - inspect the relevant diff, tests, quality checks, and OpenSpec validation evidence;
 - verify scope discipline and absence of unauthorized contract redefinition;
+- consume the shared substantive direct-Human input freshness/disposition contract before finalizing the gate when newer coordination-Issue input could affect correctness, approved scope, traceability, or gate validity;
 - classify material findings as implementation findings or specification findings;
 - bind `PASS`/findings to the reviewed PR head revision; and
 - on an unambiguous exact-head PASS, route directly to `Executor / merge-pr` without requiring an intervening Lead merge-authorization action.
@@ -196,6 +198,7 @@ The repository specification SHALL define the minimum checks and legal result ca
 - verify resulting canonical specs represent the approved contract, active change state is removed as intended, archived history is preserved, and unrelated changes are absent;
 - inspect strict OpenSpec and applicable repository validation evidence;
 - verify that Lead-owned pre-review Archive lifecycle preparation is durably reconstructable for the same coordination workflow, including required separate-follow-up tracker state and any explicitly provenance-owned temporary correction/recovery cleanup obligation that must be satisfied before native close;
+- consume the shared substantive direct-Human input freshness/disposition contract before finalizing the gate when newer coordination-Issue input could affect archive correctness, lifecycle preparation, or gate validity;
 - bind `PASS`/findings to the reviewed archive PR revision; and
 - on an unambiguous exact-head PASS, route directly to `Executor / merge-pr` without requiring an intervening Lead merge-authorization action.
 
@@ -204,14 +207,16 @@ The repository specification SHALL define the minimum checks and legal result ca
 - after an implementation merge, reconstruct actual default-branch/OpenSpec/archive state and choose only a legal outcome such as `MORE_IMPLEMENTATION_REQUIRED`, `WAITING_FOR_ARCHIVE_AUTOMATION`, `ARCHIVE_PR_READY`, or a repository-defined recovery decision;
 - when a validated archive branch is ready, create or reuse the final Archive PR with the repository-approved closing linkage;
 - before routing that Archive PR to `Reviewer / review-archive`, reconstruct every still-applicable approved required separate-follow-up obligation and ensure each has its required durable tracker;
-- before routing that Archive PR to `Reviewer / review-archive`, reconstruct any separately workflow-owned temporary correction/recovery branch from explicit durable provenance and classify the pre-native-close cleanup/retention obligation without treating the normal `agent/archive-<change>` branch as temporary cleanup input; and
+- before routing that Archive PR to `Reviewer / review-archive`, reconstruct any separately workflow-owned temporary correction/recovery branch from explicit durable provenance and classify the pre-native-close cleanup/retention obligation without treating the normal `agent/archive-<change>` branch as temporary cleanup input;
+- consume the shared substantive direct-Human input freshness/disposition contract before a lifecycle result or handoff when newer coordination-Issue input could materially affect the lifecycle judgment; and
 - fail closed instead of handing the Archive PR to Reviewer when those Lead-owned preparation obligations are ambiguous, missing, or contradictory.
 
 `finalize-archive` SHALL, at minimum:
 
 - execute only after the final Archive PR merge/native-close boundary or when reconstructing that already-completed boundary;
 - reject stale or contradictory terminal evidence;
-- reconstruct canonical default-branch/archive state, the exact reviewed Archive PR head and merge commit, observed native Issue completion, required separate-follow-up tracker state, and pre-merge temporary correction/recovery cleanup/retention evidence; and
+- reconstruct canonical default-branch/archive state, the exact reviewed Archive PR head and merge commit, observed native Issue completion, required separate-follow-up tracker state, and pre-merge temporary correction/recovery cleanup/retention evidence;
+- consume the shared substantive direct-Human input freshness/disposition contract before persisting terminal completion when newer coordination-Issue input could materially affect the terminal judgment; and
 - persist `LIFECYCLE_COMPLETE` only when final lifecycle conditions are actually satisfied, using explicit Issue-close recovery only when canonical archive merge is complete but the expected native close is missing.
 
 #### Scenario: Reviewer performs OpenSpec review
@@ -250,6 +255,15 @@ The repository specification SHALL define the minimum checks and legal result ca
 - AND no normal Lead `MERGE_AUTHORIZED` action or replacement authorization token is required between archive review and merge
 - AND Executor still fresh-reads all Archive merge and cleanup preconditions before mutation
 
+#### Scenario: Human asks material question before implementation review PASS
+
+- GIVEN Executor has handed an implementation PR to `Reviewer / review-implementation`
+- AND a newer direct-Human coordination-Issue comment asks a question that may affect approved scope or traceability correctness
+- AND that exact comment has no durable disposition
+- WHEN Reviewer evaluates PASS for the current implementation head
+- THEN Reviewer MUST NOT record PASS while silently ignoring the comment
+- AND Reviewer dispositions it through the legal review finding, bounded answer, or owner-routing path before the gate can complete
+
 ### Requirement: Scheduled execution is at-least-once and state reconstructable
 
 Every scheduled action SHALL reconstruct relevant durable repository, Issue, PR, OpenSpec, GitHub Actions, and any specifically awaited external resource state before deciding what remains to be done.
@@ -257,6 +271,14 @@ Every scheduled action SHALL reconstruct relevant durable repository, Issue, PR,
 The workflow MUST NOT require previous conversation memory or a previous scheduled run to have exited cleanly.
 
 Partial execution, interruption, tool failure, or missing final response MUST NOT transfer ownership merely because some work was attempted.
+
+Before a Scheduled role persists a consequential workflow result or completes a routing ownership transition, it SHALL fresh-read the persistent coordination Issue for direct-Human comments newer than the durable workflow evidence boundary on which the pending decision relies. The same freshness/disposition contract applies at an unsafe merge mutation through the merge requirement below.
+
+A candidate comment counts as direct-Human input for this freshness contract only when durable raw creation provenance identifies the designated Human actor and shows creation was not performed via a GitHub App. This classification is an input-freshness safeguard only and MUST NOT itself satisfy a Human-reserved admission, answer, authorization, resume, or risk/scope decision; those boundaries continue to require their separately governed provenance-bound predicate and exact decision reference.
+
+If newer direct-Human input could materially affect correctness, approved scope, traceability, gate validity, lifecycle preparation, or mutation assumptions, the current role MUST NOT silently proceed from its older snapshot. Before the consequential boundary completes, the exact comment id SHALL have one reconstructable durable disposition that is legal for the current authority boundary: addressed within current authority with bounded rationale; classified non-blocking with a bounded reason when clearly informational, administrative, or immaterial; converted into an existing action-defined finding/blocker/correction result; or routed/escalated to the legal role or Human-reserved boundary. A role MUST NOT answer outside its existing authority merely to clear the disposition requirement.
+
+A prior valid disposition SHALL identify the exact Human comment id so later wakes can reconstruct that it is already handled without a comment queue, unread counter, acknowledgement label, hidden registry, or new lifecycle state. A direct-Human comment that appears after action start but before the consequential boundary is newer evidence at the final fresh-read. Missing raw provenance, ambiguous materiality, or an unresolved legal disposition MUST fail closed at that boundary rather than assume the older snapshot remains complete.
 
 When a prior operation failed after only some durable mutations completed, recovery SHALL distinguish observed durable mutations from intended-but-uncompleted work. If the current invocation can still write repository evidence, it SHALL preserve the existing canonical action/result/`EXECUTION_EXCEPTION`/cross-role `HANDOFF` evidence required by the owning action. If no repository evidence surface is writable, the run MUST NOT manufacture a durable workflow transition from external Scheduled Task output; a later wake SHALL reconstruct correctness from the repository state that actually exists.
 
@@ -344,6 +366,49 @@ A first `absent`, `queued`, or `in_progress` observation of the exact required e
 - WHEN recovery evaluates routing repair
 - THEN it fails closed
 - AND it does not choose a lifecycle position by model inference
+
+#### Scenario: Human input arrives while Executor is preparing READY
+
+- GIVEN Executor reconstructed an implementation snapshot and is correcting approved findings
+- AND before Executor persists `READY`, a newer direct-Human comment appears that could materially affect correctness or scope
+- WHEN Executor performs the consequential-boundary fresh-read
+- THEN the older implementation snapshot is insufficient for READY
+- AND Executor MUST disposition the exact comment within Executor authority or route the unresolved meaning to its legal owner before READY can be persisted
+
+#### Scenario: Clearly non-substantive Human comment does not create lifecycle waiting state
+
+- GIVEN a newer direct-Human comment is administrative or clearly immaterial to the pending workflow decision
+- WHEN the current role evaluates the consequential boundary
+- THEN it MAY record a bounded non-blocking disposition referencing that exact comment id
+- AND the workflow MAY continue without creating a new waiting status, lifecycle action, blocker label, or Human-approval ceremony
+
+#### Scenario: Human-reserved decision remains provenance-bound
+
+- GIVEN a newer direct-Human comment contains a statement about a decision that governance reserves to Human authority
+- WHEN a Scheduled role evaluates that statement
+- THEN this freshness/disposition contract does not itself authorize the decision
+- AND the existing exact `Human-Decision-For` plus qualifying provenance-bound approval predicate remains required at the mapped Human-reserved boundary
+
+#### Scenario: Question belongs to another role authority
+
+- GIVEN a newer direct-Human comment raises a material specification/scope question while Executor or Reviewer owns the current action
+- WHEN the current role cannot legally resolve that meaning within its authority
+- THEN it MUST NOT answer outside its role merely to mark the comment handled
+- AND it dispositions the comment by using the existing finding/blocker and routing path to the legal owner
+
+#### Scenario: Repeated wake recognizes prior exact-comment disposition
+
+- GIVEN a direct-Human comment C was previously durably dispositioned by exact comment id under a legal action result, finding, answer, or routing boundary
+- WHEN a later wake reconstructs the same coordination Issue
+- THEN C does not require a duplicate acknowledgement or disposition
+- AND only newer or materially unresolved direct-Human input remains relevant to the current consequential-boundary fresh-read
+
+#### Scenario: Connector-authored workflow message is not reclassified as direct-Human input
+
+- GIVEN a coordination-Issue comment is attributed to the designated account but raw creation provenance shows it was performed via a GitHub App
+- WHEN a Scheduled role evaluates the Human-input freshness contract
+- THEN that comment is not classified as direct-Human input
+- AND its actor identity alone neither creates this disposition obligation nor grants Human authority
 
 ### Requirement: Executor persists task completion at verified vertical-slice checkpoints
 
@@ -482,12 +547,13 @@ Executor SHALL execute `merge-pr` only when durable evidence establishes:
 
 - an unambiguous independent Reviewer PASS for exact revision R under the required implementation or archive gate;
 - the current target PR head still equals R;
-- the required checks remain valid and non-contradictory; and
+- the required checks remain valid and non-contradictory;
+- the shared substantive direct-Human input freshness/disposition contract has been consumed at mutation time for newer coordination-Issue input that could affect accepted meaning or merge assumptions; and
 - all path-specific lifecycle and linkage preconditions required by the current merge target remain satisfied.
 
 The exact-head Reviewer PASS is the normal durable acceptance authority for the merge action. The workflow MUST NOT require a second Lead `MERGE_AUTHORIZED(R)` token, or an equivalent replacement token under another name, solely to repeat the accepted revision/gate state.
 
-If the target revision, Reviewer gate, required checks, lifecycle preparation, or linkage state becomes stale or contradictory, Executor MUST NOT merge and SHALL route to the legal correction/diagnosis owner according to the action contract.
+If the target revision, Reviewer gate, required checks, lifecycle preparation, Human-input disposition state, or linkage state becomes stale or contradictory, Executor MUST NOT merge and SHALL route to the legal correction/diagnosis owner according to the action contract.
 
 For implementation and implementation-correction PRs associated with a persistent coordination Issue, Executor SHALL verify before merge that the PR does not establish GitHub Issue-closing linkage to that coordination Issue. A closing linkage on an implementation PR is a lifecycle-contract violation and MUST fail closed rather than being merged.
 
@@ -530,6 +596,14 @@ For the final Archive PR, Executor SHALL verify before merge that the PR establi
 - THEN Executor does not merge
 - AND the PASS for R1 is not reused for R2
 - AND the changed revision returns through the legal review/correction path
+
+#### Scenario: Human input arrives after Reviewer PASS but before merge
+
+- GIVEN Reviewer recorded exact-head PASS for revision R
+- AND before `Executor / merge-pr` mutates the PR, a newer direct-Human comment appears that could invalidate a relied-upon merge assumption or the accepted meaning
+- WHEN Executor performs mutation-time fresh-read
+- THEN the older PASS alone is insufficient to authorize merge
+- AND Executor MUST NOT merge until the exact comment is durably dispositioned through the legal owner/path and all resulting merge preconditions are current
 
 ### Requirement: Merge recovery is idempotent and reconstructable
 
