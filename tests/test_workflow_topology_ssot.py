@@ -62,6 +62,7 @@ def test_workflow_preserves_explore_terminal_outcomes() -> None:
 
 def test_workflow_preserves_post_115_terminal_order() -> None:
     text = WORKFLOW.read_text()
+    terminal = text.split("## Formal terminal completion", maxsplit=1)[1]
     ordered = [
         "final Archive PR exact-head review PASS",
         "Executor merges exact accepted Archive revision",
@@ -72,7 +73,7 @@ def test_workflow_preserves_post_115_terminal_order() -> None:
         "re-observe the same Issue as closed",
         "terminal history",
     ]
-    positions = [text.index(item) for item in ordered]
+    positions = [terminal.index(item) for item in ordered]
     assert positions == sorted(positions)
 
 
