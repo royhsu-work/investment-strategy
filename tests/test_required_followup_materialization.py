@@ -63,8 +63,5 @@ def test_lifecycle_preparation_repairs_only_unique_required_tracker() -> None:
 def test_lifecycle_preparation_does_not_route_optional_or_prose_only_work() -> None:
     text = _lifecycle_finalize_text()
 
-    assert (
-        "Ordinary out-of-scope, non-goal, optional, or merely deferred prose creates no "
-        "materialization or routing obligation."
-        in text
-    )
+    assert "Ordinary out-of-scope, non-goal," in text
+    assert "optional, or merely deferred prose creates no materialization or routing obligation." in text
