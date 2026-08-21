@@ -84,7 +84,7 @@ def test_required_separate_follow_up_is_directly_routed_to_explore() -> None:
         assert required in lead
     for required in (
         "required deferred follow-up",
-        "create or reuse",
+        "reconstruct the approved source obligation and all matching trackers",
         "`agent:lead + action:explore-change`",
         "without Human admission",
     ):
