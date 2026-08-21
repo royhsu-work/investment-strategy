@@ -108,13 +108,14 @@ handoff evidence support the normal cross-role Exit; do not copy the shared taxo
 
 ## Exact validation run observation
 
-When `propose-change` or a materially revised `resolve-question` has just caused a just-triggered exact required run for OpenSpec validation, the first observation of that run as `queued` or `in_progress` is not by itself a reason to yield. While bounded execution opportunity remains and no different authority boundary is required, observe only the same exact run using bounded same-invocation observation. If the same exact run becomes terminal, consume its terminal result and continue immediately with the current action's next legal step. If it remains nonterminal when bounded execution opportunity is exhausted, that is a real external asynchronous wait.
+When `propose-change` or a materially revised `resolve-question` has just caused a just-triggered exact required run for OpenSpec validation, the first observation of that run as absent, `queued`, or `in_progress` is not by itself a reason to yield and does not establish async-wait Exit evidence. While bounded execution opportunity remains and no different authority boundary is required, observe only the same exact run using bounded same-invocation observation. After that first nonterminal observation, perform at least one subsequent fresh observation of the same exact target/resource before an ordinary asynchronous-wait Exit may be classified. If the subsequent fresh observation becomes terminal, consume its terminal result immediately and continue with the current action's next legal step.
 
 Before returning from an exact-validation boundary, consume the shared Invocation Exit Proof invariant. A
-first absent/queued/in-progress observation is non-exit evidence while the exact run remains legally
-consumable in this invocation. Treat the run as a real asynchronous-wait Exit only when current evidence
-proves further same-invocation consumption is unavailable and preserve the exact run identity for later
-fresh reconstruction.
+first absent/queued/in-progress observation is non-exit evidence. If a subsequent fresh observation still
+finds the same exact resource absent/nonterminal, current routing/revision/preconditions remain valid, and
+no other immediately actionable same-authority work remains, the existing asynchronous-wait Exit may be
+proven. Preserve the exact run identity for later fresh reconstruction rather than copying the generic Exit
+taxonomy into this Skill.
 
 A later wake does not trust the earlier nonterminal observation. It must fresh-read that exact run before deciding that waiting still applies. This specialization adds no timer, sleep policy, polling counter, heartbeat, retry counter, background service, or hidden waiter; the shared asynchronous-resource contract remains authoritative in `agents/AGENTS.md`.
 
