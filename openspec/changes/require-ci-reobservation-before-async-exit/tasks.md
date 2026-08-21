@@ -4,10 +4,10 @@ Traceability baseline: Explore #124 `issuecomment-5366724594` → proposal → M
 
 ## Slice 1 — Derive async-wait Exit from observation sequence
 
-- [ ] **RED** — Revise focused Invocation Exit regression coverage so a caller-supplied `exact_resource_unconsumable` truth value cannot directly establish async-wait Exit. Add cases for first absent/queued/in-progress observation, attempted async-wait Exit without re-observation, and stale routing/head/precondition discovered before the later observation. Run focused tests and verify RED failures are caused by the missing sequence-derived evidence behavior.
-- [ ] **GREEN** — Implement the minimum deterministic test seam that derives continuation, existing async-wait Exit, terminal-result consumption, or existing stale/precondition Exit from first and subsequent fresh observations of the same exact target/resource. Keep the seam test-only; do not introduce production dispatcher or waiter state.
-- [ ] **REFACTOR** — Preserve the existing bounded Exit taxonomy and remove any fixture shortcut that can bypass the required re-observation evidence. Add no wall-clock delay, sleep policy, polling counter, retry state, heartbeat, lease, durable waiter, or hidden runtime cursor.
-- [ ] **VERIFY** — Run focused Slice tests, the full regression suite, Ruff lint/format checks, mypy, and strict OpenSpec validation; persist completion only after the Slice is green.
+- [x] **RED** — Revise focused Invocation Exit regression coverage so a caller-supplied `exact_resource_unconsumable` truth value cannot directly establish async-wait Exit. Add cases for first absent/queued/in-progress observation, attempted async-wait Exit without re-observation, and stale routing/head/precondition discovered before the later observation. Run focused tests and verify RED failures are caused by the missing sequence-derived evidence behavior.
+- [x] **GREEN** — Implement the minimum deterministic test seam that derives continuation, existing async-wait Exit, terminal-result consumption, or existing stale/precondition Exit from first and subsequent fresh observations of the same exact target/resource. Keep the seam test-only; do not introduce production dispatcher or waiter state.
+- [x] **REFACTOR** — Preserve the existing bounded Exit taxonomy and remove any fixture shortcut that can bypass the required re-observation evidence. Add no wall-clock delay, sleep policy, polling counter, retry state, heartbeat, lease, durable waiter, or hidden runtime cursor.
+- [x] **VERIFY** — Run focused Slice tests, the full regression suite, Ruff lint/format checks, mypy, and strict OpenSpec validation; persist completion only after the Slice is green.
 
 ## Slice 2 — Operationalize the shared re-observation floor
 
