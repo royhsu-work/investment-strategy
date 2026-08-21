@@ -8,13 +8,13 @@ Each governed OpenSpec Change that materially adds, modifies, or removes reposit
 
 The declaration SHALL be independent from capability delta cardinality. A single capability requirement MAY drive multiple Skill changes, and the repository MUST NOT fabricate one OpenSpec capability delta per Skill file merely to satisfy Skill maintenance traceability.
 
-Wording, formatting, or other non-material edits that do not alter Skill responsibility, semantics, composition, trigger behavior, authority, or maintenance meaning MUST NOT require maintenance-trace entries solely because a Skill file changed.
+Wording, formatting, reference-only, or other non-material edits that do not alter Skill responsibility, semantics, composition, trigger behavior, authority, or maintenance meaning MUST NOT require maintenance-trace entries solely because a Skill file changed.
 
 For Skills derived from an external upstream baseline, immutable upstream provenance and current local divergence remain separately owned by the applicable `UPSTREAM.md` contract. Skill-maintenance traceability MUST NOT replace or falsify that upstream provenance layer. Repository-authored Skills with no external upstream MUST NOT receive fictional upstream metadata merely to satisfy this requirement.
 
 Lead SHALL make the material Skill-maintenance declaration part of the approved Change meaning before implementation. Reviewer SHALL verify during OpenSpec review that the declared Skill changes are justified by approved scope and during implementation review that the exact-head material Skill changes match the approved declaration. An undeclared material Skill change, a changed classification/responsibility boundary, or an unexplained removal/addition is a review finding unless the approved Change meaning is revised through the existing governed specification path.
 
-Historical repair introduced after a prior Change SHALL be explicitly retrospective, SHALL link the original durable source evidence, and SHALL NOT rewrite archived artifacts to make the earlier Change appear to have followed a later rule.
+Historical repair introduced after a prior Change SHALL be explicitly retrospective, SHALL link the original durable source evidence, and SHALL NOT rewrite archived artifacts to make the earlier Change appear to have followed a later rule. When an approved repair defines a bounded historical window, every merged implementation Change in that window SHALL be evaluated for material repository Skill Added/Modified/Removed effects; material effects SHALL be declared and non-material or no-Skill effects SHALL be explicitly excludable with rationale rather than silently grandfathered.
 
 #### Scenario: One capability change modifies two Skills
 
@@ -49,7 +49,7 @@ Historical repair introduced after a prior Change SHALL be explicitly retrospect
 
 #### Scenario: Pure wording cleanup is non-material
 
-- GIVEN a Skill edit changes only wording or formatting
+- GIVEN a Skill edit changes only wording, formatting, or a reference with no semantic effect
 - AND responsibility, semantics, composition, trigger behavior, authority, and maintenance meaning remain unchanged
 - WHEN maintenance traceability is evaluated
 - THEN no Added/Modified/Removed declaration is required solely for that edit
@@ -71,10 +71,12 @@ Historical repair introduced after a prior Change SHALL be explicitly retrospect
 - THEN the review returns a finding
 - AND internal capability Proposal↔Specs↔Design↔Tasks consistency does not excuse the unexplained Skill drift
 
-#### Scenario: Later Change repairs historical traceability
+#### Scenario: Later Change repairs a bounded historical window
 
-- GIVEN an older completed Change materially modified repository Skills before this requirement existed
-- AND a later governed Change is explicitly approved to repair that traceability gap
+- GIVEN older completed Changes materially modified repository Skills before this requirement existed
+- AND a later governed Change is explicitly approved to repair traceability across a bounded historical window
 - WHEN the later Change records the historical maintenance explanation
-- THEN it references the original Issue/PR/archive evidence and identifies the repair as retrospective
-- AND it does not edit the older archived Change to imply the newer rule existed at that time
+- THEN every merged implementation Change in that window is evaluated
+- AND material Skill effects reference their original Issue/implementation/archive evidence and are identified as retrospective
+- AND a source Change with no material Skill effect may be explicitly excluded with rationale
+- AND the repair does not edit older archived Changes to imply the newer rule existed at that time
