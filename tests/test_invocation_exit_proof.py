@@ -49,10 +49,10 @@ def _classify(evidence: Evidence) -> str:
         if latest == "failure":
             return "CONTINUE" if evidence.terminal_failure_actionable else "TERMINAL_FAILURE"
         if latest in NONTERMINAL:
-            if len(observations) < 2:
-                return "RETURN_REJECTED" if evidence.attempted_return else "CONTINUE"
             if evidence.other_same_authority_work_actionable:
                 return "CONTINUE"
+            if evidence.same_resource_observation_executable:
+                return "RETURN_REJECTED" if evidence.attempted_return else "CONTINUE"
             return "ASYNC_WAIT" if evidence.attempted_return else "CONTINUE"
 
     if evidence.same_role_successor:
