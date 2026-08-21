@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents" / "AGENTS.md"
+WORKFLOW = ROOT / "agents" / "workflow.md"
 LEAD = ROOT / "agents" / "roles" / "lead.md"
 OPEN_SPEC_CHANGE = ROOT / "agents" / "skills" / "openspec-change" / "SKILL.md"
 EXPLORE = ROOT / "agents" / "skills" / "openspec-explore" / "SKILL.md"
@@ -280,17 +281,15 @@ def test_lifecycle_transitions_use_bounded_journal_without_per_mutation_logging(
 
 
 def test_archive_merge_keeps_issue_open_and_hands_to_terminal_lead() -> None:
-    shared = _normalized(AGENTS)
+    topology = _normalized(WORKFLOW)
     merge = _normalized(MERGE_PR)
     for required in (
         "final Archive PR",
         "non-closing",
-        "`agent:lead + action:finalize-archive`",
-        "Issue remains open",
-        "merge/handoff journal",
-        "MUST NOT execute Lead finalization in the same invocation",
+        "Lead / finalize-archive",
+        "coordination Issue remains open",
     ):
-        assert required in shared
+        assert required in topology
     for required in (
         "Archive PR to be durably merged",
         "coordination Issue to remain open",
@@ -304,9 +303,9 @@ def test_archive_merge_keeps_issue_open_and_hands_to_terminal_lead() -> None:
 
 def test_lifecycle_complete_precedes_issue_close_and_closed_is_terminal_history() -> None:
     shared = _normalized(AGENTS)
+    topology = _read(WORKFLOW).split("## Formal terminal completion", maxsplit=1)[1]
     finalize = _normalized(LIFECYCLE_FINALIZE)
     for required in (
-        "Normal path therefore has no closed terminal-pending workflow",
         "LIFECYCLE_COMPLETE",
         "Issue close is missing",
         "observed closed Issue",
@@ -314,6 +313,14 @@ def test_lifecycle_complete_precedes_issue_close_and_closed_is_terminal_history(
         "excluded from formal WIP",
     ):
         assert required in shared
+    ordered = (
+        "persist valid LIFECYCLE_COMPLETE",
+        "close coordination Issue",
+        "re-observe the same Issue as closed",
+        "terminal history",
+    )
+    positions = [topology.index(item) for item in ordered]
+    assert positions == sorted(positions)
     for required in (
         "LIFECYCLE_COMPLETE",
         "Archive PR exact head",
@@ -337,7 +344,7 @@ def test_selected_workflow_is_work_conserving_until_a_legal_termination_boundary
         "failed-but-actionable validation",
         "verified Slice checkpoint",
         "Invocation Exit",
-        "target role equals the fixed invocation role",
+        "legal successor from `agents/workflow.md` has the same role",
         "reconstruct the target action",
         "genuine external asynchronous wait",
         "stale routing, revision, concurrency, or precondition loss",
