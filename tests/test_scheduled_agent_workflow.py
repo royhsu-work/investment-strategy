@@ -6,6 +6,7 @@ from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents"
+WORKFLOW = AGENTS / "workflow.md"
 
 ROLE_ACTIONS = {
     "Lead": (
@@ -259,11 +260,11 @@ def test_pr_linkage_governance_requires_non_closing_linkage_for_archive() -> Non
 
 def test_persistent_lifecycle_archive_boundary_and_human_admission_are_documented() -> None:
     shared = " ".join(_read(AGENTS / "AGENTS.md").split())
+    topology = " ".join(_read(WORKFLOW).split())
     labels = _read(AGENTS / "labels.md")
     for required in (
         "one persistent coordination Issue",
         "immutable after Lead persists it",
-        "MORE_IMPLEMENTATION_REQUIRED",
         "Complete/eligible under the README archive contract",
         "do not define or execute a competing normal `archive-change` action",
         "At most one open",
@@ -275,6 +276,7 @@ def test_persistent_lifecycle_archive_boundary_and_human_admission_are_documente
         "MUST NEVER add, remove, restore, or manufacture either reserved capability",
     ):
         assert required in shared
+    assert "MORE_IMPLEMENTATION_REQUIRED" in topology
     for required in (
         "agent:lead",
         "agent:reviewer",
@@ -290,15 +292,22 @@ def test_persistent_lifecycle_archive_boundary_and_human_admission_are_documente
 
 def test_final_completion_requires_lifecycle_complete_then_observed_issue_closure() -> None:
     shared = " ".join(_read(AGENTS / "AGENTS.md").split())
+    topology = _read(WORKFLOW).split("## Formal terminal completion", maxsplit=1)[1]
     finalize = " ".join(_read(AGENTS / "skills/lifecycle-finalize/SKILL.md").split())
     for required in (
         "PASS, completion comment, merge result",
         "open coordination Issue = formal workflow not yet terminal",
-        "closed coordination Issue = terminal history",
-        "Only after that result is durable may Lead close the coordination Issue",
         "valid `LIFECYCLE_COMPLETE` plus observed closed Issue",
     ):
         assert required in shared
+    ordered = (
+        "persist valid LIFECYCLE_COMPLETE",
+        "close coordination Issue",
+        "re-observe the same Issue as closed",
+        "terminal history",
+    )
+    positions = [topology.index(item) for item in ordered]
+    assert positions == sorted(positions)
     assert (
         "Only after `LIFECYCLE_COMPLETE` is durable may Lead perform the GitHub "
         "coordination Issue close mutation"
@@ -306,8 +315,9 @@ def test_final_completion_requires_lifecycle_complete_then_observed_issue_closur
     assert "requires observed `closed`" in finalize
 
 
-def test_readme_aligns_role_gates_multi_pr_archive_and_final_closure() -> None:
+def test_readme_orients_to_role_gates_without_copying_global_lifecycle() -> None:
     readme = _read(ROOT / "README.md")
+    topology = _read(WORKFLOW)
     for required in (
         "Reviewer / review-openspec",
         "Reviewer / review-implementation",
@@ -316,16 +326,24 @@ def test_readme_aligns_role_gates_multi_pr_archive_and_final_closure() -> None:
         "MORE_IMPLEMENTATION_REQUIRED",
         "Reviewer / review-archive",
         "Lead / finalize-archive",
-        "final Archive PR non-closing linkage",
-        "LIFECYCLE_COMPLETE",
         "intake:approved",
         "不是** mutex、CAS 或 single-flight",
         "validator checkout `HEAD`",
         "run.head_sha` 只是 association metadata",
         "synthetic merge revision",
         "Scheduled Role 不另建 normal `archive-change` mutation",
+        "agents/workflow.md",
     ):
         assert required in readme
+    for required in (
+        "final Archive PR",
+        "non-closing",
+        "LIFECYCLE_COMPLETE",
+        "close coordination Issue",
+        "terminal history",
+    ):
+        assert required in topology
+    assert "Final lifecycle 的高階導覽是：" not in readme
 
 
 def test_governance_does_not_add_parallel_workflow_engine_state() -> None:
