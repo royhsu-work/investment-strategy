@@ -1,5 +1,6 @@
 """Executable contract tests for Skill-maintenance traceability."""
 
+import re
 from pathlib import Path
 
 from investment_strategy.skill_maintenance import (
@@ -133,3 +134,67 @@ def test_implementation_review_compares_exact_head_with_declaration() -> None:
     assert "Skill maintenance traceability" in text
     assert "exact implementation head" in text
     assert "differently classified" in text
+
+
+def _retrospective_rows() -> dict[str, set[str]]:
+    proposal = _skill_text(
+        "openspec/changes/record-skill-maintenance-traceability/proposal.md"
+    )
+    section = proposal.split(
+        "### Retrospective repair window: #105 through pre-#110 baseline", 1
+    )[1].split("#80 / PR #121", 1)[0]
+    rows: dict[str, set[str]] = {}
+    for line in section.splitlines():
+        if not line.startswith("| #"):
+            continue
+        columns = [column.strip() for column in line.strip("|").split("|")]
+        source, skill_cell = columns[:2]
+        source_issue = source.split(" / ", 1)[0]
+        rows[source_issue] = set(re.findall(r"`([^`]+)`", skill_cell))
+    return rows
+
+
+def test_retrospective_window_classifies_every_skill_touching_source_change() -> None:
+    assert _retrospective_rows() == {
+        "#105": {"openspec-explore", "openspec-change"},
+        "#107": {
+            "archive-review",
+            "implementation-review",
+            "implementation",
+            "lifecycle-finalize",
+            "merge-pr",
+            "openspec-change",
+            "openspec-review",
+        },
+        "#86": {"openspec-change", "openspec-review"},
+        "#115": {"lifecycle-finalize", "merge-pr"},
+        "#112": {"implementation-review", "implementation", "openspec-change"},
+    }
+
+
+def test_retrospective_window_records_evaluated_non_skill_exclusion() -> None:
+    proposal = _skill_text(
+        "openspec/changes/record-skill-maintenance-traceability/proposal.md"
+    )
+
+    assert (
+        "#80 / PR #121 is explicitly evaluated and excluded from retrospective Skill entries "
+        "because it did not modify `agents/skills/*`."
+    ) in proposal
+
+
+def test_retrospective_repair_does_not_rewrite_source_archives() -> None:
+    source_changes = (
+        "enforce-dispatch-cardinality-preflight",
+        "disposition-substantive-human-input",
+        "preserve-explore-proposal-handoff",
+        "align-coordination-issue-close-with-terminal",
+        "enforce-invocation-exit-proof",
+    )
+    archive_root = Path("openspec/changes/archive")
+
+    for change in source_changes:
+        proposals = list(archive_root.glob(f"*-{change}/proposal.md"))
+        assert len(proposals) == 1, change
+        historical_text = proposals[0].read_text(encoding="utf-8")
+        assert "record-skill-maintenance-traceability" not in historical_text
