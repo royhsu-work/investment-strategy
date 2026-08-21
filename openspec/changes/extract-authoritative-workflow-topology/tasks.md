@@ -25,7 +25,7 @@ Traceability baseline: Explore `issuecomment-5363202052` → proposal → `sched
 
 ## Completion
 
-- [ ] Confirm every material boundary in Explore `issuecomment-5363202052` is represented and no new Human-reserved commitment was introduced.
-- [ ] Confirm no role/action, dispatch/cardinality rule, queue ordering, Human-authority predicate, review/merge gate, Invocation Exit rule, archive mechanic, or terminal ordering changed unintentionally.
-- [ ] Confirm all applicable required separate-follow-up obligations have durable trackers; none are introduced by this Change.
-- [ ] Run final Python quality gates and exact-head strict OpenSpec validation before `READY`.
+- [x] Confirm every material boundary in Explore `issuecomment-5363202052` is represented and no new Human-reserved commitment was introduced.
+- [x] Confirm no role/action, dispatch/cardinality rule, queue ordering, Human-authority predicate, review/merge gate, Invocation Exit rule, archive mechanic, or terminal ordering changed unintentionally.
+- [x] Confirm all applicable required separate-follow-up obligations have durable trackers; none are introduced by this Change.
+- [x] Run final Python quality gates and exact-head strict OpenSpec validation before `READY`.
