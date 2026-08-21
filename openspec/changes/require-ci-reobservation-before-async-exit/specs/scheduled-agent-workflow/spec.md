@@ -78,6 +78,23 @@ The generic continuation/termination, catchable-exception, and normal-finalizati
 - THEN the failed validation is not a legal Exit by itself
 - AND the invocation corrects and continues under the existing work-conserving contract
 
+#### Scenario: First nonterminal exact-resource observation cannot exit
+
+- GIVEN the selected action has just created or triggered an exact external resource such as a required CI run
+- AND its first current observation is absent, queued, or in progress
+- AND current routing, authority, and execution opportunity still allow bounded consumption of that exact resource
+- WHEN the invocation evaluates Exit Proof
+- THEN that first nonterminal observation is not a genuine asynchronous-wait Exit
+- AND the invocation continues bounded observation of the same exact resource
+
+#### Scenario: Genuine unconsumable external wait may exit
+
+- GIVEN an exact required external resource remains nonterminal
+- AND current evidence proves the current legal execution opportunity cannot further consume it without inventing waiter state or crossing an authority boundary
+- WHEN the invocation evaluates Exit Proof
+- THEN it MAY classify a genuine external asynchronous wait
+- AND the Exit Proof identifies the exact awaited resource/evidence for later reconstruction
+
 #### Scenario: First nonterminal exact-resource observation requires re-observation
 
 - GIVEN the selected action has just created or triggered an exact required external resource such as a CI run
