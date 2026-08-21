@@ -1,6 +1,6 @@
 # Design: Record Skill maintenance traceability
 
-Explore source: `issuecomment-5364628074`.
+Explore source: `issuecomment-5364628074`; material Human correction: `issuecomment-5364679558`.
 
 ## Decision 1: Reuse archived Change artifacts as the maintenance-history container
 
@@ -14,7 +14,7 @@ The proposal carries a `Skill maintenance traceability` declaration because it i
 
 Capability specs answer what repository behavior is required. Skill maintenance traceability answers why a repository Skill artifact/responsibility changed. One capability requirement may map to multiple material Skill changes; no one-file-one-capability-delta convention is introduced.
 
-Rationale: #105 showed that the capability-level `MODIFIED` workflow requirement was correct while the two concrete Skill modifications still needed explicit maintenance explanation.
+Rationale: #105 showed that the capability-level `MODIFIED` workflow requirement was correct while the concrete Skill modifications still needed explicit maintenance explanation.
 
 ## Decision 3: Preserve `UPSTREAM.md` as a different provenance axis
 
@@ -26,7 +26,7 @@ Rationale: collapsing these axes would either turn `UPSTREAM.md` into a chronolo
 
 ## Decision 4: Materiality is semantic/responsibility based, not file-touch based
 
-A Skill maintenance declaration is required when a change materially affects responsibility, executable semantics, composition/loading behavior, trigger behavior, authority, or maintenance meaning. Formatting and wording-only changes are excluded when those meanings remain stable.
+A Skill maintenance declaration is required when a change materially affects responsibility, executable semantics, composition/loading behavior, trigger behavior, authority, or maintenance meaning. Formatting, wording, and reference-only changes are excluded when those meanings remain stable.
 
 Rationale: file-touch rules produce noise and weaken reviewer attention; the demonstrated gap concerns maintainable responsibility provenance.
 
@@ -38,13 +38,13 @@ Executor does not gain authority to revise the declaration or specification mean
 
 Rationale: this keeps traceability enforceable without allowing implementation to self-authorize scope drift.
 
-## Decision 6: #105 repair is retrospective and bounded
+## Decision 6: Retrospective repair is bounded by an explicit historical window
 
-This Change records exactly two historical `Modified` entries for #105: `openspec-explore` and `openspec-change`. The record links #105, PR #106, archive PR #108, and Human question `issuecomment-5346223908`; it states that both Skills retained their existing action ownership while adding action-local cardinality-preflight consumption/defense-in-depth.
+Human correction `issuecomment-5364679558` supersedes the earlier #105-only repair. This Change retrospectively evaluates merged implementation Changes from #105 through the pre-#110 baseline and records material Skill modifications for #105/#106, #107/#109, #86/#114, #115/#117, and #112/#119. #80/#121 is explicitly excluded because it did not modify `agents/skills/*`.
 
-No other historical Skill change is audited merely because the prospective rule is introduced.
+The retrospective classification is based on source implementation diffs plus the source Change semantics. Historical archives remain immutable. `UPSTREAM.md` updates observed in the window remain their own upstream/current-local-divergence provenance and do not substitute for this chronological maintenance explanation.
 
-Rationale: this satisfies the explicit repair requirement while preserving historical integrity and bounded scope.
+Rationale: the bounded window repairs recent governed Skill maintenance consistently without turning #110 into an unbounded repository-history audit or falsely grandfathering material post-#105 changes.
 
 ## Validation strategy
 
@@ -52,10 +52,11 @@ Add focused regressions that exercise the trace contract as data/behavior rather
 
 1. two Skills mapped to one capability change are both accepted without duplicate capability deltas;
 2. undeclared material Skill changes are rejected by review classification;
-3. formatting-only changes are non-material;
+3. formatting/reference-only changes are non-material;
 4. Added/Removed/decomposition declarations require responsibility/replacement information as applicable;
 5. upstream-adapted and repository-authored Skills use distinct provenance paths;
-6. #105 retrospective entries are reconstructable from the current Change without modifying the #105 archive.
+6. the bounded retrospective window is reconstructable from #110 without modifying historical archives;
+7. #80/#121 is represented as an evaluated exclusion rather than silently omitted.
 
 Repository-level structure checks may verify that the mapped author/review Skills reference the canonical maintenance-trace contract, but semantic acceptance must not rely only on Markdown phrase presence.
 
