@@ -1,5 +1,7 @@
 """Executable contract tests for Skill-maintenance traceability."""
 
+from pathlib import Path
+
 from investment_strategy.skill_maintenance import (
     SkillChange,
     SkillChangeClass,
@@ -103,3 +105,31 @@ def test_repository_authored_skill_requires_no_fictional_upstream_metadata() -> 
 
     assert not hasattr(entry, "upstream")
     assert compare_skill_changes([change], [entry]) == ()
+
+
+def _skill_text(path: str) -> str:
+    return Path(path).read_text(encoding="utf-8")
+
+
+def test_openspec_authoring_owns_skill_maintenance_declaration() -> None:
+    text = _skill_text("agents/skills/openspec-change/SKILL.md")
+
+    assert "Skill maintenance traceability" in text
+    assert "Lead owns" in text
+    assert "materially affected Skill" in text
+
+
+def test_openspec_review_checks_declaration_completeness() -> None:
+    text = _skill_text("agents/skills/openspec-review/SKILL.md")
+
+    assert "Skill maintenance traceability" in text
+    assert "undeclared material Skill" in text
+    assert "formatting" in text
+
+
+def test_implementation_review_compares_exact_head_with_declaration() -> None:
+    text = _skill_text("agents/skills/implementation-review/SKILL.md")
+
+    assert "Skill maintenance traceability" in text
+    assert "exact implementation head" in text
+    assert "differently classified" in text
