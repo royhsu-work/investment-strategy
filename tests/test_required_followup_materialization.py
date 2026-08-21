@@ -1,7 +1,4 @@
-from __future__ import annotations
-
 from pathlib import Path
-
 
 OPEN_SPEC_CHANGE = Path("agents/skills/openspec-change/SKILL.md")
 
@@ -41,4 +38,8 @@ def test_required_followup_ambiguous_matches_fail_closed() -> None:
 def test_required_followup_does_not_infer_authority_from_prose() -> None:
     text = _openspec_change_text()
 
-    assert "Ordinary out-of-scope, non-goal, optional, or merely deferred prose does not create or route a tracker." in text
+    expected = (
+        "Ordinary out-of-scope, non-goal, optional, or merely deferred prose does not "
+        "create or route a tracker."
+    )
+    assert expected in text
