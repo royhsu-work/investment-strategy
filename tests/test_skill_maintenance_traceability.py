@@ -118,9 +118,7 @@ def _record_skill_proposal() -> str:
         return active.read_text(encoding="utf-8")
 
     archived = sorted(
-        Path("openspec/changes/archive").glob(
-            "*-record-skill-maintenance-traceability/proposal.md"
-        )
+        Path("openspec/changes/archive").glob("*-record-skill-maintenance-traceability/proposal.md")
     )
     assert len(archived) == 1
     return archived[0].read_text(encoding="utf-8")
