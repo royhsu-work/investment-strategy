@@ -4,10 +4,10 @@ Traceability baseline: Explore `issuecomment-5363202052` → proposal → `sched
 
 ## Slice 1 — Establish authoritative topology surface
 
-- [ ] RED: add focused tests proving current end-to-end topology has one expected owner and that `agents/workflow.md` must represent the existing legal action progression, correction loops, pre-Change Explore outcomes, and post-#115 terminal path.
-- [ ] GREEN: add `agents/workflow.md` with the minimum authoritative normal-flow representation plus bounded correction/Explore-terminal/formal-terminal sections, preserving current behavior.
-- [ ] REFACTOR: remove or convert duplicated global topology text in `agents/AGENTS.md` to references while retaining shared execution/cardinality/Human-authority/invocation/reconstruction invariants there.
-- [ ] VERIFY: run focused tests, full regression suite, type checks, lint/format checks, and strict OpenSpec validation; persist the verified Slice checkpoint.
+- [x] RED: add focused tests proving current end-to-end topology has one expected owner and that `agents/workflow.md` must represent the existing legal action progression, correction loops, pre-Change Explore outcomes, and post-#115 terminal path.
+- [x] GREEN: add `agents/workflow.md` with the minimum authoritative normal-flow representation plus bounded correction/Explore-terminal/formal-terminal sections, preserving current behavior.
+- [x] REFACTOR: remove or convert duplicated global topology text in `agents/AGENTS.md` to references while retaining shared execution/cardinality/Human-authority/invocation/reconstruction invariants there.
+- [x] VERIFY: run focused tests, full regression suite, type checks, lint/format checks, and strict OpenSpec validation; persist the verified Slice checkpoint.
 
 ## Slice 2 — Normalize role, Skill, and README references
 
