@@ -11,10 +11,10 @@ Traceability baseline: Explore `issuecomment-5364628074` + Human correction `iss
 
 ## Slice 2 — Enforce authoring and independent review
 
-- [ ] RED: add executable review fixtures where an undeclared material Skill change fails, a declared two-Skill/one-capability change passes, and a formatting/reference-only Skill edit does not create false maintenance noise.
-- [ ] GREEN: update `agents/skills/openspec-change/SKILL.md` so Lead authors/maintains the declaration from approved scope; update `agents/skills/openspec-review/SKILL.md` so OpenSpec review verifies declaration completeness/traceability; update `agents/skills/implementation-review/SKILL.md` so exact-head review compares material Skill changes with the approved declaration.
-- [ ] REFACTOR: preserve existing Lead/Reviewer/Executor authority boundaries; implementation must return to the governed specification path rather than letting Executor self-authorize a materially different Skill set or responsibility change.
-- [ ] VERIFY: run focused tests, full regression suite, type checks, lint/format checks, and strict OpenSpec validation; persist the verified Slice checkpoint.
+- [x] RED: add executable review fixtures where an undeclared material Skill change fails, a declared two-Skill/one-capability change passes, and a formatting/reference-only Skill edit does not create false maintenance noise.
+- [x] GREEN: update `agents/skills/openspec-change/SKILL.md` so Lead authors/maintains the declaration from approved scope; update `agents/skills/openspec-review/SKILL.md` so OpenSpec review verifies declaration completeness/traceability; update `agents/skills/implementation-review/SKILL.md` so exact-head review compares material Skill changes with the approved declaration.
+- [x] REFACTOR: preserve existing Lead/Reviewer/Executor authority boundaries; implementation must return to the governed specification path rather than letting Executor self-authorize a materially different Skill set or responsibility change.
+- [x] VERIFY: run focused tests, full regression suite, type checks, lint/format checks, and strict OpenSpec validation; persist the verified Slice checkpoint.
 
 ## Slice 3 — Repair the bounded #105-through-pre-#110 window without rewriting history
 
