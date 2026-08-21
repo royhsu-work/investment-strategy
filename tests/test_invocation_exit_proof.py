@@ -3,6 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 NONTERMINAL = {"absent", "queued", "in_progress"}
+REOBSERVATION_FLOOR = "subsequent fresh observation"
 
 
 @dataclass(frozen=True)
@@ -84,13 +85,22 @@ def test_shared_owner_and_action_consumers_are_integrated() -> None:
     assert "positively classify" in governance
     assert "If no legal Exit class is proven" in governance
     assert "Exit Proof is an internal execution precondition" in governance
+    assert REOBSERVATION_FLOOR in governance
 
     for path in (
         "agents/skills/implementation/SKILL.md",
         "agents/skills/openspec-change/SKILL.md",
-        "agents/skills/implementation-review/SKILL.md",
     ):
-        assert "consume the shared Invocation Exit Proof invariant" in _read(path)
+        text = _read(path)
+        assert "consume the shared Invocation Exit Proof invariant" in text
+        assert REOBSERVATION_FLOOR in text
+
+    for path in (
+        "agents/skills/implementation-review/SKILL.md",
+        "agents/skills/archive-review/SKILL.md",
+        "agents/skills/lifecycle-finalize/SKILL.md",
+    ):
+        assert REOBSERVATION_FLOOR not in _read(path)
 
 
 def test_red_with_known_green_requires_continuation() -> None:
