@@ -52,8 +52,10 @@ def test_reviewer_retains_reverse_first_semantic_bidirectional_gate() -> None:
 
 def test_readme_orients_to_traceability_owners_without_copying_review_protocol() -> None:
     readme = _normalized(README)
-    assert "Authoritative Scheduled-Agent runtime governance" in readme
+    assert "Authoritative Scheduled-Agent shared runtime governance" in readme
+    assert "authoritative runtime workflow topology" in readme
     assert "agents/AGENTS.md" in readme
+    assert "agents/workflow.md" in readme
     assert "OpenSpec authoring conventions" in readme
     assert "openspec/config.yaml" in readme
     assert "review-openspec" in readme
