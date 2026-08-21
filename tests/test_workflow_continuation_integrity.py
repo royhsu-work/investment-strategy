@@ -41,7 +41,7 @@ def test_same_role_transition_continues_only_same_issue_and_fixed_role() -> None
     assert "cross-role" in shared and "Human authority" in shared
     assert "real external asynchronous wait" in shared
     assert "stale" in shared and "unsafe" in shared
-    assert "Same-role vs cross-role handoff boundary" in topology
+    assert "Same-role and cross-role boundaries" in topology
 
 
 def test_handoff_is_cross_role_only_and_same_role_needs_no_synthetic_message() -> None:
