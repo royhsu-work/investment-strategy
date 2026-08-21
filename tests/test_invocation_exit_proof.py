@@ -146,8 +146,7 @@ def test_reobservation_nonterminal_with_other_work_continues() -> None:
 
 def test_reobservation_terminal_success_is_consumed() -> None:
     assert (
-        _classify(Evidence(exact_resource_observations=("queued", "success")))
-        == "TERMINAL_SUCCESS"
+        _classify(Evidence(exact_resource_observations=("queued", "success"))) == "TERMINAL_SUCCESS"
     )
 
 
