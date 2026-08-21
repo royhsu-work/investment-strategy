@@ -172,9 +172,7 @@ def test_explicit_execution_opportunity_boundary_may_prove_async_wait() -> None:
 
 def test_short_run_terminal_success_after_repeated_in_progress_is_consumed() -> None:
     assert (
-        _classify(
-            Evidence(exact_resource_observations=("in_progress", "in_progress", "success"))
-        )
+        _classify(Evidence(exact_resource_observations=("in_progress", "in_progress", "success")))
         == "TERMINAL_SUCCESS"
     )
 
