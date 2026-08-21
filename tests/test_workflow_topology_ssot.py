@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / "agents" / "workflow.md"
 AGENTS = ROOT / "agents" / "AGENTS.md"
@@ -100,7 +99,11 @@ def test_shared_governance_names_workflow_as_topology_owner() -> None:
 
 def test_readme_points_to_authoritative_workflow_instead_of_copying_final_path() -> None:
     text = README.read_text()
-    assert "authoritative runtime workflow topology 位於 default-branch `agents/workflow.md`" in text
+    expected = (
+        "authoritative runtime workflow topology 位於 default-branch "
+        "`agents/workflow.md`"
+    )
+    assert expected in text
     assert "Final lifecycle 的高階導覽是：" not in text
 
 
