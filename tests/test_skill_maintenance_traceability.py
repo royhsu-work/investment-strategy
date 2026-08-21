@@ -37,15 +37,13 @@ def test_one_capability_change_can_declare_two_material_skills() -> None:
 
 
 def test_undeclared_material_skill_change_is_a_finding() -> None:
-    changes = [SkillChange("agents/skills/implementation-review/SKILL.md", SkillChangeClass.MODIFIED)]
+    path = "agents/skills/implementation-review/SKILL.md"
+    changes = [SkillChange(path, SkillChangeClass.MODIFIED)]
 
     findings = compare_skill_changes(changes, [])
 
     assert [(finding.path, finding.reason) for finding in findings] == [
-        (
-            "agents/skills/implementation-review/SKILL.md",
-            "material Skill change is undeclared",
-        )
+        (path, "material Skill change is undeclared")
     ]
 
 
@@ -68,7 +66,8 @@ def test_changed_classification_is_a_finding() -> None:
 
     findings = compare_skill_changes(changes, declaration)
 
-    assert any("declared Modified but implementation is Removed" in finding.reason for finding in findings)
+    expected = "declared Modified but implementation is Removed"
+    assert any(expected in finding.reason for finding in findings)
 
 
 def test_retrospective_entry_is_current_provenance_not_rewritten_history() -> None:
