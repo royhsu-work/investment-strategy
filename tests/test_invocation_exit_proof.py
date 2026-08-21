@@ -14,6 +14,7 @@ class Evidence:
     exact_resource_observations: tuple[str, ...] = ()
     terminal_failure_actionable: bool = False
     other_same_authority_work_actionable: bool = False
+    same_resource_observation_executable: bool = True
     same_role_successor: bool = False
     cross_role_handoff_completed: bool = False
     workflow_terminal: bool = False
@@ -128,43 +129,61 @@ def test_first_nonterminal_exact_resource_observation_rejects_return() -> None:
         )
 
 
-def test_reobservation_still_nonterminal_may_prove_async_wait() -> None:
+def test_repeated_nonterminal_observations_reject_return_while_observation_is_executable() -> None:
     for first in NONTERMINAL:
         assert (
             _classify(
                 Evidence(
-                    exact_resource_observations=(first, "in_progress"),
+                    exact_resource_observations=(first, "in_progress", "in_progress"),
+                    same_resource_observation_executable=True,
                     attempted_return=True,
                 )
             )
-            == "ASYNC_WAIT"
+            == "RETURN_REJECTED"
         )
 
 
-def test_reobservation_nonterminal_with_other_work_continues() -> None:
+def test_nonterminal_observation_count_and_no_other_work_do_not_prove_wait() -> None:
     assert (
         _classify(
             Evidence(
                 exact_resource_observations=("queued", "in_progress"),
-                other_same_authority_work_actionable=True,
+                other_same_authority_work_actionable=False,
+                same_resource_observation_executable=True,
                 attempted_return=True,
             )
         )
-        == "CONTINUE"
+        == "RETURN_REJECTED"
     )
 
 
-def test_reobservation_terminal_success_is_consumed() -> None:
-    assert (
-        _classify(Evidence(exact_resource_observations=("queued", "success"))) == "TERMINAL_SUCCESS"
-    )
-
-
-def test_reobservation_terminal_actionable_failure_continues() -> None:
+def test_explicit_execution_opportunity_boundary_may_prove_async_wait() -> None:
     assert (
         _classify(
             Evidence(
-                exact_resource_observations=("in_progress", "failure"),
+                exact_resource_observations=("queued", "in_progress"),
+                same_resource_observation_executable=False,
+                attempted_return=True,
+            )
+        )
+        == "ASYNC_WAIT"
+    )
+
+
+def test_short_run_terminal_success_after_repeated_in_progress_is_consumed() -> None:
+    assert (
+        _classify(
+            Evidence(exact_resource_observations=("in_progress", "in_progress", "success"))
+        )
+        == "TERMINAL_SUCCESS"
+    )
+
+
+def test_short_run_actionable_failure_after_repeated_in_progress_continues() -> None:
+    assert (
+        _classify(
+            Evidence(
+                exact_resource_observations=("in_progress", "in_progress", "failure"),
                 terminal_failure_actionable=True,
             )
         )
