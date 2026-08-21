@@ -124,7 +124,7 @@ def test_openspec_review_checks_declaration_completeness() -> None:
 
     assert "Skill maintenance traceability" in text
     assert "undeclared material Skill" in text
-    assert "formatting" in text
+    assert "Formatting" in text
 
 
 def test_implementation_review_compares_exact_head_with_declaration() -> None:
