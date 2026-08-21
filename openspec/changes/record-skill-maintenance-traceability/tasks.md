@@ -4,10 +4,10 @@ Traceability baseline: Explore `issuecomment-5364628074` + Human correction `iss
 
 ## Slice 1 — Establish the Skill-maintenance trace contract
 
-- [ ] RED: add focused behavioral tests for material Added / Modified / Removed Skill trace declarations, one-capability-to-many-Skills mapping, non-material wording/reference-only edits, and retrospective-vs-original-history distinction.
-- [ ] GREEN: implement the minimum repository-governance support for a bounded `Skill maintenance traceability` declaration in governed Changes without adding a global Skill changelog/database.
-- [ ] REFACTOR: keep capability delta semantics, Skill maintenance traceability, and `UPSTREAM.md` provenance as distinct ownership layers with no synchronization-by-convention copies.
-- [ ] VERIFY: run focused tests, full regression suite, type checks, lint/format checks, and strict OpenSpec validation; persist the verified Slice checkpoint.
+- [x] RED: add focused behavioral tests for material Added / Modified / Removed Skill trace declarations, one-capability-to-many-Skills mapping, non-material wording/reference-only edits, and retrospective-vs-original-history distinction.
+- [x] GREEN: implement the minimum repository-governance support for a bounded `Skill maintenance traceability` declaration in governed Changes without adding a global Skill changelog/database.
+- [x] REFACTOR: keep capability delta semantics, Skill maintenance traceability, and `UPSTREAM.md` provenance as distinct ownership layers with no synchronization-by-convention copies.
+- [x] VERIFY: run focused tests, full regression suite, type checks, lint/format checks, and strict OpenSpec validation; persist the verified Slice checkpoint.
 
 ## Slice 2 — Enforce authoring and independent review
 
