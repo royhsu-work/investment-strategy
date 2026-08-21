@@ -452,13 +452,22 @@ phase/status state, sequence state, or another workflow state machine.
 
 A first nonterminal observation (`absent`, `queued`, or `in_progress`) of an exact external resource just
 created or triggered by the current selected action does not by itself prove a cross-invocation external
-asynchronous wait. While the same invocation still has bounded execution opportunity and no different
-authority boundary is required, the selected role/action MAY perform bounded same-invocation observation
-of only the same exact resource. If that resource reaches a terminal state during that bounded opportunity,
-work-conserving execution continues in the same invocation. If bounded execution opportunity is no longer
-available and the same exact resource remains nonterminal, yielding becomes a legal real external
-asynchronous wait. This contract defines behavior rather than wall-clock policy: it adds no durable timer,
-sleep schedule, polling counter, heartbeat, retry counter, hidden waiter, or scheduler state.
+asynchronous wait. Before an ordinary external asynchronous-wait Exit may be proven for that exact resource,
+the selected action MUST perform at least one subsequent fresh observation of the same exact target/resource
+within the current legal execution opportunity while routing/revision/preconditions remain current. If the
+subsequent fresh observation is terminal, consume that terminal result immediately and continue when the
+result is actionable inside the selected role/action. If routing, revision, concurrency, or another required
+precondition becomes stale before or during the subsequent observation, use the existing stale/precondition
+Exit semantics rather than treating the resource as a wait. Only when the subsequent fresh observation still
+finds the same exact resource absent/nonterminal and no other immediately actionable same-authority work
+remains may the existing genuine external asynchronous-wait Exit be positively proven.
+
+This contract defines a minimum evidence sequence, not wall-clock waiting policy. The selected role/action
+MAY continue bounded same-resource observation beyond that floor while legal execution opportunity remains,
+but it MUST NOT introduce a durable timer, sleep schedule, polling counter, heartbeat, retry counter, hidden
+waiter, or scheduler state. A completed subsequent fresh observation that still finds the exact resource
+nonterminal is sufficient only together with current routing/revision/preconditions and the absence of other
+immediately actionable same-authority work; it does not create a new Exit class.
 
 A wake resuming from a real external asynchronous wait MUST fresh-read the specific awaited resource
 itself before concluding that the wait still exists. Historical `in_progress`, waiting, checkpoint, or

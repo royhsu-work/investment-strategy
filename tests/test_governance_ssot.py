@@ -45,12 +45,13 @@ def test_shared_governance_declares_rule_category_ownership() -> None:
 def test_same_invocation_exact_resource_settle_is_not_immediate_external_wait() -> None:
     shared = _normalized(AGENTS / "AGENTS.md")
     assert "first nonterminal observation" in shared
-    assert "bounded same-invocation observation" in shared
-    assert "same exact resource" in shared
+    assert "subsequent fresh observation" in shared
+    assert "same exact target/resource" in shared
     assert "created or triggered by the current selected action" in shared
     assert "caused by or required for the current selected action" not in shared
     assert "does not by itself prove a cross-invocation external asynchronous wait" in shared
-    assert "no durable timer" in shared
+    assert "no other immediately actionable same-authority work remains" in shared
+    assert "MUST NOT introduce a durable timer" in shared
 
 
 def test_scheduler_topology_is_external_not_a_three_slot_requirement() -> None:

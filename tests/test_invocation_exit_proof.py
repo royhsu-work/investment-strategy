@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+NONTERMINAL = {"absent", "queued", "in_progress"}
+REOBSERVATION_FLOOR = "subsequent fresh observation"
 
 
 @dataclass(frozen=True)
@@ -9,8 +11,9 @@ class Evidence:
     red_established: bool = False
     actionable_validation_failure: bool = False
     verified_slice_with_remaining_work: bool = False
-    exact_resource_status: str | None = None
-    exact_resource_unconsumable: bool = False
+    exact_resource_observations: tuple[str, ...] = ()
+    terminal_failure_actionable: bool = False
+    other_same_authority_work_actionable: bool = False
     same_role_successor: bool = False
     cross_role_handoff_completed: bool = False
     workflow_terminal: bool = False
@@ -34,10 +37,22 @@ def _classify(evidence: Evidence) -> str:
     ):
         return "CONTINUE"
 
-    if evidence.exact_resource_status in {"absent", "queued", "in_progress"}:
-        if evidence.exact_resource_unconsumable:
-            return "ASYNC_WAIT"
-        return "CONTINUE"
+    if evidence.stale_precondition:
+        return "STALE"
+
+    observations = evidence.exact_resource_observations
+    if observations:
+        latest = observations[-1]
+        if latest == "success":
+            return "TERMINAL_SUCCESS"
+        if latest == "failure":
+            return "CONTINUE" if evidence.terminal_failure_actionable else "TERMINAL_FAILURE"
+        if latest in NONTERMINAL:
+            if len(observations) < 2:
+                return "RETURN_REJECTED" if evidence.attempted_return else "CONTINUE"
+            if evidence.other_same_authority_work_actionable:
+                return "CONTINUE"
+            return "ASYNC_WAIT" if evidence.attempted_return else "CONTINUE"
 
     if evidence.same_role_successor:
         return "CONTINUE"
@@ -50,9 +65,6 @@ def _classify(evidence: Evidence) -> str:
 
     if evidence.human_authority_boundary:
         return "HUMAN_BOUNDARY"
-
-    if evidence.stale_precondition:
-        return "STALE"
 
     if evidence.ambiguous_or_contradictory_state:
         return "AMBIGUOUS"
@@ -73,13 +85,22 @@ def test_shared_owner_and_action_consumers_are_integrated() -> None:
     assert "positively classify" in governance
     assert "If no legal Exit class is proven" in governance
     assert "Exit Proof is an internal execution precondition" in governance
+    assert REOBSERVATION_FLOOR in governance
 
     for path in (
         "agents/skills/implementation/SKILL.md",
         "agents/skills/openspec-change/SKILL.md",
-        "agents/skills/implementation-review/SKILL.md",
     ):
-        assert "consume the shared Invocation Exit Proof invariant" in _read(path)
+        text = _read(path)
+        assert "consume the shared Invocation Exit Proof invariant" in text
+        assert REOBSERVATION_FLOOR in text
+
+    for path in (
+        "agents/skills/implementation-review/SKILL.md",
+        "agents/skills/archive-review/SKILL.md",
+        "agents/skills/lifecycle-finalize/SKILL.md",
+    ):
+        assert REOBSERVATION_FLOOR not in _read(path)
 
 
 def test_red_with_known_green_requires_continuation() -> None:
@@ -94,20 +115,72 @@ def test_verified_slice_with_remaining_work_requires_continuation() -> None:
     assert _classify(Evidence(verified_slice_with_remaining_work=True)) == "CONTINUE"
 
 
-def test_first_nonterminal_exact_resource_observation_requires_continuation() -> None:
-    for status in ("absent", "queued", "in_progress"):
-        assert _classify(Evidence(exact_resource_status=status)) == "CONTINUE"
+def test_first_nonterminal_exact_resource_observation_rejects_return() -> None:
+    for status in NONTERMINAL:
+        assert (
+            _classify(
+                Evidence(
+                    exact_resource_observations=(status,),
+                    attempted_return=True,
+                )
+            )
+            == "RETURN_REJECTED"
+        )
 
 
-def test_genuine_unconsumable_exact_resource_wait_may_exit() -> None:
+def test_reobservation_still_nonterminal_may_prove_async_wait() -> None:
+    for first in NONTERMINAL:
+        assert (
+            _classify(
+                Evidence(
+                    exact_resource_observations=(first, "in_progress"),
+                    attempted_return=True,
+                )
+            )
+            == "ASYNC_WAIT"
+        )
+
+
+def test_reobservation_nonterminal_with_other_work_continues() -> None:
     assert (
         _classify(
             Evidence(
-                exact_resource_status="in_progress",
-                exact_resource_unconsumable=True,
+                exact_resource_observations=("queued", "in_progress"),
+                other_same_authority_work_actionable=True,
+                attempted_return=True,
             )
         )
-        == "ASYNC_WAIT"
+        == "CONTINUE"
+    )
+
+
+def test_reobservation_terminal_success_is_consumed() -> None:
+    assert (
+        _classify(Evidence(exact_resource_observations=("queued", "success"))) == "TERMINAL_SUCCESS"
+    )
+
+
+def test_reobservation_terminal_actionable_failure_continues() -> None:
+    assert (
+        _classify(
+            Evidence(
+                exact_resource_observations=("in_progress", "failure"),
+                terminal_failure_actionable=True,
+            )
+        )
+        == "CONTINUE"
+    )
+
+
+def test_stale_precondition_before_reobservation_may_exit_fail_closed() -> None:
+    assert (
+        _classify(
+            Evidence(
+                exact_resource_observations=("queued",),
+                stale_precondition=True,
+            )
+        )
+        == "STALE"
     )
 
 
@@ -117,10 +190,6 @@ def test_immediately_actionable_lead_same_role_successor_continues() -> None:
 
 def test_completed_reviewer_cross_role_handoff_may_exit() -> None:
     assert _classify(Evidence(cross_role_handoff_completed=True)) == "CROSS_ROLE_HANDOFF"
-
-
-def test_stale_precondition_may_exit_fail_closed() -> None:
-    assert _classify(Evidence(stale_precondition=True)) == "STALE"
 
 
 def test_hard_boundary_requires_unavailable_same_authority_recovery() -> None:
@@ -152,8 +221,13 @@ def test_ambiguous_state_exit_requires_positive_evidence() -> None:
 def test_exit_classes_do_not_exist_without_their_evidence() -> None:
     assert _classify(Evidence(attempted_return=True)) == "RETURN_REJECTED"
     assert (
-        _classify(Evidence(exact_resource_status="in_progress", attempted_return=True))
-        == "CONTINUE"
+        _classify(
+            Evidence(
+                exact_resource_observations=("in_progress",),
+                attempted_return=True,
+            )
+        )
+        == "RETURN_REJECTED"
     )
     assert (
         _classify(

@@ -60,13 +60,14 @@ def test_openspec_change_observes_only_just_triggered_exact_validation_run() -> 
     change = _read("agents/skills/openspec-change/SKILL.md")
     for required in (
         "just-triggered exact required run",
-        "`queued` or `in_progress`",
-        "bounded same-invocation observation",
-        "same exact run",
+        "absent, `queued`, or `in_progress`",
+        "subsequent fresh observation",
+        "same exact target/resource",
         "becomes terminal",
-        "continue immediately",
+        "continue",
         "later wake",
         "fresh-read that exact run",
+        "no other immediately actionable same-authority work remains",
     ):
         assert required in change
 
@@ -77,11 +78,11 @@ def test_implementation_observes_only_just_triggered_exact_required_runs() -> No
         "just-triggered exact required run",
         "Python Quality",
         "OpenSpec Validate",
-        "`queued` or `in_progress`",
-        "bounded same-invocation observation",
-        "same exact run",
+        "absent, `queued`, or `in_progress`",
+        "subsequent fresh observation",
+        "same exact target/resource",
         "becomes terminal",
-        "continue immediately",
+        "continue",
         "later wake",
         "fresh-read that exact run",
         "no timer",

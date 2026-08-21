@@ -87,15 +87,16 @@ For each approved feature slice:
 
 ## Exact required run observation
 
-When current implementation or task-checkpoint work has just caused a just-triggered exact required run such as Python Quality or OpenSpec Validate for the current branch/revision, the first observation of that run as `queued` or `in_progress` does not force a yield. While bounded execution opportunity remains and no different role/Human boundary is required, observe only the same exact run through bounded same-invocation observation. If the same exact run becomes terminal, consume its terminal result and continue immediately with the current `implement-change` procedure, including actionable failure correction or the next verified checkpoint/handoff step.
+When current implementation or task-checkpoint work has just caused a just-triggered exact required run such as Python Quality or OpenSpec Validate for the current branch/revision, the first observation of that run as absent, `queued`, or `in_progress` does not force a yield and does not establish async-wait Exit evidence. While bounded execution opportunity remains and no different role/Human boundary is required, observe only the same exact run through bounded same-invocation observation. After that first nonterminal observation, perform at least one subsequent fresh observation of the same exact target/resource before an ordinary asynchronous-wait Exit may be classified. If the subsequent fresh observation becomes terminal, consume its terminal result immediately and continue with the current `implement-change` procedure, including actionable failure correction or the next verified checkpoint/handoff step.
 
 Before returning from this boundary, consume the shared Invocation Exit Proof invariant. A first observation
-of the exact resource as absent, `queued`, or `in_progress` is explicitly non-exit evidence while bounded
-consumption remains legal. Classify a genuine asynchronous-wait Exit only when current evidence proves the
-same exact resource cannot be further consumed within the current legal execution opportunity; identify
-that exact resource for later reconstruction rather than copying the shared Exit taxonomy into this Skill.
+of the exact resource as absent, `queued`, or `in_progress` is explicitly non-exit evidence. If a subsequent
+fresh observation still finds the same exact resource absent/nonterminal, current routing/revision/
+preconditions remain valid, and no other immediately actionable same-authority work remains, the existing
+asynchronous-wait Exit may be proven. Identify that exact resource for later reconstruction rather than
+copying the shared Exit taxonomy into this Skill.
 
-If bounded execution opportunity ends while the same exact run remains nonterminal, the run is a real external asynchronous wait. A later wake must fresh-read that exact run before concluding the wait remains. Historical waiting evidence is not current status authority. This specialization uses no timer, sleep policy, polling counter, heartbeat, retry counter, background waiter, or hidden waiter; shared async semantics remain owned by `agents/AGENTS.md`.
+If the same exact run remains nonterminal after the required subsequent fresh observation and no other same-authority work is actionable, the run is a real external asynchronous wait. A later wake must fresh-read that exact run before concluding the wait remains. Historical waiting evidence is not current status authority. This specialization uses no timer, sleep policy, polling counter, heartbeat, retry counter, background waiter, or hidden waiter; shared async semantics remain owned by `agents/AGENTS.md`.
 
 ## Constrained branch integration recovery
 
