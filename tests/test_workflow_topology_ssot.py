@@ -99,10 +99,7 @@ def test_shared_governance_names_workflow_as_topology_owner() -> None:
 
 def test_readme_points_to_authoritative_workflow_instead_of_copying_final_path() -> None:
     text = README.read_text()
-    expected = (
-        "authoritative runtime workflow topology 位於 default-branch "
-        "`agents/workflow.md`"
-    )
+    expected = "authoritative runtime workflow topology 位於 default-branch `agents/workflow.md`"
     assert expected in text
     assert "Final lifecycle 的高階導覽是：" not in text
 
