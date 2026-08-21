@@ -1,10 +1,15 @@
 from pathlib import Path
 
 OPEN_SPEC_CHANGE = Path("agents/skills/openspec-change/SKILL.md")
+LIFECYCLE_FINALIZE = Path("agents/skills/lifecycle-finalize/SKILL.md")
 
 
 def _openspec_change_text() -> str:
     return OPEN_SPEC_CHANGE.read_text(encoding="utf-8")
+
+
+def _lifecycle_finalize_text() -> str:
+    return LIFECYCLE_FINALIZE.read_text(encoding="utf-8")
 
 
 def test_required_followup_success_requires_routing_complete_observation() -> None:
@@ -43,3 +48,23 @@ def test_required_followup_does_not_infer_authority_from_prose() -> None:
         "create or route a tracker."
     )
     assert expected in text
+
+
+def test_lifecycle_preparation_repairs_only_unique_required_tracker() -> None:
+    text = _lifecycle_finalize_text()
+
+    assert "same routing-complete required-follow-up postcondition" in text
+    assert "exactly one matching incomplete required tracker" in text
+    assert "repair only its missing durable fields or canonical routing" in text
+    assert "Multiple or ambiguous matching trackers fail closed" in text
+    assert "`agent:lead + action:explore-change`" in text
+
+
+def test_lifecycle_preparation_does_not_route_optional_or_prose_only_work() -> None:
+    text = _lifecycle_finalize_text()
+
+    assert (
+        "Ordinary out-of-scope, non-goal, optional, or merely deferred prose creates no "
+        "materialization or routing obligation."
+        in text
+    )
