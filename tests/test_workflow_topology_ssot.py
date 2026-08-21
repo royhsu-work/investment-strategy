@@ -3,6 +3,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / "agents" / "workflow.md"
+AGENTS = ROOT / "agents" / "AGENTS.md"
+README = ROOT / "README.md"
 
 
 def _normal_transitions(text: str) -> set[tuple[str, str]]:
@@ -82,3 +84,42 @@ def test_workflow_keeps_runtime_and_requirement_owners_distinct() -> None:
     assert "single authoritative repository owner" in text
     assert "Canonical OpenSpec owns approved capability requirements" in text
     assert "do not redefine this global topology" in text
+
+
+def test_shared_governance_names_workflow_as_topology_owner() -> None:
+    text = AGENTS.read_text()
+    assert (
+        "`agents/workflow.md` owns end-to-end Scheduled-Agent runtime workflow "
+        "topology and lifecycle relationships"
+    ) in text
+    assert (
+        "`agents/AGENTS.md` owns shared Scheduled-Agent runtime execution protocol "
+        "and cross-role invariants"
+    ) in text
+
+
+def test_readme_points_to_authoritative_workflow_instead_of_copying_final_path() -> None:
+    text = README.read_text()
+    assert "authoritative runtime workflow topology 位於 default-branch `agents/workflow.md`" in text
+    assert "Final lifecycle 的高階導覽是：" not in text
+
+
+def test_shared_governance_uses_topology_reference_for_semantic_correction_paths() -> None:
+    text = AGENTS.read_text()
+    assert "correction path defined in `agents/workflow.md`" in text
+    assert (
+        "Executor / implement-change → Lead /\n"
+        "resolve-question → Reviewer / review-openspec → Executor / implement-change"
+    ) not in text
+    assert (
+        "Reviewer / review-openspec PASS → Executor / implement-change →\n"
+        "Reviewer / review-implementation"
+    ) not in text
+
+
+def test_roles_and_mapped_skills_do_not_define_a_second_global_transition_table() -> None:
+    surfaces = list((ROOT / "agents" / "roles").glob("*.md"))
+    surfaces.extend((ROOT / "agents" / "skills").glob("*/SKILL.md"))
+    assert surfaces
+    for surface in surfaces:
+        assert "| Current action |" not in surface.read_text(), surface
