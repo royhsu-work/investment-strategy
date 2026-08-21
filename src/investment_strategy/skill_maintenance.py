@@ -1,15 +1,15 @@
 """Deterministic helpers for repository Skill-maintenance traceability.
 
 This module is deliberately small: it evaluates concrete changed-Skill facts against
-an approved maintenance declaration.  It does not decide OpenSpec scope, infer
+an approved maintenance declaration. It does not decide OpenSpec scope, infer
 semantic materiality from a diff, or replace Reviewer judgment.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Iterable
 
 
 class SkillChangeClass(StrEnum):
@@ -71,9 +71,9 @@ def compare_skill_changes(
 ) -> tuple[TraceFinding, ...]:
     """Compare material Skill changes with the approved declaration.
 
-    Materiality and semantic classification are upstream review judgments.  Once
+    Materiality and semantic classification are upstream review judgments. Once
     supplied, this function makes completeness, duplicate, and classification checks
-    deterministic.  Non-material edits intentionally create no declaration duty.
+    deterministic. Non-material edits intentionally create no declaration duty.
     """
 
     change_list = list(changes)
@@ -96,15 +96,15 @@ def compare_skill_changes(
             findings.append(TraceFinding(path, "material Skill change is undeclared"))
             continue
         if len(entries) == 1 and entries[0].change_class != change.change_class:
-            findings.append(
-                TraceFinding(
-                    path,
-                    f"declared {entries[0].change_class.value} but implementation is {change.change_class.value}",
-                )
+            reason = (
+                f"declared {entries[0].change_class.value} "
+                f"but implementation is {change.change_class.value}"
             )
+            findings.append(TraceFinding(path, reason))
 
     for path in entries_by_path:
         if path not in material_by_path:
-            findings.append(TraceFinding(path, "declaration has no corresponding material Skill change"))
+            reason = "declaration has no corresponding material Skill change"
+            findings.append(TraceFinding(path, reason))
 
     return tuple(findings)
