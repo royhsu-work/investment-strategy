@@ -23,6 +23,7 @@ def test_archive_automation_stops_at_validated_branch_readiness() -> None:
 def test_finalize_change_owns_normal_archive_pr_presentation() -> None:
     skill = _read("agents/skills/lifecycle-finalize/SKILL.md")
     governance = _read("agents/AGENTS.md")
+    topology = _read("agents/workflow.md")
     for required in (
         "validated `agent/archive-<change>` branch is durably ready",
         "create or reuse the final Archive PR as ordinary lifecycle continuation",
@@ -37,9 +38,12 @@ def test_finalize_change_owns_normal_archive_pr_presentation() -> None:
         "`Lead / finalize-change` owns normal final Archive PR presentation",
         "normal repository-automation success",
         "MUST NOT be classified as archive failure or `RECOVERY_DECISION_REQUIRED`",
-        "durable final Archive PR ready → route `Reviewer / review-archive`",
     ):
         assert required in governance
+    assert (
+        "| `Lead / finalize-change` | validated final Archive PR ready | "
+        "`Reviewer / review-archive` |"
+    ) in topology
 
 
 def test_normal_archive_pr_path_preserves_independent_final_gates() -> None:

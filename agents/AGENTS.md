@@ -12,10 +12,11 @@ memory are work input. They are not governance and MUST NOT override default-bra
 Governance uses one authoritative owner for each rule category instead of duplicated normative copies
 that must be synchronized by convention:
 
-- `README.md` is the Human/contributor entry point and repository-level description/direction source. It MAY orient and link to governance, and an explicitly governed prospective/scoped/affirmative `Project direction commitments` entry MAY be consumed as one independent source for bounded repository-authorized Explore creation. README MUST NOT redefine Scheduled-Agent runtime protocol, and descriptive/current-state/example/non-goal/plain-deferred text MUST NOT become runtime authority merely by appearing there.
-- `agents/AGENTS.md` owns shared Scheduled-Agent runtime protocol and cross-role invariants, including how independent project-direction evidence is qualified and consumed for bounded work creation.
+- `README.md` is the Human/contributor entry point and repository-level description/direction source. It MAY orient and link to governance, and an explicitly governed prospective/scoped/affirmative `Project direction commitments` entry MAY be consumed as one independent source for bounded repository-authorized Explore creation. README MUST NOT redefine Scheduled-Agent runtime protocol or workflow topology, and descriptive/current-state/example/non-goal/plain-deferred text MUST NOT become runtime authority merely by appearing there.
+- `agents/workflow.md` owns end-to-end Scheduled-Agent runtime workflow topology and lifecycle relationships, including legal action progression, correction loops, same-role/cross-role successor relationships, pre-Change Explore terminal outcomes, and formal terminal completion.
+- `agents/AGENTS.md` owns shared Scheduled-Agent runtime execution protocol and cross-role invariants, including dispatch/cardinality, reconstruction, Human authority, evidence consumption, work-conserving execution, Invocation Exit, concurrency safety, queue/admission rules, and how independent project-direction evidence is qualified and consumed for bounded work creation. It references `agents/workflow.md` rather than independently defining the global lifecycle graph.
 - `agents/roles/*.md` own role mission, authority, ownership, and role-specific invariants; they reference shared governance instead of copying generic execution contracts.
-- `agents/skills/*` own action-specific executable procedure and local result/handoff behavior; they reference shared governance and role authority instead of duplicating them.
+- `agents/skills/*` own action-specific executable procedure and local result/handoff behavior; they reference shared governance and role authority instead of duplicating them. Local source/target action references are operational context only and MUST remain consistent with `agents/workflow.md`.
 - `openspec/config.yaml` owns OpenSpec authoring/validation conventions.
 - `openspec/specs/*` contain approved capability requirements and acceptance scenarios. They are normative requirements but are not an alternative instruction-loading surface for Scheduled Agents.
 - active `openspec/changes/*` are proposed change/review targets and MUST NOT govern their own current runtime execution; archived changes are historical provenance/traceability only.
@@ -85,7 +86,8 @@ fixed invocation role for the remainder of that run and the selected coordinatio
 cross-role handoff may persist a different next routing tuple, but the current invocation MUST then end and
 does not redispatch to the new role. A same-role action transition is different: after the source result
 and legal routing mutation are durable, the run may continue on the same coordination Issue under the
-shared same-role continuation contract below.
+shared same-role continuation contract below. Which action transition is legal is owned by
+`agents/workflow.md`; this paragraph owns only invocation execution semantics after a legal transition.
 
 ## Roles and authority
 
@@ -115,14 +117,17 @@ Exactly ten normal actions are supported:
 | Executor | `implement-change` | `agents/skills/implementation/SKILL.md` |
 | Executor | `merge-pr` | `agents/skills/merge-pr/SKILL.md` |
 
+This table maps actions to procedure owners; it is not a lifecycle progression table. Global action
+relationships and legal successors are authoritative only in `agents/workflow.md`.
+
 Skills operationalize approved OpenSpec contracts. They MUST NOT invent, weaken, or replace those
 contracts, and they MUST NOT create a second proposal/specs/design/tasks workflow DAG.
 
 ## Persistent coordination Issue
 
-One normal OpenSpec change uses one persistent coordination Issue from proposal through final archive
-confirmation. Optional pre-Propose Explore uses the same coordination Issue when it later proceeds to a
-formal Change; terminal no-change/no-go research may end before a Change identity exists. The stable
+One normal OpenSpec change uses one persistent coordination Issue through the formal lifecycle defined in
+`agents/workflow.md`. Optional pre-Propose Explore uses the same coordination Issue when it later proceeds
+to a formal Change; terminal no-change/no-go research may end before a Change identity exists. The stable
 workflow identity is deliberately small:
 
 ```text
@@ -138,7 +143,8 @@ stay on the same coordination Issue. Comments are durable evidence, not canonica
 
 An open coordination Issue with valid routing and a persisted non-`unset` `Change:` identity is an active
 workflow. The repository permits at most one active workflow. Normal formal lifecycle work remains open
-through `Lead / finalize-archive`; there is no closed terminal-pending happy path.
+until the terminal contract in `agents/workflow.md` is satisfied; there is no closed terminal-pending happy
+path.
 
 Execution eligibility is orthogonal to lifecycle state. A formal workflow whose next legal action cannot
 currently complete because required Human authority, exact CI/gate evidence, environment capability,
@@ -225,20 +231,25 @@ verification is complete but the close mutation is missing, the same open `Lead 
 workflow remains actionable only to finish/re-observe that final close. Once the completion result is valid
 and the Issue is observed closed, the Issue is terminal history and MUST NOT block later workflow admission.
 
-## Explore completion boundary
+## Explore completion governance
+
+The legal Explore dispositions and their successor/terminal relationships are authoritative in
+`agents/workflow.md`. This section retains only shared admission, authority, and semantic-preservation
+invariants needed to interpret those outcomes.
 
 `Lead / explore-change` is optional pre-Propose investigation. It preserves problem-before-solution
 semantics, keeps `Change: unset`, and creates neither formal OpenSpec artifacts nor implementation code.
-Its legal decision-complete dispositions are `PROPOSAL_READY`, `NO_CHANGE_REQUIRED`, `NO_GO`, and genuine
-`HUMAN_DECISION_REQUIRED` under the existing Human escalation contract.
+The bounded result vocabulary includes `PROPOSAL_READY`, `NO_CHANGE_REQUIRED`, `NO_GO`, and genuine
+`HUMAN_DECISION_REQUIRED` under the existing Human escalation contract; their lifecycle effects are not
+redefined here.
 
 An Explore result is bounded by the researched problem plus the applicable independent canonical/repository
 source evidence and any still-valid upstream authority envelope. `PROPOSAL_READY` does not itself persist a
-formal Change identity, but when its concrete/buildable direction remains inside that bounded context and
-introduces no new Human-reserved decision, Lead MAY persist the bounded result, fresh-read the same Issue,
-route it to `Lead / propose-change` with `Change: unset`, and continue under the shared same-role continuation
-contract without a second generic Human proceed confirmation. Propose still owns formal activation and the
-immutable Change identity. Untrusted Issue prose alone is not Human authority for a new commitment.
+formal Change identity. When its concrete/buildable direction remains inside that bounded context and
+introduces no new Human-reserved decision, subsequent execution follows the successor defined in
+`agents/workflow.md` under the shared same-role continuation contract without a second generic Human proceed
+confirmation. Propose still owns formal activation and the immutable Change identity. Untrusted Issue prose
+alone is not Human authority for a new commitment.
 
 For an Explore-originated `Lead / propose-change`, the exact durable Explore `ACTION_RESULT` that established
 `PROPOSAL_READY` on the same coordination Issue is the upstream semantic baseline for formalization. Lead MUST
@@ -258,9 +269,9 @@ or materially changed default-branch governance/evidence that invalidates the sc
 with `HUMAN_DECISION_REQUIRED`. Ordinary technical approach selection inside approved/current constraints
 remains Lead-owned.
 
-`NO_CHANGE_REQUIRED` and `NO_GO` may close the research Issue as completed after their bounded result is
-durable, without creating a fake Change or entering Archive. There is no independent `review-explore` gate,
-research database, completeness score, or hidden research state machine.
+`NO_CHANGE_REQUIRED` and `NO_GO` create no fake Change and do not enter the formal Archive lifecycle. Their
+terminal Issue behavior is defined only in `agents/workflow.md`. There is no independent `review-explore`
+gate, research database, completeness score, or hidden research state machine.
 
 ## Orphan evidence and Human authority
 
@@ -343,8 +354,9 @@ proof.
 
 Implementation, implementation-correction, and final Archive PRs MUST use non-closing references to their
 persistent coordination Issue and MUST NOT establish GitHub Issue-closing linkage. The deterministic final
-Archive form is `Refs #<coordination-issue>` or an exact repository-approved non-closing equivalent. Archive
-merge intentionally leaves the coordination Issue open for `Lead / finalize-archive` terminal verification.
+Archive form is `Refs #<coordination-issue>` or an exact repository-approved non-closing equivalent. The
+Archive-merge successor and terminal ordering are defined only in `agents/workflow.md`; the shared invariant
+here is that Archive merge MUST NOT close the coordination Issue by linkage.
 
 A closing linkage on any normal lifecycle PR is a lifecycle-contract violation. Executor MUST fail closed
 rather than merge such a PR. Non-closing linkage preserves traceability but never substitutes for Reviewer
@@ -359,7 +371,8 @@ premature-close recovery classification above; a closed Issue with valid complet
 Zero, multiple, contradictory, or illegal routing labels fail closed; model inference MUST NOT repair them.
 Unrelated labels are preserved during routing changes.
 
-Legal tuples are exactly the ten role/action pairs listed above.
+Legal tuples are exactly the ten role/action pairs listed above. Their lifecycle relationships are defined
+only in `agents/workflow.md`.
 
 ## Deterministic discovery
 
@@ -378,6 +391,8 @@ review-archive > review-implementation > review-openspec
 Executor
 merge-pr > implement-change
 ```
+
+This is dispatch priority, not workflow progression.
 
 Pre-activation intake contains every coherent open `Lead / explore-change + Change: unset` entry and every
 valid Human-admitted `Lead / propose-change + Change: unset` entry together, ordered by earliest GitHub
@@ -414,9 +429,13 @@ wake
 → perform only remaining authorized work
 → persist durable artifact/result and revision-aware evidence
 → fresh-read current Issue routing
+→ apply the legal successor relationship from agents/workflow.md
 → if cross-role target: complete HANDOFF and end
 → if same-role target and immediately actionable: reconstruct target action and continue
 ```
+
+This is an execution/reconstruction algorithm, not an alternative lifecycle graph; the successor itself is
+resolved from `agents/workflow.md`.
 
 Previous conversation memory is never required for correctness. A partial run, tool failure, or missing
 final response does not transfer ownership. A later run reconstructs durable reality and continues only
@@ -505,7 +524,7 @@ Exit Proof is an internal execution precondition. It MUST NOT require a new life
 
 The following intermediate facts MUST NOT independently constitute Exit Proof: an intended RED is established; GREEN or REFACTOR completes; validation fails but correction is actionable within current authority; a commit or push completes; the first observation of an exact external resource is absent, queued, or in progress; a verified Slice checkpoint exists while approved same-action work remains; an action completes with an immediately actionable successor owned by the fixed invocation role; or the exact next legal step is already known and executable.
 
-After action A persists its result and legally mutates routing on the same coordination Issue, the invocation fresh-reads that Issue. If the target role equals the fixed invocation role and the target action is immediately actionable, the invocation MUST load the target action's mapped default-branch skill, reconstruct the target action from current Issue/PR/OpenSpec/Actions/default-branch state, re-evaluate the target action's own preconditions, and continue. The target action receives no inherited authority from action A; every unsafe mutation remains subject to its own current preconditions.
+After action A persists its result and legally mutates routing on the same coordination Issue, the invocation fresh-reads that Issue. If the legal successor from `agents/workflow.md` has the same role as the fixed invocation role and is immediately actionable, the invocation MUST load the target action's mapped default-branch skill, reconstruct the target action from current Issue/PR/OpenSpec/Actions/default-branch state, re-evaluate the target action's own preconditions, and continue. The target action receives no inherited authority from action A; every unsafe mutation remains subject to its own current preconditions.
 
 Multiple same-role action transitions may continue while they stay on the same coordination Issue, target the fixed invocation role, and remain immediately actionable. A same-role action transition MUST NOT become a mechanism to process another workflow Issue or to redispatch globally. A same-role action transition does not prove Invocation Exit merely because the action label changed.
 
@@ -515,18 +534,20 @@ Role and skill documents define only action-specific blockers, results, recovery
 
 ## Handoff ordering and concurrency safety
 
-HANDOFF is cross-role ownership-transfer evidence. Same-role action transitions use the source result, legal routing mutation, and target-action reconstruction instead; they do not fabricate a handoff.
+HANDOFF is cross-role ownership-transfer evidence. Same-role action transitions use the source result, legal routing mutation, and target-action reconstruction instead; they do not fabricate a handoff. The legal target relationship itself is owned by `agents/workflow.md`.
 
-When an action-defined result requires a different role, ownership transfer occurs only after durable work is persisted. Result evidence does not by itself complete that cross-role routing handoff. The required order is:
+When an action-defined result requires a different role according to `agents/workflow.md`, ownership transfer occurs only after durable work is persisted. Result evidence does not by itself complete that cross-role routing handoff. The required execution order is:
 
 ```text
 persist result + revision-aware evidence
 → fresh-read source routing
-→ mutate routing to the cross-role target tuple
+→ mutate routing to the legal cross-role target tuple
 → observe successful routing mutation
 → persist canonical `HANDOFF`
 → end the current invocation
 ```
+
+This is a generic handoff mutation protocol, not a global action-progression definition.
 
 `HANDOFF` follows successful cross-role routing mutation. If a prior invocation already persisted the result but source routing still matches the completed source action, a later eligible invocation preserves the already-durable result, performs only the missing cross-role routing mutation, observes the target tuple, persists canonical `HANDOFF`, and does not repeat completed implementation/review work or fabricate another result.
 
@@ -667,14 +688,13 @@ validation alone does not create semantic acceptance.
 
 A material semantic OpenSpec change to proposal intent, requirements/scenarios, design decisions,
 traceability, scope boundaries, or normative task meaning creates a new semantic review target. Executor
-MUST NOT invent the new meaning: the exceptional correction path is `Executor / implement-change → Lead /
-resolve-question → Reviewer / review-openspec → Executor / implement-change`. The corrected semantic
-target requires a fresh independent semantic PASS before implementation resumes.
+MUST NOT invent the new meaning: follow the semantic correction path defined in `agents/workflow.md`. The
+corrected semantic target requires a fresh independent semantic PASS before implementation resumes.
 
 When implementation completes with no material semantic OpenSpec change after the applicable accepted
-semantic baseline, the normal path is `Reviewer / review-openspec PASS → Executor / implement-change →
-Reviewer / review-implementation`; a newer implementation SHA, task-marker/checkpoint SHA, or mechanical
-OpenSpec validation SHA does not insert another semantic `review-openspec` gate.
+semantic baseline, follow the normal implementation-review successor defined in `agents/workflow.md`; a
+newer implementation SHA, task-marker/checkpoint SHA, or mechanical OpenSpec validation SHA does not insert
+another semantic `review-openspec` gate.
 
 `review-openspec` cumulative coverage follows material semantic OpenSpec changes from the last applicable
 accepted semantic baseline through the exact semantic target actually reviewed. `review-implementation`
@@ -762,21 +782,25 @@ ownership state, or other live runtime machinery.
 
 ## Multi-PR implementation and archive boundary
 
+This section owns repository automation/readiness semantics around multi-PR implementation and archive
+preparation. Legal action successors are defined only in `agents/workflow.md`.
+
 A change may require multiple implementation PRs. After each implementation merge, Lead reconstructs
 merged default-branch OpenSpec, archive automation, archive-branch, and Archive-PR state:
 
-- merged but active change incomplete and approved work remains → `MORE_IMPLEMENTATION_REQUIRED` and route `Executor / implement-change`;
-- merged and Complete/eligible under the README archive contract while repository automation is still progressing → Lead waits without creating competing archive mutation work;
-- validated `agent/archive-<change>` branch durably ready → normal repository-automation success; `Lead / finalize-change` creates or reuses the final Archive PR with deterministic repository-approved non-closing `Refs #<coordination-issue>` linkage to the persistent coordination Issue;
+- merged but active change incomplete and approved work remains: classify implementation as incomplete and use the legal successor from `agents/workflow.md`;
+- merged and Complete/eligible under the README archive contract while repository automation is still progressing: Lead waits without creating competing archive mutation work;
+- validated `agent/archive-<change>` branch durably ready: normal repository-automation success; `Lead / finalize-change` creates or reuses the final Archive PR with deterministic repository-approved non-closing `Refs #<coordination-issue>` linkage to the persistent coordination Issue;
 - successful validated branch readiness awaiting that Lead PR presentation MUST NOT be classified as archive failure or `RECOVERY_DECISION_REQUIRED`;
-- durable final Archive PR ready → route `Reviewer / review-archive`;
-- archive classification, mutation, validation, commit, push, contradictory branch state, or unreconstructable ownership failure → fail closed under repository-defined diagnosis/recovery behavior.
+- durable final Archive PR ready: use the legal review successor from `agents/workflow.md`;
+- archive classification, mutation, validation, commit, push, contradictory branch state, or unreconstructable ownership failure: fail closed under repository-defined diagnosis/recovery behavior.
 
 Scheduled roles do not define or execute a competing normal `archive-change` action. The existing
 repository archive workflow remains authoritative for deterministic normal archive mechanics through
 validated archive-branch push. Final Archive PR creation is ordinary Lead lifecycle continuation and does
 not authorize merge or weaken independent archive review, reviewed Lead lifecycle preparation, exact-head
-Executor merge checks, or terminal `finalize-archive` reconstruction.
+Executor merge checks, or terminal reconstruction. Global action ordering remains owned by
+`agents/workflow.md`.
 
 ## Workflow admission and idle advisory/discovery
 
@@ -842,54 +866,47 @@ MUST NEVER add, remove, restore, or manufacture either reserved capability. A re
 advisory unless independent repository-authorized creation evidence separately satisfies the bounded
 contract above.
 
-## Durable final closure
+## Durable final closure classification
+
+The authoritative formal terminal action order and successor relationships are defined only in
+`agents/workflow.md`. This section owns the shared terminal classification/cardinality/recovery invariants
+used by dispatch and reconstruction.
 
 A PASS, completion comment, merge result, or statement that an Issue "may be closed" is not terminal
 completion. The normal invariant is:
 
 ```text
 open coordination Issue  = formal workflow not yet terminal
-closed coordination Issue = terminal history
+closed coordination Issue = terminal history only when valid LIFECYCLE_COMPLETE exists
 ```
 
-The final Archive PR uses deterministic non-closing `Refs #<coordination-issue>` linkage. After independent
-`Reviewer / review-archive` PASS and all current merge preconditions, Executor merges the exact accepted
-Archive revision while the coordination Issue remains open, replaces routing with exactly
-`agent:lead + action:finalize-archive`, persists the merge/handoff journal, and ends the invocation.
-Executor MUST NOT execute Lead finalization in the same invocation.
+The final Archive PR uses deterministic non-closing `Refs #<coordination-issue>` linkage, so Archive merge
+must leave the coordination Issue open. Scheduled execution MUST follow `agents/workflow.md` for the legal
+post-merge successor and exact terminal ordering; this file does not maintain a second copy of that action
+sequence.
 
-Known workflow-owned temporary correction/recovery cleanup obligations are classified by
-`Lead / finalize-change` during final Archive PR preparation before `Reviewer / review-archive`. Reviewer
-verifies that preparation with the exact Archive target. Immediately before final Archive merge,
-`Executor / merge-pr` fresh-reads and clears every predeclared currently-safe Executor-owned temporary
-correction/recovery branch, while preserving reviewed legal retention dispositions. A new or materially
-changed obligation/disposition fails closed to Lead and requires renewed independent review when the
-reviewed preparation meaning changed. The normal `agent/archive-<change>` lifecycle branch is never inferred
-to be temporary cleanup input from its name.
+Known workflow-owned temporary correction/recovery cleanup obligations remain action-owned preparation and
+merge preconditions. A new or materially changed cleanup/retention obligation or disposition fails closed
+to its legal owner and requires renewed independent review when the reviewed preparation meaning changed.
+The normal `agent/archive-<change>` lifecycle branch is never inferred to be temporary cleanup input from its
+name.
 
-`Lead / finalize-archive` reconstructs the exact reviewed/merged Archive revision, canonical archived
-default-branch state, required follow-up trackers, reviewed cleanup/retention outcomes, and newer material
-Human input while the Issue is open. When terminal conditions hold, Lead first persists one valid
-`LIFECYCLE_COMPLETE` result. Only after that result is durable may Lead close the coordination Issue. Lead
-then re-observes the same Issue and requires `closed` before declaring the workflow terminal.
+Terminal success requires both a valid durable `LIFECYCLE_COMPLETE` result and observation of the same
+coordination Issue as closed, in the order required by `agents/workflow.md`. A valid completion result with
+an open Issue remains the same formal workflow and is actionable only for the remaining legal terminal
+mutation/re-observation. A closed Issue without valid completion is not terminal success.
 
-Normal path therefore has no closed terminal-pending workflow. Interruption is recovered from existing
-durable writes without adding a replacement state machine:
+Interruption is recovered from existing durable writes without adding a replacement state machine:
 
-- Archive merged but `LIFECYCLE_COMPLETE` absent → the open `Lead / finalize-archive` Issue remains the one
-  formal workflow and later reconstruction resumes terminal verification.
-- valid `LIFECYCLE_COMPLETE` persisted but Issue close is missing → the open Lead action performs only the
-  missing close and re-observes `closed`; it does not rewrite completion evidence.
-- close mutation completed but re-observation/journal completion was interrupted → later reconstruction
-  consumes the existing completion result and observed current Issue state; it does not replay a completed
-  close.
-- valid `LIFECYCLE_COMPLETE` plus observed closed Issue → terminal history, excluded from formal WIP and
-  ordinary cardinality.
+- Archive merged but `LIFECYCLE_COMPLETE` absent: the open routed formal workflow remains active and later reconstruction resumes from current durable state;
+- valid `LIFECYCLE_COMPLETE` persisted but Issue close is missing: perform only the remaining legal close/re-observation work; do not rewrite completion evidence;
+- close mutation completed but re-observation/journal completion was interrupted: later reconstruction consumes the existing completion result and observed current Issue state; it does not replay a completed close;
+- valid `LIFECYCLE_COMPLETE` plus observed closed Issue: terminal history, excluded from formal WIP and ordinary cardinality.
 
 If the coordination Issue is observed closed without a valid `LIFECYCLE_COMPLETE`, including a manual or
-accidental close before Archive terminal conditions, that state is premature and illegal. It is not terminal
-success and does not enter the normal action path. Only the bounded premature-close recovery predicate may
-reopen one unambiguous unfinished workflow; otherwise Scheduled roles fail closed.
+accidental close before terminal conditions, that state is premature and illegal. It is not terminal success
+and does not enter the normal action path. Only the bounded premature-close recovery predicate may reopen
+one unambiguous unfinished workflow; otherwise Scheduled roles fail closed.
 
 ## Deliberately absent machinery
 
