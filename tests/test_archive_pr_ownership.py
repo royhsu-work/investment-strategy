@@ -40,11 +40,10 @@ def test_finalize_change_owns_normal_archive_pr_presentation() -> None:
         "MUST NOT be classified as archive failure or `RECOVERY_DECISION_REQUIRED`",
     ):
         assert required in governance
-    assert ("Lead / finalize-change", "Reviewer / review-archive") in {
-        tuple(cell.strip().strip("`") for cell in line.strip("|").split("|") if cell.strip())[:3:2]
-        for line in topology.splitlines()
-        if line.startswith("| Lead / finalize-change |")
-    }
+    assert (
+        "| `Lead / finalize-change` | validated final Archive PR ready | "
+        "`Reviewer / review-archive` |"
+    ) in topology
 
 
 def test_normal_archive_pr_path_preserves_independent_final_gates() -> None:
