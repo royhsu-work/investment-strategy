@@ -11,10 +11,10 @@ Traceability baseline: Explore `issuecomment-5363202052` → proposal → `sched
 
 ## Slice 2 — Normalize role, Skill, and README references
 
-- [ ] RED: add regressions that detect competing normative global topology restatements in README, role files, and mapped Skills while allowing necessary action-local predecessor/successor references.
-- [ ] GREEN: update README orientation and directly affected role/Skill references so they point to `agents/workflow.md` for global topology and retain only their independently owned local meaning.
-- [ ] REFACTOR: remove synchronization-by-convention wording/copies without deleting role authority or action-local executable procedure.
-- [ ] VERIFY: run focused tests, full regression suite, type checks, lint/format checks, and strict OpenSpec validation; persist the verified Slice checkpoint.
+- [x] RED: add regressions that detect competing normative global topology restatements in README, role files, and mapped Skills while allowing necessary action-local predecessor/successor references.
+- [x] GREEN: update README orientation and directly affected role/Skill references so they point to `agents/workflow.md` for global topology and retain only their independently owned local meaning.
+- [x] REFACTOR: remove synchronization-by-convention wording/copies without deleting role authority or action-local executable procedure.
+- [x] VERIFY: run focused tests, full regression suite, type checks, lint/format checks, and strict OpenSpec validation; persist the verified Slice checkpoint.
 
 ## Slice 3 — Prove behavioral equivalence and ownership boundaries
 
