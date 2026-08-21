@@ -16,10 +16,12 @@ def _normalized(path: Path) -> str:
 
 def test_readme_is_orientation_not_competing_runtime_protocol() -> None:
     readme = _normalized(ROOT / "README.md")
-    assert "Authoritative Scheduled-Agent runtime governance" in readme
+    assert "Authoritative Scheduled-Agent shared runtime governance" in readme
+    assert "authoritative runtime workflow topology" in readme
     assert "agents/AGENTS.md" in readme
+    assert "agents/workflow.md" in readme
     assert "README 只提供 Human/contributor 導覽" in readme
-    assert "不複製 Scheduled-Agent runtime protocol" in readme
+    assert "不複製 Scheduled-Agent runtime protocol 或 lifecycle topology" in readme
     assert "下列名稱僅作 Human 搜尋與流程導覽" in readme
 
 
@@ -27,7 +29,8 @@ def test_shared_governance_declares_rule_category_ownership() -> None:
     shared = _normalized(AGENTS / "AGENTS.md")
     for required in (
         "README.md` is the Human/contributor entry point",
-        "agents/AGENTS.md` owns shared Scheduled-Agent runtime protocol",
+        "agents/workflow.md` owns end-to-end Scheduled-Agent runtime workflow topology",
+        "agents/AGENTS.md` owns shared Scheduled-Agent runtime execution protocol",
         "agents/roles/*.md` own role mission, authority, ownership",
         "agents/skills/*` own action-specific executable procedure",
         "openspec/config.yaml` owns OpenSpec authoring/validation conventions",
