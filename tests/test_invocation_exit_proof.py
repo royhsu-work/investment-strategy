@@ -171,9 +171,7 @@ def test_reobservation_nonterminal_with_other_work_continues() -> None:
 
 def test_repeated_in_progress_then_terminal_success_is_consumed() -> None:
     assert (
-        _classify(
-            Evidence(exact_resource_observations=("in_progress", "in_progress", "success"))
-        )
+        _classify(Evidence(exact_resource_observations=("in_progress", "in_progress", "success")))
         == "TERMINAL_SUCCESS"
     )
 
