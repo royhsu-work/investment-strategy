@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+NONTERMINAL = {"absent", "queued", "in_progress"}
 
 
 @dataclass(frozen=True)
@@ -28,7 +29,54 @@ def _read(path: str) -> str:
 
 
 def _classify(evidence: Evidence) -> str:
-    raise NotImplementedError("RED: derive exact-resource Exit from observation sequence")
+    if (
+        evidence.red_established
+        or evidence.actionable_validation_failure
+        or evidence.verified_slice_with_remaining_work
+    ):
+        return "CONTINUE"
+
+    if evidence.stale_precondition:
+        return "STALE"
+
+    observations = evidence.exact_resource_observations
+    if observations:
+        latest = observations[-1]
+        if latest == "success":
+            return "TERMINAL_SUCCESS"
+        if latest == "failure":
+            return "CONTINUE" if evidence.terminal_failure_actionable else "TERMINAL_FAILURE"
+        if latest in NONTERMINAL:
+            if len(observations) < 2:
+                return "RETURN_REJECTED" if evidence.attempted_return else "CONTINUE"
+            if evidence.other_same_authority_work_actionable:
+                return "CONTINUE"
+            return "ASYNC_WAIT" if evidence.attempted_return else "CONTINUE"
+
+    if evidence.same_role_successor:
+        return "CONTINUE"
+
+    if evidence.cross_role_handoff_completed:
+        return "CROSS_ROLE_HANDOFF"
+
+    if evidence.workflow_terminal:
+        return "TERMINAL"
+
+    if evidence.human_authority_boundary:
+        return "HUMAN_BOUNDARY"
+
+    if evidence.ambiguous_or_contradictory_state:
+        return "AMBIGUOUS"
+
+    if evidence.hard_execution_boundary:
+        if evidence.same_authority_recovery_available:
+            return "CONTINUE"
+        return "HARD_BOUNDARY"
+
+    if evidence.attempted_return:
+        return "RETURN_REJECTED"
+
+    return "CONTINUE"
 
 
 def test_shared_owner_and_action_consumers_are_integrated() -> None:
@@ -58,7 +106,7 @@ def test_verified_slice_with_remaining_work_requires_continuation() -> None:
 
 
 def test_first_nonterminal_exact_resource_observation_rejects_return() -> None:
-    for status in ("absent", "queued", "in_progress"):
+    for status in NONTERMINAL:
         assert (
             _classify(
                 Evidence(
@@ -71,7 +119,7 @@ def test_first_nonterminal_exact_resource_observation_rejects_return() -> None:
 
 
 def test_reobservation_still_nonterminal_may_prove_async_wait() -> None:
-    for first in ("absent", "queued", "in_progress"):
+    for first in NONTERMINAL:
         assert (
             _classify(
                 Evidence(
