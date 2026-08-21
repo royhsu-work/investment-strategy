@@ -18,10 +18,10 @@ Traceability baseline: Explore `issuecomment-5363202052` → proposal → `sched
 
 ## Slice 3 — Prove behavioral equivalence and ownership boundaries
 
-- [ ] RED: add executable/structural regressions covering current legal transitions, same-role versus cross-role boundaries, correction loops, independent review/merge separation, and the Archive merge → open `Lead / finalize-archive` → `LIFECYCLE_COMPLETE` → close/re-observe terminal path.
-- [ ] GREEN: make only the minimum governance/reference corrections required for all ownership and behavioral-equivalence regressions to pass.
-- [ ] REFACTOR: ensure canonical OpenSpec remains requirement/acceptance authority and `agents/workflow.md` remains runtime topology authority without introducing a generated registry, hidden state, or second workflow engine.
-- [ ] VERIFY: run focused tests, full regression suite, type checks, lint/format checks, and strict OpenSpec validation; persist the verified Slice checkpoint.
+- [x] RED: add executable/structural regressions covering current legal transitions, same-role versus cross-role boundaries, correction loops, independent review/merge separation, and the Archive merge → open `Lead / finalize-archive` → `LIFECYCLE_COMPLETE` → close/re-observe terminal path.
+- [x] GREEN: make only the minimum governance/reference corrections required for all ownership and behavioral-equivalence regressions to pass.
+- [x] REFACTOR: ensure canonical OpenSpec remains requirement/acceptance authority and `agents/workflow.md` remains runtime topology authority without introducing a generated registry, hidden state, or second workflow engine.
+- [x] VERIFY: run focused tests, full regression suite, type checks, lint/format checks, and strict OpenSpec validation; persist the verified Slice checkpoint.
 
 ## Completion
 
