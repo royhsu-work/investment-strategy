@@ -57,15 +57,15 @@ Taiwan EOD market-data infrastructure 已合併至 `main`，目前作為 reposit
 
 ## Development lifecycle
 
-Repository 使用 OpenSpec + GitHub Issue/PR 進行規格驅動開發。README 只提供 Human/contributor 導覽，不複製 Scheduled-Agent runtime protocol。
+Repository 使用 OpenSpec + GitHub Issue/PR 進行規格驅動開發。README 只提供 Human/contributor 導覽，不複製 Scheduled-Agent runtime protocol 或 lifecycle topology。
 
-**Authoritative Scheduled-Agent runtime governance** 位於 default-branch `agents/AGENTS.md`；role authority 位於 `agents/roles/*.md`，action procedure 位於 `agents/skills/*`。OpenSpec authoring conventions 位於 `openspec/config.yaml`，批准後的 capability requirements 位於 `openspec/specs/*`。Active change 與 PR/Issue/comment 是 review/work input，不會覆寫 default-branch runtime governance。
+**Authoritative Scheduled-Agent shared runtime governance** 位於 default-branch `agents/AGENTS.md`；**authoritative runtime workflow topology 位於 default-branch `agents/workflow.md`**；role authority 位於 `agents/roles/*.md`，action procedure 位於 `agents/skills/*`。OpenSpec authoring conventions 位於 `openspec/config.yaml`，批准後的 capability requirements 位於 `openspec/specs/*`。Active change 與 PR/Issue/comment 是 review/work input，不會覆寫 default-branch runtime governance。
 
-Formal Explore 的 queue eligibility 與 Human-reserved decision 邊界只由 default-branch `agents/AGENTS.md` 定義。README 不要求建立時的 Explore admission marker，也不把 GitHub App/Connector activity 視為 Human authority。
+Formal Explore 的 queue eligibility 與 Human-reserved decision 邊界只由 default-branch `agents/AGENTS.md` 定義。Legal action progression、correction loops、same-role/cross-role successor relationships、Explore terminal outcomes 與 formal terminal path 則以 default-branch `agents/workflow.md` 為唯一 runtime topology authority。README 不要求建立時的 Explore admission marker，也不把 GitHub App/Connector activity 視為 Human authority。
 
 外部 Scheduled Task 的 exact slot count、topology、cadence、notification 與 associated-conversation configuration 屬 product/deployment configuration；repository 只治理 bootstrap/dispatch behavior。Migration 說明見 `agents/scheduled-task-migration.md`。
 
-下列名稱僅作 Human 搜尋與流程導覽，不在 README 重新定義其 normative semantics：`Lead / propose-change`、`Reviewer / review-openspec`、`Executor / implement-change`、`Reviewer / review-implementation`、`Lead / finalize-change`、`Executor / merge-pr`、`MORE_IMPLEMENTATION_REQUIRED`、`Reviewer / review-archive`、`Lead / finalize-archive`。Final lifecycle 的高階導覽是：final Archive PR non-closing linkage 保留 coordination Issue 為 open；Archive merge 後由 `Lead / finalize-archive` 驗證終態、持久化 `LIFECYCLE_COMPLETE`、關閉並重新觀察 closed。`intake:approved`、routing、merge acceptance、Human authority 與 exact gate meaning 一律以 authoritative governance 為準。Scheduled Role 不另建 normal `archive-change` mutation。
+下列名稱僅作 Human 搜尋與流程導覽，不在 README 重新定義其 normative semantics：`Lead / propose-change`、`Reviewer / review-openspec`、`Executor / implement-change`、`Reviewer / review-implementation`、`Lead / finalize-change`、`Executor / merge-pr`、`MORE_IMPLEMENTATION_REQUIRED`、`Reviewer / review-archive`、`Lead / finalize-archive`。完整 action progression 與 final lifecycle ordering 請直接參照 `agents/workflow.md`；`intake:approved`、dispatch/cardinality、merge acceptance、Human authority 與 exact gate meaning 一律以 `agents/AGENTS.md` 及對應 role/skill authority 為準。Scheduled Role 不另建 normal `archive-change` mutation。
 
 同樣地，`current snapshot semantics`、`unresolved durable-evidence semantics`、`cross-Issue summary is orientation rather than replacement authority`、Reviewer `B → R` cumulative-coverage rule、verified vertical-slice checkpoint 等術語只是導覽索引；具體 contract 位於 `agents/AGENTS.md` 與對應 role/skill。Verified-slice 概念的高階意圖是：`VERIFY` 成功後才持久化完成證據，並在開始下一個 slice 或 handoff 前更新該 slice 已滿足的 markers；README 不規範其完整執行程序。
 
