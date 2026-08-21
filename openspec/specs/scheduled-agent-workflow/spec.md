@@ -974,6 +974,8 @@ Exit Proof SHALL be an internal execution precondition and MUST NOT require a ne
 
 The following intermediate facts MUST NOT independently constitute Exit Proof: an intended RED is established; GREEN or REFACTOR completes; validation fails but correction is actionable within current authority; a commit or push completes; the first observation of an exact external resource is absent, queued, or in progress; a verified Slice checkpoint exists while approved same-action work remains; an action completes with an immediately actionable successor owned by the fixed invocation role; or the exact next legal step is already known and executable.
 
+For an exact required external resource just created or triggered by the selected action, ordinary asynchronous-wait Exit evidence MUST be sequence-derived. After the first current observation is absent, queued, or in progress, the same invocation MUST perform at least one subsequent fresh observation of the same exact target/resource before that resource can support the existing asynchronous-wait Exit class. If the subsequent observation is terminal, the selected action MUST consume that terminal result immediately. If the subsequent fresh observation remains absent or nonterminal, current routing/revision/preconditions remain valid, and no other same-authority work is immediately actionable, that completed bounded re-observation MAY establish the existing genuine asynchronous-wait Exit. This fixed minimum re-observation floor MUST NOT introduce a wall-clock delay policy, sleep requirement, polling counter, heartbeat, retry state, durable waiter, or hidden runtime state.
+
 A catchable tool/runtime/execution failure does not by itself waive exception capture or invocation finalization and does not become a hard-boundary Exit merely because an exception occurred. If the invocation still has execution opportunity, it MUST first preserve the required raw exception evidence, then apply the existing action-specific recovery/disposition contract. When legal same-authority recovery is immediately actionable, it MUST recover and continue within the same selected role/action. Only when current evidence proves that applicable same-authority recovery/disposition cannot legally continue may the failure support a hard execution-boundary Exit. A genuinely uncatchable hard termination MAY prevent current-run persistence and is handled by later at-least-once reconstruction.
 
 The generic continuation/termination, catchable-exception, and normal-finalization contracts SHALL be owned once by shared governance in `agents/AGENTS.md`. Role and skill documents MUST NOT duplicate or weaken these shared rules; they MAY define only action-specific results, authority boundaries, waits, local recovery, blockers, and handoffs.
@@ -1045,6 +1047,59 @@ The generic continuation/termination, catchable-exception, and normal-finalizati
 - WHEN the invocation evaluates Exit Proof
 - THEN it MAY classify a genuine external asynchronous wait
 - AND the Exit Proof identifies the exact awaited resource/evidence for later reconstruction
+
+#### Scenario: First nonterminal exact-resource observation requires re-observation
+
+- GIVEN the selected action has just created or triggered an exact required external resource such as a CI run
+- AND its first current observation is absent, queued, or in progress
+- AND current routing, authority, revision/preconditions, and execution capability remain valid
+- WHEN the invocation evaluates Exit Proof
+- THEN that first nonterminal observation is not a genuine asynchronous-wait Exit
+- AND the invocation performs at least one subsequent fresh observation of the same exact target/resource before ordinary async-wait Exit can be classified
+
+#### Scenario: Subsequent terminal success is consumed
+
+- GIVEN the first observation of a just-triggered exact required resource was absent, queued, or in progress
+- AND a subsequent fresh same-invocation observation of that exact resource is terminal success
+- WHEN the selected action evaluates its next step
+- THEN it consumes the terminal success in the same invocation
+- AND it does not classify asynchronous-wait Exit from the earlier nonterminal observation
+
+#### Scenario: Subsequent terminal actionable failure is consumed
+
+- GIVEN the first observation of a just-triggered exact required resource was absent, queued, or in progress
+- AND a subsequent fresh same-invocation observation of that exact resource is terminal failure
+- AND the failure has a correction immediately actionable inside the selected action's approved authority
+- WHEN the selected action evaluates its next step
+- THEN it consumes the failure and performs the legal correction in the same invocation
+- AND the terminal failure does not become asynchronous-wait Exit
+
+#### Scenario: Genuine unconsumable external wait may exit after bounded re-observation
+
+- GIVEN an exact required external resource was first observed absent, queued, or in progress
+- AND the same invocation performs a subsequent fresh observation of the same exact target/resource
+- AND that later observation remains absent or nonterminal
+- AND no other same-authority work is immediately actionable
+- AND current routing, revision, and preconditions remain valid
+- WHEN the invocation evaluates Exit Proof
+- THEN it MAY classify the existing genuine external asynchronous-wait Exit
+- AND the Exit Proof identifies the exact awaited target/resource for later reconstruction
+
+#### Scenario: Async wait without required re-observation is rejected
+
+- GIVEN a just-triggered exact required resource has only one current absent, queued, or in-progress observation
+- AND no subsequent fresh observation of that same exact target/resource has occurred in the invocation
+- WHEN the invocation attempts to classify asynchronous-wait Exit
+- THEN the Exit is not proven
+- AND the invocation must continue the bounded observation procedure while current routing and preconditions remain valid
+
+#### Scenario: Stale state during re-observation permits fail-closed exit
+
+- GIVEN a just-triggered exact required resource had a first nonterminal observation
+- AND before the required subsequent observation can be legally consumed the selected routing, head, or another required precondition becomes stale
+- WHEN the invocation rechecks current state
+- THEN it uses the existing stale/precondition fail-closed Exit
+- AND it does not continue observing or acting from the obsolete revision
 
 #### Scenario: Same-role successor continues
 
