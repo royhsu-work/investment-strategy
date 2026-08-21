@@ -55,11 +55,23 @@ successful validated branch awaiting this PR creation is normal success, not `RE
 
 The preparation below is complete before `Reviewer / review-archive`. Lead prepares the final Archive
 target by reconstructing every still-applicable approved required deferred follow-up or required
-separate-follow-up obligation and proving that each obligation has a durable tracker linked to the source
-coordination Issue/Change and exact defer decision/reference. If the only missing work is an unambiguous
-tracker write, Lead may idempotently create or reuse that tracker under the existing Lead-owned tracking
-contract. The tracker MUST NOT be Human-admitted or receive workflow routing. Ordinary out-of-scope,
-non-goal, or optional future work creates no such obligation.
+separate-follow-up obligation and the same routing-complete required-follow-up postcondition owned by the
+approved Lead producer: one source-linked tracker with the exact source coordination Issue/Change and defer
+decision/reference, `Change: unset`, and canonical `agent:lead + action:explore-change` routing.
+
+Lead reconstructs the approved source obligation and all matching trackers before any repair. If no
+matching tracker exists, Lead may idempotently create exactly one tracker and complete that postcondition.
+If exactly one matching incomplete required tracker exists and the authoritative approved source obligation
+remains reconstructable, Lead may reuse it and repair only its missing durable fields or canonical routing;
+it does not create a duplicate. Multiple or ambiguous matching trackers fail closed, as does missing or
+contradictory source authority. Tracker prose is evidence only and never supplies missing admission or
+routing authority. After any create or repair, Lead fresh-reads the tracker and treats preparation as
+satisfied only when the complete postcondition is durably observable. Ordinary out-of-scope, non-goal,
+optional, or merely deferred prose creates no materialization or routing obligation.
+
+This is fail-safe reconstruction of the existing Lead-owned producer contract, not a second admission or
+dispatcher model. Lifecycle preparation never infers workflow routing from prose and does not broaden which
+future work is required.
 
 Lead also reconstructs only separately workflow-owned temporary correction/recovery branches identified by
 explicit durable lifecycle, correction, integration, or recovery provenance. The normal validated
