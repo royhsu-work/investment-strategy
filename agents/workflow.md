@@ -22,7 +22,7 @@ The persistent coordination Issue remains open throughout the formal lifecycle. 
 | `Reviewer / review-implementation` | implementation finding within approved meaning | `Executor / implement-change` |
 | `Reviewer / review-implementation` | PASS for exact implementation head | `Executor / merge-pr` |
 | `Executor / merge-pr` | implementation PR merged | `Lead / finalize-change` |
-| `Lead / finalize-change` | approved implementation still incomplete | `Executor / implement-change` |
+| `Lead / finalize-change` | `MORE_IMPLEMENTATION_REQUIRED`: approved implementation still incomplete | `Executor / implement-change` |
 | `Lead / finalize-change` | validated final Archive PR ready | `Reviewer / review-archive` |
 | `Reviewer / review-archive` | archive/preparation finding | `Lead / finalize-change` |
 | `Reviewer / review-archive` | PASS for exact Archive head | `Executor / merge-pr` |
