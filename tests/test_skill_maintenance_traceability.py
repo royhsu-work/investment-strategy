@@ -137,12 +137,10 @@ def test_implementation_review_compares_exact_head_with_declaration() -> None:
 
 
 def _retrospective_rows() -> dict[str, set[str]]:
-    proposal = _skill_text(
-        "openspec/changes/record-skill-maintenance-traceability/proposal.md"
-    )
-    section = proposal.split(
-        "### Retrospective repair window: #105 through pre-#110 baseline", 1
-    )[1].split("#80 / PR #121", 1)[0]
+    proposal = _skill_text("openspec/changes/record-skill-maintenance-traceability/proposal.md")
+    section = proposal.split("### Retrospective repair window: #105 through pre-#110 baseline", 1)[
+        1
+    ].split("#80 / PR #121", 1)[0]
     rows: dict[str, set[str]] = {}
     for line in section.splitlines():
         if not line.startswith("| #"):
@@ -173,9 +171,7 @@ def test_retrospective_window_classifies_every_skill_touching_source_change() ->
 
 
 def test_retrospective_window_records_evaluated_non_skill_exclusion() -> None:
-    proposal = _skill_text(
-        "openspec/changes/record-skill-maintenance-traceability/proposal.md"
-    )
+    proposal = _skill_text("openspec/changes/record-skill-maintenance-traceability/proposal.md")
 
     assert (
         "#80 / PR #121 is explicitly evaluated and excluded from retrospective Skill entries "
