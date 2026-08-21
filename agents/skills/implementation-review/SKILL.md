@@ -11,6 +11,12 @@ Mapped action: `Reviewer / review-implementation`.
 
 When the reviewed implementation materially creates or modifies repository Skills, load the default-branch `agents/skills/skill-creator/SKILL.md` and `agents/skills/skill-creator/references/repository-governance.md` before judging those Skill artifacts. Treat them as reusable procedural/integration input only: this mapped action and current default-branch governance/Reviewer role retain review authority, exact-head gate semantics, findings ownership, and routing. Do not load this composition for unrelated implementation review.
 
+### Skill maintenance traceability implementation check
+
+When the exact implementation head materially changes repository Skills, compare those concrete Skill changes with the approved Change-local `Skill maintenance traceability` declaration. Every material Skill present in the exact implementation head must have an approved Added, Modified, or Removed entry with matching classification and responsibility treatment. An undeclared material Skill change or a differently classified material Skill change is `IMPLEMENTATION_FINDINGS`; if correcting it would require changing approved Skill scope, responsibility, or classification meaning, return `SPEC_FINDINGS` to Lead rather than letting Executor self-authorize the difference.
+
+Formatting, wording, or reference-only edits that do not alter responsibility, executable semantics, composition/loading behavior, trigger behavior, authority, or maintenance meaning do not create false maintenance findings. The declaration is Change provenance, not a replacement for `UPSTREAM.md` when upstream/current-local divergence is independently applicable.
+
 ## Reconstruct before acting
 
 Read default-branch governance and Reviewer role, the coordination Issue and immutable `Change:`, the
@@ -38,16 +44,16 @@ For the exact current implementation PR head R:
    validation is claimed for R, durable validator evidence must prove checkout `HEAD == R` before the
    strict command; `run.head_sha == R` alone or a different synthetic merge checkout is insufficient.
 4. Verify implementation remains inside approved scope and did not redefine requirements/contracts.
-5. Classify each material problem as either:
-   - `IMPLEMENTATION_FINDINGS`: implementation defect, missing approved work, insufficient tests, or
-     quality-gate failure;
-   - `SPEC_FINDINGS`: material ambiguity/defect requiring Lead specification authority.
-6. Immediately before finalizing the gate result, consume the shared `agents/AGENTS.md` substantive
+5. When repository Skills are materially changed, compare the exact implementation head with the approved Skill maintenance traceability declaration before deciding PASS.
+6. Classify each material problem as either:
+   - `IMPLEMENTATION_FINDINGS`: implementation defect, missing approved work, insufficient tests, quality-gate failure, undeclared material Skill change, or differently classified material Skill change within otherwise approved meaning;
+   - `SPEC_FINDINGS`: material ambiguity/defect requiring Lead specification authority, including a required Skill-set/responsibility/classification change that is not already approved.
+7. Immediately before finalizing the gate result, consume the shared `agents/AGENTS.md` substantive
    Human-input freshness/disposition invariant against current coordination-Issue activity. A newer
    material direct-Human comment that can affect correctness, approved scope, traceability, or gate
    validity must have a reconstructable exact-comment disposition or be converted/routed through the
    existing legal finding path; this Skill does not redefine the shared classifier or Human authority.
-7. If all required checks pass and the consequential-boundary freshness check is clear, record `PASS`
+8. If all required checks pass and the consequential-boundary freshness check is clear, record `PASS`
    bound to the exact PR head revision.
 
 ## Legal results and handoff
