@@ -112,6 +112,20 @@ def _skill_text(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
 
+def _record_skill_proposal() -> str:
+    active = Path("openspec/changes/record-skill-maintenance-traceability/proposal.md")
+    if active.exists():
+        return active.read_text(encoding="utf-8")
+
+    archived = sorted(
+        Path("openspec/changes/archive").glob(
+            "*-record-skill-maintenance-traceability/proposal.md"
+        )
+    )
+    assert len(archived) == 1
+    return archived[0].read_text(encoding="utf-8")
+
+
 def test_openspec_authoring_owns_skill_maintenance_declaration() -> None:
     text = _skill_text("agents/skills/openspec-change/SKILL.md")
 
@@ -137,7 +151,7 @@ def test_implementation_review_compares_exact_head_with_declaration() -> None:
 
 
 def _retrospective_rows() -> dict[str, set[str]]:
-    proposal = _skill_text("openspec/changes/record-skill-maintenance-traceability/proposal.md")
+    proposal = _record_skill_proposal()
     section = proposal.split("### Retrospective repair window: #105 through pre-#110 baseline", 1)[
         1
     ].split("#80 / PR #121", 1)[0]
@@ -171,7 +185,7 @@ def test_retrospective_window_classifies_every_skill_touching_source_change() ->
 
 
 def test_retrospective_window_records_evaluated_non_skill_exclusion() -> None:
-    proposal = _skill_text("openspec/changes/record-skill-maintenance-traceability/proposal.md")
+    proposal = _record_skill_proposal()
 
     assert (
         "#80 / PR #121 is explicitly evaluated and excluded from retrospective Skill entries "
