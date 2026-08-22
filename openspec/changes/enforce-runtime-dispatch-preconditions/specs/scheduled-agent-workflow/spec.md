@@ -10,7 +10,7 @@ Every field asserted as **current** for dispatch authorization—including Issue
 
 The repository SHALL provide one production executable dispatch-precondition implementation that consumes an explicit normalized repository Issue snapshot together with explicit enumeration-completeness and observation-provenance evidence and returns the deterministic cardinality/selection/action-authorization decision required by this requirement. Executable regression coverage, the repository-hosted pre-model runtime gate, and the durable-effect application gate MUST consume that same implementation rather than maintaining a parallel classifier or re-deriving candidate-local behavior from prose. The executable input contract MUST prevent historical/prior-run/cache/conversation-only state from being represented as provenance-qualified current authorization input.
 
-Normal scheduled mapped work after runtime cutover MUST be authorized by repository-hosted executable dispatch **before the mapped model worker is invoked**. The model worker MUST NOT be responsible for deciding whether its own mapped action was allowed to begin. A legacy/direct ChatGPT Scheduled Task or other model invocation outside that machine-gated runtime is not sufficient authorization for a normal mapped action after cutover.
+Normal scheduled mapped work after runtime cutover MUST be authorized by repository-hosted executable dispatch **before the mapped model worker is invoked**. The model worker MUST NOT be responsible for deciding whether its own mapped action was allowed to begin or which role it should assume. A legacy/direct ChatGPT Scheduled Task or other model invocation outside that machine-gated runtime is not sufficient authorization for a normal mapped action after cutover.
 
 From one complete current reconstruction, dispatch SHALL apply the following decision table before normal mapped model invocation:
 
@@ -21,7 +21,7 @@ From one complete current reconstruction, dispatch SHALL apply the following dec
 | `>1` | Fail closed before any normal mapped model worker is invoked. |
 | indeterminate | Fail closed before any normal mapped model worker is invoked. |
 
-Before substantive `explore-change` work begins, the machine runtime MUST prove formal/terminal cardinality `0`, no blocking bounded recovery candidate, and that the selected Issue is the deterministic combined pre-activation winner. Before a formal lifecycle/review/implementation worker is invoked, the same execution MUST prove that its coordination Issue is the sole formal/terminal workflow selected by the shared preflight. A fixed scheduled role slot whose role does not equal the selected current role MUST exit without invoking a mapped model worker.
+Before substantive `explore-change` work begins, the machine runtime MUST prove formal/terminal cardinality `0`, no blocking bounded recovery candidate, and that the selected Issue is the deterministic combined pre-activation winner. Before a formal lifecycle/review/implementation worker is invoked, the same execution MUST prove that its coordination Issue is the sole formal/terminal workflow selected by the shared preflight. The machine-selected routing tuple determines the exact invocation role/action; no fixed external role slot or model-selected role may override it.
 
 `propose-change` activation is a durable effect and therefore MUST NOT be written directly by the model worker. The application boundary SHALL perform the shared complete-cardinality check immediately before the activation write and again from a fresh repository-wide snapshot immediately after the write. If routing, Issue state, Change identity, repository enumeration, winner identity, observation provenance, or completeness is stale, unavailable, incomplete, or contradictory at application time, the effect MUST fail closed rather than proceed from the worker's earlier local context.
 
@@ -60,7 +60,7 @@ If any recovery predicate is missing, contradictory, Human-reserved, or would cr
 
 #### Scenario: Pre-activation Explore revalidates zero formal WIP before substantive research
 
-- GIVEN a fixed Lead runtime slot wakes while an open `Lead / explore-change + Change: unset` Issue is queued
+- GIVEN an open `Lead / explore-change + Change: unset` Issue is queued
 - AND another formal workflow currently occupies WIP or complete current cardinality cannot be established
 - WHEN the repository runtime performs pre-model dispatch
 - THEN it does not invoke the queued Explore worker
@@ -134,7 +134,7 @@ If any recovery predicate is missing, contradictory, Human-reserved, or would cr
 #### Scenario: Two active workflows fail closed before a mapped action executes
 
 - GIVEN repository-wide durable state contains two open valid-routing Issues with persisted non-`unset` Change identities
-- WHEN any fixed Scheduled Agent runtime role wakes
+- WHEN the Scheduled Agent runtime wakes
 - THEN cardinality is greater than one
 - AND no normal mapped model action is invoked
 - AND the runtime does not choose a winner or rewrite either workflow to manufacture cardinality one
@@ -183,9 +183,9 @@ If any recovery predicate is missing, contradictory, Human-reserved, or would cr
 
 The repository SHALL provide a default-branch GitHub Actions Scheduled Agent runtime in which executable authorization precedes every normal mapped model invocation and durable model-requested effects are applied only after fresh executable reauthorization.
 
-The runtime SHALL preserve fixed Lead, Reviewer, and Executor role slots. A schedule/manual trigger carries only its fixed role identity. Current coordination Issue, Change identity, routing/action, formal-active cardinality, recovery/pre-activation winner, completeness, and observation provenance MUST be acquired from authoritative GitHub state by the runtime and MUST NOT be supplied as authorization facts by cron text, model prompt, prior output, or user/comment prose.
+The runtime SHALL use a single scheduled wake path with dynamic role selection. A schedule/manual trigger carries no role, Issue, Change, action, winner, or priority authorization. Current coordination Issue, Change identity, routing/action, formal-active cardinality, recovery/pre-activation winner, completeness, and observation provenance MUST be acquired from authoritative GitHub state by the runtime and MUST NOT be supplied as authorization facts by cron text, model prompt, prior output, or user/comment prose.
 
-Before invoking a mapped model worker, the runtime MUST execute the production dispatch classifier on a complete provenance-qualified current reconstruction. It may invoke a worker only when the classifier returns `AUTHORIZE` for exactly one Issue/current routing and the selected role equals the fixed invocation role. `FAIL_CLOSED`, `NO_WORK`, role mismatch, multiple-active, incomplete enumeration, contradictory state, or provenance failure MUST result in no mapped model invocation.
+Before invoking a mapped model worker, the runtime MUST execute the production dispatch classifier on a complete provenance-qualified current reconstruction. It may invoke a worker only when the classifier returns `AUTHORIZE` for exactly one Issue/current routing. The selected routing tuple determines the exact invocation role/action. `FAIL_CLOSED`, `NO_WORK`, multiple-active, incomplete enumeration, contradictory state, or provenance failure MUST result in no mapped model invocation. The model MUST NOT self-select or override its role/action.
 
 The authorized worker SHALL receive the exact selected Issue/role/action and the mapped default-branch role/Skill semantics. The worker runtime for this Change uses repository code integrating with the OpenAI Responses API and MUST NOT depend on Codex. Model/provider credentials and model selection are deployment configuration, not workflow authorization state.
 
@@ -193,37 +193,38 @@ The model-controlled worker MUST NOT possess durable write-capable GitHub creden
 
 Staged output is not workflow state and does not authorize application. Before applying a normal effect batch, the application boundary MUST fresh-reconstruct complete current GitHub state, execute the same production classifier, prove the exact source Issue/role/action is still authorized, and verify effect-specific current preconditions. Any requested routing successor MUST additionally be legal under the canonical `agents/workflow.md` topology. Stale or unprovable source state fails closed without applying the stale normal batch.
 
-After an accepted effect batch, the runtime MUST fresh-observe the durable result. Any same-role continuation requires another complete production-classifier dispatch from that resulting current state. A cross-role successor ends the current fixed-role execution. No earlier classifier result or staged output can authorize the continuation.
+After an accepted effect batch, the runtime MUST fresh-observe the durable result and execute another complete production-classifier dispatch before any continuation. If another legal mapped action is immediately selected, the runtime MAY continue in the same GitHub Actions execution, including across a role change, but each selected action MUST use a fresh model invocation bound to the newly selected exact role/action. No earlier classifier result, staged output, or prior worker context can authorize the continuation.
+
+Reviewer independence MUST be preserved by fresh invocation and evidence isolation rather than by a dedicated fixed schedule slot. A Reviewer action selected after Lead/Executor work MUST use a new Reviewer model invocation with Reviewer role/Skill context and current durable evidence; prior role conversational context MUST NOT substitute for independent review evidence or authority.
 
 Scheduled Agent runtime executions SHALL use one repository-wide serialization boundary and re-read current state when they actually execute. This execution serialization MUST NOT be represented as a repository lock, lease, heartbeat, claim, hidden queue, workflow owner, or second lifecycle state machine.
 
 Before cutover, the runtime MUST demonstrate support for every current mapped normal action, including `Lead / explore-change` and `Lead / propose-change`. Legacy ChatGPT Scheduled Tasks MUST be disabled before/when the GitHub Actions runtime becomes authoritative and MUST NOT remain as an independent fallback normal scheduler. A partial/dual cutover does not satisfy this requirement.
 
-PR-stage tests MUST verify the runtime with deterministic model/test doubles but MUST NOT be represented as live default-branch scheduled evidence. After merge to default branch, live verification MUST use ordinary current workflow state: a non-matching fixed-role slot proves pre-model STOP/no model invocation, and the matching slot proves production-classifier authorization before its real mapped model invocation. No synthetic second formal workflow or special routing state is required for this canary.
+PR-stage tests MUST verify the runtime with deterministic model/test doubles but MUST NOT be represented as live default-branch scheduled evidence. After merge to default branch, live verification MUST use ordinary current workflow state to prove: a scheduled wake runs complete acquisition/classifier authorization before a real model invocation; the worker receives only the exact machine-selected role/action; a dynamic role transition creates a fresh role-specific invocation after re-dispatch; and a naturally occurring `NO_WORK`/fail-closed wake results in no mapped model invocation. No synthetic second formal workflow or special routing state is required for this canary.
 
-#### Scenario: Fixed role mismatch stops before model invocation
-
-- GIVEN complete current reconstruction selects Issue #133 at a Lead action
-- AND a Reviewer or Executor fixed runtime slot wakes
-- WHEN the production classifier returns the selected Lead routing
-- THEN the runtime exits without invoking any mapped model worker
-- AND it does not mutate workflow state merely to make the slot eligible
-
-#### Scenario: Exact authorized role and action invokes the mapped worker
+#### Scenario: Single wake dynamically selects exact role and action
 
 - GIVEN complete provenance-qualified current reconstruction selects exactly Issue #133 at `Lead / resolve-question`
-- AND the fixed Lead slot wakes
-- WHEN the production classifier authorizes that exact current routing
-- THEN the runtime invokes the Lead `resolve-question` worker with that exact Issue/role/action
-- AND the worker is not asked to rediscover or override its own dispatch authorization
+- WHEN the Scheduled Agent runtime wakes
+- THEN the production classifier authorizes that exact current routing
+- AND the runtime invokes a fresh Lead `resolve-question` worker with that exact Issue/role/action
+- AND no fixed external role slot or model judgment may override the selected role/action
 
 #### Scenario: Formal work prevents queued Explore model invocation
 
 - GIVEN #100 is the sole formal active workflow
 - AND #130 is a queued `Lead / explore-change + Change: unset` Issue
-- WHEN the fixed Lead runtime slot wakes
+- WHEN the Scheduled Agent runtime wakes
 - THEN the production classifier selects #100's current formal action
 - AND no model request for #130 Explore is emitted
+
+#### Scenario: No legal work stops before model invocation
+
+- GIVEN complete current reconstruction returns `NO_WORK`, `FAIL_CLOSED`, or indeterminate authorization
+- WHEN the Scheduled Agent runtime wakes
+- THEN no mapped model worker is invoked
+- AND the runtime does not mutate workflow state merely to manufacture eligible work
 
 #### Scenario: Model worker cannot directly write durable GitHub state
 
@@ -254,15 +255,23 @@ PR-stage tests MUST verify the runtime with deterministic model/test doubles but
 - GIVEN an authorized Lead action applies a legal durable successor that is also Lead-owned
 - WHEN post-write state is freshly observed
 - THEN the runtime executes the production classifier again from the new current state
-- AND only a newly authorized matching Lead action may continue
+- AND only a newly authorized Lead action may continue
 - AND the prior action authorization is not reused
 
-#### Scenario: Cross-role successor ends the current fixed-role execution
+#### Scenario: Cross-role continuation uses a fresh invocation
 
 - GIVEN an authorized Lead action applies a legal successor routed to Reviewer
-- WHEN post-write state is freshly observed
-- THEN the current Lead runtime does not invoke the Reviewer worker
-- AND Reviewer work waits for a Reviewer fixed slot that independently re-dispatches current state
+- WHEN post-write state is freshly observed and machine dispatch selects the Reviewer action
+- THEN the runtime may continue without waiting for a dedicated Reviewer schedule slot
+- BUT it MUST create a fresh Reviewer model invocation with Reviewer role/Skill context and current durable evidence
+- AND it MUST NOT reuse Lead model context or the prior Lead authorization
+
+#### Scenario: Reviewer independence survives dynamic role dispatch
+
+- GIVEN a Reviewer action follows prior Lead or Executor work
+- WHEN the machine runtime dispatches that Reviewer action
+- THEN Reviewer receives a fresh invocation and independent current durable review target/evidence
+- AND prior worker reasoning/context is not used as Reviewer gate authority
 
 #### Scenario: Full mapped-action coverage precedes cutover
 
@@ -282,9 +291,10 @@ PR-stage tests MUST verify the runtime with deterministic model/test doubles but
 
 - GIVEN the runtime implementation has been merged to the default branch
 - AND #133 remains in an ordinary current lifecycle action
-- WHEN a non-matching fixed role slot runs
-- THEN Actions evidence proves it stopped before a model invocation
-- WHEN the matching fixed role slot later runs
+- WHEN a scheduled runtime wake runs
 - THEN Actions evidence proves complete current acquisition and production-classifier authorization occurred before the real mapped model invocation
+- AND the model invocation uses exactly the classifier-selected Issue/role/action
+- WHEN a subsequent legal transition changes the selected role
+- THEN Actions evidence proves a fresh role-specific model invocation occurs only after a new machine dispatch
 - AND any requested durable effects are freshly reauthorized before application
 - AND no synthetic second formal workflow or special canary routing state is created
