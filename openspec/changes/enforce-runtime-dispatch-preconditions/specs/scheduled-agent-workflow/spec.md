@@ -6,7 +6,9 @@ Scheduled dispatch SHALL establish the complete cardinality of terminal-pending 
 
 The pre-dispatch reconstruction SHALL use repository-wide durable state sufficient to classify every candidate relevant to formal-active, terminal-pending, and bounded premature-close recovery semantics. The reconstruction MUST establish observable enumeration completeness for every query/read surface whose incompleteness could hide such a candidate. Pagination, bounded result limits, role-local searches, candidate-local reads, or first-page/search projections MUST NOT be treated as complete merely because they returned a plausible candidate or no candidate. If the available tool surface cannot establish complete repository-wide enumeration, cardinality is indeterminate.
 
-The repository SHALL provide one production executable dispatch-precondition implementation that consumes an explicit normalized repository Issue snapshot together with explicit enumeration-completeness evidence and returns the deterministic cardinality/selection/action-authorization decision required by this requirement. Workflow-dynamic runtime execution and executable regression coverage MUST consume that same implementation rather than maintaining a parallel test-only classifier or re-deriving a separate candidate-local decision from prose. If the current execution environment cannot execute the authoritative default-branch implementation, cannot supply the required complete snapshot/completeness evidence, or cannot normalize required workflow identity/routing fields without ambiguity, authorization is indeterminate and MUST fail closed.
+Every field asserted as **current** for dispatch authorization—including Issue open/closed state, persisted `Change:` identity, routing labels/tuple, and enumeration/completeness metadata—MUST be derived from authoritative GitHub observations obtained during the same invocation that consumes the decision. Conversation history, prior Scheduled-Agent output, model memory, cached observations, historical Issue body/comment routing, copied summaries, or an earlier invocation's snapshot MUST NOT satisfy a current-state predicate. Historical durable evidence MAY be consumed only for audit/lifecycle semantics that are explicitly historical; it cannot override a contradictory or absent current GitHub routing/state observation. If same-invocation authoritative current fields or their provenance/completeness cannot be established, authorization is indeterminate and MUST fail closed.
+
+The repository SHALL provide one production executable dispatch-precondition implementation that consumes an explicit normalized repository Issue snapshot together with explicit enumeration-completeness and observation-provenance evidence and returns the deterministic cardinality/selection/action-authorization decision required by this requirement. Workflow-dynamic runtime execution and executable regression coverage MUST consume that same implementation rather than maintaining a parallel test-only classifier or re-deriving a separate candidate-local decision from prose. The executable input contract MUST make it impossible to represent an authorization-bearing current-state field as provenance-complete when its source is only conversation/prior-run/cache/historical prose. If the current execution environment cannot execute the authoritative default-branch implementation, cannot supply the required complete snapshot/completeness/provenance evidence, or cannot normalize required workflow identity/routing fields without ambiguity, authorization is indeterminate and MUST fail closed.
 
 From one complete current reconstruction, dispatch SHALL apply the following decision table before normal action execution:
 
@@ -17,15 +19,15 @@ From one complete current reconstruction, dispatch SHALL apply the following dec
 | `>1` | Fail closed before any normal mapped action executes. |
 | indeterminate | Fail closed before any normal mapped action executes. |
 
-A selected action SHALL consume the executable shared pre-dispatch decision as an execution precondition rather than starting from a candidate-local assumption. Before substantive `explore-change` work begins, a fresh execution of the precondition MUST still prove formal/terminal cardinality `0`, no blocking bounded recovery candidate, and that the selected Issue is the deterministic combined pre-activation winner. Before a formal lifecycle/review/implementation action proceeds, a fresh executable decision MUST prove that its selected coordination Issue is the sole formal/terminal workflow selected by the shared preflight. `propose-change` SHALL additionally execute the same complete-cardinality precondition immediately before the activation write and again from a fresh repository-wide snapshot immediately after the write. If routing, Issue state, Change identity, repository enumeration, winner identity, executable availability, or completeness is stale, unavailable, incomplete, or contradictory at action entry, the action MUST fail closed and reconstruct instead of proceeding from previously selected local context.
+A selected action SHALL consume the executable shared pre-dispatch decision as an execution precondition rather than starting from a candidate-local assumption. Before substantive `explore-change` work begins, a fresh execution of the precondition MUST still prove formal/terminal cardinality `0`, no blocking bounded recovery candidate, and that the selected Issue is the deterministic combined pre-activation winner. Before a formal lifecycle/review/implementation action proceeds, a fresh executable decision MUST prove that its selected coordination Issue is the sole formal/terminal workflow selected by the shared preflight. `propose-change` SHALL additionally execute the same complete-cardinality precondition immediately before the activation write and again from a fresh repository-wide snapshot immediately after the write. Each such decision MUST consume same-invocation authoritative GitHub current-state observations for the fields on which authorization depends. If routing, Issue state, Change identity, repository enumeration, winner identity, executable availability, observation provenance, or completeness is stale, unavailable, incomplete, or contradictory at action entry, the action MUST fail closed and reconstruct instead of proceeding from previously selected local context.
 
-A Propose activation SHALL be accepted for legal successor execution only when the immediate post-write executable decision proves complete enumeration and exactly one formal active/terminal-pending workflow corresponding to the expected selected coordination Issue, Change identity, and routing. If competing durable state produces multiple/contradictory active workflows after the write, no activation in that contradictory state is accepted for normal continuation; Scheduled roles fail closed and MUST NOT choose a winner or automatically rewrite another workflow. This requirement does not claim a cross-Issue atomic compare-and-swap primitive that the current GitHub mutation surface does not provide.
+A Propose activation SHALL be accepted for legal successor execution only when the immediate post-write executable decision proves complete enumeration, valid same-invocation observation provenance, and exactly one formal active/terminal-pending workflow corresponding to the expected selected coordination Issue, Change identity, and routing. If competing durable state produces multiple/contradictory active workflows after the write, or current routing/state cannot be authoritatively observed, no activation in that state is accepted for normal continuation; Scheduled roles fail closed and MUST NOT choose a winner or automatically rewrite another workflow. This requirement does not claim a cross-Issue atomic compare-and-swap primitive that the current GitHub mutation surface does not provide.
 
-Applicable canonical `ACTION_RESULT` evidence for `Lead / explore-change` and `Lead / propose-change` SHALL preserve the exact executable decision evidence actually consumed at their pre-activation boundaries rather than a separately re-derived Agent summary. Explore result evidence MUST include enumeration completeness, formal-active/terminal-pending Issue identities, applicable bounded recovery candidates, combined pre-activation candidate identities, selected Issue, and executable disposition sufficient to reconstruct why substantive research was authorized. Propose result evidence MUST additionally include the immediate pre-write decision, expected Change identity, immediate post-write formal-active/terminal-pending Issue identities, post-write completeness/disposition, and whether activation was accepted. These fields are audit/diagnostic evidence only and MUST NOT replace current `Change + agent + action` workflow state or authorize a later invocation without fresh reconstruction. A stable runtime/wake-source identifier MAY be recorded only when the execution environment actually exposes it and MUST NOT be fabricated or treated as workflow authority.
+Applicable canonical `ACTION_RESULT` evidence for `Lead / explore-change` and `Lead / propose-change` SHALL preserve the exact executable decision evidence actually consumed at their pre-activation boundaries rather than a separately re-derived Agent summary. Explore result evidence MUST include enumeration completeness, authoritative observation provenance sufficient to identify the current GitHub read surface/result consumed, formal-active/terminal-pending Issue identities, applicable bounded recovery candidates, combined pre-activation candidate identities, selected Issue, and executable disposition sufficient to reconstruct why substantive research was authorized. Propose result evidence MUST additionally include the immediate pre-write decision, expected Change identity, immediate post-write formal-active/terminal-pending Issue identities, post-write completeness/provenance/disposition, and whether activation was accepted. These fields are audit/diagnostic evidence only and MUST NOT replace current `Change + agent + action` workflow state or authorize a later invocation without fresh reconstruction. A stable runtime/wake-source identifier MAY be recorded only when the execution environment actually exposes it and MUST NOT be fabricated or treated as workflow authority.
 
 If active-workflow cardinality cannot be established as exactly zero or one, dispatch MUST fail closed and MUST NOT infer that queued work is eligible. Normal nonterminal routed workflow work MUST have an open coordination Issue. A closed Issue with nonterminal routing is contradictory durable state except for the existing narrow terminal-pending `Lead / finalize-archive` shape and MUST NOT execute its stale routed action while closed.
 
-When repository-wide durable state already contains more than one formal active/terminal-pending workflow, Scheduled roles SHALL remain fail closed. They MUST NOT select a winner by age, role/action priority, issue number, model judgment, or presumed legitimacy; MUST NOT automatically clear or rewrite persisted Change identities; and MUST NOT mutate routing merely to force cardinality back to one. Human/maintainer administrative repair may correct the durable repository state outside normal Scheduled-Agent lifecycle execution. A later wake MUST reconstruct the repaired current repository state from scratch before any normal action resumes; prior PASS/readiness evidence does not override newly changed `main`, routing, or lifecycle evidence.
+When repository-wide durable state already contains more than one formal active/terminal-pending workflow, Scheduled roles SHALL remain fail closed. They MUST NOT select a winner by age, role/action priority, issue number, model judgment, or presumed legitimacy; MUST NOT automatically clear or rewrite persisted Change identities; and MUST NOT mutate routing merely to force cardinality back to one. Human/maintainer administrative repair may correct the durable repository state outside normal Scheduled-Agent lifecycle execution. A later wake MUST reconstruct the repaired current repository state from scratch using same-invocation authoritative GitHub observations before any normal action resumes; prior PASS/readiness evidence, historical routing prose, or previous invocation output does not override newly changed `main`, routing, or lifecycle evidence.
 
 A closed nonterminal Issue MAY be recovered automatically only for the demonstrated premature-close class when durable reconstruction proves all of the following: the Issue has a persisted non-`unset` Change and exactly one otherwise legal nonterminal routing tuple; matching durable lifecycle evidence proves the Change is unfinished; no authorized final Archive/native-close completion or `LIFECYCLE_COMPLETE` exists; no qualifying provenance-bound Human decision requires termination/non-resumption; and repository-wide reconstruction finds no other normal formal/terminal-pending workflow or second premature-close recovery candidate. A bare Issue close event or actor identity MUST NOT by itself count as qualifying Human termination authority.
 
@@ -68,34 +70,60 @@ If any recovery predicate is missing, contradictory, Human-reserved, or would cr
 - AND #130 Explore is not authorized
 - AND the same production decision implementation is exercised by the regression fixture for this incident shape
 
+#### Scenario: Previously routed Issue with current routing removed is not active
+
+- GIVEN historical durable Issue text or comments record that Issue #130 previously had a formal routing tuple
+- AND authoritative GitHub observations obtained during the current invocation show that #130 currently lacks the required routing labels
+- WHEN the executable precondition normalizes the current repository snapshot
+- THEN historical routing text does not restore or synthesize current routing
+- AND #130 is not classified as formal-active solely from that historical evidence
+- AND any current formal-active classification depends only on current authoritative GitHub state plus the governed formal-workflow predicate
+
+#### Scenario: Prior invocation output cannot satisfy current-state predicates
+
+- GIVEN a previous invocation recorded a routing/state snapshot for an Issue
+- AND the current invocation has not obtained authoritative GitHub observations sufficient to establish that Issue's current routing/state
+- WHEN dispatch authorization is evaluated
+- THEN the previous invocation output, model memory, cache, and conversation context are non-authoritative for the current predicate
+- AND authorization is indeterminate rather than inferred from the stale snapshot
+
+#### Scenario: Current routing observation is unavailable
+
+- GIVEN repository enumeration returns a candidate whose current routing labels are required for formal-workflow classification
+- AND the current invocation cannot obtain authoritative GitHub evidence sufficient to establish those current labels
+- WHEN the executable precondition evaluates cardinality/action authorization
+- THEN observation provenance is incomplete
+- AND authorization fails closed as indeterminate
+- AND historical Issue prose/comments MUST NOT fill the missing current routing fields
+
 #### Scenario: Runtime and regression use the same decision implementation
 
 - GIVEN the repository defines the production executable dispatch precondition
-- WHEN regression coverage evaluates cardinality, completeness, deterministic selection, or action-entry authorization
+- WHEN regression coverage evaluates cardinality, completeness, observation provenance, deterministic selection, or action-entry authorization
 - THEN the tests call that production decision implementation
 - AND they do not define a parallel behavioral classifier that Scheduled runtime never executes
 
 #### Scenario: Executable precondition is unavailable
 
 - GIVEN current default-branch governance requires the executable dispatch precondition
-- AND the current Scheduled/manual execution environment cannot execute the authoritative helper or cannot supply its required complete normalized input
+- AND the current Scheduled/manual execution environment cannot execute the authoritative helper or cannot supply its required complete normalized/provenance-qualified input
 - WHEN a consequential workflow-dynamic action would otherwise proceed
 - THEN authorization is indeterminate
 - AND the action fails closed rather than replacing the executable decision with model-derived classification
 
 #### Scenario: Explore action result preserves consumed preflight identities
 
-- GIVEN `Lead / explore-change` was authorized by a complete executable action-entry decision
+- GIVEN `Lead / explore-change` was authorized by a complete executable action-entry decision using same-invocation authoritative GitHub observations
 - AND substantive Explore later reaches a durable action result
 - WHEN Lead persists the canonical `ACTION_RESULT`
-- THEN it records the completeness and exact formal/recovery/pre-activation/selected Issue identities from the executable decision actually consumed
+- THEN it records the completeness, observation provenance, and exact formal/recovery/pre-activation/selected Issue identities from the executable decision actually consumed
 - AND the durable comment remains audit evidence rather than authorization state for a later wake
 
 #### Scenario: Propose post-write state must be accepted before continuation
 
 - GIVEN the immediate executable pre-write decision legally authorizes one `Lead / propose-change + Change: unset` Issue
 - AND Lead persists its expected non-`unset` Change identity
-- WHEN the immediate fresh post-write executable reconstruction observes more than one formal active workflow or contradictory expected identity/routing
+- WHEN the immediate fresh post-write executable reconstruction observes more than one formal active workflow, contradictory expected identity/routing, or provenance-incomplete current state
 - THEN the activation is not accepted for normal successor execution
 - AND Scheduled execution fails closed without selecting a winner or automatically rewriting another workflow
 
@@ -103,7 +131,7 @@ If any recovery predicate is missing, contradictory, Human-reserved, or would cr
 
 - GIVEN Propose has executed its required pre-write and post-write decisions
 - WHEN Lead persists the canonical Propose `ACTION_RESULT`
-- THEN the result records the exact pre-write executable decision, expected Change identity, post-write active Issue identities/completeness/disposition, and accepted/not-accepted outcome
+- THEN the result records the exact pre-write executable decision, expected Change identity, post-write active Issue identities/completeness/provenance/disposition, and accepted/not-accepted outcome
 - AND a later invocation still fresh-reconstructs rather than treating that comment as an authorization token
 
 #### Scenario: Two active workflows fail closed before a mapped action executes
@@ -116,7 +144,7 @@ If any recovery predicate is missing, contradictory, Human-reserved, or would cr
 
 #### Scenario: Indeterminate enumeration cannot authorize work
 
-- GIVEN the available repository read is capped, incomplete, or otherwise cannot prove that every formal/terminal candidate was enumerated
+- GIVEN the available repository read is capped, incomplete, provenance-incomplete, or otherwise cannot prove that every formal/terminal candidate was enumerated from authoritative current GitHub state
 - WHEN dispatch derives active-workflow cardinality
 - THEN cardinality is indeterminate
 - AND neither formal action execution nor pre-activation intake is authorized from that incomplete evidence
@@ -126,8 +154,8 @@ If any recovery predicate is missing, contradictory, Human-reserved, or would cr
 - GIVEN Scheduled dispatch previously failed closed because multiple formal workflows existed
 - AND Human or maintainer later performs an administrative durable-state repair outside normal Scheduled-Agent lifecycle execution
 - WHEN a later Scheduled Task wakes
-- THEN it reconstructs repository-wide state from the repaired current repository
-- AND it does not inherit a previously guessed winner or stale routing/readiness evidence
+- THEN it reconstructs repository-wide state from authoritative GitHub observations obtained during that later invocation
+- AND it does not inherit a previously guessed winner, stale routing/readiness evidence, or historical Issue prose as current routing
 - AND normal execution resumes only if the new reconstruction independently satisfies the ordinary cardinality and routing contracts
 
 #### Scenario: Nonterminal workflow Issue is closed prematurely and safely recoverable
