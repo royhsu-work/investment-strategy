@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import Callable, Mapping
+import subprocess
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -15,6 +16,38 @@ from investment_strategy.scheduled_agent_runtime import WorkerRequest
 
 _SKILL_MAPPING = re.compile(r"- `([^`]+)` uses `([^`]+)`\.")
 _RESPONSES_URL = "https://api.openai.com/v1/responses"
+_GITHUB_API_URL = "https://api.github.com"
+_BASE_WORKER_CAPABILITIES = frozenset({"github_read", "read_file", "list_dir", "run_command"})
+_LOCAL_WRITE_ACTIONS = frozenset(
+    {
+        ("lead", "propose-change"),
+        ("lead", "resolve-question"),
+        ("executor", "implement-change"),
+    }
+)
+_MAPPED_ACTIONS = frozenset(
+    {
+        ("lead", "explore-change"),
+        ("lead", "propose-change"),
+        ("lead", "resolve-question"),
+        ("lead", "finalize-change"),
+        ("lead", "finalize-archive"),
+        ("reviewer", "review-openspec"),
+        ("reviewer", "review-implementation"),
+        ("reviewer", "review-archive"),
+        ("executor", "implement-change"),
+        ("executor", "merge-pr"),
+    }
+)
+_SECRET_ENV_NAMES = frozenset(
+    {
+        "OPENAI_API_KEY",
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_READ_TOKEN",
+        "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -37,6 +70,174 @@ class WorkerActionResult:
 
 
 WorkerTransport = Callable[[str], str]
+
+
+def worker_capabilities_for(request: WorkerRequest) -> frozenset[str]:
+    """Return the explicit local/read capability profile for one mapped action."""
+
+    identity = (request.role, request.action)
+    if identity not in _MAPPED_ACTIONS:
+        raise ValueError(f"unsupported worker role/action: {request.role}/{request.action}")
+    capabilities = set(_BASE_WORKER_CAPABILITIES)
+    if identity in _LOCAL_WRITE_ACTIONS:
+        capabilities.add("write_file")
+    return frozenset(capabilities)
+
+
+@dataclass(frozen=True)
+class WorkerToolRuntime:
+    """Bounded worker tools with no durable GitHub mutation authority."""
+
+    checkout_root: Path
+    repository: str
+    github_read_token: str | None
+    capabilities: frozenset[str]
+
+    def _workspace_path(self, raw_path: object) -> Path:
+        if not isinstance(raw_path, str):
+            raise ValueError("workspace path must be a string")
+        relative = Path(raw_path)
+        if relative.is_absolute():
+            raise ValueError("workspace path must be relative")
+        root = self.checkout_root.resolve()
+        candidate = (root / relative).resolve()
+        if candidate != root and root not in candidate.parents:
+            raise ValueError("workspace path escapes checkout workspace")
+        return candidate
+
+    def _tool_parameters(self, name: str) -> dict[str, Any]:
+        if name in {"read_file", "write_file"}:
+            properties: dict[str, Any] = {"path": {"type": "string"}}
+            required = ["path"]
+            if name == "write_file":
+                properties["content"] = {"type": "string"}
+                required.append("content")
+            return {
+                "type": "object",
+                "properties": properties,
+                "required": required,
+                "additionalProperties": False,
+            }
+        if name == "list_dir":
+            return {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "additionalProperties": False,
+            }
+        if name == "run_command":
+            return {
+                "type": "object",
+                "properties": {
+                    "argv": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                    "cwd": {"type": "string"},
+                },
+                "required": ["argv"],
+                "additionalProperties": False,
+            }
+        if name == "github_read":
+            return {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+                "additionalProperties": False,
+            }
+        raise ValueError(f"unsupported worker tool: {name}")
+
+    def tool_specs(self) -> list[dict[str, Any]]:
+        """Expose only the tools authorized for this selected action."""
+
+        return [
+            {
+                "type": "function",
+                "name": name,
+                "description": f"Scheduled Agent bounded worker tool: {name}",
+                "parameters": self._tool_parameters(name),
+            }
+            for name in sorted(self.capabilities)
+        ]
+
+    def _run_command(self, payload: Mapping[str, object]) -> dict[str, object]:
+        argv = payload.get("argv")
+        if (
+            not isinstance(argv, Sequence)
+            or isinstance(argv, (str, bytes))
+            or not argv
+            or not all(isinstance(value, str) for value in argv)
+        ):
+            raise ValueError("run_command argv must be a non-empty string array")
+        cwd = self._workspace_path(payload.get("cwd", "."))
+        if not cwd.is_dir():
+            raise ValueError("run_command cwd must be a workspace directory")
+        environment = {key: value for key, value in os.environ.items() if key not in _SECRET_ENV_NAMES}
+        completed = subprocess.run(  # noqa: S603 - argv is explicit and shell is never used
+            list(argv),
+            cwd=cwd,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        return {
+            "ok": completed.returncode == 0,
+            "returncode": completed.returncode,
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+        }
+
+    def _github_read(self, payload: Mapping[str, object]) -> dict[str, object]:
+        raw_path = payload.get("path")
+        if not isinstance(raw_path, str) or not raw_path or raw_path.startswith(("http://", "https://")):
+            raise ValueError("github_read path must be a repository-relative API path")
+        path = raw_path.lstrip("/")
+        if path.startswith("..") or "/../" in f"/{path}/":
+            raise ValueError("github_read path escapes repository API scope")
+        url = f"{_GITHUB_API_URL}/repos/{self.repository}/{path}"
+        headers = {"Accept": "application/vnd.github+json"}
+        if self.github_read_token:
+            headers["Authorization"] = f"Bearer {self.github_read_token}"
+        request = Request(url, headers=headers, method="GET")  # noqa: S310 - fixed GitHub API host
+        with urlopen(request, timeout=60) as response:  # noqa: S310 - fixed GitHub API host
+            body = response.read().decode("utf-8")
+        return {"ok": True, "content": body}
+
+    def execute(self, name: str, payload: object) -> str:
+        """Execute one selected capability and return a JSON tool result."""
+
+        if name not in self.capabilities:
+            raise ValueError(f"worker tool is not authorized: {name}")
+        if not isinstance(payload, Mapping):
+            raise ValueError("worker tool payload must be an object")
+
+        if name == "read_file":
+            path = self._workspace_path(payload.get("path"))
+            result: dict[str, object] = {"ok": True, "content": path.read_text(encoding="utf-8")}
+        elif name == "write_file":
+            path = self._workspace_path(payload.get("path"))
+            content = payload.get("content")
+            if not isinstance(content, str):
+                raise ValueError("write_file content must be a string")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+            result = {"ok": True, "path": str(path.relative_to(self.checkout_root.resolve()))}
+        elif name == "list_dir":
+            path = self._workspace_path(payload.get("path", "."))
+            if not path.is_dir():
+                raise ValueError("list_dir path must be a workspace directory")
+            result = {
+                "ok": True,
+                "entries": [
+                    {"name": entry.name, "type": "dir" if entry.is_dir() else "file"}
+                    for entry in sorted(path.iterdir(), key=lambda value: value.name)
+                ],
+            }
+        elif name == "run_command":
+            result = self._run_command(payload)
+        elif name == "github_read":
+            result = self._github_read(payload)
+        else:  # pragma: no cover - guarded by capability/profile validation
+            raise ValueError(f"unsupported worker tool: {name}")
+        return json.dumps(result, sort_keys=True)
 
 
 def _skill_path_for_action(role_text: str, action: str) -> Path:
@@ -180,26 +381,32 @@ def _extract_output_text(response: Mapping[str, object]) -> str:
     raise RuntimeError("Responses API returned no output_text")
 
 
+def _function_calls(response: Mapping[str, object]) -> list[tuple[str, str, str]]:
+    output = response.get("output")
+    if not isinstance(output, list):
+        raise RuntimeError("Responses API returned no output list")
+    calls: list[tuple[str, str, str]] = []
+    for item in output:
+        if not isinstance(item, Mapping) or item.get("type") != "function_call":
+            continue
+        name = item.get("name")
+        arguments = item.get("arguments")
+        call_id = item.get("call_id")
+        if not isinstance(name, str) or not isinstance(arguments, str) or not isinstance(call_id, str):
+            raise RuntimeError("Responses API returned malformed function call")
+        calls.append((name, arguments, call_id))
+    return calls
+
+
 @dataclass(frozen=True)
 class OpenAIResponsesTransport:
-    """Minimal direct Responses API transport; API/model config is deployment-only."""
+    """Responses API transport with bounded same-worker local/read tool execution."""
 
     api_key: str
     model: str
+    tool_runtime: WorkerToolRuntime | None = None
 
-    def __call__(self, prompt: str) -> str:
-        payload = {
-            "model": self.model,
-            "input": prompt,
-            "text": {
-                "format": {
-                    "type": "json_schema",
-                    "name": "scheduled_agent_action_result",
-                    "strict": True,
-                    "schema": _response_schema(),
-                }
-            },
-        }
+    def _post(self, payload: Mapping[str, object]) -> Mapping[str, object]:
         request = Request(  # noqa: S310 - fixed trusted OpenAI API host
             _RESPONSES_URL,
             data=json.dumps(payload).encode("utf-8"),
@@ -213,7 +420,55 @@ class OpenAIResponsesTransport:
             decoded = json.loads(response.read().decode("utf-8"))
         if not isinstance(decoded, Mapping):
             raise RuntimeError("Responses API returned a malformed response")
-        return _extract_output_text(cast(Mapping[str, object], decoded))
+        return cast(Mapping[str, object], decoded)
+
+    def __call__(self, prompt: str) -> str:
+        format_config = {
+            "format": {
+                "type": "json_schema",
+                "name": "scheduled_agent_action_result",
+                "strict": True,
+                "schema": _response_schema(),
+            }
+        }
+        tools = self.tool_runtime.tool_specs() if self.tool_runtime else []
+        payload: dict[str, object] = {
+            "model": self.model,
+            "input": prompt,
+            "text": format_config,
+        }
+        if tools:
+            payload["tools"] = tools
+
+        for _ in range(32):
+            decoded = self._post(payload)
+            calls = _function_calls(decoded)
+            if not calls:
+                return _extract_output_text(decoded)
+            if self.tool_runtime is None:
+                raise RuntimeError("Responses API requested tools without a worker tool runtime")
+            response_id = decoded.get("id")
+            if not isinstance(response_id, str):
+                raise RuntimeError("Responses API tool response is missing response id")
+            outputs: list[dict[str, str]] = []
+            for name, raw_arguments, call_id in calls:
+                arguments = json.loads(raw_arguments)
+                outputs.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": self.tool_runtime.execute(name, arguments),
+                    }
+                )
+            payload = {
+                "model": self.model,
+                "previous_response_id": response_id,
+                "input": outputs,
+                "text": format_config,
+            }
+            if tools:
+                payload["tools"] = tools
+        raise RuntimeError("Responses API exceeded bounded worker tool-call rounds")
 
 
 def _authorized_request_from_environment() -> WorkerRequest:
@@ -238,10 +493,18 @@ def main() -> int:
         raise RuntimeError("OPENAI_API_KEY and OPENAI_MODEL are required")
 
     request = _authorized_request_from_environment()
+    checkout_root = Path.cwd()
+    repository = os.environ.get("GITHUB_REPOSITORY", "royhsu-work/investment-strategy")
+    tool_runtime = WorkerToolRuntime(
+        checkout_root=checkout_root,
+        repository=repository,
+        github_read_token=None,
+        capabilities=worker_capabilities_for(request),
+    )
     result = run_authorized_worker(
         request,
-        Path.cwd(),
-        OpenAIResponsesTransport(api_key=api_key, model=model),
+        checkout_root,
+        OpenAIResponsesTransport(api_key=api_key, model=model, tool_runtime=tool_runtime),
     )
     if result is None:
         raise RuntimeError("authorized worker unexpectedly produced no result")
