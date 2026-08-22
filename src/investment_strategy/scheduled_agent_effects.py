@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
-from investment_strategy.workflow_dispatch import DispatchPreflight
+from investment_strategy.workflow_dispatch import DispatchPreflight, classify_dispatch
 
 
 @dataclass(frozen=True)
@@ -41,6 +41,18 @@ PostconditionObserver = Callable[[StagedEffect], bool]
 TopologyValidator = Callable[[WorkerRequest, StagedEffect], bool]
 
 
+def _authorized_request(preflight: DispatchPreflight) -> WorkerRequest | None:
+    decision = classify_dispatch(preflight)
+    if (
+        decision.disposition != "AUTHORIZE"
+        or decision.selected_issue_id is None
+        or decision.selected_routing is None
+    ):
+        return None
+    role, action = decision.selected_routing
+    return WorkerRequest(decision.selected_issue_id, role, action)
+
+
 def apply_effect_batch(
     batch: EffectBatch,
     *,
@@ -52,4 +64,21 @@ def apply_effect_batch(
 ) -> ApplyResult:
     """Apply one staged batch only after fresh same-source reauthorization."""
 
-    raise NotImplementedError("fresh Scheduled Agent effect application is not implemented")
+    current = _authorized_request(fresh_preflight())
+    if current != batch.source:
+        return ApplyResult(False, "source-no-longer-authorized")
+
+    # Validate the complete normal batch before its first durable mutation.
+    for effect in batch.effects:
+        if not effect_guard(effect):
+            return ApplyResult(False, "effect-precondition-rejected")
+        if effect.kind == "routing-transition" and not topology_validator(batch.source, effect):
+            return ApplyResult(False, "illegal-routing-successor")
+
+    for effect in batch.effects:
+        apply_effect(effect)
+        if not observe_postcondition(effect):
+            return ApplyResult(False, "postcondition-failed")
+
+    continuation = _authorized_request(fresh_preflight())
+    return ApplyResult(True, "applied", continuation)
