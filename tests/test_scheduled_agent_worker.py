@@ -1,4 +1,4 @@
-"""Responses API worker and credential-isolation regressions for #133 Slice 4B."""
+"""Responses API worker and credential-isolation regressions for #133 Slice 4B/4C."""
 
 from __future__ import annotations
 
@@ -65,6 +65,35 @@ def test_worker_prompt_loads_exact_authorized_role_and_mapped_skill(tmp_path: Pa
     assert "# Executor" in prompt
     assert "EXACT_SKILL_CONTEXT" in prompt
     assert "must not select or override" in prompt
+
+
+def test_cross_role_reviewer_gets_fresh_reviewer_only_context(tmp_path: Path) -> None:
+    reviewer_role = tmp_path / "agents" / "roles" / "reviewer.md"
+    reviewer_skill = tmp_path / "agents" / "skills" / "implementation-review" / "SKILL.md"
+    reviewer_role.parent.mkdir(parents=True)
+    reviewer_skill.parent.mkdir(parents=True)
+    reviewer_role.write_text(
+        "# Reviewer\n\n## Actions\n\n"
+        "- `review-implementation` uses "
+        "`agents/skills/implementation-review/SKILL.md`.\n",
+        encoding="utf-8",
+    )
+    reviewer_skill.write_text(
+        "# Implementation Review\nREVIEWER_ONLY_CONTEXT\n",
+        encoding="utf-8",
+    )
+
+    prompt = build_worker_prompt(
+        WorkerRequest(issue_number=133, role="reviewer", action="review-implementation"),
+        tmp_path,
+    )
+
+    assert "Role: reviewer" in prompt
+    assert "Action: review-implementation" in prompt
+    assert "# Reviewer" in prompt
+    assert "REVIEWER_ONLY_CONTEXT" in prompt
+    assert "EXACT_SKILL_CONTEXT" not in prompt
+    assert "Role: executor" not in prompt
 
 
 def test_worker_rejects_model_identity_override(tmp_path: Path) -> None:
