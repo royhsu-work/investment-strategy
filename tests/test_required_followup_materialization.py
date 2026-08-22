@@ -17,8 +17,8 @@ def test_required_followup_success_requires_routing_complete_observation() -> No
 
     assert "reconstruct the approved source obligation and all matching trackers" in text
     assert "exactly one matching tracker" in text
-    assert "fresh-read the tracker after the routing mutation" in text
-    assert "success only after" in text
+    assert "fresh-reads the tracker" in text
+    assert "recognizes success only after" in text
     assert "`Change: unset`" in text
     assert "`agent:lead + action:explore-change`" in text
 
@@ -28,8 +28,8 @@ def test_required_followup_unique_incomplete_tracker_is_repaired_idempotently() 
 
     assert "If no matching tracker exists" in text
     assert "If exactly one matching tracker exists" in text
-    assert "repair only the missing durable fields or routing" in text
-    assert "do not create a duplicate" in text
+    assert "request repair only of the missing durable fields/routing" in text
+    assert "do not request a duplicate" in text
 
 
 def test_required_followup_ambiguous_matches_fail_closed() -> None:
