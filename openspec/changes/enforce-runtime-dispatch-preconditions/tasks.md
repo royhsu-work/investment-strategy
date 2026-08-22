@@ -61,17 +61,17 @@ Trace: proposal corrected `What Changes`; design Decisions 2–14; added require
 
 ### 4C — Fresh effect application, stale-stop, and dynamic continuation
 
-- [ ] **RED:** Add application-gate tests proving every staged effect batch fresh-reconstructs repository state, calls the production classifier again, and rejects the whole normal batch when the exact source Issue/role/action is no longer authorized.
-- [ ] **RED:** Add stale-during-work coverage: worker starts from an authorized source, durable state changes before apply, and application performs no stale normal effect.
-- [ ] **RED:** Add routing-successor coverage proving routing effects are accepted only when the requested successor is legal under the canonical `agents/workflow.md` topology and the source tuple is still current.
-- [ ] **RED:** Add effect-specific guards for the currently supported durable effect classes used by mapped Skills, including exact Issue/labels/Change, exact PR/head/review/merge identity where applicable, and branch/ref expectations for implementation/archive work.
-- [ ] **RED:** Add same-role continuation tests proving a second action requires a new dispatch and fresh model invocation.
-- [ ] **RED:** Add cross-role continuation tests proving a role transition can continue without waiting for a dedicated role schedule but MUST create a fresh newly selected role invocation and MUST NOT reuse previous worker context/authorization.
-- [ ] **RED:** Add Reviewer-independence coverage proving Reviewer selected after Lead/Executor receives fresh Reviewer role/Skill/current durable evidence rather than prior worker model context.
-- [ ] **GREEN:** Add repository-owned effect application that holds the write authority unavailable to the worker, fresh-revalidates source dispatch plus effect-specific preconditions, applies only bounded authorized effects, and fresh-observes durable postconditions.
-- [ ] **GREEN:** Keep staged result/effect transport invocation-local. If separate Actions jobs require an artifact/patch transport, prove it cannot authorize another run and is never read as current workflow state.
-- [ ] **GREEN:** After successful apply, re-run complete dispatch before any continuation. If another legal action is selected, create a fresh model invocation for that exact newly selected Issue/role/action; role changes do not wait for another role-specific cron slot.
-- [ ] **REFACTOR:** Do not add rollback transactions, lease/heartbeat/claim state, a request registry, or a second workflow DAG. Existing recovery semantics own partial-write recovery.
+- [x] **RED:** Add application-gate tests proving every staged effect batch fresh-reconstructs repository state, calls the production classifier again, and rejects the whole normal batch when the exact source Issue/role/action is no longer authorized.
+- [x] **RED:** Add stale-during-work coverage: worker starts from an authorized source, durable state changes before apply, and application performs no stale normal effect.
+- [x] **RED:** Add routing-successor coverage proving routing effects are accepted only when the requested successor is legal under the canonical `agents/workflow.md` topology and the source tuple is still current.
+- [x] **RED:** Add effect-specific guards for the currently supported durable effect classes used by mapped Skills, including exact Issue/labels/Change, exact PR/head/review/merge identity where applicable, and branch/ref expectations for implementation/archive work.
+- [x] **RED:** Add same-role continuation tests proving a second action requires a new dispatch and fresh model invocation.
+- [x] **RED:** Add cross-role continuation tests proving a role transition can continue without waiting for a dedicated role schedule but MUST create a fresh newly selected role invocation and MUST NOT reuse previous worker context/authorization.
+- [x] **RED:** Add Reviewer-independence coverage proving Reviewer selected after Lead/Executor receives fresh Reviewer role/Skill/current durable evidence rather than prior worker model context.
+- [x] **GREEN:** Add repository-owned effect application that holds the write authority unavailable to the worker, fresh-revalidates source dispatch plus effect-specific preconditions, applies only bounded authorized effects, and fresh-observes durable postconditions.
+- [x] **GREEN:** Keep staged result/effect transport invocation-local. If separate Actions jobs require an artifact/patch transport, prove it cannot authorize another run and is never read as current workflow state.
+- [x] **GREEN:** After successful apply, re-run complete dispatch before any continuation. If another legal action is selected, create a fresh model invocation for that exact newly selected Issue/role/action; role changes do not wait for another role-specific cron slot.
+- [x] **REFACTOR:** Do not add rollback transactions, lease/heartbeat/claim state, a request registry, or a second workflow DAG. Existing recovery semantics own partial-write recovery.
 
 ### 4D — Governance/Skill integration and full mapped-action coverage
 
