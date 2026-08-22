@@ -1,0 +1,146 @@
+name: Scheduled Agent Runtime
+
+on:
+  schedule:
+    - cron: "*/20 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: scheduled-agent-runtime-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    outputs:
+      authorized: ${{ steps.preflight.outputs.authorized }}
+      issue_number: ${{ steps.preflight.outputs.issue_number }}
+      role: ${{ steps.preflight.outputs.role }}
+      action: ${{ steps.preflight.outputs.action }}
+    steps:
+      - name: Check out authoritative default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.10.0"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Machine dispatch preflight
+        id: preflight
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: uv run python -m investment_strategy.scheduled_agent_runtime
+
+  worker:
+    needs: dispatch
+    if: needs.dispatch.outputs.authorized == 'true'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out authoritative default branch without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.10.0"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Invoke exact authorized Responses API worker
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          AUTHORIZED_ISSUE: ${{ needs.dispatch.outputs.issue_number }}
+          AUTHORIZED_ROLE: ${{ needs.dispatch.outputs.role }}
+          AUTHORIZED_ACTION: ${{ needs.dispatch.outputs.action }}
+        run: >-
+          uv run python -m investment_strategy.scheduled_agent_worker_runtime
+          > scheduled-agent-result.json
+
+      - name: Upload invocation-local staged worker result
+        uses: actions/upload-artifact@v4
+        with:
+          name: scheduled-agent-result-${{ github.run_id }}-${{ github.run_attempt }}
+          path: scheduled-agent-result.json
+          if-no-files-found: error
+          retention-days: 1
+
+  apply:
+    needs:
+      - dispatch
+      - worker
+    if: needs.dispatch.outputs.authorized == 'true'
+    permissions:
+      actions: write
+      contents: write
+      issues: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out authoritative default branch for application
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Download same-run staged worker result
+        uses: actions/download-artifact@v4
+        with:
+          name: scheduled-agent-result-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .scheduled-agent-result
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.10.0"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Freshly reauthorize merge acceptance and apply staged effects
+        id: apply
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          AUTHORIZED_ISSUE: ${{ needs.dispatch.outputs.issue_number }}
+          AUTHORIZED_ROLE: ${{ needs.dispatch.outputs.role }}
+          AUTHORIZED_ACTION: ${{ needs.dispatch.outputs.action }}
+        run: >-
+          uv run python -m investment_strategy.scheduled_agent_merge_acceptance
+          .scheduled-agent-result/scheduled-agent-result.json
+
+      - name: Trigger immediate fresh continuation wake
+        if: steps.apply.outputs.continuation_required == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: >-
+          gh api --method POST
+          "/repos/${GITHUB_REPOSITORY}/actions/workflows/scheduled-agent-runtime.yml/dispatches"
+          -f ref="${DEFAULT_BRANCH}"

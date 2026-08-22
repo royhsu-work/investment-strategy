@@ -10,6 +10,14 @@ After the governance/template change is merged to the default branch, later cove
 
 This activation rule does not add template-version state, migration state, a parser-dependent runtime, branch-authority override, or hidden workflow state.
 
+## Machine-gated worker/application boundary
+
+After machine-gated runtime cutover, a mapped model worker does not make a canonical durable message authoritative by directly writing GitHub. The worker returns its action result and any requested durable effects as invocation-local output. Repository-owned application code fresh-reauthorizes the exact source Issue/role/action, validates effect-specific preconditions and topology, applies only the authorized effects, and fresh-reads the resulting durable state.
+
+A canonical message below exists as durable workflow evidence only after the repository-owned application boundary has successfully persisted it and any required postcondition is observed. Worker output or an Actions artifact is staged transport only: it is not a durable message, routing state, authorization token, or proof that a requested mutation succeeded.
+
+When an applied result changes routing, continuation always re-enters executable dispatch from the resulting current GitHub state. Same-role continuation may occur in the same GitHub Actions runtime execution, but it still receives a fresh mapped model invocation; cross-role continuation likewise receives a fresh invocation for the newly machine-selected role. No prior worker context or requested effect authorizes that continuation.
+
 The common workflow envelope is used whenever a field is applicable to the event:
 
 - `Workflow`: persistent coordination Issue identity.
@@ -29,6 +37,12 @@ Required evidence when applicable:
 - common workflow envelope including `Result` and exact `Revision`;
 - bounded result evidence supporting the action-defined result;
 - next action, expected owner, wait condition, or terminal state.
+
+For applicable pre-activation `Lead / explore-change`, the `ACTION_RESULT` MUST preserve the exact executable decision actually consumed at action entry, including enumeration completeness, observation provenance, formal-active/terminal-pending Issue identities, recovery candidate identities, pre-activation candidate identities, selected Issue, and disposition. The repository runtime renders those fields from the consumed machine decision/evidence envelope rather than reconstructing a second model-derived Issue list.
+
+For applicable `Lead / propose-change`, the `ACTION_RESULT` MUST additionally preserve the immediate pre-write executable decision, expected Change identity, post-write formal-active/terminal-pending Issue identities, post-write completeness, post-write observation provenance, post-write disposition, and whether activation accepted. The pre-write and post-write fields reflect the exact executable decisions consumed by repository-owned dispatch/application at those boundaries rather than a later model summary.
+
+These preflight/activation fields are audit/diagnostic evidence only and MUST NOT authorize a later invocation. A later dispatch MUST fresh-reconstruct the required current state from authoritative GitHub observations and re-execute the executable dispatch precondition; prior invocation output, durable comments, cached observations, and historical routing remain audit/context only. Optional wake/invocation-source correlation MAY be recorded only when the execution environment actually exposes it, MUST NOT be fabricated, and MUST NOT be used as routing or authorization state.
 
 `ACTION_RESULT` does not create result enums; the owning action contract defines them.
 
@@ -90,9 +104,9 @@ Required evidence:
 - observed target routing after successful mutation;
 - next owner/action.
 
-A result message alone is not a handoff. `HANDOFF` is reconstructable evidence for the completed cross-role ownership boundary; the routing tuple remains canonical workflow state.
+A result message alone is not a handoff. `HANDOFF` is reconstructable evidence for the completed cross-role ownership boundary; the routing tuple remains canonical workflow state. Under the machine-gated worker/application split, the repository application boundary—not the model worker—owns the routing mutation, target observation, and durable `HANDOFF` write after fresh reauthorization.
 
-Same-role action transitions MUST NOT emit a synthetic `HANDOFF` or a new action-transition message. The source `ACTION_RESULT` or other action-defined result evidence, successful routing mutation on the same coordination Issue, and target-action reconstruction are sufficient durable evidence for that same-role boundary.
+Same-role action transitions MUST NOT emit a synthetic `HANDOFF` or a new action-transition message. The source `ACTION_RESULT` or other action-defined result evidence, successful repository-owned routing mutation on the same coordination Issue, and subsequent fresh executable dispatch are sufficient durable evidence for that same-role boundary. If the resulting dispatch selects another same-role action immediately, it receives a fresh mapped model invocation rather than continuing the prior worker context.
 
 ## `HUMAN_DECISION_REQUIRED`
 

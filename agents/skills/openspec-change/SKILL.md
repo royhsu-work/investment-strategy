@@ -30,6 +30,16 @@ represented baseline is unsupported/mismatched, fail closed rather than substitu
 mutable upstream `main`, or an inferred rule. The adapter is semantic input only; it does not change
 runtime routing or Lead authority.
 
+## Machine-gated runtime boundary
+
+After the machine-gated runtime is authoritative, a Propose/Resolve model worker starts only after repository-owned dispatch has authorized the exact coordination Issue and mapped Lead action. The worker MUST NOT execute `workflow_dispatch.py` as its own authorization boundary, self-select another Issue/role/action, or treat prior worker context as current-state authority.
+
+The worker may author approved specification artifacts in its local checkout when its action capability permits local writes. It has no durable GitHub write authority. Any requested Issue/comment/label/routing/Change-identity persistence, branch/commit/PR update, Human-escalation write, or other durable GitHub effect is invocation-local output for repository-owned application. Application fresh-reauthorizes the exact source action, checks effect-specific preconditions, applies authorized effects, observes postconditions, and re-dispatches from resulting current state.
+
+For `propose-change`, the activation write is therefore an application-time effect boundary. The immediate pre-write machine decision must authorize this exact Issue as `Lead / propose-change`; after the requested Change-identity write is applied, repository runtime must fresh-reconstruct current GitHub state and execute the classifier again. Activation is accepted only when that post-write decision proves this Issue is the sole formal active workflow with the expected Change identity and current routing. The worker does not manufacture either decision and does not treat its requested activation as accepted before application returns that durable evidence.
+
+Every continuation re-enters executable dispatch. A same-role successor may execute within the same GitHub Actions runtime execution, but it receives a fresh mapped model invocation; prior Lead worker context is not carried forward as authorization or reasoning state. Cross-role continuation likewise receives a fresh invocation for the newly selected role.
+
 ## Reconstruct before acting
 
 Read from durable state:
@@ -41,7 +51,7 @@ Read from durable state:
 - relevant durable Issue/review findings;
 - exact current repository/branch revision and strict OpenSpec validation evidence.
 
-For `propose-change`, consume the shared pre-dispatch complete-cardinality classification from `agents/AGENTS.md`; candidate-local or partial enumeration is never sufficient activation evidence. The check immediately before the activation write and the post-write fresh-read below both use that same shared pre-dispatch contract.
+For `propose-change`, consume the exact machine authorization/evidence envelope supplied for this worker invocation. Candidate-local or partial enumeration is never sufficient activation evidence, and the worker MUST NOT re-derive an alternative dispatcher decision from Issue prose.
 
 If the coordination Issue or current OpenSpec artifacts contain declared upstream authoritative decision/gate references, Lead MUST dereference those sources during `propose-change` and any materially revised `resolve-question`. A cross-Issue summary is orientation only and is not replacement authority for the declared source evidence.
 
@@ -49,114 +59,87 @@ For an Explore-originated `propose-change`, reconstruct the exact durable Explor
 
 If routing, change identity, active-workflow identity, or required evidence is contradictory, fail closed.
 
-Before persisting a consequential specification/readiness/resolution result or transferring ownership,
-consume the shared `agents/AGENTS.md` substantive Human-input freshness/disposition invariant. Newer material
-direct-Human input that can affect scope, contract meaning, traceability, or the handoff assumptions must
-have a reconstructable exact-comment disposition or be routed/escalated through the existing legal owner or
-Human boundary. This Skill does not redefine the shared classifier or expand Lead/Human authority.
+Before requesting a consequential specification/readiness/resolution result or ownership transfer, consume the shared `agents/AGENTS.md` substantive Human-input freshness/disposition invariant. Newer material direct-Human input that can affect scope, contract meaning, traceability, or handoff assumptions must have a reconstructable exact-comment disposition or be routed/escalated through the existing legal owner or Human boundary. This Skill does not redefine the shared classifier or expand Lead/Human authority.
 
 ## `propose-change`
 
 1. Confirm valid `Lead / propose-change` routing and the authority that legally produced it. Human direct-to-Propose admission MUST satisfy the provenance-bound Human-decision predicate for exactly `issue:<issue-number>:admission:lead:propose-change`. A same-Issue transition from a valid routed Explore may instead rely on the bounded researched/canonical context and any still-valid upstream authority envelope that made its `PROPOSAL_READY` continuation legal; do not manufacture a second Human admission requirement. For that Explore-originated path, require and dereference the exact durable Explore `ACTION_RESULT` establishing `PROPOSAL_READY` before authoring, and preserve its still-applicable material boundary throughout formalization. Direct-to-Propose remains valid for Human direction that is already concrete/buildable; Explore is not a prerequisite and direct-to-Propose MUST NOT require a synthetic Explore result.
-   - If `Change: unset` and the admitted problem is valid but current evidence is not yet proposal-ready without inventing material requirements or approach meaning, persist that pre-activation readiness disposition and route the same Issue to `Lead / explore-change`. Keep `Change: unset`, preserve any applicable direct-Propose authority envelope, use the existing same-role continuation contract, and continue without a second Human admission or `HANDOFF` when immediately actionable.
+   - If `Change: unset` and the admitted problem is valid but current evidence is not yet proposal-ready without inventing material requirements or approach meaning, return the pre-activation readiness disposition plus the requested same-Issue routing effect to `Lead / explore-change`. Keep `Change: unset`, preserve any applicable direct-Propose authority envelope, and do not request `HANDOFF` or a second Human admission. Repository application owns persistence/routing and subsequent redispatch.
    - This fallback is pre-activation only. With a non-`unset` Change, Lead MUST NOT route backward to Explore; material specification ambiguity uses `Lead / resolve-question`.
-2. If `Change:` is unset and Propose remains proposal-ready, reconstruct formal active/terminal-pending workflow state and the shared combined pre-activation queue before persisting any Change identity. The procedure must reconstruct active workflow state before persisting an unset Change identity and MUST use the shared pre-dispatch complete-cardinality evidence, not an action-local query.
-   - If a formal active/terminal-pending workflow exists, keep this Issue queued and perform no activation.
-   - If multiple formal active workflows, indeterminate enumeration, or contradictory durable identity evidence exist, fail closed.
+2. If `Change:` is unset and Propose remains proposal-ready, reconstruct formal active/terminal-pending workflow state and the shared combined pre-activation queue from the exact machine authorization/evidence envelope before requesting any Change-identity persistence.
+   - If a formal active/terminal-pending workflow exists, keep this Issue queued and request no activation effect.
+   - If multiple formal active workflows, indeterminate enumeration/provenance, machine authorization failure, or contradictory durable identity evidence exist, fail closed.
    - If no formal active/terminal-pending workflow exists, consume the complete shared pre-activation candidate-set contract from default-branch `agents/AGENTS.md`: every coherent open `Lead / explore-change + Change: unset` entry plus every legally admitted `Lead / propose-change + Change: unset` entry participates in the same combined queue. Do not maintain or infer an action-local Explore-origin admission enumeration.
    - Choose the combined-queue winner by earliest GitHub `created_at`, then lower Issue number. A later proposal-ready direct-Propose Issue MUST NOT activate while an older eligible Explore candidate—including a same-Issue direct-Propose fallback preserving its original authority envelope—is the deterministic combined pre-activation winner.
-   - Immediately before the activation write, re-read durable state and require this Issue to remain the combined pre-activation winner; re-establish shared pre-dispatch complete-cardinality evidence in that same read. Only the first valid activation may continue.
-   - Persist the selected immutable Change identity as the activation write. Overlapping attempts use first-valid-write-wins semantics rather than a lock/claim/lease/heartbeat.
-   - Immediately re-read durable state after the write using the same complete-cardinality semantics. If a competing activation, multiple-active state, indeterminate enumeration, or newer contradictory state is observed, stop as stale; do not choose a winner or rewrite another Change/routing tuple.
+   - Require the consumed pre-write machine decision to authorize this exact Issue as `Lead / propose-change` with formal cardinality zero and current winner identity. The worker MUST NOT request activation from a stale or model-reconstructed substitute decision.
+   - Return the requested immutable Change-identity effect. Overlapping attempts preserve first-valid-write-wins semantics rather than introducing a lock/claim/lease/heartbeat.
+   - Repository application MUST fresh-reconstruct before applying the write, execute the machine classifier, apply only when the exact source remains authorized, then fresh-reconstruct and classify again after the write. Activation is accepted only when the post-write decision proves exactly one formal active workflow, this Issue, with the expected Change identity and current routing. A competing activation, multiple-active state, incomplete/indeterminate provenance, machine execution failure, or newer contradiction rejects continuation; no worker may choose a winner, reuse the pre-write decision, or rewrite another Change/routing tuple.
 3. Author the minimum proposal, delta specs, design, and tasks needed by the approved direction. Keep the change single-purpose and preserve repository scope boundaries. When the path is Explore-originated, formalize from the exact referenced Explore result rather than silently replacing or omitting a still-applicable material decision; editorial restructuring is allowed only when meaning is preserved. If formalization requires a materially different Human-reserved commitment, use the governed Human decision path rather than claiming faithful Explore continuation. Under `spec-driven`, satisfy the loaded semantic adapter's dependency/readiness and applicable config/context rules; for delta specs, apply its complete ADDED/MODIFIED/REMOVED/RENAMED and canonicalization-readiness contract rather than relying on strict validation alone.
 4. Any proposal/implementation PR associated with the persistent coordination Issue must use a non-closing reference to the coordination Issue (for example `Refs #N`). It must not establish Issue-closing linkage. Closing linkage is reserved for the final Archive PR lifecycle boundary.
 5. Before handoff, verify required artifacts exist and author/maintain the required trace declarations/references across proposal, specs, design, and tasks. When repository Skills are materially affected, this includes the Change-local Skill maintenance traceability declaration above. For an Explore-originated Change, the proposal/readiness evidence also identifies the exact durable Explore `ACTION_RESULT` used as the upstream semantic baseline so independent review can dereference it. These authoring references must be present and mechanically consistent enough to hand to independent review, but the semantic bidirectional PASS gate belongs to `Reviewer / review-openspec`; Lead MUST NOT execute or claim that independent PASS gate. For a NEW capability, require exactly one non-empty canonicalization-ready `## Purpose`; for existing capabilities, verify delta targets against canonical requirement identities and preserve all still-applicable MODIFIED scenarios/content.
 6. Obtain strict OpenSpec validation for the exact handoff revision R. CI is sufficient only when durable validator evidence proves checkout `HEAD == R` before strict validation; `run.head_sha == R` alone is association metadata and is not checkout proof. If valid exact-head CI evidence is unavailable, use the repository-pinned local CLI directly against checkout R. Stale, missing, failed, revision-mismatched, or checkout-mismatched evidence fails closed.
-7. Re-run the shared substantive Human-input freshness/disposition check immediately before the readiness result/handoff, then persist revision-aware readiness evidence before routing to `Reviewer / review-openspec` for the semantic bidirectional gate.
+7. Re-run the shared substantive Human-input freshness/disposition check immediately before the readiness result/effect request. Return revision-aware readiness evidence plus the requested routing effect to `Reviewer / review-openspec`; repository application fresh-reauthorizes, persists, observes the target tuple, and records canonical handoff evidence when applicable.
 
 Legal outcomes:
 
-- `READY_FOR_OPENSPEC_REVIEW` → hand off to `Reviewer / review-openspec`.
-- valid pre-activation direct-Propose that is not yet proposal-ready → retain the same Issue and authority envelope, route to `Lead / explore-change` with `Change: unset`, and use same-role continuation without `HANDOFF` or a second Human admission.
+- `READY_FOR_OPENSPEC_REVIEW` → request handoff to `Reviewer / review-openspec`.
+- valid pre-activation direct-Propose that is not yet proposal-ready → retain the same Issue and authority envelope, request routing to `Lead / explore-change` with `Change: unset`, and rely on fresh post-apply dispatch without `HANDOFF` or a second Human admission.
 - queued behind a formal active/terminal-pending workflow or an older combined pre-activation winner → retain `Lead / propose-change` without activation noise.
-- `SPECIFICATION_BLOCKED` or invalid/stale evidence → retain Lead; do not hand off as ready.
+- `SPECIFICATION_BLOCKED` or invalid/stale evidence → retain Lead; do not request handoff as ready.
 
 ## `resolve-question`
 
 1. Reconstruct the finding/blocker and the exact currently governed OpenSpec state.
-2. Decide whether the finding is accepted, rejected, or already resolved using approved scope and evidence. Explain the decision durably. When that approved specification/scope decision explicitly creates a required deferred follow-up that must still be handled as a separate change, materialize it as one routing-complete logical postcondition. First reconstruct the approved source obligation and all matching trackers from durable evidence; tracker prose is evidence only and never supplies missing authority.
-   - If no matching tracker exists, create exactly one source-linked tracker with the exact source coordination Issue/Change and defer-decision/reference, set `Change: unset`, then route it to `agent:lead + action:explore-change` without Human admission.
-   - If exactly one matching tracker exists and is incomplete only in durable fields or routing that Lead is already authorized to establish, reuse that tracker, repair only the missing durable fields or routing, and do not create a duplicate.
-   - If multiple or ambiguous matching trackers exist, fail closed; Lead must not choose a winner by model judgment and must not create another tracker.
-   - After any create/repair, fresh-read the tracker after the routing mutation and recognize success only after the exact source linkage, `Change: unset`, and `agent:lead + action:explore-change` routing are all durably observable.
+2. Decide whether the finding is accepted, rejected, or already resolved using approved scope and evidence. Explain the decision durably. When that approved specification/scope decision explicitly creates a required deferred follow-up that must still be handled as a separate change, express it as one routing-complete requested logical postcondition. First reconstruct the approved source obligation and all matching trackers from durable evidence; tracker prose is evidence only and never supplies missing authority.
+   - If no matching tracker exists, request creation of exactly one source-linked tracker with the exact source coordination Issue/Change and defer-decision/reference, `Change: unset`, and `agent:lead + action:explore-change` routing without Human admission.
+   - If exactly one matching tracker exists and is incomplete only in durable fields or routing that Lead is already authorized to establish, request repair only of the missing durable fields/routing; do not request a duplicate.
+   - If multiple or ambiguous matching trackers exist, fail closed; Lead must not choose a winner by model judgment and must not request another tracker.
+   - Repository application fresh-reauthorizes the source, applies any create/repair atomically enough for the governed effect boundary, fresh-reads the tracker, and recognizes success only after the exact source linkage, `Change: unset`, and `agent:lead + action:explore-change` routing are durably observable.
    - Ordinary out-of-scope, non-goal, optional, or merely deferred prose does not create or route a tracker.
 3. If the unresolved blocker is explicitly Human-reserved, only a valid provenance-bound Human decision may resolve it. For a canonical `HUMAN_DECISION_REQUIRED` escalation comment C, the exact expected reference is `issuecomment:<C>`; the qualifying Human-created answer comment must declare exactly `Human-Decision-For: issuecomment:<C>` and be bound by a later qualifying Human-only `human:approved` label event while that label is currently present. Actor identity, `human:notified`, or label snapshot alone does not resume the workflow.
 4. If accepted, revise only Lead-owned OpenSpec specification artifacts needed to resolve it; do not modify implementation code to make a gate pass. Under `spec-driven`, materially revised artifacts must continue to satisfy the loaded adapter contract; do not let a correction drop surviving canonical scenarios/content or other canonicalization-ready information.
 5. If OpenSpec artifacts changed materially, repeat the same required-artifact, required trace declarations/references authoring, and exact-revision strict-validation readiness checks used by `propose-change`. The semantic bidirectional PASS gate remains independent Reviewer work.
 6. If the same implementation or correction PR remains in use, keep its coordination-Issue reference non-closing; resolving a specification question never authorizes adding Issue-closing linkage to an implementation PR.
-7. Re-run the shared substantive Human-input freshness/disposition check immediately before the resolution result/handoff, then persist the resolution and current revision before routing.
+7. Re-run the shared substantive Human-input freshness/disposition check immediately before returning the resolution and any requested routing effect.
 
 Legal target action depends on the gate/blocker being resolved:
 
-- revised OpenSpec requiring independent review → `Reviewer / review-openspec`;
-- implementation may continue under unchanged approved meaning → `Executor / implement-change`;
-- lifecycle/archive question → route to the appropriate Lead finalize action only when the approved contract makes that legal;
+- revised OpenSpec requiring independent review → request `Reviewer / review-openspec`;
+- implementation may continue under unchanged approved meaning → request `Executor / implement-change`;
+- lifecycle/archive question → request the appropriate Lead finalize action only when the approved contract makes that legal;
 - unresolved ambiguity or failed readiness evidence → retain Lead.
 
-When the legal target is another Lead action on the same coordination Issue, perform the source `ACTION_RESULT`, fresh-read and replace the action routing, observe the target tuple, then reconstruct that target action using its mapped default-branch skill. If it is immediately actionable, continue in the same invocation under the shared fixed-role contract without `HANDOFF`. Cross-role targets still use canonical `HANDOFF` and end the invocation.
-
-Before returning after a same-role action transition, consume the shared Invocation Exit Proof invariant.
-Action completion or an action-label change alone is not Exit Proof. When the reconstructed target remains
-Lead-owned and immediately actionable and no shared legal Exit is positively proven, continue that target
-action in the same invocation. For a cross-role target, only the completed routing transfer and canonical
-handoff evidence support the normal cross-role Exit; do not copy the shared taxonomy into this Skill.
+When the legal target is another Lead action on the same coordination Issue, return the source `ACTION_RESULT` plus requested routing effect. Repository application fresh-reauthorizes and applies the source result/routing, observes the target tuple, then fresh-dispatches. If that target is immediately selected, runtime creates a fresh Lead model invocation with the target action's mapped default-branch Skill. Same-role boundaries do not use `HANDOFF`; cross-role targets use canonical `HANDOFF` only after application observes the ownership transfer.
 
 ## Exact validation run observation
 
 When `propose-change` or a materially revised `resolve-question` has just caused a just-triggered exact required run for OpenSpec validation, the first observation of that run as absent, `queued`, or `in_progress` is not by itself a reason to yield and does not establish async-wait Exit evidence. While bounded execution opportunity remains and no different authority boundary is required, observe only the same exact run using bounded same-invocation observation. After that first nonterminal observation, perform at least one subsequent fresh observation of the same exact target/resource before an ordinary asynchronous-wait Exit may be classified. If the subsequent fresh observation becomes terminal, consume its terminal result immediately and continue with the current action's next legal step.
 
-Before returning from an exact-validation boundary, consume the shared Invocation Exit Proof invariant. A
-first absent/queued/in-progress observation is non-exit evidence. If a subsequent fresh observation still
-finds the same exact resource absent/nonterminal, current routing/revision/preconditions remain valid, and
-no other immediately actionable same-authority work remains, the existing asynchronous-wait Exit may be
-proven. Preserve the exact run identity for later fresh reconstruction rather than copying the generic Exit
-taxonomy into this Skill.
+Before returning from an exact-validation boundary, consume the shared Invocation Exit Proof invariant. A first absent/queued/in-progress observation is non-exit evidence. If a subsequent fresh observation still finds the same exact resource absent/nonterminal, current routing/revision/preconditions remain valid, and no other immediately actionable same-authority work remains, the existing asynchronous-wait Exit may be proven. Preserve the exact run identity for later fresh reconstruction rather than copying the generic Exit taxonomy into this Skill.
 
-A later wake does not trust the earlier nonterminal observation. It must fresh-read that exact run before deciding that waiting still applies. This specialization adds no timer, sleep policy, polling counter, heartbeat, retry counter, background service, or hidden waiter; the shared asynchronous-resource contract remains authoritative in `agents/AGENTS.md`.
+A later fresh mapped invocation does not trust the earlier nonterminal observation. It must fresh-read that exact run before deciding that waiting still applies. This specialization adds no timer, sleep policy, polling counter, heartbeat, retry counter, background service, or hidden waiter; the shared asynchronous-resource contract remains authoritative in `agents/AGENTS.md`.
 
 ## Human escalation producer
 
-A genuine unresolved Human authority/intent decision uses canonical `HUMAN_DECISION_REQUIRED`. Lead first
-persists the durable escalation evidence. The exact persisted escalation comment id C defines the current
-Human-response anchor `issuecomment:<C>`. A later response does not satisfy the boundary until the Human-created
-decision comment declares exactly `Human-Decision-For: issuecomment:<C>` and the provenance-bound approval
-predicate succeeds with a later qualifying Human-only `human:approved` event and current label presence.
-After the escalation write succeeds, Lead MUST idempotently ensure the `human:notified` label. The label is
-historical analytics-only observability: it does not participate in routing, waiting, authorization, resume
-conditions, or proof of Human response, and ordinary resolution does not remove it.
+A genuine unresolved Human authority/intent decision uses canonical `HUMAN_DECISION_REQUIRED`. Lead returns the requested durable escalation effect. Repository application persists it first; the exact persisted escalation comment id C defines the current Human-response anchor `issuecomment:<C>`. A later response does not satisfy the boundary until the Human-created decision comment declares exactly `Human-Decision-For: issuecomment:<C>` and the provenance-bound approval predicate succeeds with a later qualifying Human-only `human:approved` event and current label presence.
 
-If `human:notified` is already present, the ensure is a no-op. If the label mutation fails while the
-escalation evidence is already durable, capture the observable failure through the shared exception
-contract and disposition it from current evidence; do not repeat an identical denied mutation unless a
-fresh-read material precondition changed or a different legal repository operation path is available.
-The already-durable escalation remains authoritative even when label production fails.
+After the escalation write succeeds, repository application idempotently ensures the `human:notified` label. The label is historical analytics-only observability: it does not participate in routing, waiting, authorization, resume conditions, or proof of Human response, and ordinary resolution does not remove it.
+
+If `human:notified` is already present, the ensure is a no-op. If the label mutation fails while the escalation evidence is already durable, preserve the observable failure through the shared exception contract and disposition it from current evidence; do not request an identical denied mutation unless a fresh-read material precondition changed or a different legal repository operation path is available. The already-durable escalation remains authoritative even when label production fails.
 
 ## Durable messages
 
-Use `agents/templates/messages.md` for recurring durable presentation. Lead readiness/resolution outcomes
-use the applicable `ACTION_RESULT`; a genuine unresolved Human authority/intent decision uses Lead-only
-`HUMAN_DECISION_REQUIRED`; a cross-role completed ownership transfer uses canonical `HANDOFF` only after
-the routing mutation succeeds. Same-role action transitions continue from the source result and routing
-mutation without `HANDOFF`; do not add an action-transition message type.
+Use `agents/templates/messages.md` for recurring durable presentation. Lead readiness/resolution outcomes use the applicable `ACTION_RESULT`; a genuine unresolved Human authority/intent decision uses Lead-only `HUMAN_DECISION_REQUIRED`; a cross-role completed ownership transfer uses canonical `HANDOFF` only after repository application observes the routing mutation. Same-role action transitions continue from source result + applied routing + fresh dispatch without `HANDOFF`; do not add an action-transition message type.
+
+For workflow-dynamic `Lead / propose-change`, the applicable `ACTION_RESULT` renders the exact activation evidence consumed by repository dispatch/application: the immediate pre-write executable decision, expected Change identity, post-write formal-active/terminal-pending Issue identities, post-write completeness, post-write observation provenance, post-write disposition, and whether activation accepted. These fields preserve the consumed pre-write/post-write decisions for audit and are not recomputed from a later model summary or reused as authorization by another invocation.
 
 ## Safety
 
 - Do not infer missing specification meaning on behalf of Executor.
-- Do not treat `run.head_sha` or a successful synthetic-merge validation for another checkout as
-  exact-head proof for revision R.
+- Do not treat `run.head_sha` or a successful synthetic-merge validation for another checkout as exact-head proof for revision R.
 - Do not require a duplicate local CLI run solely because valid exact-head CI validation already passed.
 - Do not perform the Reviewer-owned semantic bidirectional PASS gate while authoring or revising OpenSpec artifacts.
 - Do not treat actor identity, `human:approved`, `intake:approved`, or `human:notified` snapshots alone as sufficient Human authority.
 - Scheduled roles MUST NOT add, remove, restore, or manufacture `human:approved` or `intake:approved`.
-- Persist durable result/evidence before routing and fresh-read routing before the label mutation.
-- A routing update is not a mutex/CAS; overlapping Lead runs must tolerate repeated observation and stop on stale/contradictory state.
+- The model worker does not directly persist durable result/routing/label mutations; request only bounded effects for repository-owned fresh reauthorization/application.
+- A routing update is not a mutex/CAS; overlapping runtime executions must tolerate repeated observation and stop on stale/contradictory state.

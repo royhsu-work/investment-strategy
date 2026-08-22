@@ -76,16 +76,17 @@ def test_dynamic_dispatch_fails_closed_for_invalid_or_multiple_active_workflows(
         assert required in text
 
 
-def test_invocation_role_is_fixed_but_same_role_actions_may_continue() -> None:
+def test_machine_selected_identity_is_worker_local_and_redispatched() -> None:
     text = _normalized(AGENTS)
     for required in (
-        "fixed invocation role",
-        "selected coordination Issue remains fixed",
-        "cross-role handoff",
-        "current invocation MUST then end",
-        "does not redispatch to the new role",
-        "same-role action transition",
-        "may continue on the same coordination Issue",
+        "before any mapped model invocation",
+        "fixed only for that model worker invocation",
+        "model worker MUST NOT select or override",
+        "Repository-owned application fresh-reauthorizes",
+        "fresh mapped model invocation",
+        "whether the role stays the same or changes",
+        "single scheduled wake path",
+        "fixed role schedule slots are not part of the normal authorization contract",
     ):
         assert required in text
 
@@ -130,7 +131,8 @@ def test_combined_intake_is_deterministic_and_refuses_later_propose_activation()
             "eligible Explore candidate"
         ),
         "same-Issue direct-Propose fallback preserving its original authority envelope",
-        "re-read durable state and require this Issue to remain the combined pre-activation winner",
+        "Require the consumed pre-write machine decision to authorize this exact Issue",
+        "Repository application MUST fresh-reconstruct before applying the write",
     ):
         assert required in change
     assert "approved Explore-origin set" not in change
@@ -141,8 +143,9 @@ def test_activation_overlap_uses_first_valid_write_and_stale_run_termination() -
     change = _normalized(OPEN_SPEC_CHANGE)
     for required in (
         "first-valid-write-wins",
-        "re-read",
-        "stale",
+        "fresh-reauthorizes immediately before the activation write",
+        "post-write decision",
+        "stale/fail-closed",
         "lock",
         "claim",
         "lease",
@@ -150,10 +153,11 @@ def test_activation_overlap_uses_first_valid_write_and_stale_run_termination() -
     ):
         assert required in shared
     for required in (
-        "reconstruct active workflow state before persisting an unset Change identity",
-        "first valid activation",
-        "re-read durable state",
-        "stop as stale",
+        "application-time effect boundary",
+        "first-valid-write-wins",
+        "fresh-reconstruct before applying the write",
+        "post-write decision",
+        "rejects continuation",
     ):
         assert required in change
 
@@ -336,19 +340,18 @@ def test_selected_workflow_is_work_conserving_until_a_legal_termination_boundary
     shared = _normalized(AGENTS)
     implementation = _normalized(IMPLEMENTATION)
     for required in (
-        "work-conserving",
-        "continuation is the default",
+        "work-conserving execution is the default",
         "all immediately actionable work",
-        "positively classify and prove",
+        "model worker ends early",
         "If no legal Exit class is proven",
         "failed-but-actionable validation",
         "verified Slice checkpoint",
         "Invocation Exit",
-        "legal successor from `agents/workflow.md` has the same role",
-        "reconstruct the target action",
+        "fresh executable redispatch",
+        "fresh mapped model invocation",
         "genuine external asynchronous wait",
         "stale routing, revision, concurrency, or precondition loss",
-        "cross-role",
+        "cross-role transition does not wait for a dedicated role schedule slot",
     ):
         assert required in shared
     assert "continue on a later run" not in implementation
