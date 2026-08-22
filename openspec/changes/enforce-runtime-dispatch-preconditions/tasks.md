@@ -31,15 +31,15 @@ Trace: proposal `What Changes` items 2–6; design Decisions 1A, 2–4, and 7; m
 
 Trace: proposal `What Changes` items 7–11; design Decisions 4, 6, and 8; modified requirement scenarios for durable executable-preflight evidence.
 
-- [ ] **RED:** Add presentation/behavior regressions proving applicable `Lead / explore-change` `ACTION_RESULT` evidence carries the exact executable action-entry completeness, authoritative observation provenance, formal-active Issue IDs, pre-activation candidate IDs, selected Issue, and disposition actually consumed by the action.
-- [ ] **RED:** Add regressions proving applicable `Lead / propose-change` `ACTION_RESULT` evidence additionally carries the executable pre-write decision, expected Change identity, post-write formal-active Issue IDs/completeness/provenance/disposition, and accepted/not-accepted activation outcome.
-- [ ] **RED:** Add regressions proving durable comments, prior invocation output, and historical routing evidence are audit-only and can never satisfy a later invocation's current-state predicate or authorization input.
-- [ ] **RED:** Add a regression proving optional wake/invocation-source correlation is preserved only when the runtime actually exposes it and is never fabricated or used as routing/authorization state; observation provenance must remain expressible without inventing scheduler identity.
-- [ ] Run the focused RED tests and verify failures expose missing durable evidence/input-authority fields rather than parser/template assumptions.
-- [ ] **GREEN:** Extend `agents/templates/messages.md` `ACTION_RESULT` evidence requirements for these pre-activation boundaries and the corresponding action procedures to render the structured executable decision and authoritative observation provenance rather than re-summarizing a second Agent-derived Issue list.
-- [ ] **GREEN:** Add/adjust canonical implementation-facing wording/tests so the evidence is explicitly audit-only; later invocations must fresh-reconstruct from authoritative GitHub observations and re-execute the classifier rather than consume an old comment as an authorization token.
-- [ ] **REFACTOR:** Keep external Scheduled Task prompts unchanged/bootstrap-only. Do not add a debug message bus, hidden invocation registry, heartbeat, freshness cache, or per-wake noise beyond the action-result boundary.
-- [ ] **VERIFY:** Run focused message/workflow tests, full regression, Ruff, Mypy, and strict OpenSpec validation; persist Slice 3 markers only after verification succeeds.
+- [x] **RED:** Add presentation/behavior regressions proving applicable `Lead / explore-change` `ACTION_RESULT` evidence carries the exact executable action-entry completeness, authoritative observation provenance, formal-active Issue IDs, pre-activation candidate IDs, selected Issue, and disposition actually consumed by the action.
+- [x] **RED:** Add regressions proving applicable `Lead / propose-change` `ACTION_RESULT` evidence additionally carries the executable pre-write decision, expected Change identity, post-write formal-active Issue IDs/completeness/provenance/disposition, and accepted/not-accepted activation outcome.
+- [x] **RED:** Add regressions proving durable comments, prior invocation output, and historical routing evidence are audit-only and can never satisfy a later invocation's current-state predicate or authorization input.
+- [x] **RED:** Add a regression proving optional wake/invocation-source correlation is preserved only when the runtime actually exposes it and is never fabricated or used as routing/authorization state; observation provenance must remain expressible without inventing scheduler identity.
+- [x] Run the focused RED tests and verify failures expose missing durable evidence/input-authority fields rather than parser/template assumptions.
+- [x] **GREEN:** Extend `agents/templates/messages.md` `ACTION_RESULT` evidence requirements for these pre-activation boundaries and the corresponding action procedures to render the structured executable decision and authoritative observation provenance rather than re-summarizing a second Agent-derived Issue list.
+- [x] **GREEN:** Add/adjust canonical implementation-facing wording/tests so the evidence is explicitly audit-only; later invocations must fresh-reconstruct from authoritative GitHub observations and re-execute the classifier rather than consume an old comment as an authorization token.
+- [x] **REFACTOR:** Keep external Scheduled Task prompts unchanged/bootstrap-only. Do not add a debug message bus, hidden invocation registry, heartbeat, freshness cache, or per-wake noise beyond the action-result boundary.
+- [x] **VERIFY:** Run focused message/workflow tests, full regression, Ruff, Mypy, and strict OpenSpec validation; persist Slice 3 markers only after verification succeeds.
 
 ## Completion
 
