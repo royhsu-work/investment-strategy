@@ -14,6 +14,9 @@ from investment_strategy.scheduled_agent_worker import (
     run_authorized_worker,
     worker_capabilities_for,
 )
+from investment_strategy.scheduled_agent_worker_runtime import (
+    build_worker_prompt as build_runtime_worker_prompt,
+)
 
 
 def _checkout(tmp_path: Path) -> Path:
@@ -87,6 +90,39 @@ def test_worker_prompt_loads_exact_authorized_role_and_mapped_skill(tmp_path: Pa
     assert "# Executor" in prompt
     assert "EXACT_SKILL_CONTEXT" in prompt
     assert "must not select or override" in prompt
+
+
+def test_runtime_prompt_exposes_exact_action_effect_contract(tmp_path: Path) -> None:
+    prompt = build_runtime_worker_prompt(_request(), _checkout(tmp_path))
+
+    assert "Runtime staged-effect contract" in prompt
+    assert "contents-upsert" in prompt
+    assert "pull-request-ready" in prompt
+    assert "pull-request-merge" not in prompt.split("Allowed github-mutation operations", 1)[1].split(
+        "Operation payload fields", 1
+    )[0]
+    assert "repository application fresh-reauthorizes" in prompt
+
+
+def test_runtime_reviewer_prompt_has_no_action_specific_github_mutation_ops(tmp_path: Path) -> None:
+    reviewer_role = tmp_path / "agents" / "roles" / "reviewer.md"
+    reviewer_skill = tmp_path / "agents" / "skills" / "implementation-review" / "SKILL.md"
+    reviewer_role.parent.mkdir(parents=True, exist_ok=True)
+    reviewer_skill.parent.mkdir(parents=True, exist_ok=True)
+    reviewer_role.write_text(
+        "# Reviewer\n\n## Actions\n\n"
+        "- `review-implementation` uses "
+        "`agents/skills/implementation-review/SKILL.md`.\n",
+        encoding="utf-8",
+    )
+    reviewer_skill.write_text("# Implementation Review\nREVIEWER_ONLY_CONTEXT\n", encoding="utf-8")
+    request = WorkerRequest(133, "reviewer", "review-implementation")
+
+    prompt = build_runtime_worker_prompt(request, tmp_path)
+    allowed = prompt.split("Allowed github-mutation operations", 1)[1].split(
+        "Operation payload fields", 1
+    )[0]
+    assert "[]" in allowed
 
 
 def test_all_mapped_actions_have_explicit_read_and_local_capability_profiles() -> None:
