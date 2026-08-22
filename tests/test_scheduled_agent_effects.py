@@ -267,8 +267,6 @@ def test_all_ten_mapped_actions_have_shared_durable_effect_profiles() -> None:
     }
     assert mapped_role_actions() == expected_actions
 
-    # Reviewers need only the common issue-comment/routing effects. Other actions
-    # receive the repository mutation operations required by their current Skills.
     required_operations = {
         ("lead", "explore-change"): {"issue-update"},
         ("lead", "propose-change"): {"contents-upsert", "pull-request-create"},
@@ -331,7 +329,7 @@ def test_workflow_transports_worker_output_to_write_authorized_apply_boundary() 
     assert "actions/upload-artifact@v4" in workflow
     assert "actions/download-artifact@v4" in workflow
     assert "scheduled-agent-result-${{ github.run_id }}-${{ github.run_attempt }}" in workflow
-    assert "uv run python -m investment_strategy.scheduled_agent_effects" in workflow
+    assert "uv run python -m investment_strategy.scheduled_agent_merge_acceptance" in workflow
     assert "uv run python -m investment_strategy.scheduled_agent_worker_runtime" in workflow
 
     worker_section = workflow.split("\n  worker:", 1)[1].split("\n  apply:", 1)[0]
