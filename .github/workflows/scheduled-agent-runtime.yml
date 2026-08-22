@@ -77,7 +77,7 @@ jobs:
           AUTHORIZED_ROLE: ${{ needs.dispatch.outputs.role }}
           AUTHORIZED_ACTION: ${{ needs.dispatch.outputs.action }}
         run: >-
-          uv run python -m investment_strategy.scheduled_agent_worker
+          uv run python -m investment_strategy.scheduled_agent_worker_runtime
           > scheduled-agent-result.json
 
       - name: Upload invocation-local staged worker result
@@ -95,9 +95,9 @@ jobs:
     if: needs.dispatch.outputs.authorized == 'true'
     permissions:
       actions: write
-      contents: read
+      contents: write
       issues: write
-      pull-requests: read
+      pull-requests: write
     runs-on: ubuntu-latest
     steps:
       - name: Check out authoritative default branch for application
