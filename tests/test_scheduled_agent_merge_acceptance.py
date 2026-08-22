@@ -1,8 +1,11 @@
-"""RED regressions for #133 application-time merge acceptance."""
+"""Regressions for #133 application-time merge acceptance."""
 
 from __future__ import annotations
 
-from investment_strategy.scheduled_agent_effects import MergeAcceptanceSnapshot, merge_acceptance_allows
+from investment_strategy.scheduled_agent_merge_acceptance import (
+    MergeAcceptanceSnapshot,
+    merge_acceptance_allows,
+)
 
 
 HEAD = "367ec125f919546443e2f006bec2a1ae1a78d4ce"
