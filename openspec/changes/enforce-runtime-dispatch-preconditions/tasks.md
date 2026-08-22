@@ -75,12 +75,12 @@ Trace: proposal corrected `What Changes`; design Decisions 2–14; added require
 
 ### 4D — Governance/Skill integration and full mapped-action coverage
 
-- [ ] **RED:** Add governance/presentation regressions proving normal mapped work is not authorized merely because a ChatGPT Scheduled Task/model invocation exists; machine pre-model dispatch is required after cutover.
-- [ ] **RED:** Add coverage proving Issue-comment transition commands and fixed role schedule slots are not part of the normal runtime authorization contract.
-- [ ] **GREEN:** Correct `agents/AGENTS.md`, `agents/templates/messages.md`, `agents/skills/openspec-explore/SKILL.md`, and `agents/skills/openspec-change/SKILL.md` to the machine-gated worker/apply contract and remove obsolete Agent-owned-helper / Transition-Gate / fixed-role-invocation wording.
-- [ ] **GREEN:** Audit every other mapped Skill (`openspec-review`, `implementation`, `implementation-review`, `merge-pr`, `lifecycle-finalize`, `archive-review`, and any other current mapped Skill) for direct model-owned GitHub mutation or fixed-role invocation assumptions. Modify every genuinely affected Skill and record concrete traceability; do not change unaffected Skills mechanically.
-- [ ] **GREEN:** Demonstrate all ten mapped actions can be invoked through the runtime with their required read/local-work capabilities and can express their current durable effects through the shared application boundary before cutover is declared ready.
-- [ ] **REFACTOR:** Keep `agents/workflow.md` as the only global topology owner and keep role authority unchanged while role scheduling is dynamic.
+- [x] **RED:** Add governance/presentation regressions proving normal mapped work is not authorized merely because a ChatGPT Scheduled Task/model invocation exists; machine pre-model dispatch is required after cutover.
+- [x] **RED:** Add coverage proving Issue-comment transition commands and fixed role schedule slots are not part of the normal runtime authorization contract.
+- [x] **GREEN:** Correct `agents/AGENTS.md`, `agents/templates/messages.md`, `agents/skills/openspec-explore/SKILL.md`, and `agents/skills/openspec-change/SKILL.md` to the machine-gated worker/apply contract and remove obsolete Agent-owned-helper / Transition-Gate / fixed-role-invocation wording.
+- [x] **GREEN:** Audit every other mapped Skill (`openspec-review`, `implementation`, `implementation-review`, `merge-pr`, `lifecycle-finalize`, `archive-review`, and any other current mapped Skill) for direct model-owned GitHub mutation or fixed-role invocation assumptions. Modify every genuinely affected Skill and record concrete traceability; do not change unaffected Skills mechanically.
+- [x] **GREEN:** Demonstrate all ten mapped actions can be invoked through the runtime with their required read/local-work capabilities and can express their current durable effects through the shared application boundary before cutover is declared ready.
+- [x] **REFACTOR:** Keep `agents/workflow.md` as the only global topology owner and keep role authority unchanged while role scheduling is dynamic.
 
 ### 4E — Verification and cutover readiness
 
