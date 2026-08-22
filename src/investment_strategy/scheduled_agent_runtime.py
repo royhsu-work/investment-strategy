@@ -11,9 +11,10 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Iterable, Mapping, cast
+from typing import Any, cast
 from urllib.request import Request, urlopen
 
 from investment_strategy.workflow_dispatch import (
@@ -218,9 +219,13 @@ def normalize_github_issue(payload: Mapping[str, object]) -> GitHubIssueObservat
         change_valid = False
 
     recovery: RecoveryEvidence = "not-candidate"
-    if state == "closed" and change != "unset" and routing is not None:
-        if routing != ("lead", "finalize-archive"):
-            recovery = "indeterminate"
+    if (
+        state == "closed"
+        and change != "unset"
+        and routing is not None
+        and routing != ("lead", "finalize-archive")
+    ):
+        recovery = "indeterminate"
 
     return GitHubIssueObservation(
         issue_number=number,
@@ -256,7 +261,10 @@ def acquire_from_issue_pages(
     )
 
 
-def _github_issue_pages(repository: str, token: str) -> tuple[tuple[Mapping[str, object], ...], ...]:
+def _github_issue_pages(
+    repository: str,
+    token: str,
+) -> tuple[tuple[Mapping[str, object], ...], ...]:
     """Exhaust the repository Issues endpoint using current authenticated reads."""
 
     pages: list[tuple[Mapping[str, object], ...]] = []
@@ -297,7 +305,10 @@ def acquire_current_github_preflight(repository: str, token: str) -> DispatchPre
     return acquire_from_issue_pages(pages, exhausted=True)
 
 
-def _serialize_worker_request(request: WorkerRequest | None, preflight: DispatchPreflight) -> dict[str, Any]:
+def _serialize_worker_request(
+    request: WorkerRequest | None,
+    preflight: DispatchPreflight,
+) -> dict[str, Any]:
     decision = classify_dispatch(preflight)
     return {
         "disposition": decision.disposition,
