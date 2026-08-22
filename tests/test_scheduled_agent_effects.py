@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from investment_strategy.scheduled_agent_effects import (
     EffectBatch,
     StagedEffect,
     apply_effect_batch,
+    continuation_requires_fresh_wake,
+    parse_effect_batch,
+    supported_effect_guard,
+    topology_allows_successor,
 )
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 from investment_strategy.workflow_dispatch import (
@@ -36,10 +43,29 @@ def _preflight(*, role: str = "executor", action: str = "implement-change") -> D
     )
 
 
+def _request(*, role: str = "executor", action: str = "implement-change") -> WorkerRequest:
+    return WorkerRequest(issue_number=133, role=role, action=action)
+
+
 def _batch(effect: StagedEffect | None = None) -> EffectBatch:
     return EffectBatch(
-        source=WorkerRequest(issue_number=133, role="executor", action="implement-change"),
+        source=_request(),
         effects=((effect or StagedEffect(kind="issue-comment", payload_json="{}")),),
+    )
+
+
+def _worker_result(*effects: StagedEffect) -> str:
+    return json.dumps(
+        {
+            "issue_number": 133,
+            "role": "executor",
+            "action": "implement-change",
+            "result_content": "bounded result",
+            "requested_effects": [
+                {"kind": effect.kind, "payload_json": effect.payload_json}
+                for effect in effects
+            ],
+        }
     )
 
 
@@ -90,7 +116,7 @@ def test_effect_specific_guard_rejects_whole_batch() -> None:
 def test_illegal_routing_successor_is_rejected_before_apply() -> None:
     effect = StagedEffect(
         kind="routing-transition",
-        payload_json='{"role":"lead","action":"finalize-change"}',
+        payload_json='{"issue_number":133,"role":"lead","action":"finalize-change"}',
     )
     result = apply_effect_batch(
         _batch(effect),
@@ -127,11 +153,7 @@ def test_same_role_continuation_requires_fresh_redispatch() -> None:
         apply_effect=lambda _effect: None,
         observe_postcondition=lambda _effect: True,
     )
-    assert result.continuation == WorkerRequest(
-        issue_number=133,
-        role="executor",
-        action="merge-pr",
-    )
+    assert result.continuation == _request(action="merge-pr")
 
 
 def test_cross_role_continuation_is_new_machine_selected_identity() -> None:
@@ -144,8 +166,115 @@ def test_cross_role_continuation_is_new_machine_selected_identity() -> None:
         apply_effect=lambda _effect: None,
         observe_postcondition=lambda _effect: True,
     )
-    assert result.continuation == WorkerRequest(
-        issue_number=133,
-        role="reviewer",
-        action="review-implementation",
+    assert result.continuation == _request(role="reviewer", action="review-implementation")
+
+
+def test_worker_result_transport_is_bound_to_machine_authorized_source() -> None:
+    effect = StagedEffect(
+        kind="issue-comment",
+        payload_json='{"issue_number":133,"body":"ACTION_RESULT"}',
     )
+    batch = parse_effect_batch(_worker_result(effect), _request())
+    assert batch.source == _request()
+    assert batch.effects == (effect,)
+
+
+def test_supported_effect_guard_rejects_foreign_issue_and_unknown_kind() -> None:
+    source = _request()
+    assert supported_effect_guard(
+        source,
+        StagedEffect(
+            kind="issue-comment",
+            payload_json='{"issue_number":133,"body":"ACTION_RESULT"}',
+        ),
+    )
+    assert supported_effect_guard(
+        source,
+        StagedEffect(
+            kind="routing-transition",
+            payload_json=(
+                '{"issue_number":133,"role":"reviewer",'
+                '"action":"review-implementation"}'
+            ),
+        ),
+    )
+    assert not supported_effect_guard(
+        source,
+        StagedEffect(
+            kind="issue-comment",
+            payload_json='{"issue_number":137,"body":"wrong issue"}',
+        ),
+    )
+    assert not supported_effect_guard(
+        source,
+        StagedEffect(kind="unknown-effect", payload_json="{}"),
+    )
+
+
+def test_topology_validator_consumes_canonical_workflow_text() -> None:
+    workflow_text = Path("agents/workflow.md").read_text(encoding="utf-8")
+    assert topology_allows_successor(
+        workflow_text,
+        _request(),
+        StagedEffect(
+            kind="routing-transition",
+            payload_json=(
+                '{"issue_number":133,"role":"reviewer",'
+                '"action":"review-implementation"}'
+            ),
+        ),
+    )
+    assert not topology_allows_successor(
+        workflow_text,
+        _request(),
+        StagedEffect(
+            kind="routing-transition",
+            payload_json='{"issue_number":133,"role":"lead","action":"finalize-change"}',
+        ),
+    )
+    assert topology_allows_successor(
+        workflow_text,
+        _request(role="lead", action="explore-change"),
+        StagedEffect(
+            kind="routing-transition",
+            payload_json='{"issue_number":133,"role":"lead","action":"propose-change"}',
+        ),
+    )
+
+
+def test_continuation_requires_a_fresh_wake_only_for_new_selected_action() -> None:
+    source = _request()
+    assert continuation_requires_fresh_wake(source, _request(action="merge-pr"))
+    assert continuation_requires_fresh_wake(
+        source,
+        _request(role="reviewer", action="review-implementation"),
+    )
+    assert not continuation_requires_fresh_wake(source, source)
+    assert not continuation_requires_fresh_wake(source, None)
+
+
+def test_workflow_transports_worker_output_to_write_authorized_apply_boundary() -> None:
+    workflow = Path(".github/workflows/scheduled-agent-runtime.yml").read_text(encoding="utf-8")
+    assert "actions/upload-artifact@v4" in workflow
+    assert "actions/download-artifact@v4" in workflow
+    assert "scheduled-agent-result-${{ github.run_id }}-${{ github.run_attempt }}" in workflow
+    assert "uv run python -m investment_strategy.scheduled_agent_effects" in workflow
+
+    worker_section = workflow.split("\n  worker:", 1)[1].split("\n  apply:", 1)[0]
+    assert "issues: write" not in worker_section
+    assert "pull-requests: write" not in worker_section
+    assert "contents: write" not in worker_section
+
+    apply_section = workflow.split("\n  apply:", 1)[1]
+    assert "issues: write" in apply_section
+    assert "actions: write" in apply_section
+    assert "GITHUB_TOKEN:" in apply_section
+
+
+def test_continuation_wake_reenters_machine_dispatch_without_role_override() -> None:
+    workflow = Path(".github/workflows/scheduled-agent-runtime.yml").read_text(encoding="utf-8")
+    apply_section = workflow.split("\n  apply:", 1)[1]
+    assert "continuation_required" in apply_section
+    assert "/actions/workflows/scheduled-agent-runtime.yml/dispatches" in apply_section
+    assert "AUTHORIZED_ROLE" not in apply_section.split("Trigger immediate fresh continuation wake", 1)[1]
+    assert "AUTHORIZED_ACTION" not in apply_section.split("Trigger immediate fresh continuation wake", 1)[1]
