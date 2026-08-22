@@ -275,20 +275,19 @@ def action_entry_authorized(
     )
 
 
-def activation_accepted(
+def activation_prewrite_authorized(preflight: DispatchPreflight, issue_number: int) -> bool:
+    """Authorize the exact Issue for the immediate Propose activation write."""
+
+    return action_entry_authorized(preflight, issue_number, ("lead", "propose-change"))
+
+
+def activation_postwrite_accepted(
     preflight: DispatchPreflight,
     *,
     issue_number: int,
     expected_change: str,
 ) -> bool:
-    """Return whether a Propose activation is accepted after its durable write.
-
-    The caller must supply a fresh post-write repository reconstruction. The
-    activation is accepted only when the executable classifier authorizes the
-    same Issue as the sole formal workflow, the current route remains Propose,
-    the persisted Change identity matches the expected activation, and every
-    authorization-bearing field remains provenance-qualified.
-    """
+    """Accept a Propose activation only from a fresh qualified post-write state."""
 
     decision = classify_dispatch(preflight)
     if (
@@ -308,4 +307,19 @@ def activation_accepted(
         and activated.change == expected_change
         and activated.routing == ("lead", "propose-change")
         and activated.current_state_provenance is ObservationProvenance.QUALIFIED
+    )
+
+
+def activation_accepted(
+    preflight: DispatchPreflight,
+    *,
+    issue_number: int,
+    expected_change: str,
+) -> bool:
+    """Compatibility name for the post-write activation acceptance predicate."""
+
+    return activation_postwrite_accepted(
+        preflight,
+        issue_number=issue_number,
+        expected_change=expected_change,
     )
