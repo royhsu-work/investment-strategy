@@ -122,7 +122,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Freshly reauthorize and apply staged effects
+      - name: Freshly reauthorize merge acceptance and apply staged effects
         id: apply
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -131,7 +131,7 @@ jobs:
           AUTHORIZED_ROLE: ${{ needs.dispatch.outputs.role }}
           AUTHORIZED_ACTION: ${{ needs.dispatch.outputs.action }}
         run: >-
-          uv run python -m investment_strategy.scheduled_agent_effects
+          uv run python -m investment_strategy.scheduled_agent_merge_acceptance
           .scheduled-agent-result/scheduled-agent-result.json
 
       - name: Trigger immediate fresh continuation wake
