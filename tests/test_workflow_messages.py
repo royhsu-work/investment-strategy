@@ -9,6 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 MESSAGES = ROOT / "agents" / "templates" / "messages.md"
 AGENTS = ROOT / "agents" / "AGENTS.md"
 MIGRATION = ROOT / "agents" / "scheduled-task-migration.md"
+EXPLORE_SKILL = ROOT / "agents" / "skills" / "openspec-explore" / "SKILL.md"
+CHANGE_SKILL = ROOT / "agents" / "skills" / "openspec-change" / "SKILL.md"
 
 ROLE_FILES = (
     ROOT / "agents" / "roles" / "lead.md",
@@ -16,7 +18,7 @@ ROLE_FILES = (
     ROOT / "agents" / "roles" / "executor.md",
 )
 SKILL_FILES = (
-    ROOT / "agents" / "skills" / "openspec-change" / "SKILL.md",
+    CHANGE_SKILL,
     ROOT / "agents" / "skills" / "openspec-review" / "SKILL.md",
     ROOT / "agents" / "skills" / "implementation" / "SKILL.md",
     ROOT / "agents" / "skills" / "implementation-review" / "SKILL.md",
@@ -239,3 +241,78 @@ def test_human_delivery_is_lead_only_decision_required_and_other_wakes_are_silen
         "must not emit",
     ):
         assert required in migration
+
+
+def test_explore_action_result_preserves_consumed_executable_preflight_evidence() -> None:
+    action_result = _template_section("ACTION_RESULT")
+    explore = _normalized(EXPLORE_SKILL)
+
+    for required in (
+        "Lead / explore-change",
+        "exact executable decision actually consumed",
+        "enumeration completeness",
+        "observation provenance",
+        "formal-active/terminal-pending Issue identities",
+        "recovery candidate identities",
+        "pre-activation candidate identities",
+        "selected Issue",
+        "disposition",
+    ):
+        assert required in action_result
+
+    for required in (
+        "ACTION_RESULT",
+        "enumeration completeness",
+        "observation provenance",
+        "formal-active/terminal-pending Issue identities",
+        "recovery candidate identities",
+        "pre-activation candidate identities",
+        "selected Issue",
+        "disposition",
+    ):
+        assert required in explore
+
+
+def test_propose_action_result_preserves_prewrite_and_postwrite_activation_evidence() -> None:
+    action_result = _template_section("ACTION_RESULT")
+    change = _normalized(CHANGE_SKILL)
+
+    for required in (
+        "Lead / propose-change",
+        "immediate pre-write executable decision",
+        "expected Change identity",
+        "post-write formal-active/terminal-pending Issue identities",
+        "post-write completeness",
+        "post-write observation provenance",
+        "post-write disposition",
+        "activation accepted",
+    ):
+        assert required in action_result
+        assert required in change
+
+
+def test_preflight_action_result_evidence_is_audit_only_for_later_invocations() -> None:
+    action_result = _template_section("ACTION_RESULT")
+
+    for required in (
+        "audit/diagnostic evidence only",
+        "MUST NOT authorize a later invocation",
+        "fresh-reconstruct",
+        "authoritative GitHub observations",
+        "re-execute the executable dispatch precondition",
+        "prior invocation output",
+        "historical routing",
+    ):
+        assert required in action_result
+
+
+def test_optional_wake_correlation_is_never_fabricated_or_authorization_state() -> None:
+    action_result = _template_section("ACTION_RESULT")
+
+    for required in (
+        "wake/invocation-source correlation",
+        "only when the execution environment actually exposes it",
+        "MUST NOT be fabricated",
+        "MUST NOT be used as routing or authorization state",
+    ):
+        assert required in action_result
