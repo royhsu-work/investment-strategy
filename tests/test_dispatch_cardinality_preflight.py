@@ -99,7 +99,13 @@ def test_one_qualifying_premature_close_blocks_queue_for_lead_recovery() -> None
 
 def test_two_premature_close_recovery_candidates_fail_closed() -> None:
     preflight = snapshot(
-        issue(45, "first", ("reviewer", "review-implementation"), state="closed", recovery="qualifying"),
+        issue(
+            45,
+            "first",
+            ("reviewer", "review-implementation"),
+            state="closed",
+            recovery="qualifying",
+        ),
         issue(46, "second", ("executor", "merge-pr"), state="closed", recovery="qualifying"),
     )
     assert classify_dispatch(preflight).disposition == "FAIL_CLOSED"
