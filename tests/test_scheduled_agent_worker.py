@@ -98,9 +98,10 @@ def test_runtime_prompt_exposes_exact_action_effect_contract(tmp_path: Path) -> 
     assert "Runtime staged-effect contract" in prompt
     assert "contents-upsert" in prompt
     assert "pull-request-ready" in prompt
-    assert "pull-request-merge" not in prompt.split("Allowed github-mutation operations", 1)[1].split(
+    allowed = prompt.split("Allowed github-mutation operations", 1)[1].split(
         "Operation payload fields", 1
     )[0]
+    assert "pull-request-merge" not in allowed
     assert "repository application fresh-reauthorizes" in prompt
 
 
