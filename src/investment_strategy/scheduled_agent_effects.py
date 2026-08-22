@@ -421,37 +421,37 @@ class GitHubEffectAdapter:
         if operation == "issue-create" or operation == "issue-label-add":
             return True
         if operation == "issue-update":
-            current = self._current_issue()
-            if current is None:
+            current_issue = self._current_issue()
+            if current_issue is None:
                 return False
             expected = payload.get("expected")
             return expected is None or (
-                isinstance(expected, Mapping) and _shallow_matches(current, expected)
+                isinstance(expected, Mapping) and _shallow_matches(current_issue, expected)
             )
         if operation in {"contents-upsert", "contents-delete"}:
             path = cast(str, payload["path"])
             branch = cast(str, payload["branch"])
             expected_sha = payload.get("expected_sha")
-            current = _github_json(
+            content_state = _github_json(
                 self.repository,
                 self.token,
                 f"contents/{quote(path, safe='/')}?{urlencode({'ref': branch})}",
                 allow_not_found=True,
             )
-            if current is None:
+            if content_state is None:
                 return expected_sha is None
-            return isinstance(current, Mapping) and current.get("sha") == expected_sha
+            return isinstance(content_state, Mapping) and content_state.get("sha") == expected_sha
         if operation in {"ref-update", "ref-delete"}:
             ref = cast(str, payload["ref"])
-            current = _github_json(
+            ref_state = _github_json(
                 self.repository,
                 self.token,
                 _ref_api_path(ref),
                 allow_not_found=True,
             )
-            if not isinstance(current, Mapping):
+            if not isinstance(ref_state, Mapping):
                 return False
-            obj = current.get("object")
+            obj = ref_state.get("object")
             return isinstance(obj, Mapping) and obj.get("sha") == payload.get("expected_sha")
         if operation == "ref-create":
             ref = cast(str, payload["ref"])
@@ -482,11 +482,11 @@ class GitHubEffectAdapter:
             return isinstance(head_ref, Mapping) and isinstance(base_ref, Mapping)
         if operation in {"pull-request-update", "pull-request-ready", "pull-request-merge"}:
             number = cast(int, payload["number"])
-            current = _github_json(self.repository, self.token, f"pulls/{number}")
+            pr_state = _github_json(self.repository, self.token, f"pulls/{number}")
             return (
-                isinstance(current, Mapping)
-                and _pull_request_head_sha(current) == payload.get("expected_head_sha")
-                and current.get("state") == "open"
+                isinstance(pr_state, Mapping)
+                and _pull_request_head_sha(pr_state) == payload.get("expected_head_sha")
+                and pr_state.get("state") == "open"
             )
         return False
 
