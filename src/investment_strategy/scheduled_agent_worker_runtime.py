@@ -33,7 +33,8 @@ def build_worker_prompt(request: WorkerRequest, checkout_root: Path) -> str:
         + "- issue-create: title, optional body, optional labels.\n"
         + "- issue-update: fields (title/body/state), optional expected current fields.\n"
         + "- issue-label-add: label.\n"
-        + "- contents-upsert: path, branch, message, content, expected_sha (null only for create).\n"
+        + "- contents-upsert: path, branch, message, content, expected_sha "
+        + "(null only for create).\n"
         + "- contents-delete: path, branch, message, expected_sha.\n"
         + "- ref-create: ref (`refs/heads/...`), sha.\n"
         + "- ref-update: ref, expected_sha, sha.\n"
@@ -43,7 +44,8 @@ def build_worker_prompt(request: WorkerRequest, checkout_root: Path) -> str:
         + "- pull-request-ready: number, expected_head_sha.\n"
         + "- pull-request-merge: number, expected_head_sha, optional merge_method.\n"
         + "Do not request an operation absent from the allowed list. Every request is staged only; "
-        + "repository application fresh-reauthorizes source state and effect-specific preconditions.\n"
+        + "repository application fresh-reauthorizes source state and effect-specific "
+        + "preconditions.\n"
     )
 
 
