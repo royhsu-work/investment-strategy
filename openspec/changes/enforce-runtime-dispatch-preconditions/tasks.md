@@ -43,9 +43,9 @@ Trace: proposal `What Changes` items 7–11; design Decisions 4, 6, and 8; modif
 
 ## Completion
 
-- [ ] Confirm proposal → specs → design → tasks trace declarations are mechanically consistent and reverse traceability `tasks → design → specs → proposal` has no intentional orphan scope.
-- [ ] Confirm the corrected semantic target preserves temporal evidence boundaries: original Explore conclusions remain distinct from the later Reviewer-driven observation-provenance correction, and causal/timeline claims that matter are grounded in authoritative source objects rather than cross-Issue summary prose.
-- [ ] Confirm Skill maintenance traceability lists every materially modified repository Skill and no fictional upstream metadata is introduced.
-- [ ] Confirm the proposal/implementation PR uses non-closing `Refs #133` linkage; final closing linkage remains reserved for the final Archive PR lifecycle boundary.
-- [ ] Obtain strict OpenSpec validation for the exact proposal handoff revision with checkout-identity evidence proving validator `HEAD` equals that revision.
-- [ ] Hand the exact semantic revision to `Reviewer / review-openspec`; Lead does not claim the independent semantic bidirectional PASS.
+- [x] Confirm proposal → specs → design → tasks trace declarations are mechanically consistent and reverse traceability `tasks → design → specs → proposal` has no intentional orphan scope.
+- [x] Confirm the corrected semantic target preserves temporal evidence boundaries: original Explore conclusions remain distinct from the later Reviewer-driven observation-provenance correction, and causal/timeline claims that matter are grounded in authoritative source objects rather than cross-Issue summary prose.
+- [x] Confirm Skill maintenance traceability lists every materially modified repository Skill and no fictional upstream metadata is introduced.
+- [x] Confirm the proposal/implementation PR uses non-closing `Refs #133` linkage; final closing linkage remains reserved for the final Archive PR lifecycle boundary.
+- [x] Obtain strict OpenSpec validation for the exact proposal handoff revision with checkout-identity evidence proving validator `HEAD` equals that revision.
+- [x] Hand the exact semantic revision to `Reviewer / review-openspec`; Lead does not claim the independent semantic bidirectional PASS.
