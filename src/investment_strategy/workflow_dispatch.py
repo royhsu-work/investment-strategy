@@ -1,7 +1,7 @@
 """Executable workflow-dynamic dispatch preconditions.
 
 This module is a stateless adapter for the dispatch semantics owned by
-``agents/AGENTS.md``.  It deliberately performs no GitHub I/O and owns no
+``agents/AGENTS.md``. It deliberately performs no GitHub I/O and owns no
 workflow state.
 """
 
@@ -272,4 +272,40 @@ def action_entry_authorized(
         decision.disposition == "AUTHORIZE"
         and decision.selected_issue_id == issue_number
         and decision.selected_routing == routing
+    )
+
+
+def activation_accepted(
+    preflight: DispatchPreflight,
+    *,
+    issue_number: int,
+    expected_change: str,
+) -> bool:
+    """Return whether a Propose activation is accepted after its durable write.
+
+    The caller must supply a fresh post-write repository reconstruction. The
+    activation is accepted only when the executable classifier authorizes the
+    same Issue as the sole formal workflow, the current route remains Propose,
+    the persisted Change identity matches the expected activation, and every
+    authorization-bearing field remains provenance-qualified.
+    """
+
+    decision = classify_dispatch(preflight)
+    if (
+        decision.disposition != "AUTHORIZE"
+        or decision.formal_issue_ids != (issue_number,)
+        or decision.selected_issue_id != issue_number
+        or decision.selected_routing != ("lead", "propose-change")
+    ):
+        return False
+
+    matches = tuple(issue for issue in preflight.issues if issue.issue_number == issue_number)
+    if len(matches) != 1:
+        return False
+    activated = matches[0]
+    return (
+        activated.state == "open"
+        and activated.change == expected_change
+        and activated.routing == ("lead", "propose-change")
+        and activated.current_state_provenance is ObservationProvenance.QUALIFIED
     )
