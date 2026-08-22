@@ -7,8 +7,8 @@ from investment_strategy.scheduled_agent_merge_acceptance import (
     merge_acceptance_allows,
 )
 
-
 HEAD = "367ec125f919546443e2f006bec2a1ae1a78d4ce"
+STALE_HEAD = "0000000000000000000000000000000000000000"
 
 
 def _accepted(**overrides: object) -> MergeAcceptanceSnapshot:
@@ -33,7 +33,7 @@ def test_merge_acceptance_allows_only_fresh_exact_accepted_state() -> None:
 
 def test_merge_acceptance_rejects_changed_acceptance_with_unchanged_head() -> None:
     cases = (
-        _accepted(reviewer_pass_head_sha="stale"),
+        _accepted(reviewer_pass_head_sha=STALE_HEAD),
         _accepted(required_checks_pass=False),
         _accepted(non_closing_linkage=False),
         _accepted(contradictory_evidence=True),
