@@ -14,6 +14,7 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, cast
 from urllib.request import Request, urlopen
 
@@ -329,6 +330,23 @@ def _serialize_worker_request(
     }
 
 
+def _write_github_outputs(request: WorkerRequest | None) -> None:
+    output_path = os.environ.get("GITHUB_OUTPUT")
+    if not output_path:
+        return
+    lines = [f"authorized={'true' if request is not None else 'false'}"]
+    if request is not None:
+        lines.extend(
+            (
+                f"issue_number={request.issue_number}",
+                f"role={request.role}",
+                f"action={request.action}",
+            )
+        )
+    with Path(output_path).open("a", encoding="utf-8") as output:
+        output.write("\n".join(lines) + "\n")
+
+
 def main() -> int:
     """Run one pre-model dispatch wake from current GitHub state."""
 
@@ -339,6 +357,7 @@ def main() -> int:
 
     preflight = acquire_current_github_preflight(repository, token)
     request = authorize_worker_request(preflight, RuntimeTrigger())
+    _write_github_outputs(request)
     print(json.dumps(_serialize_worker_request(request, preflight), sort_keys=True))
     return 0
 
