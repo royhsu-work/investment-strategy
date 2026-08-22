@@ -66,19 +66,19 @@ def apply_effect_batch(
 
     current = _authorized_request(fresh_preflight())
     if current != batch.source:
-        return ApplyResult(False, "source-no-longer-authorized")
+        return ApplyResult(False, "source dispatch is stale")
 
     # Validate the complete normal batch before its first durable mutation.
     for effect in batch.effects:
         if not effect_guard(effect):
-            return ApplyResult(False, "effect-precondition-rejected")
+            return ApplyResult(False, "effect precondition rejected")
         if effect.kind == "routing-transition" and not topology_validator(batch.source, effect):
-            return ApplyResult(False, "illegal-routing-successor")
+            return ApplyResult(False, "routing successor rejected")
 
     for effect in batch.effects:
         apply_effect(effect)
         if not observe_postcondition(effect):
-            return ApplyResult(False, "postcondition-failed")
+            return ApplyResult(False, "durable postcondition not observed")
 
     continuation = _authorized_request(fresh_preflight())
     return ApplyResult(True, "applied", continuation)
