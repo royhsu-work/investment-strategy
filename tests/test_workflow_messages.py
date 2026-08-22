@@ -177,7 +177,8 @@ def test_cross_role_result_evidence_does_not_complete_required_handoff() -> None
         "cross-role target tuple",
         "observe successful routing mutation",
         "persist canonical `HANDOFF`",
-        "end the current invocation",
+        "end the current model worker invocation",
+        "fresh global dispatch",
     ):
         assert required in shared
 
@@ -185,7 +186,8 @@ def test_cross_role_result_evidence_does_not_complete_required_handoff() -> None
         "cross-role routing ownership transfer",
         "Same-role action transitions MUST NOT emit",
         "source `ACTION_RESULT`",
-        "target-action reconstruction",
+        "fresh executable dispatch",
+        "fresh mapped model invocation",
     ):
         assert required in messages
 
