@@ -73,7 +73,11 @@ def _github_json(repository: str, token: str, api_path: str) -> object:
         return json.loads(response.read().decode("utf-8"))
 
 
-def _paged_github_list(repository: str, token: str, api_path: str) -> tuple[Mapping[str, object], ...]:
+def _paged_github_list(
+    repository: str,
+    token: str,
+    api_path: str,
+) -> tuple[Mapping[str, object], ...]:
     items: list[Mapping[str, object]] = []
     page = 1
     while True:
@@ -183,7 +187,11 @@ def _required_checks_pass(repository: str, token: str, head_sha: str) -> tuple[b
         return False, False
     total_count = decoded.get("total_count")
     raw_runs = decoded.get("check_runs")
-    if not isinstance(total_count, int) or not isinstance(raw_runs, list) or total_count != len(raw_runs):
+    if (
+        not isinstance(total_count, int)
+        or not isinstance(raw_runs, list)
+        or total_count != len(raw_runs)
+    ):
         return False, False
     if total_count == 0:
         return False, False
