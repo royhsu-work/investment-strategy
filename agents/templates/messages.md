@@ -30,6 +30,12 @@ Required evidence when applicable:
 - bounded result evidence supporting the action-defined result;
 - next action, expected owner, wait condition, or terminal state.
 
+For applicable pre-activation `Lead / explore-change`, the `ACTION_RESULT` MUST preserve the exact executable decision actually consumed at action entry, including enumeration completeness, observation provenance, formal-active/terminal-pending Issue identities, recovery candidate identities, pre-activation candidate identities, selected Issue, and disposition. The action procedure renders those fields from the consumed decision rather than reconstructing a second Agent-derived Issue list.
+
+For applicable `Lead / propose-change`, the `ACTION_RESULT` MUST additionally preserve the immediate pre-write executable decision, expected Change identity, post-write formal-active/terminal-pending Issue identities, post-write completeness, post-write observation provenance, post-write disposition, and whether activation accepted. The pre-write and post-write fields reflect the exact executable decisions consumed at those boundaries rather than a later summary.
+
+These preflight/activation fields are audit/diagnostic evidence only and MUST NOT authorize a later invocation. A later invocation MUST fresh-reconstruct the required current state from authoritative GitHub observations and re-execute the executable dispatch precondition; prior invocation output, durable comments, cached observations, and historical routing remain audit/context only. Optional wake/invocation-source correlation MAY be recorded only when the execution environment actually exposes it, MUST NOT be fabricated, and MUST NOT be used as routing or authorization state.
+
 `ACTION_RESULT` does not create result enums; the owning action contract defines them.
 
 ## `REVIEW_RESULT`
