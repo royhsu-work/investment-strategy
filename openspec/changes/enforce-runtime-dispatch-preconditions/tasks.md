@@ -84,10 +84,10 @@ Trace: proposal corrected `What Changes`; design Decisions 2–14; added require
 
 ### 4E — Verification and cutover readiness
 
-- [ ] **VERIFY:** Run focused runtime/acquisition/worker/apply tests, full Python regression, Ruff, Mypy, and strict OpenSpec validation on the exact implementation head.
-- [ ] **VERIFY:** Verify the Actions workflow uses default-branch runtime/governance code, a single wake path with machine-selected dynamic roles, non-cancelling repository-wide concurrency, and no model-controlled write credential path.
-- [ ] **VERIFY:** Verify all mapped actions have runtime coverage and no independent legacy normal scheduler is required for an unsupported action.
-- [ ] **VERIFY:** Persist implementation readiness evidence without claiming live default-branch scheduled execution before the workflow is merged to `main`.
+- [x] **VERIFY:** Run focused runtime/acquisition/worker/apply tests, full Python regression, Ruff, Mypy, and strict OpenSpec validation on the exact implementation head.
+- [x] **VERIFY:** Verify the Actions workflow uses default-branch runtime/governance code, a single wake path with machine-selected dynamic roles, non-cancelling repository-wide concurrency, and no model-controlled write credential path.
+- [x] **VERIFY:** Verify all mapped actions have runtime coverage and no independent legacy normal scheduler is required for an unsupported action.
+- [x] **VERIFY:** Persist implementation readiness evidence without claiming live default-branch scheduled execution before the workflow is merged to `main`.
 
 ## Post-merge live runtime canary and cutover
 
