@@ -8,6 +8,8 @@ Reviewer implementation finding `issuecomment-5379837891` proved that the real S
 
 The required enforcement boundary is therefore before model invocation. GitHub Actions owns scheduling, current-state acquisition, production-classifier execution, and durable-effect application. The model remains the action worker, but it is invoked only after executable authorization and does not receive durable GitHub write authority.
 
+Reviewer finding `issuecomment-5380696545` identified that fixed Lead/Reviewer/Executor schedule slots are not required for safety and reduce work-conserving efficiency. The corrected runtime keeps role ownership but makes role selection dynamic: one scheduled wake executes the production classifier, receives one exact selected Issue/role/action, and only then creates a fresh model invocation for that selected role/action. Role transitions are therefore machine-selected from durable state, never model-selected from conversation context.
+
 ## Decision 1 — Preserve the pure production classifier
 
 Keep `src/investment_strategy/workflow_dispatch.py` as the repository-owned deterministic dispatch/cardinality/action-authorization implementation.
@@ -26,19 +28,21 @@ Each wake executes this order before any mapped model work:
 2. acquire complete current repository workflow state from GitHub with observable enumeration completeness;
 3. normalize provenance-qualified `DispatchPreflight` input;
 4. execute `workflow_dispatch.py`;
-5. compare the classifier-selected current role with the fixed role assigned to that schedule/manual invocation;
-6. exit without a model request unless the decision is `AUTHORIZE` for one exact coordination Issue and the selected role matches the fixed slot;
-7. only then construct the mapped role/action worker request.
+5. require an `AUTHORIZE` result for one exact coordination Issue, role, and action;
+6. exit without a model request on `FAIL_CLOSED` or `NO_WORK`;
+7. only then construct a fresh mapped role/action worker request from the selected role/action.
 
-`FAIL_CLOSED`, `NO_WORK`, role mismatch, incomplete enumeration, multiple-active state, contradictory current fields, or unqualified observation provenance MUST terminate before model invocation.
+Incomplete enumeration, multiple-active state, contradictory current fields, unqualified observation provenance, or no legal work MUST terminate before model invocation.
 
-## Decision 3 — Preserve fixed role slots; scheduling does not choose workflow state
+## Decision 3 — One wake dynamically selects Issue, role, and action
 
-Preserve three fixed runtime slots corresponding to Lead, Reviewer, and Executor. The schedule carries only that fixed role identity. It does not carry an Issue number, Change, action, winner, or workflow priority.
+Use a single scheduled runtime wake rather than three fixed role slots. The trigger carries no Issue number, Change, role, action, winner, or workflow priority.
 
-The production classifier independently selects current work from GitHub. A Lead slot cannot execute Reviewer/Executor work, and vice versa. A role mismatch is a normal pre-model no-op.
+The production classifier selects the current coordination Issue and derives the invocation role/action from authoritative GitHub routing. The selected role becomes fixed only for that individual model invocation. The model worker MUST NOT select, reinterpret, or override its own role.
 
-An optional GitHub Actions `workflow_dispatch` manual wake MAY accept a fixed role input for controlled/manual execution. It is subject to exactly the same acquisition/classifier/role-match boundary and cannot override selection.
+An optional GitHub Actions `workflow_dispatch` manual wake MAY trigger the same runtime but MUST NOT accept role/Issue/action override inputs as authorization. Manual wake only asks the runtime to perform a fresh machine dispatch.
+
+This keeps role ownership unchanged while removing slot-induced idle wakes and cross-role waiting.
 
 ## Decision 4 — The action worker uses the Responses API, not Codex
 
@@ -76,7 +80,7 @@ They MUST NOT be treated as:
 - a source of current GitHub state;
 - a substitute for a fresh application-time classifier decision.
 
-The implementation may use an Actions artifact or equivalent bounded runner transport when separate jobs are required for credential isolation. Such transport expires with the invocation/cutover mechanics and has no lifecycle meaning.
+The implementation may use an Actions artifact or equivalent bounded runner transport when separate jobs are required for credential isolation. Such transport expires with invocation mechanics and has no lifecycle meaning.
 
 ## Decision 7 — Durable effects require fresh application-time reauthorization
 
@@ -101,21 +105,27 @@ The runtime does not define a second global action DAG.
 
 Role authority remains in role definitions, action-local procedure remains in Skills, and canonical OpenSpec remains capability semantics.
 
-## Decision 9 — Same-role continuation is re-dispatched after durable application
+## Decision 9 — Continuation always re-dispatches and may change roles
 
 A source action authorization ends when its durable effect batch has been applied/verified or rejected.
 
-After a successful effect batch, runtime performs another complete executable dispatch from the new GitHub state. If the resulting selected role is the same fixed role and work-conserving continuation is otherwise legal, the runtime may invoke the next mapped action. It MUST NOT reuse the previous classifier output as authorization for that continuation.
+After a successful effect batch, runtime performs another complete executable dispatch from the new GitHub state. If another legal mapped action is immediately work-conserving, the runtime may invoke it in the same GitHub Actions execution even when the selected role changes. The next role/action receives a **fresh model invocation** with only its own mapped default-branch role/Skill and durable/current evidence; it MUST NOT inherit the previous worker's model context as authorization.
 
-If the target role differs, the current fixed-role run ends and the next matching role slot owns execution.
+No prior classifier output authorizes that continuation.
 
-## Decision 10 — Serialize runtime executions without creating workflow state
+## Decision 10 — Reviewer independence is invocation isolation, not schedule isolation
+
+Reviewer independence does not require a dedicated Reviewer cron slot.
+
+When dispatch selects a Reviewer action, runtime creates a fresh Reviewer model invocation from current durable evidence and the Reviewer role/Skill. Lead or Executor model context is not reused as Reviewer reasoning context or authority. Cross-role workflow routing remains durable in GitHub and `agents/workflow.md`; dynamic dispatch changes only when the next fresh role invocation happens.
+
+## Decision 11 — Serialize runtime executions without creating workflow state
 
 Use one repository-wide non-cancelling GitHub Actions concurrency boundary for Scheduled Agent runtime executions.
 
 A queued run reconstructs current GitHub state only when it actually executes. It does not inherit the earlier run's preflight. Concurrency is execution serialization only and does not create a lock, lease, heartbeat, claim, durable owner, hidden queue semantics, or winner priority in repository workflow state.
 
-## Decision 11 — Cutover requires full mapped-action coverage and no parallel legacy scheduler
+## Decision 12 — Cutover requires full mapped-action coverage and no parallel legacy scheduler
 
 The new runtime must support all mapped normal actions before it becomes the authoritative scheduled path. This specifically includes the two demonstrated pre-activation surfaces `Lead / explore-change` and `Lead / propose-change`; protecting only formal successor routing is insufficient.
 
@@ -123,33 +133,37 @@ Legacy ChatGPT Scheduled Tasks MUST be disabled before/when the GitHub Actions r
 
 Manual Human/maintenance operations remain governed by their existing authority semantics, but a normal mapped Agent action executed outside the machine-gated runtime is not an authorized scheduled execution after cutover.
 
-## Decision 12 — Live verification uses ordinary #133 state, not synthetic workflow state
+## Decision 13 — Live verification uses ordinary #133 state, not synthetic workflow state
 
-PR-stage tests MUST prove the acquisition adapter, pre-model no-invocation behavior, worker isolation contract, effect reauthorization, stale-stop, and fixed-role matching against fixtures and test doubles. They do not prove that the default-branch scheduled runtime has executed live.
+PR-stage tests MUST prove the acquisition adapter, pre-model no-invocation behavior, worker isolation contract, effect reauthorization, stale-stop, dynamic role selection, and fresh cross-role invocation behavior against fixtures and test doubles. They do not prove that the default-branch scheduled runtime has executed live.
 
 After the runtime implementation is merged to `main`, verify it using whatever ordinary #133 lifecycle state exists then:
 
-1. observe at least one fixed role slot whose role does not match the production classifier's current selected role; the run must stop before a model request and persist enough Actions evidence to prove that no mapped model invocation occurred;
-2. observe the matching fixed role slot; it must execute the same default-branch classifier, authorize the exact current #133 Issue/role/action, and only then invoke the model worker;
-3. if that worker requests durable effects, the application phase must fresh-revalidate the same source before applying them and persist post-write evidence.
+1. observe a scheduled wake executing the same default-branch classifier and authorizing the exact current #133 Issue/role/action before any model request;
+2. prove the actual model invocation receives exactly that selected role/action and cannot self-select or override another role;
+3. when a legal durable transition changes role, prove the subsequent continuation or later wake re-dispatches from current state and creates a fresh invocation for the newly selected role;
+4. observe at least one `NO_WORK` or fail-closed case when naturally available and prove no mapped model invocation occurred;
+5. if a worker requests durable effects, prove the application phase fresh-revalidates the same source before applying them and persists post-write evidence.
 
-This canary does not require manufacturing a second formal workflow or restoring `Lead / resolve-question` merely to exercise a trigger.
+This canary does not require manufacturing a second formal workflow or special routing state merely to exercise a trigger.
 
-## Decision 13 — Correct prior Agent-owned/Transition-Gate governance wording
+## Decision 14 — Correct prior Agent-owned/Transition-Gate/fixed-slot governance wording
 
-Shared governance and affected Skills must stop asserting either of these obsolete models:
+Shared governance and affected Skills must stop asserting any of these obsolete models:
 
 - the current ChatGPT Scheduled Agent itself executes repository Python as its own authorization boundary;
-- an Issue-comment Transition Gate after action completion is sufficient runtime enforcement.
+- an Issue-comment Transition Gate after action completion is sufficient runtime enforcement;
+- fixed Lead/Reviewer/Executor schedule slots are required for role ownership or Reviewer independence.
 
 The new common contract is:
 
-- repository runtime authorizes before worker invocation;
+- repository runtime authorizes exact Issue/role/action before worker invocation;
 - mapped Skill/role semantics still govern what the authorized worker is trying to accomplish;
 - durable effects are applied only through the repository runtime after fresh reauthorization;
-- every same-role continuation re-enters executable dispatch.
+- every continuation re-enters executable dispatch;
+- a role change creates a fresh role-specific model invocation.
 
-Implementation MUST audit all mapped Skills for procedure text that assumes direct model-owned durable mutation and update every genuinely affected Skill with explicit traceability rather than silently changing its execution meaning.
+Implementation MUST audit all mapped Skills for procedure text that assumes direct model-owned durable mutation or fixed-role invocation semantics and update every genuinely affected Skill with explicit traceability rather than silently changing its execution meaning.
 
 ## Traceability
 
@@ -159,21 +173,22 @@ Implementation MUST audit all mapped Skills for procedure text that assumes dire
 - Runtime-consumption implementation finding: #133 `issuecomment-5379837891`.
 - Scheduled-Agent capability blocker: #133 `issuecomment-5379922085`.
 - Transition-Gate OpenSpec rejection: #133 `issuecomment-5380345857`.
+- Fixed-role OpenSpec finding: #133 `issuecomment-5380696545`.
 - Existing production classifier: `src/investment_strategy/workflow_dispatch.py`.
 - Existing topology owner: `agents/workflow.md`.
 - Modified canonical requirement: `Active-workflow cardinality and Issue-state coherence precede queue selection`.
 - Added requirement: `Machine-gated runtime authorizes mapped work before model invocation and reauthorizes durable effects`.
-- Decisions 1–3 define the pre-model dispatch boundary.
+- Decisions 1–3 define the pre-model dynamic dispatch boundary.
 - Decisions 4–7 define worker isolation and durable-effect application.
-- Decisions 8–10 preserve topology ownership, continuation semantics, and stateless serialization.
-- Decisions 11–12 define cutover/live verification.
-- Decision 13 defines governance/Skill correction.
+- Decisions 8–11 preserve topology ownership, fresh invocation independence, continuation semantics, and stateless serialization.
+- Decisions 12–13 define cutover/live verification.
+- Decision 14 defines governance/Skill correction.
 
 ## Risks and mitigations
 
 ### Risk: Runtime becomes a second workflow engine
 
-Mitigation: `workflow_dispatch.py` remains the dispatch implementation, `agents/workflow.md` remains topology owner, and runtime code only acquires state, invokes the selected worker, validates/apply effects, and re-dispatches.
+Mitigation: `workflow_dispatch.py` remains the dispatch implementation, `agents/workflow.md` remains topology owner, and runtime code only acquires state, invokes the selected worker, validates/applies effects, and re-dispatches.
 
 ### Risk: Worker finds a write credential through shell/repository state
 
@@ -187,10 +202,14 @@ Mitigation: effect transport is invocation-local, expires with the run, cannot a
 
 Mitigation: fresh application-time dispatch and effect-specific guards reject stale output. No stale preflight is carried through to write authorization.
 
+### Risk: Dynamic role continuation leaks prior role context
+
+Mitigation: every mapped action is a fresh model invocation. A newly selected role receives only its own role/Skill plus current/durable evidence; prior worker conversational context is not reused as authority or Reviewer reasoning input.
+
 ### Risk: Dual scheduler reintroduces the original bypass
 
 Mitigation: full mapped-action coverage is required before cutover and legacy ChatGPT Scheduled Tasks are disabled rather than retained as fallback.
 
 ### Risk: Live canary requires illegal/synthetic state
 
-Mitigation: fixed role slots naturally provide both a non-matching pre-model STOP case and the matching authorized invocation on the ordinary post-merge #133 state.
+Mitigation: ordinary #133 transitions can prove selected-role invocation and dynamic role changes; naturally occurring `NO_WORK`/fail-closed runs prove pre-model STOP without manufacturing illegal state.
