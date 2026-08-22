@@ -51,13 +51,13 @@ Trace: proposal corrected `What Changes`; design Decisions 2–14; added require
 
 ### 4B — Responses API worker and credential isolation
 
-- [ ] **RED:** Add worker-adapter tests proving an authorized exact Issue/role/action is passed to a fresh model invocation with the mapped default-branch role/Skill context and that no model request occurs without the runtime authorization object produced in the same execution.
-- [ ] **RED:** Add tests proving the model cannot self-select or override its authorized role/action.
-- [ ] **RED:** Add credential-boundary tests/configuration assertions proving model-controlled shell/tools cannot obtain a durable write-capable GitHub credential or persisted checkout credential.
-- [ ] **GREEN:** Add the minimum OpenAI Responses API worker adapter. Do not use Codex as the worker runtime. Keep model/provider authentication outside workflow state and expose only the read/local-workspace capabilities required by the selected action.
-- [ ] **GREEN:** Define a structured action-result/effect output contract sufficient to carry the source Issue/role/action, canonical result content, local patch/workspace result when applicable, and requested durable effects without treating that output as authorization.
-- [ ] **GREEN:** Configure checkout/tooling so implementation workers may edit/test the local workspace while remote GitHub durable writes remain unavailable from model-controlled execution.
-- [ ] **REFACTOR:** Keep action reasoning in the mapped role/Skill and runtime authorization outside the model prompt. The worker must not be asked to decide whether it was allowed to start or which role it is.
+- [x] **RED:** Add worker-adapter tests proving an authorized exact Issue/role/action is passed to a fresh model invocation with the mapped default-branch role/Skill context and that no model request occurs without the runtime authorization object produced in the same execution.
+- [x] **RED:** Add tests proving the model cannot self-select or override its authorized role/action.
+- [x] **RED:** Add credential-boundary tests/configuration assertions proving model-controlled shell/tools cannot obtain a durable write-capable GitHub credential or persisted checkout credential.
+- [x] **GREEN:** Add the minimum OpenAI Responses API worker adapter. Do not use Codex as the worker runtime. Keep model/provider authentication outside workflow state and expose only the read/local-workspace capabilities required by the selected action.
+- [x] **GREEN:** Define a structured action-result/effect output contract sufficient to carry the source Issue/role/action, canonical result content, local patch/workspace result when applicable, and requested durable effects without treating that output as authorization.
+- [x] **GREEN:** Configure checkout/tooling so implementation workers may edit/test the local workspace while remote GitHub durable writes remain unavailable from model-controlled execution.
+- [x] **REFACTOR:** Keep action reasoning in the mapped role/Skill and runtime authorization outside the model prompt. The worker must not be asked to decide whether it was allowed to start or which role it is.
 
 ### 4C — Fresh effect application, stale-stop, and dynamic continuation
 
