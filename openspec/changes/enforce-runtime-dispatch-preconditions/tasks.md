@@ -38,16 +38,16 @@ Trace: proposal corrected `What Changes`; design Decisions 2–14; added require
 
 ### 4A — Runtime acquisition, dynamic selection, and pre-model authorization
 
-- [ ] **RED:** Add acquisition-adapter tests that reconstruct complete current Issue/routing/Change state into the production `DispatchPreflight` contract, including pagination/completeness and provenance failure cases.
-- [ ] **RED:** Add runtime tests proving the model-invocation adapter is not called for `FAIL_CLOSED`, `NO_WORK`, multiple-active, or incomplete/unqualified reconstruction.
-- [ ] **RED:** Add tests proving one wake receives the exact classifier-selected Issue/role/action and that trigger metadata cannot override role/action selection.
-- [ ] **RED:** Add the exact #100 formal-active + #130 queued-Explore runtime regression: a wake MUST select #100's current formal action and MUST NOT invoke a model for #130 Explore.
-- [ ] **RED:** Add a Propose regression proving a second `Lead / propose-change` worker is not invoked while another formal workflow occupies WIP.
-- [ ] Run focused RED tests and prove failures are caused by the missing runtime/acquisition integration rather than fixture/import/setup errors.
-- [ ] **GREEN:** Add the minimum repository-owned GitHub acquisition/normalization adapter that can establish observable complete current workflow state and call the existing production classifier.
-- [ ] **GREEN:** Add a Scheduled Agent runtime entrypoint with no fixed role input; execute acquisition/classifier first and construct a worker request only for one exact machine-authorized Issue/role/action.
-- [ ] **GREEN:** Add `.github/workflows/scheduled-agent-runtime.yml` with one scheduled wake path, optional manual `workflow_dispatch` trigger without Issue/role/action override authority, authoritative default-branch checkout, and one repository-wide non-cancelling concurrency group.
-- [ ] **REFACTOR:** Keep selection semantics in `workflow_dispatch.py`; do not duplicate cardinality/queue/role selection logic in YAML, prompt text, or runtime orchestration.
+- [x] **RED:** Add acquisition-adapter tests that reconstruct complete current Issue/routing/Change state into the production `DispatchPreflight` contract, including pagination/completeness and provenance failure cases.
+- [x] **RED:** Add runtime tests proving the model-invocation adapter is not called for `FAIL_CLOSED`, `NO_WORK`, multiple-active, or incomplete/unqualified reconstruction.
+- [x] **RED:** Add tests proving one wake receives the exact classifier-selected Issue/role/action and that trigger metadata cannot override role/action selection.
+- [x] **RED:** Add the exact #100 formal-active + #130 queued-Explore runtime regression: a wake MUST select #100's current formal action and MUST NOT invoke a model for #130 Explore.
+- [x] **RED:** Add a Propose regression proving a second `Lead / propose-change` worker is not invoked while another formal workflow occupies WIP.
+- [x] Run focused RED tests and prove failures are caused by the missing runtime/acquisition integration rather than fixture/import/setup errors.
+- [x] **GREEN:** Add the minimum repository-owned GitHub acquisition/normalization adapter that can establish observable complete current workflow state and call the existing production classifier.
+- [x] **GREEN:** Add a Scheduled Agent runtime entrypoint with no fixed role input; execute acquisition/classifier first and construct a worker request only for one exact machine-authorized Issue/role/action.
+- [x] **GREEN:** Add `.github/workflows/scheduled-agent-runtime.yml` with one scheduled wake path, optional manual `workflow_dispatch` trigger without Issue/role/action override authority, authoritative default-branch checkout, and one repository-wide non-cancelling concurrency group.
+- [x] **REFACTOR:** Keep selection semantics in `workflow_dispatch.py`; do not duplicate cardinality/queue/role selection logic in YAML, prompt text, or runtime orchestration.
 
 ### 4B — Responses API worker and credential isolation
 
