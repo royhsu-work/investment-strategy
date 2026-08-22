@@ -1,5 +1,11 @@
 """Runtime dispatch precondition regressions for #133."""
 
+from investment_strategy.scheduled_agent_runtime import (
+    GitHubIssueObservation,
+    RuntimeTrigger,
+    acquire_dispatch_preflight,
+    authorize_worker_request,
+)
 from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
     EnumerationEvidence,
@@ -40,6 +46,17 @@ def complete(*issues: RepositoryIssueSnapshot) -> DispatchPreflight:
             exhausted=True,
             observation_provenance=ObservationProvenance.QUALIFIED,
         ),
+    )
+
+
+def observation(number: int, change: str, routing: Routing | None) -> GitHubIssueObservation:
+    return GitHubIssueObservation(
+        issue_number=number,
+        change=change,
+        routing=routing,
+        state="open",
+        created_order=number,
+        authoritative=True,
     )
 
 
@@ -193,3 +210,76 @@ def test_postwrite_wrong_change_has_no_accepted_activation() -> None:
         issue_number=133,
         expected_change="enforce-runtime-dispatch-preconditions",
     )
+
+
+def test_runtime_acquisition_requires_complete_authoritative_observations() -> None:
+    preflight = acquire_dispatch_preflight(
+        observations=(observation(133, "enforce-runtime-dispatch-preconditions", ("executor", "implement-change")),),
+        source_total_count=2,
+        incomplete_results=False,
+        exhausted=False,
+    )
+    assert classify_dispatch(preflight).disposition == "FAIL_CLOSED"
+
+
+def test_runtime_does_not_construct_worker_request_for_fail_closed_or_no_work() -> None:
+    incomplete = acquire_dispatch_preflight(
+        observations=(observation(133, "enforce-runtime-dispatch-preconditions", ("executor", "implement-change")),),
+        source_total_count=2,
+        incomplete_results=False,
+        exhausted=False,
+    )
+    assert authorize_worker_request(incomplete, RuntimeTrigger()) is None
+
+    no_work = acquire_dispatch_preflight(
+        observations=(),
+        source_total_count=0,
+        incomplete_results=False,
+        exhausted=True,
+    )
+    assert authorize_worker_request(no_work, RuntimeTrigger()) is None
+
+
+def test_one_wake_uses_classifier_selected_issue_role_action_not_trigger_metadata() -> None:
+    preflight = acquire_dispatch_preflight(
+        observations=(observation(133, "enforce-runtime-dispatch-preconditions", ("executor", "implement-change")),),
+        source_total_count=1,
+        incomplete_results=False,
+        exhausted=True,
+    )
+    request = authorize_worker_request(
+        preflight,
+        RuntimeTrigger(requested_issue=137, requested_role="lead", requested_action="explore-change"),
+    )
+    assert request is not None
+    assert (request.issue_number, request.role, request.action) == (133, "executor", "implement-change")
+
+
+def test_runtime_100_130_recurrence_invokes_only_current_formal_work() -> None:
+    preflight = acquire_dispatch_preflight(
+        observations=(
+            observation(100, "complete-required-followup-materialization", ("lead", "finalize-change")),
+            observation(130, "unset", ("lead", "explore-change")),
+        ),
+        source_total_count=2,
+        incomplete_results=False,
+        exhausted=True,
+    )
+    request = authorize_worker_request(preflight, RuntimeTrigger())
+    assert request is not None
+    assert (request.issue_number, request.role, request.action) == (100, "lead", "finalize-change")
+
+
+def test_runtime_does_not_invoke_second_propose_while_formal_wip_exists() -> None:
+    preflight = acquire_dispatch_preflight(
+        observations=(
+            observation(100, "complete-required-followup-materialization", ("lead", "finalize-change")),
+            observation(137, "unset", ("lead", "propose-change")),
+        ),
+        source_total_count=2,
+        incomplete_results=False,
+        exhausted=True,
+    )
+    request = authorize_worker_request(preflight, RuntimeTrigger())
+    assert request is not None
+    assert request.issue_number == 100
