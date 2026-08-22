@@ -54,6 +54,17 @@ When the surface exposes completeness metadata, consume it; when pagination is r
 required pages. If completeness cannot be established, classification is `indeterminate` and dispatch
 fails closed.
 
+For workflow-dynamic authorization, the complete reconstruction MUST be normalized into the repository-
+owned executable precondition in `src/investment_strategy/workflow_dispatch.py`, and runtime MUST execute
+and consume that production decision rather than re-derive a separate classifier from prose.
+Authorization-bearing current Issue state, persisted `Change:` identity, routing labels/tuple, and
+enumeration/completeness evidence MUST come from authoritative GitHub observations obtained during the same
+invocation that consumes the decision. Conversation history, prior Scheduled-Agent output, model memory,
+cached observations, and historical Issue body/comment routing are context/audit evidence only and MUST NOT
+satisfy missing current-state fields. If the helper cannot execute, complete provenance-qualified normalized
+evidence cannot be supplied, or required current workflow identity/routing cannot be normalized without
+ambiguity, authorization is `indeterminate` and fails closed.
+
 From that one complete current reconstruction, classify formal active workflows and apply this canonical
 decision table before mapped action execution:
 
@@ -64,15 +75,17 @@ decision table before mapped action execution:
 | `>1` | fail closed before any normal mapped action executes |
 | `indeterminate` | fail closed before any normal mapped action executes |
 
-A selected action consumes this shared pre-dispatch classification as an execution precondition. Before a
-formal lifecycle/review/implementation action proceeds, its current coordination Issue MUST still be the
-sole formal workflow selected by the shared preflight. Before substantive `explore-change` work begins, a
-fresh current reconstruction MUST still prove formal cardinality `0`, no bounded recovery candidate, and
-selected-Issue equality with the deterministic combined pre-activation winner. `propose-change`
-additionally performs its existing immediate pre-activation and post-write checks using the same complete-
-cardinality evidence. If routing, Issue state, Change identity, repository enumeration, or winner identity
-is stale, incomplete, or contradictory at action entry, fail closed and reconstruct rather than proceeding
-from candidate-local context.
+A selected action consumes this executable shared pre-dispatch decision as an execution precondition. Before
+a formal lifecycle/review/implementation action proceeds, a fresh executable decision MUST still prove its
+current coordination Issue is the sole formal workflow selected by the shared preflight. Before substantive
+`explore-change` work begins, a fresh execution of the precondition from a complete provenance-qualified
+current snapshot MUST still prove formal cardinality `0`, no bounded recovery candidate, and selected-Issue
+equality with the deterministic combined pre-activation winner. `propose-change` additionally executes the
+same executable precondition immediately before the activation write and again from a newly fresh complete
+provenance-qualified repository snapshot immediately after the write. If routing, Issue state, Change
+identity, repository enumeration, winner identity, executable availability, observation provenance, or
+completeness is stale, unavailable, incomplete, or contradictory at action entry, fail closed and
+reconstruct rather than proceeding from candidate-local context.
 
 If workflow-dynamic reconstruction finds multiple active workflows, invalid routing, or otherwise
 cannot identify one legal active workflow, it MUST fail closed and MUST NOT guess an owner. Multiple formal
