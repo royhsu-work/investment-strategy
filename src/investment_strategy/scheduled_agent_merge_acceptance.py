@@ -1,0 +1,307 @@
+"""Application-time merge acceptance for the machine-gated Scheduled Agent runtime."""
+
+from __future__ import annotations
+
+import json
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import datetime
+from typing import cast
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+from investment_strategy.human_authority import HUMAN_ACTOR
+from investment_strategy.scheduled_agent_effect_contract import GITHUB_MUTATION_KIND
+from investment_strategy.scheduled_agent_effects import (
+    ApplyResult,
+    EffectBatch,
+    StagedEffect,
+    parse_effect_batch,
+    run_effect_application,
+)
+from investment_strategy.scheduled_agent_runtime import WorkerRequest
+
+_REVIEW_ACTIONS = ("review-implementation", "review-archive")
+_CLOSING_KEYWORDS = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)"
+_ACCEPTED_CHECK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
+
+
+@dataclass(frozen=True)
+class MergeAcceptanceSnapshot:
+    """Fresh structural evidence required immediately before a merge effect."""
+
+    pr_open: bool
+    current_head_sha: str | None
+    expected_head_sha: str
+    reviewer_pass_head_sha: str | None
+    required_checks_pass: bool
+    non_closing_linkage: bool
+    contradictory_evidence: bool
+    human_input_fresh: bool
+    complete: bool
+
+
+def merge_acceptance_allows(snapshot: MergeAcceptanceSnapshot) -> bool:
+    """Return whether all fresh merge-acceptance predicates hold together."""
+
+    return (
+        snapshot.complete
+        and snapshot.pr_open
+        and snapshot.current_head_sha == snapshot.expected_head_sha
+        and snapshot.reviewer_pass_head_sha == snapshot.expected_head_sha
+        and snapshot.required_checks_pass
+        and snapshot.non_closing_linkage
+        and not snapshot.contradictory_evidence
+        and snapshot.human_input_fresh
+    )
+
+
+def _github_json(repository: str, token: str, api_path: str) -> object:
+    request = Request(  # noqa: S310 - fixed trusted GitHub API host
+        f"https://api.github.com/repos/{repository}/{api_path.lstrip('/')}",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _paged_github_list(repository: str, token: str, api_path: str) -> tuple[Mapping[str, object], ...]:
+    items: list[Mapping[str, object]] = []
+    page = 1
+    while True:
+        separator = "&" if "?" in api_path else "?"
+        decoded = _github_json(
+            repository,
+            token,
+            f"{api_path}{separator}{urlencode({'per_page': 100, 'page': page})}",
+        )
+        if not isinstance(decoded, list):
+            raise RuntimeError("GitHub paginated evidence endpoint returned a non-list response")
+        current: list[Mapping[str, object]] = []
+        for item in decoded:
+            if not isinstance(item, Mapping):
+                raise RuntimeError("GitHub paginated evidence endpoint returned a malformed item")
+            current.append(cast(Mapping[str, object], item))
+        items.extend(current)
+        if len(current) < 100:
+            return tuple(items)
+        page += 1
+
+
+def _timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _pull_request_head_sha(payload: Mapping[str, object]) -> str | None:
+    head = payload.get("head")
+    if not isinstance(head, Mapping):
+        return None
+    sha = head.get("sha")
+    return sha if isinstance(sha, str) else None
+
+
+def _merge_payload(effect: StagedEffect) -> Mapping[str, object] | None:
+    if effect.kind != GITHUB_MUTATION_KIND:
+        return None
+    try:
+        payload = json.loads(effect.payload_json)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, Mapping) or payload.get("operation") != "pull-request-merge":
+        return None
+    return cast(Mapping[str, object], payload)
+
+
+def _review_record(body: object) -> tuple[str, str, str] | None:
+    if not isinstance(body, str):
+        return None
+    action_match = re.search(r"Action:\s*`?Reviewer / (review-(?:implementation|archive))`?", body)
+    result_match = re.search(r"Result:\s*`?(PASS|IMPLEMENTATION_FINDINGS|FINDINGS)`?", body)
+    revision_match = re.search(r"Revision:\s*`?([0-9a-f]{40})`?", body)
+    if action_match is None or result_match is None or revision_match is None:
+        return None
+    return action_match.group(1), result_match.group(1), revision_match.group(1)
+
+
+def _latest_matching_pass(
+    comments: tuple[Mapping[str, object], ...],
+    expected_head_sha: str,
+) -> tuple[str | None, datetime | None, bool, bool]:
+    records: list[tuple[datetime, int, str, str, str]] = []
+    complete = True
+    for comment in comments:
+        record = _review_record(comment.get("body"))
+        if record is None:
+            continue
+        created_at = _timestamp(comment.get("created_at"))
+        comment_id = comment.get("id")
+        if created_at is None or not isinstance(comment_id, int):
+            complete = False
+            continue
+        action, result, revision = record
+        records.append((created_at, comment_id, action, result, revision))
+
+    matching = [record for record in records if record[4] == expected_head_sha]
+    passes = [record for record in matching if record[3] == "PASS" and record[2] in _REVIEW_ACTIONS]
+    if not passes:
+        return None, None, False, complete
+
+    latest_pass = max(passes, key=lambda item: (item[0], item[1]))
+    later_contradiction = any(
+        (record[0], record[1]) > (latest_pass[0], latest_pass[1])
+        and record[2] == latest_pass[2]
+        and record[3] != "PASS"
+        for record in records
+    )
+    return latest_pass[4], latest_pass[0], later_contradiction, complete
+
+
+def _non_closing_linkage(body: object, issue_number: int) -> bool:
+    if not isinstance(body, str):
+        return False
+    non_closing = re.search(rf"(?im)^\s*Refs\s+#{issue_number}\b", body) is not None
+    closing = re.search(rf"(?i)\b{_CLOSING_KEYWORDS}\s*:?[ \t]+#{issue_number}\b", body) is not None
+    return non_closing and not closing
+
+
+def _required_checks_pass(repository: str, token: str, head_sha: str) -> tuple[bool, bool]:
+    check_runs = _paged_github_list(repository, token, f"commits/{head_sha}/check-runs")
+    # The check-runs endpoint is an object, not a list, so consume it directly instead.
+    del check_runs
+    decoded = _github_json(repository, token, f"commits/{head_sha}/check-runs?per_page=100")
+    if not isinstance(decoded, Mapping):
+        return False, False
+    total_count = decoded.get("total_count")
+    raw_runs = decoded.get("check_runs")
+    if not isinstance(total_count, int) or not isinstance(raw_runs, list) or total_count != len(raw_runs):
+        return False, False
+    if total_count == 0:
+        return False, False
+    for raw in raw_runs:
+        if not isinstance(raw, Mapping):
+            return False, False
+        status = raw.get("status")
+        conclusion = raw.get("conclusion")
+        if status != "completed" or conclusion not in _ACCEPTED_CHECK_CONCLUSIONS:
+            return False, True
+    return True, True
+
+
+def _human_input_fresh(
+    comments: tuple[Mapping[str, object], ...],
+    relied_upon_at: datetime | None,
+) -> tuple[bool, bool]:
+    if relied_upon_at is None:
+        return False, False
+    for comment in comments:
+        created_at = _timestamp(comment.get("created_at"))
+        if created_at is None:
+            return False, False
+        if created_at <= relied_upon_at:
+            continue
+        user = comment.get("user")
+        if not isinstance(user, Mapping) or not isinstance(user.get("login"), str):
+            return False, False
+        if user.get("login") != HUMAN_ACTOR:
+            continue
+        if "performed_via_github_app" not in comment:
+            return False, False
+        if comment.get("performed_via_github_app") is None:
+            # Conservative application-time boundary: newer direct-Human input
+            # requires a later accepted review before merge rather than being
+            # inferred non-blocking by the mutation adapter.
+            return False, True
+    return True, True
+
+
+def acquire_merge_acceptance_snapshot(
+    *,
+    repository: str,
+    token: str,
+    issue_number: int,
+    pr_number: int,
+    expected_head_sha: str,
+) -> MergeAcceptanceSnapshot:
+    """Acquire current GitHub evidence for one staged merge immediately before application."""
+
+    try:
+        pr = _github_json(repository, token, f"pulls/{pr_number}")
+        comments = _paged_github_list(repository, token, f"issues/{issue_number}/comments")
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return MergeAcceptanceSnapshot(
+            False, None, expected_head_sha, None, False, False, True, False, False
+        )
+    if not isinstance(pr, Mapping):
+        return MergeAcceptanceSnapshot(
+            False, None, expected_head_sha, None, False, False, True, False, False
+        )
+
+    reviewer_pass_head, pass_time, contradiction, review_complete = _latest_matching_pass(
+        comments, expected_head_sha
+    )
+    try:
+        checks_pass, checks_complete = _required_checks_pass(repository, token, expected_head_sha)
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        checks_pass, checks_complete = False, False
+    human_fresh, human_complete = _human_input_fresh(comments, pass_time)
+    complete = review_complete and checks_complete and human_complete
+
+    return MergeAcceptanceSnapshot(
+        pr_open=pr.get("state") == "open",
+        current_head_sha=_pull_request_head_sha(pr),
+        expected_head_sha=expected_head_sha,
+        reviewer_pass_head_sha=reviewer_pass_head,
+        required_checks_pass=checks_pass,
+        non_closing_linkage=_non_closing_linkage(pr.get("body"), issue_number),
+        contradictory_evidence=contradiction,
+        human_input_fresh=human_fresh,
+        complete=complete,
+    )
+
+
+def run_guarded_effect_application(
+    raw_worker_result: str,
+    *,
+    source: WorkerRequest,
+    repository: str,
+    token: str,
+    workflow_text: str,
+) -> tuple[EffectBatch, ApplyResult]:
+    """Reject stale merge acceptance before entering the durable-effect applier."""
+
+    batch = parse_effect_batch(raw_worker_result, source)
+    for effect in batch.effects:
+        payload = _merge_payload(effect)
+        if payload is None:
+            continue
+        number = payload.get("number")
+        expected_head_sha = payload.get("expected_head_sha")
+        if not isinstance(number, int) or not isinstance(expected_head_sha, str):
+            return batch, ApplyResult(False, "merge acceptance evidence is incomplete")
+        snapshot = acquire_merge_acceptance_snapshot(
+            repository=repository,
+            token=token,
+            issue_number=source.issue_number,
+            pr_number=number,
+            expected_head_sha=expected_head_sha,
+        )
+        if not merge_acceptance_allows(snapshot):
+            return batch, ApplyResult(False, "fresh merge acceptance rejected")
+
+    return run_effect_application(
+        raw_worker_result,
+        source=source,
+        repository=repository,
+        token=token,
+        workflow_text=workflow_text,
+    )
