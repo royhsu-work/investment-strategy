@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -211,3 +212,54 @@ class OpenAIResponsesTransport:
         if not isinstance(decoded, Mapping):
             raise RuntimeError("Responses API returned a malformed response")
         return _extract_output_text(cast(Mapping[str, object], decoded))
+
+
+def _authorized_request_from_environment() -> WorkerRequest:
+    issue = os.environ.get("AUTHORIZED_ISSUE")
+    role = os.environ.get("AUTHORIZED_ROLE")
+    action = os.environ.get("AUTHORIZED_ACTION")
+    if not issue or not role or not action:
+        raise RuntimeError("machine-authorized Issue/role/action environment is required")
+    try:
+        issue_number = int(issue)
+    except ValueError as exc:
+        raise RuntimeError("AUTHORIZED_ISSUE must be an integer") from exc
+    return WorkerRequest(issue_number=issue_number, role=role, action=action)
+
+
+def main() -> int:
+    """Invoke one fresh Responses API worker for the exact same-run authorization."""
+
+    api_key = os.environ.get("OPENAI_API_KEY")
+    model = os.environ.get("OPENAI_MODEL")
+    if not api_key or not model:
+        raise RuntimeError("OPENAI_API_KEY and OPENAI_MODEL are required")
+
+    request = _authorized_request_from_environment()
+    result = run_authorized_worker(
+        request,
+        Path.cwd(),
+        OpenAIResponsesTransport(api_key=api_key, model=model),
+    )
+    if result is None:
+        raise RuntimeError("authorized worker unexpectedly produced no result")
+    print(
+        json.dumps(
+            {
+                "issue_number": result.issue_number,
+                "role": result.role,
+                "action": result.action,
+                "result_content": result.result_content,
+                "requested_effects": [
+                    {"kind": effect.kind, "payload_json": effect.payload_json}
+                    for effect in result.requested_effects
+                ],
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
