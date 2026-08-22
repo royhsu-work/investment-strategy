@@ -1,10 +1,14 @@
-"""Fresh effect-application and continuation regressions for #133 Slice 4C."""
+"""Fresh effect-application and continuation regressions for #133 Slice 4C/4D."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
+from investment_strategy.scheduled_agent_effect_contract import (
+    allowed_github_mutation_operations,
+    mapped_role_actions,
+)
 from investment_strategy.scheduled_agent_effects import (
     EffectBatch,
     StagedEffect,
@@ -155,6 +159,11 @@ def test_same_role_continuation_requires_fresh_redispatch() -> None:
     assert result.continuation == _request(action="merge-pr")
 
 
+def test_same_action_remaining_work_also_requires_fresh_worker() -> None:
+    source = _request()
+    assert continuation_requires_fresh_wake(source, source)
+
+
 def test_cross_role_continuation_is_new_machine_selected_identity() -> None:
     states = iter((_preflight(), _preflight(role="reviewer", action="review-implementation")))
     result = apply_effect_batch(
@@ -196,6 +205,23 @@ def test_supported_effect_guard_rejects_foreign_issue_and_unknown_kind() -> None
             ),
         ),
     )
+    assert supported_effect_guard(
+        source,
+        StagedEffect(
+            kind="github-mutation",
+            payload_json=json.dumps(
+                {
+                    "issue_number": 133,
+                    "operation": "contents-upsert",
+                    "path": "src/example.py",
+                    "branch": "agent/example",
+                    "message": "Update example",
+                    "content": "print('ok')\n",
+                    "expected_sha": None,
+                }
+            ),
+        ),
+    )
     assert not supported_effect_guard(
         source,
         StagedEffect(
@@ -204,9 +230,59 @@ def test_supported_effect_guard_rejects_foreign_issue_and_unknown_kind() -> None
         ),
     )
     assert not supported_effect_guard(
+        _request(role="reviewer", action="review-implementation"),
+        StagedEffect(
+            kind="github-mutation",
+            payload_json=json.dumps(
+                {
+                    "issue_number": 133,
+                    "operation": "contents-upsert",
+                    "path": "src/example.py",
+                    "branch": "agent/example",
+                    "message": "forbidden reviewer write",
+                    "content": "x = 1\n",
+                    "expected_sha": None,
+                }
+            ),
+        ),
+    )
+    assert not supported_effect_guard(
         source,
         StagedEffect(kind="unknown-effect", payload_json="{}"),
     )
+
+
+def test_all_ten_mapped_actions_have_shared_durable_effect_profiles() -> None:
+    expected_actions = {
+        ("lead", "explore-change"),
+        ("lead", "propose-change"),
+        ("lead", "resolve-question"),
+        ("lead", "finalize-change"),
+        ("lead", "finalize-archive"),
+        ("reviewer", "review-openspec"),
+        ("reviewer", "review-implementation"),
+        ("reviewer", "review-archive"),
+        ("executor", "implement-change"),
+        ("executor", "merge-pr"),
+    }
+    assert mapped_role_actions() == expected_actions
+
+    # Reviewers need only the common issue-comment/routing effects. Other actions
+    # receive the repository mutation operations required by their current Skills.
+    required_operations = {
+        ("lead", "explore-change"): {"issue-update"},
+        ("lead", "propose-change"): {"contents-upsert", "pull-request-create"},
+        ("lead", "resolve-question"): {"issue-create", "contents-upsert"},
+        ("lead", "finalize-change"): {"issue-create", "pull-request-create"},
+        ("lead", "finalize-archive"): {"issue-update"},
+        ("reviewer", "review-openspec"): set(),
+        ("reviewer", "review-implementation"): set(),
+        ("reviewer", "review-archive"): set(),
+        ("executor", "implement-change"): {"contents-upsert", "pull-request-ready"},
+        ("executor", "merge-pr"): {"pull-request-merge", "ref-delete"},
+    }
+    for identity, operations in required_operations.items():
+        assert operations <= allowed_github_mutation_operations(*identity)
 
 
 def test_topology_validator_consumes_canonical_workflow_text() -> None:
@@ -239,14 +315,14 @@ def test_topology_validator_consumes_canonical_workflow_text() -> None:
     )
 
 
-def test_continuation_requires_a_fresh_wake_only_for_new_selected_action() -> None:
+def test_continuation_requires_a_fresh_wake_for_any_selected_work() -> None:
     source = _request()
+    assert continuation_requires_fresh_wake(source, source)
     assert continuation_requires_fresh_wake(source, _request(action="merge-pr"))
     assert continuation_requires_fresh_wake(
         source,
         _request(role="reviewer", action="review-implementation"),
     )
-    assert not continuation_requires_fresh_wake(source, source)
     assert not continuation_requires_fresh_wake(source, None)
 
 
@@ -256,6 +332,7 @@ def test_workflow_transports_worker_output_to_write_authorized_apply_boundary() 
     assert "actions/download-artifact@v4" in workflow
     assert "scheduled-agent-result-${{ github.run_id }}-${{ github.run_attempt }}" in workflow
     assert "uv run python -m investment_strategy.scheduled_agent_effects" in workflow
+    assert "uv run python -m investment_strategy.scheduled_agent_worker_runtime" in workflow
 
     worker_section = workflow.split("\n  worker:", 1)[1].split("\n  apply:", 1)[0]
     assert "issues: write" not in worker_section
@@ -264,6 +341,8 @@ def test_workflow_transports_worker_output_to_write_authorized_apply_boundary() 
 
     apply_section = workflow.split("\n  apply:", 1)[1]
     assert "issues: write" in apply_section
+    assert "pull-requests: write" in apply_section
+    assert "contents: write" in apply_section
     assert "actions: write" in apply_section
     assert "GITHUB_TOKEN:" in apply_section
 
