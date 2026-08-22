@@ -8,25 +8,28 @@ Reviewer implementation finding `issuecomment-5379837891` showed that the then-a
 
 Further feasibility work established the required boundary more precisely: executable authorization must occur **before the model worker for a mapped action is invoked**. The current ChatGPT Scheduled Tasks surface has no demonstrated external webhook/pre-invocation hook that lets repository code decide whether a mapped action may start. Repository-hosted GitHub Actions can own scheduling and execute `workflow_dispatch.py` before any model request. The model worker can then operate inside an isolated runner/workspace without durable GitHub write authority, while repository-owned application code fresh-revalidates the same workflow state before committing any requested durable effect.
 
-The corrected target is therefore a **machine-gated Scheduled Agent runtime**, not an Issue-comment transition gate and not a second workflow engine.
+Reviewer finding `issuecomment-5380696545` then identified one unnecessary constraint in that machine-gated design: fixed Lead/Reviewer/Executor schedule slots would preserve avoidable idle wakes and delay legal cross-role progress. The Human-selected correction is to preserve **dynamic roles** while moving role selection entirely into the executable pre-model dispatcher. One scheduled wake reconstructs current repository state; the production classifier selects the exact coordination Issue, role, and action; only then is a fresh model invocation constructed for that exact role/action. The model never self-selects or overrides its role.
+
+The corrected target is therefore a **single-wake, machine-gated dynamic Scheduled Agent runtime**, not an Issue-comment transition gate, not fixed role scheduling, and not a second workflow engine.
 
 ## What Changes
 
 - Preserve `src/investment_strategy/workflow_dispatch.py` as the one repository-owned pure dispatch/cardinality/action-authorization implementation used by regressions and live runtime authorization.
 - Add one repository-hosted Scheduled Agent runtime in GitHub Actions. Its scheduled/manual wake path checks out authoritative default-branch governance, reconstructs complete current GitHub workflow state, builds provenance-qualified classifier input, and executes the production classifier **before any mapped-action model invocation**.
-- Preserve the three fixed role slots. Scheduled wakes for Lead, Reviewer, and Executor carry only the fixed slot role; the executable dispatcher selects the current Issue/routing from GitHub. A slot whose role does not match the selected current role exits without invoking a model.
-- Permit an explicit GitHub Actions manual wake only when it is subject to the same pre-model dispatcher and fixed-role-match rule. Manual wake is an execution trigger, not workflow authorization or a target-selection override.
+- Preserve dynamic roles. A wake carries no Lead/Reviewer/Executor authority. The executable dispatcher selects the exact current coordination Issue, role, and action from authoritative GitHub state; only that selected role/action may be used to construct the model worker invocation.
+- Permit an explicit GitHub Actions manual wake only when it is subject to the same pre-model dispatcher. Manual wake is an execution trigger, not workflow authorization, role selection, target selection, or an override.
 - Invoke an OpenAI Responses API model worker only after the dispatcher authorizes the exact coordination Issue, role, and action. The worker receives the mapped default-branch role/Skill context and repository/GitHub read capability needed by that action, plus local workspace tools where implementation work requires them.
 - Do not use Codex as the worker runtime for this Change. The runtime integration is repository code calling the OpenAI Responses API; model choice/authentication is deployment configuration and does not become workflow state.
 - Prevent the model worker from possessing durable GitHub write authority. Durable writes—including Issue/PR comments and labels, Change/routing mutation, branch/commit/PR changes, merge, close/reopen, and other workflow-owned GitHub effects—must pass through repository-owned apply code rather than a model-visible write credential.
 - Represent worker-requested effects only as invocation-local output/transport. Such staged effects are not workflow state, are not an authorization token, and cannot authorize a later run.
 - Before each effect batch is durably applied, fresh-reconstruct current GitHub state and re-run the production classifier. Application is allowed only while the exact source Issue/role/action remains authorized and any effect-specific repository preconditions still hold. A stale, incomplete, contradictory, multiple-active, or otherwise unprovable source fails closed without applying the staged effects.
 - Keep `agents/workflow.md` as the single lifecycle-topology owner. Routing/successor effects must be validated against that authoritative topology without introducing a second normative DAG or hidden lifecycle registry.
-- After an accepted effect batch, fresh-read the resulting durable state. Same-role continuation may run only after another executable dispatch from that new current state; cross-role continuation ends the fixed-role execution and waits for the matching role slot.
+- After an accepted effect batch, fresh-read the resulting durable state and execute another machine dispatch. If the newly selected exact Issue/role/action is legally work-conserving, a fresh model invocation may continue in the same runtime execution even when the role changes; no previous authorization or model context is reused as authority.
+- Preserve Reviewer independence across dynamic-role transitions: Reviewer execution is a fresh model invocation constructed from current durable evidence and the Reviewer role/Skill, not a continuation of Lead/Executor model context.
 - Use one repository-wide runtime concurrency boundary so only one Scheduled Agent runtime execution applies workflow effects at a time. Concurrency is runner serialization only; it is not a lock/lease/heartbeat/claim or repository workflow state.
 - Cover **all mapped actions**, including `explore-change` and `propose-change`, before this runtime becomes the sole scheduled execution path. A partial cutover that leaves an independent ChatGPT Scheduled Task able to start mapped work would not satisfy #133.
 - Cut over without dual schedulers: legacy ChatGPT Scheduled Tasks must be disabled before/when the GitHub Actions runtime becomes authoritative for normal scheduled mapped actions. They are not retained as a fallback execution path.
-- Require post-merge live evidence from normal #133 state: at least one scheduled role slot that does not match the current selected role must prove pre-model STOP/no model invocation, and the matching selected role slot must prove dispatcher authorization before the first real model invocation. No synthetic second formal workflow or special `Lead / resolve-question` state is required.
+- Require post-merge live evidence from normal #133 state: at least one scheduled wake must prove complete pre-model dispatch and invocation of only the classifier-selected exact Issue/role/action; a fail-closed or no-work wake must prove no model invocation. No synthetic second formal workflow or special routing state is required.
 
 ## Affected Capabilities
 
@@ -34,10 +37,11 @@ The corrected target is therefore a **machine-gated Scheduled Agent runtime**, n
 
 - `scheduled-agent-workflow`
   - complete same-execution GitHub reconstruction and production classifier consumption become a pre-model runtime gate rather than an Agent-followed instruction;
-  - fixed role scheduling remains, but repository-hosted GitHub Actions owns the wake/runtime boundary;
-  - unauthorized/mismatched/incomplete dispatch exits before a mapped model action begins;
+  - one repository-hosted wake dynamically selects the exact Issue/role/action before model invocation;
+  - unauthorized/incomplete/no-work dispatch exits before a mapped model action begins;
   - worker-requested durable effects are reauthorized from fresh current state before application;
-  - same-role continuation is re-dispatched after applied durable state rather than inheriting an earlier authorization;
+  - continuation is re-dispatched from resulting durable state and may dynamically select another role only through a fresh model invocation;
+  - Reviewer independence remains role/Skill + fresh invocation + durable-evidence isolation rather than fixed schedule-slot isolation;
   - legacy ChatGPT Scheduled Tasks are not a parallel normal runtime after cutover.
 
 ## Scope
@@ -46,14 +50,14 @@ In scope:
 
 - Existing pure production dispatch classifier and observation-provenance input contract.
 - Repository-owned GitHub acquisition/normalization sufficient to build complete `DispatchPreflight` input in GitHub Actions.
-- GitHub Actions scheduled/manual runtime wake with fixed Lead/Reviewer/Executor role slots and repository-wide execution serialization.
+- One GitHub Actions scheduled/manual runtime wake with machine-selected dynamic Issue/role/action and repository-wide execution serialization.
 - A Responses API worker adapter that invokes a model only after exact Issue/role/action authorization.
 - Model-worker isolation from durable GitHub write credentials.
 - Invocation-local staged effect/result transport and repository-owned effect application after fresh classifier/action reauthorization.
 - Effect-specific fresh guards, post-write verification, and stale-stop behavior.
-- Same-role continuation only through fresh post-apply dispatch.
+- Work-conserving continuation only through fresh post-apply dispatch; role change requires a fresh role-specific model invocation.
 - Coverage of every mapped normal action, including pre-activation Explore and Propose, before runtime cutover.
-- Removal/correction of prior governance/Skill wording that treated the current ChatGPT Scheduled Agent as the live executor/authorization owner.
+- Removal/correction of prior governance/Skill wording that treated the current ChatGPT Scheduled Agent as the live executor/authorization owner or fixed role slots as required runtime semantics.
 - PR-stage runtime/adapter tests plus post-merge live default-branch canary evidence from ordinary #133 lifecycle state.
 
 Out of scope:
@@ -85,6 +89,7 @@ No new user-triggered Skill is introduced. The Scheduled Agent runtime is reposi
 - Reviewer implementation finding proving Agent-side executable consumption was absent: #133 `issuecomment-5379837891`.
 - Executor capability blocker for the assumed Scheduled-Agent repository execution path: #133 `issuecomment-5379922085`.
 - Reviewer OpenSpec finding rejecting the later Transition-Gate MVP: #133 `issuecomment-5380345857`.
+- Reviewer OpenSpec finding removing fixed role slots while preserving machine-gated dynamic dispatch: #133 `issuecomment-5380696545`.
 - Prior semantic remediation: #105 / Change `enforce-dispatch-cardinality-preflight`.
 - Existing canonical requirement: `Active-workflow cardinality and Issue-state coherence precede queue selection`.
 - Added requirement in this correction: `Machine-gated runtime authorizes mapped work before model invocation and reauthorizes durable effects`.
