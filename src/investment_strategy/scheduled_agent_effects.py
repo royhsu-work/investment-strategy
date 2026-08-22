@@ -276,10 +276,11 @@ class GitHubEffectAdapter:
             target_action_label = f"action:{target_action}"
 
             if source_action_label != target_action_label:
+                encoded_action_label = quote(source_action_label, safe="")
                 _github_json(
                     self.repository,
                     self.token,
-                    f"issues/{self.source.issue_number}/labels/{quote(source_action_label, safe='')}",
+                    f"issues/{self.source.issue_number}/labels/{encoded_action_label}",
                     method="DELETE",
                 )
             if source_role_label != target_role_label:
