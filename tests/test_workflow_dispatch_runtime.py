@@ -5,6 +5,7 @@ from investment_strategy.workflow_dispatch import (
     EnumerationEvidence,
     ObservationProvenance,
     RepositoryIssueSnapshot,
+    Routing,
     classify_dispatch,
 )
 
@@ -12,7 +13,7 @@ from investment_strategy.workflow_dispatch import (
 def issue(
     number: int,
     change: str,
-    routing: tuple[str, str] | None,
+    routing: Routing | None,
     *,
     created_order: int = 0,
     provenance: ObservationProvenance = ObservationProvenance.QUALIFIED,
