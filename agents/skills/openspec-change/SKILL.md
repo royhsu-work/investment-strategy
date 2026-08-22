@@ -151,6 +151,8 @@ use the applicable `ACTION_RESULT`; a genuine unresolved Human authority/intent 
 the routing mutation succeeds. Same-role action transitions continue from the source result and routing
 mutation without `HANDOFF`; do not add an action-transition message type.
 
+For workflow-dynamic `Lead / propose-change`, the applicable `ACTION_RESULT` renders the exact activation evidence consumed by the action: the immediate pre-write executable decision, expected Change identity, post-write formal-active/terminal-pending Issue identities, post-write completeness, post-write observation provenance, post-write disposition, and whether activation accepted. These fields preserve the consumed pre-write/post-write decisions for audit and are not recomputed from a later Agent summary or reused as authorization by another invocation.
+
 ## Safety
 
 - Do not infer missing specification meaning on behalf of Executor.
