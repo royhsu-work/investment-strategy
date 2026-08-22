@@ -4,7 +4,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _read(path: str) -> str:
-    return (ROOT / path).read_text(encoding="utf-8")
+    return " ".join((ROOT / path).read_text(encoding="utf-8").split())
 
 
 def test_required_deferred_follow_up_has_one_shared_semantic_boundary() -> None:
