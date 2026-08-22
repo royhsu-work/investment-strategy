@@ -101,4 +101,7 @@ def test_worker_job_has_no_model_controlled_github_write_credential() -> None:
     assert "OPENAI_API_KEY:" in workflow
     worker_section = workflow.split("worker:", 1)[1]
     assert "GITHUB_TOKEN:" not in worker_section
-    assert "permissions: {}" in worker_section
+    assert "contents: read" in worker_section
+    assert "contents: write" not in worker_section
+    assert "issues: write" not in worker_section
+    assert "pull-requests: write" not in worker_section
