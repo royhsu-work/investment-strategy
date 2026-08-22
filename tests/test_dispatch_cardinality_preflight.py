@@ -185,7 +185,7 @@ def test_shared_governance_exposes_concrete_complete_preflight_procedure() -> No
         "role-local",
         "candidate-local",
         "indeterminate",
-        "only then",
+        "Only then",
         "mapped Skill",
     ):
         assert required in text
