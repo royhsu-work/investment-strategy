@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import cast
-from urllib.parse import quote
+from urllib.error import HTTPError
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
+from investment_strategy.scheduled_agent_effect_contract import (
+    GITHUB_MUTATION_KIND,
+    allowed_github_mutation_operations,
+)
 from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
     acquire_current_github_preflight,
@@ -54,6 +60,9 @@ PostconditionObserver = Callable[[StagedEffect], bool]
 TopologyValidator = Callable[[WorkerRequest, StagedEffect], bool]
 
 _ROUTING_TOKEN = re.compile(r"`(Lead|Reviewer|Executor) / ([a-z-]+)`")
+_ALLOWED_ISSUE_FIELDS = frozenset({"title", "body", "state"})
+_ALLOWED_PR_FIELDS = frozenset({"title", "body", "state", "base"})
+_ALLOWED_MERGE_METHODS = frozenset({"merge", "squash", "rebase"})
 
 
 def _authorized_request(preflight: DispatchPreflight) -> WorkerRequest | None:
@@ -120,8 +129,114 @@ def _effect_payload(effect: StagedEffect) -> dict[str, object] | None:
     return cast(dict[str, object], decoded)
 
 
+def _is_nonempty_string(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _valid_repo_path(value: object) -> bool:
+    if not _is_nonempty_string(value):
+        return False
+    path = PurePosixPath(cast(str, value))
+    return not path.is_absolute() and ".." not in path.parts
+
+
+def _valid_branch(value: object) -> bool:
+    return _is_nonempty_string(value) and not cast(str, value).startswith("refs/")
+
+
+def _valid_ref(value: object) -> bool:
+    if not _is_nonempty_string(value):
+        return False
+    ref = cast(str, value)
+    return ref.startswith("refs/heads/") and ".." not in ref and ref.count("//") == 0
+
+
+def _valid_fields(value: object, allowed: frozenset[str]) -> bool:
+    return (
+        isinstance(value, Mapping)
+        and bool(value)
+        and all(isinstance(key, str) and key in allowed for key in value)
+    )
+
+
+def _github_mutation_structurally_valid(source: WorkerRequest, payload: Mapping[str, object]) -> bool:
+    if payload.get("issue_number") != source.issue_number:
+        return False
+    operation = payload.get("operation")
+    if not isinstance(operation, str):
+        return False
+    if operation not in allowed_github_mutation_operations(source.role, source.action):
+        return False
+
+    if operation == "issue-create":
+        return (
+            _is_nonempty_string(payload.get("title"))
+            and isinstance(payload.get("body", ""), str)
+            and isinstance(payload.get("labels", []), list)
+            and all(isinstance(label, str) and label for label in cast(list[object], payload.get("labels", [])))
+        )
+    if operation == "issue-update":
+        fields = payload.get("fields")
+        expected = payload.get("expected")
+        return _valid_fields(fields, _ALLOWED_ISSUE_FIELDS) and (
+            expected is None or _valid_fields(expected, _ALLOWED_ISSUE_FIELDS)
+        )
+    if operation == "issue-label-add":
+        return _is_nonempty_string(payload.get("label"))
+    if operation in {"contents-upsert", "contents-delete"}:
+        expected_sha = payload.get("expected_sha")
+        base_valid = (
+            _valid_repo_path(payload.get("path"))
+            and _valid_branch(payload.get("branch"))
+            and _is_nonempty_string(payload.get("message"))
+            and (expected_sha is None or _is_nonempty_string(expected_sha))
+        )
+        if not base_valid:
+            return False
+        if operation == "contents-upsert":
+            return isinstance(payload.get("content"), str)
+        return _is_nonempty_string(expected_sha)
+    if operation == "ref-create":
+        return _valid_ref(payload.get("ref")) and _is_nonempty_string(payload.get("sha"))
+    if operation in {"ref-update", "ref-delete"}:
+        return (
+            _valid_ref(payload.get("ref"))
+            and _is_nonempty_string(payload.get("expected_sha"))
+            and (
+                operation == "ref-delete" or _is_nonempty_string(payload.get("sha"))
+            )
+        )
+    if operation == "pull-request-create":
+        return (
+            _is_nonempty_string(payload.get("title"))
+            and isinstance(payload.get("body", ""), str)
+            and _valid_branch(payload.get("head"))
+            and _valid_branch(payload.get("base"))
+            and isinstance(payload.get("draft", False), bool)
+        )
+    if operation == "pull-request-update":
+        return (
+            isinstance(payload.get("number"), int)
+            and _is_nonempty_string(payload.get("expected_head_sha"))
+            and _valid_fields(payload.get("fields"), _ALLOWED_PR_FIELDS)
+        )
+    if operation == "pull-request-ready":
+        return isinstance(payload.get("number"), int) and _is_nonempty_string(
+            payload.get("expected_head_sha")
+        )
+    if operation == "pull-request-merge":
+        method = payload.get("merge_method", "merge")
+        return (
+            isinstance(payload.get("number"), int)
+            and _is_nonempty_string(payload.get("expected_head_sha"))
+            and isinstance(method, str)
+            and method in _ALLOWED_MERGE_METHODS
+        )
+    return False
+
+
 def supported_effect_guard(source: WorkerRequest, effect: StagedEffect) -> bool:
-    """Validate the bounded structural effect surface implemented by Slice 4C."""
+    """Validate the bounded structural effect surface used by mapped Skills."""
 
     payload = _effect_payload(effect)
     if payload is None or payload.get("issue_number") != source.issue_number:
@@ -142,6 +257,9 @@ def supported_effect_guard(source: WorkerRequest, effect: StagedEffect) -> bool:
             and bool(cast(str, payload["role"]).strip())
             and bool(cast(str, payload["action"]).strip())
         )
+
+    if effect.kind == GITHUB_MUTATION_KIND:
+        return _github_mutation_structurally_valid(source, payload)
 
     return False
 
@@ -184,9 +302,10 @@ def continuation_requires_fresh_wake(
     source: WorkerRequest,
     continuation: WorkerRequest | None,
 ) -> bool:
-    """Return whether a newly selected action should get a fresh machine wake."""
+    """Return whether any authorized post-apply work needs a fresh mapped worker."""
 
-    return continuation is not None and continuation != source
+    del source
+    return continuation is not None
 
 
 def _github_json(
@@ -196,6 +315,7 @@ def _github_json(
     *,
     method: str = "GET",
     payload: Mapping[str, object] | None = None,
+    allow_not_found: bool = False,
 ) -> object | None:
     url = f"https://api.github.com/repos/{repository}/{api_path.lstrip('/')}"
     data = None if payload is None else json.dumps(payload).encode("utf-8")
@@ -210,15 +330,59 @@ def _github_json(
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
-        raw = response.read()
+    try:
+        with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
+            raw = response.read()
+    except HTTPError as exc:
+        if allow_not_found and exc.code == 404:
+            return None
+        raise
     if not raw:
         return None
     return json.loads(raw.decode("utf-8"))
 
 
+def _github_graphql(token: str, query: str, variables: Mapping[str, object]) -> object:
+    request = Request(  # noqa: S310 - fixed trusted GitHub API host
+        "https://api.github.com/graphql",
+        data=json.dumps({"query": query, "variables": variables}).encode("utf-8"),
+        method="POST",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
+        raw = response.read()
+    decoded = json.loads(raw.decode("utf-8"))
+    if not isinstance(decoded, Mapping) or decoded.get("errors"):
+        raise RuntimeError("GitHub GraphQL mutation failed")
+    return decoded
+
+
+def _shallow_matches(actual: Mapping[str, object], expected: Mapping[str, object]) -> bool:
+    return all(actual.get(key) == value for key, value in expected.items())
+
+
+def _pull_request_head_sha(payload: Mapping[str, object]) -> str | None:
+    head = payload.get("head")
+    if not isinstance(head, Mapping):
+        return None
+    sha = head.get("sha")
+    return sha if isinstance(sha, str) else None
+
+
+def _ref_api_path(ref: str) -> str:
+    return f"git/ref/{quote(ref.removeprefix('refs/'), safe='/')}"
+
+
+def _ref_mutation_path(ref: str) -> str:
+    return f"git/refs/{quote(ref.removeprefix('refs/'), safe='/')}"
+
+
 class GitHubEffectAdapter:
-    """Small production adapter for the initial bounded durable-effect surface."""
+    """Production adapter for bounded durable effects requested by mapped workers."""
 
     def __init__(self, repository: str, token: str, source: WorkerRequest) -> None:
         self.repository = repository
@@ -226,6 +390,9 @@ class GitHubEffectAdapter:
         self.source = source
         self._comment_ids: dict[StagedEffect, int] = {}
         self._routing_targets: dict[StagedEffect, tuple[str, str]] = {}
+        self._created_issue_numbers: dict[StagedEffect, int] = {}
+        self._created_pr_numbers: dict[StagedEffect, int] = {}
+        self._content_shas: dict[StagedEffect, str] = {}
 
     def _current_issue(self) -> Mapping[str, object] | None:
         payload = _github_json(
@@ -235,9 +402,7 @@ class GitHubEffectAdapter:
         )
         return payload if isinstance(payload, Mapping) else None
 
-    def guard(self, effect: StagedEffect) -> bool:
-        if not supported_effect_guard(self.source, effect):
-            return False
+    def _source_still_current(self) -> bool:
         current = self._current_issue()
         if current is None:
             return False
@@ -248,6 +413,236 @@ class GitHubEffectAdapter:
             and observation.issue_number == self.source.issue_number
             and observation.routing == _routing_identity(self.source)
         )
+
+    def _guard_github_mutation(self, payload: Mapping[str, object]) -> bool:
+        operation = cast(str, payload["operation"])
+        if operation == "issue-create" or operation == "issue-label-add":
+            return True
+        if operation == "issue-update":
+            current = self._current_issue()
+            if current is None:
+                return False
+            expected = payload.get("expected")
+            return expected is None or (
+                isinstance(expected, Mapping) and _shallow_matches(current, expected)
+            )
+        if operation in {"contents-upsert", "contents-delete"}:
+            path = cast(str, payload["path"])
+            branch = cast(str, payload["branch"])
+            expected_sha = payload.get("expected_sha")
+            current = _github_json(
+                self.repository,
+                self.token,
+                f"contents/{quote(path, safe='/')}?{urlencode({'ref': branch})}",
+                allow_not_found=True,
+            )
+            if current is None:
+                return expected_sha is None
+            return isinstance(current, Mapping) and current.get("sha") == expected_sha
+        if operation in {"ref-update", "ref-delete"}:
+            ref = cast(str, payload["ref"])
+            current = _github_json(self.repository, self.token, _ref_api_path(ref), allow_not_found=True)
+            if not isinstance(current, Mapping):
+                return False
+            obj = current.get("object")
+            return isinstance(obj, Mapping) and obj.get("sha") == payload.get("expected_sha")
+        if operation == "ref-create":
+            ref = cast(str, payload["ref"])
+            return (
+                _github_json(
+                    self.repository,
+                    self.token,
+                    _ref_api_path(ref),
+                    allow_not_found=True,
+                )
+                is None
+            )
+        if operation == "pull-request-create":
+            head = cast(str, payload["head"])
+            base = cast(str, payload["base"])
+            head_ref = _github_json(
+                self.repository,
+                self.token,
+                _ref_api_path(f"refs/heads/{head}"),
+                allow_not_found=True,
+            )
+            base_ref = _github_json(
+                self.repository,
+                self.token,
+                _ref_api_path(f"refs/heads/{base}"),
+                allow_not_found=True,
+            )
+            return isinstance(head_ref, Mapping) and isinstance(base_ref, Mapping)
+        if operation in {"pull-request-update", "pull-request-ready", "pull-request-merge"}:
+            number = cast(int, payload["number"])
+            current = _github_json(self.repository, self.token, f"pulls/{number}")
+            return (
+                isinstance(current, Mapping)
+                and _pull_request_head_sha(current) == payload.get("expected_head_sha")
+                and current.get("state") == "open"
+            )
+        return False
+
+    def guard(self, effect: StagedEffect) -> bool:
+        if not supported_effect_guard(self.source, effect) or not self._source_still_current():
+            return False
+        if effect.kind != GITHUB_MUTATION_KIND:
+            return True
+        payload = _effect_payload(effect)
+        return payload is not None and self._guard_github_mutation(payload)
+
+    def _apply_github_mutation(self, effect: StagedEffect, payload: Mapping[str, object]) -> None:
+        operation = cast(str, payload["operation"])
+        if operation == "issue-create":
+            response = _github_json(
+                self.repository,
+                self.token,
+                "issues",
+                method="POST",
+                payload={
+                    "title": cast(str, payload["title"]),
+                    "body": cast(str, payload.get("body", "")),
+                    "labels": cast(list[object], payload.get("labels", [])),
+                },
+            )
+            if not isinstance(response, Mapping) or not isinstance(response.get("number"), int):
+                raise RuntimeError("GitHub issue creation returned no issue number")
+            self._created_issue_numbers[effect] = cast(int, response["number"])
+            return
+        if operation == "issue-update":
+            _github_json(
+                self.repository,
+                self.token,
+                f"issues/{self.source.issue_number}",
+                method="PATCH",
+                payload=cast(Mapping[str, object], payload["fields"]),
+            )
+            return
+        if operation == "issue-label-add":
+            _github_json(
+                self.repository,
+                self.token,
+                f"issues/{self.source.issue_number}/labels",
+                method="POST",
+                payload={"labels": [cast(str, payload["label"])]},
+            )
+            return
+        if operation == "contents-upsert":
+            path = cast(str, payload["path"])
+            mutation: dict[str, object] = {
+                "message": cast(str, payload["message"]),
+                "content": base64.b64encode(cast(str, payload["content"]).encode()).decode(),
+                "branch": cast(str, payload["branch"]),
+            }
+            expected_sha = payload.get("expected_sha")
+            if isinstance(expected_sha, str):
+                mutation["sha"] = expected_sha
+            response = _github_json(
+                self.repository,
+                self.token,
+                f"contents/{quote(path, safe='/')}",
+                method="PUT",
+                payload=mutation,
+            )
+            if not isinstance(response, Mapping):
+                raise RuntimeError("GitHub contents update returned no response")
+            content = response.get("content")
+            if not isinstance(content, Mapping) or not isinstance(content.get("sha"), str):
+                raise RuntimeError("GitHub contents update returned no content sha")
+            self._content_shas[effect] = cast(str, content["sha"])
+            return
+        if operation == "contents-delete":
+            path = cast(str, payload["path"])
+            _github_json(
+                self.repository,
+                self.token,
+                f"contents/{quote(path, safe='/')}",
+                method="DELETE",
+                payload={
+                    "message": cast(str, payload["message"]),
+                    "sha": cast(str, payload["expected_sha"]),
+                    "branch": cast(str, payload["branch"]),
+                },
+            )
+            return
+        if operation == "ref-create":
+            _github_json(
+                self.repository,
+                self.token,
+                "git/refs",
+                method="POST",
+                payload={"ref": cast(str, payload["ref"]), "sha": cast(str, payload["sha"])},
+            )
+            return
+        if operation == "ref-update":
+            _github_json(
+                self.repository,
+                self.token,
+                _ref_mutation_path(cast(str, payload["ref"])),
+                method="PATCH",
+                payload={"sha": cast(str, payload["sha"]), "force": False},
+            )
+            return
+        if operation == "ref-delete":
+            _github_json(
+                self.repository,
+                self.token,
+                _ref_mutation_path(cast(str, payload["ref"])),
+                method="DELETE",
+            )
+            return
+        if operation == "pull-request-create":
+            response = _github_json(
+                self.repository,
+                self.token,
+                "pulls",
+                method="POST",
+                payload={
+                    "title": cast(str, payload["title"]),
+                    "body": cast(str, payload.get("body", "")),
+                    "head": cast(str, payload["head"]),
+                    "base": cast(str, payload["base"]),
+                    "draft": cast(bool, payload.get("draft", False)),
+                },
+            )
+            if not isinstance(response, Mapping) or not isinstance(response.get("number"), int):
+                raise RuntimeError("GitHub pull request creation returned no number")
+            self._created_pr_numbers[effect] = cast(int, response["number"])
+            return
+        if operation == "pull-request-update":
+            _github_json(
+                self.repository,
+                self.token,
+                f"pulls/{cast(int, payload['number'])}",
+                method="PATCH",
+                payload=cast(Mapping[str, object], payload["fields"]),
+            )
+            return
+        if operation == "pull-request-ready":
+            number = cast(int, payload["number"])
+            current = _github_json(self.repository, self.token, f"pulls/{number}")
+            if not isinstance(current, Mapping) or not isinstance(current.get("node_id"), str):
+                raise RuntimeError("GitHub pull request has no node id for ready transition")
+            _github_graphql(
+                self.token,
+                "mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id})"
+                "{pullRequest{isDraft}}}",
+                {"id": cast(str, current["node_id"])},
+            )
+            return
+        if operation == "pull-request-merge":
+            _github_json(
+                self.repository,
+                self.token,
+                f"pulls/{cast(int, payload['number'])}/merge",
+                method="PUT",
+                payload={
+                    "sha": cast(str, payload["expected_head_sha"]),
+                    "merge_method": cast(str, payload.get("merge_method", "merge")),
+                },
+            )
+            return
+        raise RuntimeError(f"unsupported GitHub mutation operation: {operation}")
 
     def apply(self, effect: StagedEffect) -> None:
         payload = _effect_payload(effect)
@@ -307,7 +702,140 @@ class GitHubEffectAdapter:
             self._routing_targets[effect] = (target_role, target_action)
             return
 
+        if effect.kind == GITHUB_MUTATION_KIND:
+            self._apply_github_mutation(effect, payload)
+            return
+
         raise RuntimeError(f"unsupported effect kind: {effect.kind}")
+
+    def _observe_github_mutation(self, effect: StagedEffect, payload: Mapping[str, object]) -> bool:
+        operation = cast(str, payload["operation"])
+        if operation == "issue-create":
+            number = self._created_issue_numbers.get(effect)
+            if number is None:
+                return False
+            current = _github_json(self.repository, self.token, f"issues/{number}")
+            return (
+                isinstance(current, Mapping)
+                and current.get("title") == payload.get("title")
+                and current.get("body", "") == payload.get("body", "")
+            )
+        if operation == "issue-update":
+            current = self._current_issue()
+            fields = payload.get("fields")
+            return (
+                current is not None
+                and isinstance(fields, Mapping)
+                and _shallow_matches(current, fields)
+            )
+        if operation == "issue-label-add":
+            current = self._current_issue()
+            if current is None:
+                return False
+            labels = current.get("labels")
+            if not isinstance(labels, list):
+                return False
+            names = {
+                item.get("name")
+                for item in labels
+                if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+            }
+            return payload.get("label") in names
+        if operation == "contents-upsert":
+            path = cast(str, payload["path"])
+            branch = cast(str, payload["branch"])
+            expected_new_sha = self._content_shas.get(effect)
+            current = _github_json(
+                self.repository,
+                self.token,
+                f"contents/{quote(path, safe='/')}?{urlencode({'ref': branch})}",
+            )
+            return (
+                expected_new_sha is not None
+                and isinstance(current, Mapping)
+                and current.get("sha") == expected_new_sha
+            )
+        if operation == "contents-delete":
+            path = cast(str, payload["path"])
+            branch = cast(str, payload["branch"])
+            return (
+                _github_json(
+                    self.repository,
+                    self.token,
+                    f"contents/{quote(path, safe='/')}?{urlencode({'ref': branch})}",
+                    allow_not_found=True,
+                )
+                is None
+            )
+        if operation in {"ref-create", "ref-update"}:
+            ref = cast(str, payload["ref"])
+            current = _github_json(self.repository, self.token, _ref_api_path(ref))
+            obj = current.get("object") if isinstance(current, Mapping) else None
+            return isinstance(obj, Mapping) and obj.get("sha") == payload.get("sha")
+        if operation == "ref-delete":
+            return (
+                _github_json(
+                    self.repository,
+                    self.token,
+                    _ref_api_path(cast(str, payload["ref"])),
+                    allow_not_found=True,
+                )
+                is None
+            )
+        if operation == "pull-request-create":
+            number = self._created_pr_numbers.get(effect)
+            if number is None:
+                return False
+            current = _github_json(self.repository, self.token, f"pulls/{number}")
+            if not isinstance(current, Mapping):
+                return False
+            head = current.get("head")
+            base = current.get("base")
+            return (
+                current.get("title") == payload.get("title")
+                and current.get("body", "") == payload.get("body", "")
+                and current.get("draft") == payload.get("draft", False)
+                and isinstance(head, Mapping)
+                and head.get("ref") == payload.get("head")
+                and isinstance(base, Mapping)
+                and base.get("ref") == payload.get("base")
+            )
+        if operation == "pull-request-update":
+            current = _github_json(
+                self.repository,
+                self.token,
+                f"pulls/{cast(int, payload['number'])}",
+            )
+            fields = payload.get("fields")
+            if not isinstance(current, Mapping) or not isinstance(fields, Mapping):
+                return False
+            for key, value in fields.items():
+                if key == "base":
+                    base = current.get("base")
+                    if not isinstance(base, Mapping) or base.get("ref") != value:
+                        return False
+                elif current.get(key) != value:
+                    return False
+            return _pull_request_head_sha(current) == payload.get("expected_head_sha")
+        if operation == "pull-request-ready":
+            current = _github_json(
+                self.repository,
+                self.token,
+                f"pulls/{cast(int, payload['number'])}",
+            )
+            return (
+                isinstance(current, Mapping)
+                and current.get("draft") is False
+                and _pull_request_head_sha(current) == payload.get("expected_head_sha")
+            )
+        if operation == "pull-request-merge":
+            current = _github_json(
+                self.repository,
+                self.token,
+                f"pulls/{cast(int, payload['number'])}",
+            )
+            return isinstance(current, Mapping) and current.get("merged") is True
+        return False
 
     def observe_postcondition(self, effect: StagedEffect) -> bool:
         if effect.kind == "issue-comment":
@@ -339,6 +867,10 @@ class GitHubEffectAdapter:
                 and observation.authoritative
                 and observation.routing == target
             )
+
+        if effect.kind == GITHUB_MUTATION_KIND:
+            payload = _effect_payload(effect)
+            return payload is not None and self._observe_github_mutation(effect, payload)
 
         return False
 
