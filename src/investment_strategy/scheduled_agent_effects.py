@@ -9,7 +9,7 @@ import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
@@ -54,7 +54,6 @@ PostconditionObserver = Callable[[StagedEffect], bool]
 TopologyValidator = Callable[[WorkerRequest, StagedEffect], bool]
 
 _ROUTING_TOKEN = re.compile(r"`(Lead|Reviewer|Executor) / ([a-z-]+)`")
-_ROLE_DISPLAY = {"lead": "Lead", "reviewer": "Reviewer", "executor": "Executor"}
 
 
 def _authorized_request(preflight: DispatchPreflight) -> WorkerRequest | None:
