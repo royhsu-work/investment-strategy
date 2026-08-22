@@ -168,7 +168,11 @@ class WorkerToolRuntime:
         cwd = self._workspace_path(payload.get("cwd", "."))
         if not cwd.is_dir():
             raise ValueError("run_command cwd must be a workspace directory")
-        environment = {key: value for key, value in os.environ.items() if key not in _SECRET_ENV_NAMES}
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if key not in _SECRET_ENV_NAMES
+        }
         completed = subprocess.run(  # noqa: S603 - argv is explicit and shell is never used
             list(argv),
             cwd=cwd,
@@ -392,7 +396,11 @@ def _function_calls(response: Mapping[str, object]) -> list[tuple[str, str, str]
         name = item.get("name")
         arguments = item.get("arguments")
         call_id = item.get("call_id")
-        if not isinstance(name, str) or not isinstance(arguments, str) or not isinstance(call_id, str):
+        if (
+            not isinstance(name, str)
+            or not isinstance(arguments, str)
+            or not isinstance(call_id, str)
+        ):
             raise RuntimeError("Responses API returned malformed function call")
         calls.append((name, arguments, call_id))
     return calls
