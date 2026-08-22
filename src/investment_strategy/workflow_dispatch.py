@@ -8,7 +8,7 @@ workflow state.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 Role = Literal["lead", "reviewer", "executor"]
@@ -28,7 +28,7 @@ Routing = tuple[Role, Action]
 RecoveryEvidence = Literal["not-candidate", "qualifying", "indeterminate"]
 
 
-class ObservationProvenance(str, Enum):
+class ObservationProvenance(StrEnum):
     """Whether authorization-bearing current fields are invocation-local GitHub facts."""
 
     QUALIFIED = "QUALIFIED"
