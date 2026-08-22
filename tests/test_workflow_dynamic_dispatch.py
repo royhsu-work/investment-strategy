@@ -82,7 +82,7 @@ def test_machine_selected_identity_is_worker_local_and_redispatched() -> None:
         "before any mapped model invocation",
         "fixed only for that model worker invocation",
         "model worker MUST NOT select or override",
-        "repository-owned application fresh-reauthorizes",
+        "Repository-owned application fresh-reauthorizes",
         "fresh mapped model invocation",
         "whether the role stays the same or changes",
         "single scheduled wake path",
