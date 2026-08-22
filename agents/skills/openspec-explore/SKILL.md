@@ -98,6 +98,8 @@ Use the persistent coordination Issue and existing canonical message presentatio
 - the next action/Human boundary; and
 - a material reconsideration condition for `NO_GO` when one is known.
 
+For workflow-dynamic `Lead / explore-change`, the applicable canonical `ACTION_RESULT` also renders the exact executable decision consumed at action entry: enumeration completeness, observation provenance, formal-active/terminal-pending Issue identities, recovery candidate identities, pre-activation candidate identities, selected Issue, and disposition. These values are copied from the consumed decision/evidence envelope for audit rather than recomputed from a second Issue summary, and they do not authorize a later invocation.
+
 Do not log chain-of-thought, every query, live progress, fixed option counts, a completeness score, coverage cursor, or separate research database. A later wake must be able to reconstruct the current scope/disposition/wait from durable evidence without prior conversation memory.
 
 ## Routing and completion
