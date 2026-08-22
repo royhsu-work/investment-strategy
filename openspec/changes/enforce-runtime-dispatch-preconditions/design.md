@@ -2,226 +2,172 @@
 
 ## Context
 
-#105 corrected the workflow semantics but intentionally stopped at prose-governed runtime behavior plus a test-only classifier. That design was reasonable for the then-observed incident, but the later #100/#130 recurrence demonstrates that the live Scheduled-Agent path can still bypass or misapply the prose precondition while the parallel fixture model remains green.
+#105 corrected the workflow semantics but intentionally stopped at prose-governed runtime behavior plus a test-only classifier. #133 then extracted that classifier into `src/investment_strategy/workflow_dispatch.py`, added explicit same-invocation GitHub observation provenance, made regressions consume the production implementation, and updated governance/Skills to require executable consumption.
 
-The first proven illegal mapped action in the original recurrence was `explore-change`, not a near-simultaneous activation race. The repository therefore needs an executable decision surface at action entry. The design must not pretend that GitHub Issue mutation APIs expose a cross-Issue atomic compare-and-swap primitive when the current connector does not.
+Reviewer implementation finding `issuecomment-5379837891` showed that the latter design still assumed a runtime capability that has not been demonstrated. The Scheduled-Agent environment can use the GitHub connector, but there is no repository checkout mounted and no proven pre-action hook that executes repository Python. A Skill instruction to call the helper therefore remains an Agent interpretation bridge rather than a live machine enforcement boundary.
 
-Reviewer finding `issuecomment-5377194503` exposed a second, distinct trust boundary that the initial formal target omitted: a correct classifier can still return the wrong current authorization result when its normalized input was synthesized from stale conversation/prior-run/cache/history instead of authoritative GitHub observations from the current invocation. The correction below treats **decision correctness** and **input authority** as separate required layers. It does not retroactively claim that this later observation-provenance failure mode was established at the original Explore handoff.
+The corrected design keeps the pure classifier and moves the first live executable integration point to GitHub Actions. The MVP intentionally proves one bounded formal-routing path before broadening Gate ownership.
 
-## Decision 1 — One pure executable dispatch-precondition module
+## Decision 1 — Preserve the pure production classifier
 
-Add one repository-owned production module, `src/investment_strategy/workflow_dispatch.py`, containing the deterministic workflow-dynamic classifier/precondition logic that is currently duplicated as a test-local model.
+Keep `src/investment_strategy/workflow_dispatch.py` as the repository-owned deterministic classifier/precondition implementation.
 
-The module accepts explicit normalized inputs rather than reading GitHub itself:
+It remains pure and accepts explicit normalized `DispatchPreflight` input containing repository Issue snapshots plus enumeration/provenance evidence. It does not own GitHub I/O, lifecycle topology, routing mutation, Human authority, or workflow state.
+
+The existing implementation and regressions are retained as groundwork. Tests and any machine authorization adapter MUST call this production implementation rather than defining another behavioral classifier.
+
+## Decision 1A — Current-state input authority remains explicit
+
+Authorization-bearing current fields remain qualified only when obtained from authoritative GitHub observations in the execution that consumes the decision. Historical comments, prior invocation output, conversation context, model memory/cache, and copied summaries do not satisfy current Issue state, Change identity, routing, or enumeration-completeness predicates.
+
+The GitHub Actions Gate acquisition adapter is responsible for building this provenance-qualified input from GitHub. Missing or incomplete current evidence produces an indeterminate decision rather than a last-known-state fallback.
+
+## Decision 2 — GitHub Actions owns the MVP live executable transition boundary
+
+Add a thin default-branch GitHub Actions workflow, `.github/workflows/workflow-transition-gate.yml`, triggered by newly created Issue comments. The workflow checks out the authoritative default branch and invokes one repository-owned effectful adapter, for example `src/investment_strategy/workflow_transition_gate.py`.
+
+The adapter owns only the live transition procedure:
+
+1. parse a bounded transition intent from the triggering comment;
+2. derive the coordination Issue number from the GitHub event, not from comment claims;
+3. reconstruct current repository workflow state from GitHub with observable completeness;
+4. normalize a provenance-qualified `DispatchPreflight`;
+5. execute `workflow_dispatch.py`;
+6. validate the bounded MVP source/target transition;
+7. fresh-read the target Issue immediately before mutation;
+8. mutate routing only after acceptance;
+9. fresh-read the resulting routing and emit durable Gate result evidence.
+
+The Gate does not become a second workflow DAG or state store.
+
+## Decision 3 — Request comments carry intent, not authorization facts
+
+The MVP request syntax is intentionally small:
 
 ```text
-RepositoryIssueSnapshot
-- issue_number
-- created_at
-- open/closed state
-- Change identity
-- routing role/action
-- only the bounded lifecycle/recovery fields required by shared governance
-- current-observation provenance for authorization-bearing fields
-
-EnumerationEvidence
-- observed open-Issue count
-- source-reported total count when available
-- incomplete/truncated indicator
-- pagination/exhaustion proof supplied by the acquisition adapter
-- authoritative GitHub observation identity/surface for this invocation
-
-DispatchPreflight
-- snapshot collection
-- enumeration evidence
-- optional selected/candidate Issue expected by the caller
+/transition reviewer review-openspec
 ```
 
-It returns a structured immutable decision, for example:
+or
 
 ```text
-DispatchDecision
-- completeness: COMPLETE | INDETERMINATE
-- observation_provenance: QUALIFIED | INDETERMINATE
-- formal_issue_ids
-- recovery_candidate_ids
-- preactivation_candidate_ids
-- selected_issue_id | None
-- selected_role/action | None
-- disposition: AUTHORIZE | FAIL_CLOSED | NO_WORK
-- reason
+/transition executor implement-change
 ```
 
-The exact names are implementation detail; the required property is one deterministic executable result carrying enough structured evidence for both authorization and durable presentation.
+The comment location supplies the Issue number. Current source routing, persisted Change identity, formal-active cardinality, selected Issue, completeness, and observation provenance are always acquired by the Gate.
 
-The module does **not** own GitHub acquisition, routing mutation, lifecycle topology, or Human authority. `agents/AGENTS.md` remains the semantic owner and the production function is its executable adapter.
+Any additional prose is audit context only. A request cannot make itself valid by asserting a current routing tuple or cardinality.
 
-### Why a pure module
+## Decision 4 — MVP transition surface is intentionally narrow
 
-- Tests can call the same code as runtime authorization.
-- The classifier remains stateless and has no hidden repository state.
-- Acquisition completeness and classification are explicit instead of inferred from a candidate-local query.
-- Observation provenance is explicit, so stale model-constructed inputs cannot masquerade as current authoritative repository state.
-- The runtime can fail closed when the function cannot execute or when current-source provenance cannot be established rather than silently falling back to model interpretation.
+The Gate MVP supports only an already-formal coordination Issue whose current selected routing is `Lead / resolve-question` and whose requested target is one of the two legal successors already owned by `agents/workflow.md`:
 
-## Decision 1A — Current-state input authority is part of the executable contract
+- `Reviewer / review-openspec` for a material semantic correction ready for independent review;
+- `Executor / implement-change` when clarification is resolved without material semantic change and implementation remains the legal consumer.
 
-The acquisition layer remains outside `workflow_dispatch.py`, but the production decision surface accepts authorization-bearing snapshots only when their current-state fields are provenance-qualified as authoritative GitHub observations from the same invocation.
+The Gate verifies that the production classifier selects the same Issue at the current `Lead / resolve-question` routing. The Gate does not determine the semantic judgment that caused Lead to choose one of the two legal targets; that judgment remains Lead-owned and is represented by the source action result.
 
-For current dispatch predicates, the acquisition adapter/procedure must establish at minimum:
+No generic topology registry is added. Expanding Gate ownership to other actions is deferred until this live boundary is proven.
 
-- current Issue open/closed state;
-- current routing labels/tuple;
-- current persisted `Change:` identity;
-- repository-wide enumeration completeness sufficient for the governed classifier;
-- enough source metadata to prove that these values came from the current invocation's GitHub reads rather than conversation history, prior invocation output, cache, copied Issue summaries, or historical body/comment routing.
+## Decision 5 — Gate outcomes are ACCEPTED, REJECTED, or INDETERMINATE
 
-Historical durable evidence remains valid for genuinely historical/lifecycle predicates, but it never fills a missing current routing/state field. A previously routed Issue with current routing labels removed is therefore normalized as currently unrouted even if old HANDOFF/body/comment text still describes the former tuple.
+- `ACCEPTED`: current complete reconstruction selects the request Issue at `Lead / resolve-question`, the requested target is one of the bounded legal successors, immediate source preconditions still match, routing mutation succeeds, and post-write routing is freshly verified.
+- `REJECTED`: the request is syntactically valid but current authoritative state does not authorize it, for example a different selected Issue, changed source routing, non-formal Issue, or unsupported target.
+- `INDETERMINATE`: complete/provenance-qualified current authorization cannot be established, including incomplete enumeration, contradictory routing/Change identity, or multiple formal workflows.
 
-If the runtime cannot obtain or prove a required current field from same-invocation authoritative GitHub evidence, it constructs an indeterminate provenance/completeness result and the executable precondition fails closed. It does not substitute the last known value.
+Only `ACCEPTED` may mutate routing. `REJECTED` and `INDETERMINATE` leave routing unchanged.
 
-This keeps acquisition replaceable while preventing the classifier boundary from accepting an unqualified model-built snapshot as if it were current repository fact.
+## Decision 6 — Serialize authorization, then re-read current state
 
-## Decision 2 — Runtime execution must consume, not paraphrase, the executable result
+Configure one repository-wide GitHub Actions concurrency group for the transition Gate and do not cancel an in-progress Gate run merely because a newer request appears.
 
-Update shared governance so workflow-dynamic dispatch and action-entry checks require executing the default-branch classifier against the fresh complete, provenance-qualified snapshot.
+Concurrency is execution serialization, not workflow state. Each Gate run reconstructs GitHub state when it actually executes. If request B waited behind request A and A changed routing, B observes the newer state and is rejected rather than replaying its earlier assumptions.
 
-A Scheduled/manual Agent MAY obtain the raw GitHub state through the connector/tool surface, but it MUST NOT replace the executable decision with its own candidate-local or prose-derived classification. It also MUST NOT populate current routing/state/Change fields from conversation history, previous Scheduled output, model memory/cache, or historical Issue text. If the runtime cannot execute the default-branch helper byte-for-byte/equivalently, cannot supply complete enumeration evidence, cannot establish same-invocation authoritative observation provenance, or cannot normalize the required fields without ambiguity, disposition is fail closed.
+This provides a bounded stale-stop property without adding a lock, lease, heartbeat, claim, or hidden queue to repository workflow state.
 
-The external Scheduled Task prompt stays bootstrap-only. It continues to say “load default-branch governance”; the repository tells the selected runtime how to load/execute the helper and qualify its input.
+## Decision 7 — Durable Gate evidence is audit evidence only
 
-## Decision 3 — `explore-change` consumes executable action-entry authorization
+For every processed request, emit a durable Gate result carrying enough information to diagnose the decision:
 
-Before substantive pre-activation Explore research, `openspec-explore` requires a fresh executable decision proving:
+- triggering Issue/comment identity;
+- requested target;
+- completeness/provenance disposition;
+- formal-active Issue identities;
+- selected Issue/current routing from the classifier;
+- Gate outcome and reason;
+- post-write routing when accepted.
 
-- enumeration is complete;
-- authorization-bearing current fields came from same-invocation authoritative GitHub observations;
-- formal active cardinality is zero;
-- no bounded recovery candidate blocks intake;
-- the current Issue is the deterministic combined pre-activation winner; and
-- selected routing is still `Lead / explore-change`.
+The result comment is not an authorization token for a later run. Every later Gate execution reconstructs GitHub state again.
 
-If any predicate fails, Explore does not begin substantive research and the Agent reconstructs/fails closed according to shared governance.
+## Decision 8 — Correct prior Agent-owned executable-consumption claims
 
-This directly rejects both demonstrated safety shapes: a snapshot containing formal-active #100 cannot authorize queued #130 Explore, and historical #130 routing text cannot make #130 current-active when current GitHub routing labels are absent.
+Shared governance and the two Skills previously modified by #133 must stop claiming that the Scheduled Agent itself is the demonstrated live executor of repository Python.
 
-## Decision 4 — Propose consumes the same executable gate before and after activation
+- `openspec-explore` keeps its existing procedural current-state/cardinality safety obligations, but the MVP does not place Explore admission behind the Gate.
+- `openspec-change` keeps Lead specification/activation authority. For the already-formal `resolve-question` successor transition covered by the MVP, it submits transition intent and consumes the Gate outcome instead of directly changing routing. Propose activation remains outside this MVP.
 
-`openspec-change` keeps formal activation ownership but replaces prose-only reconstruction decisions with the same executable precondition:
+The production classifier remains executable and test-owned; only the live ownership assumption changes.
 
-1. **Immediate pre-write:** fresh complete, provenance-qualified snapshot must authorize this `Lead / propose-change` Issue as the legal pre-activation winner with no formal active workflow.
-2. **Activation write:** persist the immutable non-`unset` Change identity.
-3. **Immediate post-write:** fresh complete, provenance-qualified snapshot is classified again. Activation is accepted only when exactly one formal active workflow exists and it is this Issue with the expected routing/Change identity.
+## Decision 9 — Direct Issue-label bypass is an explicit MVP limitation
 
-If post-write state contains another formal workflow, is incomplete, lacks same-invocation current-state provenance, or contradicts the expected identity, the current invocation fails closed/stops stale. It does not choose a winner, reuse the pre-write snapshot, or automatically rewrite another Issue.
+The current ChatGPT GitHub connector still has `Issues: write`, and Issue comments and routing-label writes share that permission class. The MVP therefore cannot truthfully claim that the Agent is physically incapable of bypassing the Gate and writing routing labels directly.
 
-### Overlapping activation limitation
+This revision treats that as a known limitation. A direct routing-label mutation outside the Gate is not evidence that the Gate accepted a transition, but this MVP does not yet add routing-event provenance enforcement that would make such a write unusable for later authorization.
 
-The current GitHub connector's Issue update surface exposes no cross-Issue atomic compare/precondition parameter. Therefore this Change does not claim that a pure read/classify/write sequence can make two simultaneous writes physically impossible. Instead, “accepted activation” remains post-write validated: two competing durable writes cannot both be accepted as legal continuations because the shared post-write classifier returns multiple-active and blocks normal action progression.
+Routing-event provenance hardening and connector/action-level capability restriction are deferred. The MVP's acceptance criterion is narrower: demonstrate a real repository-hosted executable authorization path that the Scheduled Agent can request and that performs accepted routing transitions from fresh authoritative state.
 
-The demonstrated original #100/#130 recurrence was not a tight activation race, so a lock/lease/durable claim is not justified by the incident. If future evidence requires physical prevention of transient double persistence, that is a separate mutation-primitive/serialization decision rather than something to conceal inside this classifier.
+## Decision 10 — PR-stage tests and post-merge live canary are distinct
 
-## Decision 5 — Regression tests import the production classifier
+A newly added `issue_comment` workflow cannot be exercised as a live default-branch event trigger until that workflow exists on the default branch.
 
-Refactor `tests/test_dispatch_cardinality_preflight.py` so it imports the production decision types/function instead of defining local `WorkflowIssue`, `Snapshot`, `classify`, `action_entry_allowed`, `activate`, and `activation_still_valid` logic.
+Before merge, regression/integration tests exercise the same transition adapter with representative GitHub event/state fixtures and verify classifier consumption, mutation gating, stale requests, incomplete state, and serialized re-evaluation behavior.
 
-Keep fixture-driven tests, but make them evidence for the actual executable authorization surface. Required regressions include:
+After the implementation is merged to the default branch, lifecycle completion requires live canary evidence showing:
 
-- zero formal WIP selects the deterministic pre-activation winner;
-- one formal active blocks queued Explore and Propose;
-- incomplete/partial enumeration returns indeterminate/fail closed;
-- candidate-local or role-local input cannot establish completeness;
-- two formal active workflows authorize no mapped action;
-- stale action-entry snapshot is rejected by a fresh invocation;
-- the exact #100/#130 recurrence shape rejects #130 Explore;
-- an Issue with historical routing evidence but current routing labels absent is not classified active from history;
-- prior invocation output/cache cannot satisfy current state/routing/Change predicates;
-- inability to obtain same-invocation authoritative current routing/state produces indeterminate rather than fallback-to-history;
-- Propose pre-write blocks a second activation when formal work already exists;
-- post-write competing activation yields no accepted activation and no normal successor;
-- Human/maintainer administrative repair remains external and a later decision uses only fresh authoritative current state.
+1. one valid transition request reaches the real `issue_comment` workflow, executes the repository adapter/classifier, and produces `ACCEPTED` with the expected routing mutation; and
+2. one invalid/stale request reaches the same live path, produces `REJECTED` or `INDETERMINATE`, and leaves routing unchanged.
 
-Tests that only assert governance phrases may remain as structural SSOT checks, but they are not substitutes for executable behavior tests.
+PR-stage tests MUST NOT be described as proof that the default-branch event trigger already ran.
 
-## Decision 6 — Canonical action results expose the same decision evidence
+## Decision 11 — External Scheduled Task prompts remain unchanged
 
-Do not introduce a second dispatch state store or a debug-only message bus. Extend the existing canonical `ACTION_RESULT` presentation for the two pre-activation boundaries:
-
-### `Lead / explore-change`
-
-When an Explore result is persisted after substantive research, include the executable action-entry evidence actually consumed:
-
-- enumeration completeness;
-- observation provenance sufficient to identify the authoritative current GitHub read surface/result consumed;
-- formal-active Issue IDs;
-- bounded recovery candidate IDs when any were considered;
-- combined pre-activation candidate Issue IDs;
-- selected Issue ID;
-- executable disposition/reason sufficient to prove authorization.
-
-### `Lead / propose-change`
-
-Include:
-
-- the pre-write executable decision fields above;
-- the activation write's expected Change identity;
-- post-write formal-active Issue IDs;
-- post-write completeness/provenance/disposition;
-- whether activation was accepted.
-
-These fields are audit/debug evidence only. `Change + agent + action` remains canonical workflow state, and the comment MUST NOT be used as a replacement authorization token on a later wake.
-
-When the runtime supplies a stable wake/invocation-source identifier, the message MAY preserve it for correlation. If the runtime does not expose one, the Agent MUST NOT fabricate scheduler identity or infer a task/slot from timing. Observation provenance does not require such a scheduler identifier; it requires proof that the authorization-bearing repository fields came from authoritative GitHub reads in the current invocation.
-
-## Decision 7 — No new Skill; two existing Skills get minimal consumption changes
-
-The executable classifier is shared runtime infrastructure, not a user-triggered Skill. Do not create a `dispatch-preflight` Skill merely to wrap one deterministic function.
-
-Modify only:
-
-- `agents/skills/openspec-explore/SKILL.md`: before substantive research, execute/consume the shared helper using same-invocation authoritative current-state evidence and retain its result for the later `ACTION_RESULT` evidence.
-- `agents/skills/openspec-change/SKILL.md`: execute/consume it immediately before and after formal activation using fresh same-invocation authoritative current-state evidence and retain those exact results for readiness evidence.
-
-Both Skills reference shared governance/helper ownership rather than duplicating classifier or provenance rules. This follows `skill-creator` progressive-disclosure and SSOT guidance.
-
-## Decision 8 — External Scheduled Task configuration remains unchanged
-
-No slot count, cadence, title, legacy role, or prompt execution semantics change is required. Current bootstrap prompts already load default-branch governance dynamically. The fix belongs in the repository-owned execution surface.
-
-This also means #133 does not attempt to identify historical external Scheduled Task run IDs that GitHub durable state never recorded. New optional correlation evidence is prospective only.
+No Scheduled Task slot count, cadence, title, or prompt logic is moved into this Change. Scheduled Agents continue to load default-branch governance. The new behavior is repository-hosted: the governed action submits a transition request comment and GitHub Actions performs the executable authorization.
 
 ## Traceability
 
 - Source Explore: #133 `issuecomment-5373937613`.
-- Post-handoff Reviewer correction: #133 `issuecomment-5377194503`.
-- Evidence-discipline clarification: #133 `issuecomment-5377184598`; later evidence is not projected backward into the original Explore timeline.
-- Original incident: #100 formal-active durable evidence and #130 Explore/Propose action results.
-- Current-state provenance regression: current GitHub routing/state observations control current classification; historical Issue routing/body/comment evidence is audit context only.
-- Prior semantics: #105 / `enforce-dispatch-cardinality-preflight`.
+- Observation-provenance Reviewer correction: #133 `issuecomment-5377194503`.
+- Prior implementation READY: #133 `issuecomment-5379787305` at PR #134 head `0727b030bb9c27d311a390e9d765d4421302abaa`.
+- Runtime-consumption implementation finding: #133 `issuecomment-5379837891`.
+- Runtime capability blocker: #133 `issuecomment-5379922085`.
+- Existing production classifier: `src/investment_strategy/workflow_dispatch.py`.
+- Existing topology owner: `agents/workflow.md`.
 - Modified canonical requirement: `Active-workflow cardinality and Issue-state coherence precede queue selection`.
-- Decisions 1–5 -> executable classifier + input-authority/runtime/test consumption.
-- Decision 6 -> canonical `ACTION_RESULT` observability.
-- Decision 7 -> minimal Skill changes with Skill maintenance traceability.
-- Decision 8 -> Scheduled Task bootstrap negative scope.
+- Added MVP requirement: `Issue-comment Transition Gate executes live formal-routing authorization`.
+- Decisions 1–1A preserve the classifier/provenance groundwork.
+- Decisions 2–7 define the live Gate path.
+- Decision 8 defines governance/Skill correction.
+- Decision 9 states the bypass limitation explicitly.
+- Decision 10 defines honest live verification.
 
 ## Risks and mitigations
 
-### Risk: Executable helper becomes a second workflow authority
+### Risk: Gate becomes a second workflow engine
 
-Mitigation: keep topology, authority, queue semantics, and Human rules in their existing owners. The helper implements only the approved dispatch-precondition decision and exposes structured evidence.
+Mitigation: constrain the MVP to one existing source action and its two existing legal successors. `agents/workflow.md` remains topology authority; the Gate performs authorization/mutation only.
 
-### Risk: Correct classifier receives stale or model-constructed input
+### Risk: Request prose becomes stale authority
 
-Mitigation: make same-invocation authoritative GitHub observation provenance part of the executable input contract. Unqualified current-state fields cannot authorize work; missing provenance yields indeterminate/fail closed rather than last-known-state fallback.
+Mitigation: treat comments as intent only. Current source routing, Change identity, cardinality, selection, and completeness are always reacquired by the Gate.
 
-### Risk: Runtime cannot execute repository code or qualify current observations
+### Risk: Concurrent requests race
 
-Mitigation: fail closed explicitly. Do not silently fall back to prose/model classification or historical context at a consequential dispatch boundary. The implementation must document and test the supported execution/acquisition adapter used by the current Scheduled-Agent environment.
+Mitigation: serialize Gate runs and re-read current GitHub state when each run executes. A stale queued request is rejected.
 
-### Risk: Structured evidence becomes workflow state
+### Risk: Direct label mutation bypass remains possible
 
-Mitigation: canonical comments are audit evidence only. Every later invocation fresh-reconstructs repository Issue state from authoritative GitHub observations and reruns the executable classifier.
+Mitigation: state the limitation explicitly and do not claim permission-layer prevention. Routing-event provenance or action-level capability restriction is separate hardening after the MVP proves the live Gate path.
 
-### Risk: Physical overlapping writes remain possible
+### Risk: Unit tests are mistaken for live integration
 
-Mitigation: distinguish **accepted activation** from raw write completion. The immediate post-write executable check blocks both competing states from normal continuation. Do not introduce a hidden mutex without concrete evidence that a stronger mutation primitive is required.
+Mitigation: require a post-merge default-branch `issue_comment` canary before lifecycle completion and keep that evidence distinct from PR-stage tests.

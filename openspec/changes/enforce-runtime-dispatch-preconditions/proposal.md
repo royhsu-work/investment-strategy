@@ -2,80 +2,84 @@
 
 ## Why
 
-#105 / Change `enforce-dispatch-cardinality-preflight` correctly established WIP=1, complete repository-wide cardinality reconstruction, fail-closed dispatch, and pre-activation Explore/Propose guards. Its approved design also deliberately kept the executable classifier as a **test-only model** because Scheduled Tasks have no repository runtime dispatcher process.
+#105 / Change `enforce-dispatch-cardinality-preflight` correctly established WIP=1, complete repository-wide cardinality reconstruction, fail-closed dispatch, and pre-activation Explore/Propose guards. #133 then added one production executable classifier plus same-invocation observation-provenance inputs, and the implementation through PR #134 head `0727b030bb9c27d311a390e9d765d4421302abaa` made regression tests consume that production implementation.
 
-The #100/#130 recurrence proves that this left one material enforcement gap. Durable #100 evidence shows `complete-required-followup-materialization` was formal-active at `Lead / finalize-change` while durable #130 evidence nevertheless records later substantive `Lead / explore-change` work and formal activation. The first conclusively reconstructable illegal mapped action was therefore already #130 Explore, before the second Change identity was persisted.
+Reviewer implementation finding `issuecomment-5379837891` identified the remaining architecture gap: the real Scheduled-Agent path still has no demonstrated callable boundary that executes repository Python before normal work or routing mutation. The current Skills can instruct the Agent to execute `workflow_dispatch.py`, but that instruction is still an Agent interpretation bridge. Green tests therefore prove classifier behavior, not live runtime consumption.
 
-The test-only classifier rejects this state, but the live Agent path does not execute that classifier before direct GitHub work/mutations. Current durable messages also do not record the actual formal-Issue set, candidate set, completeness evidence, or selected Issue consumed at action entry, so the incident cannot distinguish incomplete enumeration from skipped/misapplied preflight after the fact.
+The corrected target moves live executable ownership to a repository-hosted GitHub Actions Transition Gate. A Scheduled Agent submits a minimal transition intent as an Issue comment; the Gate independently reconstructs current GitHub state, executes the production classifier, accepts or rejects the requested transition, and performs the routing mutation only after acceptance. The pure classifier remains reusable and stateless; the Gate becomes the effectful runtime adapter.
 
-Reviewer correction on exact proposal revision `3508493673447d39b4ad0420ca7e1dfe2c333c64` identified a second trust boundary that the initial formalization did not state normatively: **decision correctness is insufficient unless the classifier's current-state inputs themselves come from authoritative GitHub observations obtained during the current invocation**. A previously routed Issue may retain historical routing text in its body/comments after its current routing labels are removed; such history is audit context, not current routing evidence. If same-invocation current Issue state, Change identity, routing labels, and repository enumeration completeness cannot be established from authoritative GitHub reads, authorization must be indeterminate rather than synthesized from conversation history, prior run output, cache, or historical Issue prose.
-
-This correction strengthens the runtime-enforcement boundary without retroactively asserting that the later observation-provenance failure mode was established at the original Explore handoff. It is a material post-handoff specification correction accepted from Reviewer finding `issuecomment-5377194503`.
+This revision is deliberately an MVP. It proves the end-to-end live boundary first for normal formal `Lead / resolve-question` routing transitions. It does not claim that the current ChatGPT GitHub connector has lost direct Issue-label write capability, and it does not yet move Explore admission or Propose activation behind the Gate. Those are explicit limits, not hidden claims of hard enforcement.
 
 ## What Changes
 
-- Replace the parallel test-only cardinality model with one repository-owned executable dispatch-precondition implementation that consumes an explicit repository Issue snapshot plus observable enumeration-completeness metadata and returns a structured deterministic decision.
-- Define the input-authority contract for that executable surface: current Issue state, Change identity, routing labels, and completeness fields used for dispatch MUST be derived from authoritative GitHub observations obtained during the same invocation. Conversation history, prior invocation output, model memory/cache, and historical Issue body/comment routing MUST NOT satisfy current-state predicates.
-- Require workflow-dynamic runtime selection and mapped action entry to consume that executable result. A missing, unexecutable, provenance-invalid, incomplete, stale, candidate-local, or contradictory input cannot authorize work.
-- Require `Lead / explore-change` to consume an executable zero-formal-WIP + deterministic-winner decision before substantive research, and require `Lead / propose-change` to consume the same executable contract immediately before activation and again on the post-write reconstruction.
-- Preserve current reconstruction-based semantics: the executable surface does not become a second workflow DAG or canonical state store. Coordination Issue `Change + agent + action` remains workflow state; `agents/AGENTS.md` remains the semantic owner.
-- Treat activation as accepted only after the post-write executable reconstruction proves exactly one formal active workflow and it is the selected Issue. A competing post-write state fails closed; the Change does not invent automatic winner selection or rollback.
-- Make `tests/test_dispatch_cardinality_preflight.py` exercise the same production decision implementation used by runtime authorization rather than a local model.
-- Extend executable/integration regression coverage to reject stale current-state inputs, including the shape where an Issue was historically routed but its current routing labels are absent, and to return indeterminate when same-invocation authoritative current labels cannot be obtained.
-- Extend canonical `ACTION_RESULT` evidence for pre-activation Explore and Propose so the durable result carries the exact executable preflight output needed for diagnosis: enumeration completeness, formal-active Issue identities, applicable pre-activation candidate identities, selected Issue, action-entry decision, and the authoritative observation provenance/completeness evidence consumed; Propose additionally records pre-write and post-write formal-active Issue identities and whether activation was accepted.
-- Preserve optional runtime/wake-source correlation only when the execution environment actually exposes it; do not fabricate scheduler identity and do not make it workflow authority.
-- Keep external Scheduled Task prompts bootstrap-only. The executable contract is repository-owned and progressively loaded/executed from default-branch governance, not copied into task prompts.
+- Preserve `src/investment_strategy/workflow_dispatch.py` as the one repository-owned pure classifier/precondition implementation used by executable regressions and by machine authorization surfaces.
+- Add one effectful repository-owned transition adapter executed by GitHub Actions. It performs authoritative GitHub acquisition, builds provenance-qualified classifier input, executes the production classifier, validates the MVP transition request, performs the routing mutation only on acceptance, and freshly verifies the resulting routing.
+- Trigger the MVP Gate from a newly created Issue comment on an already-formal coordination Issue. The request carries only target intent (for example `/transition reviewer review-openspec`); the Issue number, current Change identity, current routing, cardinality, and completeness are acquired by the Gate and MUST NOT be trusted from comment prose.
+- Limit the MVP Gate to normal formal transitions whose current source is `Lead / resolve-question` and whose requested target is one of its two existing legal formal successors: `Reviewer / review-openspec` or `Executor / implement-change`. The Gate does not create or redefine lifecycle topology.
+- Serialize Gate authorization runs through one repository-wide GitHub Actions concurrency group. Every queued request reconstructs current GitHub state when its run executes; a request that became stale while waiting is rejected rather than replaying old state.
+- Define three Gate outcomes: `ACCEPTED`, `REJECTED`, and `INDETERMINATE`. Only `ACCEPTED` may mutate routing. `INDETERMINATE` is fail-closed for incomplete enumeration, provenance failure, multiple active workflows, or otherwise unprovable current authorization.
+- Require a fresh post-write read after an accepted mutation and durable Gate result evidence sufficient to reconstruct the request, classifier decision, and resulting routing without making the result comment workflow state.
+- Correct the earlier Agent-owned executable-consumption wording in shared governance and the two previously modified OpenSpec Skills. Scheduled Agents remain responsible for their governed action judgment and authoritative current-state reconstruction, but the MVP's live executable routing authorization is owned by the GitHub Actions Gate rather than by an assumed ability to execute repository Python inside the Scheduled-Agent container.
+- Keep the existing classifier, provenance, and audit-evidence implementation work as reusable groundwork; add new RED/GREEN/REFACTOR/VERIFY work only for the Gate MVP and the semantic corrections required to stop claiming an unavailable Agent-side runtime hook.
+- Require post-merge live canary evidence because a newly added `issue_comment` workflow is not a live trigger until that workflow exists on the default branch. PR-stage tests may verify the same adapter with event/GitHub fixtures, but they MUST NOT be represented as proof that the default-branch event path already ran.
+- Keep external Scheduled Task prompts bootstrap-only.
 
 ## Affected Capabilities
 
 ### Modified
 
 - `scheduled-agent-workflow`
-  - executable complete-cardinality/action-entry authorization;
-  - invocation-local authoritative-GitHub input provenance for current-state predicates;
-  - executable pre/post formal-activation acceptance;
-  - shared runtime/test classifier ownership;
-  - durable preflight/activation observability tied to the same executable result and input provenance.
+  - authoritative same-invocation GitHub reconstruction remains required for current-state predicates;
+  - production classifier remains shared by executable regression and machine authorization;
+  - live executable ownership moves from an assumed Scheduled-Agent helper invocation to a GitHub Actions Transition Gate for the bounded MVP transition surface;
+  - serialized request handling provides stale-stop behavior at the Gate;
+  - direct connector label-write bypass remains an explicit MVP limitation rather than being misrepresented as permission-layer prevention.
 
 ## Scope
 
 In scope:
 
-- One deterministic repository-owned executable classifier/precondition surface for workflow-dynamic cardinality, queue selection, and action-entry authorization.
-- One explicit acquisition/provenance contract requiring every current Issue state / Change identity / routing input consumed by that surface to originate from authoritative GitHub observation in the current invocation, with explicit completeness evidence.
-- Shared governance needed to require execution/consumption of that surface while retaining `agents/AGENTS.md` as semantic authority.
-- Narrow `openspec-explore` and `openspec-change` procedural changes needed to consume the executable precondition at their demonstrated boundaries.
-- Canonical `ACTION_RESULT` presentation fields for exact preflight/activation Issue identities, completeness evidence, and observation provenance sufficient to audit what the executable decision consumed.
-- Regression/integration tests that import and exercise the same executable decision implementation used by the runtime procedure, including the exact #100/#130 recurrence shape and the historical-routing/current-label-absent stale-input shape.
-- Explicit failure behavior when the current execution environment cannot execute the repository-owned precondition, cannot establish complete enumeration, or cannot obtain same-invocation authoritative current-state fields.
+- The existing pure production dispatch classifier and provenance-bearing input contract.
+- One GitHub Actions `issue_comment` Transition Gate and one repository-owned effectful adapter that consumes the production classifier.
+- Minimal transition intent syntax carried by a newly created Issue comment.
+- Fresh complete repository reconstruction by the Gate; current Issue/routing/Change/cardinality values are never accepted from request prose.
+- Repository-wide Gate concurrency and fresh execution-time stale detection.
+- MVP support only for already-formal `Lead / resolve-question -> Reviewer / review-openspec` and `Lead / resolve-question -> Executor / implement-change` routing transitions.
+- `ACCEPTED` / `REJECTED` / `INDETERMINATE` result behavior, accepted-only routing mutation, post-write verification, and durable audit evidence.
+- PR-stage adapter/regression tests plus post-merge live canary requirements for one accepted and one rejected request.
+- Correcting prior governance/Skill wording that incorrectly made Scheduled-Agent execution of repository Python the live enforcement boundary.
 
-Out of scope:
+Out of scope for this MVP:
 
-- Reopening or implementing #130's Invocation Exit scope.
+- Removing the ChatGPT connector's direct `Issues: write` / routing-label capability or claiming that direct bypass is physically impossible.
+- Routing-event provenance hardening that would make non-Gate routing writes unqualified for later authorization.
+- Moving Explore admission or substantive Explore action-entry authorization behind the Gate.
+- Moving Propose activation (`Change: unset -> non-unset`) or its pre/post activation acceptance behind the Gate.
+- Migrating every formal lifecycle action to the Gate in this revision.
 - Automatically selecting a winner from an already multiple-active repository state.
-- Automatically clearing or rewriting another workflow's immutable Change identity.
+- Automatically rolling back or repairing a direct unauthorized label mutation.
 - A lock, lease, heartbeat, hidden queue, durable claim, central workflow engine, global priority score, or second workflow DAG.
 - Moving workflow semantics into Scheduled Task prompts.
 - Treating historical comments, Issue prose, previous invocation output, model memory, or cache as a current-state source.
-- Claiming an atomic GitHub cross-Issue compare-and-swap primitive that the current connector does not expose.
-- Changing Human authority, Reviewer independence, role ownership, or ordinary OpenSpec lifecycle topology.
+- Changing Human authority, Reviewer independence, role ownership, or the legal lifecycle topology in `agents/workflow.md`.
 
 ## Skill maintenance traceability
 
-- `agents/skills/openspec-explore/SKILL.md` — **Modified**. Sources: #133 `ACTION_RESULT` establishing `PROPOSAL_READY` plus Reviewer finding `issuecomment-5377194503`. Preserve Explore's existing research responsibility and authority; add only the requirement to execute/consume the shared runtime precondition built from same-invocation authoritative GitHub observations before substantive pre-activation research. Rationale: #130 Explore is the first reconstructable illegal action after #105, and stale/historical routing input must not satisfy that action-entry gate.
-- `agents/skills/openspec-change/SKILL.md` — **Modified**. Sources: #133 `ACTION_RESULT` establishing `PROPOSAL_READY` plus Reviewer finding `issuecomment-5377194503`. Preserve Lead specification/activation authority; replace prose-only complete-cardinality consumption with the same executable precondition immediately before and after the activation write, using only same-invocation authoritative current-state inputs. Rationale: #130 Propose was the downstream illegal formal activation and remains vulnerable if the executable classifier receives stale normalized input.
+- `agents/skills/openspec-explore/SKILL.md` — **Modified**. Sources: the earlier #133 semantic target plus Reviewer implementation finding `issuecomment-5379837891`. Preserve Explore's research/admission responsibility and current-state freshness rules, but remove the claim that the Scheduled Agent itself is the demonstrated live executor of repository Python. The Gate MVP does not yet own Explore admission.
+- `agents/skills/openspec-change/SKILL.md` — **Modified**. Sources: the earlier #133 semantic target plus Reviewer implementation finding `issuecomment-5379837891`. Preserve Lead specification/activation authority. For the MVP's already-formal `resolve-question` successor transition, submit target intent to the shared Transition Gate rather than directly mutating routing; do not broaden the MVP to Propose activation.
 
-No Skill is added or removed. Shared classifier/acquisition contract code and message presentation remain outside the two action Skills so they do not duplicate global semantics.
+No Skill is added or removed. The GitHub Actions Gate is shared runtime infrastructure, not a user-triggered Skill.
 
 ## Traceability
 
 - Source decision-complete Explore: #133 `issuecomment-5373937613`.
-- Post-handoff semantic correction: Reviewer finding #133 `issuecomment-5377194503`.
-- Evidence-discipline clarification consumed for temporal/source boundaries: #133 `issuecomment-5377184598`.
-- Regression incident: #100 formal-active durable evidence and #130 Explore/Propose durable results; timeline claims that matter to causality must remain grounded in their authoritative source objects rather than cross-Issue summary prose.
-- Current-vs-historical routing regression shape: current GitHub routing observations are authoritative; historical body/comment routing remains audit context only.
-- Prior semantic remediation: #105 / Change `enforce-dispatch-cardinality-preflight`, especially archived design Decision 5 documenting the intentionally test-only helper.
+- Observation-provenance semantic correction: Reviewer finding #133 `issuecomment-5377194503`.
+- Completed prior implementation target and final verification: #133 `issuecomment-5379787305`, PR #134 head `0727b030bb9c27d311a390e9d765d4421302abaa`.
+- Runtime-integration implementation finding that requires this correction: #133 `issuecomment-5379837891`.
+- Capability blocker that demonstrated the Scheduled-Agent container has no proven repository execution boundary: #133 `issuecomment-5379922085`.
+- Prior semantic remediation: #105 / Change `enforce-dispatch-cardinality-preflight`.
 - Existing canonical requirement: `Active-workflow cardinality and Issue-state coherence precede queue selection`.
+- New MVP requirement in this delta: `Issue-comment Transition Gate executes live formal-routing authorization`.
 - Capability delta: `specs/scheduled-agent-workflow/spec.md`.
 - Design: `design.md`.
 - Implementation slices: `tasks.md`.
