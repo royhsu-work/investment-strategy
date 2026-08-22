@@ -122,7 +122,7 @@ def test_worker_tool_specs_expose_only_selected_capabilities(tmp_path: Path) -> 
     runtime = WorkerToolRuntime(
         checkout_root=tmp_path,
         repository="royhsu-work/investment-strategy",
-        github_read_token="read-only-token",
+        github_read_token=None,
         capabilities=frozenset({"github_read", "read_file", "run_command"}),
     )
 
