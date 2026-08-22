@@ -169,9 +169,7 @@ class WorkerToolRuntime:
         if not cwd.is_dir():
             raise ValueError("run_command cwd must be a workspace directory")
         environment = {
-            key: value
-            for key, value in os.environ.items()
-            if key not in _SECRET_ENV_NAMES
+            key: value for key, value in os.environ.items() if key not in _SECRET_ENV_NAMES
         }
         completed = subprocess.run(  # noqa: S603 - argv is explicit and shell is never used
             list(argv),
@@ -191,7 +189,11 @@ class WorkerToolRuntime:
 
     def _github_read(self, payload: Mapping[str, object]) -> dict[str, object]:
         raw_path = payload.get("path")
-        if not isinstance(raw_path, str) or not raw_path or raw_path.startswith(("http://", "https://")):
+        if (
+            not isinstance(raw_path, str)
+            or not raw_path
+            or raw_path.startswith(("http://", "https://"))
+        ):
             raise ValueError("github_read path must be a repository-relative API path")
         path = raw_path.lstrip("/")
         if path.startswith("..") or "/../" in f"/{path}/":
