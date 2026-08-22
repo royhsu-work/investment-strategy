@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from investment_strategy.scheduled_agent_effects import EffectBatch, StagedEffect, apply_effect_batch
+from investment_strategy.scheduled_agent_effects import (
+    EffectBatch,
+    StagedEffect,
+    apply_effect_batch,
+)
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
@@ -84,7 +88,10 @@ def test_effect_specific_guard_rejects_whole_batch() -> None:
 
 
 def test_illegal_routing_successor_is_rejected_before_apply() -> None:
-    effect = StagedEffect(kind="routing-transition", payload_json='{"role":"lead","action":"finalize-change"}')
+    effect = StagedEffect(
+        kind="routing-transition",
+        payload_json='{"role":"lead","action":"finalize-change"}',
+    )
     result = apply_effect_batch(
         _batch(effect),
         fresh_preflight=lambda: _preflight(),
@@ -120,7 +127,11 @@ def test_same_role_continuation_requires_fresh_redispatch() -> None:
         apply_effect=lambda _effect: None,
         observe_postcondition=lambda _effect: True,
     )
-    assert result.continuation == WorkerRequest(issue_number=133, role="executor", action="merge-pr")
+    assert result.continuation == WorkerRequest(
+        issue_number=133,
+        role="executor",
+        action="merge-pr",
+    )
 
 
 def test_cross_role_continuation_is_new_machine_selected_identity() -> None:
