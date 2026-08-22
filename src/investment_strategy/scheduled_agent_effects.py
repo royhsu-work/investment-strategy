@@ -159,7 +159,10 @@ def _valid_fields(value: object, allowed: frozenset[str]) -> bool:
     )
 
 
-def _github_mutation_structurally_valid(source: WorkerRequest, payload: Mapping[str, object]) -> bool:
+def _github_mutation_structurally_valid(
+    source: WorkerRequest,
+    payload: Mapping[str, object],
+) -> bool:
     if payload.get("issue_number") != source.issue_number:
         return False
     operation = payload.get("operation")
@@ -169,11 +172,12 @@ def _github_mutation_structurally_valid(source: WorkerRequest, payload: Mapping[
         return False
 
     if operation == "issue-create":
+        labels = cast(list[object], payload.get("labels", []))
         return (
             _is_nonempty_string(payload.get("title"))
             and isinstance(payload.get("body", ""), str)
             and isinstance(payload.get("labels", []), list)
-            and all(isinstance(label, str) and label for label in cast(list[object], payload.get("labels", [])))
+            and all(isinstance(label, str) and label for label in labels)
         )
     if operation == "issue-update":
         fields = payload.get("fields")
@@ -202,9 +206,7 @@ def _github_mutation_structurally_valid(source: WorkerRequest, payload: Mapping[
         return (
             _valid_ref(payload.get("ref"))
             and _is_nonempty_string(payload.get("expected_sha"))
-            and (
-                operation == "ref-delete" or _is_nonempty_string(payload.get("sha"))
-            )
+            and (operation == "ref-delete" or _is_nonempty_string(payload.get("sha")))
         )
     if operation == "pull-request-create":
         return (
@@ -441,7 +443,12 @@ class GitHubEffectAdapter:
             return isinstance(current, Mapping) and current.get("sha") == expected_sha
         if operation in {"ref-update", "ref-delete"}:
             ref = cast(str, payload["ref"])
-            current = _github_json(self.repository, self.token, _ref_api_path(ref), allow_not_found=True)
+            current = _github_json(
+                self.repository,
+                self.token,
+                _ref_api_path(ref),
+                allow_not_found=True,
+            )
             if not isinstance(current, Mapping):
                 return False
             obj = current.get("object")
@@ -708,7 +715,11 @@ class GitHubEffectAdapter:
 
         raise RuntimeError(f"unsupported effect kind: {effect.kind}")
 
-    def _observe_github_mutation(self, effect: StagedEffect, payload: Mapping[str, object]) -> bool:
+    def _observe_github_mutation(
+        self,
+        effect: StagedEffect,
+        payload: Mapping[str, object],
+    ) -> bool:
         operation = cast(str, payload["operation"])
         if operation == "issue-create":
             number = self._created_issue_numbers.get(effect)
