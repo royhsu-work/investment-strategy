@@ -1,12 +1,15 @@
 """Fixture-driven regression coverage for executable dispatch cardinality preflight."""
 
 from pathlib import Path
+from typing import Literal
 
 from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
     EnumerationEvidence,
     ObservationProvenance,
+    RecoveryEvidence,
     RepositoryIssueSnapshot,
+    Routing,
     action_entry_authorized,
     classify_dispatch,
 )
@@ -19,14 +22,14 @@ MIGRATION = ROOT / "agents" / "scheduled-task-migration.md"
 def issue(
     number: int,
     change: str,
-    routing: tuple[str, str] | None,
+    routing: Routing | None,
     *,
-    state: str = "open",
+    state: Literal["open", "closed"] = "open",
     created_order: int = 0,
-    recovery: str = "not-candidate",
+    recovery: RecoveryEvidence = "not-candidate",
     provenance: ObservationProvenance = ObservationProvenance.QUALIFIED,
 ) -> RepositoryIssueSnapshot:
-    return RepositoryIssueSnapshot(  # type: ignore[arg-type]
+    return RepositoryIssueSnapshot(
         issue_number=number,
         change=change,
         routing=routing,
