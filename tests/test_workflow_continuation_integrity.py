@@ -4,7 +4,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _read(path: str) -> str:
-    return (ROOT / path).read_text(encoding="utf-8")
+    return " ".join((ROOT / path).read_text(encoding="utf-8").split())
 
 
 def test_required_deferred_follow_up_has_one_shared_semantic_boundary() -> None:
@@ -30,14 +30,15 @@ def test_required_deferred_follow_up_is_enforced_at_review_and_finalization() ->
     assert "tracker" in finalize
 
 
-def test_same_role_transition_continues_only_same_issue_and_fixed_role() -> None:
+def test_action_transition_redispatches_same_issue_with_fresh_worker() -> None:
     shared = _read("agents/AGENTS.md")
     topology = _read("agents/workflow.md")
     assert "same coordination Issue" in shared
-    assert "fixed invocation role" in shared
-    assert "legal successor from `agents/workflow.md` has the same role" in shared
-    assert "load the target action's mapped default-branch skill" in shared
-    assert "reconstruct the target action" in shared
+    assert "fixed only for that model worker invocation" in shared
+    assert "fresh executable redispatch" in shared
+    assert "fresh mapped model invocation" in shared
+    assert "Same-role transition does not mean same-model continuation" in shared
+    assert "cross-role transition does not wait for a dedicated role schedule slot" in shared
     assert "cross-role" in shared and "Human authority" in shared
     assert "real external asynchronous wait" in shared
     assert "stale" in shared and "unsafe" in shared
@@ -65,7 +66,7 @@ def test_openspec_change_observes_only_just_triggered_exact_validation_run() -> 
         "same exact target/resource",
         "becomes terminal",
         "continue",
-        "later wake",
+        "later fresh mapped invocation",
         "fresh-read that exact run",
         "no other immediately actionable same-authority work remains",
     ):
