@@ -2,136 +2,154 @@
 
 ## Context
 
-#105 corrected the workflow semantics but intentionally stopped at prose-governed runtime behavior plus a test-only classifier. #133 then extracted that classifier into `src/investment_strategy/workflow_dispatch.py`, added explicit same-invocation GitHub observation provenance, made regressions consume the production implementation, and updated governance/Skills to require executable consumption.
+#105 corrected dispatch/cardinality semantics but intentionally stopped at Agent-interpreted runtime behavior plus a test-only classifier. #133 then extracted those semantics into the production pure module `src/investment_strategy/workflow_dispatch.py`, added explicit same-execution GitHub observation provenance, made regressions consume that implementation, and initially required the Scheduled Agent to execute it.
 
-Reviewer implementation finding `issuecomment-5379837891` showed that the latter design still assumed a runtime capability that has not been demonstrated. The Scheduled-Agent environment can use the GitHub connector, but there is no repository checkout mounted and no proven pre-action hook that executes repository Python. A Skill instruction to call the helper therefore remains an Agent interpretation bridge rather than a live machine enforcement boundary.
+Reviewer implementation finding `issuecomment-5379837891` proved that the real Scheduled-Agent environment had no demonstrated pre-action repository execution hook. A later correction proposed an Issue-comment-triggered GitHub Actions Transition Gate, but Reviewer OpenSpec finding `issuecomment-5380345857` correctly rejected that boundary because #133's first demonstrated violation was substantive #130 Explore itself, before any later routing transition. A gate that runs only after the model action cannot prevent that recurrence.
 
-The corrected design keeps the pure classifier and moves the first live executable integration point to GitHub Actions. The MVP intentionally proves one bounded formal-routing path before broadening Gate ownership.
+The required enforcement boundary is therefore before model invocation. GitHub Actions owns scheduling, current-state acquisition, production-classifier execution, and durable-effect application. The model remains the action worker, but it is invoked only after executable authorization and does not receive durable GitHub write authority.
 
 ## Decision 1 — Preserve the pure production classifier
 
-Keep `src/investment_strategy/workflow_dispatch.py` as the repository-owned deterministic classifier/precondition implementation.
+Keep `src/investment_strategy/workflow_dispatch.py` as the repository-owned deterministic dispatch/cardinality/action-authorization implementation.
 
-It remains pure and accepts explicit normalized `DispatchPreflight` input containing repository Issue snapshots plus enumeration/provenance evidence. It does not own GitHub I/O, lifecycle topology, routing mutation, Human authority, or workflow state.
+It remains pure and accepts explicit normalized `DispatchPreflight` input containing repository Issue snapshots plus enumeration/provenance evidence. It does not own GitHub I/O, lifecycle topology, model invocation, durable mutation, Human authority, or workflow state.
 
-The existing implementation and regressions are retained as groundwork. Tests and any machine authorization adapter MUST call this production implementation rather than defining another behavioral classifier.
+Tests and every live runtime authorization boundary MUST call this production implementation rather than defining another behavioral classifier.
 
-## Decision 1A — Current-state input authority remains explicit
+## Decision 2 — GitHub Actions owns the pre-model Scheduled Agent runtime boundary
 
-Authorization-bearing current fields remain qualified only when obtained from authoritative GitHub observations in the execution that consumes the decision. Historical comments, prior invocation output, conversation context, model memory/cache, and copied summaries do not satisfy current Issue state, Change identity, routing, or enumeration-completeness predicates.
+Add one default-branch GitHub Actions Scheduled Agent runtime. It is the normal scheduler/runtime after cutover.
 
-The GitHub Actions Gate acquisition adapter is responsible for building this provenance-qualified input from GitHub. Missing or incomplete current evidence produces an indeterminate decision rather than a last-known-state fallback.
+Each wake executes this order before any mapped model work:
 
-## Decision 2 — GitHub Actions owns the MVP live executable transition boundary
+1. check out authoritative default-branch runtime/governance code;
+2. acquire complete current repository workflow state from GitHub with observable enumeration completeness;
+3. normalize provenance-qualified `DispatchPreflight` input;
+4. execute `workflow_dispatch.py`;
+5. compare the classifier-selected current role with the fixed role assigned to that schedule/manual invocation;
+6. exit without a model request unless the decision is `AUTHORIZE` for one exact coordination Issue and the selected role matches the fixed slot;
+7. only then construct the mapped role/action worker request.
 
-Add a thin default-branch GitHub Actions workflow, `.github/workflows/workflow-transition-gate.yml`, triggered by newly created Issue comments. The workflow checks out the authoritative default branch and invokes one repository-owned effectful adapter, for example `src/investment_strategy/workflow_transition_gate.py`.
+`FAIL_CLOSED`, `NO_WORK`, role mismatch, incomplete enumeration, multiple-active state, contradictory current fields, or unqualified observation provenance MUST terminate before model invocation.
 
-The adapter owns only the live transition procedure:
+## Decision 3 — Preserve fixed role slots; scheduling does not choose workflow state
 
-1. parse a bounded transition intent from the triggering comment;
-2. derive the coordination Issue number from the GitHub event, not from comment claims;
-3. reconstruct current repository workflow state from GitHub with observable completeness;
-4. normalize a provenance-qualified `DispatchPreflight`;
-5. execute `workflow_dispatch.py`;
-6. validate the bounded MVP source/target transition;
-7. fresh-read the target Issue immediately before mutation;
-8. mutate routing only after acceptance;
-9. fresh-read the resulting routing and emit durable Gate result evidence.
+Preserve three fixed runtime slots corresponding to Lead, Reviewer, and Executor. The schedule carries only that fixed role identity. It does not carry an Issue number, Change, action, winner, or workflow priority.
 
-The Gate does not become a second workflow DAG or state store.
+The production classifier independently selects current work from GitHub. A Lead slot cannot execute Reviewer/Executor work, and vice versa. A role mismatch is a normal pre-model no-op.
 
-## Decision 3 — Request comments carry intent, not authorization facts
+An optional GitHub Actions `workflow_dispatch` manual wake MAY accept a fixed role input for controlled/manual execution. It is subject to exactly the same acquisition/classifier/role-match boundary and cannot override selection.
 
-The MVP request syntax is intentionally small:
+## Decision 4 — The action worker uses the Responses API, not Codex
 
-```text
-/transition reviewer review-openspec
-```
+After authorization, repository runtime code invokes an OpenAI Responses API model worker for the exact selected Issue/role/action. Codex is not the worker runtime for this Change.
 
-or
+The worker receives:
 
-```text
-/transition executor implement-change
-```
+- authoritative default-branch role and mapped Skill instructions;
+- the exact machine-authorized Issue/role/action identity;
+- GitHub/repository read capability required for current evidence reconstruction and action-local work;
+- a local checkout/workspace and bounded shell/patch tooling when implementation work requires it;
+- an output contract for the action result and requested durable effects.
 
-The comment location supplies the Issue number. Current source routing, persisted Change identity, formal-active cardinality, selected Issue, completeness, and observation provenance are always acquired by the Gate.
+Provider/model authentication is deployment configuration. It MUST NOT be encoded as workflow state, routing state, or authorization evidence.
 
-Any additional prose is audit context only. A request cannot make itself valid by asserting a current routing tuple or cardinality.
+## Decision 5 — The model worker has no durable GitHub write authority
 
-## Decision 4 — MVP transition surface is intentionally narrow
+The worker execution boundary MUST NOT expose a write-capable GitHub credential to model-controlled tools or shell execution.
 
-The Gate MVP supports only an already-formal coordination Issue whose current selected routing is `Lead / resolve-question` and whose requested target is one of the two legal successors already owned by `agents/workflow.md`:
+In particular, model-controlled execution cannot directly create/update/delete Issue or PR state, mutate routing labels or Change identity, push repository refs, create/merge PRs, close/reopen Issues, or perform equivalent durable GitHub effects.
 
-- `Reviewer / review-openspec` for a material semantic correction ready for independent review;
-- `Executor / implement-change` when clarification is resolved without material semantic change and implementation remains the legal consumer.
+The worker may modify its local checkout/workspace. Any desired durable effect is returned through repository-owned invocation-local result/effect transport for later application.
 
-The Gate verifies that the production classifier selects the same Issue at the current `Lead / resolve-question` routing. The Gate does not determine the semantic judgment that caused Lead to choose one of the two legal targets; that judgment remains Lead-owned and is represented by the source action result.
+This removes the direct-write bypass that made a post-action Transition Gate insufficient: the worker cannot make its own action selection or durable effect authoritative merely by writing GitHub state.
 
-No generic topology registry is added. Expanding Gate ownership to other actions is deferred until this live boundary is proven.
+## Decision 6 — Staged effects are ephemeral transport, not workflow state
 
-## Decision 5 — Gate outcomes are ACCEPTED, REJECTED, or INDETERMINATE
+Worker-requested effects and local patches are invocation-local transport between the authorized worker phase and repository-owned application phase.
 
-- `ACCEPTED`: current complete reconstruction selects the request Issue at `Lead / resolve-question`, the requested target is one of the bounded legal successors, immediate source preconditions still match, routing mutation succeeds, and post-write routing is freshly verified.
-- `REJECTED`: the request is syntactically valid but current authoritative state does not authorize it, for example a different selected Issue, changed source routing, non-formal Issue, or unsupported target.
-- `INDETERMINATE`: complete/provenance-qualified current authorization cannot be established, including incomplete enumeration, contradictory routing/Change identity, or multiple formal workflows.
+They MUST NOT be treated as:
 
-Only `ACCEPTED` may mutate routing. `REJECTED` and `INDETERMINATE` leave routing unchanged.
+- durable workflow state;
+- an authorization token for another run;
+- a second queue or request registry;
+- a source of current GitHub state;
+- a substitute for a fresh application-time classifier decision.
 
-## Decision 6 — Serialize authorization, then re-read current state
+The implementation may use an Actions artifact or equivalent bounded runner transport when separate jobs are required for credential isolation. Such transport expires with the invocation/cutover mechanics and has no lifecycle meaning.
 
-Configure one repository-wide GitHub Actions concurrency group for the transition Gate and do not cancel an in-progress Gate run merely because a newer request appears.
+## Decision 7 — Durable effects require fresh application-time reauthorization
 
-Concurrency is execution serialization, not workflow state. Each Gate run reconstructs GitHub state when it actually executes. If request B waited behind request A and A changed routing, B observes the newer state and is rejected rather than replaying its earlier assumptions.
+Before applying a staged effect batch, repository-owned application code MUST:
 
-This provides a bounded stale-stop property without adding a lock, lease, heartbeat, claim, or hidden queue to repository workflow state.
+1. fresh-acquire complete current GitHub workflow state;
+2. rebuild provenance-qualified classifier input;
+3. execute `workflow_dispatch.py` again;
+4. prove the same source coordination Issue/role/action is still authorized;
+5. verify effect-specific current preconditions such as exact PR/head, current labels/routing, expected Change identity, current branch/ref, or merge/review gates where applicable;
+6. validate any requested routing successor against the authoritative topology in `agents/workflow.md`;
+7. apply only the bounded authorized effects;
+8. fresh-read the resulting durable state and fail closed on contradiction.
 
-## Decision 7 — Durable Gate evidence is audit evidence only
+If the source became stale while the model was working, none of that stale batch is authorized for normal application. Partial external writes that already occurred are handled by existing action/recovery semantics rather than by inventing transaction/rollback state.
 
-For every processed request, emit a durable Gate result carrying enough information to diagnose the decision:
+## Decision 8 — `agents/workflow.md` remains the only lifecycle-topology owner
 
-- triggering Issue/comment identity;
-- requested target;
-- completeness/provenance disposition;
-- formal-active Issue identities;
-- selected Issue/current routing from the classifier;
-- Gate outcome and reason;
-- post-write routing when accepted.
+The runtime does not define a second global action DAG.
 
-The result comment is not an authorization token for a later run. Every later Gate execution reconstructs GitHub state again.
+`agents/workflow.md` remains authoritative for legal successor relationships. Runtime code may parse/validate the canonical topology representation or implement only the minimum adapter necessary to validate a requested successor against that owner, but MUST NOT maintain a separate normative lifecycle graph that can drift.
 
-## Decision 8 — Correct prior Agent-owned executable-consumption claims
+Role authority remains in role definitions, action-local procedure remains in Skills, and canonical OpenSpec remains capability semantics.
 
-Shared governance and the two Skills previously modified by #133 must stop claiming that the Scheduled Agent itself is the demonstrated live executor of repository Python.
+## Decision 9 — Same-role continuation is re-dispatched after durable application
 
-- `openspec-explore` keeps its existing procedural current-state/cardinality safety obligations, but the MVP does not place Explore admission behind the Gate.
-- `openspec-change` keeps Lead specification/activation authority. For the already-formal `resolve-question` successor transition covered by the MVP, it submits transition intent and consumes the Gate outcome instead of directly changing routing. Propose activation remains outside this MVP.
+A source action authorization ends when its durable effect batch has been applied/verified or rejected.
 
-The production classifier remains executable and test-owned; only the live ownership assumption changes.
+After a successful effect batch, runtime performs another complete executable dispatch from the new GitHub state. If the resulting selected role is the same fixed role and work-conserving continuation is otherwise legal, the runtime may invoke the next mapped action. It MUST NOT reuse the previous classifier output as authorization for that continuation.
 
-## Decision 9 — Direct Issue-label bypass is an explicit MVP limitation
+If the target role differs, the current fixed-role run ends and the next matching role slot owns execution.
 
-The current ChatGPT GitHub connector still has `Issues: write`, and Issue comments and routing-label writes share that permission class. The MVP therefore cannot truthfully claim that the Agent is physically incapable of bypassing the Gate and writing routing labels directly.
+## Decision 10 — Serialize runtime executions without creating workflow state
 
-This revision treats that as a known limitation. A direct routing-label mutation outside the Gate is not evidence that the Gate accepted a transition, but this MVP does not yet add routing-event provenance enforcement that would make such a write unusable for later authorization.
+Use one repository-wide non-cancelling GitHub Actions concurrency boundary for Scheduled Agent runtime executions.
 
-Routing-event provenance hardening and connector/action-level capability restriction are deferred. The MVP's acceptance criterion is narrower: demonstrate a real repository-hosted executable authorization path that the Scheduled Agent can request and that performs accepted routing transitions from fresh authoritative state.
+A queued run reconstructs current GitHub state only when it actually executes. It does not inherit the earlier run's preflight. Concurrency is execution serialization only and does not create a lock, lease, heartbeat, claim, durable owner, hidden queue semantics, or winner priority in repository workflow state.
 
-## Decision 10 — PR-stage tests and post-merge live canary are distinct
+## Decision 11 — Cutover requires full mapped-action coverage and no parallel legacy scheduler
 
-A newly added `issue_comment` workflow cannot be exercised as a live default-branch event trigger until that workflow exists on the default branch.
+The new runtime must support all mapped normal actions before it becomes the authoritative scheduled path. This specifically includes the two demonstrated pre-activation surfaces `Lead / explore-change` and `Lead / propose-change`; protecting only formal successor routing is insufficient.
 
-Before merge, regression/integration tests exercise the same transition adapter with representative GitHub event/state fixtures and verify classifier consumption, mutation gating, stale requests, incomplete state, and serialized re-evaluation behavior.
+Legacy ChatGPT Scheduled Tasks MUST be disabled before/when the GitHub Actions runtime becomes authoritative. They are not a fallback normal runtime because an independently waking model would recreate the pre-model bypass.
 
-After the implementation is merged to the default branch, lifecycle completion requires live canary evidence showing:
+Manual Human/maintenance operations remain governed by their existing authority semantics, but a normal mapped Agent action executed outside the machine-gated runtime is not an authorized scheduled execution after cutover.
 
-1. one valid transition request reaches the real `issue_comment` workflow, executes the repository adapter/classifier, and produces `ACCEPTED` with the expected routing mutation; and
-2. one invalid/stale request reaches the same live path, produces `REJECTED` or `INDETERMINATE`, and leaves routing unchanged.
+## Decision 12 — Live verification uses ordinary #133 state, not synthetic workflow state
 
-PR-stage tests MUST NOT be described as proof that the default-branch event trigger already ran.
+PR-stage tests MUST prove the acquisition adapter, pre-model no-invocation behavior, worker isolation contract, effect reauthorization, stale-stop, and fixed-role matching against fixtures and test doubles. They do not prove that the default-branch scheduled runtime has executed live.
 
-## Decision 11 — External Scheduled Task prompts remain unchanged
+After the runtime implementation is merged to `main`, verify it using whatever ordinary #133 lifecycle state exists then:
 
-No Scheduled Task slot count, cadence, title, or prompt logic is moved into this Change. Scheduled Agents continue to load default-branch governance. The new behavior is repository-hosted: the governed action submits a transition request comment and GitHub Actions performs the executable authorization.
+1. observe at least one fixed role slot whose role does not match the production classifier's current selected role; the run must stop before a model request and persist enough Actions evidence to prove that no mapped model invocation occurred;
+2. observe the matching fixed role slot; it must execute the same default-branch classifier, authorize the exact current #133 Issue/role/action, and only then invoke the model worker;
+3. if that worker requests durable effects, the application phase must fresh-revalidate the same source before applying them and persist post-write evidence.
+
+This canary does not require manufacturing a second formal workflow or restoring `Lead / resolve-question` merely to exercise a trigger.
+
+## Decision 13 — Correct prior Agent-owned/Transition-Gate governance wording
+
+Shared governance and affected Skills must stop asserting either of these obsolete models:
+
+- the current ChatGPT Scheduled Agent itself executes repository Python as its own authorization boundary;
+- an Issue-comment Transition Gate after action completion is sufficient runtime enforcement.
+
+The new common contract is:
+
+- repository runtime authorizes before worker invocation;
+- mapped Skill/role semantics still govern what the authorized worker is trying to accomplish;
+- durable effects are applied only through the repository runtime after fresh reauthorization;
+- every same-role continuation re-enters executable dispatch.
+
+Implementation MUST audit all mapped Skills for procedure text that assumes direct model-owned durable mutation and update every genuinely affected Skill with explicit traceability rather than silently changing its execution meaning.
 
 ## Traceability
 
@@ -139,35 +157,40 @@ No Scheduled Task slot count, cadence, title, or prompt logic is moved into this
 - Observation-provenance Reviewer correction: #133 `issuecomment-5377194503`.
 - Prior implementation READY: #133 `issuecomment-5379787305` at PR #134 head `0727b030bb9c27d311a390e9d765d4421302abaa`.
 - Runtime-consumption implementation finding: #133 `issuecomment-5379837891`.
-- Runtime capability blocker: #133 `issuecomment-5379922085`.
+- Scheduled-Agent capability blocker: #133 `issuecomment-5379922085`.
+- Transition-Gate OpenSpec rejection: #133 `issuecomment-5380345857`.
 - Existing production classifier: `src/investment_strategy/workflow_dispatch.py`.
 - Existing topology owner: `agents/workflow.md`.
 - Modified canonical requirement: `Active-workflow cardinality and Issue-state coherence precede queue selection`.
-- Added MVP requirement: `Issue-comment Transition Gate executes live formal-routing authorization`.
-- Decisions 1–1A preserve the classifier/provenance groundwork.
-- Decisions 2–7 define the live Gate path.
-- Decision 8 defines governance/Skill correction.
-- Decision 9 states the bypass limitation explicitly.
-- Decision 10 defines honest live verification.
+- Added requirement: `Machine-gated runtime authorizes mapped work before model invocation and reauthorizes durable effects`.
+- Decisions 1–3 define the pre-model dispatch boundary.
+- Decisions 4–7 define worker isolation and durable-effect application.
+- Decisions 8–10 preserve topology ownership, continuation semantics, and stateless serialization.
+- Decisions 11–12 define cutover/live verification.
+- Decision 13 defines governance/Skill correction.
 
 ## Risks and mitigations
 
-### Risk: Gate becomes a second workflow engine
+### Risk: Runtime becomes a second workflow engine
 
-Mitigation: constrain the MVP to one existing source action and its two existing legal successors. `agents/workflow.md` remains topology authority; the Gate performs authorization/mutation only.
+Mitigation: `workflow_dispatch.py` remains the dispatch implementation, `agents/workflow.md` remains topology owner, and runtime code only acquires state, invokes the selected worker, validates/apply effects, and re-dispatches.
 
-### Risk: Request prose becomes stale authority
+### Risk: Worker finds a write credential through shell/repository state
 
-Mitigation: treat comments as intent only. Current source routing, Change identity, cardinality, selection, and completeness are always reacquired by the Gate.
+Mitigation: the model-controlled worker phase/job is provisioned without durable GitHub write credentials and without persisted checkout credentials. Write-capable application runs in a separate repository-controlled boundary when credential isolation requires it.
 
-### Risk: Concurrent requests race
+### Risk: Staged effect manifest becomes hidden workflow state
 
-Mitigation: serialize Gate runs and re-read current GitHub state when each run executes. A stale queued request is rejected.
+Mitigation: effect transport is invocation-local, expires with the run, cannot authorize a later invocation, and is always rechecked against fresh GitHub state before application.
 
-### Risk: Direct label mutation bypass remains possible
+### Risk: Long model execution races with newer durable state
 
-Mitigation: state the limitation explicitly and do not claim permission-layer prevention. Routing-event provenance or action-level capability restriction is separate hardening after the MVP proves the live Gate path.
+Mitigation: fresh application-time dispatch and effect-specific guards reject stale output. No stale preflight is carried through to write authorization.
 
-### Risk: Unit tests are mistaken for live integration
+### Risk: Dual scheduler reintroduces the original bypass
 
-Mitigation: require a post-merge default-branch `issue_comment` canary before lifecycle completion and keep that evidence distinct from PR-stage tests.
+Mitigation: full mapped-action coverage is required before cutover and legacy ChatGPT Scheduled Tasks are disabled rather than retained as fallback.
+
+### Risk: Live canary requires illegal/synthetic state
+
+Mitigation: fixed role slots naturally provide both a non-matching pre-model STOP case and the matching authorized invocation on the ordinary post-merge #133 state.
