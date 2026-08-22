@@ -276,5 +276,6 @@ def test_continuation_wake_reenters_machine_dispatch_without_role_override() -> 
     apply_section = workflow.split("\n  apply:", 1)[1]
     assert "continuation_required" in apply_section
     assert "/actions/workflows/scheduled-agent-runtime.yml/dispatches" in apply_section
-    assert "AUTHORIZED_ROLE" not in apply_section.split("Trigger immediate fresh continuation wake", 1)[1]
-    assert "AUTHORIZED_ACTION" not in apply_section.split("Trigger immediate fresh continuation wake", 1)[1]
+    continuation_step = apply_section.split("Trigger immediate fresh continuation wake", 1)[1]
+    assert "AUTHORIZED_ROLE" not in continuation_step
+    assert "AUTHORIZED_ACTION" not in continuation_step
