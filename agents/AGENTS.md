@@ -94,13 +94,24 @@ clearing, or routing rewrites. Human/maintainer administrative durable-state rep
 Scheduled-Agent lifecycle execution; a later wake reconstructs the repaired current repository from
 scratch and does not inherit a guessed winner or stale PASS/readiness in place of current evidence.
 
-Only then, after this shared preflight identifies a legal selected Issue, the invocation role becomes the
-fixed invocation role for the remainder of that run and the selected coordination Issue remains fixed. A
-cross-role handoff may persist a different next routing tuple, but the current invocation MUST then end and
-does not redispatch to the new role. A same-role action transition is different: after the source result
-and legal routing mutation are durable, the run may continue on the same coordination Issue under the
-shared same-role continuation contract below. Which action transition is legal is owned by
-`agents/workflow.md`; this paragraph owns only invocation execution semantics after a legal transition.
+Only then, after this shared preflight identifies a legal selected Issue, repository runtime authorizes
+one exact Issue/role/action before any mapped model invocation. That machine-selected identity is fixed only
+for that model worker invocation. The model worker MUST NOT select or override the Issue, role, or action and
+MUST NOT treat prior worker context as current authorization. It may perform only the mapped action's
+read/local-work capability and return structured result content plus requested durable effects.
+
+The model worker has no durable GitHub write authority. Repository-owned application fresh-reauthorizes the
+exact source Issue/role/action from current authoritative GitHub state, validates effect-specific
+preconditions and the successor against `agents/workflow.md`, applies only authorized effects, and observes
+the resulting durable state. After an accepted effect batch, runtime executes complete dispatch again. If a
+legal mapped action is selected, runtime creates a fresh mapped model invocation for that exact identity,
+whether the role stays the same or changes. No previous dispatch decision, requested effect, or model
+context authorizes the continuation. Which successor is legal remains owned only by `agents/workflow.md`.
+
+Issue comments and prior worker output are durable/audit context only. They are not transition commands and
+MUST NOT authorize mapped work, routing changes, or continuation. After machine-gated cutover the normal
+runtime uses a single scheduled wake path with dynamic machine-selected Issue/role/action; fixed role
+schedule slots are not part of the normal authorization contract.
 
 ## Roles and authority
 
@@ -227,17 +238,20 @@ no `explore-change > propose-change` priority inside this combined queue.
 
 Lead MUST NOT activate a queued proposal while another formal active workflow exists, while a bounded
 premature-close recovery candidate blocks intake, or while an older eligible Explore/direct-Propose entry
-is the deterministic combined pre-activation winner. Immediately before persisting a non-`unset` Change
-identity, Propose MUST re-read durable state and confirm its Issue is still the combined pre-activation
-winner using the shared complete-cardinality preflight. The selected Lead persists its immutable Change
-identity; that durable write is the formal activation boundary.
+is the deterministic combined pre-activation winner. Immediately before any non-`unset` Change identity is
+persisted, repository application MUST fresh-reconstruct durable state, execute the production precondition,
+and require this Issue to remain the combined pre-activation winner with exact `Lead / propose-change`
+authorization. The selected Lead action owns the immutable Change identity semantically, while the
+repository-owned application boundary performs the durable write; that accepted write is the formal
+activation boundary.
 
-Overlapping activation attempts remain at-least-once. Before the activation write, Lead re-read checks
-that no active workflow has appeared and that the candidate is still the deterministic winner. The
-activation contract is first-valid-write-wins: after writing, the run MUST re-read complete repository-wide
-durable state and stop as stale if another valid activation, multiple-active state, indeterminate
-enumeration, or newer contradictory state won. This safety model uses reconstruction and preconditions, not
-a lock, claim, lease, heartbeat, hidden sequence, `status:exploring`, or `status:in-progress` state.
+Overlapping activation attempts remain at-least-once and first-valid-write-wins. Repository application
+fresh-reauthorizes immediately before the activation write and, after writing, obtains a newly fresh complete
+repository-wide snapshot and executes the production precondition again. Activation is accepted only when
+the post-write decision proves this exact Issue is the sole formal active workflow with its expected Change
+and routing. A competing activation, multiple-active state, indeterminate enumeration/provenance, or newer
+contradiction stops stale/fail-closed. This safety model uses reconstruction and preconditions, not a lock,
+claim, lease, heartbeat, hidden sequence, `status:exploring`, or `status:in-progress` state.
 
 A valid `LIFECYCLE_COMPLETE` result does not by itself remove an open Issue from formal WIP. If terminal
 verification is complete but the close mutation is missing, the same open `Lead / finalize-archive`
@@ -427,32 +441,30 @@ the separate bounded idle advisory/discovery mode defined below.
 
 ## At-least-once execution and state reconstruction
 
-Every run behaves as if it may be the first run to see the work item:
+Every runtime execution behaves as if it may be the first execution to see the work item:
 
 ```text
 wake
-→ load default-branch AGENTS.md
+→ load authoritative default-branch runtime/governance
 → obtain complete repository-wide durable Issue snapshot
-→ establish observable enumeration completeness
-→ apply the shared formal cardinality/recovery preflight
-→ only then select one eligible Issue and one fixed invocation role
-→ load role + mapped Skill
-→ reconstruct Issue / PR / OpenSpec / Actions / default-branch state
-→ re-evaluate action preconditions
-→ perform only remaining authorized work
-→ persist durable artifact/result and revision-aware evidence
-→ fresh-read current Issue routing
-→ apply the legal successor relationship from agents/workflow.md
-→ if cross-role target: complete HANDOFF and end
-→ if same-role target and immediately actionable: reconstruct target action and continue
+→ establish observable enumeration completeness and same-execution provenance
+→ execute the production formal-cardinality/recovery/selection precondition
+→ if NO_WORK/fail-closed: stop before any mapped model invocation
+→ if authorized: create one fresh worker for the exact machine-selected Issue/role/action
+→ worker reconstructs mapped action evidence, performs bounded read/local work, and returns structured result/requested durable effects
+→ repository-owned application fresh-reconstructs and reauthorizes that exact source action
+→ validate effect-specific preconditions and legal successor against agents/workflow.md
+→ apply only authorized durable effects and fresh-observe their postconditions
+→ execute complete dispatch again from resulting durable state
+→ if another legal mapped action is selected: create a fresh model worker for that exact Issue/role/action
 ```
 
 This is an execution/reconstruction algorithm, not an alternative lifecycle graph; the successor itself is
 resolved from `agents/workflow.md`.
 
-Previous conversation memory is never required for correctness. A partial run, tool failure, or missing
-final response does not transfer ownership. A later run reconstructs durable reality and continues only
-the missing legal work.
+Previous conversation memory is never required for correctness. A partial execution, tool failure, or
+missing final response does not transfer ownership. A later runtime execution reconstructs durable reality
+and continues only the missing legal work.
 
 Crash recovery of a specific already-completed durable mutation or handoff is transition-specific. Before
 a later run may repair routing for that specific recovered transition, it MUST reconstruct same-workflow
@@ -527,9 +539,17 @@ This integrity contract uses existing Issues, provenance, review, Explore, and f
 
 ## Work-conserving selected-action execution
 
-After a Scheduled Agent invocation selects one legal workflow Issue and fixed invocation role, continuation is the default. The selected action MUST continue all immediately actionable work while routing still matches the selected action, required revision/preconditions and authority remain current, and no legal blocking condition exists.
+After repository dispatch authorizes one exact Issue/role/action, work-conserving execution is the
+default for that selected mapped action. The fresh model worker MUST continue all immediately actionable
+work that fits its mapped read/local-work authority while its supplied identity/evidence, required
+revision/preconditions, and execution capability remain current. Durable effects are requested rather than
+applied directly by the worker.
 
-Before the invocation returns, it MUST positively classify and prove from current evidence one legal Invocation Exit. If no legal Exit class is proven, the invocation MUST continue the selected workflow under the fixed invocation role while routing, authority, revision/preconditions, and execution capability remain current.
+Before a model worker ends early, its action MUST positively classify and prove from current evidence one
+legal Invocation Exit for the work it can perform locally. If no legal Exit class is proven, the worker
+continues the selected mapped action while its authority/preconditions remain current. Completion that
+requires durable effects returns those effects to repository application; after application, the runtime
+fresh-dispatches instead of continuing under an inherited fixed role.
 
 A durable checkpoint, remaining approved local work, a recoverable same-role failure, a failed-but-actionable validation, or another ordinary intermediate checkpoint MUST NOT by itself be treated as a voluntary yield point. When the correction is inside the selected role/action authority and approved contract, the invocation performs that correction and continues instead of deferring it solely to a later wake.
 
@@ -544,11 +564,20 @@ A selected action MAY end before its normal completion only when current evidenc
 
 Exit Proof is an internal execution precondition. It MUST NOT require a new lifecycle action, workflow status, progress comment, timer, retry counter, heartbeat, lease, hidden runtime cursor, durable waiter state, or second workflow DAG. Existing action results, review results, handoffs, execution exceptions, exact-resource observations, and lifecycle journals remain the durable evidence surfaces.
 
-The following intermediate facts MUST NOT independently constitute Exit Proof: an intended RED is established; GREEN or REFACTOR completes; validation fails but correction is actionable within current authority; a commit or push completes; the first observation of an exact external resource is absent, queued, or in progress; a verified Slice checkpoint exists while approved same-action work remains; an action completes with an immediately actionable successor owned by the fixed invocation role; or the exact next legal step is already known and executable.
+The following intermediate facts MUST NOT independently constitute Exit Proof: an intended RED is established; GREEN or REFACTOR completes; validation fails but correction is actionable within current authority; a commit or push completes; the first observation of an exact external resource is absent, queued, or in progress; a verified Slice checkpoint exists while approved same-action work remains; a worker completes local work while an immediately actionable successor can be selected after authorized effect application; or the exact next legal local step is already known and executable.
 
-After action A persists its result and legally mutates routing on the same coordination Issue, the invocation fresh-reads that Issue. If the legal successor from `agents/workflow.md` has the same role as the fixed invocation role and is immediately actionable, the invocation MUST load the target action's mapped default-branch skill, reconstruct the target action from current Issue/PR/OpenSpec/Actions/default-branch state, re-evaluate the target action's own preconditions, and continue. The target action receives no inherited authority from action A; every unsafe mutation remains subject to its own current preconditions.
+After action A's requested result/routing effects are fresh-reauthorized, durably applied, and observed, the
+repository runtime executes complete dispatch again from the resulting current state. If the legal successor
+from `agents/workflow.md` is immediately actionable, runtime MUST create a fresh model worker using the
+target action's mapped default-branch role/Skill and current durable evidence. The target action receives no
+inherited authority, hidden context, or authorization from action A; every unsafe durable mutation remains a
+new requested effect subject to fresh application-time preconditions.
 
-Multiple same-role action transitions may continue while they stay on the same coordination Issue, target the fixed invocation role, and remain immediately actionable. A same-role action transition MUST NOT become a mechanism to process another workflow Issue or to redispatch globally. A same-role action transition does not prove Invocation Exit merely because the action label changed.
+Multiple legal action transitions may be work-conserving inside one GitHub Actions runtime execution, but
+every transition is mediated by durable effect application plus fresh global dispatch and every selected
+action gets a fresh mapped model invocation. Same-role transition does not mean same-model continuation;
+cross-role transition does not wait for a dedicated role schedule slot. No transition may use prior worker
+context to process another workflow Issue or bypass global dispatch.
 
 A catchable tool/runtime/execution failure does not become a hard-boundary Exit merely because an exception occurred. If execution opportunity remains, the current role first preserves the required raw exception evidence and applies the existing action-specific recovery/disposition contract. When legal same-authority recovery is immediately actionable, it MUST recover and continue within the same selected role/action. Only when current evidence proves that applicable same-authority recovery/disposition cannot legally continue may the failure support a hard execution-boundary Exit. A genuinely uncatchable hard termination may prevent current-run persistence and is handled by later at-least-once reconstruction.
 
@@ -556,9 +585,13 @@ Role and skill documents define only action-specific blockers, results, recovery
 
 ## Handoff ordering and concurrency safety
 
-HANDOFF is cross-role ownership-transfer evidence. Same-role action transitions use the source result, legal routing mutation, and target-action reconstruction instead; they do not fabricate a handoff. The legal target relationship itself is owned by `agents/workflow.md`.
+HANDOFF is cross-role ownership-transfer evidence. Same-role action transitions use the source result,
+repository-owned routing mutation, and fresh executable redispatch instead; they do not fabricate a
+handoff. The legal target relationship itself is owned by `agents/workflow.md`.
 
-When an action-defined result requires a different role according to `agents/workflow.md`, ownership transfer occurs only after durable work is persisted. Result evidence does not by itself complete that cross-role routing handoff. The required execution order is:
+When an action-defined result requires a different role according to `agents/workflow.md`, ownership
+transfer occurs only after repository application fresh-reauthorizes and persists the durable work. Result
+evidence does not by itself complete that cross-role routing handoff. The required application order is:
 
 ```text
 persist result + revision-aware evidence
@@ -566,14 +599,20 @@ persist result + revision-aware evidence
 → mutate routing to the legal cross-role target tuple
 → observe successful routing mutation
 → persist canonical `HANDOFF`
-→ end the current invocation
+→ end the current model worker invocation
+→ execute fresh global dispatch from resulting durable state
 ```
 
-This is a generic handoff mutation protocol, not a global action-progression definition.
+If the resulting state selects legal work, the same GitHub Actions runtime execution MAY continue by
+creating a fresh mapped worker for the newly selected role/action. This is a generic handoff mutation and
+redispatch protocol, not a global action-progression definition.
 
 `HANDOFF` follows successful cross-role routing mutation. If a prior invocation already persisted the result but source routing still matches the completed source action, a later eligible invocation preserves the already-durable result, performs only the missing cross-role routing mutation, observes the target tuple, persists canonical `HANDOFF`, and does not repeat completed implementation/review work or fabricate another result.
 
-For a same-role target, persist the source action's required result first, fresh-read and legally mutate routing, observe the target tuple, then reconstruct and continue the target action under the fixed invocation role. Do not emit canonical `HANDOFF` for that same-role boundary.
+For a same-role target, repository application persists the source action's required result first,
+fresh-reauthorizes and legally mutates routing, observes the target tuple, then executes fresh global
+dispatch. If that target action is selected, runtime creates a fresh mapped model invocation for it. Do not
+emit canonical `HANDOFF` for that same-role boundary and do not continue under inherited worker context.
 
 A normal cross-role handoff MUST NOT intentionally expose two role owners or two action owners. A same-role action transition likewise replaces the source action label rather than exposing two action owners.
 
@@ -603,7 +642,7 @@ A canonical typed message that directly represents a covered lifecycle transitio
 lifecycle journal for that same boundary. The workflow MUST NOT add a duplicate generic
 `LIFECYCLE_JOURNAL` or recursive meta-comment merely to restate it. Cross-role routing ownership transfer uses `HANDOFF`, PR
 merge uses `MERGE_RESULT`, applicable non-review lifecycle completion uses `ACTION_RESULT`, and Human
-escalation uses `HUMAN_DECISION_REQUIRED`. Same-role action transitions use the already-required source result plus routing/target reconstruction and add no synthetic transition message.
+escalation uses `HUMAN_DECISION_REQUIRED`. Same-role action transitions use the already-required source result plus repository-owned routing mutation and fresh executable redispatch; they add no synthetic transition message.
 
 ## Shared exception capture and invocation finalization
 
