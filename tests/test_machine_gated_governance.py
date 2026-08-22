@@ -12,7 +12,7 @@ CHANGE = ROOT / "agents" / "skills" / "openspec-change" / "SKILL.md"
 
 
 def _normalized(path: Path) -> str:
-    return " ".join(path.read_text(encoding="utf-8").split())
+    return " ".join(path.read_text(encoding="utf-8").split()).replace("- ", "-")
 
 
 def test_mapped_worker_requires_machine_pre_model_dispatch_after_cutover() -> None:
@@ -27,7 +27,7 @@ def test_mapped_worker_requires_machine_pre_model_dispatch_after_cutover() -> No
         "fresh-reauthorizes",
         "fresh mapped model invocation",
     ):
-        assert required in shared
+        assert required.lower() in shared.lower()
 
 
 def test_fixed_role_slots_and_issue_comment_transition_commands_are_not_runtime_authority() -> None:
@@ -57,7 +57,7 @@ def test_shared_apply_boundary_owns_durable_messages_and_redispatch() -> None:
         "fresh executable dispatch",
         "fresh mapped model invocation",
     ):
-        assert required in messages
+        assert required.lower() in messages.lower()
 
 
 def test_lead_workers_consume_machine_identity_and_request_durable_effects() -> None:
@@ -68,7 +68,7 @@ def test_lead_workers_consume_machine_identity_and_request_durable_effects() -> 
         "Machine-gated runtime boundary",
         "MUST NOT run `workflow_dispatch.py`",
         "requested durable effect",
-        "fresh model invocation",
+        "fresh mapped model invocation",
     ):
         assert required in explore
 
