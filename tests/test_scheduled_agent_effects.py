@@ -62,8 +62,7 @@ def _worker_result(*effects: StagedEffect) -> str:
             "action": "implement-change",
             "result_content": "bounded result",
             "requested_effects": [
-                {"kind": effect.kind, "payload_json": effect.payload_json}
-                for effect in effects
+                {"kind": effect.kind, "payload_json": effect.payload_json} for effect in effects
             ],
         }
     )
@@ -193,8 +192,7 @@ def test_supported_effect_guard_rejects_foreign_issue_and_unknown_kind() -> None
         StagedEffect(
             kind="routing-transition",
             payload_json=(
-                '{"issue_number":133,"role":"reviewer",'
-                '"action":"review-implementation"}'
+                '{"issue_number":133,"role":"reviewer","action":"review-implementation"}'
             ),
         ),
     )
@@ -219,8 +217,7 @@ def test_topology_validator_consumes_canonical_workflow_text() -> None:
         StagedEffect(
             kind="routing-transition",
             payload_json=(
-                '{"issue_number":133,"role":"reviewer",'
-                '"action":"review-implementation"}'
+                '{"issue_number":133,"role":"reviewer","action":"review-implementation"}'
             ),
         ),
     )
