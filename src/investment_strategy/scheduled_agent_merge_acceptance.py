@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import cast
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -175,9 +178,6 @@ def _non_closing_linkage(body: object, issue_number: int) -> bool:
 
 
 def _required_checks_pass(repository: str, token: str, head_sha: str) -> tuple[bool, bool]:
-    check_runs = _paged_github_list(repository, token, f"commits/{head_sha}/check-runs")
-    # The check-runs endpoint is an object, not a list, so consume it directly instead.
-    del check_runs
     decoded = _github_json(repository, token, f"commits/{head_sha}/check-runs?per_page=100")
     if not isinstance(decoded, Mapping):
         return False, False
@@ -217,9 +217,9 @@ def _human_input_fresh(
         if "performed_via_github_app" not in comment:
             return False, False
         if comment.get("performed_via_github_app") is None:
-            # Conservative application-time boundary: newer direct-Human input
-            # requires a later accepted review before merge rather than being
-            # inferred non-blocking by the mutation adapter.
+            # The mutation adapter does not make semantic materiality judgments.
+            # A newer direct-Human comment therefore requires a later accepted
+            # review before merge rather than being inferred non-blocking here.
             return False, True
     return True, True
 
@@ -305,3 +305,82 @@ def run_guarded_effect_application(
         token=token,
         workflow_text=workflow_text,
     )
+
+
+def _source_from_environment() -> WorkerRequest:
+    issue = os.environ.get("AUTHORIZED_ISSUE")
+    role = os.environ.get("AUTHORIZED_ROLE")
+    action = os.environ.get("AUTHORIZED_ACTION")
+    if not issue or not role or not action:
+        raise RuntimeError("machine-authorized Issue/role/action environment is required")
+    try:
+        issue_number = int(issue)
+    except ValueError as exc:
+        raise RuntimeError("AUTHORIZED_ISSUE must be an integer") from exc
+    return WorkerRequest(issue_number=issue_number, role=role, action=action)
+
+
+def _write_github_outputs(batch: EffectBatch, result: ApplyResult) -> None:
+    output_path = os.environ.get("GITHUB_OUTPUT")
+    if not output_path:
+        return
+    lines = [
+        f"applied={'true' if result.applied else 'false'}",
+        f"continuation_required={'true' if result.continuation is not None else 'false'}",
+    ]
+    if result.continuation is not None:
+        lines.extend(
+            (
+                f"continuation_issue={result.continuation.issue_number}",
+                f"continuation_role={result.continuation.role}",
+                f"continuation_action={result.continuation.action}",
+            )
+        )
+    with Path(output_path).open("a", encoding="utf-8") as output:
+        output.write("\n".join(lines) + "\n")
+
+
+def main() -> int:
+    """Apply one same-run result through merge acceptance plus effect reauthorization."""
+
+    if len(sys.argv) != 2:
+        raise RuntimeError("worker result path argument is required")
+    repository = os.environ.get("GITHUB_REPOSITORY")
+    token = os.environ.get("GITHUB_TOKEN")
+    if not repository or not token:
+        raise RuntimeError("GITHUB_REPOSITORY and GITHUB_TOKEN are required")
+
+    source = _source_from_environment()
+    raw_worker_result = Path(sys.argv[1]).read_text(encoding="utf-8")
+    workflow_text = Path("agents/workflow.md").read_text(encoding="utf-8")
+    batch, result = run_guarded_effect_application(
+        raw_worker_result,
+        source=source,
+        repository=repository,
+        token=token,
+        workflow_text=workflow_text,
+    )
+    _write_github_outputs(batch, result)
+    print(
+        json.dumps(
+            {
+                "applied": result.applied,
+                "reason": result.reason,
+                "continuation": (
+                    None
+                    if result.continuation is None
+                    else {
+                        "issue_number": result.continuation.issue_number,
+                        "role": result.continuation.role,
+                        "action": result.continuation.action,
+                    }
+                ),
+            },
+            sort_keys=True,
+        )
+    )
+    return 0 if result.applied else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
