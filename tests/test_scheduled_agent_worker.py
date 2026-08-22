@@ -1,4 +1,4 @@
-"""Responses API worker and credential-isolation regressions for #133 Slice 4B/4C."""
+"""Responses API worker and credential-isolation regressions for #133 Slice 4B/4D."""
 
 from __future__ import annotations
 
@@ -9,8 +9,10 @@ import pytest
 
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 from investment_strategy.scheduled_agent_worker import (
+    WorkerToolRuntime,
     build_worker_prompt,
     run_authorized_worker,
+    worker_capabilities_for,
 )
 
 
@@ -44,6 +46,26 @@ def _result_json(*, role: str = "executor", action: str = "implement-change") ->
     )
 
 
+_ALL_MAPPED_ACTIONS = (
+    WorkerRequest(133, "lead", "explore-change"),
+    WorkerRequest(133, "lead", "propose-change"),
+    WorkerRequest(133, "lead", "resolve-question"),
+    WorkerRequest(133, "lead", "finalize-change"),
+    WorkerRequest(133, "lead", "finalize-archive"),
+    WorkerRequest(133, "reviewer", "review-openspec"),
+    WorkerRequest(133, "reviewer", "review-implementation"),
+    WorkerRequest(133, "reviewer", "review-archive"),
+    WorkerRequest(133, "executor", "implement-change"),
+    WorkerRequest(133, "executor", "merge-pr"),
+)
+
+_LOCAL_WRITE_ACTIONS = {
+    ("lead", "propose-change"),
+    ("lead", "resolve-question"),
+    ("executor", "implement-change"),
+}
+
+
 def test_worker_is_not_invoked_without_machine_authorization(tmp_path: Path) -> None:
     calls: list[str] = []
 
@@ -65,6 +87,47 @@ def test_worker_prompt_loads_exact_authorized_role_and_mapped_skill(tmp_path: Pa
     assert "# Executor" in prompt
     assert "EXACT_SKILL_CONTEXT" in prompt
     assert "must not select or override" in prompt
+
+
+def test_all_mapped_actions_have_explicit_read_and_local_capability_profiles() -> None:
+    for request in _ALL_MAPPED_ACTIONS:
+        capabilities = worker_capabilities_for(request)
+        assert {"github_read", "read_file", "list_dir", "run_command"} <= capabilities
+        should_write = (request.role, request.action) in _LOCAL_WRITE_ACTIONS
+        assert ("write_file" in capabilities) is should_write
+
+
+def test_worker_tool_runtime_confines_file_writes_to_checkout(tmp_path: Path) -> None:
+    runtime = WorkerToolRuntime(
+        checkout_root=tmp_path,
+        repository="royhsu-work/investment-strategy",
+        github_read_token=None,
+        capabilities=frozenset({"read_file", "write_file"}),
+    )
+
+    result = json.loads(
+        runtime.execute(
+            "write_file",
+            {"path": "notes/result.txt", "content": "bounded"},
+        )
+    )
+    assert result["ok"] is True
+    assert (tmp_path / "notes" / "result.txt").read_text(encoding="utf-8") == "bounded"
+
+    with pytest.raises(ValueError, match="workspace"):
+        runtime.execute("write_file", {"path": "../escape.txt", "content": "forbidden"})
+
+
+def test_worker_tool_specs_expose_only_selected_capabilities(tmp_path: Path) -> None:
+    runtime = WorkerToolRuntime(
+        checkout_root=tmp_path,
+        repository="royhsu-work/investment-strategy",
+        github_read_token="read-only-token",
+        capabilities=frozenset({"github_read", "read_file", "run_command"}),
+    )
+
+    names = {tool["name"] for tool in runtime.tool_specs()}
+    assert names == {"github_read", "read_file", "run_command"}
 
 
 def test_cross_role_reviewer_gets_fresh_reviewer_only_context(tmp_path: Path) -> None:
