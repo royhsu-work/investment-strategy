@@ -40,7 +40,11 @@ WorkerTransport = Callable[[str], str]
 
 
 def _skill_path_for_action(role_text: str, action: str) -> Path:
-    matches = [path for mapped_action, path in _SKILL_MAPPING.findall(role_text) if mapped_action == action]
+    matches = [
+        path
+        for mapped_action, path in _SKILL_MAPPING.findall(role_text)
+        if mapped_action == action
+    ]
     if len(matches) != 1:
         raise ValueError(f"role definition does not map action exactly once: {action}")
     return Path(matches[0])
