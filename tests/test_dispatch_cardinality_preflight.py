@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Literal
 
+import investment_strategy.workflow_dispatch as workflow_dispatch
 from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
     EnumerationEvidence,
@@ -165,6 +166,14 @@ def test_removed_current_routing_is_not_reconstructed_from_history() -> None:
     )
     assert decision.formal_issue_ids == (133,)
     assert decision.selected_issue_id == 133
+
+
+def test_slice2_runtime_exposes_activation_prewrite_authorization() -> None:
+    assert hasattr(workflow_dispatch, "activation_prewrite_authorized")
+
+
+def test_slice2_runtime_exposes_activation_postwrite_acceptance() -> None:
+    assert hasattr(workflow_dispatch, "activation_postwrite_accepted")
 
 
 def test_shared_governance_exposes_concrete_complete_preflight_procedure() -> None:
