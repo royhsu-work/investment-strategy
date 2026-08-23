@@ -134,7 +134,7 @@ def evidence_from_environment() -> LiveRuntimeEvidence:
     return LiveRuntimeEvidence(
         run_id=_required_environment("GITHUB_RUN_ID"),
         run_attempt=_required_environment("GITHUB_RUN_ATTEMPT"),
-        revision=_required_environment("GITHUB_SHA"),
+        revision=_required_environment("RUNTIME_REVISION"),
         event_name=_required_environment("GITHUB_EVENT_NAME"),
         source=source,
         applied=applied,
