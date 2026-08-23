@@ -93,7 +93,7 @@ Trace: proposal corrected `What Changes`; design Decisions 2–14; added require
 
 Trace: design Decisions 12–13; added requirement live-cutover scenarios.
 
-- [ ] Before enabling the new runtime as the sole normal scheduler, verify legacy ChatGPT Lead/Reviewer/Executor Scheduled Tasks are disabled so there is no dual normal execution path.
+- [x] Before enabling the new runtime as the sole normal scheduler, verify legacy ChatGPT Lead/Reviewer/Executor Scheduled Tasks are disabled so there is no dual normal execution path.
 - [ ] After the runtime workflow exists on `main`, use the ordinary current #133 lifecycle state. Observe a scheduled wake and prove complete acquisition plus production-classifier authorization of the exact current #133 Issue/role/action before model invocation.
 - [ ] Prove the real worker receives only the classifier-selected role/action and cannot self-select another role.
 - [ ] On a natural legal role transition, prove a fresh post-apply dispatch selects the new role and a fresh role-specific model invocation occurs without waiting for a dedicated role schedule slot.
