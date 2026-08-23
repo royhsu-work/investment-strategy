@@ -13,7 +13,7 @@ import os
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 from urllib.request import Request, urlopen
@@ -51,6 +51,10 @@ _ACTION_LABELS: dict[str, Action] = {
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
 _MESSAGE_FIELD = re.compile(r"(?m)^(Workflow|Change|Action|Result):\s*(.+?)\s*$")
 
+# Default-branch activation of workflow-dynamic dispatch and its terminal journal contract.
+# Commit 0312a56fe38f1702ac8e53ddd7aa6a1deba1cb0d, 2026-08-13T18:11:21Z.
+_WORKFLOW_DYNAMIC_ACTIVATED_AT = datetime(2026, 8, 13, 18, 11, 21, tzinfo=timezone.utc)
+
 
 @dataclass(frozen=True)
 class GitHubIssueObservation:
@@ -64,6 +68,7 @@ class GitHubIssueObservation:
     authoritative: bool
     premature_close_recovery: RecoveryEvidence = "not-candidate"
     terminal_evidence: TerminalEvidence = "not-terminal"
+    legacy_terminal_candidate: bool = False
 
 
 @dataclass(frozen=True)
@@ -191,6 +196,21 @@ def _routing_from_labels(labels: set[str]) -> tuple[Routing | None, bool]:
     return (role, action), True
 
 
+def _github_timestamp(value: object) -> tuple[datetime | None, bool]:
+    if value is None:
+        return None, True
+    if not isinstance(value, str):
+        return None, False
+    try:
+        normalized = value.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None, False
+    if parsed.tzinfo is None:
+        return None, False
+    return parsed.astimezone(timezone.utc), True
+
+
 def normalize_github_issue(payload: Mapping[str, object]) -> GitHubIssueObservation | None:
     """Normalize one current GitHub Issues API object.
 
@@ -211,6 +231,7 @@ def normalize_github_issue(payload: Mapping[str, object]) -> GitHubIssueObservat
     labels, labels_valid = _label_names(payload)
     routing, routing_valid = _routing_from_labels(labels)
     created_order, created_valid = _created_order(payload.get("created_at"), number)
+    closed_at, closed_valid = _github_timestamp(payload.get("closed_at"))
 
     body_text = body if isinstance(body, str) else ""
     change_matches = _CHANGE_LINE.findall(body_text)
@@ -225,12 +246,18 @@ def normalize_github_issue(payload: Mapping[str, object]) -> GitHubIssueObservat
 
     recovery: RecoveryEvidence = "not-candidate"
     terminal_evidence: TerminalEvidence = "not-terminal"
+    legacy_terminal_candidate = False
     if state == "closed" and change != "unset":
         # Closed formal-looking state is not normal work. Until complete terminal
         # evidence is obtained below, recovery remains indeterminate/fail-closed.
         terminal_evidence = "indeterminate"
         if routing is not None:
             recovery = "indeterminate"
+        legacy_terminal_candidate = (
+            closed_valid
+            and closed_at is not None
+            and closed_at < _WORKFLOW_DYNAMIC_ACTIVATED_AT
+        )
 
     return GitHubIssueObservation(
         issue_number=number,
@@ -238,9 +265,12 @@ def normalize_github_issue(payload: Mapping[str, object]) -> GitHubIssueObservat
         routing=routing,
         state=cast(str, state),
         created_order=created_order,
-        authoritative=labels_valid and routing_valid and created_valid and change_valid,
+        authoritative=(
+            labels_valid and routing_valid and created_valid and closed_valid and change_valid
+        ),
         premature_close_recovery=recovery,
         terminal_evidence=terminal_evidence,
+        legacy_terminal_candidate=legacy_terminal_candidate,
     )
 
 
@@ -335,6 +365,32 @@ def _apply_terminal_evidence(
             else observation.premature_close_recovery
         ),
     )
+
+
+def _legacy_terminal_evidence_from_checkout(
+    change: str,
+    *,
+    repository_root: Path,
+) -> TerminalEvidence:
+    """Classify pre-workflow-dynamic closed history from current OpenSpec state.
+
+    The current terminal journal cannot be required retroactively. A legacy
+    closed Issue is historical only when current default-branch state proves
+    the Change is no longer active and exactly one archived Change exists.
+    """
+
+    changes_root = repository_root / "openspec" / "changes"
+    archive_root = changes_root / "archive"
+    if not changes_root.is_dir() or not archive_root.is_dir():
+        return "indeterminate"
+    if (changes_root / change).exists():
+        return "indeterminate"
+    matches = tuple(
+        path
+        for path in archive_root.glob(f"????-??-??-{change}")
+        if path.is_dir()
+    )
+    return "terminal-history" if len(matches) == 1 else "indeterminate"
 
 
 def acquire_from_issue_pages(
@@ -448,7 +504,12 @@ def _github_issue(repository: str, token: str, issue_number: int) -> Mapping[str
     return cast(Mapping[str, object], decoded)
 
 
-def acquire_current_github_preflight(repository: str, token: str) -> DispatchPreflight:
+def acquire_current_github_preflight(
+    repository: str,
+    token: str,
+    *,
+    repository_root: Path | None = None,
+) -> DispatchPreflight:
     """Freshly acquire and normalize complete current repository Issue state.
 
     Closed formal-looking Issues require invocation-local terminal evidence. A
@@ -458,15 +519,34 @@ def acquire_current_github_preflight(repository: str, token: str) -> DispatchPre
     closed with the same immutable Change/routing identity.
     """
 
+    root = Path.cwd() if repository_root is None else repository_root
     pages = _github_issue_pages(repository, token)
     preliminary = acquire_from_issue_pages(pages, exhausted=True)
     repository_owner = repository.split("/", 1)[0]
     terminal_evidence: dict[int, TerminalEvidence] = {}
     reobserved: dict[int, GitHubIssueObservation] = {}
 
+    preliminary_observations = {
+        observation.issue_number: observation
+        for page in pages
+        for payload in page
+        if (observation := normalize_github_issue(payload)) is not None
+    }
+
     for issue in preliminary.issues:
         if issue.state != "closed" or issue.change == "unset":
             continue
+        original = preliminary_observations.get(issue.issue_number)
+        if original is None:
+            terminal_evidence[issue.issue_number] = "indeterminate"
+            continue
+        if original.legacy_terminal_candidate:
+            terminal_evidence[issue.issue_number] = _legacy_terminal_evidence_from_checkout(
+                issue.change,
+                repository_root=root,
+            )
+            continue
+
         comment_pages = _github_issue_comment_pages(repository, token, issue.issue_number)
         comments = (comment for page in comment_pages for comment in page)
         evidence = _terminal_evidence_from_comments(
@@ -504,6 +584,11 @@ def acquire_current_github_preflight(repository: str, token: str) -> DispatchPre
                 ),
                 premature_close_recovery=issue.premature_close_recovery,
                 terminal_evidence=issue.terminal_evidence,
+                legacy_terminal_candidate=(
+                    preliminary_observations.get(issue.issue_number).legacy_terminal_candidate
+                    if preliminary_observations.get(issue.issue_number) is not None
+                    else False
+                ),
             )
         if issue.issue_number in terminal_evidence:
             observation = _apply_terminal_evidence(
