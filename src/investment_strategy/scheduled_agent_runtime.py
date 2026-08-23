@@ -226,6 +226,8 @@ def normalize_github_issue(payload: Mapping[str, object]) -> GitHubIssueObservat
     recovery: RecoveryEvidence = "not-candidate"
     terminal_evidence: TerminalEvidence = "not-terminal"
     if state == "closed" and change != "unset":
+        # Closed formal-looking state is not normal work. Until complete terminal
+        # evidence is obtained below, recovery remains indeterminate/fail-closed.
         terminal_evidence = "indeterminate"
         if routing is not None:
             recovery = "indeterminate"
@@ -263,7 +265,7 @@ def _valid_lifecycle_complete_comment(
     change: str,
     repository_owner: str,
 ) -> bool:
-    """Recognize one canonical trusted terminal ACTION_RESULT."""
+    """Recognize one canonical owner-authored terminal ACTION_RESULT."""
 
     body = payload.get("body")
     user = payload.get("user")
@@ -367,7 +369,7 @@ def acquire_from_issue_pages(
 
 
 def _github_get_list_page(url: str, token: str) -> tuple[Mapping[str, object], ...]:
-    request = Request(
+    request = Request(  # noqa: S310 - fixed trusted GitHub API host
         url,
         headers={
             "Accept": "application/vnd.github+json",
@@ -375,7 +377,7 @@ def _github_get_list_page(url: str, token: str) -> tuple[Mapping[str, object], .
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    with urlopen(request, timeout=30) as response:
+    with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
         decoded = json.loads(response.read().decode("utf-8"))
     if not isinstance(decoded, list):
         raise RuntimeError("GitHub API returned a non-list response")
@@ -431,7 +433,7 @@ def _github_issue_comment_pages(
 
 def _github_issue(repository: str, token: str, issue_number: int) -> Mapping[str, object]:
     url = f"https://api.github.com/repos/{repository}/issues/{issue_number}"
-    request = Request(
+    request = Request(  # noqa: S310 - fixed trusted GitHub API host
         url,
         headers={
             "Accept": "application/vnd.github+json",
@@ -439,7 +441,7 @@ def _github_issue(repository: str, token: str, issue_number: int) -> Mapping[str
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    with urlopen(request, timeout=30) as response:
+    with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
         decoded = json.loads(response.read().decode("utf-8"))
     if not isinstance(decoded, Mapping):
         raise RuntimeError("GitHub Issue API returned a malformed item")
@@ -447,7 +449,14 @@ def _github_issue(repository: str, token: str, issue_number: int) -> Mapping[str
 
 
 def acquire_current_github_preflight(repository: str, token: str) -> DispatchPreflight:
-    """Freshly acquire and normalize complete current repository Issue state."""
+    """Freshly acquire and normalize complete current repository Issue state.
+
+    Closed formal-looking Issues require invocation-local terminal evidence. A
+    structurally valid completion comment is not enough by itself: after the
+    completion evidence is obtained, runtime re-observes the exact Issue and
+    only classifies terminal history when that current observation is still
+    closed with the same immutable Change/routing identity.
+    """
 
     pages = _github_issue_pages(repository, token)
     preliminary = acquire_from_issue_pages(pages, exhausted=True)
