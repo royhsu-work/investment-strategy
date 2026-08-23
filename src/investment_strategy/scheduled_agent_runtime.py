@@ -50,6 +50,11 @@ _ACTION_LABELS: dict[str, Action] = {
 }
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
 _MESSAGE_FIELD = re.compile(r"(?m)^(Workflow|Change|Action|Result):\s*(.+?)\s*$")
+_HUMAN_RETIREMENT = re.compile(
+    r"^Human administrative retirement:\s*"
+    r"abandon Change (?P<change>[A-Za-z0-9._-]+)\.\s*"
+    r"Do not recover or resume #(?P<issue>[1-9][0-9]*)\.(?:\s|$)"
+)
 
 # Default-branch activation of workflow-dynamic dispatch and its terminal journal contract.
 # Commit 0312a56fe38f1702ac8e53ddd7aa6a1deba1cb0d, 2026-08-13T18:11:21Z.
@@ -320,6 +325,42 @@ def _valid_lifecycle_complete_comment(
     return all(fields.get(name) == [value] for name, value in expected.items())
 
 
+def _valid_human_retirement_comment(
+    payload: Mapping[str, object],
+    *,
+    issue_number: int,
+    change: str,
+    repository_owner: str,
+) -> bool:
+    """Recognize one direct-Human administrative termination decision."""
+
+    body = payload.get("body")
+    user = payload.get("user")
+    author_association = payload.get("author_association")
+    if not isinstance(body, str) or not isinstance(user, Mapping):
+        return False
+    if user.get("login") != repository_owner or author_association != "OWNER":
+        return False
+    if "performed_via_github_app" not in payload or payload.get("performed_via_github_app") is not None:
+        return False
+
+    created_at, created_valid = _github_timestamp(payload.get("created_at"))
+    updated_at, updated_valid = _github_timestamp(payload.get("updated_at"))
+    if (
+        not created_valid
+        or not updated_valid
+        or created_at is None
+        or updated_at is None
+        or created_at != updated_at
+    ):
+        return False
+
+    match = _HUMAN_RETIREMENT.match(body.strip())
+    if match is None:
+        return False
+    return match.group("change") == change and int(match.group("issue")) == issue_number
+
+
 def _terminal_evidence_from_comments(
     comments: Iterable[Mapping[str, object]],
     *,
@@ -342,6 +383,26 @@ def _terminal_evidence_from_comments(
     if len(valid) > 1:
         return "indeterminate"
     return "not-terminal"
+
+
+def _has_human_retirement_comment(
+    comments: Iterable[Mapping[str, object]],
+    *,
+    issue_number: int,
+    change: str,
+    repository_owner: str,
+) -> bool:
+    valid = [
+        comment
+        for comment in comments
+        if _valid_human_retirement_comment(
+            comment,
+            issue_number=issue_number,
+            change=change,
+            repository_owner=repository_owner,
+        )
+    ]
+    return len(valid) == 1
 
 
 def _apply_terminal_evidence(
@@ -516,7 +577,10 @@ def acquire_current_github_preflight(
     structurally valid completion comment is not enough by itself: after the
     completion evidence is obtained, runtime re-observes the exact Issue and
     only classifies terminal history when that current observation is still
-    closed with the same immutable Change/routing identity.
+    closed with the same immutable Change/routing identity. A direct-Human
+    administrative retirement may instead exclude the closed workflow from
+    candidate reconstruction only after its own stricter retirement
+    postconditions are freshly proved.
     """
 
     root = Path.cwd() if repository_root is None else repository_root
@@ -525,6 +589,7 @@ def acquire_current_github_preflight(
     repository_owner = repository.split("/", 1)[0]
     terminal_evidence: dict[int, TerminalEvidence] = {}
     reobserved: dict[int, GitHubIssueObservation] = {}
+    human_retired_issue_ids: set[int] = set()
 
     preliminary_observations = {
         observation.issue_number: observation
@@ -548,13 +613,35 @@ def acquire_current_github_preflight(
             continue
 
         comment_pages = _github_issue_comment_pages(repository, token, issue.issue_number)
-        comments = (comment for page in comment_pages for comment in page)
+        comments = tuple(comment for page in comment_pages for comment in page)
         evidence = _terminal_evidence_from_comments(
             comments,
             issue_number=issue.issue_number,
             change=issue.change,
             repository_owner=repository_owner,
         )
+        if evidence == "not-terminal" and _has_human_retirement_comment(
+            comments,
+            issue_number=issue.issue_number,
+            change=issue.change,
+            repository_owner=repository_owner,
+        ):
+            current_raw = _github_issue(repository, token, issue.issue_number)
+            current = normalize_github_issue(current_raw)
+            active_change = root / "openspec" / "changes" / issue.change
+            if (
+                current is not None
+                and current.authoritative
+                and current.state == "closed"
+                and current.change == issue.change
+                and current.routing is None
+                and current_raw.get("state_reason") == "not_planned"
+                and not active_change.exists()
+            ):
+                human_retired_issue_ids.add(issue.issue_number)
+                continue
+            evidence = "indeterminate"
+
         if evidence == "terminal-history":
             current = normalize_github_issue(_github_issue(repository, token, issue.issue_number))
             if (
@@ -571,6 +658,8 @@ def acquire_current_github_preflight(
 
     observations: list[GitHubIssueObservation] = []
     for issue in preliminary.issues:
+        if issue.issue_number in human_retired_issue_ids:
+            continue
         observation = reobserved.get(issue.issue_number)
         if observation is None:
             observation = GitHubIssueObservation(
