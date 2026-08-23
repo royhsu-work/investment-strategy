@@ -26,6 +26,7 @@ Action = Literal[
 ]
 Routing = tuple[Role, Action]
 RecoveryEvidence = Literal["not-candidate", "qualifying", "indeterminate"]
+TerminalEvidence = Literal["not-terminal", "terminal-history", "indeterminate"]
 
 
 class ObservationProvenance(StrEnum):
@@ -45,6 +46,7 @@ class RepositoryIssueSnapshot:
     state: Literal["open", "closed"] = "open"
     created_order: int = 0
     premature_close_recovery: RecoveryEvidence = "not-candidate"
+    terminal_evidence: TerminalEvidence = "not-terminal"
     current_state_provenance: ObservationProvenance = ObservationProvenance.QUALIFIED
 
 
@@ -119,7 +121,9 @@ def classify_dispatch(preflight: DispatchPreflight) -> DispatchDecision:
 
     Missing completeness or current-state provenance fails closed. Historical
     routing is intentionally not an input: callers must normalize only current
-    GitHub state into ``routing``.
+    GitHub state into ``routing``. Closed workflow-looking Issues are excluded
+    only when terminal evidence proves terminal history; otherwise they remain
+    bounded recovery/contradiction input.
     """
 
     if not preflight.enumeration.complete:
@@ -139,30 +143,86 @@ def classify_dispatch(preflight: DispatchPreflight) -> DispatchDecision:
             reason="authorization-bearing current Issue state is unqualified",
         )
 
+    terminal_indeterminate = tuple(
+        issue
+        for issue in preflight.issues
+        if issue.state == "closed"
+        and issue.change != "unset"
+        and issue.terminal_evidence == "indeterminate"
+    )
+    if terminal_indeterminate:
+        return _fail_closed(
+            completeness="COMPLETE",
+            provenance=ObservationProvenance.QUALIFIED,
+            reason="terminal completion evidence is indeterminate",
+        )
+
     formal_issues = tuple(
         issue
         for issue in preflight.issues
         if issue.change != "unset" and issue.routing is not None and issue.state == "open"
     )
-    terminal_pending = tuple(
+    formal_ids = tuple(sorted(issue.issue_number for issue in formal_issues))
+
+    closed_nonterminal = tuple(
         issue
         for issue in preflight.issues
-        if issue.change != "unset"
-        and issue.routing == ("lead", "finalize-archive")
-        and issue.state == "closed"
+        if issue.state == "closed"
+        and issue.change != "unset"
+        and issue.terminal_evidence != "terminal-history"
     )
-    active = formal_issues + terminal_pending
-    formal_ids = tuple(sorted(issue.issue_number for issue in active))
+    recovery_indeterminate = tuple(
+        issue
+        for issue in closed_nonterminal
+        if issue.routing is not None and issue.premature_close_recovery == "indeterminate"
+    )
+    if recovery_indeterminate:
+        return _fail_closed(
+            completeness="COMPLETE",
+            provenance=ObservationProvenance.QUALIFIED,
+            formal=formal_ids,
+            reason="premature-close recovery evidence is indeterminate",
+        )
 
-    if len(active) > 1:
+    recovery = tuple(
+        issue
+        for issue in closed_nonterminal
+        if issue.routing is not None and issue.premature_close_recovery == "qualifying"
+    )
+    recovery_ids = tuple(sorted(issue.issue_number for issue in recovery))
+
+    unclassified_closed = tuple(
+        issue
+        for issue in closed_nonterminal
+        if issue not in recovery and issue not in recovery_indeterminate
+    )
+    if unclassified_closed:
+        return _fail_closed(
+            completeness="COMPLETE",
+            provenance=ObservationProvenance.QUALIFIED,
+            formal=formal_ids,
+            recovery=recovery_ids,
+            reason="closed nonterminal workflow state is unresolved",
+        )
+
+    if formal_issues and recovery:
+        return _fail_closed(
+            completeness="COMPLETE",
+            provenance=ObservationProvenance.QUALIFIED,
+            formal=formal_ids,
+            recovery=recovery_ids,
+            reason="formal workflow conflicts with premature-close recovery candidate",
+        )
+
+    if len(formal_issues) > 1:
         return _fail_closed(
             completeness="COMPLETE",
             provenance=ObservationProvenance.QUALIFIED,
             formal=formal_ids,
             reason="multiple formal workflows",
         )
-    if len(active) == 1:
-        selected = active[0]
+    if len(formal_issues) == 1:
+        selected = formal_issues[0]
         return DispatchDecision(
             completeness="COMPLETE",
             observation_provenance=ObservationProvenance.QUALIFIED,
@@ -175,32 +235,6 @@ def classify_dispatch(preflight: DispatchPreflight) -> DispatchDecision:
             reason="sole formal workflow",
         )
 
-    recovery_indeterminate = tuple(
-        issue
-        for issue in preflight.issues
-        if issue.state == "closed"
-        and issue.change != "unset"
-        and issue.routing is not None
-        and issue.routing != ("lead", "finalize-archive")
-        and issue.premature_close_recovery == "indeterminate"
-    )
-    if recovery_indeterminate:
-        return _fail_closed(
-            completeness="COMPLETE",
-            provenance=ObservationProvenance.QUALIFIED,
-            reason="premature-close recovery evidence is indeterminate",
-        )
-
-    recovery = tuple(
-        issue
-        for issue in preflight.issues
-        if issue.state == "closed"
-        and issue.change != "unset"
-        and issue.routing is not None
-        and issue.routing != ("lead", "finalize-archive")
-        and issue.premature_close_recovery == "qualifying"
-    )
-    recovery_ids = tuple(sorted(issue.issue_number for issue in recovery))
     if len(recovery) > 1:
         return _fail_closed(
             completeness="COMPLETE",
