@@ -11,6 +11,7 @@ from investment_strategy.workflow_dispatch import (
     RecoveryEvidence,
     RepositoryIssueSnapshot,
     Routing,
+    TerminalEvidence,
     action_entry_authorized,
     classify_dispatch,
 )
@@ -28,6 +29,7 @@ def issue(
     state: Literal["open", "closed"] = "open",
     created_order: int = 0,
     recovery: RecoveryEvidence = "not-candidate",
+    terminal: TerminalEvidence = "not-terminal",
     provenance: ObservationProvenance = ObservationProvenance.QUALIFIED,
 ) -> RepositoryIssueSnapshot:
     return RepositoryIssueSnapshot(
@@ -37,6 +39,7 @@ def issue(
         state=state,
         created_order=created_order,
         premature_close_recovery=recovery,
+        terminal_evidence=terminal,
         current_state_provenance=provenance,
     )
 
@@ -133,14 +136,40 @@ def test_two_formal_workflows_fail_closed_without_winner_selection() -> None:
     assert decision.selected_issue_id is None
 
 
-def test_terminal_pending_work_wins_over_pre_activation_queue() -> None:
+def test_closed_terminal_history_is_excluded_from_formal_wip() -> None:
     decision = classify_dispatch(
         snapshot(
-            issue(90, "archiving", ("lead", "finalize-archive"), state="closed"),
-            issue(91, "unset", ("lead", "explore-change")),
+            issue(
+                90,
+                "archived",
+                ("lead", "finalize-archive"),
+                state="closed",
+                terminal="terminal-history",
+            ),
+            issue(
+                133,
+                "enforce-runtime-dispatch-preconditions",
+                ("reviewer", "review-implementation"),
+            ),
         )
     )
-    assert decision.selected_issue_id == 90
+    assert decision.formal_issue_ids == (133,)
+    assert decision.selected_issue_id == 133
+
+
+def test_closed_finalize_archive_without_completion_fails_closed() -> None:
+    decision = classify_dispatch(
+        snapshot(
+            issue(
+                90,
+                "archiving",
+                ("lead", "finalize-archive"),
+                state="closed",
+                recovery="indeterminate",
+            )
+        )
+    )
+    assert decision.disposition == "FAIL_CLOSED"
 
 
 def test_current_state_provenance_is_required() -> None:
