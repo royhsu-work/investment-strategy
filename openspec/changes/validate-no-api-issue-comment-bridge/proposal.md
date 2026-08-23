@@ -6,15 +6,15 @@ The repository already contains production dispatch and effect-gating code, but 
 
 #140 first established a bounded transport prerequisite: one ChatGPT Scheduled Task invocation must be able to write an exact GitHub Issue comment, trigger default-branch GitHub Actions, execute bounded repository-owned code, and read back the exact correlated result. Subsequent Human scope correction and independent review established that transport alone is not lifecycle-complete for this Change. The same Change must also connect that proven no-API boundary to production pre-model dispatch and remove deterministic Issue-selection judgment from model-side natural-language reconstruction.
 
-The current production runtime also demonstrates unnecessary coupling: ordinary dispatch acquires `state=all` Issues and reconstructs terminal comments, Human retirement evidence, legacy archive state, and closed-Issue re-observation before it may select an otherwise unambiguous open formal workflow. Correctness still requires bounded premature-close recovery to block new pre-activation work, but it does not require every normal active-workflow selection to pay that historical forensic cost.
+The current production runtime also demonstrates unnecessary coupling: ordinary dispatch acquires `state=all` Issues and reconstructs terminal comments, Human retirement evidence, legacy archive state, and closed-Issue re-observation before it may select an otherwise unambiguous open formal workflow. Correctness still requires bounded premature-close recovery whenever no open formal workflow exists, but it does not require every normal active-workflow selection to pay that historical forensic cost.
 
 ## What Changes
 
 - Add a standalone GitHub `issue_comment` transport canary that accepts only a bounded `DISPATCH_REQUEST` comment on one explicitly configured Human-created check-in Issue.
 - Use the GitHub request comment ID as the sole correlation identity; do not introduce a custom request UUID and do not correlate by latest comment.
 - Execute bounded repository-owned code from the current default-branch checkout and write an exactly correlated transport result; malformed, unrelated, repeated, or already-completed requests fail closed or become idempotent no-ops.
-- Make `src/investment_strategy/workflow_dispatch.py` the single production normal-selection classifier consumed by runtime and regression tests. Normal selection deterministically returns an exact Issue/Role/Action, `NO_WORK`, or `FAIL_CLOSED` from the minimum provenance-qualified current Issue facts required for selection.
-- Separate normal open-Issue selection from exceptional closed-history/premature-close recovery. A sole open formal workflow is selected without terminal-history forensics; when open formal cardinality is zero and pre-activation work could otherwise run, a bounded executable recovery gate evaluates only the closed workflow-looking candidates needed to prove that pre-activation is safe.
+- Make `src/investment_strategy/workflow_dispatch.py` the single production normal-selection classifier consumed by runtime and regression tests. Normal selection deterministically returns an exact Issue/Role/Action, `NO_WORK`, or `FAIL_CLOSED` from the minimum provenance-qualified current Issue facts required for selection, consuming existing executable admission evaluators rather than interpreting admission prose.
+- Separate normal open-Issue selection from exceptional closed-history/premature-close recovery. A sole open formal workflow is selected without terminal-history forensics; when open formal cardinality is zero, a bounded executable recovery gate runs before either pre-activation authorization or `NO_WORK` and evaluates only the closed workflow-looking candidates needed to determine recovery safety.
 - Keep PR, CI, OpenSpec, review, and effect-specific evidence out of global Issue selection. After an exact Issue/Role/Action is selected, the mapped action/effect preconditions own those correctness checks.
 - Simplify default-branch dispatch governance so it defines authority, required authoritative input provenance, result meanings, and fail-closed boundaries while executable code owns deterministic classifier mechanics rather than duplicating that algorithm in natural-language instructions.
 - After the bridge and corrected production dispatch are deployed to the default branch, extend the no-API path to return the exact correlated production dispatch decision and prove in one real ChatGPT Scheduled Task invocation that the model consumes that machine-selected identity instead of selecting Issue/Role/Action itself.
@@ -30,9 +30,10 @@ In scope:
 - explicit check-in Issue configuration and exact request-comment-ID correlation/idempotency;
 - `src/investment_strategy/workflow_dispatch.py` normal-selection responsibility and production classifier contract;
 - `src/investment_strategy/scheduled_agent_runtime.py` acquisition/orchestration changes needed to separate normal open-Issue selection from bounded exceptional recovery/history reconstruction;
-- the minimum explicit executable premature-close recovery boundary required to prevent unsafe pre-activation when no open formal workflow exists;
+- consumption of existing executable admission authority such as `src/investment_strategy/human_authority.py` where queue eligibility requires it, without creating a second Human-authority algorithm;
+- the minimum explicit executable premature-close recovery boundary required before pre-activation or `NO_WORK` when no open formal workflow exists;
 - `agents/AGENTS.md` dispatch-governance simplification needed to consume executable decisions without duplicating their deterministic algorithm;
-- focused production-path regression coverage for WIP=1, deterministic pre-activation selection, incomplete/provenance-invalid fail-closed behavior, recovery separation, and model-side selection exclusion;
+- focused production-path regression coverage for WIP=1, deterministic pre-activation selection, executable direct-Propose admission, incomplete/provenance-invalid fail-closed behavior, recovery separation, and model-side selection exclusion;
 - real no-API bridge evidence for both transport feasibility and, after deployment, exact production machine-dispatch readback.
 
 Out of scope:
