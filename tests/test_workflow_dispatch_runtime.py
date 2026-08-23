@@ -1,5 +1,10 @@
 """Runtime dispatch precondition regressions for #133."""
 
+from pathlib import Path
+
+import pytest
+
+import investment_strategy.scheduled_agent_runtime as runtime
 from investment_strategy.scheduled_agent_runtime import (
     GitHubIssueObservation,
     RuntimeTrigger,
@@ -317,3 +322,99 @@ def test_runtime_does_not_invoke_second_propose_while_formal_wip_exists() -> Non
     request = authorize_worker_request(preflight, RuntimeTrigger())
     assert request is not None
     assert request.issue_number == 100
+
+
+def _retired_issue_payload() -> dict[str, object]:
+    return {
+        "number": 133,
+        "state": "closed",
+        "state_reason": "not_planned",
+        "body": "Change: enforce-runtime-dispatch-preconditions",
+        "labels": [],
+        "created_at": "2026-08-21T17:21:27Z",
+        "closed_at": "2026-08-23T12:14:54Z",
+    }
+
+
+def _queued_140_payload() -> dict[str, object]:
+    return {
+        "number": 140,
+        "state": "open",
+        "body": "Change: unset",
+        "labels": [
+            {"name": "agent:lead"},
+            {"name": "action:explore-change"},
+        ],
+        "created_at": "2026-08-23T11:39:39Z",
+        "closed_at": None,
+    }
+
+
+def _retirement_comment(*, app: object | None = None) -> dict[str, object]:
+    return {
+        "id": 5385902831,
+        "body": (
+            "Human administrative retirement: abandon Change "
+            "enforce-runtime-dispatch-preconditions. Do not recover or resume #133. "
+            "Remaining runtime-enforcement work is superseded by #140."
+        ),
+        "user": {"login": "royhsu-work"},
+        "author_association": "OWNER",
+        "created_at": "2026-08-23T12:05:21Z",
+        "updated_at": "2026-08-23T12:05:21Z",
+        "performed_via_github_app": app,
+    }
+
+
+def test_human_retirement_excludes_abandoned_workflow_and_allows_140(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "openspec" / "changes").mkdir(parents=True)
+    pages = ((_retired_issue_payload(), _queued_140_payload()),)
+    comments = ((_retirement_comment(),),)
+
+    monkeypatch.setattr(runtime, "_github_issue_pages", lambda repository, token: pages)
+    monkeypatch.setattr(
+        runtime,
+        "_github_issue_comment_pages",
+        lambda repository, token, issue_number: comments if issue_number == 133 else (),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_github_issue",
+        lambda repository, token, issue_number: _retired_issue_payload(),
+    )
+
+    preflight = runtime.acquire_current_github_preflight(
+        "royhsu-work/investment-strategy",
+        "token",
+        repository_root=tmp_path,
+    )
+    decision = classify_dispatch(preflight)
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.selected_issue_id == 140
+    assert decision.selected_routing == ("lead", "explore-change")
+
+
+def test_app_authored_retirement_does_not_release_closed_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "openspec" / "changes").mkdir(parents=True)
+    pages = ((_retired_issue_payload(), _queued_140_payload()),)
+    comments = ((_retirement_comment(app={"id": 1144995}),),)
+
+    monkeypatch.setattr(runtime, "_github_issue_pages", lambda repository, token: pages)
+    monkeypatch.setattr(
+        runtime,
+        "_github_issue_comment_pages",
+        lambda repository, token, issue_number: comments if issue_number == 133 else (),
+    )
+
+    preflight = runtime.acquire_current_github_preflight(
+        "royhsu-work/investment-strategy",
+        "token",
+        repository_root=tmp_path,
+    )
+    assert classify_dispatch(preflight).disposition == "FAIL_CLOSED"
