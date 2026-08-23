@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
+from typing import NoReturn
+
+import pytest
 
 import investment_strategy.scheduled_agent_merge_acceptance as acceptance
 from investment_strategy.scheduled_agent_live_evidence import (
@@ -57,7 +61,8 @@ def test_merge_acceptance_rejects_closed_or_changed_head() -> None:
 
 
 def test_apply_rejects_when_default_branch_advanced_before_effect_application(
-    monkeypatch, tmp_path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     worker_result = tmp_path / "scheduled-agent-result.json"
     worker_result.write_text("{}", encoding="utf-8")
@@ -77,7 +82,7 @@ def test_apply_rejects_when_default_branch_advanced_before_effect_application(
 
     effect_application_called = False
 
-    def unexpected_effect_application(*args, **kwargs):
+    def unexpected_effect_application(*args: object, **kwargs: object) -> NoReturn:
         nonlocal effect_application_called
         effect_application_called = True
         raise AssertionError("stale runtime revision must reject before effect application")
