@@ -341,7 +341,10 @@ def _valid_human_retirement_comment(
         return False
     if user.get("login") != repository_owner or author_association != "OWNER":
         return False
-    if "performed_via_github_app" not in payload or payload.get("performed_via_github_app") is not None:
+    if (
+        "performed_via_github_app" not in payload
+        or payload.get("performed_via_github_app") is not None
+    ):
         return False
 
     created_at, created_valid = _github_timestamp(payload.get("created_at"))
