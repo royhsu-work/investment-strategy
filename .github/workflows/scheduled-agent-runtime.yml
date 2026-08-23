@@ -134,6 +134,21 @@ jobs:
           uv run python -m investment_strategy.scheduled_agent_merge_acceptance
           .scheduled-agent-result/scheduled-agent-result.json
 
+      - name: Persist exact live runtime audit evidence
+        if: steps.apply.outputs.applied == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          AUTHORIZED_ISSUE: ${{ needs.dispatch.outputs.issue_number }}
+          AUTHORIZED_ROLE: ${{ needs.dispatch.outputs.role }}
+          AUTHORIZED_ACTION: ${{ needs.dispatch.outputs.action }}
+          APPLY_APPLIED: ${{ steps.apply.outputs.applied }}
+          CONTINUATION_REQUIRED: ${{ steps.apply.outputs.continuation_required }}
+          CONTINUATION_ISSUE: ${{ steps.apply.outputs.continuation_issue }}
+          CONTINUATION_ROLE: ${{ steps.apply.outputs.continuation_role }}
+          CONTINUATION_ACTION: ${{ steps.apply.outputs.continuation_action }}
+        run: uv run python -m investment_strategy.scheduled_agent_live_evidence
+
       - name: Trigger immediate fresh continuation wake
         if: steps.apply.outputs.continuation_required == 'true'
         env:
