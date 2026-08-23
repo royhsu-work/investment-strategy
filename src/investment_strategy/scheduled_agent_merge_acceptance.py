@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import cast
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from investment_strategy.human_authority import HUMAN_ACTOR
@@ -45,6 +45,15 @@ class MergeAcceptanceSnapshot:
     complete: bool
 
 
+@dataclass(frozen=True)
+class RuntimeRevisionSnapshot:
+    """Fresh default-branch identity required before pinned runtime code may apply effects."""
+
+    current_head_sha: str | None
+    expected_revision: str
+    complete: bool
+
+
 def merge_acceptance_allows(snapshot: MergeAcceptanceSnapshot) -> bool:
     """Return whether all fresh merge-acceptance predicates hold together."""
 
@@ -60,6 +69,16 @@ def merge_acceptance_allows(snapshot: MergeAcceptanceSnapshot) -> bool:
     )
 
 
+def runtime_revision_allows(snapshot: RuntimeRevisionSnapshot) -> bool:
+    """Return whether pinned application code is still the authoritative default-branch revision."""
+
+    return (
+        snapshot.complete
+        and snapshot.current_head_sha is not None
+        and snapshot.current_head_sha == snapshot.expected_revision
+    )
+
+
 def _github_json(repository: str, token: str, api_path: str) -> object:
     request = Request(  # noqa: S310 - fixed trusted GitHub API host
         f"https://api.github.com/repos/{repository}/{api_path.lstrip('/')}",
@@ -71,6 +90,34 @@ def _github_json(repository: str, token: str, api_path: str) -> object:
     )
     with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
         return json.loads(response.read().decode("utf-8"))
+
+
+def acquire_runtime_revision_snapshot(
+    *,
+    repository: str,
+    token: str,
+    default_branch: str,
+    expected_revision: str,
+) -> RuntimeRevisionSnapshot:
+    """Fresh-read the default branch and bind application authority to the dispatch revision."""
+
+    try:
+        decoded = _github_json(
+            repository,
+            token,
+            f"branches/{quote(default_branch, safe='')}",
+        )
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return RuntimeRevisionSnapshot(None, expected_revision, False)
+    if not isinstance(decoded, Mapping):
+        return RuntimeRevisionSnapshot(None, expected_revision, False)
+    commit = decoded.get("commit")
+    if not isinstance(commit, Mapping):
+        return RuntimeRevisionSnapshot(None, expected_revision, False)
+    current_head_sha = commit.get("sha")
+    if not isinstance(current_head_sha, str):
+        return RuntimeRevisionSnapshot(None, expected_revision, False)
+    return RuntimeRevisionSnapshot(current_head_sha, expected_revision, True)
 
 
 def _paged_github_list(
@@ -348,27 +395,7 @@ def _write_github_outputs(batch: EffectBatch, result: ApplyResult) -> None:
         output.write("\n".join(lines) + "\n")
 
 
-def main() -> int:
-    """Apply one same-run result through merge acceptance plus effect reauthorization."""
-
-    if len(sys.argv) != 2:
-        raise RuntimeError("worker result path argument is required")
-    repository = os.environ.get("GITHUB_REPOSITORY")
-    token = os.environ.get("GITHUB_TOKEN")
-    if not repository or not token:
-        raise RuntimeError("GITHUB_REPOSITORY and GITHUB_TOKEN are required")
-
-    source = _source_from_environment()
-    raw_worker_result = Path(sys.argv[1]).read_text(encoding="utf-8")
-    workflow_text = Path("agents/workflow.md").read_text(encoding="utf-8")
-    batch, result = run_guarded_effect_application(
-        raw_worker_result,
-        source=source,
-        repository=repository,
-        token=token,
-        workflow_text=workflow_text,
-    )
-    _write_github_outputs(batch, result)
+def _print_result(result: ApplyResult) -> None:
     print(
         json.dumps(
             {
@@ -387,6 +414,47 @@ def main() -> int:
             sort_keys=True,
         )
     )
+
+
+def main() -> int:
+    """Apply one same-run result through revision, merge, and effect reauthorization."""
+
+    if len(sys.argv) != 2:
+        raise RuntimeError("worker result path argument is required")
+    repository = os.environ.get("GITHUB_REPOSITORY")
+    token = os.environ.get("GITHUB_TOKEN")
+    default_branch = os.environ.get("DEFAULT_BRANCH")
+    runtime_revision = os.environ.get("RUNTIME_REVISION")
+    if not repository or not token:
+        raise RuntimeError("GITHUB_REPOSITORY and GITHUB_TOKEN are required")
+    if not default_branch or not runtime_revision:
+        raise RuntimeError("DEFAULT_BRANCH and RUNTIME_REVISION are required")
+
+    source = _source_from_environment()
+    runtime_snapshot = acquire_runtime_revision_snapshot(
+        repository=repository,
+        token=token,
+        default_branch=default_branch,
+        expected_revision=runtime_revision,
+    )
+    if not runtime_revision_allows(runtime_snapshot):
+        batch = EffectBatch(source=source, effects=())
+        result = ApplyResult(False, "runtime default-branch revision is stale or incomplete")
+        _write_github_outputs(batch, result)
+        _print_result(result)
+        return 1
+
+    raw_worker_result = Path(sys.argv[1]).read_text(encoding="utf-8")
+    workflow_text = Path("agents/workflow.md").read_text(encoding="utf-8")
+    batch, result = run_guarded_effect_application(
+        raw_worker_result,
+        source=source,
+        repository=repository,
+        token=token,
+        workflow_text=workflow_text,
+    )
+    _write_github_outputs(batch, result)
+    _print_result(result)
     return 0 if result.applied else 1
 
 
