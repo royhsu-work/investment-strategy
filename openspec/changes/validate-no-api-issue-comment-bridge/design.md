@@ -12,7 +12,7 @@ Primary source evidence:
 - #140 decision-complete Explore result `issuecomment-5386482159`;
 - #140 scope correction `issuecomment-5387096717`;
 - Reviewer finding `issuecomment-5387268115`;
-- current default-branch `src/investment_strategy/workflow_dispatch.py` and `src/investment_strategy/scheduled_agent_runtime.py`;
+- current default-branch `src/investment_strategy/workflow_dispatch.py`, `src/investment_strategy/scheduled_agent_runtime.py`, and `src/investment_strategy/human_authority.py`;
 - current default-branch `agents/AGENTS.md` and `agents/workflow.md`;
 - GitHub Actions documentation for the `issue_comment` `created` event and `GITHUB_TOKEN` recursion suppression semantics.
 
@@ -92,9 +92,9 @@ Normal selection consumes only provenance-qualified current facts required to an
 - GitHub `created_at` ordering for the combined pre-activation queue; and
 - enumeration/provenance completeness.
 
-A direct-Propose candidate may participate only when its existing canonical executable Human-admission predicate has already produced a normalized eligible fact for that candidate. The normal classifier does not interpret Human prose or reimplement the Human-authority algorithm.
+A direct-Propose candidate may participate only after the existing executable Human-authority surface in `src/investment_strategy/human_authority.py` has proved the canonical `propose_admission_ref(issue_number)` decision through `is_human_decision_approved(...)`. Runtime normalizes that result into candidate eligibility; `workflow_dispatch.py` does not parse Human comments/events itself, and the model does not interpret Human prose or reimplement that authority algorithm.
 
-The model does not calculate formal cardinality, queue order, current routing, or Issue/Role/Action from governance prose. The classifier returns one structured disposition:
+The model does not calculate formal cardinality, queue order, current routing, or Issue/Role/Action from governance prose. The production decision returns one structured disposition:
 
 - `AUTHORIZE` with exact Issue/Role/Action;
 - `NO_WORK`; or
@@ -112,28 +112,28 @@ complete current OPEN-Issue snapshot
 normal production classifier
         ├─ formal > 1 / invalid / incomplete → FAIL_CLOSED
         ├─ formal = 1 → AUTHORIZE exact Issue / Role / Action
-        └─ formal = 0 → exceptional-recovery guard before queue
+        └─ formal = 0 → exceptional-recovery guard before queue or NO_WORK
 ```
 
 When exactly one open routed non-`unset` formal workflow exists, that workflow wins immediately. The runtime MUST NOT require terminal comments, Human-retirement comments, archived legacy Change lookup, or closed-Issue re-observation merely to authorize that sole open formal workflow.
 
 This changes cost and responsibility, not WIP=1 semantics: two open formal workflows still fail closed, and incomplete/unqualified open-Issue enumeration still cannot authorize work.
 
-## Decision 7: Exceptional closed-history recovery is a pre-activation safety gate
+## Decision 7: Exceptional closed-history recovery is a formal-zero safety gate
 
-Closed-history/premature-close handling remains safety-critical only when no open formal workflow exists and pre-activation work could otherwise be admitted.
+Whenever no open formal workflow exists, the runtime performs a separate bounded executable recovery acquisition/classification before it may authorize pre-activation work or return `NO_WORK`. This prevents a prematurely closed unfinished workflow from being stranded merely because the open queue is empty, while avoiding historical forensics whenever a coherent open formal workflow already owns WIP.
 
-At that boundary the runtime performs a separate bounded executable recovery acquisition/classification:
+At that boundary the runtime:
 
-1. enumerate the current closed workflow-looking candidate set with observable completeness;
-2. fetch detailed terminal/recovery evidence only for candidates that may affect recovery classification;
-3. preserve existing terminal journal, direct-Human retirement, legacy archive, and current re-observation predicates as applicable;
-4. classify the result:
+1. enumerates the current closed workflow-looking candidate set with observable completeness;
+2. fetches detailed terminal/recovery evidence only for candidates that may affect recovery classification;
+3. preserves existing terminal journal, direct-Human retirement, legacy archive, and current re-observation predicates as applicable;
+4. classifies the result:
    - exactly one qualifying premature-close candidate → authorize `Lead / resolve-question` for that Issue;
    - multiple, unresolved, incomplete, or provenance-indeterminate recovery state → `FAIL_CLOSED`;
-   - no blocking recovery candidate → allow the normal classifier to select the deterministic open pre-activation winner or `NO_WORK`.
+   - no blocking recovery candidate → allow deterministic open pre-activation selection or `NO_WORK`.
 
-Therefore premature close still blocks new workflow admission, but the historical forensic path is no longer an unconditional prerequisite for every active-workflow wake.
+Therefore premature close still blocks new workflow admission and is recoverable even when there is no queued work, but the historical forensic path is no longer an unconditional prerequisite for every active-workflow wake.
 
 This may be implemented as a focused recovery classifier/helper beside the normal classifier or as a narrowly factored runtime helper. It MUST NOT become a generic workflow engine, global fault registry, persistent recovery state machine, or hidden ownership store. Existing `workflow_recovery.py` is merge-recovery-specific and is not silently repurposed as proof that premature-close recovery already has the required abstraction.
 
@@ -150,7 +150,7 @@ Examples:
 
 A fresh normal dispatch decision remains an action-entry identity precondition. It proves that the same exact Issue/routing is still selected; it does not make global dispatch load every action-specific resource.
 
-`propose-change` retains immediate pre-write and fresh post-write activation checks. When no open formal workflow exists, its preactivation authorization also depends on the exceptional recovery guard having proved that no closed recovery candidate blocks admission.
+`propose-change` retains immediate pre-write and fresh post-write activation checks. Its preactivation authorization also depends on executable direct-Propose admission and, whenever open formal cardinality is zero, the exceptional recovery guard having proved that no closed recovery candidate blocks admission.
 
 ## Decision 9: `agents/AGENTS.md` describes the authority boundary, not a duplicate classifier algorithm
 
@@ -160,11 +160,11 @@ The approved implementation will reduce the default-branch dispatch section to t
 - authoritative current GitHub provenance/completeness requirements;
 - the meaning of `AUTHORIZE`, `NO_WORK`, and `FAIL_CLOSED`;
 - formal-work-first and WIP=1 safety;
-- exceptional recovery must clear before pre-activation admission;
+- exceptional recovery must clear before pre-activation admission or `NO_WORK` when formal cardinality is zero;
 - selected Issue/Role/Action comes only from executable output; and
 - action/effect preconditions remain downstream responsibilities.
 
-Detailed deterministic branching, candidate construction, and ordering mechanics belong in the production classifier and its regression tests. `agents/workflow.md` continues to own lifecycle topology; this Change does not create a second topology representation.
+Detailed deterministic branching, candidate construction, admission evaluation, and ordering mechanics belong in executable production code and regression tests. `agents/workflow.md` continues to own lifecycle topology; this Change does not create a second topology representation.
 
 ## Decision 10: The deployed bridge returns the production machine decision after dispatch deployment
 
@@ -193,7 +193,7 @@ GitHub `issue_comment` workflows execute only when their workflow definition is 
 The existing one-Change/multi-PR lifecycle is used in three deployment stages:
 
 1. **Transport deployment.** Implement/review/merge the bounded bridge workflow/handler/tests to `main`. `finalize-change` sees approved work remaining and returns `MORE_IMPLEMENTATION_REQUIRED`.
-2. **Executable dispatch deployment.** Prove the Phase 1 transport round trip, then implement/review/merge the normal-selection/recovery separation, governance simplification, bridge machine-decision extension, and deterministic tests to `main`. `finalize-change` again returns `MORE_IMPLEMENTATION_REQUIRED` because live machine-dispatch evidence remains.
+2. **Executable dispatch deployment.** Prove the Phase 1 transport round trip, then implement/review/merge the normal-selection/recovery separation, executable direct-Propose admission consumption, governance simplification, bridge machine-decision extension, and deterministic tests to `main`. `finalize-change` again returns `MORE_IMPLEMENTATION_REQUIRED` because live machine-dispatch evidence remains.
 3. **Live machine-dispatch proof.** A later real ChatGPT Scheduled Task invocation uses the deployed default-branch bridge and production classifier, obtains an exact correlated `DISPATCH_DECISION`, and consumes the machine-selected tuple without model-side selection. Evidence/task completion is recorded in the subsequent implementation revision/PR and passes the normal review/merge lifecycle.
 
 No task is marked complete before its real deployment-dependent evidence exists. The sequence does not create a special merge bypass or second lifecycle DAG.
@@ -205,7 +205,8 @@ Expected implementation surfaces:
 - `.github/workflows/scheduled-agent-bridge-canary.yml` — no-API `issue_comment` entry point, request-scoped serialization, default-branch checkout, and later machine-decision response;
 - `src/investment_strategy/scheduled_agent_bridge_canary.py` — bounded request/result parsing, correlation/idempotency, and dispatch-response rendering;
 - `src/investment_strategy/workflow_dispatch.py` — pure normal open-Issue selection classifier and structured decision;
-- `src/investment_strategy/scheduled_agent_runtime.py` — open-first acquisition/orchestration and bounded exceptional-recovery acquisition;
+- `src/investment_strategy/scheduled_agent_runtime.py` — open-first acquisition/orchestration, executable admission consumption, and bounded exceptional-recovery acquisition;
+- existing `src/investment_strategy/human_authority.py` as the canonical executable direct-Propose admission evaluator, modified only if integration proves a narrowly necessary reusable adapter is missing;
 - a focused recovery helper only if needed to keep recovery classification independent and testable;
 - `agents/AGENTS.md` — dispatch authority/result boundary simplified to consume executable decisions;
 - focused bridge/dispatch/runtime regression tests;
@@ -217,9 +218,9 @@ No change is expected to `agents/workflow.md`, role definitions, mapped Skills, 
 
 - The existing Responses API runtime may remain during this Change; its presence is not the no-API proof.
 - Phase 1 `BRIDGE_OK` remains non-authorizing and can coexist with the later `DISPATCH_DECISION` contract during staged deployment.
-- Current WIP=1, deterministic pre-activation order, fail-closed multiple-active behavior, Human/maintainer administrative repair, and bounded premature-close recovery semantics are preserved.
+- Current WIP=1, deterministic pre-activation order, fail-closed multiple-active behavior, Human/maintainer administrative repair, executable Human authority, and bounded premature-close recovery semantics are preserved.
 - Normal active-workflow selection no longer depends on repository-wide closed-history reconstruction.
-- Exceptional recovery still executes before any pre-activation work is authorized when open formal cardinality is zero.
+- Exceptional recovery executes before any pre-activation work or `NO_WORK` result when open formal cardinality is zero.
 - Action-specific gates remain independently authoritative after selection.
 - The Human-created check-in Issue remains external deployment setup and is not workflow state.
 
@@ -235,7 +236,11 @@ Rejected because closed terminal/recovery evidence is irrelevant to selection wh
 
 ### Ignore closed Issues entirely
 
-Rejected because a prematurely closed unfinished workflow must still block pre-activation intake. Exceptional recovery remains a required executable gate before queue admission when no open formal workflow exists.
+Rejected because a prematurely closed unfinished workflow must still be recovered or fail closed before pre-activation/idle classification. Exceptional recovery remains a required executable formal-zero gate.
+
+### Reinterpret direct-Propose Human admission inside the dispatcher
+
+Rejected because `human_authority.py` already owns the executable provenance-bound decision algorithm. Dispatch consumes its result rather than creating a second Human-authority implementation or asking the model to interpret comments/labels.
 
 ### Put PR/CI/OpenSpec/review evidence into the global classifier
 
