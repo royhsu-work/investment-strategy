@@ -1,40 +1,64 @@
-# Tasks: Validate no-API Issue-comment bridge
+# Tasks: Validate no-API bridge and executable dispatch
 
-## Slice 1 — Correlated Issue-comment transport canary
+## Slice 1 — Deploy the correlated Issue-comment transport bridge
 
-- [ ] **RED** Add focused tests that fail until the canary strictly accepts only the configured check-in Issue plus exact two-line `DISPATCH_REQUEST` contract, uses the triggering GitHub comment ID as the sole correlation identity, rejects malformed/unrelated/RESULT comments, requires same-request GitHub Actions serialization with `cancel-in-progress: false`, and re-checks for an already-correlated result inside that serialized boundary before any result post.
+- [ ] **RED** Add focused tests that fail until the bridge strictly accepts only the configured check-in Issue plus exact two-line `DISPATCH_REQUEST` contract, uses the triggering GitHub comment ID as the sole correlation identity, rejects malformed/unrelated/RESULT comments, requires same-request GitHub Actions serialization with `cancel-in-progress: false`, and re-checks for an already-correlated result inside that serialized boundary before any result post.
 - [ ] **GREEN** Add the standalone default-branch `issue_comment: created` workflow and bounded repository-owned handler that checks out current default branch, validates the configured check-in Issue/request event, serializes runs by the exact immutable request comment ID, freshly re-checks for an existing correlated result before posting, treats an already-completed request as an idempotent no-op, and writes only the exact `DISPATCH_RESULT` transport fields with `Result: BRIDGE_OK`.
-- [ ] **REFACTOR** Keep the canary isolated from `workflow_dispatch.py`, production classifier/runtime, Role/Skill loading, canonical routing/Change/review state, and consequential effect authorization; consolidate request/result parsing and rendering without adding custom request IDs, hidden durable state, retry counters, polling services, locks, leases, or heartbeat machinery. Treat the required Actions concurrency group only as transient same-request execution serialization.
-- [ ] **VERIFY** Run the focused canary tests, full pytest suite, mypy, Ruff, and strict OpenSpec validation for the exact implementation revision; verify the workflow trigger/permissions/configuration, exact-comment-ID concurrency key, `cancel-in-progress: false`, fresh pre-post correlated-result re-check, and that no production dispatch/Role/Skill/effect surface changed.
+- [ ] **REFACTOR** Keep Phase 1 `BRIDGE_OK` isolated from workflow authority; consolidate request/result parsing and rendering without custom request IDs, hidden durable state, retry counters, polling services, locks, leases, or heartbeat machinery. Treat the required Actions concurrency group only as transient same-request execution serialization.
+- [ ] **VERIFY** Run the focused bridge tests, full pytest suite, mypy, Ruff, and strict OpenSpec validation for the exact implementation revision; verify trigger/permissions/configuration, exact-comment-ID concurrency, `cancel-in-progress: false`, fresh pre-post result re-check, and that Phase 1 result contains no mapped Issue/Role/Action/Skill/effect authority.
 
-Trace: proposal `What Changes` items 1–5; added requirement `A no-API Issue-comment canary proves the Scheduled Task transport boundary without granting workflow authority`; design Decisions 1–5.
+Trace: proposal transport bullets; added requirement `A no-API Issue-comment canary proves the Scheduled Task transport boundary without granting workflow authority`; design Decisions 1–4.
 
-### Required deployment boundary before Slice 2
+### Deployment boundary after Slice 1
 
-Slice 2 MUST NOT begin as a pre-merge check of the implementation revision that first introduces the canary workflow. GitHub only triggers `issue_comment` workflows whose workflow file already exists on the default branch.
+The workflow introduced by Slice 1 must exist on the default branch before the real Phase 1 round trip can occur. Complete Slice 1, pass normal implementation review, merge it to `main`, and leave every later Slice incomplete. `Lead / finalize-change` then returns the same Change through `MORE_IMPLEMENTATION_REQUIRED → Executor / implement-change`.
 
-The intended existing multi-PR lifecycle is:
+## Slice 2 — Prove the real transport round trip
 
-1. complete Slice 1 while leaving every Slice 2 task unchecked;
-2. pass normal implementation review and merge the Slice 1 implementation so `.github/workflows/scheduled-agent-bridge-canary.yml` exists on `main`;
-3. let `Lead / finalize-change` reconstruct the still-incomplete Change and return `MORE_IMPLEMENTATION_REQUIRED → Executor / implement-change`;
-4. only then execute Slice 2 against the deployed default-branch canary;
-5. record the real E2E evidence and justified Slice 2 task completion in the subsequent implementation revision/PR, then pass the normal implementation review/merge lifecycle before archive eligibility is considered.
+- [ ] **RED** Establish that repository-only tests are not qualifying runtime evidence and that no Phase 1 success may be recorded until the already-deployed default-branch workflow returns an exact correlated result to one real ChatGPT Scheduled Task invocation.
+- [ ] **GREEN** After Slice 1 is merged and the Change returns through `MORE_IMPLEMENTATION_REQUIRED`, use the Human-created configured check-in Issue and execute one real ChatGPT Scheduled Task invocation that writes the exact request, captures its exact GitHub request comment ID, performs bounded fresh reads for only that identity, and observes the matching Actions-produced `DISPATCH_RESULT` before the invocation ends.
+- [ ] **REFACTOR** Record only the minimum transport evidence—request/result GitHub timestamps, exact request comment ID, exact handler default-branch revision, Scheduled Task matching-result observation, and derived round-trip latency—without promoting `BRIDGE_OK` into workflow authority or adding callback/waiter state.
+- [ ] **VERIFY** In the follow-up implementation revision/PR, confirm exact-ID correlation, exact handler checkout revision, same-invocation observation, and that `BRIDGE_OK` contains no Issue/Role/Action/Skill/effect authorization.
 
-This is sequencing inside the existing one-Change/multi-PR lifecycle. It does not authorize an implementation merge outside normal review/merge gates and does not introduce a second workflow state machine.
+Trace: proposal no-API proof; added canary requirement final acceptance paragraph/scenarios; design Decisions 1–4 and 11.
 
-## Slice 2 — Real same-Scheduled-Task round-trip proof
+## Slice 3 — Make normal dispatch executable and separate exceptional recovery
 
-- [ ] **RED** Before declaring bridge success, establish both that repository-only tests provide no qualifying real Scheduled Task round-trip evidence and that the canary workflow must already be present on `main`; therefore Slice 2 remains incomplete through the first implementation merge even when Slice 1 tests are fully green.
-- [ ] **GREEN** After the Slice 1 implementation is merged and `finalize-change` has returned the incomplete Change through `MORE_IMPLEMENTATION_REQUIRED`, use a Human-created configured check-in Issue and execute one real ChatGPT Scheduled Task invocation that writes the exact request, captures its exact GitHub request comment ID, performs bounded fresh reads for only that identity, and observes the matching Actions-produced `DISPATCH_RESULT` before the invocation ends.
-- [ ] **REFACTOR** Record only the minimum transport evidence required for the experiment—request/result GitHub timestamps, exact request comment ID, exact handler default-branch revision, Scheduled Task matching-result observation, and derived round-trip latency—without promoting canary messages into workflow authority or adding callback/waiter state. Do not mark Slice 2 complete before this real evidence exists.
-- [ ] **VERIFY** In the subsequent implementation revision/PR, confirm the observed result correlates only by the exact request comment ID, `Default-Branch-Revision` matches the handler checkout used for the run, `BRIDGE_OK` contains no mapped Issue/Role/Action/Skill/effect authorization, the result was observed within the same Scheduled Task invocation execution opportunity, and the evidence came from the already-deployed default-branch canary rather than a feature-branch-only workflow.
+- [ ] **RED** Extend production-path dispatch/runtime regressions so they fail until: one complete provenance-qualified open formal workflow is selected without terminal-comment/retirement/legacy-archive/closed re-observation input; two open formal workflows fail closed; incomplete or provenance-invalid open enumeration cannot authorize; zero open formal workflows require exceptional-recovery clearance before queue or `NO_WORK`; exactly one qualifying premature-close candidate routes to `Lead / resolve-question`; multiple/unresolved/indeterminate recovery candidates fail closed; deterministic pre-activation ordering remains earliest `created_at` then lower Issue number; and PR/CI/OpenSpec/review/effect evidence is not accepted as global Issue-selection input.
+- [ ] **GREEN** Refactor `workflow_dispatch.py` into the single production normal-selection surface over the minimum current open-Issue facts, and refactor `scheduled_agent_runtime.py` so it acquires/classifies complete current open Issues first. When open formal cardinality is one, authorize that exact tuple without closed-history forensics. When it is zero, execute a separate bounded exceptional-recovery acquisition/classification before authorizing the pre-activation winner or `NO_WORK`. Preserve existing terminal journal, direct-Human retirement, legacy archive, unfinished-Change, current re-observation, WIP=1, and premature-close safety predicates inside that exceptional boundary.
+- [ ] **GREEN** Simplify the default-branch `agents/AGENTS.md` dispatch section so it states executable ownership, authoritative current-provenance/completeness inputs, `AUTHORIZE`/`NO_WORK`/`FAIL_CLOSED` meanings, formal-work-first/WIP=1, exceptional-recovery-before-preactivation, and downstream action/effect ownership without maintaining a competing natural-language classifier algorithm. Keep `agents/workflow.md`, role authority, and mapped Skills unchanged unless an independently governed blocker proves otherwise.
+- [ ] **REFACTOR** Consolidate normalized dispatch/recovery types and helpers at the smallest existing ownership layer. Do not repurpose merge-specific `workflow_recovery.py` by name alone, and do not add a generic recovery engine, global fault registry, lock, lease, heartbeat, durable claim, retry state, hidden cursor, or second DAG.
+- [ ] **VERIFY** Run focused dispatch/runtime regressions, full pytest, mypy, Ruff, and strict OpenSpec validation. Verify the production classifier and tests are the same executable surface, a sole formal winner does not trigger closed-history acquisition, formal-zero cannot bypass exceptional recovery, action-entry identity remains executable, and `propose-change` retains pre-write/post-write activation checks.
 
-Trace: proposal `What Changes` item 6; added requirement final acceptance paragraph and scenario `Same-invocation round trip is required for Phase 1 acceptance`; design Decision 6.
+Trace: proposal production-dispatch bullets; MODIFIED requirement `Active-workflow cardinality and Issue-state coherence precede queue selection`; design Decisions 5–9.
+
+## Slice 4 — Deploy and prove the production machine decision through the no-API bridge
+
+- [ ] **RED** Add bridge/runtime tests that fail until the deployed handler can return the exact production decision as `DISPATCH_DECISION`, accepts only exact request-comment correlation, emits exactly one Issue/Role/Action tuple for `AUTHORIZE`, emits no tuple for `NO_WORK`/`FAIL_CLOSED`, and cannot obtain or fill a tuple from model-provided Issue/Role/Action input.
+- [ ] **GREEN** Extend the deployed bridge handler/workflow to invoke the same production dispatch orchestration used by runtime/tests and render the exact correlated `DISPATCH_DECISION` with request comment ID, default-branch revision, disposition, and the machine-selected Issue/Role/Action only for `AUTHORIZE`. Preserve `BRIDGE_OK` as the earlier non-authorizing transport proof and preserve effect/mutation authority outside this response.
+- [ ] **REFACTOR** Keep machine selection one-way: the Scheduled Task supplies transport correlation only, repository code selects the tuple, and model loading consumes but never overrides it. Do not add a second classifier in the workflow YAML, handler, prompt, or test fixture.
+- [ ] **VERIFY** Run focused bridge/dispatch integration tests, full pytest, mypy, Ruff, and strict OpenSpec validation for the exact implementation head. Verify `DISPATCH_DECISION` is produced from default-branch production code and that `NO_WORK`/`FAIL_CLOSED` cannot load a mapped Role/Skill.
+
+Trace: proposal live machine-selection bullet; added requirement `The deployed no-API bridge carries the production dispatch decision without model-side selection`; design Decisions 10–11.
+
+### Deployment boundary before live machine-dispatch acceptance
+
+Slice 4's decision-producing workflow/handler and corrected production dispatch must be merged to `main` before the real machine-dispatch E2E can satisfy acceptance. After that implementation merge, `Lead / finalize-change` returns `MORE_IMPLEMENTATION_REQUIRED` while the real runtime proof remains incomplete.
+
+## Slice 5 — Real same-Scheduled-Task machine-dispatch proof
+
+- [ ] **RED** Establish that deterministic repository tests and the earlier `BRIDGE_OK` transport proof do not prove that a real ChatGPT Scheduled Task consumes the machine-selected Issue/Role/Action; keep this Slice incomplete until the decision-producing bridge and production classifier are already deployed on `main`.
+- [ ] **GREEN** Execute one real ChatGPT Scheduled Task invocation that writes the exact request, captures its exact GitHub request comment ID, reads only the exactly correlated `DISPATCH_DECISION`, and follows the returned disposition: load only the returned default-branch Role/mapped Skill for `AUTHORIZE`, or load no mapped Role/Skill for `NO_WORK`/`FAIL_CLOSED`. Do not select or alter the tuple in model reasoning.
+- [ ] **REFACTOR** Record only bounded acceptance evidence: request/result timestamps, exact request comment ID, exact handler default-branch revision, machine disposition and tuple when present, and the observation showing model loading followed that decision. Do not turn the evidence into a second workflow state or authorization registry.
+- [ ] **VERIFY** In the subsequent implementation revision/PR, verify the real result came from deployed default-branch production dispatch, exact correlation was preserved, model-side Issue/Role/Action selection did not occur, the decision did not authorize consequential effects, and all earlier approved Slices remain satisfied.
+
+Trace: proposal final runtime proof; added machine-decision requirement real-E2E scenario; design Decisions 10–11.
 
 ## Final verification
 
 - [ ] Verify proposal → specs → design → tasks forward traceability and tasks → design → specs → proposal reverse traceability.
-- [ ] Verify the Change remains limited to the Phase 1 Issue-comment bridge and does not implement production dispatch, Role/Skill loading, consequential effects, no-bypass capability separation, automatic check-in Issue lifecycle, #137, or #138.
-- [ ] Verify the implementation lifecycle preserves the required two-stage deployment/E2E sequence: first implementation merge deploys Slice 1 with Slice 2 pending; `finalize-change` returns `MORE_IMPLEMENTATION_REQUIRED`; only a later implementation revision records real E2E completion.
-- [ ] Record exact-revision strict OpenSpec validation evidence before Reviewer handoff.
+- [ ] Verify the complete MODIFIED canonical dispatch requirement preserves WIP=1, multiple-active/incomplete fail-closed behavior, deterministic pre-activation ordering, Human administrative repair, and bounded premature-close recovery while removing closed-history forensics from the sole-open-formal happy path.
+- [ ] Verify action-specific PR/CI/OpenSpec/review/effect evidence remains downstream of machine Issue/Role/Action selection and no task invents new normative dispatch semantics.
+- [ ] Verify the Change remains out of scope for consequential effect application changes, mechanical no-bypass/capability separation, automatic check-in Issue lifecycle, multi-repository control plane, #137, and #138.
+- [ ] Verify staged deployment is preserved: transport deployment → real transport proof → executable dispatch/decision deployment → real machine-dispatch proof, with `MORE_IMPLEMENTATION_REQUIRED` after any merge that leaves approved work incomplete.
+- [ ] Record exact-revision strict OpenSpec validation evidence before every required independent Reviewer handoff.
