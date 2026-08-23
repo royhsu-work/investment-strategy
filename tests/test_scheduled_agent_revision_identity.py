@@ -15,6 +15,7 @@ def test_scheduled_runtime_pins_worker_apply_and_evidence_to_dispatch_checkout_r
     assert "id: checkout_revision" in workflow
     assert 'echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"' in workflow
     assert workflow.count("ref: ${{ needs.dispatch.outputs.revision }}") == 2
-    assert "RUNTIME_REVISION: ${{ needs.dispatch.outputs.revision }}" in workflow
+    assert workflow.count("RUNTIME_REVISION: ${{ needs.dispatch.outputs.revision }}") == 2
+    assert "DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}" in workflow
     assert '_required_environment("RUNTIME_REVISION")' in evidence
     assert '_required_environment("GITHUB_SHA")' not in evidence
