@@ -61,7 +61,7 @@ The check-in Issue number is deployment/configuration input, preferably an expli
 
 If the configured Issue identity is absent, malformed, or does not match the triggering Issue, the workflow performs no valid request handling. Phase 1 does not create, rotate, or close check-in Issues automatically.
 
-## Decision 4: Strict parsing plus exact-result idempotency bounds duplicate delivery
+## Decision 4: Strict parsing plus required request-scoped serialization bounds duplicate delivery
 
 The repository-owned handler validates all of these before producing a result:
 
@@ -73,7 +73,18 @@ The repository-owned handler validates all of these before producing a result:
 
 Malformed/unrelated input is an ignored/non-request outcome rather than authority to do additional work. A rerun or duplicate delivery for a request that already has a valid correlated result is an idempotent no-op.
 
-The workflow may additionally use a concurrency group keyed by request comment ID to reduce overlap, but correctness does not depend on the concurrency group: the handler's exact-result check remains the durable idempotency boundary.
+The workflow MUST serialize handling for the same immutable request comment ID with a request-scoped GitHub Actions concurrency group and `cancel-in-progress: false`. Different request comment IDs remain independent. After entering that serialized execution boundary, the handler MUST freshly re-check whether a valid correlated `DISPATCH_RESULT` already exists immediately before posting a new result. If one already exists, the run is an idempotent no-op.
+
+The correctness boundary is therefore:
+
+```text
+exact request comment ID
+→ same-request Actions serialization
+→ fresh correlated-result re-check
+→ at most one effective DISPATCH_RESULT
+```
+
+The concurrency group is transient GitHub Actions execution serialization, not a durable workflow lock, lease, claim, retry registry, or hidden lifecycle state. The durable GitHub comment remains the completion evidence, while required serialization prevents two overlapping check-then-write runs for the same request from both passing the absence check and posting duplicate valid results.
 
 ## Decision 5: RESULT cannot authorize workflow execution
 
@@ -85,9 +96,19 @@ The existing `agent:*`, `action:*`, `Change:`, review gates, and production clas
 
 ## Decision 6: Real end-to-end evidence is part of acceptance, not replaced by repository tests
 
-Unit/structural tests prove parser, filter, correlation, idempotency, result shape, workflow trigger/permissions, and authority-isolation behavior. They cannot prove ChatGPT Scheduled Task execution opportunity and Actions round-trip latency.
+Unit/structural tests prove parser, filter, correlation, same-request serialization, idempotency, result shape, workflow trigger/permissions, and authority-isolation behavior. They cannot prove ChatGPT Scheduled Task execution opportunity and Actions round-trip latency.
 
-The implementation is accepted only after one real Scheduled Task invocation:
+GitHub's `issue_comment` event only runs a workflow when the workflow file exists on the repository default branch. Therefore the real canary cannot be a pre-merge acceptance step for the first implementation revision that introduces `.github/workflows/scheduled-agent-bridge-canary.yml`.
+
+The Change uses the repository's existing multi-PR lifecycle instead of inventing a deployment exception:
+
+1. The first implementation revision completes Slice 1, including the workflow, handler, deterministic tests, required same-request serialization, and repository validation. Slice 2 remains explicitly incomplete.
+2. After normal implementation review and merge, the canary workflow exists on `main`. Because approved work remains, `Lead / finalize-change` reconstructs the incomplete Change and uses the existing `MORE_IMPLEMENTATION_REQUIRED → Executor / implement-change` continuation rather than attempting archive.
+3. A later real ChatGPT Scheduled Task invocation uses the Human-created configured check-in Issue, writes the exact request, captures its exact GitHub request comment ID, performs bounded fresh reads for only that correlation, and observes the matching Actions-produced result before the invocation ends.
+4. The resulting transport evidence and justified Slice 2 task completion are recorded in the subsequent implementation revision/PR under the normal multi-PR workflow. No task is marked complete before the real evidence exists.
+5. That subsequent implementation revision passes the normal implementation review/merge lifecycle. Only after no approved implementation work remains may `finalize-change` proceed toward archive.
+
+For the real invocation itself, acceptance requires that it:
 
 1. writes the exact request;
 2. captures its exact request comment ID;
@@ -95,13 +116,15 @@ The implementation is accepted only after one real Scheduled Task invocation:
 4. observes the matching Actions-produced result before the invocation ends; and
 5. records request/result timestamps, the handler revision, and the observation needed to determine round-trip latency.
 
-If the result is not observed within that same invocation, the bridge is not declared successful. That failure is evidence for the next design decision; it does not justify adding polling state, webhook callbacks, or an OpenAI API worker inside this Change.
+If the result is not observed within that same invocation, the bridge is not declared successful and Slice 2 remains incomplete. That failure is evidence for the next design decision; it does not justify adding polling state, webhook callbacks, or an OpenAI API worker inside this Change.
+
+This sequencing is deployment ordering inside the existing one-Change/multi-PR lifecycle. It does not introduce a second workflow DAG, a special merge authorization, or a new persistent state machine.
 
 ## Blast radius
 
 Expected implementation surfaces are intentionally narrow:
 
-- `.github/workflows/scheduled-agent-bridge-canary.yml` — standalone `issue_comment` trigger, explicit permissions/configuration, default-branch checkout, bounded handler invocation;
+- `.github/workflows/scheduled-agent-bridge-canary.yml` — standalone `issue_comment` trigger, explicit permissions/configuration, required request-scoped serialization, default-branch checkout, bounded handler invocation;
 - `src/investment_strategy/scheduled_agent_bridge_canary.py` — request validation, exact correlation/idempotency, result rendering/posting boundary;
 - `tests/test_scheduled_agent_bridge_canary.py` — focused deterministic regressions;
 - this OpenSpec Change and its delta requirement.
@@ -113,6 +136,7 @@ No default-branch `agents/AGENTS.md`, `agents/workflow.md`, role, mapped Skill, 
 - The existing scheduled Responses API runtime remains unchanged during this canary Change; its continued presence does not prove or disprove the no-API bridge.
 - The new canary workflow has no scheduled trigger and no `workflow_dispatch` dependency. Only matching `issue_comment: created` events on the configured check-in Issue are handled.
 - The Human-created check-in Issue is external deployment setup and may be removed after the experiment without changing canonical workflow state.
+- The first implementation merge deploys the canary but does not declare Phase 1 complete; the real Scheduled Task E2E remains required follow-on work inside the same Change.
 - Phase 1 success authorizes only the conclusion that the transport works. Any later connection to the production dispatcher requires a new bounded Change and current-state review.
 
 ## Rejected alternatives
@@ -132,6 +156,14 @@ Rejected because GitHub already supplies an exact immutable comment ID for the t
 ### Correlate using the latest comment or timestamps
 
 Rejected because concurrent or delayed comments make ordering/proximity non-authoritative. Exact request-comment identity is deterministic.
+
+### Rely on check-then-post without same-request serialization
+
+Rejected because two overlapping runs can both observe no existing correlated result before either posts. Required request-scoped Actions serialization plus a fresh result re-check closes that demonstrated race without adding durable coordination state.
+
+### Run the real canary before the workflow is merged to the default branch
+
+Rejected because GitHub only triggers `issue_comment` workflows whose workflow file already exists on the default branch. The existing multi-PR `MORE_IMPLEMENTATION_REQUIRED` lifecycle provides the needed deployment sequence without a special bypass.
 
 ### Automate daily check-in Issue lifecycle now
 
