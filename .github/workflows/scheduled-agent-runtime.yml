@@ -18,6 +18,7 @@ jobs:
   dispatch:
     runs-on: ubuntu-latest
     outputs:
+      revision: ${{ steps.checkout_revision.outputs.revision }}
       authorized: ${{ steps.preflight.outputs.authorized }}
       issue_number: ${{ steps.preflight.outputs.issue_number }}
       role: ${{ steps.preflight.outputs.role }}
@@ -28,6 +29,11 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+
+      - name: Capture authoritative checkout revision
+        id: checkout_revision
+        shell: bash
+        run: echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
@@ -53,10 +59,10 @@ jobs:
       contents: read
     runs-on: ubuntu-latest
     steps:
-      - name: Check out authoritative default branch without persisted credentials
+      - name: Check out machine-authorized default-branch revision without persisted credentials
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: ${{ needs.dispatch.outputs.revision }}
           persist-credentials: false
 
       - name: Set up uv
@@ -100,10 +106,10 @@ jobs:
       pull-requests: write
     runs-on: ubuntu-latest
     steps:
-      - name: Check out authoritative default branch for application
+      - name: Check out machine-authorized default-branch revision for application
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: ${{ needs.dispatch.outputs.revision }}
           persist-credentials: false
 
       - name: Download same-run staged worker result
@@ -139,6 +145,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          RUNTIME_REVISION: ${{ needs.dispatch.outputs.revision }}
           AUTHORIZED_ISSUE: ${{ needs.dispatch.outputs.issue_number }}
           AUTHORIZED_ROLE: ${{ needs.dispatch.outputs.role }}
           AUTHORIZED_ACTION: ${{ needs.dispatch.outputs.action }}
