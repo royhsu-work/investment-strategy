@@ -128,11 +128,13 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Freshly reauthorize merge acceptance and apply staged effects
+      - name: Freshly verify runtime revision, reauthorize merge acceptance, and apply staged effects
         id: apply
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RUNTIME_REVISION: ${{ needs.dispatch.outputs.revision }}
           AUTHORIZED_ISSUE: ${{ needs.dispatch.outputs.issue_number }}
           AUTHORIZED_ROLE: ${{ needs.dispatch.outputs.role }}
           AUTHORIZED_ACTION: ${{ needs.dispatch.outputs.action }}
