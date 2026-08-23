@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from investment_strategy.scheduled_agent_effects import ApplyResult
-from investment_strategy.scheduled_agent_merge_acceptance import (
+from investment_strategy.scheduled_agent_live_evidence import (
     LiveRuntimeEvidence,
+    render_live_runtime_evidence,
+)
+from investment_strategy.scheduled_agent_merge_acceptance import (
     MergeAcceptanceSnapshot,
     merge_acceptance_allows,
-    render_live_runtime_evidence,
 )
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 
@@ -60,11 +61,8 @@ def test_live_runtime_evidence_binds_exact_run_revision_and_apply_outcome() -> N
         revision=HEAD,
         event_name="schedule",
         source=source,
-        result=ApplyResult(
-            applied=True,
-            reason="applied",
-            continuation=WorkerRequest(133, "reviewer", "review-implementation"),
-        ),
+        applied=True,
+        continuation=WorkerRequest(133, "reviewer", "review-implementation"),
     )
 
     body = render_live_runtime_evidence(evidence)
@@ -75,6 +73,6 @@ def test_live_runtime_evidence_binds_exact_run_revision_and_apply_outcome() -> N
     assert "Trigger: `schedule`" in body
     assert "Dispatch: `AUTHORIZE` → `#133 / Executor / implement-change`" in body
     assert "Model invocation: `completed`" in body
-    assert "Apply: `applied` (`applied`)" in body
+    assert "Apply: `applied`" in body
     assert "Continuation: `#133 / Reviewer / review-implementation`" in body
     assert "Audit evidence only; this comment is not dispatch authorization." in body
