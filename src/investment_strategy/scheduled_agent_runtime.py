@@ -306,15 +306,29 @@ def acquire_current_github_preflight(repository: str, token: str) -> DispatchPre
     return acquire_from_issue_pages(pages, exhausted=True)
 
 
-def _serialize_worker_request(
+def serialize_dispatch_evidence(
     request: WorkerRequest | None,
     preflight: DispatchPreflight,
 ) -> dict[str, Any]:
+    """Expose classifier and acquisition evidence used by this exact wake."""
+
     decision = classify_dispatch(preflight)
+    enumeration = preflight.enumeration
     return {
+        "completeness": decision.completeness,
+        "observation_provenance": decision.observation_provenance.value,
+        "enumeration": {
+            "observed_count": enumeration.observed_count,
+            "source_total_count": enumeration.source_total_count,
+            "incomplete_results": enumeration.incomplete_results,
+            "exhausted": enumeration.exhausted,
+            "observation_provenance": enumeration.observation_provenance.value,
+            "complete": enumeration.complete,
+        },
         "disposition": decision.disposition,
         "reason": decision.reason,
         "formal_issue_ids": decision.formal_issue_ids,
+        "recovery_candidate_ids": decision.recovery_candidate_ids,
         "preactivation_candidate_ids": decision.preactivation_candidate_ids,
         "selected_issue_id": decision.selected_issue_id,
         "selected_routing": decision.selected_routing,
@@ -358,7 +372,7 @@ def main() -> int:
     preflight = acquire_current_github_preflight(repository, token)
     request = authorize_worker_request(preflight, RuntimeTrigger())
     _write_github_outputs(request)
-    print(json.dumps(_serialize_worker_request(request, preflight), sort_keys=True))
+    print(json.dumps(serialize_dispatch_evidence(request, preflight), sort_keys=True))
     return 0
 
 
