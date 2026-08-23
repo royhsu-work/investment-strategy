@@ -12,7 +12,7 @@ import json
 import os
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -27,6 +27,7 @@ from investment_strategy.workflow_dispatch import (
     RepositoryIssueSnapshot,
     Role,
     Routing,
+    TerminalEvidence,
     classify_dispatch,
 )
 
@@ -48,6 +49,7 @@ _ACTION_LABELS: dict[str, Action] = {
     "action:merge-pr": "merge-pr",
 }
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
+_MESSAGE_FIELD = re.compile(r"(?m)^(Workflow|Change|Action|Result):\s*(.+?)\s*$")
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,7 @@ class GitHubIssueObservation:
     created_order: int
     authoritative: bool
     premature_close_recovery: RecoveryEvidence = "not-candidate"
+    terminal_evidence: TerminalEvidence = "not-terminal"
 
 
 @dataclass(frozen=True)
@@ -98,6 +101,7 @@ def acquire_dispatch_preflight(
             state="open" if observation.state == "open" else "closed",
             created_order=observation.created_order,
             premature_close_recovery=observation.premature_close_recovery,
+            terminal_evidence=observation.terminal_evidence,
             current_state_provenance=(
                 ObservationProvenance.QUALIFIED
                 if observation.authoritative
@@ -220,13 +224,11 @@ def normalize_github_issue(payload: Mapping[str, object]) -> GitHubIssueObservat
         change_valid = False
 
     recovery: RecoveryEvidence = "not-candidate"
-    if (
-        state == "closed"
-        and change != "unset"
-        and routing is not None
-        and routing != ("lead", "finalize-archive")
-    ):
-        recovery = "indeterminate"
+    terminal_evidence: TerminalEvidence = "not-terminal"
+    if state == "closed" and change != "unset":
+        terminal_evidence = "indeterminate"
+        if routing is not None:
+            recovery = "indeterminate"
 
     return GitHubIssueObservation(
         issue_number=number,
@@ -236,6 +238,100 @@ def normalize_github_issue(payload: Mapping[str, object]) -> GitHubIssueObservat
         created_order=created_order,
         authoritative=labels_valid and routing_valid and created_valid and change_valid,
         premature_close_recovery=recovery,
+        terminal_evidence=terminal_evidence,
+    )
+
+
+def _strip_code(value: str) -> str:
+    normalized = value.strip()
+    if len(normalized) >= 2 and normalized.startswith("`") and normalized.endswith("`"):
+        return normalized[1:-1].strip()
+    return normalized
+
+
+def _message_fields(body: str) -> dict[str, list[str]]:
+    fields: dict[str, list[str]] = {}
+    for name, raw_value in _MESSAGE_FIELD.findall(body):
+        fields.setdefault(name, []).append(_strip_code(raw_value))
+    return fields
+
+
+def _valid_lifecycle_complete_comment(
+    payload: Mapping[str, object],
+    *,
+    issue_number: int,
+    change: str,
+    repository_owner: str,
+) -> bool:
+    """Recognize one canonical trusted terminal ACTION_RESULT."""
+
+    body = payload.get("body")
+    user = payload.get("user")
+    author_association = payload.get("author_association")
+    if not isinstance(body, str) or not isinstance(user, Mapping):
+        return False
+    actor = user.get("login")
+    trusted_owner = actor == repository_owner and author_association == "OWNER"
+    trusted_runtime = actor == "github-actions[bot]"
+    if not (trusted_owner or trusted_runtime):
+        return False
+    if "## ACTION_RESULT" not in body.splitlines():
+        return False
+
+    fields = _message_fields(body)
+    expected = {
+        "Workflow": f"#{issue_number}",
+        "Change": change,
+        "Action": "Lead / finalize-archive",
+        "Result": "LIFECYCLE_COMPLETE",
+    }
+    return all(fields.get(name) == [value] for name, value in expected.items())
+
+
+def _terminal_evidence_from_comments(
+    comments: Iterable[Mapping[str, object]],
+    *,
+    issue_number: int,
+    change: str,
+    repository_owner: str,
+) -> TerminalEvidence:
+    valid = [
+        comment
+        for comment in comments
+        if _valid_lifecycle_complete_comment(
+            comment,
+            issue_number=issue_number,
+            change=change,
+            repository_owner=repository_owner,
+        )
+    ]
+    if len(valid) == 1:
+        return "terminal-history"
+    if len(valid) > 1:
+        return "indeterminate"
+    return "not-terminal"
+
+
+def _apply_terminal_evidence(
+    observation: GitHubIssueObservation,
+    evidence: TerminalEvidence,
+) -> GitHubIssueObservation:
+    if evidence == "terminal-history":
+        return replace(
+            observation,
+            terminal_evidence=evidence,
+            premature_close_recovery="not-candidate",
+        )
+    return replace(
+        observation,
+        terminal_evidence=evidence,
+        premature_close_recovery=(
+            "indeterminate"
+            if observation.state == "closed"
+            and observation.change != "unset"
+            and observation.routing is not None
+            else observation.premature_close_recovery
+        ),
     )
 
 
@@ -243,15 +339,23 @@ def acquire_from_issue_pages(
     pages: Iterable[Iterable[Mapping[str, object]]],
     *,
     exhausted: bool,
+    terminal_evidence_by_issue: Mapping[int, TerminalEvidence] | None = None,
 ) -> DispatchPreflight:
     """Build a complete preflight from exhaustively fetched Issues API pages."""
 
+    evidence_by_issue = terminal_evidence_by_issue or {}
     observations: list[GitHubIssueObservation] = []
     for page in pages:
         for payload in page:
             observation = normalize_github_issue(payload)
-            if observation is not None:
-                observations.append(observation)
+            if observation is None:
+                continue
+            if observation.issue_number in evidence_by_issue:
+                observation = _apply_terminal_evidence(
+                    observation,
+                    evidence_by_issue[observation.issue_number],
+                )
+            observations.append(observation)
 
     normalized = tuple(observations)
     return acquire_dispatch_preflight(
@@ -260,6 +364,28 @@ def acquire_from_issue_pages(
         incomplete_results=not exhausted,
         exhausted=exhausted,
     )
+
+
+def _github_get_list_page(url: str, token: str) -> tuple[Mapping[str, object], ...]:
+    request = Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    with urlopen(request, timeout=30) as response:
+        decoded = json.loads(response.read().decode("utf-8"))
+    if not isinstance(decoded, list):
+        raise RuntimeError("GitHub API returned a non-list response")
+
+    items: list[Mapping[str, object]] = []
+    for item in decoded:
+        if not isinstance(item, Mapping):
+            raise RuntimeError("GitHub API returned a malformed item")
+        items.append(cast(Mapping[str, object], item))
+    return tuple(items)
 
 
 def _github_issue_pages(
@@ -275,35 +401,113 @@ def _github_issue_pages(
             f"https://api.github.com/repos/{repository}/issues"
             f"?state=all&per_page=100&page={page_number}"
         )
-        request = Request(  # noqa: S310 - fixed trusted GitHub API host
-            url,
-            headers={
-                "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {token}",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-        )
-        with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
-            decoded = json.loads(response.read().decode("utf-8"))
-        if not isinstance(decoded, list):
-            raise RuntimeError("GitHub Issues API returned a non-list response")
-
-        page_items: list[Mapping[str, object]] = []
-        for item in decoded:
-            if not isinstance(item, Mapping):
-                raise RuntimeError("GitHub Issues API returned a malformed item")
-            page_items.append(cast(Mapping[str, object], item))
-        pages.append(tuple(page_items))
+        page_items = _github_get_list_page(url, token)
+        pages.append(page_items)
         if len(page_items) < 100:
             return tuple(pages)
         page_number += 1
+
+
+def _github_issue_comment_pages(
+    repository: str,
+    token: str,
+    issue_number: int,
+) -> tuple[tuple[Mapping[str, object], ...], ...]:
+    """Exhaust comments for one closed workflow-looking Issue."""
+
+    pages: list[tuple[Mapping[str, object], ...]] = []
+    page_number = 1
+    while True:
+        url = (
+            f"https://api.github.com/repos/{repository}/issues/{issue_number}/comments"
+            f"?per_page=100&page={page_number}"
+        )
+        page_items = _github_get_list_page(url, token)
+        pages.append(page_items)
+        if len(page_items) < 100:
+            return tuple(pages)
+        page_number += 1
+
+
+def _github_issue(repository: str, token: str, issue_number: int) -> Mapping[str, object]:
+    url = f"https://api.github.com/repos/{repository}/issues/{issue_number}"
+    request = Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    with urlopen(request, timeout=30) as response:
+        decoded = json.loads(response.read().decode("utf-8"))
+    if not isinstance(decoded, Mapping):
+        raise RuntimeError("GitHub Issue API returned a malformed item")
+    return cast(Mapping[str, object], decoded)
 
 
 def acquire_current_github_preflight(repository: str, token: str) -> DispatchPreflight:
     """Freshly acquire and normalize complete current repository Issue state."""
 
     pages = _github_issue_pages(repository, token)
-    return acquire_from_issue_pages(pages, exhausted=True)
+    preliminary = acquire_from_issue_pages(pages, exhausted=True)
+    repository_owner = repository.split("/", 1)[0]
+    terminal_evidence: dict[int, TerminalEvidence] = {}
+    reobserved: dict[int, GitHubIssueObservation] = {}
+
+    for issue in preliminary.issues:
+        if issue.state != "closed" or issue.change == "unset":
+            continue
+        comment_pages = _github_issue_comment_pages(repository, token, issue.issue_number)
+        comments = (comment for page in comment_pages for comment in page)
+        evidence = _terminal_evidence_from_comments(
+            comments,
+            issue_number=issue.issue_number,
+            change=issue.change,
+            repository_owner=repository_owner,
+        )
+        if evidence == "terminal-history":
+            current = normalize_github_issue(_github_issue(repository, token, issue.issue_number))
+            if (
+                current is None
+                or not current.authoritative
+                or current.state != "closed"
+                or current.change != issue.change
+                or current.routing != issue.routing
+            ):
+                evidence = "indeterminate"
+            else:
+                reobserved[issue.issue_number] = current
+        terminal_evidence[issue.issue_number] = evidence
+
+    observations: list[GitHubIssueObservation] = []
+    for issue in preliminary.issues:
+        observation = reobserved.get(issue.issue_number)
+        if observation is None:
+            observation = GitHubIssueObservation(
+                issue_number=issue.issue_number,
+                change=issue.change,
+                routing=issue.routing,
+                state=issue.state,
+                created_order=issue.created_order,
+                authoritative=(
+                    issue.current_state_provenance is ObservationProvenance.QUALIFIED
+                ),
+                premature_close_recovery=issue.premature_close_recovery,
+                terminal_evidence=issue.terminal_evidence,
+            )
+        if issue.issue_number in terminal_evidence:
+            observation = _apply_terminal_evidence(
+                observation, terminal_evidence[issue.issue_number]
+            )
+        observations.append(observation)
+
+    return acquire_dispatch_preflight(
+        observations=tuple(observations),
+        source_total_count=len(observations),
+        incomplete_results=False,
+        exhausted=True,
+    )
 
 
 def _serialize_worker_request(
@@ -315,6 +519,7 @@ def _serialize_worker_request(
         "disposition": decision.disposition,
         "reason": decision.reason,
         "formal_issue_ids": decision.formal_issue_ids,
+        "recovery_candidate_ids": decision.recovery_candidate_ids,
         "preactivation_candidate_ids": decision.preactivation_candidate_ids,
         "selected_issue_id": decision.selected_issue_id,
         "selected_routing": decision.selected_routing,
