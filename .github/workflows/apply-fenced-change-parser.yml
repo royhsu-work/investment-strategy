@@ -1,0 +1,53 @@
+name: Apply fenced Change parser repair
+
+on:
+  push:
+    branches:
+      - agent/fix-fenced-change-identity-dispatch
+    paths:
+      - .github/workflows/apply-fenced-change-parser.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-fenced-change-identity-dispatch
+      - name: Apply bounded parser repair
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/investment_strategy/scheduled_agent_runtime.py")
+          text = path.read_text(encoding="utf-8")
+
+          anchor = '_CHANGE_LINE = re.compile(r"(?m)^Change:\\s*([^\\s]+)\\s*$")\n'
+          helper = '''_CHANGE_LINE = re.compile(r"(?m)^Change:\\s*([^\\s]+)\\s*$")\n\n\ndef _change_matches(body: str) -> list[str]:\n    """Return canonical Change fields outside fenced Markdown examples."""\n\n    matches: list[str] = []\n    fence_char: str | None = None\n    for line in body.splitlines():\n        stripped = line.lstrip()\n        marker = stripped[0] if stripped.startswith(("```", "~~~")) else None\n        if marker is not None:\n            if fence_char is None:\n                fence_char = marker\n            elif marker == fence_char:\n                fence_char = None\n            continue\n        if fence_char is not None:\n            continue\n        match = _CHANGE_LINE.fullmatch(line)\n        if match is not None:\n            matches.append(match.group(1))\n    return matches\n'''
+          if text.count(anchor) != 1:
+              raise SystemExit("unexpected _CHANGE_LINE anchor")
+          text = text.replace(anchor, helper, 1)
+
+          old = "    change_matches = _CHANGE_LINE.findall(body_text)\n"
+          new = "    change_matches = _change_matches(body_text)\n"
+          if text.count(old) != 1:
+              raise SystemExit("unexpected normalize change matcher")
+          text = text.replace(old, new, 1)
+
+          old = "    if not isinstance(body, str) or _CHANGE_LINE.search(body) is not None:\n"
+          new = "    if not isinstance(body, str) or _change_matches(body):\n"
+          if text.count(old) != 1:
+              raise SystemExit("unexpected closed normalization change matcher")
+          text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+          rm .github/workflows/apply-fenced-change-parser.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/investment_strategy/scheduled_agent_runtime.py .github/workflows/apply-fenced-change-parser.yml
+          git commit -m "Fix fenced Change identity parsing"
+          git push origin HEAD:agent/fix-fenced-change-identity-dispatch
