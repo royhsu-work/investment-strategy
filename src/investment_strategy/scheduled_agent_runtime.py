@@ -13,7 +13,7 @@ import os
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from urllib.request import Request, urlopen
@@ -58,7 +58,7 @@ _HUMAN_RETIREMENT = re.compile(
 
 # Default-branch activation of workflow-dynamic dispatch and its terminal journal contract.
 # Commit 0312a56fe38f1702ac8e53ddd7aa6a1deba1cb0d, 2026-08-13T18:11:21Z.
-_WORKFLOW_DYNAMIC_ACTIVATED_AT = datetime(2026, 8, 13, 18, 11, 21, tzinfo=timezone.utc)
+_WORKFLOW_DYNAMIC_ACTIVATED_AT = datetime(2026, 8, 13, 18, 11, 21, tzinfo=UTC)
 
 
 @dataclass(frozen=True)
@@ -213,7 +213,7 @@ def _github_timestamp(value: object) -> tuple[datetime | None, bool]:
         return None, False
     if parsed.tzinfo is None:
         return None, False
-    return parsed.astimezone(timezone.utc), True
+    return parsed.astimezone(UTC), True
 
 
 def normalize_github_issue(payload: Mapping[str, object]) -> GitHubIssueObservation | None:
