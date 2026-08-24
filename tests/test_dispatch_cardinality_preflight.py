@@ -221,29 +221,26 @@ def test_slice2_runtime_exposes_activation_postwrite_acceptance() -> None:
     assert hasattr(workflow_dispatch, "activation_postwrite_accepted")
 
 
-def test_shared_governance_exposes_concrete_complete_preflight_procedure() -> None:
+def test_shared_governance_points_to_executable_dispatch_ssot() -> None:
     text = " ".join(AGENTS.read_text(encoding="utf-8").split())
     for required in (
-        "complete repository-wide durable Issue snapshot",
-        "observable enumeration completeness",
-        "partial page",
-        "role-local",
-        "candidate-local",
-        "indeterminate",
-        "Only then",
-        "mapped Skill",
+        "repository-owned executable dispatch is the only normal-selection authority",
+        "authoritative current GitHub observations",
+        "observable enumeration/provenance completeness",
+        "`AUTHORIZE`, `NO_WORK`, or `FAIL_CLOSED`",
+        "A partial enumeration is never proof of zero formal WIP",
+        "Detailed candidate construction",
+        "production executable code and regression tests",
     ):
         assert required in text
+    assert "complete repository-wide durable Issue snapshot" not in text
 
 
 def test_parked_or_reset_work_restarts_from_current_main_not_old_readiness() -> None:
     governance = " ".join(AGENTS.read_text(encoding="utf-8").split())
     orientation = " ".join(MIGRATION.read_text(encoding="utf-8").split())
-    for required in (
-        "later wake reconstructs the repaired current repository from scratch",
-        "stale PASS/readiness",
-    ):
-        assert required in governance
+    assert "Previous conversation memory is never required for correctness" in governance
+    assert "execute fresh production dispatch from resulting durable state" in governance
     for required in (
         "parked/reset work",
         "then-current `main`",
