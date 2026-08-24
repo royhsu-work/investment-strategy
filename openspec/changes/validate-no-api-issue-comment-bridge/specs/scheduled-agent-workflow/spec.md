@@ -193,7 +193,7 @@ This separation MUST NOT create a generic fault state machine, hidden recovery r
 - AND incomplete enumeration produces `FAIL_CLOSED`
 - AND pre-activation work cannot be selected from that incomplete evidence
 
-#### Scenario: Complete enumeration selects the sole active workflow after structural conflict clearance
+#### Scenario: Complete enumeration selects the sole active workflow
 
 - GIVEN current open-Issue enumeration is provenance-qualified and complete
 - AND exactly one open formal active workflow exists
