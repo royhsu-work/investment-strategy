@@ -40,6 +40,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          PYTHONPATH: ${{ github.workspace }}/src
         run: |
           uv run python - <<'PY'
           import os
@@ -71,7 +72,8 @@ jobs:
               )
               body = marker.get("body") if marker else None
               first_line = body.splitlines()[0] if isinstance(body, str) and body.splitlines() else ""
-              actor = marker.get("user", {}).get("login") if marker and isinstance(marker.get("user"), dict) else None
+              user = marker.get("user") if marker else None
+              actor = user.get("login") if isinstance(user, dict) else None
               marker_id = marker.get("id") if marker else None
               print(
                   "STRUCTURAL_CANDIDATE "
