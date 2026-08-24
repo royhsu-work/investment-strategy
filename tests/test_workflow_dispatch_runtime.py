@@ -414,10 +414,14 @@ def test_sole_formal_structural_clear_skips_detailed_closed_forensics(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(
-        runtime, "_github_open_issue_pages", lambda repository, token: ((_formal_140_payload(),),)
+        runtime,
+        "_github_open_issue_pages",
+        lambda repository, token: ((_formal_140_payload(),),),
     )
     monkeypatch.setattr(
-        runtime, "_github_closed_issue_pages", lambda repository, token: ((_retired_issue_payload(),),)
+        runtime,
+        "_github_closed_issue_pages",
+        lambda repository, token: ((_retired_issue_payload(),),),
     )
 
     def forbidden(*args: object, **kwargs: object) -> object:
@@ -444,7 +448,9 @@ def test_sole_formal_possible_closed_conflict_enters_detailed_path(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(
-        runtime, "_github_open_issue_pages", lambda repository, token: ((_formal_140_payload(),),)
+        runtime,
+        "_github_open_issue_pages",
+        lambda repository, token: ((_formal_140_payload(),),),
     )
     monkeypatch.setattr(
         runtime,
@@ -474,10 +480,14 @@ def test_human_retirement_excludes_abandoned_workflow_and_allows_140(
     comments = ((_retirement_comment(),),)
 
     monkeypatch.setattr(
-        runtime, "_github_open_issue_pages", lambda repository, token: ((_queued_140_payload(),),)
+        runtime,
+        "_github_open_issue_pages",
+        lambda repository, token: ((_queued_140_payload(),),),
     )
     monkeypatch.setattr(
-        runtime, "_github_closed_issue_pages", lambda repository, token: ((_retired_issue_payload(),),)
+        runtime,
+        "_github_closed_issue_pages",
+        lambda repository, token: ((_retired_issue_payload(),),),
     )
     monkeypatch.setattr(
         runtime,
@@ -509,10 +519,14 @@ def test_app_authored_retirement_does_not_release_closed_workflow(
     comments = ((_retirement_comment(app={"id": 1144995}),),)
 
     monkeypatch.setattr(
-        runtime, "_github_open_issue_pages", lambda repository, token: ((_queued_140_payload(),),)
+        runtime,
+        "_github_open_issue_pages",
+        lambda repository, token: ((_queued_140_payload(),),),
     )
     monkeypatch.setattr(
-        runtime, "_github_closed_issue_pages", lambda repository, token: ((_retired_issue_payload(),),)
+        runtime,
+        "_github_closed_issue_pages",
+        lambda repository, token: ((_retired_issue_payload(),),),
     )
     monkeypatch.setattr(
         runtime,
