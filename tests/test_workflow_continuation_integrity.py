@@ -34,7 +34,7 @@ def test_action_transition_redispatches_same_issue_with_fresh_worker() -> None:
     shared = _read("agents/AGENTS.md")
     topology = _read("agents/workflow.md")
     assert "same coordination Issue" in shared
-    assert "fixed only for that model worker invocation" in shared
+    assert "only the returned exact Issue/role/action may determine the mapped model worker" in shared
     assert "fresh executable redispatch" in shared
     assert "fresh mapped model invocation" in shared
     assert "Same-role transition does not mean same-model continuation" in shared
