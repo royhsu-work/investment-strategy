@@ -150,7 +150,7 @@ def test_deterministic_discovery_uses_fixed_priority_and_stable_tie_breakers() -
     assert "lower numeric Issue" in shared
     assert "Model-derived urgency" in shared
     assert "combined pre-activation queue" in shared
-    assert "there is no `explore-change > propose-change` priority" in shared
+    assert "model does not add an urgency score or role/action preference" in shared
     raw = _read(AGENTS / "AGENTS.md")
     candidates = [
         Candidate(5, "2026-08-01T00:00:00Z", "Executor", "implement-change"),

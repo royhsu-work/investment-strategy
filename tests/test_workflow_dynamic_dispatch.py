@@ -52,15 +52,15 @@ def test_fixed_role_mode_preserves_lifecycle_priority_then_combined_intake() -> 
         assert required in text
 
 
-def test_dynamic_mode_selects_role_from_single_active_workflow() -> None:
+def test_dynamic_mode_uses_executable_normal_selection_authority() -> None:
     text = _normalized(AGENTS)
     for required in (
         "workflow-dynamic",
-        "Exactly one active workflow",
-        "valid routing tuple",
-        "determines the invocation role/action and mapped skill",
-        "global urgency",
-        "second workflow DAG",
+        "repository-owned executable dispatch is the only normal-selection authority",
+        "authoritative current GitHub observations",
+        "`AUTHORIZE`, `NO_WORK`, or `FAIL_CLOSED`",
+        "only the returned exact Issue/role/action may determine the mapped model worker",
+        "second natural-language classifier",
     ):
         assert required in text
 
@@ -68,10 +68,10 @@ def test_dynamic_mode_selects_role_from_single_active_workflow() -> None:
 def test_dynamic_dispatch_fails_closed_for_invalid_or_multiple_active_workflows() -> None:
     text = _normalized(AGENTS)
     for required in (
-        "multiple active workflows",
-        "fail closed",
+        "multiple open formal workflows produces `FAIL_CLOSED`",
         "invalid routing",
-        "MUST NOT guess",
+        "Incomplete/provenance-invalid reconstruction",
+        "A dispatch decision never substitutes for those downstream gates",
     ):
         assert required in text
 
@@ -80,11 +80,9 @@ def test_machine_selected_identity_is_worker_local_and_redispatched() -> None:
     text = _normalized(AGENTS)
     for required in (
         "before any mapped model invocation",
-        "fixed only for that model worker invocation",
-        "model worker MUST NOT select or override",
-        "Repository-owned application fresh-reauthorizes",
-        "fresh mapped model invocation",
-        "whether the role stays the same or changes",
+        "only the returned exact Issue/role/action may determine the mapped model worker",
+        "repository-owned application fresh-reauthorizes",
+        "fresh global dispatch",
         "single scheduled wake path",
         "fixed role schedule slots are not part of the normal authorization contract",
     ):
@@ -107,18 +105,16 @@ def test_change_identity_defines_active_workflow_and_combined_pre_activation_int
         assert required in text
 
 
-def test_combined_intake_is_deterministic_and_refuses_later_propose_activation() -> None:
+def test_combined_intake_is_executable_and_propose_keeps_activation_guards() -> None:
     text = _normalized(AGENTS)
     change = _normalized(OPEN_SPEC_CHANGE)
     for required in (
-        "combined pre-activation queue",
-        "earliest GitHub `created_at`",
-        "lower Issue number",
-        "there is no `explore-change > propose-change` priority",
-        "MUST NOT activate a queued proposal",
-        "older eligible Explore/direct-Propose entry",
-        "formal active workflow must win over pre-activation intake",
-        "bounded premature-close recovery candidate",
+        "combined pre-activation candidate contract",
+        "coherent routed Explore",
+        "executable-approved direct-Propose",
+        "earliest GitHub `created_at` then lower Issue number ordering",
+        "A formal workflow always wins over intake",
+        "immediate pre-write and fresh post-write activation checks",
     ):
         assert required in text
     for required in (
@@ -138,14 +134,15 @@ def test_combined_intake_is_deterministic_and_refuses_later_propose_activation()
     assert "approved Explore-origin set" not in change
 
 
-def test_activation_overlap_uses_first_valid_write_and_stale_run_termination() -> None:
+def test_activation_overlap_keeps_first_valid_write_and_fresh_decisions() -> None:
     shared = _normalized(AGENTS)
     change = _normalized(OPEN_SPEC_CHANGE)
     for required in (
         "first-valid-write-wins",
-        "fresh-reauthorizes immediately before the activation write",
-        "post-write decision",
-        "stale/fail-closed",
+        "Immediately before a non-`unset` `Change:` write",
+        "must fresh-reauthorize this exact `Lead / propose-change` candidate",
+        "newly fresh executable decision",
+        "Stale, contradictory, incomplete, competing, or provenance-invalid evidence stops",
         "lock",
         "claim",
         "lease",
@@ -162,12 +159,12 @@ def test_activation_overlap_uses_first_valid_write_and_stale_run_termination() -
         assert required in change
 
 
-def test_oldest_explore_stays_winner_without_claim_or_status_state() -> None:
+def test_explore_ordering_remains_executable_without_claim_or_status_state() -> None:
     shared = _normalized(AGENTS)
     explore = _normalized(EXPLORE)
     for required in (
-        "oldest eligible open Explore naturally remains the deterministic winner across wakes",
-        "no claim, lease, heartbeat, or hidden ownership state",
+        "earliest GitHub `created_at` then lower Issue number ordering",
+        "No lock, claim, lease, heartbeat",
         "`status:exploring`",
     ):
         assert required in shared
@@ -372,15 +369,13 @@ def test_active_workflow_remains_wip_while_next_action_is_blocked() -> None:
         assert required in text
 
 
-def test_dispatch_requires_complete_active_cardinality_before_queue_selection() -> None:
+def test_dispatch_requires_complete_executable_evidence_before_queue_selection() -> None:
     text = _normalized(AGENTS)
     for required in (
-        "complete cardinality",
-        "formal active workflows",
-        "Before evaluating pre-activation queue",
-        "partial enumeration",
-        "MUST NOT",
-        "queued work",
-        "premature-close recovery",
+        "observable enumeration/provenance completeness",
+        "A partial enumeration is never proof of zero formal WIP",
+        "multiple open formal workflows produces `FAIL_CLOSED`",
+        "detailed exceptional boundary runs before deterministic pre-activation selection",
+        "premature-close recovery cannot be bypassed",
     ):
         assert required in text

@@ -14,29 +14,25 @@ def _normalized(path: Path) -> str:
     return " ".join(path.read_text(encoding="utf-8").split())
 
 
-def test_closed_nonterminal_work_is_not_executable_while_closed() -> None:
+def test_closed_nonterminal_work_is_not_normal_routing_eligibility() -> None:
     text = _normalized(AGENTS)
     for required in (
-        "closed nonterminal",
+        "Closed nonterminal workflow-looking state",
         "contradiction/recovery input",
-        "MUST NOT execute its stale routed action while closed",
-        "bounded premature-close recovery",
+        "not ordinary routing eligibility",
+        "bounded premature-close contract",
     ):
         assert required in text
 
 
-def test_unique_premature_close_candidate_uses_bounded_lead_recovery() -> None:
+def test_unique_premature_close_candidate_keeps_bounded_lead_recovery() -> None:
     shared = _normalized(AGENTS)
     lead = _normalized(LEAD)
     for required in (
-        "premature-close recovery candidate",
+        "Exactly one qualifying unfinished recovery candidate at formal-zero",
         "`Lead / resolve-question`",
-        "reopen that same coordination Issue",
-        "immutable Change identity",
-        "pre-close nonterminal routing tuple",
-        "repository-wide active cardinality",
-        "recovery invocation MUST NOT execute the preserved normal lifecycle action",
-        "later wake",
+        "fails closed rather than reopening a second formal workflow",
+        "detailed exceptional boundary",
     ):
         assert required in shared
     for required in (
@@ -52,11 +48,10 @@ def test_unique_premature_close_candidate_uses_bounded_lead_recovery() -> None:
 def test_ambiguous_or_human_terminated_premature_close_stays_fail_closed() -> None:
     text = _normalized(AGENTS)
     for required in (
-        "qualifying provenance-bound Human decision",
-        "second premature-close recovery candidate",
-        "MUST remain fail closed",
-        "MUST NOT reopen by inference",
-        "generic fault state machine",
+        "conflicting, multiple, incomplete, or indeterminate recovery evidence fails closed",
+        "Human-retirement",
+        "detailed exceptional boundary",
+        "no central workflow engine",
     ):
         assert required in text
 

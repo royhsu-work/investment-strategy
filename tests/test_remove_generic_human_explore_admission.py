@@ -23,9 +23,9 @@ def test_routed_formal_explore_is_origin_neutral_for_queue_eligibility() -> None
 
 def test_formal_wip_and_stable_order_still_dominate_pre_activation_explore() -> None:
     text = _governance()
-    assert "formal active workflow must win over pre-activation intake" in text
-    assert "earliest GitHub `created_at`, then lower Issue number" in text
-    assert "premature-close recovery candidate" in text
+    assert "A formal workflow always wins over intake" in text
+    assert "earliest GitHub `created_at` then lower Issue number ordering" in text
+    assert "premature-close recovery" in text
 
 
 def test_direct_propose_human_admission_remains_distinct() -> None:

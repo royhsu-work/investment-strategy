@@ -2,18 +2,31 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from investment_strategy.scheduled_agent_runtime import acquire_current_github_preflight
+from investment_strategy.workflow_dispatch import DispatchDecision, classify_dispatch
+
 REQUEST_MARKER = "DISPATCH_REQUEST"
 REQUESTED_AT_PREFIX = "Requested-At: "
 RESULT_MARKER = "DISPATCH_RESULT"
+DECISION_MARKER = "DISPATCH_DECISION"
 REQUEST_COMMENT_ID_PREFIX = "Request-Comment-ID: "
 DEFAULT_BRANCH_REVISION_PREFIX = "Default-Branch-Revision: "
 RESULT_PREFIX = "Result: "
+DISPOSITION_PREFIX = "Disposition: "
+ISSUE_PREFIX = "Issue: "
+ROLE_PREFIX = "Role: "
+ACTION_PREFIX = "Action: "
 BRIDGE_OK = "BRIDGE_OK"
+_DECISION_DISPOSITIONS = {"AUTHORIZE", "NO_WORK", "FAIL_CLOSED"}
+_ROLES = {"lead", "reviewer", "executor"}
+_GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]"
+_GITHUB_ACTIONS_APP_SLUG = "github-actions"
 
 
 @dataclass(frozen=True)
@@ -26,6 +39,16 @@ class DispatchResult:
     request_comment_id: int
     default_branch_revision: str
     result: str
+
+
+@dataclass(frozen=True)
+class MachineDispatchDecision:
+    request_comment_id: int
+    default_branch_revision: str
+    disposition: str
+    issue_number: int | None = None
+    role: str | None = None
+    action: str | None = None
 
 
 @dataclass(frozen=True)
@@ -51,27 +74,38 @@ def parse_dispatch_request(body: str) -> DispatchRequest | None:
     return DispatchRequest(requested_at=requested_at)
 
 
+def _parse_positive_decimal(value: str) -> int | None:
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None
+    if parsed <= 0 or str(parsed) != value:
+        return None
+    return parsed
+
+
+def _parse_revision(line: str) -> str | None:
+    if not line.startswith(DEFAULT_BRANCH_REVISION_PREFIX):
+        return None
+    revision = line[len(DEFAULT_BRANCH_REVISION_PREFIX) :]
+    if not revision or revision != revision.strip():
+        return None
+    return revision
+
+
 def parse_dispatch_result(body: str) -> DispatchResult | None:
     lines = body.split("\n")
     if len(lines) != 4 or lines[0] != RESULT_MARKER:
         return None
     if not lines[1].startswith(REQUEST_COMMENT_ID_PREFIX):
         return None
-    if not lines[2].startswith(DEFAULT_BRANCH_REVISION_PREFIX):
-        return None
-    if lines[3] != f"{RESULT_PREFIX}{BRIDGE_OK}":
+    revision = _parse_revision(lines[2])
+    if revision is None or lines[3] != f"{RESULT_PREFIX}{BRIDGE_OK}":
         return None
 
     raw_request_comment_id = lines[1][len(REQUEST_COMMENT_ID_PREFIX) :]
-    try:
-        request_comment_id = int(raw_request_comment_id)
-    except ValueError:
-        return None
-    if request_comment_id <= 0 or str(request_comment_id) != raw_request_comment_id:
-        return None
-
-    revision = lines[2][len(DEFAULT_BRANCH_REVISION_PREFIX) :]
-    if not revision or revision != revision.strip():
+    request_comment_id = _parse_positive_decimal(raw_request_comment_id)
+    if request_comment_id is None:
         return None
 
     return DispatchResult(
@@ -82,16 +116,101 @@ def parse_dispatch_result(body: str) -> DispatchResult | None:
 
 
 def render_dispatch_result(*, request_comment_id: int, default_branch_revision: str) -> str:
-    if request_comment_id <= 0:
-        raise ValueError("request_comment_id must be positive")
-    if not default_branch_revision or default_branch_revision != default_branch_revision.strip():
-        raise ValueError("default_branch_revision must be non-empty and trimmed")
+    _validate_result_identity(request_comment_id, default_branch_revision)
     return (
         f"{RESULT_MARKER}\n"
         f"{REQUEST_COMMENT_ID_PREFIX}{request_comment_id}\n"
         f"{DEFAULT_BRANCH_REVISION_PREFIX}{default_branch_revision}\n"
         f"{RESULT_PREFIX}{BRIDGE_OK}"
     )
+
+
+def parse_dispatch_decision(body: str) -> MachineDispatchDecision | None:
+    lines = body.split("\n")
+    if len(lines) not in {4, 7} or lines[0] != DECISION_MARKER:
+        return None
+    if not lines[1].startswith(REQUEST_COMMENT_ID_PREFIX):
+        return None
+    request_comment_id = _parse_positive_decimal(lines[1][len(REQUEST_COMMENT_ID_PREFIX) :])
+    revision = _parse_revision(lines[2])
+    if request_comment_id is None or revision is None:
+        return None
+    if not lines[3].startswith(DISPOSITION_PREFIX):
+        return None
+
+    disposition = lines[3][len(DISPOSITION_PREFIX) :]
+    if disposition not in _DECISION_DISPOSITIONS:
+        return None
+    if disposition != "AUTHORIZE":
+        if len(lines) != 4:
+            return None
+        return MachineDispatchDecision(
+            request_comment_id=request_comment_id,
+            default_branch_revision=revision,
+            disposition=disposition,
+        )
+
+    if len(lines) != 7:
+        return None
+    if not lines[4].startswith(ISSUE_PREFIX):
+        return None
+    issue_number = _parse_positive_decimal(lines[4][len(ISSUE_PREFIX) :])
+    if issue_number is None or not lines[5].startswith(ROLE_PREFIX):
+        return None
+    role = lines[5][len(ROLE_PREFIX) :]
+    if role not in _ROLES or not lines[6].startswith(ACTION_PREFIX):
+        return None
+    action = lines[6][len(ACTION_PREFIX) :]
+    if not action or action != action.strip():
+        return None
+
+    return MachineDispatchDecision(
+        request_comment_id=request_comment_id,
+        default_branch_revision=revision,
+        disposition=disposition,
+        issue_number=issue_number,
+        role=role,
+        action=action,
+    )
+
+
+def _validate_result_identity(request_comment_id: int, default_branch_revision: str) -> None:
+    if request_comment_id <= 0:
+        raise ValueError("request_comment_id must be positive")
+    if not default_branch_revision or default_branch_revision != default_branch_revision.strip():
+        raise ValueError("default_branch_revision must be non-empty and trimmed")
+
+
+def render_dispatch_decision(
+    *,
+    request_comment_id: int,
+    default_branch_revision: str,
+    decision: DispatchDecision,
+) -> str:
+    _validate_result_identity(request_comment_id, default_branch_revision)
+    if decision.disposition not in _DECISION_DISPOSITIONS:
+        raise ValueError("unsupported dispatch disposition")
+
+    lines = [
+        DECISION_MARKER,
+        f"{REQUEST_COMMENT_ID_PREFIX}{request_comment_id}",
+        f"{DEFAULT_BRANCH_REVISION_PREFIX}{default_branch_revision}",
+        f"{DISPOSITION_PREFIX}{decision.disposition}",
+    ]
+    if decision.disposition == "AUTHORIZE":
+        if decision.selected_issue_id is None or decision.selected_routing is None:
+            raise ValueError("AUTHORIZE requires one machine-selected Issue/Role/Action tuple")
+        role, action = decision.selected_routing
+        lines.extend(
+            (
+                f"{ISSUE_PREFIX}{decision.selected_issue_id}",
+                f"{ROLE_PREFIX}{role}",
+                f"{ACTION_PREFIX}{action}",
+            )
+        )
+    elif decision.selected_issue_id is not None or decision.selected_routing is not None:
+        raise ValueError("NO_WORK/FAIL_CLOSED must not carry an Issue/Role/Action tuple")
+    return "\n".join(lines)
 
 
 def _as_mapping(value: object) -> Mapping[str, object] | None:
@@ -127,6 +246,18 @@ def _request_identity(
     return issue_number, comment_id
 
 
+def _is_github_actions_comment(comment: Mapping[str, object]) -> bool:
+    user = _as_mapping(comment.get("user"))
+    app = _as_mapping(comment.get("performed_via_github_app"))
+    return (
+        user is not None
+        and user.get("login") == _GITHUB_ACTIONS_BOT_LOGIN
+        and user.get("type") == "Bot"
+        and app is not None
+        and app.get("slug") == _GITHUB_ACTIONS_APP_SLUG
+    )
+
+
 def _has_correlated_result(
     existing_comments: Sequence[Mapping[str, object]], request_comment_id: int
 ) -> bool:
@@ -134,10 +265,49 @@ def _has_correlated_result(
         body = comment.get("body")
         if not isinstance(body, str):
             continue
-        result = parse_dispatch_result(body)
-        if result is not None and result.request_comment_id == request_comment_id:
+        transport = parse_dispatch_result(body)
+        if transport is not None and transport.request_comment_id == request_comment_id:
+            return True
+        decision = parse_dispatch_decision(body)
+        if (
+            decision is not None
+            and decision.request_comment_id == request_comment_id
+            and _is_github_actions_comment(comment)
+        ):
             return True
     return False
+
+
+def _plan_identity(
+    *,
+    event: Mapping[str, object],
+    existing_comments: Sequence[Mapping[str, object]],
+    configured_issue_number: int,
+) -> tuple[BridgePlan | None, tuple[int, int] | None]:
+    identity = _request_identity(
+        event=event,
+        configured_issue_number=configured_issue_number,
+    )
+    if identity is None:
+        return BridgePlan(should_post=False), None
+
+    issue_number, request_comment_id = identity
+    if _has_correlated_result(existing_comments, request_comment_id):
+        return (
+            BridgePlan(
+                should_post=False,
+                issue_number=issue_number,
+                request_comment_id=request_comment_id,
+            ),
+            None,
+        )
+    return None, identity
+
+
+def _require_pending_identity(identity: tuple[int, int] | None) -> tuple[int, int]:
+    if identity is None:
+        raise RuntimeError("pending bridge request identity is missing")
+    return identity
 
 
 def plan_bridge(
@@ -147,21 +317,14 @@ def plan_bridge(
     configured_issue_number: int,
     default_branch_revision: str,
 ) -> BridgePlan:
-    identity = _request_identity(
+    existing_plan, identity = _plan_identity(
         event=event,
+        existing_comments=existing_comments,
         configured_issue_number=configured_issue_number,
     )
-    if identity is None:
-        return BridgePlan(should_post=False)
-
-    issue_number, request_comment_id = identity
-    if _has_correlated_result(existing_comments, request_comment_id):
-        return BridgePlan(
-            should_post=False,
-            issue_number=issue_number,
-            request_comment_id=request_comment_id,
-        )
-
+    if existing_plan is not None:
+        return existing_plan
+    issue_number, request_comment_id = _require_pending_identity(identity)
     return BridgePlan(
         should_post=True,
         issue_number=issue_number,
@@ -171,6 +334,39 @@ def plan_bridge(
             default_branch_revision=default_branch_revision,
         ),
     )
+
+
+def plan_dispatch_decision(
+    *,
+    event: Mapping[str, object],
+    existing_comments: Sequence[Mapping[str, object]],
+    configured_issue_number: int,
+    default_branch_revision: str,
+    decision: DispatchDecision,
+) -> BridgePlan:
+    existing_plan, identity = _plan_identity(
+        event=event,
+        existing_comments=existing_comments,
+        configured_issue_number=configured_issue_number,
+    )
+    if existing_plan is not None:
+        return existing_plan
+    issue_number, request_comment_id = _require_pending_identity(identity)
+    return BridgePlan(
+        should_post=True,
+        issue_number=issue_number,
+        request_comment_id=request_comment_id,
+        result_body=render_dispatch_decision(
+            request_comment_id=request_comment_id,
+            default_branch_revision=default_branch_revision,
+            decision=decision,
+        ),
+    )
+
+
+def acquire_production_dispatch_decision(repository: str, token: str) -> DispatchDecision:
+    preflight = acquire_current_github_preflight(repository, token)
+    return classify_dispatch(preflight)
 
 
 def _load_json(path: Path) -> object:
@@ -220,7 +416,7 @@ def _write_result_payload(path: Path, plan: BridgePlan) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Plan one no-API issue-comment bridge result")
+    parser = argparse.ArgumentParser(description="Plan one no-API machine dispatch decision")
     parser.add_argument("--event-path", type=Path, required=True)
     parser.add_argument("--comments-path", type=Path, required=True)
     parser.add_argument("--check-in-issue", type=int, required=True)
@@ -231,12 +427,28 @@ def main() -> int:
 
     event = _require_mapping(_load_json(args.event_path), name="event")
     comments = _flatten_comments(_load_json(args.comments_path))
-    plan = plan_bridge(
+    existing_plan, identity = _plan_identity(
         event=event,
         existing_comments=comments,
         configured_issue_number=args.check_in_issue,
-        default_branch_revision=args.revision,
     )
+    if existing_plan is not None:
+        plan = existing_plan
+    else:
+        _require_pending_identity(identity)
+        repository = os.environ.get("GITHUB_REPOSITORY")
+        token = os.environ.get("GITHUB_TOKEN")
+        if not repository or not token:
+            raise RuntimeError("GITHUB_REPOSITORY and GITHUB_TOKEN are required")
+        decision = acquire_production_dispatch_decision(repository, token)
+        plan = plan_dispatch_decision(
+            event=event,
+            existing_comments=comments,
+            configured_issue_number=args.check_in_issue,
+            default_branch_revision=args.revision,
+            decision=decision,
+        )
+
     _write_outputs(args.github_output, plan)
     _write_result_payload(args.result_payload, plan)
     return 0

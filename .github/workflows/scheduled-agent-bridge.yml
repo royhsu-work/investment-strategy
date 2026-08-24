@@ -50,11 +50,13 @@ jobs:
             "/repos/${GITHUB_REPOSITORY}/issues/${CHECKIN_ISSUE}/comments?per_page=100" \
             > "$RUNNER_TEMP/issue-comment-pages.json"
 
-      - name: Plan exact correlated bridge result
+      - name: Plan exact correlated machine dispatch decision
         id: handler
         env:
           AGENT_RUNTIME_CHECKIN_ISSUE: ${{ vars.AGENT_RUNTIME_CHECKIN_ISSUE }}
           DEFAULT_BRANCH_REVISION: ${{ steps.revision.outputs.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           PYTHONPATH: ${{ github.workspace }}/src
         run: >-
           uv run python -m investment_strategy.issue_comment_bridge
@@ -65,7 +67,7 @@ jobs:
           --github-output "$GITHUB_OUTPUT"
           --result-payload "$RUNNER_TEMP/dispatch-result.json"
 
-      - name: Post correlated transport-only result
+      - name: Post correlated machine dispatch decision
         if: steps.handler.outputs.should_post == 'true'
         env:
           GH_TOKEN: ${{ github.token }}

@@ -37,76 +37,42 @@ Scheduled Task name, prior conversation memory, Issues, pull requests, or featur
 In `fixed-role` mode, the legacy externally assigned role remains the invocation role and the run
 uses the existing role-local action priority and stable tie breakers defined below.
 
-In `workflow-dynamic` mode, the wake first reconstructs durable workflow state. Exactly one active
-workflow with a valid routing tuple determines the invocation role/action and mapped skill. The
-legacy externally assigned role does not override that repository-selected role. The dispatcher
-MUST NOT introduce model-derived global urgency, cross-role priority scoring, or a second workflow DAG.
+In `workflow-dynamic` mode, repository-owned executable dispatch is the only normal-selection authority.
+`src/investment_strategy/scheduled_agent_runtime.py` obtains authoritative current GitHub observations and
+consumes the production decision from `src/investment_strategy/workflow_dispatch.py` before any mapped model
+invocation. The executable result is exactly `AUTHORIZE`, `NO_WORK`, or `FAIL_CLOSED`; model reasoning,
+conversation history, previous worker output, feature-branch prose, or a Scheduled Task name MUST NOT fill,
+replace, or reinterpret that result.
 
-### Workflow-dynamic cardinality preflight
+Normal selection uses only the current Issue facts needed to choose work: Issue identity/open state,
+persisted `Change:` identity, current routing tuple, GitHub `created_at`, observable enumeration/provenance
+completeness, and an executable admission result when a queued candidate requires one. PR heads, CI state,
+OpenSpec artifacts, review evidence, lifecycle-specific PR evidence, and effect-specific mutation guards are
+downstream action/effect inputs and MUST NOT become global Issue-selection prerequisites.
 
-Before selecting any role/action or loading its mapped Skill, a workflow-dynamic wake MUST obtain a
-complete repository-wide durable Issue snapshot sufficient to classify every candidate relevant to formal
-active and bounded premature-close/interrupted-finalization recovery semantics. The wake MUST establish
-observable enumeration completeness for every read/query surface whose incompleteness could hide such a
-candidate. A partial page, bounded result limit, first-page/search projection, role-local query, or
-candidate-local read is not proof of completeness merely because it returns one plausible Issue or none.
-When the surface exposes completeness metadata, consume it; when pagination is required, exhaust the
-required pages. If completeness cannot be established, classification is `indeterminate` and dispatch
-fails closed.
+Formal work is finish-first and WIP remains one. Incomplete/provenance-invalid reconstruction, invalid
+routing, or multiple open formal workflows produces `FAIL_CLOSED`. With one open formal workflow, executable
+acquisition MUST establish a complete bounded structural closed-workflow conflict projection with disposition
+`CLEAR`, `POSSIBLE_CONFLICT`, or `INDETERMINATE`; only `CLEAR` may authorize the sole formal tuple without
+detailed closed-history forensics. A non-clear structural result enters bounded detailed exceptional
+recovery/consistency evaluation and authorizes only after that executable boundary clears every conflict.
+With zero open formal workflows, the detailed exceptional boundary runs before deterministic pre-activation
+selection or `NO_WORK` so premature-close recovery cannot be bypassed.
 
-For workflow-dynamic authorization, the complete reconstruction MUST be normalized into the repository-
-owned executable precondition in `src/investment_strategy/workflow_dispatch.py`, and runtime MUST execute
-and consume that production decision rather than re-derive a separate classifier from prose.
-Authorization-bearing current Issue state, persisted `Change:` identity, routing labels/tuple, and
-enumeration/completeness evidence MUST come from authoritative GitHub observations obtained during the same
-invocation that consumes the decision. Conversation history, prior Scheduled-Agent output, model memory,
-cached observations, and historical Issue body/comment routing are context/audit evidence only and MUST NOT
-satisfy missing current-state fields. If the helper cannot execute, complete provenance-qualified normalized
-evidence cannot be supplied, or required current workflow identity/routing cannot be normalized without
-ambiguity, authorization is `indeterminate` and fails closed.
+Direct `Lead / propose-change + Change: unset` admission is executable input, not prose inference. It is
+eligible only when the existing provenance-bound Human-authority predicate proves the canonical
+`issue:<issue-number>:admission:lead:propose-change` decision. Ordinary routed Explore does not gain a Human
+approval requirement. Detailed candidate construction, ordering, structural-conflict mechanics, recovery
+evidence acquisition, and Human-admission evaluation belong to production executable code and regression
+tests rather than a second natural-language classifier in this file.
 
-From that one complete current reconstruction, classify formal active workflows and apply this canonical
-decision table before mapped action execution:
-
-| formal cardinality | legal result |
-| --- | --- |
-| `0` | evaluate bounded premature-close recovery candidates, then the deterministic combined pre-activation queue when no recovery candidate blocks it |
-| `1` | select only that formal workflow and derive role/action from its valid routing tuple |
-| `>1` | fail closed before any normal mapped action executes |
-| `indeterminate` | fail closed before any normal mapped action executes |
-
-A selected action consumes this executable shared pre-dispatch decision as an execution precondition. Before
-a formal lifecycle/review/implementation action proceeds, a fresh executable decision MUST still prove its
-current coordination Issue is the sole formal workflow selected by the shared preflight. Before substantive
-`explore-change` work begins, a fresh execution of the precondition from a complete provenance-qualified
-current snapshot MUST still prove formal cardinality `0`, no bounded recovery candidate, and selected-Issue
-equality with the deterministic combined pre-activation winner. `propose-change` additionally executes the
-same executable precondition immediately before the activation write and again from a newly fresh complete
-provenance-qualified repository snapshot immediately after the write. If routing, Issue state, Change
-identity, repository enumeration, winner identity, executable availability, observation provenance, or
-completeness is stale, unavailable, incomplete, or contradictory at action entry, fail closed and
-reconstruct rather than proceeding from candidate-local context.
-
-If workflow-dynamic reconstruction finds multiple active workflows, invalid routing, or otherwise
-cannot identify one legal active workflow, it MUST fail closed and MUST NOT guess an owner. Multiple formal
-workflows MUST NOT be reduced by age, role/action priority, Issue number, model judgment, automatic Change
-clearing, or routing rewrites. Human/maintainer administrative durable-state repair remains outside normal
-Scheduled-Agent lifecycle execution; a later wake reconstructs the repaired current repository from
-scratch and does not inherit a guessed winner or stale PASS/readiness in place of current evidence.
-
-Only then, after this shared preflight identifies a legal selected Issue, repository runtime authorizes
-one exact Issue/role/action before any mapped model invocation. That machine-selected identity is fixed only
-for that model worker invocation. The model worker MUST NOT select or override the Issue, role, or action and
-MUST NOT treat prior worker context as current authorization. It may perform only the mapped action's
-read/local-work capability and return structured result content plus requested durable effects.
-
-The model worker has no durable GitHub write authority. Repository-owned application fresh-reauthorizes the
-exact source Issue/role/action from current authoritative GitHub state, validates effect-specific
-preconditions and the successor against `agents/workflow.md`, applies only authorized effects, and observes
-the resulting durable state. After an accepted effect batch, runtime executes complete dispatch again. If a
-legal mapped action is selected, runtime creates a fresh mapped model invocation for that exact identity,
-whether the role stays the same or changes. No previous dispatch decision, requested effect, or model
-context authorizes the continuation. Which successor is legal remains owned only by `agents/workflow.md`.
+A selected action consumes a fresh executable dispatch decision as its action-entry identity precondition.
+`propose-change` retains its immediate pre-write and fresh post-write activation checks. After `AUTHORIZE`,
+only the returned exact Issue/role/action may determine the mapped model worker. Action-specific correctness
+and consequential durable writes remain separately governed: repository-owned application fresh-reauthorizes
+the exact source action, validates the applicable effect-specific preconditions and legal successor against
+`agents/workflow.md`, applies only authorized effects, observes postconditions, and then executes fresh global
+dispatch. A dispatch decision never substitutes for those downstream gates.
 
 Issue comments and prior worker output are durable/audit context only. They are not transition commands and
 MUST NOT authorize mapped work, routing changes, or continuation. After machine-gated cutover the normal
@@ -178,36 +144,20 @@ exception, escalation, result, and routing evidence explains the blocker; the re
 universal `blocked` result, waiting taxonomy, or capacity-release lifecycle state. Formal scheduling remains
 finish-first: an active workflow first, and pre-activation intake only when formal WIP is absent.
 
-Before evaluating pre-activation queue order or any derived blocker/priority/Project projection, dispatch
-MUST use the workflow-dynamic cardinality preflight above to establish the complete cardinality of formal
-active workflows from repository-wide durable state. A partial enumeration is not proof of zero. If
-complete cardinality cannot be established as exactly zero or one, dispatch MUST fail closed and MUST NOT
-infer that queued work is eligible. Normal nonterminal routed workflow work requires an open coordination
-Issue. A closed Issue with valid `LIFECYCLE_COMPLETE` is terminal history; any other closed nonterminal
-workflow-looking state is contradiction/recovery input, not normal eligibility.
+Normal workflow-dynamic selection and conflict/recovery branching are owned by the executable dispatch
+boundary above. This section states only durable admission and safety invariants used by that executable
+surface. A partial enumeration is never proof of zero formal WIP. Closed nonterminal workflow-looking state
+is contradiction/recovery input, not ordinary routing eligibility, and a closed Issue with valid terminal
+completion is historical rather than formal work.
 
-A closed nonterminal Issue MAY be recovered automatically only as a bounded premature-close recovery
-candidate when durable reconstruction proves all of the following: it has a persisted non-`unset` Change
-identity and exactly one otherwise legal nonterminal routing tuple; matching lifecycle evidence proves the
-Change is unfinished; no valid terminal `LIFECYCLE_COMPLETE` exists; no qualifying provenance-bound Human
-decision requires termination or non-resumption; and repository-wide reconstruction finds no other formal
-workflow or second premature-close recovery candidate. A bare close event or actor identity is not
-qualifying Human termination authority.
-
-When exactly one premature-close recovery candidate satisfies those predicates, it blocks pre-activation
-intake and normal lifecycle execution. The governed recovery owner/action is `Lead / resolve-question`.
-The stale routed action MUST NOT execute its stale routed action while closed. Lead MAY reopen that same
-coordination Issue while preserving its immutable Change identity and pre-close nonterminal routing tuple.
-After reopening, Lead MUST fresh-read Issue state, routing, matching OpenSpec/PR lifecycle evidence, and
-repository-wide active cardinality. Recovery is complete only when the reopened Issue reconstructs as the
-single coherent formal active workflow and the preserved routing remains legal. The recovery invocation
-MUST NOT execute the preserved normal lifecycle action; a later wake dispatches from the freshly
-reconstructed preserved tuple.
-
-If any premature-close recovery predicate is missing, contradictory, Human-reserved, or would create
-multiple-active ambiguity, Scheduled roles MUST remain fail closed and MUST NOT reopen by inference. This
-bounded rule does not create a generic fault state machine, hidden recovery registry, cancellation
-lifecycle, or authority to undo a qualifying Human decision.
+A closed nonterminal Issue may be recovered only under the bounded premature-close contract already encoded
+by production recovery classification. Exactly one qualifying unfinished recovery candidate at formal-zero
+blocks intake and routes to `Lead / resolve-question`; conflicting, multiple, incomplete, or indeterminate
+recovery evidence fails closed. When one open formal workflow coexists with a qualifying unfinished closed
+conflict, dispatch fails closed rather than reopening a second formal workflow. Detailed terminal journal,
+Human-retirement, legacy archive, unfinished-Change, and current re-observation evidence remains confined to
+the detailed exceptional boundary and is not a mandatory sole-formal happy-path input after structural
+`CLEAR`.
 
 Ordinary routed Explore eligibility does not require Human approval. Open `Lead / explore-change + Change: unset`
 entries are legal queued pre-activation work when routing is coherent; origin does not control dispatcher
@@ -229,29 +179,17 @@ remains derived from its exact approved source defer decision/linkage; and direc
 the original Propose authority envelope. These producer/source rules MUST NOT be reinterpreted as dispatcher
 admission classes for an already coherent routed Explore.
 
-When no formal active workflow or bounded premature-close recovery candidate exists, every coherent open
-`Lead / explore-change + Change: unset` entry and every valid Human-admitted
-`Lead / propose-change + Change: unset` entry participate in one combined pre-activation queue ordered by
-earliest GitHub `created_at`, then lower Issue number. A formal active workflow must win over pre-activation
-intake. The selected Issue's current routing determines whether Lead executes Explore or Propose; there is
-no `explore-change > propose-change` priority inside this combined queue.
+When formal WIP is absent and detailed exceptional recovery permits intake, executable dispatch applies the
+combined pre-activation candidate contract: coherent routed Explore plus executable-approved direct-Propose,
+with deterministic earliest GitHub `created_at` then lower Issue number ordering. A formal workflow always
+wins over intake. The model does not add an urgency score or role/action preference.
 
-Lead MUST NOT activate a queued proposal while another formal active workflow exists, while a bounded
-premature-close recovery candidate blocks intake, or while an older eligible Explore/direct-Propose entry
-is the deterministic combined pre-activation winner. Immediately before any non-`unset` Change identity is
-persisted, repository application MUST fresh-reconstruct durable state, execute the production precondition,
-and require this Issue to remain the combined pre-activation winner with exact `Lead / propose-change`
-authorization. The selected Lead action owns the immutable Change identity semantically, while the
-repository-owned application boundary performs the durable write; that accepted write is the formal
-activation boundary.
-
-Overlapping activation attempts remain at-least-once and first-valid-write-wins. Repository application
-fresh-reauthorizes immediately before the activation write and, after writing, obtains a newly fresh complete
-repository-wide snapshot and executes the production precondition again. Activation is accepted only when
-the post-write decision proves this exact Issue is the sole formal active workflow with its expected Change
-and routing. A competing activation, multiple-active state, indeterminate enumeration/provenance, or newer
-contradiction stops stale/fail-closed. This safety model uses reconstruction and preconditions, not a lock,
-claim, lease, heartbeat, hidden sequence, `status:exploring`, or `status:in-progress` state.
+Formal activation remains at-least-once and first-valid-write-wins. Immediately before a non-`unset`
+`Change:` write, repository application must fresh-reauthorize this exact `Lead / propose-change` candidate;
+after the write it must obtain a newly fresh executable decision accepting this exact Issue as the sole
+formal workflow with expected Change/routing. Stale, contradictory, incomplete, competing, or
+provenance-invalid evidence stops the activation. No lock, claim, lease, heartbeat, hidden sequence,
+`status:exploring`, or `status:in-progress` state is introduced.
 
 A valid `LIFECYCLE_COMPLETE` result does not by itself remove an open Issue from formal WIP. If terminal
 verification is complete but the close mutation is missing, the same open `Lead / finalize-archive`
@@ -429,12 +367,10 @@ same candidate set. Within the same ordinary role/action priority, earlier GitHu
 equal, lower numeric Issue number wins. Model-derived urgency, scoring, or discretionary reordering is
 prohibited.
 
-In workflow-dynamic mode, the shared cardinality preflight above runs first. A sole formal active workflow
-is selected before pre-activation work. Only after complete formal cardinality `0` and no bounded recovery
-candidate blocks intake may the combined pre-activation winner determine `Lead / explore-change` or
-`Lead / propose-change`. An oldest eligible open Explore naturally remains the deterministic winner across
-wakes until it reaches a terminal result or legally routes to Propose; no claim, lease, heartbeat, or hidden
-ownership state is required.
+In workflow-dynamic mode, candidate construction and selection are consumed only from the production
+executable dispatch result described above. A sole formal workflow is formal-work-first; pre-activation is
+considered only at formal-zero after detailed exceptional recovery clearance. The model does not re-run the
+ordering or recovery classifier from this prose.
 
 If the role has no eligible workflow work, it performs no ordinary workflow mutation. Only Lead may use
 the separate bounded idle advisory/discovery mode defined below.
@@ -446,21 +382,21 @@ Every runtime execution behaves as if it may be the first execution to see the w
 ```text
 wake
 → load authoritative default-branch runtime/governance
-→ obtain complete repository-wide durable Issue snapshot
-→ establish observable enumeration completeness and same-execution provenance
-→ execute the production formal-cardinality/recovery/selection precondition
-→ if NO_WORK/fail-closed: stop before any mapped model invocation
-→ if authorized: create one fresh worker for the exact machine-selected Issue/role/action
+→ obtain authoritative current GitHub dispatch observations
+→ execute the production dispatcher
+→ if NO_WORK/FAIL_CLOSED: stop before any mapped model invocation
+→ if AUTHORIZE: create one fresh worker for the exact machine-selected Issue/role/action
 → worker reconstructs mapped action evidence, performs bounded read/local work, and returns structured result/requested durable effects
 → repository-owned application fresh-reconstructs and reauthorizes that exact source action
 → validate effect-specific preconditions and legal successor against agents/workflow.md
 → apply only authorized durable effects and fresh-observe their postconditions
-→ execute complete dispatch again from resulting durable state
+→ execute fresh production dispatch from resulting durable state
 → if another legal mapped action is selected: create a fresh model worker for that exact Issue/role/action
 ```
 
-This is an execution/reconstruction algorithm, not an alternative lifecycle graph; the successor itself is
-resolved from `agents/workflow.md`.
+This is an execution/reconstruction boundary, not an alternative lifecycle graph or natural-language
+selection algorithm; exact normal selection remains executable and the successor itself is resolved from
+`agents/workflow.md`.
 
 Previous conversation memory is never required for correctness. A partial execution, tool failure, or
 missing final response does not transfer ownership. A later runtime execution reconstructs durable reality
