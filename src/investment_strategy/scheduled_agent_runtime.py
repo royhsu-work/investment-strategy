@@ -84,6 +84,11 @@ _LEGACY_FINAL_ARCHIVE_MERGE_LINE = re.compile(
 # Default-branch activation of workflow-dynamic dispatch and its terminal journal contract.
 # Commit 0312a56fe38f1702ac8e53ddd7aa6a1deba1cb0d, 2026-08-13T18:11:21Z.
 _WORKFLOW_DYNAMIC_ACTIVATED_AT = datetime(2026, 8, 13, 18, 11, 21, tzinfo=UTC)
+# Default-branch activation of terminal-aligned Issue closure. Before this commit,
+# normal Archive linkage could close the coordination Issue before Lead persisted
+# LIFECYCLE_COMPLETE. Commit 6c241723338e47052ca18499c30aef0b11db87d7,
+# 2026-08-20T16:50:34Z.
+_TERMINAL_CLOSE_ALIGNMENT_ACTIVATED_AT = datetime(2026, 8, 20, 16, 50, 34, tzinfo=UTC)
 
 
 @dataclass(frozen=True)
@@ -807,7 +812,7 @@ def _structural_terminal_marker(
     raw_issue: Mapping[str, object],
     observation: GitHubIssueObservation,
 ) -> bool:
-    """Prove bounded modern or pre-dynamic terminal shape from current GitHub facts."""
+    """Prove bounded modern or historical terminal shape from current GitHub facts."""
 
     if (
         not observation.authoritative
@@ -839,15 +844,20 @@ def _structural_terminal_marker(
 
     repository_owner = repository.split("/", 1)[0]
     if observation.routing == ("lead", "finalize-archive"):
-        if completed_at > closed_at:
-            return False
         if _valid_lifecycle_complete_comment(
             marker,
             issue_number=observation.issue_number,
             change=observation.change,
             repository_owner=repository_owner,
         ):
-            return True
+            if completed_at <= closed_at:
+                return True
+            return (
+                closed_at < _TERMINAL_CLOSE_ALIGNMENT_ACTIVATED_AT
+                and closed_at < completed_at < _TERMINAL_CLOSE_ALIGNMENT_ACTIVATED_AT
+            )
+        if completed_at > closed_at:
+            return False
         return (
             observation.legacy_terminal_candidate
             and raw_issue.get("state_reason") == "completed"
