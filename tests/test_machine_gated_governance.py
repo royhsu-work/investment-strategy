@@ -88,6 +88,43 @@ def _lifecycle_complete_124_comment() -> dict[str, object]:
     }
 
 
+def _legacy_terminal_21_payload() -> dict[str, object]:
+    return {
+        "number": 21,
+        "state": "closed",
+        "state_reason": "completed",
+        "body": "Change: align-issue-completion-with-archive",
+        "labels": [
+            {"name": "agent:executor"},
+            {"name": "action:merge-pr"},
+        ],
+        "created_at": "2026-08-12T11:42:38Z",
+        "closed_at": "2026-08-12T23:51:29Z",
+        "comments": 20,
+    }
+
+
+def _legacy_archive_merge_21_comment() -> dict[str, object]:
+    return {
+        "id": 5274200000,
+        "body": (
+            "Executor / merge-pr — ARCHIVE MERGED\n\n"
+            "Change: `align-issue-completion-with-archive`\n"
+            "Archive PR: #27\n"
+            "Authorized exact revision: `bcd52fae6367799d3e6a803834ed654f82cf4e82`\n\n"
+            "Merge executed with "
+            "`expected_head_sha=bcd52fae6367799d3e6a803834ed654f82cf4e82` and succeeded. "
+            "GitHub merge result commit: `40d48d61842fd5a1ab379f36d489857c1943e278`.\n\n"
+            "Outcome: Archive PR merge is durable. "
+            "Handoff target: Lead / `finalize-archive` to reconstruct terminal state."
+        ),
+        "user": {"login": "royhsu-work"},
+        "author_association": "OWNER",
+        "created_at": "2026-08-12T23:51:19Z",
+        "updated_at": "2026-08-12T23:51:19Z",
+    }
+
+
 def test_mapped_worker_requires_machine_pre_model_dispatch_after_cutover() -> None:
     shared = _normalized(AGENTS)
     for required in (
@@ -200,6 +237,47 @@ def test_terminal_retained_routing_is_structurally_clear_without_detailed_forens
 
     monkeypatch.setattr(runtime, "_github_issue_comment_pages", forbidden)
     monkeypatch.setattr(runtime, "_legacy_terminal_evidence_from_checkout", forbidden)
+    monkeypatch.setattr(runtime, "_github_issue", forbidden)
+
+    preflight = runtime.acquire_current_github_preflight(
+        "royhsu-work/investment-strategy",
+        "token",
+        repository_root=tmp_path,
+    )
+    decision = workflow_dispatch.classify_dispatch(preflight)
+
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.selected_issue_id == 140
+    assert decision.selected_routing == ("executor", "implement-change")
+    assert all(item.state == "open" for item in preflight.issues)
+
+
+def test_pre_dynamic_archive_merge_terminal_is_structurally_clear_without_archive_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "_github_open_issue_pages",
+        lambda repository, token: ((_formal_140_payload(),),),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_github_closed_issue_pages",
+        lambda repository, token: ((_legacy_terminal_21_payload(),),),
+    )
+
+    def structural_page(url: str, token: str) -> tuple[dict[str, object], ...]:
+        assert url.endswith("/issues/21/comments?per_page=1&page=20")
+        return (_legacy_archive_merge_21_comment(),)
+
+    monkeypatch.setattr(runtime, "_github_get_list_page", structural_page)
+
+    def forbidden(*args: object, **kwargs: object) -> object:
+        raise AssertionError("proven legacy terminal history must not read archived Change")
+
+    monkeypatch.setattr(runtime, "_legacy_terminal_evidence_from_checkout", forbidden)
+    monkeypatch.setattr(runtime, "_github_issue_comment_pages", forbidden)
     monkeypatch.setattr(runtime, "_github_issue", forbidden)
 
     preflight = runtime.acquire_current_github_preflight(
