@@ -314,9 +314,7 @@ def test_pre_dynamic_archive_merge_marker_created_after_cutover_stays_nonclear(
     monkeypatch.setattr(
         runtime,
         "_github_get_list_page",
-        lambda url, token: (
-            _legacy_archive_merge_21_comment(created_at="2026-08-14T00:00:00Z"),
-        ),
+        lambda url, token: (_legacy_archive_merge_21_comment(created_at="2026-08-14T00:00:00Z"),),
     )
     archive_lookups: list[str] = []
 
