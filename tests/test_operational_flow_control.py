@@ -51,7 +51,7 @@ def test_ambiguous_or_human_terminated_premature_close_stays_fail_closed() -> No
         "conflicting, multiple, incomplete, or indeterminate recovery evidence fails closed",
         "Human-retirement",
         "detailed exceptional boundary",
-        "generic fault state machine",
+        "no central workflow engine",
     ):
         assert required in text
 
