@@ -25,6 +25,8 @@ ACTION_PREFIX = "Action: "
 BRIDGE_OK = "BRIDGE_OK"
 _DECISION_DISPOSITIONS = {"AUTHORIZE", "NO_WORK", "FAIL_CLOSED"}
 _ROLES = {"lead", "reviewer", "executor"}
+_GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]"
+_GITHUB_ACTIONS_APP_SLUG = "github-actions"
 
 
 @dataclass(frozen=True)
@@ -244,6 +246,18 @@ def _request_identity(
     return issue_number, comment_id
 
 
+def _is_github_actions_comment(comment: Mapping[str, object]) -> bool:
+    user = _as_mapping(comment.get("user"))
+    app = _as_mapping(comment.get("performed_via_github_app"))
+    return (
+        user is not None
+        and user.get("login") == _GITHUB_ACTIONS_BOT_LOGIN
+        and user.get("type") == "Bot"
+        and app is not None
+        and app.get("slug") == _GITHUB_ACTIONS_APP_SLUG
+    )
+
+
 def _has_correlated_result(
     existing_comments: Sequence[Mapping[str, object]], request_comment_id: int
 ) -> bool:
@@ -255,7 +269,11 @@ def _has_correlated_result(
         if transport is not None and transport.request_comment_id == request_comment_id:
             return True
         decision = parse_dispatch_decision(body)
-        if decision is not None and decision.request_comment_id == request_comment_id:
+        if (
+            decision is not None
+            and decision.request_comment_id == request_comment_id
+            and _is_github_actions_comment(comment)
+        ):
             return True
     return False
 
