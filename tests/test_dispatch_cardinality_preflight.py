@@ -31,6 +31,7 @@ def issue(
     recovery: RecoveryEvidence = "not-candidate",
     terminal: TerminalEvidence = "not-terminal",
     provenance: ObservationProvenance = ObservationProvenance.QUALIFIED,
+    preactivation_eligible: bool = False,
 ) -> RepositoryIssueSnapshot:
     return RepositoryIssueSnapshot(
         issue_number=number,
@@ -41,6 +42,7 @@ def issue(
         premature_close_recovery=recovery,
         terminal_evidence=terminal,
         current_state_provenance=provenance,
+        preactivation_eligible=preactivation_eligible,
     )
 
 
@@ -61,12 +63,26 @@ def snapshot(*issues: RepositoryIssueSnapshot, complete: bool = True) -> Dispatc
 def test_zero_formal_work_selects_oldest_combined_pre_activation_candidate() -> None:
     decision = classify_dispatch(
         snapshot(
-            issue(20, "unset", ("lead", "propose-change"), created_order=2),
+            issue(
+                20,
+                "unset",
+                ("lead", "propose-change"),
+                created_order=2,
+                preactivation_eligible=True,
+            ),
             issue(19, "unset", ("lead", "explore-change"), created_order=1),
         )
     )
     assert decision.preactivation_candidate_ids == (19, 20)
     assert decision.selected_issue_id == 19
+
+
+def test_unapproved_direct_propose_is_not_a_preactivation_candidate() -> None:
+    decision = classify_dispatch(
+        snapshot(issue(20, "unset", ("lead", "propose-change"), created_order=1))
+    )
+    assert decision.preactivation_candidate_ids == ()
+    assert decision.disposition == "NO_WORK"
 
 
 def test_one_formal_work_wins_over_queued_explore() -> None:
