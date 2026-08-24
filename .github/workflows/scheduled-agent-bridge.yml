@@ -55,6 +55,7 @@ jobs:
         env:
           AGENT_RUNTIME_CHECKIN_ISSUE: ${{ vars.AGENT_RUNTIME_CHECKIN_ISSUE }}
           DEFAULT_BRANCH_REVISION: ${{ steps.revision.outputs.sha }}
+          PYTHONPATH: ${{ github.workspace }}/src
         run: >-
           uv run python -m investment_strategy.issue_comment_bridge
           --event-path "$GITHUB_EVENT_PATH"
