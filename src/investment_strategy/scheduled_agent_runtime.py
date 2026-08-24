@@ -622,6 +622,84 @@ def _raw_issue_map(
     return result
 
 
+def _structural_terminal_marker(
+    repository: str,
+    token: str,
+    *,
+    raw_issue: Mapping[str, object],
+    observation: GitHubIssueObservation,
+) -> bool:
+    """Prove the bounded normal terminal shape without loading full Issue history."""
+
+    if (
+        not observation.authoritative
+        or observation.state != "closed"
+        or observation.change == "unset"
+        or observation.routing != ("lead", "finalize-archive")
+    ):
+        return False
+
+    comment_count = raw_issue.get("comments")
+    if type(comment_count) is not int or comment_count < 1:
+        return False
+
+    closed_at, closed_valid = _github_timestamp(raw_issue.get("closed_at"))
+    if not closed_valid or closed_at is None:
+        return False
+
+    url = (
+        f"https://api.github.com/repos/{repository}/issues/{observation.issue_number}/comments"
+        f"?per_page=1&page={comment_count}"
+    )
+    last_page = _github_get_list_page(url, token)
+    if len(last_page) != 1:
+        return False
+    marker = last_page[0]
+
+    completed_at, completed_valid = _github_timestamp(marker.get("created_at"))
+    if not completed_valid or completed_at is None or completed_at > closed_at:
+        return False
+
+    repository_owner = repository.split("/", 1)[0]
+    return _valid_lifecycle_complete_comment(
+        marker,
+        issue_number=observation.issue_number,
+        change=observation.change,
+        repository_owner=repository_owner,
+    )
+
+
+def _acquire_structural_closed_preflight(
+    repository: str,
+    token: str,
+    closed_pages: tuple[tuple[Mapping[str, object], ...], ...],
+) -> DispatchPreflight:
+    """Build the bounded closed-conflict projection for sole-formal selection."""
+
+    raw_by_issue = _raw_issue_map(closed_pages)
+    observations: list[GitHubIssueObservation] = []
+    for observation in _normalized_observations(closed_pages):
+        raw_issue = raw_by_issue.get(observation.issue_number)
+        if (
+            raw_issue is not None
+            and _structural_terminal_marker(
+                repository,
+                token,
+                raw_issue=raw_issue,
+                observation=observation,
+            )
+        ):
+            continue
+        observations.append(observation)
+
+    return acquire_dispatch_preflight(
+        observations=tuple(observations),
+        source_total_count=len(observations),
+        incomplete_results=False,
+        exhausted=True,
+    )
+
+
 def _direct_propose_admission_approved(
     repository: str,
     token: str,
@@ -806,7 +884,11 @@ def acquire_current_github_preflight(
         open_decision = classify_open_dispatch(open_preflight)
 
     closed_pages = _github_closed_issue_pages(repository, token)
-    structural_preflight = acquire_from_issue_pages(closed_pages, exhausted=True)
+    structural_preflight = _acquire_structural_closed_preflight(
+        repository,
+        token,
+        closed_pages,
+    )
     structural = classify_structural_conflicts(structural_preflight)
 
     if open_decision.formal_issue_ids and structural is StructuralConflictDisposition.CLEAR:
