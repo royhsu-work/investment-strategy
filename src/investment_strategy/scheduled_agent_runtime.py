@@ -74,6 +74,12 @@ _LEGACY_ARCHIVE_MERGE_SENTENCE = re.compile(
     r"Merge executed with `expected_head_sha=(?P<head>[0-9a-f]{40})` and succeeded\. "
     r"GitHub merge result commit: `(?P<merge>[0-9a-f]{40})`\."
 )
+_LEGACY_FINAL_ARCHIVE_HEAD_LINE = re.compile(
+    r"(?m)^Authorized/reviewed archive head:\s*`(?P<head>[0-9a-f]{40})`\s*$"
+)
+_LEGACY_FINAL_ARCHIVE_MERGE_LINE = re.compile(
+    r"(?m)^Archive merge commit / current `main` HEAD:\s*`(?P<merge>[0-9a-f]{40})`\s*$"
+)
 
 # Default-branch activation of workflow-dynamic dispatch and its terminal journal contract.
 # Commit 0312a56fe38f1702ac8e53ddd7aa6a1deba1cb0d, 2026-08-13T18:11:21Z.
@@ -405,6 +411,50 @@ def _valid_legacy_archive_merge_comment(
     if authorized[0] != expected_head or not merge_commit:
         return False
     if "Handoff target: Lead / `finalize-archive`" not in body:
+        return False
+
+    created_at, created_valid = _github_timestamp(payload.get("created_at"))
+    updated_at, updated_valid = _github_timestamp(payload.get("updated_at"))
+    return (
+        created_valid
+        and updated_valid
+        and created_at is not None
+        and updated_at is not None
+        and created_at == updated_at
+    )
+
+
+def _valid_legacy_final_archive_comment(
+    payload: Mapping[str, object],
+    *,
+    change: str,
+    repository_owner: str,
+) -> bool:
+    """Recognize the bounded pre-dynamic Lead final-archive terminal journal shape."""
+
+    body = payload.get("body")
+    user = payload.get("user")
+    author_association = payload.get("author_association")
+    if not isinstance(body, str) or not isinstance(user, Mapping):
+        return False
+    if user.get("login") != repository_owner or author_association != "OWNER":
+        return False
+
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    if not lines or lines[0] != "## Lead — final archive confirmation":
+        return False
+
+    fields = _message_fields(body)
+    if fields.get("Change") != [change] or fields.get("Action") != ["finalize-archive"]:
+        return False
+    if "Result: **ARCHIVE_CONFIRMED_ON_DEFAULT_BRANCH**" not in lines:
+        return False
+    if len(_LEGACY_ARCHIVE_PR_LINE.findall(body)) != 1:
+        return False
+
+    authorized_heads = _LEGACY_FINAL_ARCHIVE_HEAD_LINE.findall(body)
+    merge_commits = _LEGACY_FINAL_ARCHIVE_MERGE_LINE.findall(body)
+    if len(authorized_heads) != 1 or len(merge_commits) != 1:
         return False
 
     created_at, created_valid = _github_timestamp(payload.get("created_at"))
@@ -764,11 +814,21 @@ def _structural_terminal_marker(
 
     repository_owner = repository.split("/", 1)[0]
     if observation.routing == ("lead", "finalize-archive"):
-        return _valid_lifecycle_complete_comment(
+        if _valid_lifecycle_complete_comment(
             marker,
             issue_number=observation.issue_number,
             change=observation.change,
             repository_owner=repository_owner,
+        ):
+            return True
+        return (
+            observation.legacy_terminal_candidate
+            and raw_issue.get("state_reason") == "completed"
+            and _valid_legacy_final_archive_comment(
+                marker,
+                change=observation.change,
+                repository_owner=repository_owner,
+            )
         )
 
     return (
