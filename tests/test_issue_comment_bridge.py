@@ -7,6 +7,14 @@ from investment_strategy import issue_comment_bridge as bridge
 WORKFLOW_PATH = Path(".github/workflows/scheduled-agent-bridge.yml")
 REQUEST_BODY = "DISPATCH_REQUEST\nRequested-At: 2026-08-24T03:45:00Z"
 REVISION = "cb8f9ec12d826e0d71897a4c73ece961d00df59e"
+LIVE_REQUEST_COMMENT_ID = 5391475092
+LIVE_REVISION = "0f334664811785158c796b4cfeb582ee99c49881"
+LIVE_RESULT_BODY = (
+    "DISPATCH_RESULT\n"
+    f"Request-Comment-ID: {LIVE_REQUEST_COMMENT_ID}\n"
+    f"Default-Branch-Revision: {LIVE_REVISION}\n"
+    "Result: BRIDGE_OK"
+)
 
 
 def _event(
@@ -145,3 +153,16 @@ def test_bridge_ok_result_is_exact_transport_only_payload() -> None:
         assert forbidden not in rendered
 
     assert bridge.parse_dispatch_request(rendered) is None
+
+
+def test_observed_live_bridge_result_remains_exact_transport_only_contract() -> None:
+    result = bridge.parse_dispatch_result(LIVE_RESULT_BODY)
+
+    assert result == bridge.DispatchResult(
+        request_comment_id=LIVE_REQUEST_COMMENT_ID,
+        default_branch_revision=LIVE_REVISION,
+        result=bridge.BRIDGE_OK,
+    )
+    for forbidden in ("Issue:", "Role:", "Action:", "Skill:", "Effect:"):
+        assert forbidden not in LIVE_RESULT_BODY
+    assert bridge.parse_dispatch_request(LIVE_RESULT_BODY) is None
