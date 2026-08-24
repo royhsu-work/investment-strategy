@@ -55,16 +55,15 @@ def test_explore_uses_decision_complete_outcomes_and_human_boundary() -> None:
         assert required in explore
 
 
-def test_explore_and_direct_propose_share_one_pre_activation_queue() -> None:
+def test_explore_and_direct_propose_share_executable_preactivation_contract() -> None:
     shared = _normalized(AGENTS)
     for required in (
-        "combined pre-activation queue",
-        "`Lead / explore-change`",
-        "`Lead / propose-change`",
-        "earliest GitHub `created_at`",
-        "lower Issue number",
-        "formal active workflow must win over pre-activation intake",
-        "bounded premature-close recovery candidate",
+        "combined pre-activation candidate contract",
+        "coherent routed Explore",
+        "executable-approved direct-Propose",
+        "earliest GitHub `created_at` then lower Issue number ordering",
+        "A formal workflow always wins over intake",
+        "detailed exceptional recovery permits intake",
     ):
         assert required in shared
 
