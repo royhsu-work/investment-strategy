@@ -129,9 +129,7 @@ def parse_dispatch_decision(body: str) -> MachineDispatchDecision | None:
         return None
     if not lines[1].startswith(REQUEST_COMMENT_ID_PREFIX):
         return None
-    request_comment_id = _parse_positive_decimal(
-        lines[1][len(REQUEST_COMMENT_ID_PREFIX) :]
-    )
+    request_comment_id = _parse_positive_decimal(lines[1][len(REQUEST_COMMENT_ID_PREFIX) :])
     revision = _parse_revision(lines[2])
     if request_comment_id is None or revision is None:
         return None
