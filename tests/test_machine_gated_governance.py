@@ -66,6 +66,8 @@ def _terminal_124_payload() -> dict[str, object]:
         ],
         "created_at": "2026-08-21T05:56:01Z",
         "closed_at": "2026-08-21T09:33:25Z",
+        # GitHub currently reports 23 even though the REST comment list exposes
+        # the terminal journal as the 22nd/last visible comment.
         "comments": 23,
     }
 
@@ -104,9 +106,11 @@ def _legacy_terminal_21_payload() -> dict[str, object]:
     }
 
 
-def _legacy_archive_merge_21_comment() -> dict[str, object]:
+def _legacy_archive_merge_21_comment(
+    *, created_at: str = "2026-08-12T23:51:35Z"
+) -> dict[str, object]:
     return {
-        "id": 5274200000,
+        "id": 5274149383,
         "body": (
             "Executor / merge-pr — ARCHIVE MERGED\n\n"
             "Change: `align-issue-completion-with-archive`\n"
@@ -120,8 +124,8 @@ def _legacy_archive_merge_21_comment() -> dict[str, object]:
         ),
         "user": {"login": "royhsu-work"},
         "author_association": "OWNER",
-        "created_at": "2026-08-12T23:51:19Z",
-        "updated_at": "2026-08-12T23:51:19Z",
+        "created_at": created_at,
+        "updated_at": created_at,
     }
 
 
@@ -227,7 +231,7 @@ def test_terminal_retained_routing_is_structurally_clear_without_detailed_forens
     )
 
     def structural_page(url: str, token: str) -> tuple[dict[str, object], ...]:
-        assert url.endswith("/issues/124/comments?per_page=1&page=23")
+        assert url.endswith("/issues/124/comments?per_page=100&page=1")
         return (_lifecycle_complete_124_comment(),)
 
     monkeypatch.setattr(runtime, "_github_get_list_page", structural_page)
@@ -268,7 +272,7 @@ def test_pre_dynamic_archive_merge_terminal_is_structurally_clear_without_archiv
     )
 
     def structural_page(url: str, token: str) -> tuple[dict[str, object], ...]:
-        assert url.endswith("/issues/21/comments?per_page=1&page=20")
+        assert url.endswith("/issues/21/comments?per_page=100&page=1")
         return (_legacy_archive_merge_21_comment(),)
 
     monkeypatch.setattr(runtime, "_github_get_list_page", structural_page)
@@ -291,6 +295,44 @@ def test_pre_dynamic_archive_merge_terminal_is_structurally_clear_without_archiv
     assert decision.selected_issue_id == 140
     assert decision.selected_routing == ("executor", "implement-change")
     assert all(item.state == "open" for item in preflight.issues)
+
+
+def test_pre_dynamic_archive_merge_marker_created_after_cutover_stays_nonclear(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "_github_open_issue_pages",
+        lambda repository, token: ((_formal_140_payload(),),),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_github_closed_issue_pages",
+        lambda repository, token: ((_legacy_terminal_21_payload(),),),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_github_get_list_page",
+        lambda url, token: (_legacy_archive_merge_21_comment(created_at="2026-08-14T00:00:00Z"),),
+    )
+    archive_lookups: list[str] = []
+
+    def exceptional_lookup(change: str, *, repository_root: Path) -> str:
+        del repository_root
+        archive_lookups.append(change)
+        return "indeterminate"
+
+    monkeypatch.setattr(runtime, "_legacy_terminal_evidence_from_checkout", exceptional_lookup)
+
+    preflight = runtime.acquire_current_github_preflight(
+        "royhsu-work/investment-strategy",
+        "token",
+        repository_root=tmp_path,
+    )
+
+    assert archive_lookups == ["align-issue-completion-with-archive"]
+    assert workflow_dispatch.classify_dispatch(preflight).disposition == "FAIL_CLOSED"
 
 
 def test_pre_dynamic_completed_without_archive_merge_marker_stays_nonclear(
@@ -316,8 +358,8 @@ def test_pre_dynamic_completed_without_archive_merge_marker_stays_nonclear(
                 "body": "not an archive merge terminal marker",
                 "user": {"login": "royhsu-work"},
                 "author_association": "OWNER",
-                "created_at": "2026-08-12T23:51:19Z",
-                "updated_at": "2026-08-12T23:51:19Z",
+                "created_at": "2026-08-12T23:51:35Z",
+                "updated_at": "2026-08-12T23:51:35Z",
             },
         ),
     )
