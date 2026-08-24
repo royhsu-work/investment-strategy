@@ -78,7 +78,7 @@ def test_pre_dynamic_finalize_archive_terminal_is_structurally_clear_without_arc
 
     def structural_page(url: str, token: str) -> tuple[dict[str, object], ...]:
         del token
-        assert url.endswith("/issues/18/comments?per_page=1&page=26")
+        assert url.endswith("/issues/18/comments?per_page=100&page=1")
         return (_legacy_final_archive_18_comment(),)
 
     monkeypatch.setattr(runtime, "_github_get_list_page", structural_page)
