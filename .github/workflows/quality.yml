@@ -36,7 +36,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Diagnose structural closed-workflow screen
+      - name: Diagnose current dispatch preflight
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -45,46 +45,69 @@ jobs:
           uv run python - <<'PY'
           import os
           from investment_strategy import scheduled_agent_runtime as runtime
+          from investment_strategy import workflow_dispatch
 
           repository = os.environ["GITHUB_REPOSITORY"]
           token = os.environ["GITHUB_TOKEN"]
-          pages = runtime._github_closed_issue_pages(repository, token)
-          raw_by_issue = runtime._raw_issue_map(pages)
-          observations = runtime._normalized_closed_observations(pages)
-          print(f"STRUCTURAL_DIAGNOSTIC closed_observations={len(observations)}")
+
+          open_pages = runtime._github_open_issue_pages(repository, token)
+          raw_open = runtime._raw_issue_map(open_pages)
+          open_observations = runtime._normalized_observations(open_pages)
+          open_preflight = runtime.acquire_dispatch_preflight(
+              observations=open_observations,
+              source_total_count=len(open_observations),
+              incomplete_results=False,
+              exhausted=True,
+          )
+          open_decision = workflow_dispatch.classify_open_dispatch(open_preflight)
+          print(
+              "OPEN_DECISION "
+              f"disposition={open_decision.disposition} reason={open_decision.reason!r} "
+              f"formal={open_decision.formal_issue_ids} selected={open_decision.selected_issue_id} "
+              f"routing={open_decision.selected_routing}"
+          )
+          for observation in open_observations:
+              if (
+                  observation.change != "unset"
+                  or observation.routing is not None
+                  or not observation.authoritative
+              ):
+                  raw_issue = raw_open[observation.issue_number]
+                  labels = [
+                      item.get("name")
+                      for item in raw_issue.get("labels", [])
+                      if isinstance(item, dict)
+                  ]
+                  print(
+                      "OPEN_OBSERVATION "
+                      f"issue={observation.issue_number} change={observation.change} "
+                      f"routing={observation.routing} authoritative={observation.authoritative} "
+                      f"state_reason={raw_issue.get('state_reason')} labels={labels}"
+                  )
+
+          closed_pages = runtime._github_closed_issue_pages(repository, token)
+          raw_closed = runtime._raw_issue_map(closed_pages)
+          closed_observations = runtime._normalized_closed_observations(closed_pages)
           unresolved = []
-          for observation in observations:
+          for observation in closed_observations:
               if observation.change == "unset" or observation.routing is None:
                   continue
-              raw_issue = raw_by_issue[observation.issue_number]
+              raw_issue = raw_closed[observation.issue_number]
               cleared = runtime._structural_terminal_marker(
                   repository,
                   token,
                   raw_issue=raw_issue,
                   observation=observation,
               )
-              comment_count = raw_issue.get("comments")
-              marker = runtime._github_last_visible_issue_comment(
-                  repository,
-                  token,
-                  issue_number=observation.issue_number,
-                  reported_comment_count=comment_count if type(comment_count) is int else 0,
-              )
-              body = marker.get("body") if marker else None
-              first_line = body.splitlines()[0] if isinstance(body, str) and body.splitlines() else ""
-              user = marker.get("user") if marker else None
-              actor = user.get("login") if isinstance(user, dict) else None
-              marker_id = marker.get("id") if marker else None
-              print(
-                  "STRUCTURAL_CANDIDATE "
-                  f"issue={observation.issue_number} change={observation.change} "
-                  f"routing={observation.routing} state_reason={raw_issue.get('state_reason')} "
-                  f"comments={comment_count} cleared={cleared} marker_id={marker_id} "
-                  f"marker_actor={actor} marker_first_line={first_line!r}"
-              )
               if not cleared:
                   unresolved.append(observation.issue_number)
-          print(f"STRUCTURAL_UNRESOLVED ids={unresolved}")
+          structural_preflight = runtime._acquire_structural_closed_preflight(
+              repository,
+              token,
+              closed_pages,
+          )
+          structural = workflow_dispatch.classify_structural_conflicts(structural_preflight)
+          print(f"STRUCTURAL_DECISION disposition={structural} unresolved={unresolved}")
           PY
       - name: Run tests
         run: uv run pytest
