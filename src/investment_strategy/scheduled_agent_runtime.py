@@ -89,6 +89,11 @@ _WORKFLOW_DYNAMIC_ACTIVATED_AT = datetime(2026, 8, 13, 18, 11, 21, tzinfo=UTC)
 # LIFECYCLE_COMPLETE. Commit 6c241723338e47052ca18499c30aef0b11db87d7,
 # 2026-08-20T16:50:34Z.
 _TERMINAL_CLOSE_ALIGNMENT_ACTIVATED_AT = datetime(2026, 8, 20, 16, 50, 34, tzinfo=UTC)
+# First default-branch deployment of the repository-owned machine dispatcher.
+# Historical terminal journals created before this boundary may retain the old
+# close-before-final-comment ordering; later history must obey terminal-aligned
+# ordering. Merge PR #144, commit b7ce952ee8dbd26760441b871d0807a2ece0c3cd.
+_MACHINE_DISPATCH_ACTIVATED_AT = datetime(2026, 8, 24, 12, 6, 8, tzinfo=UTC)
 
 
 @dataclass(frozen=True)
@@ -852,9 +857,18 @@ def _structural_terminal_marker(
         ):
             if completed_at <= closed_at:
                 return True
-            return (
+            if (
                 closed_at < _TERMINAL_CLOSE_ALIGNMENT_ACTIVATED_AT
                 and closed_at < completed_at < _TERMINAL_CLOSE_ALIGNMENT_ACTIVATED_AT
+            ):
+                return True
+
+            updated_at, updated_valid = _github_timestamp(marker.get("updated_at"))
+            return (
+                raw_issue.get("state_reason") == "completed"
+                and updated_valid
+                and updated_at == completed_at
+                and closed_at < completed_at < _MACHINE_DISPATCH_ACTIVATED_AT
             )
         if completed_at > closed_at:
             return False
