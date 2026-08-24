@@ -1,9 +1,9 @@
 """Machine-gated Scheduled Agent runtime acquisition and worker authorization.
 
-The runtime reconstructs current GitHub Issue state before mapped model work,
-normalizes that state into the pure ``workflow_dispatch`` classifier, and
-constructs a worker request only from an ``AUTHORIZE`` decision. Trigger
-metadata is intentionally non-authoritative.
+Normal dispatch reconstructs complete current open GitHub Issue state first.
+Closed workflow state is screened structurally and detailed recovery evidence is
+acquired only when that screen cannot clear a sole formal workflow or when
+formal open cardinality is zero.
 """
 
 from __future__ import annotations
@@ -18,6 +18,13 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.request import Request, urlopen
 
+from investment_strategy.human_authority import (
+    APPROVAL_LABEL,
+    decision_comment_from_raw,
+    is_human_decision_approved,
+    label_event_from_raw,
+    propose_admission_ref,
+)
 from investment_strategy.workflow_dispatch import (
     Action,
     DispatchPreflight,
@@ -27,8 +34,11 @@ from investment_strategy.workflow_dispatch import (
     RepositoryIssueSnapshot,
     Role,
     Routing,
+    StructuralConflictDisposition,
     TerminalEvidence,
     classify_dispatch,
+    classify_open_dispatch,
+    classify_structural_conflicts,
 )
 
 _AGENT_LABELS: dict[str, Role] = {
@@ -74,6 +84,7 @@ class GitHubIssueObservation:
     premature_close_recovery: RecoveryEvidence = "not-candidate"
     terminal_evidence: TerminalEvidence = "not-terminal"
     legacy_terminal_candidate: bool = False
+    preactivation_eligible: bool = False
 
 
 @dataclass(frozen=True)
@@ -117,6 +128,7 @@ def acquire_dispatch_preflight(
                 if observation.authoritative
                 else ObservationProvenance.INDETERMINATE
             ),
+            preactivation_eligible=observation.preactivation_eligible,
         )
         for observation in observations
     )
@@ -217,12 +229,7 @@ def _github_timestamp(value: object) -> tuple[datetime | None, bool]:
 
 
 def normalize_github_issue(payload: Mapping[str, object]) -> GitHubIssueObservation | None:
-    """Normalize one current GitHub Issues API object.
-
-    Pull-request projections returned by the Issues endpoint are intentionally
-    ignored. Any malformed authorization-bearing field marks the observation
-    unqualified so the production classifier fails closed.
-    """
+    """Normalize one current GitHub Issues API object."""
 
     if "pull_request" in payload:
         return None
@@ -253,8 +260,6 @@ def normalize_github_issue(payload: Mapping[str, object]) -> GitHubIssueObservat
     terminal_evidence: TerminalEvidence = "not-terminal"
     legacy_terminal_candidate = False
     if state == "closed" and change != "unset":
-        # Closed formal-looking state is not normal work. Until complete terminal
-        # evidence is obtained below, recovery remains indeterminate/fail-closed.
         terminal_evidence = "indeterminate"
         if routing is not None:
             recovery = "indeterminate"
@@ -298,8 +303,6 @@ def _valid_lifecycle_complete_comment(
     change: str,
     repository_owner: str,
 ) -> bool:
-    """Recognize one canonical owner-authored terminal ACTION_RESULT."""
-
     body = payload.get("body")
     user = payload.get("user")
     author_association = payload.get("author_association")
@@ -330,8 +333,6 @@ def _valid_human_retirement_comment(
     change: str,
     repository_owner: str,
 ) -> bool:
-    """Recognize one direct-Human administrative termination decision."""
-
     body = payload.get("body")
     user = payload.get("user")
     author_association = payload.get("author_association")
@@ -434,12 +435,7 @@ def _legacy_terminal_evidence_from_checkout(
     *,
     repository_root: Path,
 ) -> TerminalEvidence:
-    """Classify pre-workflow-dynamic closed history from current OpenSpec state.
-
-    The current terminal journal cannot be required retroactively. A legacy
-    closed Issue is historical only when current default-branch state proves
-    the Change is no longer active and exactly one archived Change exists.
-    """
+    """Classify pre-workflow-dynamic closed history from current OpenSpec state."""
 
     changes_root = repository_root / "openspec" / "changes"
     archive_root = changes_root / "archive"
@@ -504,18 +500,17 @@ def _github_get_list_page(url: str, token: str) -> tuple[Mapping[str, object], .
     return tuple(items)
 
 
-def _github_issue_pages(
+def _github_issue_pages_for_state(
     repository: str,
     token: str,
+    state: Literal["open", "closed", "all"],
 ) -> tuple[tuple[Mapping[str, object], ...], ...]:
-    """Exhaust the repository Issues endpoint using current authenticated reads."""
-
     pages: list[tuple[Mapping[str, object], ...]] = []
     page_number = 1
     while True:
         url = (
             f"https://api.github.com/repos/{repository}/issues"
-            f"?state=all&per_page=100&page={page_number}"
+            f"?state={state}&per_page=100&page={page_number}"
         )
         page_items = _github_get_list_page(url, token)
         pages.append(page_items)
@@ -524,18 +519,58 @@ def _github_issue_pages(
         page_number += 1
 
 
+def _github_open_issue_pages(
+    repository: str,
+    token: str,
+) -> tuple[tuple[Mapping[str, object], ...], ...]:
+    return _github_issue_pages_for_state(repository, token, "open")
+
+
+def _github_closed_issue_pages(
+    repository: str,
+    token: str,
+) -> tuple[tuple[Mapping[str, object], ...], ...]:
+    return _github_issue_pages_for_state(repository, token, "closed")
+
+
+def _github_issue_pages(
+    repository: str,
+    token: str,
+) -> tuple[tuple[Mapping[str, object], ...], ...]:
+    """Compatibility helper for detailed all-Issue acquisition tests."""
+
+    return _github_issue_pages_for_state(repository, token, "all")
+
+
 def _github_issue_comment_pages(
     repository: str,
     token: str,
     issue_number: int,
 ) -> tuple[tuple[Mapping[str, object], ...], ...]:
-    """Exhaust comments for one closed workflow-looking Issue."""
-
     pages: list[tuple[Mapping[str, object], ...]] = []
     page_number = 1
     while True:
         url = (
             f"https://api.github.com/repos/{repository}/issues/{issue_number}/comments"
+            f"?per_page=100&page={page_number}"
+        )
+        page_items = _github_get_list_page(url, token)
+        pages.append(page_items)
+        if len(page_items) < 100:
+            return tuple(pages)
+        page_number += 1
+
+
+def _github_issue_event_pages(
+    repository: str,
+    token: str,
+    issue_number: int,
+) -> tuple[tuple[Mapping[str, object], ...], ...]:
+    pages: list[tuple[Mapping[str, object], ...]] = []
+    page_number = 1
+    while True:
+        url = (
+            f"https://api.github.com/repos/{repository}/issues/{issue_number}/events"
             f"?per_page=100&page={page_number}"
         )
         page_items = _github_get_list_page(url, token)
@@ -562,130 +597,227 @@ def _github_issue(repository: str, token: str, issue_number: int) -> Mapping[str
     return cast(Mapping[str, object], decoded)
 
 
-def acquire_current_github_preflight(
-    repository: str,
-    token: str,
-    *,
-    repository_root: Path | None = None,
-) -> DispatchPreflight:
-    """Freshly acquire and normalize complete current repository Issue state.
-
-    Closed formal-looking Issues require invocation-local terminal evidence. A
-    structurally valid completion comment is not enough by itself: after the
-    completion evidence is obtained, runtime re-observes the exact Issue and
-    only classifies terminal history when that current observation is still
-    closed with the same immutable Change/routing identity. A direct-Human
-    administrative retirement may instead exclude the closed workflow from
-    candidate reconstruction only after its own stricter retirement
-    postconditions are freshly proved.
-    """
-
-    root = Path.cwd() if repository_root is None else repository_root
-    pages = _github_issue_pages(repository, token)
-    preliminary = acquire_from_issue_pages(pages, exhausted=True)
-    repository_owner = repository.split("/", 1)[0]
-    terminal_evidence: dict[int, TerminalEvidence] = {}
-    reobserved: dict[int, GitHubIssueObservation] = {}
-    human_retired_issue_ids: set[int] = set()
-
-    preliminary_observations = {
-        observation.issue_number: observation
+def _normalized_observations(
+    pages: Iterable[Iterable[Mapping[str, object]]],
+) -> tuple[GitHubIssueObservation, ...]:
+    return tuple(
+        observation
         for page in pages
         for payload in page
         if (observation := normalize_github_issue(payload)) is not None
-    }
+    )
 
-    for issue in preliminary.issues:
-        if issue.state != "closed" or issue.change == "unset":
-            continue
-        original = preliminary_observations.get(issue.issue_number)
-        if original is None:
-            terminal_evidence[issue.issue_number] = "indeterminate"
-            continue
-        if original.legacy_terminal_candidate:
-            terminal_evidence[issue.issue_number] = _legacy_terminal_evidence_from_checkout(
-                issue.change,
-                repository_root=root,
+
+def _raw_issue_map(
+    pages: Iterable[Iterable[Mapping[str, object]]],
+) -> dict[int, Mapping[str, object]]:
+    result: dict[int, Mapping[str, object]] = {}
+    for page in pages:
+        for payload in page:
+            if "pull_request" in payload:
+                continue
+            number = payload.get("number")
+            if isinstance(number, int):
+                result[number] = payload
+    return result
+
+
+def _direct_propose_admission_approved(
+    repository: str,
+    token: str,
+    raw_issue: Mapping[str, object],
+    issue_number: int,
+) -> bool:
+    labels, labels_valid = _label_names(raw_issue)
+    if not labels_valid or APPROVAL_LABEL not in labels:
+        return False
+
+    comment_pages = _github_issue_comment_pages(repository, token, issue_number)
+    comments = []
+    for page in comment_pages:
+        for raw in page:
+            try:
+                comments.append(decision_comment_from_raw(raw))
+            except ValueError:
+                continue
+
+    event_pages = _github_issue_event_pages(repository, token, issue_number)
+    events = []
+    for page in event_pages:
+        for raw in page:
+            if raw.get("event") != "labeled":
+                continue
+            try:
+                events.append(label_event_from_raw(raw))
+            except ValueError:
+                continue
+
+    return is_human_decision_approved(
+        expected_ref=propose_admission_ref(issue_number),
+        approval_label_present=True,
+        comments=tuple(comments),
+        label_events=tuple(events),
+    )
+
+
+def _apply_direct_propose_admission(
+    repository: str,
+    token: str,
+    observations: tuple[GitHubIssueObservation, ...],
+    raw_by_issue: Mapping[int, Mapping[str, object]],
+) -> tuple[GitHubIssueObservation, ...]:
+    qualified: list[GitHubIssueObservation] = []
+    for observation in observations:
+        if observation.change == "unset" and observation.routing == ("lead", "propose-change"):
+            raw_issue = raw_by_issue.get(observation.issue_number)
+            approved = (
+                raw_issue is not None
+                and observation.authoritative
+                and _direct_propose_admission_approved(
+                    repository,
+                    token,
+                    raw_issue,
+                    observation.issue_number,
+                )
             )
+            observation = replace(observation, preactivation_eligible=approved)
+        qualified.append(observation)
+    return tuple(qualified)
+
+
+def _acquire_detailed_exceptional_preflight(
+    repository: str,
+    token: str,
+    *,
+    repository_root: Path,
+    open_observations: tuple[GitHubIssueObservation, ...],
+    closed_pages: tuple[tuple[Mapping[str, object], ...], ...],
+) -> DispatchPreflight:
+    """Acquire terminal/recovery evidence only inside the exceptional boundary."""
+
+    repository_owner = repository.split("/", 1)[0]
+    observations: list[GitHubIssueObservation] = list(open_observations)
+
+    for original in _normalized_observations(closed_pages):
+        if original.change == "unset":
+            observations.append(original)
             continue
 
-        comment_pages = _github_issue_comment_pages(repository, token, issue.issue_number)
+        if original.legacy_terminal_candidate:
+            evidence = _legacy_terminal_evidence_from_checkout(
+                original.change,
+                repository_root=repository_root,
+            )
+            observations.append(_apply_terminal_evidence(original, evidence))
+            continue
+
+        comment_pages = _github_issue_comment_pages(repository, token, original.issue_number)
         comments = tuple(comment for page in comment_pages for comment in page)
         evidence = _terminal_evidence_from_comments(
             comments,
-            issue_number=issue.issue_number,
-            change=issue.change,
+            issue_number=original.issue_number,
+            change=original.change,
             repository_owner=repository_owner,
         )
+
         if evidence == "not-terminal" and _has_human_retirement_comment(
             comments,
-            issue_number=issue.issue_number,
-            change=issue.change,
+            issue_number=original.issue_number,
+            change=original.change,
             repository_owner=repository_owner,
         ):
-            current_raw = _github_issue(repository, token, issue.issue_number)
+            current_raw = _github_issue(repository, token, original.issue_number)
             current = normalize_github_issue(current_raw)
-            active_change = root / "openspec" / "changes" / issue.change
+            active_change = repository_root / "openspec" / "changes" / original.change
             if (
                 current is not None
                 and current.authoritative
                 and current.state == "closed"
-                and current.change == issue.change
+                and current.change == original.change
                 and current.routing is None
                 and current_raw.get("state_reason") == "not_planned"
                 and not active_change.exists()
             ):
-                human_retired_issue_ids.add(issue.issue_number)
                 continue
             evidence = "indeterminate"
 
+        observation = original
         if evidence == "terminal-history":
-            current = normalize_github_issue(_github_issue(repository, token, issue.issue_number))
+            current = normalize_github_issue(
+                _github_issue(repository, token, original.issue_number)
+            )
             if (
                 current is None
                 or not current.authoritative
                 or current.state != "closed"
-                or current.change != issue.change
-                or current.routing != issue.routing
+                or current.change != original.change
+                or current.routing != original.routing
             ):
                 evidence = "indeterminate"
             else:
-                reobserved[issue.issue_number] = current
-        terminal_evidence[issue.issue_number] = evidence
+                observation = current
 
-    observations: list[GitHubIssueObservation] = []
-    for issue in preliminary.issues:
-        if issue.issue_number in human_retired_issue_ids:
-            continue
-        observation = reobserved.get(issue.issue_number)
-        if observation is None:
-            preliminary_observation = preliminary_observations.get(issue.issue_number)
-            observation = GitHubIssueObservation(
-                issue_number=issue.issue_number,
-                change=issue.change,
-                routing=issue.routing,
-                state=issue.state,
-                created_order=issue.created_order,
-                authoritative=(issue.current_state_provenance is ObservationProvenance.QUALIFIED),
-                premature_close_recovery=issue.premature_close_recovery,
-                terminal_evidence=issue.terminal_evidence,
-                legacy_terminal_candidate=(
-                    preliminary_observation.legacy_terminal_candidate
-                    if preliminary_observation is not None
-                    else False
-                ),
-            )
-        if issue.issue_number in terminal_evidence:
-            observation = _apply_terminal_evidence(
-                observation, terminal_evidence[issue.issue_number]
-            )
-        observations.append(observation)
+        observations.append(_apply_terminal_evidence(observation, evidence))
 
     return acquire_dispatch_preflight(
         observations=tuple(observations),
         source_total_count=len(observations),
         incomplete_results=False,
         exhausted=True,
+    )
+
+
+def acquire_current_github_preflight(
+    repository: str,
+    token: str,
+    *,
+    repository_root: Path | None = None,
+) -> DispatchPreflight:
+    """Acquire the final preflight using open-first production orchestration."""
+
+    root = Path.cwd() if repository_root is None else repository_root
+    open_pages = _github_open_issue_pages(repository, token)
+    open_observations = _normalized_observations(open_pages)
+    open_preflight = acquire_dispatch_preflight(
+        observations=open_observations,
+        source_total_count=len(open_observations),
+        incomplete_results=False,
+        exhausted=True,
+    )
+    open_decision = classify_open_dispatch(open_preflight)
+
+    # Multiple/invalid/incomplete OPEN state fails before any detailed history is loaded.
+    if open_decision.disposition == "FAIL_CLOSED":
+        return open_preflight
+
+    if not open_decision.formal_issue_ids:
+        open_observations = _apply_direct_propose_admission(
+            repository,
+            token,
+            open_observations,
+            _raw_issue_map(open_pages),
+        )
+        open_preflight = acquire_dispatch_preflight(
+            observations=open_observations,
+            source_total_count=len(open_observations),
+            incomplete_results=False,
+            exhausted=True,
+        )
+        open_decision = classify_open_dispatch(open_preflight)
+
+    closed_pages = _github_closed_issue_pages(repository, token)
+    structural_preflight = acquire_from_issue_pages(closed_pages, exhausted=True)
+    structural = classify_structural_conflicts(structural_preflight)
+
+    if open_decision.formal_issue_ids and structural is StructuralConflictDisposition.CLEAR:
+        return open_preflight
+
+    return _acquire_detailed_exceptional_preflight(
+        repository,
+        token,
+        repository_root=root,
+        open_observations=open_observations,
+        closed_pages=closed_pages,
     )
 
 
