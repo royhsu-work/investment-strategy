@@ -659,6 +659,7 @@ def acquire_current_github_preflight(
             continue
         observation = reobserved.get(issue.issue_number)
         if observation is None:
+            preliminary_observation = preliminary_observations.get(issue.issue_number)
             observation = GitHubIssueObservation(
                 issue_number=issue.issue_number,
                 change=issue.change,
@@ -669,8 +670,8 @@ def acquire_current_github_preflight(
                 premature_close_recovery=issue.premature_close_recovery,
                 terminal_evidence=issue.terminal_evidence,
                 legacy_terminal_candidate=(
-                    preliminary_observations.get(issue.issue_number).legacy_terminal_candidate
-                    if preliminary_observations.get(issue.issue_number) is not None
+                    preliminary_observation.legacy_terminal_candidate
+                    if preliminary_observation is not None
                     else False
                 ),
             )
