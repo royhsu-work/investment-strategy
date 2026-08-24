@@ -101,9 +101,7 @@ def test_retired_133_clears_structurally_without_closed_change_lookup(
         ({"state_reason": "completed"}, _retirement_comment()),
         (
             {},
-            _retirement_comment(
-                performed_via_github_app={"slug": "chatgpt-codex-connector"}
-            ),
+            _retirement_comment(performed_via_github_app={"slug": "chatgpt-codex-connector"}),
         ),
         ({}, _retirement_comment(updated_at="2026-08-23T12:06:00Z")),
         ({}, _retirement_comment(created_at="2026-08-23T12:15:00Z")),
