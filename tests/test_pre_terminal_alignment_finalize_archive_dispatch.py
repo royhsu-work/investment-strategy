@@ -124,9 +124,7 @@ def test_post_alignment_post_close_completion_does_not_clear_structurally(
     monkeypatch.setattr(
         runtime,
         "_github_get_list_page",
-        lambda url, token: (
-            _lifecycle_complete_25_comment(created_at="2026-08-21T00:01:00Z"),
-        ),
+        lambda url, token: (_lifecycle_complete_25_comment(created_at="2026-08-21T00:01:00Z"),),
     )
     monkeypatch.setattr(
         runtime,
