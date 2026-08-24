@@ -93,10 +93,7 @@ def _legacy_terminal_21_payload() -> dict[str, object]:
         "number": 21,
         "state": "closed",
         "state_reason": "completed",
-        "body": (
-            "## Workflow identity\n\n"
-            "`Change: align-issue-completion-with-archive`\n"
-        ),
+        "body": ("## Workflow identity\n\n`Change: align-issue-completion-with-archive`\n"),
         "labels": [
             {"name": "agent:executor"},
             {"name": "action:merge-pr"},
@@ -294,6 +291,53 @@ def test_pre_dynamic_archive_merge_terminal_is_structurally_clear_without_archiv
     assert decision.selected_issue_id == 140
     assert decision.selected_routing == ("executor", "implement-change")
     assert all(item.state == "open" for item in preflight.issues)
+
+
+def test_pre_dynamic_completed_without_archive_merge_marker_stays_nonclear(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "_github_open_issue_pages",
+        lambda repository, token: ((_formal_140_payload(),),),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_github_closed_issue_pages",
+        lambda repository, token: ((_legacy_terminal_21_payload(),),),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_github_get_list_page",
+        lambda url, token: (
+            {
+                "id": 1,
+                "body": "not an archive merge terminal marker",
+                "user": {"login": "royhsu-work"},
+                "author_association": "OWNER",
+                "created_at": "2026-08-12T23:51:19Z",
+                "updated_at": "2026-08-12T23:51:19Z",
+            },
+        ),
+    )
+    archive_lookups: list[str] = []
+
+    def exceptional_lookup(change: str, *, repository_root: Path) -> str:
+        del repository_root
+        archive_lookups.append(change)
+        return "indeterminate"
+
+    monkeypatch.setattr(runtime, "_legacy_terminal_evidence_from_checkout", exceptional_lookup)
+
+    preflight = runtime.acquire_current_github_preflight(
+        "royhsu-work/investment-strategy",
+        "token",
+        repository_root=tmp_path,
+    )
+
+    assert archive_lookups == ["align-issue-completion-with-archive"]
+    assert workflow_dispatch.classify_dispatch(preflight).disposition == "FAIL_CLOSED"
 
 
 def test_closed_finalize_archive_without_completion_marker_stays_nonclear(
