@@ -848,6 +848,18 @@ def _structural_terminal_marker(
         return False
 
     repository_owner = repository.split("/", 1)[0]
+    if observation.routing is None:
+        return (
+            raw_issue.get("state_reason") == "not_planned"
+            and completed_at <= closed_at
+            and _valid_human_retirement_comment(
+                marker,
+                issue_number=observation.issue_number,
+                change=observation.change,
+                repository_owner=repository_owner,
+            )
+        )
+
     if observation.routing == ("lead", "finalize-archive"):
         if _valid_lifecycle_complete_comment(
             marker,
