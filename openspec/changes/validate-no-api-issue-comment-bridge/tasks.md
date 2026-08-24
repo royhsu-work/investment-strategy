@@ -57,18 +57,30 @@ Slice 4's decision-producing workflow/handler and corrected production dispatch 
 
 ## Slice 5 — Real same-Scheduled-Task machine-dispatch proof
 
-- [ ] **RED** Establish that deterministic repository tests and the earlier `BRIDGE_OK` transport proof do not prove that a real ChatGPT Scheduled Task consumes the machine-selected Issue/Role/Action; keep this Slice incomplete until the decision-producing bridge and production classifier are already deployed on `main`.
-- [ ] **GREEN** Execute one real ChatGPT Scheduled Task invocation that writes the exact request, captures its exact GitHub request comment ID, reads only the exactly correlated `DISPATCH_DECISION`, and follows the returned disposition: load only the returned default-branch Role/mapped Skill for `AUTHORIZE`, or load no mapped Role/Skill for `NO_WORK`/`FAIL_CLOSED`. Do not select or alter the tuple in model reasoning.
-- [ ] **REFACTOR** Record only bounded acceptance evidence: request/result timestamps, exact request comment ID, exact handler default-branch revision, machine disposition and tuple when present, and the observation showing model loading followed that decision. Do not turn the evidence into a second workflow state or authorization registry.
-- [ ] **VERIFY** In the subsequent implementation revision/PR, verify the real result came from deployed default-branch production dispatch, exact correlation was preserved, model-side Issue/Role/Action selection did not occur, the decision did not authorize consequential effects, and all earlier approved Slices remain satisfied.
+### Runtime evidence observed in one ChatGPT invocation
+
+- Request comment: `5398504508`, with `Requested-At: 2026-08-25T00:54:00+08:00`.
+- Exactly correlated Actions decision comment: `5398509738`, accepted only by `Request-Comment-ID: 5398504508` in the same invocation; no latest-comment heuristic was used.
+- Exact handler/default-branch revision: `a4ad197552fd062b6c46b547aa61a0a7edc768d8`.
+- Machine result: `AUTHORIZE / #140 / lead / finalize-change`.
+- The request carried transport correlation only and supplied no Issue/Role/Action tuple; the production dispatcher selected the tuple.
+- Only after the machine decision was observed were the current default-branch Lead role and `lifecycle-finalize` Skill loaded.
+- The decision was consumed only as mapped-model identity authority and was not treated as consequential-effect authorization.
+- The matching decision was observed before the same invocation emitted successor request `5398530271` at `Requested-At: 2026-08-25T00:56:45+08:00`; that fresh request independently returned decision `5398534787` selecting `#140 / executor / implement-change` before Executor role/Skill loading.
+- Follow-up acceptance regression revision: `01195fc9f84bbcb0c3ca5fef6ecd66fa6719592c`; Python Quality run `32754418370` completed successfully.
+
+- [x] **RED** Establish that deterministic repository tests and the earlier `BRIDGE_OK` transport proof do not prove that a real ChatGPT Scheduled Task consumes the machine-selected Issue/Role/Action; keep this Slice incomplete until the decision-producing bridge and production classifier are already deployed on `main`.
+- [x] **GREEN** Execute one real ChatGPT Scheduled Task invocation that writes the exact request, captures its exact GitHub request comment ID, reads only the exactly correlated `DISPATCH_DECISION`, and follows the returned disposition: load only the returned default-branch Role/mapped Skill for `AUTHORIZE`, or load no mapped Role/Skill for `NO_WORK`/`FAIL_CLOSED`. Do not select or alter the tuple in model reasoning.
+- [x] **REFACTOR** Record only bounded acceptance evidence: request/result timestamps, exact request comment ID, exact handler default-branch revision, machine disposition and tuple when present, and the observation showing model loading followed that decision. Do not turn the evidence into a second workflow state or authorization registry.
+- [x] **VERIFY** In the subsequent implementation revision/PR, verify the real result came from deployed default-branch production dispatch, exact correlation was preserved, model-side Issue/Role/Action selection did not occur, the decision did not authorize consequential effects, and all earlier approved Slices remain satisfied.
 
 Trace: proposal final runtime proof; added machine-decision requirement real-E2E scenario; design Decisions 10–11.
 
 ## Final verification
 
-- [ ] Verify proposal → specs → design → tasks forward traceability and tasks → design → specs → proposal reverse traceability.
-- [ ] Verify the complete MODIFIED canonical dispatch requirement preserves WIP=1, multiple-active/incomplete fail-closed behavior, deterministic pre-activation ordering, Human administrative repair, executable direct-Propose admission, and bounded premature-close recovery; detailed closed-history forensics are removed from the sole-open-formal happy path only after structural `CLEAR`, while `open formal + qualifying premature-close conflict` remains fail closed.
-- [ ] Verify action-specific PR/CI/OpenSpec/review/effect evidence remains downstream of machine Issue/Role/Action selection and no task invents new normative dispatch semantics.
-- [ ] Verify the Change remains out of scope for consequential effect application changes, mechanical no-bypass/capability separation, automatic check-in Issue lifecycle, multi-repository control plane, #137, and #138.
-- [ ] Verify staged deployment is preserved: transport deployment → real transport proof → executable dispatch/decision deployment → real machine-dispatch proof, with `MORE_IMPLEMENTATION_REQUIRED` after any merge that leaves approved work incomplete.
-- [ ] Record exact-revision strict OpenSpec validation evidence before every required independent Reviewer handoff.
+- [x] Verify proposal → specs → design → tasks forward traceability and tasks → design → specs → proposal reverse traceability.
+- [x] Verify the complete MODIFIED canonical dispatch requirement preserves WIP=1, multiple-active/incomplete fail-closed behavior, deterministic pre-activation ordering, Human administrative repair, executable direct-Propose admission, and bounded premature-close recovery; detailed closed-history forensics are removed from the sole-open-formal happy path only after structural `CLEAR`, while `open formal + qualifying premature-close conflict` remains fail closed.
+- [x] Verify action-specific PR/CI/OpenSpec/review/effect evidence remains downstream of machine Issue/Role/Action selection and no task invents new normative dispatch semantics.
+- [x] Verify the Change remains out of scope for consequential effect application changes, mechanical no-bypass/capability separation, automatic check-in Issue lifecycle, multi-repository control plane, #137, and #138.
+- [x] Verify staged deployment is preserved: transport deployment → real transport proof → executable dispatch/decision deployment → real machine-dispatch proof, with `MORE_IMPLEMENTATION_REQUIRED` after any merge that leaves approved work incomplete.
+- [x] Record exact-revision strict OpenSpec validation evidence before every required independent Reviewer handoff.
