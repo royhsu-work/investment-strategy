@@ -93,7 +93,10 @@ def _legacy_terminal_21_payload() -> dict[str, object]:
         "number": 21,
         "state": "closed",
         "state_reason": "completed",
-        "body": "Change: align-issue-completion-with-archive",
+        "body": (
+            "## Workflow identity\n\n"
+            "`Change: align-issue-completion-with-archive`\n"
+        ),
         "labels": [
             {"name": "agent:executor"},
             {"name": "action:merge-pr"},
