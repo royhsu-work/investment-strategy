@@ -78,7 +78,9 @@ def test_pre_dispatch_124_terminal_history_clears_without_archived_change_lookup
     _install_pages(monkeypatch, _terminal_124_comment())
 
     def forbidden(*args: object, **kwargs: object) -> object:
-        raise AssertionError("proven pre-dispatch terminal history must not inspect archived Change")
+        raise AssertionError(
+            "proven pre-dispatch terminal history must not inspect archived Change"
+        )
 
     monkeypatch.setattr(runtime, "_legacy_terminal_evidence_from_checkout", forbidden)
     monkeypatch.setattr(runtime, "_github_issue_comment_pages", forbidden)
