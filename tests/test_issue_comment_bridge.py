@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
+from pytest import MonkeyPatch
+
 from investment_strategy import issue_comment_bridge as bridge
 from investment_strategy.workflow_dispatch import (
     DispatchDecision,
@@ -299,18 +301,18 @@ def test_machine_decision_plan_correlates_only_to_exact_request_comment_id() -> 
 
 
 def test_production_dispatch_decision_consumes_runtime_acquisition_and_classifier(
-    monkeypatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     preflight = object()
     decision = _decision("NO_WORK")
     observed: dict[str, object] = {}
 
-    def fake_acquire(repository: str, token: str):
+    def fake_acquire(repository: str, token: str) -> object:
         observed["repository"] = repository
         observed["token"] = token
         return preflight
 
-    def fake_classify(value: object):
+    def fake_classify(value: object) -> DispatchDecision:
         observed["preflight"] = value
         return decision
 
