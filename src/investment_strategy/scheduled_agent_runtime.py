@@ -775,6 +775,31 @@ def _raw_issue_map(
     return result
 
 
+def _github_last_visible_issue_comment(
+    repository: str,
+    token: str,
+    *,
+    issue_number: int,
+    reported_comment_count: int,
+) -> Mapping[str, object] | None:
+    """Return the last currently visible comment with at most two bounded API reads."""
+
+    if reported_comment_count < 1:
+        return None
+    page_number = max(1, (reported_comment_count + 99) // 100)
+    for candidate_page in (page_number, page_number - 1):
+        if candidate_page < 1:
+            continue
+        url = (
+            f"https://api.github.com/repos/{repository}/issues/{issue_number}/comments"
+            f"?per_page=100&page={candidate_page}"
+        )
+        page = _github_get_list_page(url, token)
+        if page:
+            return page[-1]
+    return None
+
+
 def _structural_terminal_marker(
     repository: str,
     token: str,
@@ -799,21 +824,23 @@ def _structural_terminal_marker(
     if not closed_valid or closed_at is None:
         return False
 
-    url = (
-        f"https://api.github.com/repos/{repository}/issues/{observation.issue_number}/comments"
-        f"?per_page=1&page={comment_count}"
+    marker = _github_last_visible_issue_comment(
+        repository,
+        token,
+        issue_number=observation.issue_number,
+        reported_comment_count=comment_count,
     )
-    last_page = _github_get_list_page(url, token)
-    if len(last_page) != 1:
+    if marker is None:
         return False
-    marker = last_page[0]
 
     completed_at, completed_valid = _github_timestamp(marker.get("created_at"))
-    if not completed_valid or completed_at is None or completed_at > closed_at:
+    if not completed_valid or completed_at is None:
         return False
 
     repository_owner = repository.split("/", 1)[0]
     if observation.routing == ("lead", "finalize-archive"):
+        if completed_at > closed_at:
+            return False
         if _valid_lifecycle_complete_comment(
             marker,
             issue_number=observation.issue_number,
@@ -835,6 +862,7 @@ def _structural_terminal_marker(
         observation.legacy_terminal_candidate
         and observation.routing == ("executor", "merge-pr")
         and raw_issue.get("state_reason") == "completed"
+        and closed_at <= completed_at < _WORKFLOW_DYNAMIC_ACTIVATED_AT
         and _valid_legacy_archive_merge_comment(
             marker,
             change=observation.change,
