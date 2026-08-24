@@ -59,7 +59,7 @@ _ACTION_LABELS: dict[str, Action] = {
     "action:merge-pr": "merge-pr",
 }
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
-_MESSAGE_FIELD = re.compile(r"(?m)^(Workflow|Change|Action|Result):\s*(.+?)\s*$")
+_MESSAGE_FIELD = re.compile(r"(?m)^(?:-\s+)?(Workflow|Change|Action|Result):\s*(.+?)\s*$")
 _HUMAN_RETIREMENT = re.compile(
     r"^Human administrative retirement:\s*"
     r"abandon Change (?P<change>[A-Za-z0-9._-]+)\.\s*"
