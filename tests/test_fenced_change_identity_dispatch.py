@@ -102,8 +102,7 @@ def test_fenced_change_example_does_not_poison_closed_structural_dispatch(
 def test_multiple_top_level_change_fields_remain_indeterminate() -> None:
     payload = _closed_93_payload()
     payload["body"] = (
-        "Change: remove-generic-human-explore-admission\n"
-        "Change: attacker-controlled-second-value\n"
+        "Change: remove-generic-human-explore-admission\nChange: attacker-controlled-second-value\n"
     )
 
     observation = runtime.normalize_github_issue(payload)
