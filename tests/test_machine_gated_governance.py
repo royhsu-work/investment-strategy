@@ -1,8 +1,16 @@
-"""Machine-gated Scheduled Agent governance regressions for #133 Slice 4D."""
+"""Machine-gated Scheduled Agent governance and production dispatch regressions."""
 
 from __future__ import annotations
 
 from pathlib import Path
+
+import investment_strategy.workflow_dispatch as workflow_dispatch
+from investment_strategy.workflow_dispatch import (
+    DispatchPreflight,
+    EnumerationEvidence,
+    ObservationProvenance,
+    RepositoryIssueSnapshot,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents" / "AGENTS.md"
@@ -13,6 +21,20 @@ CHANGE = ROOT / "agents" / "skills" / "openspec-change" / "SKILL.md"
 
 def _normalized(path: Path) -> str:
     return " ".join(path.read_text(encoding="utf-8").split()).replace("- ", "-")
+
+
+def _complete(*issues: RepositoryIssueSnapshot) -> DispatchPreflight:
+    count = len(issues)
+    return DispatchPreflight(
+        issues=issues,
+        enumeration=EnumerationEvidence(
+            observed_count=count,
+            source_total_count=count,
+            incomplete_results=False,
+            exhausted=True,
+            observation_provenance=ObservationProvenance.QUALIFIED,
+        ),
+    )
 
 
 def test_mapped_worker_requires_machine_pre_model_dispatch_after_cutover() -> None:
@@ -79,3 +101,25 @@ def test_lead_workers_consume_machine_identity_and_request_durable_effects() -> 
         "fresh mapped model invocation",
     ):
         assert required in change
+
+
+def test_direct_propose_is_not_queue_eligible_without_executable_admission() -> None:
+    preflight = _complete(
+        RepositoryIssueSnapshot(
+            issue_number=137,
+            change="unset",
+            routing=("lead", "propose-change"),
+            created_order=1,
+        )
+    )
+
+    decision = workflow_dispatch.classify_dispatch(preflight)
+
+    assert decision.disposition == "NO_WORK"
+    assert decision.preactivation_candidate_ids == ()
+
+
+def test_dispatch_exposes_open_selection_and_structural_conflict_surfaces() -> None:
+    assert hasattr(workflow_dispatch, "classify_open_dispatch")
+    assert hasattr(workflow_dispatch, "StructuralConflictDisposition")
+    assert hasattr(workflow_dispatch, "classify_structural_conflicts")
