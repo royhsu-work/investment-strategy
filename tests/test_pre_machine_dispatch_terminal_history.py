@@ -1,4 +1,4 @@
-"""Regressions for terminal history created before terminal-aligned Issue closure."""
+"""Production-shaped compatibility regressions for pre-machine-dispatch terminal history."""
 
 from pathlib import Path
 
@@ -13,59 +13,45 @@ def _formal_140_payload() -> dict[str, object]:
         "number": 140,
         "state": "open",
         "body": "Change: validate-no-api-issue-comment-bridge",
-        "labels": [
-            {"name": "agent:lead"},
-            {"name": "action:finalize-change"},
-        ],
+        "labels": [{"name": "agent:lead"}, {"name": "action:finalize-change"}],
         "created_at": "2026-08-23T11:39:39Z",
         "closed_at": None,
     }
 
 
-def _historical_terminal_25_payload() -> dict[str, object]:
+def _terminal_124_payload() -> dict[str, object]:
     return {
-        "number": 25,
+        "number": 124,
         "state": "closed",
         "state_reason": "completed",
-        "body": "Change: workflow-dynamic-scheduled-dispatch\n",
-        "labels": [
-            {"name": "agent:lead"},
-            {"name": "action:finalize-archive"},
-        ],
-        "created_at": "2026-08-12T11:43:55Z",
-        "closed_at": "2026-08-13T19:49:10Z",
-        "comments": 134,
+        "body": "Change: require-ci-reobservation-before-async-exit\n",
+        "labels": [{"name": "agent:lead"}, {"name": "action:finalize-archive"}],
+        "created_at": "2026-08-21T05:56:01Z",
+        "closed_at": "2026-08-21T09:33:25Z",
+        "comments": 23,
     }
 
 
-def _lifecycle_complete_25_comment(
-    *,
-    created_at: str = "2026-08-13T20:10:09Z",
-    updated_at: str | None = None,
-) -> dict[str, object]:
+def _terminal_124_comment(*, updated_at: str = "2026-08-21T09:34:08Z") -> dict[str, object]:
     return {
-        "id": 5289357012,
+        "id": 5368139311,
         "body": (
             "## ACTION_RESULT\n\n"
-            "Workflow: #25\n"
-            "Change: `workflow-dynamic-scheduled-dispatch`\n"
+            "Workflow: #124\n"
+            "Change: `require-ci-reobservation-before-async-exit`\n"
             "Action: `Lead / finalize-archive`\n"
             "Result: `LIFECYCLE_COMPLETE`\n"
-            "Revision: Archive PR #33 exact head "
-            "`786680176324f396322e4d1bb2f77b63be97bb48`; merge commit "
-            "`ed767ca645e782bea96154044d02c45e4bef2cbf`\n"
+            "Revision: final Archive PR #127 exact reviewed/merged head "
+            "`d9401afb2992de0b274f267040bbdde4b4f75dad`\n"
         ),
         "user": {"login": "royhsu-work"},
         "author_association": "OWNER",
-        "created_at": created_at,
-        "updated_at": updated_at or created_at,
+        "created_at": "2026-08-21T09:34:08Z",
+        "updated_at": updated_at,
     }
 
 
-def test_pre_alignment_post_close_completion_is_structurally_terminal(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
+def _install_pages(monkeypatch: pytest.MonkeyPatch, comment: dict[str, object]) -> None:
     monkeypatch.setattr(
         runtime,
         "_github_open_issue_pages",
@@ -74,18 +60,27 @@ def test_pre_alignment_post_close_completion_is_structurally_terminal(
     monkeypatch.setattr(
         runtime,
         "_github_closed_issue_pages",
-        lambda repository, token: ((_historical_terminal_25_payload(),),),
+        lambda repository, token: ((_terminal_124_payload(),),),
     )
 
     def structural_page(url: str, token: str) -> tuple[dict[str, object], ...]:
         del token
-        assert url.endswith("/issues/25/comments?per_page=100&page=2")
-        return (_lifecycle_complete_25_comment(),)
+        assert url.endswith("/issues/124/comments?per_page=100&page=1")
+        return (comment,)
 
     monkeypatch.setattr(runtime, "_github_get_list_page", structural_page)
 
+
+def test_pre_dispatch_124_terminal_history_clears_without_archived_change_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _install_pages(monkeypatch, _terminal_124_comment())
+
     def forbidden(*args: object, **kwargs: object) -> object:
-        raise AssertionError("proven historical terminal must not inspect archived Change")
+        raise AssertionError(
+            "proven pre-dispatch terminal history must not inspect archived Change"
+        )
 
     monkeypatch.setattr(runtime, "_legacy_terminal_evidence_from_checkout", forbidden)
     monkeypatch.setattr(runtime, "_github_issue_comment_pages", forbidden)
@@ -104,28 +99,11 @@ def test_pre_alignment_post_close_completion_is_structurally_terminal(
     assert all(item.state == "open" for item in preflight.issues)
 
 
-def test_post_machine_dispatch_post_close_completion_does_not_clear_structurally(
+def test_edited_pre_dispatch_completion_does_not_gain_historical_clearance(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    historical = _historical_terminal_25_payload()
-    historical["closed_at"] = "2026-08-24T12:07:00Z"
-
-    monkeypatch.setattr(
-        runtime,
-        "_github_open_issue_pages",
-        lambda repository, token: ((_formal_140_payload(),),),
-    )
-    monkeypatch.setattr(
-        runtime,
-        "_github_closed_issue_pages",
-        lambda repository, token: ((historical,),),
-    )
-    monkeypatch.setattr(
-        runtime,
-        "_github_get_list_page",
-        lambda url, token: (_lifecycle_complete_25_comment(created_at="2026-08-24T12:08:00Z"),),
-    )
+    _install_pages(monkeypatch, _terminal_124_comment(updated_at="2026-08-24T12:07:00Z"))
     monkeypatch.setattr(
         runtime,
         "_legacy_terminal_evidence_from_checkout",
