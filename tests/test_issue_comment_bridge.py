@@ -32,6 +32,7 @@ def test_bridge_workflow_has_exact_trigger_serialization_and_write_boundary() ->
         "ref: ${{ github.event.repository.default_branch }}",
         "persist-credentials: false",
         "AGENT_RUNTIME_CHECKIN_ISSUE",
+        "PYTHONPATH: ${{ github.workspace }}/src",
         "uv run python -m investment_strategy.issue_comment_bridge",
     )
     for fragment in required_fragments:
