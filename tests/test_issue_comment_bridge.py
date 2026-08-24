@@ -1,23 +1,17 @@
 from __future__ import annotations
 
-import importlib
-import importlib.util
 from pathlib import Path
-from types import ModuleType
+
+from investment_strategy import issue_comment_bridge as bridge
 
 WORKFLOW_PATH = Path(".github/workflows/scheduled-agent-bridge.yml")
-MODULE_NAME = "investment_strategy.issue_comment_bridge"
 REQUEST_BODY = "DISPATCH_REQUEST\nRequested-At: 2026-08-24T03:45:00Z"
 REVISION = "cb8f9ec12d826e0d71897a4c73ece961d00df59e"
 
 
-def _bridge() -> ModuleType:
-    spec = importlib.util.find_spec(MODULE_NAME)
-    assert spec is not None, "Slice 1 bridge handler is not implemented yet"
-    return importlib.import_module(MODULE_NAME)
-
-
-def _event(*, issue_number: int = 321, comment_id: int = 987, body: str = REQUEST_BODY) -> dict[str, object]:
+def _event(
+    *, issue_number: int = 321, comment_id: int = 987, body: str = REQUEST_BODY
+) -> dict[str, object]:
     return {
         "action": "created",
         "issue": {"number": issue_number},
@@ -45,8 +39,6 @@ def test_bridge_workflow_has_exact_trigger_serialization_and_write_boundary() ->
 
 
 def test_request_parser_accepts_only_exact_two_line_contract() -> None:
-    bridge = _bridge()
-
     request = bridge.parse_dispatch_request(REQUEST_BODY)
     assert request is not None
     assert request.requested_at == "2026-08-24T03:45:00Z"
@@ -64,8 +56,6 @@ def test_request_parser_accepts_only_exact_two_line_contract() -> None:
 
 
 def test_plan_bridge_accepts_only_configured_issue_and_non_pr_request() -> None:
-    bridge = _bridge()
-
     plan = bridge.plan_bridge(
         event=_event(),
         existing_comments=[],
@@ -106,8 +96,6 @@ def test_plan_bridge_accepts_only_configured_issue_and_non_pr_request() -> None:
 
 
 def test_exact_request_comment_id_is_the_only_result_correlation_key() -> None:
-    bridge = _bridge()
-
     unrelated_latest = {
         "id": 5000,
         "body": bridge.render_dispatch_result(
@@ -141,8 +129,6 @@ def test_exact_request_comment_id_is_the_only_result_correlation_key() -> None:
 
 
 def test_bridge_ok_result_is_exact_transport_only_payload() -> None:
-    bridge = _bridge()
-
     rendered = bridge.render_dispatch_result(
         request_comment_id=987,
         default_branch_revision=REVISION,
