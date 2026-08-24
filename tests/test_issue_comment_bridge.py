@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from investment_strategy import issue_comment_bridge as bridge
-from investment_strategy.workflow_dispatch import DispatchDecision, ObservationProvenance
+from investment_strategy.workflow_dispatch import (
+    DispatchDecision,
+    ObservationProvenance,
+    Routing,
+)
 
 WORKFLOW_PATH = Path(".github/workflows/scheduled-agent-bridge.yml")
 REQUEST_BODY = "DISPATCH_REQUEST\nRequested-At: 2026-08-24T03:45:00Z"
@@ -29,10 +34,10 @@ def _event(
 
 
 def _decision(
-    disposition: str,
+    disposition: Literal["AUTHORIZE", "NO_WORK", "FAIL_CLOSED"],
     *,
     issue_number: int | None = None,
-    routing: tuple[str, str] | None = None,
+    routing: Routing | None = None,
 ) -> DispatchDecision:
     return DispatchDecision(
         completeness="COMPLETE",
@@ -293,7 +298,9 @@ def test_machine_decision_plan_correlates_only_to_exact_request_comment_id() -> 
     assert duplicate.request_comment_id == 987
 
 
-def test_production_dispatch_decision_consumes_runtime_acquisition_and_classifier(monkeypatch) -> None:
+def test_production_dispatch_decision_consumes_runtime_acquisition_and_classifier(
+    monkeypatch,
+) -> None:
     preflight = object()
     decision = _decision("NO_WORK")
     observed: dict[str, object] = {}
