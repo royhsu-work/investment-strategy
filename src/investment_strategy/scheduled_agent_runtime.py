@@ -81,6 +81,8 @@ def _change_matches(body: str) -> list[str]:
         if match is not None:
             matches.append(match.group(1))
     return matches
+
+
 _MESSAGE_FIELD = re.compile(r"(?m)^(?:-\s+)?(Workflow|Change|Action|Result):\s*(.+?)\s*$")
 _HUMAN_RETIREMENT = re.compile(
     r"^Human administrative retirement:\s*"
