@@ -23,13 +23,12 @@ The workflow introduced by Slice 1 must exist on the default branch before the r
 - Derived GitHub-comment round-trip latency: `15s`.
 - The same ChatGPT invocation observed the matching result by exact `Request-Comment-ID: 5391475092`; no latest-comment heuristic was used.
 - The result was exactly `BRIDGE_OK` and carried no Issue/Role/Action/Skill/effect authorization.
+- Follow-up VERIFY revision: `14a97b80131fbdceac64fa7f668057d1018e369d`; Python Quality run `32697356557` and OpenSpec Validate run `32697356509` both completed successfully.
 
-The markers below remain incomplete until this follow-up implementation revision/PR passes the required VERIFY gates.
-
-- [ ] **RED** Establish that repository-only tests are not qualifying runtime evidence and that no Phase 1 success may be recorded until the already-deployed default-branch workflow returns an exact correlated result to one real ChatGPT Scheduled Task invocation.
-- [ ] **GREEN** After Slice 1 is merged and the Change returns through `MORE_IMPLEMENTATION_REQUIRED`, use the Human-created configured check-in Issue and execute one real ChatGPT Scheduled Task invocation that writes the exact request, captures its exact GitHub request comment ID, performs bounded fresh reads for only that identity, and observes the matching Actions-produced `DISPATCH_RESULT` before the invocation ends.
-- [ ] **REFACTOR** Record only the minimum transport evidence—request/result GitHub timestamps, exact request comment ID, exact handler default-branch revision, Scheduled Task matching-result observation, and derived round-trip latency—without promoting `BRIDGE_OK` into workflow authority or adding callback/waiter state.
-- [ ] **VERIFY** In the follow-up implementation revision/PR, confirm exact-ID correlation, exact handler checkout revision, same-invocation observation, and that `BRIDGE_OK` contains no Issue/Role/Action/Skill/effect authorization.
+- [x] **RED** Establish that repository-only tests are not qualifying runtime evidence and that no Phase 1 success may be recorded until the already-deployed default-branch workflow returns an exact correlated result to one real ChatGPT Scheduled Task invocation.
+- [x] **GREEN** After Slice 1 is merged and the Change returns through `MORE_IMPLEMENTATION_REQUIRED`, use the Human-created configured check-in Issue and execute one real ChatGPT Scheduled Task invocation that writes the exact request, captures its exact GitHub request comment ID, performs bounded fresh reads for only that identity, and observes the matching Actions-produced `DISPATCH_RESULT` before the invocation ends.
+- [x] **REFACTOR** Record only the minimum transport evidence—request/result GitHub timestamps, exact request comment ID, exact handler default-branch revision, Scheduled Task matching-result observation, and derived round-trip latency—without promoting `BRIDGE_OK` into workflow authority or adding callback/waiter state.
+- [x] **VERIFY** In the follow-up implementation revision/PR, confirm exact-ID correlation, exact handler checkout revision, same-invocation observation, and that `BRIDGE_OK` contains no Issue/Role/Action/Skill/effect authorization.
 
 Trace: proposal no-API proof; added canary requirement final acceptance paragraph/scenarios; design Decisions 1–4 and 11.
 
