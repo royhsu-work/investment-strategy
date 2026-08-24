@@ -65,9 +65,7 @@ _HUMAN_RETIREMENT = re.compile(
     r"abandon Change (?P<change>[A-Za-z0-9._-]+)\.\s*"
     r"Do not recover or resume #(?P<issue>[1-9][0-9]*)\.(?:\s|$)"
 )
-_LEGACY_QUOTED_CHANGE_LINE = re.compile(
-    r"(?m)^`Change:\s*(?P<change>[A-Za-z0-9._-]+)`\s*$"
-)
+_LEGACY_QUOTED_CHANGE_LINE = re.compile(r"(?m)^`Change:\s*(?P<change>[A-Za-z0-9._-]+)`\s*$")
 _LEGACY_ARCHIVE_PR_LINE = re.compile(r"(?m)^Archive PR:\s*#[1-9][0-9]*\s*$")
 _LEGACY_AUTHORIZED_REVISION_LINE = re.compile(
     r"(?m)^Authorized exact revision:\s*`(?P<revision>[0-9a-f]{40})`\s*$"
@@ -313,11 +311,7 @@ def _normalize_closed_issue(payload: Mapping[str, object]) -> GitHubIssueObserva
         payload.get("created_at"), observation.issue_number
     )
     closed_at, closed_valid = _github_timestamp(payload.get("closed_at"))
-    if (
-        not closed_valid
-        or closed_at is None
-        or closed_at >= _WORKFLOW_DYNAMIC_ACTIVATED_AT
-    ):
+    if not closed_valid or closed_at is None or closed_at >= _WORKFLOW_DYNAMIC_ACTIVATED_AT:
         return observation
 
     return GitHubIssueObservation(
