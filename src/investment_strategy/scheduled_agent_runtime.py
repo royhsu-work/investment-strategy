@@ -59,6 +59,28 @@ _ACTION_LABELS: dict[str, Action] = {
     "action:merge-pr": "merge-pr",
 }
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
+
+
+def _change_matches(body: str) -> list[str]:
+    """Return canonical Change fields outside fenced Markdown examples."""
+
+    matches: list[str] = []
+    fence_char: str | None = None
+    for line in body.splitlines():
+        stripped = line.lstrip()
+        marker = stripped[0] if stripped.startswith(("```", "~~~")) else None
+        if marker is not None:
+            if fence_char is None:
+                fence_char = marker
+            elif marker == fence_char:
+                fence_char = None
+            continue
+        if fence_char is not None:
+            continue
+        match = _CHANGE_LINE.fullmatch(line)
+        if match is not None:
+            matches.append(match.group(1))
+    return matches
 _MESSAGE_FIELD = re.compile(r"(?m)^(?:-\s+)?(Workflow|Change|Action|Result):\s*(.+?)\s*$")
 _HUMAN_RETIREMENT = re.compile(
     r"^Human administrative retirement:\s*"
@@ -271,7 +293,7 @@ def normalize_github_issue(payload: Mapping[str, object]) -> GitHubIssueObservat
     closed_at, closed_valid = _github_timestamp(payload.get("closed_at"))
 
     body_text = body if isinstance(body, str) else ""
-    change_matches = _CHANGE_LINE.findall(body_text)
+    change_matches = _change_matches(body_text)
     change_valid = len(change_matches) <= 1
     if len(change_matches) == 1:
         change = change_matches[0]
@@ -315,7 +337,7 @@ def _normalize_closed_issue(payload: Mapping[str, object]) -> GitHubIssueObserva
         return observation
 
     body = payload.get("body")
-    if not isinstance(body, str) or _CHANGE_LINE.search(body) is not None:
+    if not isinstance(body, str) or _change_matches(body):
         return observation
     legacy_matches = _LEGACY_QUOTED_CHANGE_LINE.findall(body)
     if len(legacy_matches) != 1:
