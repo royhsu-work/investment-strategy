@@ -288,6 +288,12 @@ def _plan_identity(
     return None, identity
 
 
+def _require_pending_identity(identity: tuple[int, int] | None) -> tuple[int, int]:
+    if identity is None:
+        raise RuntimeError("pending bridge request identity is missing")
+    return identity
+
+
 def plan_bridge(
     *,
     event: Mapping[str, object],
@@ -302,8 +308,7 @@ def plan_bridge(
     )
     if existing_plan is not None:
         return existing_plan
-    assert identity is not None
-    issue_number, request_comment_id = identity
+    issue_number, request_comment_id = _require_pending_identity(identity)
     return BridgePlan(
         should_post=True,
         issue_number=issue_number,
@@ -330,8 +335,7 @@ def plan_dispatch_decision(
     )
     if existing_plan is not None:
         return existing_plan
-    assert identity is not None
-    issue_number, request_comment_id = identity
+    issue_number, request_comment_id = _require_pending_identity(identity)
     return BridgePlan(
         should_post=True,
         issue_number=issue_number,
@@ -415,7 +419,7 @@ def main() -> int:
     if existing_plan is not None:
         plan = existing_plan
     else:
-        assert identity is not None
+        _require_pending_identity(identity)
         repository = os.environ.get("GITHUB_REPOSITORY")
         token = os.environ.get("GITHUB_TOKEN")
         if not repository or not token:
