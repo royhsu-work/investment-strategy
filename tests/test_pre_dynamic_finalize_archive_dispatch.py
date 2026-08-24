@@ -27,10 +27,7 @@ def _legacy_terminal_18_payload() -> dict[str, object]:
         "number": 18,
         "state": "closed",
         "state_reason": "completed",
-        "body": (
-            "## Workflow identity\n\n"
-            "Change: establish-scheduled-role-agent-workflow\n"
-        ),
+        "body": ("## Workflow identity\n\nChange: establish-scheduled-role-agent-workflow\n"),
         "labels": [
             {"name": "agent:lead"},
             {"name": "action:finalize-archive"},
