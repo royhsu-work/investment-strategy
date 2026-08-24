@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from investment_strategy import issue_comment_bridge as bridge
+from investment_strategy.workflow_dispatch import DispatchDecision, ObservationProvenance
 
 WORKFLOW_PATH = Path(".github/workflows/scheduled-agent-bridge.yml")
 REQUEST_BODY = "DISPATCH_REQUEST\nRequested-At: 2026-08-24T03:45:00Z"
@@ -25,6 +26,25 @@ def _event(
         "issue": {"number": issue_number},
         "comment": {"id": comment_id, "body": body},
     }
+
+
+def _decision(
+    disposition: str,
+    *,
+    issue_number: int | None = None,
+    routing: tuple[str, str] | None = None,
+) -> DispatchDecision:
+    return DispatchDecision(
+        completeness="COMPLETE",
+        observation_provenance=ObservationProvenance.QUALIFIED,
+        formal_issue_ids=(() if issue_number is None else (issue_number,)),
+        recovery_candidate_ids=(),
+        preactivation_candidate_ids=(),
+        selected_issue_id=issue_number,
+        selected_routing=routing,
+        disposition=disposition,
+        reason="test decision",
+    )
 
 
 def test_bridge_workflow_has_exact_trigger_serialization_and_write_boundary() -> None:
@@ -59,6 +79,10 @@ def test_request_parser_accepts_only_exact_two_line_contract() -> None:
         " DISPATCH_REQUEST\nRequested-At: 2026-08-24T03:45:00Z",
         "DISPATCH_REQUEST\n Requested-At: 2026-08-24T03:45:00Z",
         "DISPATCH_RESULT\nRequest-Comment-ID: 987\nDefault-Branch-Revision: abc\nResult: BRIDGE_OK",
+        (
+            "DISPATCH_REQUEST\nRequested-At: 2026-08-24T03:45:00Z\n"
+            "Issue: 140\nRole: executor\nAction: implement-change"
+        ),
     )
     for body in invalid_bodies:
         assert bridge.parse_dispatch_request(body) is None
@@ -166,3 +190,144 @@ def test_observed_live_bridge_result_remains_exact_transport_only_contract() -> 
     for forbidden in ("Issue:", "Role:", "Action:", "Skill:", "Effect:"):
         assert forbidden not in LIVE_RESULT_BODY
     assert bridge.parse_dispatch_request(LIVE_RESULT_BODY) is None
+
+
+def test_dispatch_decision_authorize_renders_exact_machine_selected_tuple() -> None:
+    decision = _decision(
+        "AUTHORIZE",
+        issue_number=140,
+        routing=("executor", "implement-change"),
+    )
+
+    rendered = bridge.render_dispatch_decision(
+        request_comment_id=987,
+        default_branch_revision=REVISION,
+        decision=decision,
+    )
+
+    assert rendered == (
+        "DISPATCH_DECISION\n"
+        "Request-Comment-ID: 987\n"
+        f"Default-Branch-Revision: {REVISION}\n"
+        "Disposition: AUTHORIZE\n"
+        "Issue: 140\n"
+        "Role: executor\n"
+        "Action: implement-change"
+    )
+    parsed = bridge.parse_dispatch_decision(rendered)
+    assert parsed is not None
+    assert parsed.request_comment_id == 987
+    assert parsed.default_branch_revision == REVISION
+    assert parsed.disposition == "AUTHORIZE"
+    assert parsed.issue_number == 140
+    assert parsed.role == "executor"
+    assert parsed.action == "implement-change"
+
+
+def test_dispatch_decision_no_work_and_fail_closed_emit_no_tuple() -> None:
+    for disposition in ("NO_WORK", "FAIL_CLOSED"):
+        rendered = bridge.render_dispatch_decision(
+            request_comment_id=987,
+            default_branch_revision=REVISION,
+            decision=_decision(disposition),
+        )
+        assert rendered == (
+            "DISPATCH_DECISION\n"
+            "Request-Comment-ID: 987\n"
+            f"Default-Branch-Revision: {REVISION}\n"
+            f"Disposition: {disposition}"
+        )
+        for forbidden in ("Issue:", "Role:", "Action:"):
+            assert forbidden not in rendered
+        parsed = bridge.parse_dispatch_decision(rendered)
+        assert parsed is not None
+        assert parsed.disposition == disposition
+        assert parsed.issue_number is None
+        assert parsed.role is None
+        assert parsed.action is None
+
+
+def test_machine_decision_plan_correlates_only_to_exact_request_comment_id() -> None:
+    decision = _decision(
+        "AUTHORIZE",
+        issue_number=140,
+        routing=("executor", "implement-change"),
+    )
+    unrelated = {
+        "id": 6000,
+        "body": bridge.render_dispatch_decision(
+            request_comment_id=111,
+            default_branch_revision=REVISION,
+            decision=decision,
+        ),
+    }
+
+    plan = bridge.plan_dispatch_decision(
+        event=_event(comment_id=987),
+        existing_comments=[unrelated],
+        configured_issue_number=321,
+        default_branch_revision=REVISION,
+        decision=decision,
+    )
+    assert plan.should_post is True
+    assert plan.request_comment_id == 987
+    assert plan.result_body is not None
+    assert "Request-Comment-ID: 987" in plan.result_body
+
+    exact = {
+        "id": 6001,
+        "body": bridge.render_dispatch_decision(
+            request_comment_id=987,
+            default_branch_revision=REVISION,
+            decision=decision,
+        ),
+    }
+    duplicate = bridge.plan_dispatch_decision(
+        event=_event(comment_id=987),
+        existing_comments=[unrelated, exact],
+        configured_issue_number=321,
+        default_branch_revision=REVISION,
+        decision=decision,
+    )
+    assert duplicate.should_post is False
+    assert duplicate.request_comment_id == 987
+
+
+def test_production_dispatch_decision_consumes_runtime_acquisition_and_classifier(monkeypatch) -> None:
+    preflight = object()
+    decision = _decision("NO_WORK")
+    observed: dict[str, object] = {}
+
+    def fake_acquire(repository: str, token: str):
+        observed["repository"] = repository
+        observed["token"] = token
+        return preflight
+
+    def fake_classify(value: object):
+        observed["preflight"] = value
+        return decision
+
+    monkeypatch.setattr(bridge, "acquire_current_github_preflight", fake_acquire)
+    monkeypatch.setattr(bridge, "classify_dispatch", fake_classify)
+
+    assert bridge.acquire_production_dispatch_decision("owner/repo", "token") is decision
+    assert observed == {
+        "repository": "owner/repo",
+        "token": "token",
+        "preflight": preflight,
+    }
+
+
+def test_bridge_workflow_supplies_only_transport_and_repository_credentials_to_dispatch() -> None:
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert "GITHUB_TOKEN: ${{ github.token }}" in workflow
+    assert "GITHUB_REPOSITORY: ${{ github.repository }}" in workflow
+    for forbidden in (
+        "REQUESTED_ISSUE",
+        "REQUESTED_ROLE",
+        "REQUESTED_ACTION",
+        "requested_issue",
+        "requested_role",
+        "requested_action",
+    ):
+        assert forbidden not in workflow
