@@ -13,7 +13,7 @@ import os
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from urllib.request import Request, urlopen
@@ -58,7 +58,7 @@ _HUMAN_RETIREMENT = re.compile(
 
 # Default-branch activation of workflow-dynamic dispatch and its terminal journal contract.
 # Commit 0312a56fe38f1702ac8e53ddd7aa6a1deba1cb0d, 2026-08-13T18:11:21Z.
-_WORKFLOW_DYNAMIC_ACTIVATED_AT = datetime(2026, 8, 13, 18, 11, 21, tzinfo=timezone.utc)
+_WORKFLOW_DYNAMIC_ACTIVATED_AT = datetime(2026, 8, 13, 18, 11, 21, tzinfo=UTC)
 
 
 @dataclass(frozen=True)
@@ -213,7 +213,7 @@ def _github_timestamp(value: object) -> tuple[datetime | None, bool]:
         return None, False
     if parsed.tzinfo is None:
         return None, False
-    return parsed.astimezone(timezone.utc), True
+    return parsed.astimezone(UTC), True
 
 
 def normalize_github_issue(payload: Mapping[str, object]) -> GitHubIssueObservation | None:
@@ -259,9 +259,7 @@ def normalize_github_issue(payload: Mapping[str, object]) -> GitHubIssueObservat
         if routing is not None:
             recovery = "indeterminate"
         legacy_terminal_candidate = (
-            closed_valid
-            and closed_at is not None
-            and closed_at < _WORKFLOW_DYNAMIC_ACTIVATED_AT
+            closed_valid and closed_at is not None and closed_at < _WORKFLOW_DYNAMIC_ACTIVATED_AT
         )
 
     return GitHubIssueObservation(
@@ -449,11 +447,7 @@ def _legacy_terminal_evidence_from_checkout(
         return "indeterminate"
     if (changes_root / change).exists():
         return "indeterminate"
-    matches = tuple(
-        path
-        for path in archive_root.glob(f"????-??-??-{change}")
-        if path.is_dir()
-    )
+    matches = tuple(path for path in archive_root.glob(f"????-??-??-{change}") if path.is_dir())
     return "terminal-history" if len(matches) == 1 else "indeterminate"
 
 
@@ -665,20 +659,19 @@ def acquire_current_github_preflight(
             continue
         observation = reobserved.get(issue.issue_number)
         if observation is None:
+            preliminary_observation = preliminary_observations.get(issue.issue_number)
             observation = GitHubIssueObservation(
                 issue_number=issue.issue_number,
                 change=issue.change,
                 routing=issue.routing,
                 state=issue.state,
                 created_order=issue.created_order,
-                authoritative=(
-                    issue.current_state_provenance is ObservationProvenance.QUALIFIED
-                ),
+                authoritative=(issue.current_state_provenance is ObservationProvenance.QUALIFIED),
                 premature_close_recovery=issue.premature_close_recovery,
                 terminal_evidence=issue.terminal_evidence,
                 legacy_terminal_candidate=(
-                    preliminary_observations.get(issue.issue_number).legacy_terminal_candidate
-                    if preliminary_observations.get(issue.issue_number) is not None
+                    preliminary_observation.legacy_terminal_candidate
+                    if preliminary_observation is not None
                     else False
                 ),
             )
