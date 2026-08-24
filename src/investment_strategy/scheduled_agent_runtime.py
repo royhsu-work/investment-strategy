@@ -680,14 +680,11 @@ def _acquire_structural_closed_preflight(
     observations: list[GitHubIssueObservation] = []
     for observation in _normalized_observations(closed_pages):
         raw_issue = raw_by_issue.get(observation.issue_number)
-        if (
-            raw_issue is not None
-            and _structural_terminal_marker(
-                repository,
-                token,
-                raw_issue=raw_issue,
-                observation=observation,
-            )
+        if raw_issue is not None and _structural_terminal_marker(
+            repository,
+            token,
+            raw_issue=raw_issue,
+            observation=observation,
         ):
             continue
         observations.append(observation)
