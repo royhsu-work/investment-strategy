@@ -1,0 +1,123 @@
+name: Bootstrap Apply #140 Finalize Change
+
+on:
+  push:
+    branches:
+      - bootstrap/apply-140-finalize-change
+    paths:
+      - .github/workflows/bootstrap-apply-140-finalize-change.yml
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact machine-authorized default-branch revision
+        uses: actions/checkout@v4
+        with:
+          ref: a4ad197552fd062b6c46b547aa61a0a7edc768d8
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.10.0"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Stage no-API Lead worker result
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          action_result = """## ACTION_RESULT
+
+Workflow: #140
+Change: `validate-no-api-issue-comment-bridge`
+Action: `Lead / finalize-change`
+Result: `MORE_IMPLEMENTATION_REQUIRED`
+Revision: `a4ad197552fd062b6c46b547aa61a0a7edc768d8`
+
+Reconstruction evidence:
+- Machine dispatch request: `5397834942`.
+- Exact correlated `github-actions[bot]` decision: `5397842439`.
+- Machine decision: `AUTHORIZE / #140 / lead / finalize-change` on default-branch revision `a4ad197552fd062b6c46b547aa61a0a7edc768d8`.
+- Only after that AUTHORIZE result were the default-branch Lead role and `lifecycle-finalize` Skill loaded.
+- Active Change tasks still have all four Slice 5 tasks and all Final verification tasks incomplete.
+- This invocation produced the real exact-correlated machine-dispatch evidence needed by Slice 5, but recording/verifying implementation task markers and final exact-revision verification remain Executor-owned work.
+- No closed/archived OpenSpec Change content was read or used.
+
+Next: `Executor / implement-change`.
+"""
+
+          handoff = """## HANDOFF
+
+Workflow: #140
+Change: `validate-no-api-issue-comment-bridge`
+Revision: `a4ad197552fd062b6c46b547aa61a0a7edc768d8`
+From: `Lead / finalize-change`
+To: `Executor / implement-change`
+Triggering-Result: `MORE_IMPLEMENTATION_REQUIRED`
+
+Routing transfer evidence:
+- Repository-owned application freshly reauthorized the exact source `#140 / lead / finalize-change` before applying this batch.
+- The legal topology successor is `Executor / implement-change` because approved active Change work remains incomplete.
+- This HANDOFF is written only after the application boundary has applied the routing transition and observed the target tuple.
+
+Next owner/action: `Executor / implement-change`.
+"""
+
+          effects = [
+              {
+                  "kind": "issue-comment",
+                  "payload_json": json.dumps({"issue_number": 140, "body": action_result}),
+              },
+              {
+                  "kind": "routing-transition",
+                  "payload_json": json.dumps(
+                      {"issue_number": 140, "role": "executor", "action": "implement-change"}
+                  ),
+              },
+              {
+                  "kind": "issue-comment",
+                  "payload_json": json.dumps({"issue_number": 140, "body": handoff}),
+              },
+          ]
+          worker_result = {
+              "issue_number": 140,
+              "role": "lead",
+              "action": "finalize-change",
+              "result_content": "MORE_IMPLEMENTATION_REQUIRED",
+              "requested_effects": effects,
+          }
+          Path("worker-result.json").write_text(
+              json.dumps(worker_result, ensure_ascii=False), encoding="utf-8"
+          )
+          PY
+
+      - name: Freshly reauthorize and apply through repository application boundary
+        id: apply
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          AUTHORIZED_ISSUE: "140"
+          AUTHORIZED_ROLE: lead
+          AUTHORIZED_ACTION: finalize-change
+        run: >-
+          uv run python -m investment_strategy.scheduled_agent_merge_acceptance
+          worker-result.json
+
+      - name: Remove one-shot bootstrap branch after successful application
+        if: steps.apply.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: >-
+          gh api --method DELETE
+          "/repos/${GITHUB_REPOSITORY}/git/refs/heads/bootstrap/apply-140-finalize-change"
