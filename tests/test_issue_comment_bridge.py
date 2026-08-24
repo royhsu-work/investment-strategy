@@ -54,6 +54,15 @@ def _decision(
     )
 
 
+def _actions_comment(*, comment_id: int, body: str) -> dict[str, object]:
+    return {
+        "id": comment_id,
+        "body": body,
+        "user": {"login": "github-actions[bot]", "type": "Bot"},
+        "performed_via_github_app": {"id": 15368, "slug": "github-actions"},
+    }
+
+
 def test_bridge_workflow_has_exact_trigger_serialization_and_write_boundary() -> None:
     assert WORKFLOW_PATH.exists(), "Slice 1 issue-comment workflow is not implemented yet"
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
@@ -260,14 +269,14 @@ def test_machine_decision_plan_correlates_only_to_exact_request_comment_id() -> 
         issue_number=140,
         routing=("executor", "implement-change"),
     )
-    unrelated = {
-        "id": 6000,
-        "body": bridge.render_dispatch_decision(
+    unrelated = _actions_comment(
+        comment_id=6000,
+        body=bridge.render_dispatch_decision(
             request_comment_id=111,
             default_branch_revision=REVISION,
             decision=decision,
         ),
-    }
+    )
 
     plan = bridge.plan_dispatch_decision(
         event=_event(comment_id=987),
@@ -281,14 +290,14 @@ def test_machine_decision_plan_correlates_only_to_exact_request_comment_id() -> 
     assert plan.result_body is not None
     assert "Request-Comment-ID: 987" in plan.result_body
 
-    exact = {
-        "id": 6001,
-        "body": bridge.render_dispatch_decision(
+    exact = _actions_comment(
+        comment_id=6001,
+        body=bridge.render_dispatch_decision(
             request_comment_id=987,
             default_branch_revision=REVISION,
             decision=decision,
         ),
-    }
+    )
     duplicate = bridge.plan_dispatch_decision(
         event=_event(comment_id=987),
         existing_comments=[unrelated, exact],
