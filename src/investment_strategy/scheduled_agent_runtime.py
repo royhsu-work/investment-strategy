@@ -259,9 +259,7 @@ def normalize_github_issue(payload: Mapping[str, object]) -> GitHubIssueObservat
         if routing is not None:
             recovery = "indeterminate"
         legacy_terminal_candidate = (
-            closed_valid
-            and closed_at is not None
-            and closed_at < _WORKFLOW_DYNAMIC_ACTIVATED_AT
+            closed_valid and closed_at is not None and closed_at < _WORKFLOW_DYNAMIC_ACTIVATED_AT
         )
 
     return GitHubIssueObservation(
@@ -449,11 +447,7 @@ def _legacy_terminal_evidence_from_checkout(
         return "indeterminate"
     if (changes_root / change).exists():
         return "indeterminate"
-    matches = tuple(
-        path
-        for path in archive_root.glob(f"????-??-??-{change}")
-        if path.is_dir()
-    )
+    matches = tuple(path for path in archive_root.glob(f"????-??-??-{change}") if path.is_dir())
     return "terminal-history" if len(matches) == 1 else "indeterminate"
 
 
@@ -671,9 +665,7 @@ def acquire_current_github_preflight(
                 routing=issue.routing,
                 state=issue.state,
                 created_order=issue.created_order,
-                authoritative=(
-                    issue.current_state_provenance is ObservationProvenance.QUALIFIED
-                ),
+                authoritative=(issue.current_state_provenance is ObservationProvenance.QUALIFIED),
                 premature_close_recovery=issue.premature_close_recovery,
                 terminal_evidence=issue.terminal_evidence,
                 legacy_terminal_candidate=(
