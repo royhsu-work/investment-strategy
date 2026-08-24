@@ -1,0 +1,28 @@
+name: Temporary retired-history patch
+
+on:
+  push:
+    branches:
+      - agent/fix-retired-closed-history-stage
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-retired-closed-history-stage
+      - name: Apply deterministic patch
+        run: python .tmp/patch_retired_closed_history.py
+      - name: Commit patch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/investment_strategy/scheduled_agent_runtime.py tests/test_retired_closed_history_dispatch.py
+          git diff --cached --check
+          git commit -m 'fix: clear trusted retired history structurally'
+          git push origin HEAD:agent/fix-retired-closed-history-stage
