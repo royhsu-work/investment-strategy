@@ -65,6 +65,17 @@ _HUMAN_RETIREMENT = re.compile(
     r"abandon Change (?P<change>[A-Za-z0-9._-]+)\.\s*"
     r"Do not recover or resume #(?P<issue>[1-9][0-9]*)\.(?:\s|$)"
 )
+_LEGACY_QUOTED_CHANGE_LINE = re.compile(
+    r"(?m)^`Change:\s*(?P<change>[A-Za-z0-9._-]+)`\s*$"
+)
+_LEGACY_ARCHIVE_PR_LINE = re.compile(r"(?m)^Archive PR:\s*#[1-9][0-9]*\s*$")
+_LEGACY_AUTHORIZED_REVISION_LINE = re.compile(
+    r"(?m)^Authorized exact revision:\s*`(?P<revision>[0-9a-f]{40})`\s*$"
+)
+_LEGACY_ARCHIVE_MERGE_SENTENCE = re.compile(
+    r"Merge executed with `expected_head_sha=(?P<head>[0-9a-f]{40})` and succeeded\. "
+    r"GitHub merge result commit: `(?P<merge>[0-9a-f]{40})`\."
+)
 
 # Default-branch activation of workflow-dynamic dispatch and its terminal journal contract.
 # Commit 0312a56fe38f1702ac8e53ddd7aa6a1deba1cb0d, 2026-08-13T18:11:21Z.
@@ -282,6 +293,46 @@ def normalize_github_issue(payload: Mapping[str, object]) -> GitHubIssueObservat
     )
 
 
+def _normalize_closed_issue(payload: Mapping[str, object]) -> GitHubIssueObservation | None:
+    """Normalize closed state, including the bounded pre-dynamic quoted Change shape."""
+
+    observation = normalize_github_issue(payload)
+    if observation is None or observation.state != "closed" or observation.change != "unset":
+        return observation
+
+    body = payload.get("body")
+    if not isinstance(body, str) or _CHANGE_LINE.search(body) is not None:
+        return observation
+    legacy_matches = _LEGACY_QUOTED_CHANGE_LINE.findall(body)
+    if len(legacy_matches) != 1:
+        return observation
+
+    labels, labels_valid = _label_names(payload)
+    routing, routing_valid = _routing_from_labels(labels)
+    created_order, created_valid = _created_order(
+        payload.get("created_at"), observation.issue_number
+    )
+    closed_at, closed_valid = _github_timestamp(payload.get("closed_at"))
+    if (
+        not closed_valid
+        or closed_at is None
+        or closed_at >= _WORKFLOW_DYNAMIC_ACTIVATED_AT
+    ):
+        return observation
+
+    return GitHubIssueObservation(
+        issue_number=observation.issue_number,
+        change=legacy_matches[0],
+        routing=routing,
+        state="closed",
+        created_order=created_order,
+        authoritative=(labels_valid and routing_valid and created_valid and closed_valid),
+        premature_close_recovery=("indeterminate" if routing is not None else "not-candidate"),
+        terminal_evidence="indeterminate",
+        legacy_terminal_candidate=True,
+    )
+
+
 def _strip_code(value: str) -> str:
     normalized = value.strip()
     if len(normalized) >= 2 and normalized.startswith("`") and normalized.endswith("`"):
@@ -324,6 +375,53 @@ def _valid_lifecycle_complete_comment(
         "Result": "LIFECYCLE_COMPLETE",
     }
     return all(fields.get(name) == [value] for name, value in expected.items())
+
+
+def _valid_legacy_archive_merge_comment(
+    payload: Mapping[str, object],
+    *,
+    change: str,
+    repository_owner: str,
+) -> bool:
+    """Recognize the bounded pre-dynamic archive-merge terminal journal shape."""
+
+    body = payload.get("body")
+    user = payload.get("user")
+    author_association = payload.get("author_association")
+    if not isinstance(body, str) or not isinstance(user, Mapping):
+        return False
+    if user.get("login") != repository_owner or author_association != "OWNER":
+        return False
+
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    if not lines or lines[0] != "Executor / merge-pr — ARCHIVE MERGED":
+        return False
+
+    fields = _message_fields(body)
+    if fields.get("Change") != [change]:
+        return False
+    if len(_LEGACY_ARCHIVE_PR_LINE.findall(body)) != 1:
+        return False
+
+    authorized = _LEGACY_AUTHORIZED_REVISION_LINE.findall(body)
+    merged = _LEGACY_ARCHIVE_MERGE_SENTENCE.findall(body)
+    if len(authorized) != 1 or len(merged) != 1:
+        return False
+    expected_head, merge_commit = merged[0]
+    if authorized[0] != expected_head or not merge_commit:
+        return False
+    if "Handoff target: Lead / `finalize-archive`" not in body:
+        return False
+
+    created_at, created_valid = _github_timestamp(payload.get("created_at"))
+    updated_at, updated_valid = _github_timestamp(payload.get("updated_at"))
+    return (
+        created_valid
+        and updated_valid
+        and created_at is not None
+        and updated_at is not None
+        and created_at == updated_at
+    )
 
 
 def _valid_human_retirement_comment(
@@ -608,6 +706,17 @@ def _normalized_observations(
     )
 
 
+def _normalized_closed_observations(
+    pages: Iterable[Iterable[Mapping[str, object]]],
+) -> tuple[GitHubIssueObservation, ...]:
+    return tuple(
+        observation
+        for page in pages
+        for payload in page
+        if (observation := _normalize_closed_issue(payload)) is not None
+    )
+
+
 def _raw_issue_map(
     pages: Iterable[Iterable[Mapping[str, object]]],
 ) -> dict[int, Mapping[str, object]]:
@@ -629,13 +738,12 @@ def _structural_terminal_marker(
     raw_issue: Mapping[str, object],
     observation: GitHubIssueObservation,
 ) -> bool:
-    """Prove the bounded normal terminal shape without loading full Issue history."""
+    """Prove bounded modern or pre-dynamic terminal shape from current GitHub facts."""
 
     if (
         not observation.authoritative
         or observation.state != "closed"
         or observation.change == "unset"
-        or observation.routing != ("lead", "finalize-archive")
     ):
         return False
 
@@ -661,11 +769,23 @@ def _structural_terminal_marker(
         return False
 
     repository_owner = repository.split("/", 1)[0]
-    return _valid_lifecycle_complete_comment(
-        marker,
-        issue_number=observation.issue_number,
-        change=observation.change,
-        repository_owner=repository_owner,
+    if observation.routing == ("lead", "finalize-archive"):
+        return _valid_lifecycle_complete_comment(
+            marker,
+            issue_number=observation.issue_number,
+            change=observation.change,
+            repository_owner=repository_owner,
+        )
+
+    return (
+        observation.legacy_terminal_candidate
+        and observation.routing == ("executor", "merge-pr")
+        and raw_issue.get("state_reason") == "completed"
+        and _valid_legacy_archive_merge_comment(
+            marker,
+            change=observation.change,
+            repository_owner=repository_owner,
+        )
     )
 
 
@@ -678,7 +798,7 @@ def _acquire_structural_closed_preflight(
 
     raw_by_issue = _raw_issue_map(closed_pages)
     observations: list[GitHubIssueObservation] = []
-    for observation in _normalized_observations(closed_pages):
+    for observation in _normalized_closed_observations(closed_pages):
         raw_issue = raw_by_issue.get(observation.issue_number)
         if raw_issue is not None and _structural_terminal_marker(
             repository,
@@ -773,7 +893,7 @@ def _acquire_detailed_exceptional_preflight(
     repository_owner = repository.split("/", 1)[0]
     observations: list[GitHubIssueObservation] = list(open_observations)
 
-    for original in _normalized_observations(closed_pages):
+    for original in _normalized_closed_observations(closed_pages):
         if original.change == "unset":
             observations.append(original)
             continue
