@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+import investment_strategy.scheduled_agent_runtime as runtime
 import investment_strategy.workflow_dispatch as workflow_dispatch
 from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
@@ -35,6 +38,54 @@ def _complete(*issues: RepositoryIssueSnapshot) -> DispatchPreflight:
             observation_provenance=ObservationProvenance.QUALIFIED,
         ),
     )
+
+
+def _formal_140_payload() -> dict[str, object]:
+    return {
+        "number": 140,
+        "state": "open",
+        "body": "Change: validate-no-api-issue-comment-bridge",
+        "labels": [
+            {"name": "agent:executor"},
+            {"name": "action:implement-change"},
+        ],
+        "created_at": "2026-08-23T11:39:39Z",
+        "closed_at": None,
+    }
+
+
+def _terminal_124_payload() -> dict[str, object]:
+    return {
+        "number": 124,
+        "state": "closed",
+        "state_reason": "completed",
+        "body": "Change: require-ci-reobservation-before-async-exit",
+        "labels": [
+            {"name": "agent:lead"},
+            {"name": "action:finalize-archive"},
+        ],
+        "created_at": "2026-08-21T05:56:01Z",
+        "closed_at": "2026-08-21T09:33:25Z",
+        "comments": 23,
+    }
+
+
+def _lifecycle_complete_124_comment() -> dict[str, object]:
+    return {
+        "id": 5368139311,
+        "body": (
+            "## ACTION_RESULT\n\n"
+            "Workflow: #124\n"
+            "Change: `require-ci-reobservation-before-async-exit`\n"
+            "Action: `Lead / finalize-archive`\n"
+            "Result: `LIFECYCLE_COMPLETE`\n"
+            "Revision: final archive revision"
+        ),
+        "user": {"login": "royhsu-work"},
+        "author_association": "OWNER",
+        "created_at": "2026-08-21T09:33:16Z",
+        "updated_at": "2026-08-21T09:33:16Z",
+    }
 
 
 def test_mapped_worker_requires_machine_pre_model_dispatch_after_cutover() -> None:
@@ -121,3 +172,88 @@ def test_dispatch_exposes_open_selection_and_structural_conflict_surfaces() -> N
     assert hasattr(workflow_dispatch, "classify_open_dispatch")
     assert hasattr(workflow_dispatch, "StructuralConflictDisposition")
     assert hasattr(workflow_dispatch, "classify_structural_conflicts")
+
+
+def test_terminal_retained_routing_is_structurally_clear_without_detailed_forensics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "_github_open_issue_pages",
+        lambda repository, token: ((_formal_140_payload(),),),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_github_closed_issue_pages",
+        lambda repository, token: ((_terminal_124_payload(),),),
+    )
+
+    def structural_page(url: str, token: str) -> tuple[dict[str, object], ...]:
+        assert url.endswith("/issues/124/comments?per_page=1&page=23")
+        return (_lifecycle_complete_124_comment(),)
+
+    monkeypatch.setattr(runtime, "_github_get_list_page", structural_page)
+
+    def forbidden(*args: object, **kwargs: object) -> object:
+        raise AssertionError("detailed closed-workflow forensics must not run for terminal history")
+
+    monkeypatch.setattr(runtime, "_github_issue_comment_pages", forbidden)
+    monkeypatch.setattr(runtime, "_legacy_terminal_evidence_from_checkout", forbidden)
+    monkeypatch.setattr(runtime, "_github_issue", forbidden)
+
+    preflight = runtime.acquire_current_github_preflight(
+        "royhsu-work/investment-strategy",
+        "token",
+        repository_root=tmp_path,
+    )
+    decision = workflow_dispatch.classify_dispatch(preflight)
+
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.selected_issue_id == 140
+    assert decision.selected_routing == ("executor", "implement-change")
+    assert all(item.state == "open" for item in preflight.issues)
+
+
+def test_closed_finalize_archive_without_completion_marker_stays_nonclear(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "_github_open_issue_pages",
+        lambda repository, token: ((_formal_140_payload(),),),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_github_closed_issue_pages",
+        lambda repository, token: ((_terminal_124_payload(),),),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_github_get_list_page",
+        lambda url, token: (
+            {
+                "id": 1,
+                "body": "not lifecycle complete",
+                "user": {"login": "royhsu-work"},
+                "author_association": "OWNER",
+                "created_at": "2026-08-21T09:33:16Z",
+                "updated_at": "2026-08-21T09:33:16Z",
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_github_issue_comment_pages",
+        lambda repository, token, issue_number: ((),),
+    )
+
+    preflight = runtime.acquire_current_github_preflight(
+        "royhsu-work/investment-strategy",
+        "token",
+        repository_root=tmp_path,
+    )
+
+    assert workflow_dispatch.classify_dispatch(preflight).disposition == "FAIL_CLOSED"
+    assert any(item.state == "closed" for item in preflight.issues)
