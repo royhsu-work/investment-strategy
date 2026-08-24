@@ -41,13 +41,11 @@ def test_mapped_worker_requires_machine_pre_model_dispatch_after_cutover() -> No
     shared = _normalized(AGENTS)
     for required in (
         "before any mapped model invocation",
-        "repository-owned executable precondition",
-        "model worker",
-        "MUST NOT select or override",
+        "repository-owned executable dispatch is the only normal-selection authority",
+        "only the returned exact Issue/role/action may determine the mapped model worker",
         "requested durable effects",
-        "repository-owned application",
-        "fresh-reauthorizes",
-        "fresh mapped model invocation",
+        "repository-owned application fresh-reauthorizes",
+        "fresh global dispatch",
     ):
         assert required.lower() in shared.lower()
 
