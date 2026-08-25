@@ -73,47 +73,111 @@ The diagnostic reason is observability only. It MUST NOT authorize routing, `Cha
 - AND mapped semantic work begins only from the machine-selected `AUTHORIZE` tuple
 - AND `NO_WORK` or `FAIL_CLOSED` does not gain a tuple through model interpretation
 
+### Requirement: Actionable workflow routing is one logical role/action tuple
+
+A coordination Issue SHALL be actionable by scheduled roles only when it is open and contains exactly one valid `agent:<role>` label and exactly one valid `action:<action>` label forming a legal routing tuple for that role.
+
+A closed coordination Issue that still retains a workflow routing tuple SHALL NOT be normal actionable work. After the legacy routing-normalization migration has activated the new invariant, such a closed routed Issue SHALL represent an explicit unresolved recovery candidate until bounded recovery, retirement, or administrative repair resolves it.
+
+Repository-owned terminal close effects SHALL close the Issue and retire all workflow `agent:*` and `action:*` routing labels as one logical Issue mutation after a fresh read, while preserving every unrelated label. This routing-retirement rule applies both to formal `LIFECYCLE_COMPLETE` closure and to legal pre-Change terminal research closure after `NO_CHANGE_REQUIRED` or `NO_GO`.
+
+A closed coordination Issue with valid terminal completion and retired workflow routing is terminal history and MUST NOT participate in normal formal-workflow routing/cardinality or current unresolved-recovery enumeration. A closed Issue with retained routing MUST NOT be treated as terminal merely from age, prose, or prior model output.
+
+Zero, multiple, contradictory, or illegal routing labels on an open actionable Issue MUST fail closed and MUST NOT be resolved by model inference. Unrelated Issue labels MUST be preserved during routing changes, terminal routing retirement, and legacy routing normalization.
+
+#### Scenario: Open coordination Issue has valid routing
+
+- GIVEN an open coordination Issue has exactly one `agent:reviewer` label
+- AND exactly one `action:review-openspec` label
+- WHEN Reviewer discovers eligible work
+- THEN the Issue is eligible for the Reviewer `review-openspec` action
+
+#### Scenario: Closed terminal-pending Issue has the one legal exception
+
+- GIVEN a coordination Issue is closed
+- AND it still retains a valid nonterminal workflow routing tuple
+- AND valid terminal completion for final terminal conditions is absent
+- WHEN scheduled work discovery evaluates current unresolved obligations
+- THEN the Issue is not eligible as normal routed work
+- AND only the bounded premature-close recovery or fail-closed contract may apply
+
+#### Scenario: Closed completed Issue is terminal history
+
+- GIVEN a coordination Issue has valid `LIFECYCLE_COMPLETE` evidence for its final reviewed and merged Archive revision
+- AND repository-owned terminal closure succeeds
+- WHEN the close postcondition is observed
+- THEN the Issue is closed
+- AND workflow `agent:*` and `action:*` routing labels are absent
+- AND unrelated labels are preserved
+- AND the Issue is terminal history that does not consume formal WIP or current unresolved-recovery capacity
+
+#### Scenario: Terminal research closure retires routing
+
+- GIVEN a pre-Change Explore has a legal terminal `NO_CHANGE_REQUIRED` or `NO_GO` result
+- AND the coordination Issue still has `Change: unset`
+- WHEN repository-owned application closes that research Issue
+- THEN the same logical close effect retires workflow `agent:*` and `action:*` labels
+- AND preserves unrelated labels
+- AND later normal dispatch does not rediscover that completed research as unresolved recovery work
+
+#### Scenario: Premature close retains an explicit recovery signal
+
+- GIVEN a nonterminal coordination Issue is closed outside the repository-owned terminal close effect
+- AND its valid workflow routing tuple remains attached
+- WHEN production acquisition reconstructs current unresolved closed-routing state
+- THEN that exact closed routed Issue is an unresolved recovery candidate
+- AND normal dispatch does not infer terminal completion merely because the Issue is closed
+
+#### Scenario: Coordination Issue has conflicting role labels
+
+- GIVEN an open coordination Issue has both `agent:lead` and `agent:reviewer`
+- WHEN a scheduled role evaluates eligibility
+- THEN the routing is invalid
+- AND no role proceeds by guessing which role owns the work
+
 ### Requirement: Active-workflow cardinality and Issue-state coherence precede queue selection
 
-Workflow-dynamic Scheduled dispatch SHALL use repository-owned executable classification before loading any mapped Role or Skill. The production normal-selection classifier SHALL operate on a complete provenance-qualified snapshot of current open Issues and SHALL consume only the current facts required to select work: Issue number, open state, persisted `Change:` identity, current routing tuple derived from labels, GitHub `created_at` ordering, and enumeration/provenance completeness. Any additional admission fact required for a queued candidate MUST come from its existing canonical executable admission predicate rather than model interpretation of prose.
+Workflow-dynamic Scheduled dispatch SHALL use repository-owned executable classification before loading any mapped Role or Skill. Steady-state production selection SHALL operate on two complete provenance-qualified current sets:
 
-PR heads, CI state, OpenSpec artifacts, review evidence, lifecycle-specific PR evidence, and effect-specific mutation guards MUST NOT be prerequisites for global Issue selection. They SHALL be reconstructed only after an exact Issue/Role/Action is selected by the mapped action or effect boundary that owns those facts.
+1. current open Issues needed for formal WIP and pre-activation selection; and
+2. current closed Issues that still retain workflow routing labels and therefore represent unresolved recovery candidates.
 
-From the complete current open-Issue reconstruction, the executable normal classifier SHALL apply these formal-WIP rules before pre-activation selection:
+The normal classifier SHALL consume only facts required to select current work: Issue number/state, persisted `Change:` identity, current routing tuple derived from labels, GitHub `created_at` ordering for pre-activation candidates, and enumeration/provenance completeness. Any additional admission fact required for a queued candidate MUST come from its existing canonical executable admission predicate rather than model interpretation of prose.
 
-| Open formal cardinality | Required result |
+Completed closed workflow history, PR heads, CI state, OpenSpec artifacts, review evidence, lifecycle-specific PR evidence, and effect-specific mutation guards MUST NOT be prerequisites for global Issue selection. Completed terminal history SHALL NOT be re-enumerated or re-adjudicated merely to authorize unrelated current work. Action/effect-specific evidence SHALL be reconstructed only after an exact Issue/Role/Action or unresolved recovery candidate is selected by the boundary that owns those facts.
+
+Before this history-independent steady-state behavior is activated, repository migration/reconciliation SHALL completely enumerate the pre-existing closed routed workflow set and classify each entry from authoritative evidence. Entries proven terminal/retired SHALL have only workflow routing labels removed while preserving unrelated labels and historical body/comments/state. Genuine unfinished obligations SHALL remain explicit current recovery work. Missing, contradictory, incomplete, or unqualified migration evidence MUST fail the migration and MUST NOT activate the new steady-state selection contract. After successful normalization there SHALL be no recurring migration cursor, cutover watermark, terminal-history cache, or periodic full-history reconciliation requirement.
+
+From the complete current open-Issue and unresolved closed-routing reconstruction, the executable classifier SHALL apply these rules before pre-activation selection:
+
+| Current state | Required result |
 | --- | --- |
-| `1` | Require complete provenance-qualified structural closed-workflow conflict clearance before authorization. `CLEAR` MAY authorize only that formal workflow and derive exact Role/Action from its current valid routing tuple; `POSSIBLE_CONFLICT` or `INDETERMINATE` MUST enter detailed exceptional recovery/consistency evaluation before any authorization. |
-| `>1` | `FAIL_CLOSED` before any normal mapped action executes. |
-| indeterminate | `FAIL_CLOSED` before any normal mapped action executes. |
-| `0` | Require the same complete provenance-qualified structural closed-workflow conflict projection before pre-activation selection or `NO_WORK`. `CLEAR` MAY proceed directly to the deterministic combined pre-activation queue/`NO_WORK`; `POSSIBLE_CONFLICT` or `INDETERMINATE` MUST enter detailed exceptional recovery/consistency evaluation first. |
+| exactly `1` open formal workflow and `0` unresolved closed-routing candidates | AUTHORIZE only that formal workflow using its current valid routing tuple |
+| `>1` open formal workflows | `FAIL_CLOSED` before any mapped action executes |
+| open formal cardinality indeterminate | `FAIL_CLOSED` before any mapped action executes |
+| exactly `1` open formal workflow and one or more unresolved closed-routing candidates | `FAIL_CLOSED`; current formal work MUST NOT coexist with an unresolved closed recovery obligation |
+| `0` open formal workflows and `0` unresolved closed-routing candidates | select the deterministic combined pre-activation winner, or return `NO_WORK` when none exists |
+| `0` open formal workflows and exactly `1` unresolved closed-routing candidate | perform detailed exceptional recovery for that candidate before pre-activation or `NO_WORK` |
+| `0` open formal workflows and `>1` unresolved closed-routing candidates | `FAIL_CLOSED` |
+| unresolved closed-routing enumeration/provenance indeterminate | `FAIL_CLOSED` |
 
-Repository-owned acquisition SHALL establish a bounded, complete structural projection of current closed workflow-looking Issues whenever closed state could affect formal or pre-activation authorization. The projection SHALL use only current authoritative structural facts needed for the conflict screen, such as Issue identity, closed state, persisted non-`unset` `Change:` identity, current recoverable nonterminal routing shape, and already-available lifecycle/status facts that can exclude definitely non-conflicting history without per-candidate detailed forensic reconstruction. If the structural facts cannot safely exclude a candidate, the projection MUST classify it as a possible conflict rather than infer terminal history.
+Production unresolved-recovery acquisition SHALL use complete paginated current GitHub observations constrained by `state=closed` and the existing workflow `agent:*` routing labels, deduplicate Issue identities, and validate the resulting current routing/Change shape. Because repository-owned terminal close and the one-time migration retire routing from terminal history, this acquisition SHALL scale with current unresolved routed closes rather than accumulated completed workflow history. It MUST NOT perform a repository-wide closed-history projection as a normal authorization prerequisite.
 
-The structural projection SHALL produce only `CLEAR`, `POSSIBLE_CONFLICT`, or `INDETERMINATE`. `CLEAR` MAY authorize the sole open formal workflow, or with formal cardinality zero MAY proceed to deterministic pre-activation selection/`NO_WORK`, without fetching terminal comments, Human-retirement comments, legacy archive details, or closed-Issue terminal re-observation merely to re-prove unrelated historical completion. `POSSIBLE_CONFLICT` or `INDETERMINATE` MUST NOT authorize from the open-Issue snapshot alone and SHALL trigger detailed exceptional recovery/consistency evaluation. The structural projection MUST remain ephemeral executable classification input and MUST NOT become a durable recovery registry, hidden workflow state, cache-based authority, or second workflow DAG.
+Detailed exceptional recovery SHALL obtain detailed terminal/recovery evidence only for the exact current unresolved closed-routing candidate selected by the current-state boundary. With formal cardinality zero, exactly one qualifying premature-close recovery candidate SHALL authorize that closed Issue as `Lead / resolve-question` and SHALL block pre-activation intake. A candidate that proves terminal/retired is not normal work and SHALL be eligible only for the bounded cleanup/retirement effect required to restore the closed+unrouted invariant before normal dispatch proceeds. Multiple candidates, incomplete evidence, indeterminate required provenance, or genuine contradiction MUST produce `FAIL_CLOSED`.
 
-Detailed exceptional recovery/consistency evaluation SHALL run only when the structural projection cannot prove `CLEAR` for the applicable authorization boundary. That boundary SHALL establish observable completeness for the relevant current closed candidate set and SHALL obtain detailed terminal/recovery evidence only for candidates whose closed state can affect recovery or conflict classification. Applicable terminal `LIFECYCLE_COMPLETE`, direct-Human administrative retirement, legacy archive, unfinished-Change, and current re-observation predicates SHALL remain fail-closed evidence inside that detailed exceptional boundary rather than unconditional inputs to every formal-zero or sole-formal wake.
+Canonical terminal completion evidence used by migration or detailed recovery SHALL be classified by semantic consistency rather than raw comment cardinality. Multiple valid `LIFECYCLE_COMPLETE` journals that identify the same coordination Issue, immutable Change, `Lead / finalize-archive` action, terminal result, and non-conflicting terminal revision/Archive identity SHALL represent idempotent at-least-once replay of one terminal fact. If otherwise valid terminal journals disagree on immutable terminal identity or carry materially contradictory completion evidence, terminal evidence SHALL remain `INDETERMINATE`. Additional non-conflicting metadata or a later journal supplying previously omitted compatible metadata MUST NOT by itself turn one terminal fact into a contradiction.
 
-Canonical terminal completion evidence SHALL be classified by semantic consistency, not by raw comment cardinality. Multiple valid `LIFECYCLE_COMPLETE` journals that identify the same coordination Issue, immutable Change, `Lead / finalize-archive` action, terminal result, and non-conflicting terminal revision/Archive identity SHALL represent idempotent at-least-once replay of one terminal fact and SHALL be treated as terminal history. If otherwise valid terminal journals disagree on an immutable terminal identity or carry materially contradictory completion evidence, terminal evidence SHALL remain `INDETERMINATE` and dispatch MUST fail closed wherever that candidate affects authorization. Additional non-conflicting metadata or a later journal that supplies previously omitted compatible metadata MUST NOT by itself turn one terminal fact into a contradiction.
-
-The detailed exceptional decision SHALL preserve the existing safety contract:
-
-- with open formal cardinality `0`, exactly one qualifying premature-close recovery candidate SHALL authorize that closed Issue as `Lead / resolve-question` and SHALL block pre-activation intake;
-- with open formal cardinality `1`, a qualifying unfinished premature-close candidate or unresolved contradiction SHALL conflict with the already-open formal workflow and MUST produce `FAIL_CLOSED`; the closed Issue MUST NOT be reopened automatically into a second formal workflow;
-- multiple qualifying/conflicting candidates, incomplete candidate enumeration, or indeterminate required provenance/evidence MUST produce `FAIL_CLOSED` in either context;
-- when detailed evidence proves all structurally possible closed candidates terminal, retired, or otherwise non-conflicting, dispatch MAY authorize the sole open formal workflow for cardinality `1`, or MAY select the deterministic combined pre-activation winner/return `NO_WORK` for cardinality `0`.
-
-Historical routing in Issue bodies/comments, prior model output, conversation history, or cached observations MUST NOT override the current authoritative open-Issue snapshot, structural conflict projection, or detailed exceptional evidence.
+Historical routing in Issue bodies/comments, prior model output, conversation history, cached observations, or normalized terminal history MUST NOT override the current authoritative open-Issue and unresolved closed-routing sets.
 
 The combined pre-activation queue SHALL continue to contain every otherwise eligible open `Lead / explore-change + Change: unset` entry and every legally admitted open `Lead / propose-change + Change: unset` entry, ordered by earliest GitHub `created_at`, then lower Issue number. The model MUST NOT introduce another role/action priority or urgency score.
 
-A selected action SHALL consume a fresh executable dispatch decision as an action-entry identity precondition rather than starting from a candidate-local assumption. Before a formal lifecycle/review/implementation action proceeds, current executable selection MUST still prove that its coordination Issue is the sole open formal workflow, that its routing equals the selected Issue/Role/Action, and that the structural closed-workflow conflict boundary is `CLEAR` or has been cleared by the required detailed exceptional evaluation. Before substantive `explore-change` or pre-activation `propose-change` work proceeds, executable selection MUST still prove open formal cardinality zero, that the applicable structural/detailed recovery boundary proves no blocking closed recovery candidate exists, and that the selected Issue remains the deterministic combined pre-activation winner. `propose-change` SHALL additionally preserve the immediate pre-write and fresh post-write activation checks. Stale, contradictory, incomplete, provenance-invalid, or execution-unavailable evidence MUST fail closed rather than being filled from model memory or prose.
+A selected action SHALL consume a fresh executable dispatch decision as an action-entry identity precondition rather than starting from a candidate-local assumption. Before a formal lifecycle/review/implementation action proceeds, current executable selection MUST still prove that its coordination Issue is the sole open formal workflow, its routing equals the selected Issue/Role/Action, and the current unresolved closed-routing set is empty. Before substantive `explore-change` or pre-activation `propose-change` work proceeds, executable selection MUST still prove open formal cardinality zero, no unresolved closed-routing candidate blocks intake, and the selected Issue remains the deterministic combined pre-activation winner. `propose-change` SHALL additionally preserve the immediate pre-write and fresh post-write activation checks. Stale, contradictory, incomplete, provenance-invalid, or execution-unavailable evidence MUST fail closed rather than being filled from model memory or prose.
 
 When repository durable state contains more than one open formal workflow, Scheduled roles SHALL remain fail closed. They MUST NOT select a winner by age, role/action priority, Issue number, model judgment, presumed legitimacy, automatic Change clearing, or routing rewrite. Human/maintainer administrative repair MAY correct that illegal durable state outside normal Scheduled-Agent lifecycle execution. A later wake MUST reconstruct current repository state and obtain a new executable decision before normal work resumes.
 
-A closed nonterminal Issue MAY be recovered automatically only for the demonstrated premature-close class when detailed exceptional recovery proves all existing predicates required for that recovery: persisted non-`unset` Change, one otherwise legal nonterminal routing tuple, unfinished lifecycle evidence, no valid terminal completion, no qualifying Human termination/non-resumption decision, no competing open formal workflow, and no second recovery candidate. Lead MAY reopen only that same Issue under `Lead / resolve-question`, preserve the immutable Change and pre-close routing identity, then fresh-reconstruct normal dispatch after reopening. The recovery invocation MUST NOT execute the preserved stale normal lifecycle action.
+A closed nonterminal Issue MAY be recovered automatically only for the demonstrated premature-close class when detailed exceptional recovery proves all existing predicates required for that recovery: persisted non-`unset` Change, one otherwise legal nonterminal routing tuple, unfinished lifecycle evidence, no valid terminal completion, no qualifying Human termination/non-resumption decision, no competing open formal workflow, and no second unresolved closed-routing candidate. Lead MAY reopen only that same Issue under `Lead / resolve-question`, preserve the immutable Change and pre-close routing identity, then fresh-reconstruct normal dispatch after reopening. The recovery invocation MUST NOT execute the preserved stale normal lifecycle action.
 
-This separation MUST NOT create a generic fault state machine, hidden recovery registry, lock, lease, heartbeat, retry counter, durable claim, cache-based authorization, or second workflow DAG. Deterministic normal-selection, structural-conflict, terminal-replay, and exceptional-recovery mechanics SHALL be implemented and tested in production executable surfaces rather than duplicated as a second natural-language classifier for the model.
+This separation MUST NOT create a generic fault state machine, hidden recovery registry, new lifecycle status, lock, lease, heartbeat, retry counter, durable claim, cursor/watermark, cache-based authorization, or second workflow DAG. Deterministic normal-selection, unresolved-close, terminal-replay, migration, and exceptional-recovery mechanics SHALL be implemented and tested in production executable surfaces rather than duplicated as a second natural-language classifier for the model.
 
 #### Scenario: One active workflow is missed by a partial search
 
@@ -127,9 +191,10 @@ This separation MUST NOT create a generic fault state machine, hidden recovery r
 #### Scenario: Complete enumeration selects the sole active workflow
 
 - GIVEN current open-Issue enumeration is provenance-qualified and complete
+- AND current unresolved closed-routing enumeration is provenance-qualified and complete
 - AND exactly one open formal active workflow exists
+- AND no unresolved closed-routing candidate exists
 - AND one or more routed pre-activation Issues also exist
-- AND the complete structural closed-workflow conflict projection returns `CLEAR`
 - WHEN workflow-dynamic dispatch performs normal classification
 - THEN only the formal active workflow is selected
 - AND its current routing tuple determines the exact invocation Role/Action
@@ -137,100 +202,96 @@ This separation MUST NOT create a generic fault state machine, hidden recovery r
 
 #### Scenario: Clear sole formal workflow does not require detailed closed-history forensics
 
-- GIVEN current open-Issue enumeration is provenance-qualified and complete
+- GIVEN current open-Issue and unresolved closed-routing enumeration are provenance-qualified and complete
 - AND exactly one open formal active workflow exists
-- AND historical closed workflow Issues also exist in the repository
-- AND the complete structural closed-workflow conflict projection proves none can still be a conflicting unfinished/premature-close candidate
+- AND no unresolved closed-routing candidate exists
+- AND historical terminal workflows exist in the repository
 - WHEN normal dispatch selects work
-- THEN the structural conflict disposition is `CLEAR`
-- AND it authorizes the sole open formal workflow without fetching detailed historical terminal/recovery evidence merely for that selection
+- THEN it authorizes the sole open formal workflow without enumerating or fetching historical terminal workflow evidence merely for that selection
 - AND historical closed workflow state cannot override the current open formal winner by prose or stale context
 
 #### Scenario: Sole formal workflow with a possible closed unfinished conflict does not fast-path authorization
 
-- GIVEN current open-Issue enumeration is provenance-qualified and complete
+- GIVEN current open-Issue and unresolved closed-routing enumeration are provenance-qualified and complete
 - AND exactly one open formal active workflow A exists
-- AND a different closed workflow-looking Issue B cannot be safely excluded by the structural projection as an unfinished/premature-close conflict candidate
-- WHEN workflow-dynamic dispatch evaluates sole-formal authorization
-- THEN the structural disposition is `POSSIBLE_CONFLICT` or `INDETERMINATE`
-- AND dispatch does not authorize A from the open-Issue snapshot alone
-- AND it performs bounded detailed exceptional recovery/consistency evaluation for B
-- AND qualifying or genuinely indeterminate recovery state preserves the existing fail-closed/recovery semantics
+- AND at least one different closed Issue still retains workflow routing and is therefore an unresolved recovery candidate
+- WHEN workflow-dynamic dispatch evaluates authorization
+- THEN dispatch returns `FAIL_CLOSED`
+- AND it does not execute A or reopen the closed Issue into a second formal workflow
 
 #### Scenario: Formal zero with structural-clear history proceeds without detailed forensics
 
-- GIVEN current open-Issue enumeration is provenance-qualified and complete
+- GIVEN current open-Issue and unresolved closed-routing enumeration are provenance-qualified and complete
 - AND open formal cardinality is zero
+- AND no unresolved closed-routing candidate exists
 - AND one or more eligible pre-activation candidates exist
-- AND the complete structural closed-workflow conflict projection returns `CLEAR`
 - WHEN workflow-dynamic dispatch reaches pre-activation selection
-- THEN it does not fetch detailed terminal/recovery evidence for unrelated historical closed workflows merely to re-prove their completion
+- THEN it does not enumerate or fetch historical terminal workflow evidence merely to re-prove completion
 - AND it selects the deterministic combined pre-activation winner
 - AND the selected tuple remains subject to the normal fresh action-entry identity precondition
 
 #### Scenario: Formal zero with no queued work and structural-clear history returns no work
 
-- GIVEN current open-Issue enumeration is provenance-qualified and complete
+- GIVEN current open-Issue and unresolved closed-routing enumeration are provenance-qualified and complete
 - AND open formal cardinality is zero
+- AND no unresolved closed-routing candidate exists
 - AND no eligible pre-activation candidate exists
-- AND the complete structural closed-workflow conflict projection returns `CLEAR`
 - WHEN workflow-dynamic dispatch evaluates repository work
-- THEN it returns `NO_WORK` without detailed forensic reconstruction of unrelated terminal history
+- THEN it returns `NO_WORK` without historical terminal-workflow reconstruction
 - AND the durable decision includes the bounded machine-owned no-work reason required by the no-API decision contract
 
 #### Scenario: Possible closed unfinished conflict still enters detailed recovery
 
-- GIVEN current open-Issue enumeration is provenance-qualified and complete
-- AND the structural projection identifies a closed workflow-looking Issue that cannot be safely excluded as an unfinished/premature-close conflict candidate
+- GIVEN current unresolved closed-routing enumeration is provenance-qualified and complete
+- AND exactly one closed Issue retains a coherent nonterminal workflow routing tuple
+- AND open formal cardinality is zero
 - WHEN workflow-dynamic dispatch evaluates authorization
-- THEN the structural disposition is `POSSIBLE_CONFLICT` or `INDETERMINATE`
-- AND dispatch does not authorize a formal or pre-activation action from the open-Issue snapshot alone
-- AND it performs bounded detailed exceptional recovery/consistency evaluation for the relevant candidate
-- AND qualifying or genuinely indeterminate recovery state preserves the existing fail-closed/recovery semantics
+- THEN it performs bounded detailed exceptional recovery for that exact Issue only
+- AND qualifying or genuinely indeterminate recovery state preserves the existing recovery/fail-closed semantics
 
 #### Scenario: Exceptional recovery runs before pre-activation selection
 
 - GIVEN complete current open-Issue state contains zero formal workflows
 - AND one or more open pre-activation candidates exist
-- AND the complete structural closed-workflow conflict projection is `POSSIBLE_CONFLICT` or `INDETERMINATE`
+- AND exactly one unresolved closed-routing candidate exists
 - WHEN workflow-dynamic dispatch reaches the admission boundary
-- THEN it executes detailed exceptional closed-recovery evaluation before authorizing the queue winner
+- THEN it executes detailed exceptional recovery for that candidate before authorizing the queue winner
 - AND a qualifying or genuinely indeterminate recovery state blocks pre-activation
-- AND the queue is evaluated only after the exceptional candidate set is cleared
+- AND the queue is evaluated only after the current unresolved candidate is cleared or retired
 
 #### Scenario: No formal or queued work still checks recoverable closed workflow state
 
 - GIVEN complete current open-Issue state contains zero formal workflows and no eligible pre-activation candidate
-- AND the complete structural closed-workflow conflict projection is `POSSIBLE_CONFLICT` or `INDETERMINATE`
+- AND exactly one unresolved closed-routing candidate exists
 - WHEN workflow-dynamic dispatch evaluates whether the repository has no work
-- THEN it executes detailed exceptional recovery before returning `NO_WORK`
-- AND a qualifying premature-close candidate is selected for `Lead / resolve-question` instead of being stranded as history
+- THEN it executes detailed exceptional recovery for that candidate before returning `NO_WORK`
+- AND a qualifying premature-close candidate is selected for `Lead / resolve-question` instead of being stranded
 - AND genuinely indeterminate required recovery evidence produces `FAIL_CLOSED`
 
 #### Scenario: Equivalent duplicate terminal journals are one terminal fact
 
-- GIVEN a closed workflow has two or more valid canonical `LIFECYCLE_COMPLETE` journals
+- GIVEN migration or detailed recovery evaluates a closed workflow with two or more valid canonical `LIFECYCLE_COMPLETE` journals
 - AND every journal identifies the same coordination Issue, immutable Change, `Lead / finalize-archive` action, and terminal result
 - AND any recorded terminal revision/Archive identities are compatible and non-conflicting
-- WHEN detailed terminal evidence is classified
+- WHEN terminal evidence is classified
 - THEN the journals are treated as idempotent at-least-once replay of one terminal fact
 - AND terminal evidence is `terminal-history`
 - AND duplicate journal count alone cannot block unrelated legal current work
 
 #### Scenario: Contradictory terminal identities remain fail closed
 
-- GIVEN a closed workflow has multiple otherwise valid terminal journals
+- GIVEN migration or detailed recovery evaluates multiple otherwise valid terminal journals
 - AND those journals disagree on an immutable terminal revision, Archive identity, or another required terminal fact
-- WHEN detailed terminal evidence is classified
+- WHEN terminal evidence is classified
 - THEN terminal evidence is `INDETERMINATE`
-- AND any authorization boundary affected by that candidate returns `FAIL_CLOSED`
+- AND the affected migration or recovery boundary fails closed
 - AND the model does not choose which terminal journal to trust
 
 #### Scenario: Pre-activation Explore revalidates zero formal WIP before substantive research
 
 - GIVEN normal classification identifies an open `Lead / explore-change + Change: unset` Issue as the deterministic combined-queue winner
-- AND the applicable structural/detailed closed-recovery boundary found no blocking recovery candidate
-- AND before substantive Explore begins another durable formal workflow appears or completeness can no longer be established
+- AND current unresolved closed-routing enumeration was complete and empty
+- AND before substantive Explore begins another durable formal workflow or unresolved closed-routing candidate appears, or completeness can no longer be established
 - WHEN `explore-change` consumes its fresh action-entry identity precondition
 - THEN it does not continue from the earlier candidate-local selection
 - AND it fails closed and reconstructs current executable dispatch
@@ -246,8 +307,8 @@ This separation MUST NOT create a generic fault state machine, hidden recovery r
 
 #### Scenario: Indeterminate enumeration cannot authorize work
 
-- GIVEN the available current open-Issue read is capped, incomplete, provenance-invalid, or otherwise cannot prove enumeration completeness
-- WHEN normal dispatch derives formal cardinality
+- GIVEN the available current open-Issue or unresolved closed-routing read is capped, incomplete, provenance-invalid, or otherwise cannot prove enumeration completeness
+- WHEN normal dispatch derives current formal/recovery state
 - THEN classification is fail-closed
 - AND neither formal action execution nor pre-activation intake is authorized from that evidence
 
@@ -271,10 +332,10 @@ This separation MUST NOT create a generic fault state machine, hidden recovery r
 #### Scenario: Nonterminal workflow Issue is closed prematurely and safely recoverable
 
 - GIVEN open formal cardinality is zero
-- AND a closed coordination Issue has a persisted non-`unset` Change and exactly one otherwise legal nonterminal routing tuple
+- AND exactly one closed coordination Issue still retains a persisted non-`unset` Change and exactly one otherwise legal nonterminal routing tuple
 - AND detailed exceptional recovery evidence proves the Change remains unfinished
 - AND no valid terminal completion or qualifying Human termination/non-resumption decision exists
-- AND no competing formal or second recovery candidate exists
+- AND no second unresolved closed-routing candidate exists
 - WHEN the exceptional recovery boundary classifies current state
 - THEN the stale routed action is not executed while the Issue is closed
 - AND pre-activation work is not selected
@@ -284,8 +345,18 @@ This separation MUST NOT create a generic fault state machine, hidden recovery r
 
 #### Scenario: Premature close cannot be recovered unambiguously
 
-- GIVEN a closed nonterminal coordination Issue has missing or contradictory lifecycle evidence, a qualifying Human termination decision, another open formal workflow, another premature-close recovery candidate, or incomplete recovery provenance
+- GIVEN a closed routed coordination Issue has missing or contradictory lifecycle evidence, a qualifying Human termination decision, another open formal workflow, another unresolved closed-routing candidate, or incomplete recovery provenance
 - WHEN detailed exceptional recovery evaluates eligibility
 - THEN Scheduled dispatch returns `FAIL_CLOSED`
 - AND Lead does not reopen the Issue by inference
 - AND the repository uses existing diagnosis or Human-escalation semantics rather than creating a generic recovery state
+
+#### Scenario: Legacy routed terminal history is normalized once
+
+- GIVEN pre-existing closed workflow Issues still retain workflow routing labels before the new steady-state invariant is activated
+- WHEN the one-time migration/reconciliation runs
+- THEN it completely enumerates that pre-existing closed routed set
+- AND removes only workflow routing labels from each entry proven terminal or retired while preserving unrelated labels and historical state/evidence
+- AND leaves or restores genuine unfinished obligations as explicit recovery work
+- AND any ambiguous or incomplete entry fails the migration
+- AND successful activation leaves no recurring migration cursor, watermark, or full-history scan
