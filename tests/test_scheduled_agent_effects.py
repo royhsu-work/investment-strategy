@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import investment_strategy.scheduled_agent_effects as effects
 from investment_strategy.scheduled_agent_effect_contract import (
     allowed_github_mutation_operations,
     mapped_role_actions,
 )
 from investment_strategy.scheduled_agent_effects import (
     EffectBatch,
+    GitHubEffectAdapter,
     StagedEffect,
     apply_effect_batch,
     continuation_requires_fresh_wake,
@@ -69,6 +71,13 @@ def _worker_result(*effects: StagedEffect) -> str:
                 {"kind": effect.kind, "payload_json": effect.payload_json} for effect in effects
             ],
         }
+    )
+
+
+def _terminal_retirement_effect(change: str = "archived-change") -> StagedEffect:
+    return StagedEffect(
+        kind="terminal-retirement",
+        payload_json=json.dumps({"issue_number": 133, "expected_change": change}),
     )
 
 
@@ -252,6 +261,91 @@ def test_supported_effect_guard_rejects_foreign_issue_and_unknown_kind() -> None
     )
 
 
+def test_terminal_retirement_requires_machine_terminal_cleanup_for_resolve_question() -> None:
+    effect = _terminal_retirement_effect()
+    assert supported_effect_guard(
+        WorkerRequest(133, "lead", "resolve-question", debt_disposition="terminal-cleanup"),
+        effect,
+    )
+    assert not supported_effect_guard(
+        WorkerRequest(133, "lead", "resolve-question", debt_disposition="unfinished-recovery"),
+        effect,
+    )
+    assert not supported_effect_guard(
+        WorkerRequest(133, "lead", "resolve-question"),
+        effect,
+    )
+
+
+def test_terminal_cleanup_removes_only_workflow_labels_and_accepts_zero_debt_completion(
+    monkeypatch,
+) -> None:
+    issue: dict[str, object] = {
+        "number": 133,
+        "state": "closed",
+        "body": "Change: archived-change\n",
+        "created_at": "2026-08-20T00:00:00Z",
+        "closed_at": "2026-08-25T00:00:00Z",
+        "labels": [
+            {"name": "agent:lead"},
+            {"name": "action:finalize-archive"},
+            {"name": "human:approved"},
+        ],
+    }
+    mutations: list[tuple[str, str, object | None]] = []
+    injected = False
+
+    def fake_github_json(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload=None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        nonlocal injected
+        del repository, token, allow_not_found
+        if api_path == "issues/133" and method == "GET":
+            return json.loads(json.dumps(issue))
+        if api_path.startswith("issues/133/labels/") and method == "DELETE":
+            mutations.append((method, api_path, payload))
+            label = api_path.rsplit("/", 1)[-1].replace("%3A", ":")
+            labels = issue["labels"]
+            assert isinstance(labels, list)
+            issue["labels"] = [
+                item
+                for item in labels
+                if not (isinstance(item, dict) and item.get("name") == label)
+            ]
+            if not injected:
+                labels = issue["labels"]
+                assert isinstance(labels, list)
+                labels.append({"name": "concurrent:keep"})
+                injected = True
+            return None
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    source = WorkerRequest(133, "lead", "resolve-question", debt_disposition="terminal-cleanup")
+    effect = _terminal_retirement_effect()
+    adapter = GitHubEffectAdapter("royhsu-work/investment-strategy", "token", source)
+
+    assert adapter.guard(effect)
+    adapter.apply(effect)
+    assert adapter.observe_postcondition(effect)
+
+    labels = issue["labels"]
+    assert isinstance(labels, list)
+    names = {item["name"] for item in labels if isinstance(item, dict)}
+    assert names == {"human:approved", "concurrent:keep"}
+    assert all(method == "DELETE" and payload is None for method, _, payload in mutations)
+    assert {path.rsplit("/", 1)[-1].replace("%3A", ":") for _, path, _ in mutations} == {
+        "agent:lead",
+        "action:finalize-archive",
+    }
+
+
 def test_all_ten_mapped_actions_have_shared_durable_effect_profiles() -> None:
     expected_actions = {
         ("lead", "explore-change"),
@@ -331,6 +425,8 @@ def test_workflow_transports_worker_output_to_write_authorized_apply_boundary() 
     assert "scheduled-agent-result-${{ github.run_id }}-${{ github.run_attempt }}" in workflow
     assert "uv run python -m investment_strategy.scheduled_agent_merge_acceptance" in workflow
     assert "uv run python -m investment_strategy.scheduled_agent_worker_runtime" in workflow
+    assert "debt_disposition: ${{ steps.preflight.outputs.debt_disposition }}" in workflow
+    assert "AUTHORIZED_DEBT_DISPOSITION" in workflow
 
     worker_section = workflow.split("\n  worker:", 1)[1].split("\n  apply:", 1)[0]
     assert "issues: write" not in worker_section
