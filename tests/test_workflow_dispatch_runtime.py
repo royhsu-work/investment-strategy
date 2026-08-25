@@ -397,6 +397,70 @@ def _retirement_comment(*, app: object | None = None) -> dict[str, object]:
     }
 
 
+def _closed_terminal_research_payload() -> dict[str, object]:
+    return {
+        "number": 141,
+        "state": "closed",
+        "state_reason": "completed",
+        "body": "Change: unset",
+        "labels": [{"name": "action:explore-change"}],
+        "created_at": "2026-08-25T14:00:00Z",
+        "closed_at": "2026-08-25T14:30:00Z",
+    }
+
+
+def _terminal_research_comment(result: str = "NO_CHANGE_REQUIRED") -> dict[str, object]:
+    return {
+        "id": 5412000000,
+        "body": (
+            "## ACTION_RESULT\n\n"
+            "Workflow: #141\n"
+            "Change: `unset`\n"
+            "Action: `Lead / explore-change`\n"
+            f"Result: `{result}`\n"
+            "Revision: `00a0e5a2c8068077faf5d18980e4a6f84f72f74e`"
+        ),
+        "user": {"login": "github-actions[bot]"},
+        "author_association": "NONE",
+        "created_at": "2026-08-25T14:29:00Z",
+        "updated_at": "2026-08-25T14:29:00Z",
+    }
+
+
+def test_interrupted_terminal_research_debt_routes_candidate_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "openspec" / "changes").mkdir(parents=True)
+    debt = _closed_terminal_research_payload()
+    comments = ((_terminal_research_comment(),),)
+
+    monkeypatch.setattr(runtime, "_github_open_issue_pages", lambda repository, token: ())
+    monkeypatch.setattr(
+        runtime,
+        "_github_closed_routing_issue_pages",
+        lambda repository, token: ((debt,),),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_github_issue_comment_pages",
+        lambda repository, token, issue_number: comments if issue_number == 141 else (),
+    )
+    monkeypatch.setattr(runtime, "_github_issue", lambda repository, token, issue_number: debt)
+
+    decision = classify_dispatch(
+        runtime.acquire_current_github_preflight(
+            "royhsu-work/investment-strategy",
+            "token",
+            repository_root=tmp_path,
+        )
+    )
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.selected_issue_id == 141
+    assert decision.selected_routing == ("lead", "resolve-question")
+    assert decision.selected_debt_disposition == "terminal-cleanup"
+
+
 def test_sole_formal_with_no_current_routing_debt_skips_detailed_forensics(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
