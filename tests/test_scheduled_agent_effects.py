@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 import investment_strategy.scheduled_agent_effects as effects
 from investment_strategy.scheduled_agent_effect_contract import (
     allowed_github_mutation_operations,
@@ -278,7 +280,7 @@ def test_terminal_retirement_requires_machine_terminal_cleanup_for_resolve_quest
 
 
 def test_terminal_cleanup_removes_only_workflow_labels_and_accepts_zero_debt_completion(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     issue: dict[str, object] = {
         "number": 133,
@@ -301,7 +303,7 @@ def test_terminal_cleanup_removes_only_workflow_labels_and_accepts_zero_debt_com
         api_path: str,
         *,
         method: str = "GET",
-        payload=None,
+        payload: dict[str, object] | None = None,
         allow_not_found: bool = False,
     ) -> object | None:
         nonlocal injected
