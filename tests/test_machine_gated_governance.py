@@ -17,6 +17,7 @@ from investment_strategy.workflow_dispatch import (
 
 ROOT = Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents" / "AGENTS.md"
+LEAD = ROOT / "agents" / "roles" / "lead.md"
 MESSAGES = ROOT / "agents" / "templates" / "messages.md"
 EXPLORE = ROOT / "agents" / "skills" / "openspec-explore" / "SKILL.md"
 CHANGE = ROOT / "agents" / "skills" / "openspec-change" / "SKILL.md"
@@ -166,6 +167,50 @@ def test_lead_workers_consume_machine_identity_and_request_durable_effects() -> 
         "fresh mapped model invocation",
     ):
         assert required in change
+
+
+def test_shared_governance_uses_current_routing_debt_not_structural_history_projection() -> None:
+    shared = _normalized(AGENTS)
+    for required in (
+        "complete current set of closed Issues",
+        "closed-routing debt",
+        "agent:*",
+        "action:*",
+        "mapped-Action boundary",
+        "unrelated labels are preserved",
+        "Lead / resolve-question",
+    ):
+        assert required.lower() in shared.lower()
+    for forbidden in (
+        "complete bounded structural closed-workflow conflict projection",
+        "after structural `CLEAR`",
+    ):
+        assert forbidden.lower() not in shared.lower()
+
+
+def test_lead_resolve_question_owns_exact_candidate_debt_disposition() -> None:
+    lead = _normalized(LEAD)
+    change = _normalized(CHANGE)
+
+    for required in (
+        "current closed-routing-debt boundary",
+        "exact executable-selected candidate",
+        "machine-derived debt disposition",
+        "terminal-cleanup",
+        "unfinished-recovery",
+        "closed + no workflow routing",
+    ):
+        assert required.lower() in lead.lower()
+
+    for required in (
+        "Machine-selected closed-routing debt branch",
+        "machine-derived debt disposition",
+        "terminal-retirement",
+        "terminal-cleanup",
+        "unfinished-recovery",
+        "exact selected closed-routing-debt candidate",
+    ):
+        assert required.lower() in change.lower()
 
 
 def test_direct_propose_is_not_queue_eligible_without_executable_admission() -> None:
