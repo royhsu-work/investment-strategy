@@ -32,7 +32,9 @@ def _historical_terminal_25_payload() -> dict[str, object]:
     }
 
 
-def _lifecycle_complete_25_comment(*, head: str = "786680176324f396322e4d1bb2f77b63be97bb48") -> dict[str, object]:
+def _lifecycle_complete_25_comment(
+    *, head: str = "786680176324f396322e4d1bb2f77b63be97bb48"
+) -> dict[str, object]:
     return {
         "id": 5289357012,
         "body": (
@@ -55,7 +57,11 @@ def _install_debt(
     monkeypatch: pytest.MonkeyPatch,
     comments: tuple[dict[str, object], ...],
 ) -> None:
-    monkeypatch.setattr(runtime, "_github_open_issue_pages", lambda repository, token: ((_formal_140_payload(),),))
+    monkeypatch.setattr(
+        runtime,
+        "_github_open_issue_pages",
+        lambda repository, token: ((_formal_140_payload(),),),
+    )
     monkeypatch.setattr(
         runtime,
         "_github_closed_routing_issue_pages",
