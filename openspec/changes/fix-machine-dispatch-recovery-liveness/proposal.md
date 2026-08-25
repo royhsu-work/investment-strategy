@@ -2,24 +2,22 @@
 
 ## Why
 
-#155 reproduced a self-hosting failure in the deployed workflow-dynamic dispatcher after #140 completed. With no open formal workflow, production acquisition enters detailed exceptional closed-history reconstruction before it may authorize a queued pre-activation Issue. Historical Issue #91 contains two canonical `LIFECYCLE_COMPLETE` journals for the same completed workflow. The current terminal recognizer treats more than one valid completion journal as `indeterminate`, so an at-least-once replay of the same terminal fact becomes repository-wide `FAIL_CLOSED` and prevents otherwise legal pre-activation work from starting.
+#155 reproduced a self-hosting failure in the deployed workflow-dynamic dispatcher after #140 completed. The failure was triggered by historical Issue #91, but #91 is already terminal history: its imperfect duplicate completion journal should not participate in authorization for unrelated current work.
 
-The failure exposes two related responsibility defects in the current dispatch contract:
+Reviewer finding `issuecomment-5406357205` identified the remaining defect in the first proposal revision: replacing full closed-history forensics with a structural projection still makes every normal dispatch depend on a repository-history-sized closed set. That cost grows with accumulated history and does not satisfy #155's explicit requirement to avoid `O(repository-history)` normal-path reconstruction.
 
-1. formal-zero dispatch unconditionally pays detailed historical recovery cost before pre-activation selection or `NO_WORK`, even when a bounded complete structural projection can prove that no closed Issue is capable of changing current authorization; and
-2. terminal evidence uniqueness is inferred from comment cardinality instead of semantic consistency, so repeated equivalent durable evidence is treated as contradiction.
-
-The safety goal is not to weaken `FAIL_CLOSED`. It is to reserve `INDETERMINATE` for missing/incomplete/unqualified authoritative input or genuinely contradictory facts, while deterministically classifying evidence that is sufficient to prove one outcome.
+The safety boundary is therefore narrower: normal dispatch must authorize from **current unresolved obligations**, not from repeated re-adjudication of completed history. `FAIL_CLOSED` remains strict for incomplete or contradictory current evidence and genuine unresolved recovery state.
 
 ## What Changes
 
-- Modify the existing `scheduled-agent-workflow` dispatch contract so formal cardinality zero uses the same bounded, complete structural closed-workflow conflict projection before detailed exceptional recovery.
-- When that structural projection is `CLEAR`, allow the executable dispatcher to select the deterministic eligible pre-activation winner or return `NO_WORK` without fetching detailed terminal/recovery evidence for unrelated historical closed workflows.
-- When the structural projection is `POSSIBLE_CONFLICT` or `INDETERMINATE`, preserve detailed exceptional recovery before any pre-activation authorization or `NO_WORK` result.
-- Classify multiple canonical terminal completion journals by semantic consistency rather than raw comment count. Repeated journals that establish the same terminal fact are one idempotent at-least-once completion; conflicting immutable terminal identity/evidence remains `INDETERMINATE` and fails closed.
-- Keep detailed recovery scoped to closed candidates that can actually affect current recovery/conflict classification instead of treating every historical completed workflow as a mandatory forensic input.
-- Include a bounded machine-owned diagnostic reason for `NO_WORK` and `FAIL_CLOSED` dispatch decisions so the durable no-API decision exposes the classifier's reason without adding an Issue/Role/Action tuple or giving the model override authority.
-- Add production-path regression coverage reproducing the #91 duplicate-terminal-history + formal-zero + queued-Explore failure and proving that equivalent replay no longer seals the pre-activation queue.
+- Define normal workflow-dynamic selection from a complete provenance-qualified snapshot of current open Issues plus a bounded current unresolved-recovery set; completed closed workflow history is not normal authorization input.
+- Represent a post-cutover premature close using existing routing state rather than a new workflow registry: a coordination Issue closed while it still retains an `agent:* + action:*` routing tuple remains an explicit unresolved closed-routing candidate. Repository-owned terminal close effects retire the routing tuple in the same logical close mutation while preserving unrelated labels.
+- Enumerate only post-cutover closed Issues that still retain routing labels when checking unresolved recovery. The fixed cutover boundary is established once from exact migration evidence; it is not a moving cursor, cache, lease, or hidden lifecycle state.
+- Before activating the new steady-state rule, perform one bounded pre-cutover reconciliation. Any genuinely unfinished pre-cutover workflow must be resolved or made explicit; completed pre-cutover history is thereafter audit history and is never rescanned by normal dispatch.
+- If the current unresolved-recovery set is empty, normal dispatch uses only current open formal/pre-activation state. If one closed-routing candidate exists, detailed recovery evaluates only that candidate. Multiple candidates, incomplete enumeration/provenance, or genuinely contradictory recovery evidence remain `FAIL_CLOSED`.
+- Keep semantic duplicate-terminal classification for the exceptional recovery/reconciliation path: compatible repeated `LIFECYCLE_COMPLETE` journals are idempotent replay; conflicting immutable terminal facts remain indeterminate. This classifier no longer justifies keeping terminal history on the normal hot path.
+- Include a bounded machine-owned diagnostic reason for `NO_WORK` and `FAIL_CLOSED` decisions without adding an Issue/Role/Action tuple or model override authority.
+- Add production regressions proving that an already completed #91-like workflow does not participate in ordinary dispatch, while a genuinely premature post-cutover close remains discoverable and recoverable from its retained routing tuple.
 
 ## Scope
 
@@ -27,20 +25,20 @@ Affected capability:
 - `scheduled-agent-workflow`
 
 In scope:
-- `src/investment_strategy/scheduled_agent_runtime.py` acquisition/orchestration needed to apply bounded structural closed-conflict screening at formal cardinality zero;
-- `src/investment_strategy/workflow_dispatch.py` terminal/recovery classification contract where required to distinguish equivalent terminal replay from genuine contradiction;
+- `src/investment_strategy/scheduled_agent_runtime.py` current-state acquisition/orchestration needed to replace repository-history projection with bounded unresolved closed-routing acquisition;
+- `src/investment_strategy/workflow_dispatch.py` current unresolved-recovery classification and exceptional terminal-evidence semantics;
 - `src/investment_strategy/issue_comment_bridge.py` bounded non-authorization diagnostic presentation for `NO_WORK` / `FAIL_CLOSED`;
-- the existing canonical `Active-workflow cardinality and Issue-state coherence precede queue selection` requirement and directly related no-API dispatch-decision behavior;
-- focused regressions for structural-clear formal-zero dispatch, exceptional recovery retention, terminal replay identity, contradictory terminal evidence, and diagnostic publication;
-- only the minimum shared governance wording needed to stop requiring unconditional detailed formal-zero history reconstruction after the executable contract changes.
+- repository-owned terminal Issue close effect semantics needed to retire routing labels while preserving unrelated labels;
+- a one-time, exact-evidence cutover/reconciliation mechanism that establishes the steady-state boundary without a perpetual history scan;
+- the canonical `Actionable workflow routing is one logical role/action tuple` and `Active-workflow cardinality and Issue-state coherence precede queue selection` requirements, plus directly related no-API decision behavior;
+- minimum shared-governance wording required to remove normal closed-history projection while preserving WIP=1, premature-close recovery, and fail-closed boundaries.
 
 Out of scope:
-- removing or weakening WIP=1, complete current open-Issue enumeration, provenance qualification, deterministic pre-activation ordering, exact selected action identity, stale-state rejection, or effect-time reauthorization;
-- automatic recovery of ambiguous or genuinely contradictory closed workflow state;
-- changing the premature-close recovery ownership or topology;
-- locks, leases, heartbeats, retry counters, hidden durable state, caching as authorization evidence, or a second workflow DAG;
+- weakening complete current open-Issue enumeration, provenance qualification, WIP=1, deterministic pre-activation ordering, exact selected action identity, stale-state rejection, or effect-time reauthorization;
+- automatically resolving ambiguous or genuinely contradictory recovery state;
+- a generic recovery registry, new workflow lifecycle status, lock, lease, heartbeat, retry counter, moving cursor, or cache-based authorization;
 - lightweight Python/control-plane packaging or removal of `uv run` from bridge/runtime workflows;
-- the separate `scheduled-agent-runtime.yml` `PYTHONPATH` execution defect unless implementation proves it is inseparable from this Change's dispatch semantics;
+- the separate `scheduled-agent-runtime.yml` `PYTHONPATH` execution defect unless implementation proves it is inseparable from this Change's authorization semantics;
 - the broader executable-governance inventory tracked by #138.
 
 ## Durable source decisions and evidence
@@ -49,11 +47,11 @@ Out of scope:
 - First-principles investigation: `issuecomment-5405282007`
 - Decision-complete interactive Explore evidence: `issuecomment-5405497269`
 - Exceptional self-hosting bootstrap record: `issuecomment-5405643748`
-- Production reproduction source: closed workflow #91 with canonical completion comments `5333895069` and `5335505763`
-- Baseline default-branch revision used to activate this Change: `00a0e5a2c8068077faf5d18980e4a6f84f72f74e`
-- Prior approved boundary being corrected: archived Change `validate-no-api-issue-comment-bridge`, which intentionally retained unconditional detailed exceptional recovery for formal cardinality zero.
+- Reviewer finding requiring current-unresolved-obligation semantics: `issuecomment-5406357205`
+- Production reproduction source: closed workflow #91 with canonical completion comments `5333895069` and `5335505763`; #91 is terminal history and is evidence of the responsibility-boundary defect, not a current recovery obligation.
+- Baseline default-branch revision for this correction: `00a0e5a2c8068077faf5d18980e4a6f84f72f74e`.
 
-The bootstrap record is audit provenance for this exceptional self-repair only; it is not a synthesized machine `AUTHORIZE` and does not become a reusable normal-dispatch bypass. After #155 was activated as the sole formal workflow, the normal formal lifecycle resumes from current durable state.
+The bootstrap record is audit provenance for this exceptional self-repair only; it is not a synthesized machine `AUTHORIZE` and does not become a reusable normal-dispatch bypass.
 
 ## Deferred work
 
