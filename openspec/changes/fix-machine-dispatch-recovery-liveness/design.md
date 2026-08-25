@@ -4,7 +4,7 @@
 
 Reviewer finding `issuecomment-5406357205` rejects the first proposal revision because its structural closed-workflow projection still makes normal dispatch cost grow with repository history. #91 demonstrates the problem clearly: it is already terminal history, so its duplicate completion journal is an audit/recovery-classification concern and must not be re-adjudicated on every unrelated wake.
 
-The revised design changes the responsibility boundary rather than making the old scan cheaper.
+The revised design changes the responsibility boundary rather than making the old scan cheaper. That boundary ends when dispatch has selected an exact Issue/Role/Action. The mapped Action's existing durable-evidence reconstruction remains independently governed and is not an optimization target of this Change.
 
 ## Design goals
 
@@ -13,6 +13,7 @@ The revised design changes the responsibility boundary rather than making the ol
 3. Preserve bounded premature-close recovery without a second workflow registry, activation flag, cutover cursor, or hidden lifecycle status.
 4. Keep detailed terminal/recovery forensics exceptional and candidate-bound.
 5. Preserve bounded machine diagnostics for `NO_WORK` / `FAIL_CLOSED`.
+6. Preserve every existing action-specific evidence reconstruction/consumption obligation after `AUTHORIZE`; dispatch read-reduction must not create comment/evidence filtering inside mapped Actions.
 
 ## Decision 1: Normal dispatch consumes current unresolved obligations only
 
@@ -151,7 +152,27 @@ The new fast path still requires:
 
 Incomplete current evidence, multiple formal workflows, stale routing/Change contradictions, unresolved closed-routing ambiguity, or execution failure remains `FAIL_CLOSED`.
 
-## Decision 8: Publish bounded non-authorizing diagnostics
+## Decision 8: Dispatch optimization stops at the mapped-Action boundary
+
+The selection fast path owns only the evidence needed to choose the exact current Issue/Role/Action or current recovery candidate. Once `AUTHORIZE` selects a mapped Action, that Action's default-branch governance and Skill continue to own reconstruction of all durable evidence they require.
+
+Therefore this Change does **not** introduce a generic bounded-comment reader, comment-age cutoff, latest-comment shortcut, evidence index, summary substitute, or action-local evidence filter. If a mapped Action currently requires complete Issue-comment reconstruction, historical review findings, prior `ACTION_RESULT`/`HANDOFF`, Human-decision evidence, exact PR/review state, CI evidence, OpenSpec artifacts, or another durable input, the implementation must continue to provide that evidence under the existing action contract.
+
+This separation is intentional:
+
+```text
+dispatch selection
+  → current metadata + current unresolved recovery state
+  → AUTHORIZE exact Issue/Role/Action
+
+mapped Action execution
+  → existing action-specific evidence reconstruction
+  → no #155-induced filtering/truncation
+```
+
+The previous failure mode where relevant comments were missed is therefore protected against by regression: reducing dispatch reads must not reduce Action evidence completeness.
+
+## Decision 9: Publish bounded non-authorizing diagnostics
 
 `DispatchDecision.reason` already exists in the executable classifier, but the issue-comment bridge drops it for `NO_WORK` and `FAIL_CLOSED`. Publish one bounded repository-owned `Reason` field for those non-authorizing decisions.
 
@@ -170,6 +191,15 @@ Expected:
 - closed-routing queries return no normalized terminal history;
 - dispatch cost depends on current open state and current unresolved closed-routing candidates only;
 - #91 cannot block current work because it is terminal history.
+
+### Action-evidence preservation regression
+
+Model a selected mapped Action whose governing evidence includes an older Issue comment that is irrelevant to dispatch selection but required by that Action's current reconstruction contract.
+
+Expected:
+- dispatch authorizes from the narrowed current-state boundary without reading that comment for selection;
+- after `AUTHORIZE`, mapped Action reconstruction still receives and evaluates the older required comment exactly as before this Change;
+- no dispatch optimization layer filters, truncates, summarizes away, or substitutes for action-required evidence.
 
 ### Premature-close regression
 
@@ -202,13 +232,14 @@ Keep/add cases proving:
 - duplicate compatible terminal journals classify terminal when migration/recovery code directly evaluates them;
 - conflicting terminal identity remains indeterminate;
 - direct-Propose admission and pre-activation ordering remain deterministic;
-- non-authorizing bridge decisions expose bounded reason but no tuple.
+- non-authorizing bridge decisions expose bounded reason but no tuple;
+- action-specific evidence completeness remains unchanged after an `AUTHORIZE` decision.
 
 ## Governance impact
 
-This is a behavioral contract change. Canonical `scheduled-agent-workflow` must stop requiring a complete closed-history structural projection for normal selection and must define routing retirement/current unresolved-close semantics.
+This is a behavioral contract change. Canonical `scheduled-agent-workflow` must stop requiring a complete closed-history structural projection for normal selection and must define routing retirement/current unresolved-close semantics while explicitly preserving the downstream action-evidence boundary.
 
-`agents/AGENTS.md` needs the minimum matching shared-governance update. `agents/workflow.md` topology does not change: the same actions and correction loops remain authoritative. Terminal routing retirement is an effect/postcondition detail, not a new lifecycle node.
+`agents/AGENTS.md` needs the minimum matching shared-governance update. `agents/workflow.md` topology does not change: the same actions and correction loops remain authoritative. Terminal routing retirement is an effect/postcondition detail, not a new lifecycle node. Existing role/Skill evidence-consumption semantics remain unchanged by this Change.
 
 No role or mapped Skill ownership change is intended.
 
@@ -221,7 +252,8 @@ Pros:
 - normal cost scales with unresolved work, not history;
 - premature close produces a durable signal naturally because close does not erase routing;
 - legitimate terminal close can retire routing in the same Issue mutation;
-- legacy cost is paid once, then migration state disappears.
+- legacy cost is paid once, then migration state disappears;
+- optimization is isolated from action correctness/evidence completeness.
 
 Cons:
 - one-time migration must inspect the bounded pre-existing closed routed set during rollout;
@@ -231,6 +263,10 @@ Cons:
 ### Rejected: structural projection of every closed workflow
 
 Still `O(repository-history)` and is the Reviewer finding being corrected.
+
+### Rejected: bounded or filtered mapped-Action comment reconstruction
+
+This would solve a different performance problem by weakening action evidence completeness, reintroducing the known class of missed-comment failures. It is outside this Change and rejected as an implementation interpretation of #155.
 
 ### Rejected: fixed cutover cursor/watermark
 
