@@ -442,6 +442,64 @@ def _valid_lifecycle_complete_comment(
     return all(fields.get(name) == [value] for name, value in expected.items())
 
 
+def _terminal_research_result_from_comment(
+    payload: Mapping[str, object],
+    *,
+    issue_number: int,
+    repository_owner: str,
+) -> str | None:
+    body = payload.get("body")
+    user = payload.get("user")
+    author_association = payload.get("author_association")
+    if not isinstance(body, str) or not isinstance(user, Mapping):
+        return None
+    actor = user.get("login")
+    trusted_owner = actor == repository_owner and author_association == "OWNER"
+    trusted_runtime = actor == "github-actions[bot]"
+    if not (trusted_owner or trusted_runtime):
+        return None
+    if "## ACTION_RESULT" not in body.splitlines():
+        return None
+
+    fields = _message_fields(body)
+    expected = {
+        "Workflow": f"#{issue_number}",
+        "Change": "unset",
+        "Action": "Lead / explore-change",
+    }
+    if not all(fields.get(name) == [value] for name, value in expected.items()):
+        return None
+    results = fields.get("Result")
+    if results is None or len(results) != 1 or results[0] not in {"NO_CHANGE_REQUIRED", "NO_GO"}:
+        return None
+    return results[0]
+
+
+def _terminal_research_evidence_from_comments(
+    comments: Iterable[Mapping[str, object]],
+    *,
+    issue_number: int,
+    repository_owner: str,
+) -> TerminalEvidence:
+    results = tuple(
+        result
+        for comment in comments
+        if (
+            result := _terminal_research_result_from_comment(
+                comment,
+                issue_number=issue_number,
+                repository_owner=repository_owner,
+            )
+        )
+        is not None
+    )
+    if not results:
+        return "not-terminal"
+    if len(set(results)) == 1:
+        return "terminal-history"
+    return "indeterminate"
+
+
 def _terminal_identity(
     payload: Mapping[str, object],
 ) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
@@ -1101,8 +1159,30 @@ def _acquire_detailed_exceptional_preflight(
     observations: list[GitHubIssueObservation] = list(open_observations)
 
     for original in _normalized_closed_observations(closed_pages):
-        if original.state != "closed" or not original.routing_debt or original.change == "unset":
+        if original.state != "closed" or not original.routing_debt:
             observations.append(_invalid_current_debt(original))
+            continue
+
+        if original.change == "unset":
+            comment_pages = _github_issue_comment_pages(repository, token, original.issue_number)
+            comments = tuple(comment for page in comment_pages for comment in page)
+            evidence = _terminal_research_evidence_from_comments(
+                comments,
+                issue_number=original.issue_number,
+                repository_owner=repository_owner,
+            )
+            current_raw = _github_issue(repository, token, original.issue_number)
+            current = _normalize_closed_issue(current_raw)
+            if (
+                current is None
+                or not current.authoritative
+                or current.state != "closed"
+                or current.change != "unset"
+                or not current.routing_debt
+            ):
+                observations.append(_invalid_current_debt(current or original))
+                continue
+            observations.append(_apply_terminal_evidence(current, evidence))
             continue
 
         if original.legacy_terminal_candidate:
