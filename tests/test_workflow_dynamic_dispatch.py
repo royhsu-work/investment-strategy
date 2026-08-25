@@ -375,9 +375,15 @@ def test_dispatch_requires_complete_executable_evidence_before_queue_selection()
     text = _normalized(AGENTS)
     for required in (
         "observable enumeration/provenance completeness",
-        "A partial enumeration is never proof of zero formal WIP or zero current closed-routing debt",
+        (
+            "A partial enumeration is never proof of zero formal WIP or zero current "
+            "closed-routing debt"
+        ),
         "multiple open formal workflows produces `FAIL_CLOSED`",
-        "Any current closed-routing debt enters bounded candidate-specific exceptional classification before ordinary work",
+        (
+            "Any current closed-routing debt enters bounded candidate-specific exceptional "
+            "classification before ordinary work"
+        ),
         "Current routing debt is handled before intake",
     ):
         assert required in text
