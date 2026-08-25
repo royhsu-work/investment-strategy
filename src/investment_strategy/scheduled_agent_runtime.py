@@ -1,9 +1,9 @@
 """Machine-gated Scheduled Agent runtime acquisition and worker authorization.
 
-Normal dispatch reconstructs complete current open GitHub Issue state first.
-Closed workflow state is screened structurally and detailed recovery evidence is
-acquired only when that screen cannot clear a sole formal workflow or when
-formal open cardinality is zero.
+Normal dispatch reconstructs complete current open GitHub Issue state plus the
+bounded set of current closed Issues that still carry workflow routing debt.
+Completed closed history whose routing has been retired is not normal dispatch
+input; detailed recovery evidence is acquired only for current debt candidates.
 """
 
 from __future__ import annotations
@@ -58,6 +58,7 @@ _ACTION_LABELS: dict[str, Action] = {
     "action:implement-change": "implement-change",
     "action:merge-pr": "merge-pr",
 }
+_WORKFLOW_ROUTING_LABELS = tuple((*_AGENT_LABELS, *_ACTION_LABELS))
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
 
 
@@ -709,6 +710,37 @@ def _github_closed_issue_pages(
     return _github_issue_pages_for_state(repository, token, "closed")
 
 
+def _github_closed_routing_issue_pages(
+    repository: str,
+    token: str,
+) -> tuple[tuple[Mapping[str, object], ...], ...]:
+    """Acquire only current closed Issues carrying governed workflow routing debt."""
+
+    by_issue: dict[int, Mapping[str, object]] = {}
+    for label in _WORKFLOW_ROUTING_LABELS:
+        page_number = 1
+        while True:
+            url = (
+                f"https://api.github.com/repos/{repository}/issues"
+                f"?state=closed&labels={label}&per_page=100&page={page_number}"
+            )
+            page_items = _github_get_list_page(url, token)
+            for item in page_items:
+                if "pull_request" in item:
+                    continue
+                number = item.get("number")
+                if not isinstance(number, int):
+                    raise RuntimeError("GitHub closed-routing query returned an invalid Issue")
+                by_issue[number] = item
+            if len(page_items) < 100:
+                break
+            page_number += 1
+
+    if not by_issue:
+        return ()
+    return (tuple(by_issue[number] for number in sorted(by_issue)),)
+
+
 def _github_issue_pages(
     repository: str,
     token: str,
@@ -1110,7 +1142,7 @@ def acquire_current_github_preflight(
     *,
     repository_root: Path | None = None,
 ) -> DispatchPreflight:
-    """Acquire the final preflight using open-first production orchestration."""
+    """Acquire dispatch from complete current open state plus current routing debt."""
 
     root = Path.cwd() if repository_root is None else repository_root
     open_pages = _github_open_issue_pages(repository, token)
@@ -1123,7 +1155,7 @@ def acquire_current_github_preflight(
     )
     open_decision = classify_open_dispatch(open_preflight)
 
-    # Multiple/invalid/incomplete OPEN state fails before any detailed history is loaded.
+    # Multiple/invalid/incomplete OPEN state fails before any closed debt is loaded.
     if open_decision.disposition == "FAIL_CLOSED":
         return open_preflight
 
@@ -1142,15 +1174,8 @@ def acquire_current_github_preflight(
         )
         open_decision = classify_open_dispatch(open_preflight)
 
-    closed_pages = _github_closed_issue_pages(repository, token)
-    structural_preflight = _acquire_structural_closed_preflight(
-        repository,
-        token,
-        closed_pages,
-    )
-    structural = classify_structural_conflicts(structural_preflight)
-
-    if open_decision.formal_issue_ids and structural is StructuralConflictDisposition.CLEAR:
+    closed_pages = _github_closed_routing_issue_pages(repository, token)
+    if not _normalized_closed_observations(closed_pages):
         return open_preflight
 
     return _acquire_detailed_exceptional_preflight(
