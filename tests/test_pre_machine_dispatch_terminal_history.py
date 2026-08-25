@@ -94,7 +94,7 @@ def test_pre_dispatch_terminal_journal_routes_candidate_local_cleanup(
     assert decision.selected_debt_disposition == "terminal-cleanup"
 
 
-def test_edited_pre_dispatch_completion_remains_indeterminate_debt(
+def test_compatible_terminal_journal_replay_still_routes_cleanup(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -103,11 +103,14 @@ def test_edited_pre_dispatch_completion_remains_indeterminate_debt(
         _terminal_124_comment(updated_at="2026-08-24T12:07:00Z"),
     )
 
-    preflight = runtime.acquire_current_github_preflight(
-        "royhsu-work/investment-strategy",
-        "token",
-        repository_root=tmp_path,
+    decision = workflow_dispatch.classify_dispatch(
+        runtime.acquire_current_github_preflight(
+            "royhsu-work/investment-strategy",
+            "token",
+            repository_root=tmp_path,
+        )
     )
 
-    assert workflow_dispatch.classify_dispatch(preflight).disposition == "FAIL_CLOSED"
-    assert any(item.state == "closed" for item in preflight.issues)
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.selected_issue_id == 124
+    assert decision.selected_debt_disposition == "terminal-cleanup"
