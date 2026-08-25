@@ -2,24 +2,27 @@
 
 ## Why
 
-#155 reproduced a self-hosting failure in the deployed workflow-dynamic dispatcher after #140 completed. The failure was triggered by historical Issue #91, but #91 is already terminal history: its imperfect duplicate completion journal should not participate in authorization for unrelated current work.
+#155 reproduced a self-hosting failure in the deployed workflow-dynamic dispatcher after #140 completed. The failure was triggered by historical Issue #91, but #91 is already terminal history: its compatible duplicate completion journal should not participate in authorization for unrelated current work.
 
-Reviewer finding `issuecomment-5406357205` identified the remaining defect in the first proposal revision: replacing full closed-history forensics with a structural projection still makes every normal dispatch depend on a repository-history-sized closed set. That cost grows with accumulated history and does not satisfy #155's explicit requirement to avoid `O(repository-history)` normal-path reconstruction.
+Reviewer finding `issuecomment-5406357205` identified the first remaining defect: replacing full closed-history forensics with a structural projection still made every normal dispatch depend on a repository-history-sized closed set. Reviewer finding `issuecomment-5406912928` accepted that responsibility-boundary correction but identified two mutation-contract gaps in the revised target:
 
-The safety boundary is therefore narrower: normal dispatch must authorize from **current unresolved obligations**, not from repeated re-adjudication of completed history. `FAIL_CLOSED` remains strict for incomplete or contradictory current evidence and genuine unresolved recovery state.
+1. terminal close + routing retirement was specified as one full-label replacement even though `fresh-read routing → update labels` is not CAS and could erase an unrelated concurrent label; and
+2. the one-time legacy normalization mutated multiple historical Issues without a governed owner/activation boundary.
+
+The safety boundary is therefore narrower and explicit: normal dispatch authorizes from **current unresolved obligations**, while terminal routing retirement is an idempotent narrow effect that never treats a stale full-label snapshot as CAS. Pre-existing routed terminal history is resolved through the existing closed-routing `Lead / resolve-question` owner one exact candidate at a time rather than through an unowned bulk migration action.
 
 ## What Changes
 
-- Define normal workflow-dynamic selection from a complete provenance-qualified snapshot of current open Issues plus a bounded current unresolved-recovery set; completed closed workflow history is not normal authorization input.
+- Define normal workflow-dynamic selection from a complete provenance-qualified snapshot of current open Issues plus a bounded current closed-routing-debt set; completed closed workflow history is not normal authorization input.
 - Limit this read-reduction strictly to dispatch/recovery selection before an exact Issue/Role/Action is authorized. After `AUTHORIZE`, the mapped Action keeps its existing complete evidence-reconstruction and evidence-consumption contract; this Change does not filter, truncate, replace, or otherwise narrow action-required Issue comments, PR/review evidence, CI evidence, OpenSpec artifacts, Human evidence, or other durable inputs.
-- Reuse existing routing state instead of adding a recovery registry: a coordination Issue that is closed while it still retains an `agent:* + action:*` routing tuple is an explicit unresolved closed-routing candidate.
-- Make repository-owned terminal close effects retire the workflow routing tuple in the same logical Issue mutation that closes the Issue, while preserving unrelated labels. Closed completed Issues therefore become closed + unrouted terminal history.
-- Include one bounded rollout migration/reconciliation for pre-existing closed routed workflow Issues. Entries proven terminal/retired have workflow routing removed; genuine unfinished obligations remain explicit recovery work; ambiguous/incomplete entries fail closed. Until that normalization succeeds, retained legacy routing remains visible as unresolved debt and normal dispatch may remain fail closed rather than silently bypassing it.
-- After normalization, normal unresolved-recovery acquisition queries only current closed Issues that still retain workflow routing labels. No activation flag, cutover cursor, timestamp watermark, cache, or recurring historical scan remains.
-- If the current unresolved-recovery set is empty, normal dispatch uses only current open formal/pre-activation state. If one closed-routing candidate exists, detailed recovery evaluates only that candidate. Multiple candidates, incomplete enumeration/provenance, or genuinely contradictory recovery evidence remain `FAIL_CLOSED`.
-- Keep semantic duplicate-terminal classification for migration and exceptional recovery: compatible repeated `LIFECYCLE_COMPLETE` journals are idempotent replay; conflicting immutable terminal facts remain indeterminate. This classifier no longer justifies keeping terminal history on the normal hot path.
+- Reuse existing routing state instead of adding a recovery registry: any closed coordination Issue retaining any workflow `agent:*` or `action:*` routing-label residue is current closed-routing debt until bounded resolution removes that residue or legally reopens the Issue.
+- Make repository-owned terminal close + routing retirement one **logical idempotent effect**, not one full-label replacement. The effect closes state without replacing labels, fresh-reads, removes only exact workflow routing labels through narrow label removals with fresh preconditions/postconditions, and never writes a stale complete label set. Unrelated labels therefore survive concurrent additions/changes because the effect never replaces them.
+- Keep partial/interrupted routing retirement observable: unresolved-close acquisition covers the complete fixed repository-governed set of both `agent:*` and `action:*` labels, deduplicates Issue identities, and treats any residual workflow routing label as debt until a fresh postcondition proves the Issue is closed and fully unrouted.
+- Remove the standalone multi-Issue legacy migration/reconciliation effect. Pre-existing closed routed history is drained through the existing `Lead / resolve-question` recovery owner. Executable current-debt classification may select exactly one closed candidate for bounded resolution; terminal/retired candidates may request retirement of only their own routing residue, unfinished candidates retain the existing bounded reopen semantics, and ambiguous/incomplete evidence fails closed.
+- When multiple current closed-routing candidates exist, executable classification may identify terminal/retired candidates from the complete current debt set and select at most one such candidate at a time for deterministic retirement. It MUST NOT reopen an unfinished candidate while another unresolved candidate or an open formal workflow exists. Genuine multiple unfinished/ambiguous debt remains fail closed.
+- Keep semantic duplicate-terminal classification on the exceptional debt path: compatible repeated `LIFECYCLE_COMPLETE` journals are idempotent replay; conflicting immutable terminal facts remain indeterminate. This classifier no longer justifies keeping completed terminal history on the normal hot path.
 - Include a bounded machine-owned diagnostic reason for `NO_WORK` and `FAIL_CLOSED` decisions without adding an Issue/Role/Action tuple or model override authority.
-- Add production regressions proving both sides of the boundary: an already completed #91-like workflow does not participate in ordinary dispatch after normalization, while a selected mapped Action still receives every durable evidence input required by its existing governance and Skill even when that evidence is older Issue-comment history.
+- Add production regressions proving both sides of the boundary: an already completed #91-like workflow no longer participates in ordinary dispatch after its routing debt is retired, while a selected mapped Action still receives every durable evidence input required by its existing governance and Skill even when that evidence is older Issue-comment history.
 
 ## Scope
 
@@ -27,23 +30,37 @@ Affected capability:
 - `scheduled-agent-workflow`
 
 In scope:
-- `src/investment_strategy/scheduled_agent_runtime.py` current-state acquisition/orchestration needed to replace repository-history projection with bounded unresolved closed-routing acquisition;
-- `src/investment_strategy/workflow_dispatch.py` current unresolved-recovery classification and exceptional terminal-evidence semantics;
+- `src/investment_strategy/scheduled_agent_runtime.py` current-state acquisition/orchestration needed to replace repository-history projection with bounded current routing-debt acquisition across all governed `agent:*` and `action:*` labels;
+- `src/investment_strategy/workflow_dispatch.py` current routing-debt classification, candidate selection, exceptional terminal-evidence semantics, and the bounded `Lead / resolve-question` closed-candidate path;
 - `src/investment_strategy/issue_comment_bridge.py` bounded non-authorization diagnostic presentation for `NO_WORK` / `FAIL_CLOSED`;
-- repository-owned terminal Issue close effect semantics needed to retire routing labels while preserving unrelated labels;
-- one bounded exact-evidence migration/reconciliation of pre-existing closed routed workflow Issues during rollout, with fail-closed transition until normalized;
+- repository-owned terminal Issue close/routing-retirement effect semantics needed to use narrow idempotent mutations and preserve unrelated labels under concurrency;
+- `agents/AGENTS.md` minimum shared-governance alignment for current routing debt, partial retirement observability, and candidate-bound resolution;
+- `agents/roles/lead.md` clarification that the existing `Lead / resolve-question` recovery owner also owns candidate-bound terminal routing retirement for an executable-classified closed candidate;
+- `agents/skills/openspec-change/SKILL.md` minimum action-local procedure for that candidate-bound closed-routing resolution path;
 - regression protection that confines dispatch read-reduction to pre-action selection and preserves existing mapped-Action evidence reconstruction/consumption semantics after `AUTHORIZE`;
-- the canonical `Actionable workflow routing is one logical role/action tuple` and `Active-workflow cardinality and Issue-state coherence precede queue selection` requirements, plus directly related no-API decision behavior;
-- minimum shared-governance wording required to remove normal closed-history projection while preserving WIP=1, premature-close recovery, fail-closed boundaries, and downstream action evidence completeness.
+- the canonical `Actionable workflow routing is one logical role/action tuple` and `Active-workflow cardinality and Issue-state coherence precede queue selection` requirements, plus directly related no-API decision behavior.
 
 Out of scope:
 - weakening complete current open-Issue enumeration, provenance qualification, WIP=1, deterministic pre-activation ordering, exact selected action identity, stale-state rejection, or effect-time reauthorization;
 - optimizing, bounding, filtering, truncating, indexing away, or otherwise changing the existing action-specific durable evidence reconstruction/consumption contract after a mapped Action is selected;
 - automatically resolving ambiguous or genuinely contradictory recovery state;
-- a generic recovery registry, new workflow lifecycle status, activation flag, lock, lease, heartbeat, retry counter, cursor/watermark, or cache-based authorization;
+- a bulk multi-Issue migration action, generic recovery registry, new workflow lifecycle status, activation flag, lock, lease, heartbeat, retry counter, cursor/watermark, or cache-based authorization;
+- treating `fresh-read + full label replacement` as a mutex/CAS primitive;
 - lightweight Python/control-plane packaging or removal of `uv run` from bridge/runtime workflows;
 - the separate `scheduled-agent-runtime.yml` `PYTHONPATH` execution defect unless implementation proves it is inseparable from this Change's authorization semantics;
 - the broader executable-governance inventory tracked by #138.
+
+## Skill maintenance traceability
+
+### Modified — `agents/skills/openspec-change/SKILL.md`
+
+- Approved source/change: #155 / `fix-machine-dispatch-recovery-liveness`, resolving Reviewer finding `issuecomment-5406912928` F3.
+- Responsibility before: `Lead / resolve-question` owns specification-question resolution and participates in the existing bounded premature-close recovery path, but the Skill has no explicit candidate-bound terminal routing-retirement procedure.
+- Responsibility after: preserve all existing specification-resolution behavior and add only the bounded closed-routing branch needed by the existing recovery owner: consume exact executable candidate classification; for terminal/retired debt request narrow retirement of that same closed Issue's routing residue; for qualifying unfinished debt use the existing bounded reopen semantics; for ambiguous/incomplete/competing debt request no cleanup/reopen mutation.
+- Rationale: gives legacy/current closed-routing cleanup an existing governed owner and exact action-local boundary instead of inventing an unowned bulk migration action.
+- Replacement/supersession: none; this is a narrow extension of the existing `resolve-question` recovery responsibility.
+
+No repository Skill is added or removed by this Change.
 
 ## Durable source decisions and evidence
 
@@ -52,6 +69,7 @@ Out of scope:
 - Decision-complete interactive Explore evidence: `issuecomment-5405497269`
 - Exceptional self-hosting bootstrap record: `issuecomment-5405643748`
 - Reviewer finding requiring current-unresolved-obligation semantics: `issuecomment-5406357205`
+- Reviewer findings requiring concurrency-safe retirement and governed normalization ownership: `issuecomment-5406912928`
 - Production reproduction source: closed workflow #91 with canonical completion comments `5333895069` and `5335505763`; #91 is terminal history and is evidence of the responsibility-boundary defect, not a current recovery obligation.
 - Baseline default-branch revision for this correction: `00a0e5a2c8068077faf5d18980e4a6f84f72f74e`.
 
