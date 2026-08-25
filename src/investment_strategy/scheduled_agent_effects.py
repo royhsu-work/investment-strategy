@@ -63,6 +63,14 @@ _ROUTING_TOKEN = re.compile(r"`(Lead|Reviewer|Executor) / ([a-z-]+)`")
 _ALLOWED_ISSUE_FIELDS = frozenset({"title", "body", "state"})
 _ALLOWED_PR_FIELDS = frozenset({"title", "body", "state", "base"})
 _ALLOWED_MERGE_METHODS = frozenset({"merge", "squash", "rebase"})
+_TERMINAL_EFFECT_OWNERS = frozenset(
+    {
+        ("lead", "explore-change"),
+        ("lead", "resolve-question"),
+        ("lead", "finalize-archive"),
+    }
+)
+_DEBT_DISPOSITIONS = frozenset({"terminal-cleanup", "unfinished-recovery"})
 
 
 def _authorized_request(preflight: DispatchPreflight) -> WorkerRequest | None:
@@ -74,7 +82,12 @@ def _authorized_request(preflight: DispatchPreflight) -> WorkerRequest | None:
     ):
         return None
     role, action = decision.selected_routing
-    return WorkerRequest(decision.selected_issue_id, role, action)
+    return WorkerRequest(
+        decision.selected_issue_id,
+        role,
+        action,
+        debt_disposition=decision.selected_debt_disposition,
+    )
 
 
 def apply_effect_batch(
@@ -237,6 +250,24 @@ def _github_mutation_structurally_valid(
     return False
 
 
+def _terminal_retirement_structurally_valid(
+    source: WorkerRequest,
+    payload: Mapping[str, object],
+) -> bool:
+    if set(payload) != {"issue_number", "expected_change"}:
+        return False
+    if payload.get("issue_number") != source.issue_number or not _is_nonempty_string(
+        payload.get("expected_change")
+    ):
+        return False
+    identity = (source.role, source.action)
+    if identity not in _TERMINAL_EFFECT_OWNERS:
+        return False
+    if identity == ("lead", "resolve-question"):
+        return source.debt_disposition == "terminal-cleanup"
+    return source.debt_disposition is None
+
+
 def supported_effect_guard(source: WorkerRequest, effect: StagedEffect) -> bool:
     """Validate the bounded structural effect surface used by mapped Skills."""
 
@@ -259,6 +290,9 @@ def supported_effect_guard(source: WorkerRequest, effect: StagedEffect) -> bool:
             and bool(cast(str, payload["role"]).strip())
             and bool(cast(str, payload["action"]).strip())
         )
+
+    if effect.kind == "terminal-retirement":
+        return _terminal_retirement_structurally_valid(source, payload)
 
     if effect.kind == GITHUB_MUTATION_KIND:
         return _github_mutation_structurally_valid(source, payload)
@@ -383,6 +417,20 @@ def _ref_mutation_path(ref: str) -> str:
     return f"git/refs/{quote(ref.removeprefix('refs/'), safe='/')}"
 
 
+def _workflow_label_names(payload: Mapping[str, object]) -> tuple[str, ...] | None:
+    labels = payload.get("labels")
+    if not isinstance(labels, list):
+        return None
+    names: list[str] = []
+    for item in labels:
+        if not isinstance(item, Mapping) or not isinstance(item.get("name"), str):
+            return None
+        name = cast(str, item["name"])
+        if name.startswith(("agent:", "action:")):
+            names.append(name)
+    return tuple(sorted(names))
+
+
 class GitHubEffectAdapter:
     """Production adapter for bounded durable effects requested by mapped workers."""
 
@@ -395,6 +443,7 @@ class GitHubEffectAdapter:
         self._created_issue_numbers: dict[StagedEffect, int] = {}
         self._created_pr_numbers: dict[StagedEffect, int] = {}
         self._content_shas: dict[StagedEffect, str] = {}
+        self._terminal_retirements: set[StagedEffect] = set()
 
     def _current_issue(self) -> Mapping[str, object] | None:
         payload = _github_json(
@@ -409,12 +458,20 @@ class GitHubEffectAdapter:
         if current is None:
             return False
         observation = normalize_github_issue(current)
-        return (
-            observation is not None
-            and observation.authoritative
-            and observation.issue_number == self.source.issue_number
-            and observation.routing == _routing_identity(self.source)
-        )
+        if (
+            observation is None
+            or not observation.authoritative
+            or observation.issue_number != self.source.issue_number
+        ):
+            return False
+        if self.source.debt_disposition is not None:
+            return (
+                self.source.debt_disposition in _DEBT_DISPOSITIONS
+                and _routing_identity(self.source) == ("lead", "resolve-question")
+                and observation.state == "closed"
+                and observation.routing_debt
+            )
+        return observation.routing == _routing_identity(self.source)
 
     def _guard_github_mutation(self, payload: Mapping[str, object]) -> bool:
         operation = cast(str, payload["operation"])
@@ -490,13 +547,122 @@ class GitHubEffectAdapter:
             )
         return False
 
+    def _terminal_target_valid(
+        self,
+        current: Mapping[str, object] | None,
+        *,
+        expected_change: str,
+        require_closed: bool,
+        require_debt: bool = False,
+    ) -> bool:
+        if current is None:
+            return False
+        observation = normalize_github_issue(current)
+        if (
+            observation is None
+            or not observation.authoritative
+            or observation.issue_number != self.source.issue_number
+            or observation.change != expected_change
+        ):
+            return False
+        if require_closed and observation.state != "closed":
+            return False
+        if self.source.debt_disposition == "terminal-cleanup":
+            if observation.state != "closed":
+                return False
+            return observation.routing_debt if require_debt else True
+        if self.source.debt_disposition is not None:
+            return False
+        if observation.state == "open":
+            return observation.routing == _routing_identity(self.source)
+        return observation.state == "closed"
+
     def guard(self, effect: StagedEffect) -> bool:
         if not supported_effect_guard(self.source, effect) or not self._source_still_current():
             return False
+        payload = _effect_payload(effect)
+        if payload is None:
+            return False
+        if effect.kind == "terminal-retirement":
+            return self._terminal_target_valid(
+                self._current_issue(),
+                expected_change=cast(str, payload["expected_change"]),
+                require_closed=self.source.debt_disposition == "terminal-cleanup",
+                require_debt=self.source.debt_disposition == "terminal-cleanup",
+            )
         if effect.kind != GITHUB_MUTATION_KIND:
             return True
-        payload = _effect_payload(effect)
-        return payload is not None and self._guard_github_mutation(payload)
+        return self._guard_github_mutation(payload)
+
+    def _apply_terminal_retirement(
+        self,
+        effect: StagedEffect,
+        payload: Mapping[str, object],
+    ) -> None:
+        expected_change = cast(str, payload["expected_change"])
+        current = self._current_issue()
+        if not self._terminal_target_valid(
+            current,
+            expected_change=expected_change,
+            require_closed=self.source.debt_disposition == "terminal-cleanup",
+            require_debt=self.source.debt_disposition == "terminal-cleanup",
+        ):
+            raise RuntimeError("terminal retirement target is stale")
+
+        if current is not None and current.get("state") == "open":
+            _github_json(
+                self.repository,
+                self.token,
+                f"issues/{self.source.issue_number}",
+                method="PATCH",
+                payload={"state": "closed"},
+            )
+            current = self._current_issue()
+            if not self._terminal_target_valid(
+                current,
+                expected_change=expected_change,
+                require_closed=True,
+            ):
+                raise RuntimeError("terminal close postcondition not observed")
+
+        while True:
+            current = self._current_issue()
+            if not self._terminal_target_valid(
+                current,
+                expected_change=expected_change,
+                require_closed=True,
+            ):
+                raise RuntimeError("terminal retirement target changed")
+            if current is None:
+                raise RuntimeError("terminal retirement target disappeared")
+            workflow_labels = _workflow_label_names(current)
+            if workflow_labels is None:
+                raise RuntimeError("terminal retirement labels are malformed")
+            if not workflow_labels:
+                break
+            label = workflow_labels[0]
+            _github_json(
+                self.repository,
+                self.token,
+                f"issues/{self.source.issue_number}/labels/{quote(label, safe='')}",
+                method="DELETE",
+            )
+            observed = self._current_issue()
+            if observed is None:
+                raise RuntimeError("terminal retirement target disappeared after label removal")
+            observed_labels = _workflow_label_names(observed)
+            observed_state = normalize_github_issue(observed)
+            if (
+                observed_labels is None
+                or label in observed_labels
+                or observed_state is None
+                or not observed_state.authoritative
+                or observed_state.state != "closed"
+                or observed_state.change != expected_change
+            ):
+                raise RuntimeError("terminal routing-label removal postcondition not observed")
+
+        self._terminal_retirements.add(effect)
 
     def _apply_github_mutation(self, effect: StagedEffect, payload: Mapping[str, object]) -> None:
         operation = cast(str, payload["operation"])
@@ -709,6 +875,10 @@ class GitHubEffectAdapter:
             self._routing_targets[effect] = (target_role, target_action)
             return
 
+        if effect.kind == "terminal-retirement":
+            self._apply_terminal_retirement(effect, payload)
+            return
+
         if effect.kind == GITHUB_MUTATION_KIND:
             self._apply_github_mutation(effect, payload)
             return
@@ -879,6 +1049,23 @@ class GitHubEffectAdapter:
                 and observation.routing == target
             )
 
+        if effect.kind == "terminal-retirement":
+            if effect not in self._terminal_retirements:
+                return False
+            payload = _effect_payload(effect)
+            current = self._current_issue()
+            if payload is None or current is None:
+                return False
+            observation = normalize_github_issue(current)
+            workflow_labels = _workflow_label_names(current)
+            return (
+                observation is not None
+                and observation.authoritative
+                and observation.state == "closed"
+                and observation.change == payload.get("expected_change")
+                and workflow_labels == ()
+            )
+
         if effect.kind == GITHUB_MUTATION_KIND:
             payload = _effect_payload(effect)
             return payload is not None and self._observe_github_mutation(effect, payload)
@@ -917,13 +1104,22 @@ def _source_from_environment() -> WorkerRequest:
     issue = os.environ.get("AUTHORIZED_ISSUE")
     role = os.environ.get("AUTHORIZED_ROLE")
     action = os.environ.get("AUTHORIZED_ACTION")
+    raw_disposition = os.environ.get("AUTHORIZED_DEBT_DISPOSITION", "")
+    disposition = raw_disposition or None
     if not issue or not role or not action:
         raise RuntimeError("machine-authorized Issue/role/action environment is required")
+    if disposition is not None and disposition not in _DEBT_DISPOSITIONS:
+        raise RuntimeError("AUTHORIZED_DEBT_DISPOSITION is invalid")
     try:
         issue_number = int(issue)
     except ValueError as exc:
         raise RuntimeError("AUTHORIZED_ISSUE must be an integer") from exc
-    return WorkerRequest(issue_number=issue_number, role=role, action=action)
+    return WorkerRequest(
+        issue_number=issue_number,
+        role=role,
+        action=action,
+        debt_disposition=disposition,
+    )
 
 
 def _write_github_outputs(batch: EffectBatch, result: ApplyResult) -> None:
@@ -943,6 +1139,8 @@ def _write_github_outputs(batch: EffectBatch, result: ApplyResult) -> None:
                 f"continuation_action={result.continuation.action}",
             )
         )
+        if result.continuation.debt_disposition is not None:
+            lines.append(f"continuation_debt_disposition={result.continuation.debt_disposition}")
     with Path(output_path).open("a", encoding="utf-8") as output:
         output.write("\n".join(lines) + "\n")
 
@@ -980,6 +1178,7 @@ def main() -> int:
                         "issue_number": result.continuation.issue_number,
                         "role": result.continuation.role,
                         "action": result.continuation.action,
+                        "debt_disposition": result.continuation.debt_disposition,
                     }
                 ),
             },

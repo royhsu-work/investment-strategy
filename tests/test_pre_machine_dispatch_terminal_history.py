@@ -1,4 +1,4 @@
-"""Production-shaped compatibility regressions for pre-machine-dispatch terminal history."""
+"""Production-shaped regressions for pre-machine-dispatch closed routing debt."""
 
 from pathlib import Path
 
@@ -51,7 +51,10 @@ def _terminal_124_comment(*, updated_at: str = "2026-08-21T09:34:08Z") -> dict[s
     }
 
 
-def _install_pages(monkeypatch: pytest.MonkeyPatch, comment: dict[str, object]) -> None:
+def _install_current_debt(
+    monkeypatch: pytest.MonkeyPatch,
+    comment: dict[str, object],
+) -> None:
     monkeypatch.setattr(
         runtime,
         "_github_open_issue_pages",
@@ -59,67 +62,59 @@ def _install_pages(monkeypatch: pytest.MonkeyPatch, comment: dict[str, object]) 
     )
     monkeypatch.setattr(
         runtime,
-        "_github_closed_issue_pages",
+        "_github_closed_routing_issue_pages",
         lambda repository, token: ((_terminal_124_payload(),),),
-    )
-
-    def structural_page(url: str, token: str) -> tuple[dict[str, object], ...]:
-        del token
-        assert url.endswith("/issues/124/comments?per_page=100&page=1")
-        return (comment,)
-
-    monkeypatch.setattr(runtime, "_github_get_list_page", structural_page)
-
-
-def test_pre_dispatch_124_terminal_history_clears_without_archived_change_lookup(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _install_pages(monkeypatch, _terminal_124_comment())
-
-    def forbidden(*args: object, **kwargs: object) -> object:
-        raise AssertionError(
-            "proven pre-dispatch terminal history must not inspect archived Change"
-        )
-
-    monkeypatch.setattr(runtime, "_legacy_terminal_evidence_from_checkout", forbidden)
-    monkeypatch.setattr(runtime, "_github_issue_comment_pages", forbidden)
-    monkeypatch.setattr(runtime, "_github_issue", forbidden)
-
-    preflight = runtime.acquire_current_github_preflight(
-        "royhsu-work/investment-strategy",
-        "token",
-        repository_root=tmp_path,
-    )
-    decision = workflow_dispatch.classify_dispatch(preflight)
-
-    assert decision.disposition == "AUTHORIZE"
-    assert decision.selected_issue_id == 140
-    assert decision.selected_routing == ("lead", "finalize-change")
-    assert all(item.state == "open" for item in preflight.issues)
-
-
-def test_edited_pre_dispatch_completion_does_not_gain_historical_clearance(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _install_pages(monkeypatch, _terminal_124_comment(updated_at="2026-08-24T12:07:00Z"))
-    monkeypatch.setattr(
-        runtime,
-        "_legacy_terminal_evidence_from_checkout",
-        lambda change, *, repository_root: "indeterminate",
     )
     monkeypatch.setattr(
         runtime,
         "_github_issue_comment_pages",
-        lambda repository, token, issue_number: ((),),
+        lambda repository, token, issue_number: ((comment,),),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_github_issue",
+        lambda repository, token, issue_number: _terminal_124_payload(),
     )
 
-    preflight = runtime.acquire_current_github_preflight(
-        "royhsu-work/investment-strategy",
-        "token",
-        repository_root=tmp_path,
+
+def test_pre_dispatch_terminal_journal_routes_candidate_local_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _install_current_debt(monkeypatch, _terminal_124_comment())
+
+    decision = workflow_dispatch.classify_dispatch(
+        runtime.acquire_current_github_preflight(
+            "royhsu-work/investment-strategy",
+            "token",
+            repository_root=tmp_path,
+        )
     )
 
-    assert workflow_dispatch.classify_dispatch(preflight).disposition == "FAIL_CLOSED"
-    assert any(item.state == "closed" for item in preflight.issues)
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.formal_issue_ids == (140,)
+    assert decision.selected_issue_id == 124
+    assert decision.selected_routing == ("lead", "resolve-question")
+    assert decision.selected_debt_disposition == "terminal-cleanup"
+
+
+def test_compatible_terminal_journal_replay_still_routes_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _install_current_debt(
+        monkeypatch,
+        _terminal_124_comment(updated_at="2026-08-24T12:07:00Z"),
+    )
+
+    decision = workflow_dispatch.classify_dispatch(
+        runtime.acquire_current_github_preflight(
+            "royhsu-work/investment-strategy",
+            "token",
+            repository_root=tmp_path,
+        )
+    )
+
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.selected_issue_id == 124
+    assert decision.selected_debt_disposition == "terminal-cleanup"

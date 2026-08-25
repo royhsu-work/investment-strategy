@@ -152,7 +152,7 @@ def test_two_formal_workflows_fail_closed_without_winner_selection() -> None:
     assert decision.selected_issue_id is None
 
 
-def test_closed_terminal_history_is_excluded_from_formal_wip() -> None:
+def test_closed_terminal_routing_debt_is_selected_for_cleanup_before_open_formal() -> None:
     decision = classify_dispatch(
         snapshot(
             issue(
@@ -170,7 +170,9 @@ def test_closed_terminal_history_is_excluded_from_formal_wip() -> None:
         )
     )
     assert decision.formal_issue_ids == (133,)
-    assert decision.selected_issue_id == 133
+    assert decision.selected_issue_id == 90
+    assert decision.selected_routing == ("lead", "resolve-question")
+    assert decision.selected_debt_disposition == "terminal-cleanup"
 
 
 def test_closed_finalize_archive_without_completion_fails_closed() -> None:

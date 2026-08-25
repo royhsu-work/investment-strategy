@@ -62,8 +62,8 @@ def test_explore_and_direct_propose_share_executable_preactivation_contract() ->
         "coherent routed Explore",
         "executable-approved direct-Propose",
         "earliest GitHub `created_at` then lower Issue number ordering",
-        "A formal workflow always wins over intake",
-        "detailed exceptional recovery permits intake",
+        "Current routing debt is handled before intake",
+        "A formal workflow otherwise wins over intake",
     ):
         assert required in shared
 

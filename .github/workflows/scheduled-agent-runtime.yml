@@ -22,6 +22,7 @@ jobs:
       issue_number: ${{ steps.preflight.outputs.issue_number }}
       role: ${{ steps.preflight.outputs.role }}
       action: ${{ steps.preflight.outputs.action }}
+      debt_disposition: ${{ steps.preflight.outputs.debt_disposition }}
     steps:
       - name: Check out authoritative default branch
         uses: actions/checkout@v4
@@ -76,6 +77,7 @@ jobs:
           AUTHORIZED_ISSUE: ${{ needs.dispatch.outputs.issue_number }}
           AUTHORIZED_ROLE: ${{ needs.dispatch.outputs.role }}
           AUTHORIZED_ACTION: ${{ needs.dispatch.outputs.action }}
+          AUTHORIZED_DEBT_DISPOSITION: ${{ needs.dispatch.outputs.debt_disposition }}
         run: >-
           uv run python -m investment_strategy.scheduled_agent_worker_runtime
           > scheduled-agent-result.json
@@ -130,6 +132,7 @@ jobs:
           AUTHORIZED_ISSUE: ${{ needs.dispatch.outputs.issue_number }}
           AUTHORIZED_ROLE: ${{ needs.dispatch.outputs.role }}
           AUTHORIZED_ACTION: ${{ needs.dispatch.outputs.action }}
+          AUTHORIZED_DEBT_DISPOSITION: ${{ needs.dispatch.outputs.debt_disposition }}
         run: >-
           uv run python -m investment_strategy.scheduled_agent_merge_acceptance
           .scheduled-agent-result/scheduled-agent-result.json

@@ -1,9 +1,9 @@
 """Executable workflow-dynamic dispatch preconditions.
 
 This module is the stateless production owner for deterministic work selection.
-Normal selection consumes current open-Issue facts only. Closed workflow state
-enters a bounded structural conflict screen and, only when needed, the detailed
-exceptional recovery classifier.
+Normal selection consumes current open-Issue facts plus the complete current set
+of closed Issues that still carry workflow routing debt. Retired closed history
+is outside normal selection; detailed recovery is candidate-bound.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ Action = Literal[
 Routing = tuple[Role, Action]
 RecoveryEvidence = Literal["not-candidate", "qualifying", "indeterminate"]
 TerminalEvidence = Literal["not-terminal", "terminal-history", "indeterminate"]
+DebtDisposition = Literal["terminal-cleanup", "unfinished-recovery"]
 
 
 class ObservationProvenance(StrEnum):
@@ -38,7 +39,7 @@ class ObservationProvenance(StrEnum):
 
 
 class StructuralConflictDisposition(StrEnum):
-    """Bounded closed-workflow conflict screen for sole-formal authorization."""
+    """Compatibility enum for the retired broad closed-history screen."""
 
     CLEAR = "CLEAR"
     POSSIBLE_CONFLICT = "POSSIBLE_CONFLICT"
@@ -58,6 +59,7 @@ class RepositoryIssueSnapshot:
     terminal_evidence: TerminalEvidence = "not-terminal"
     current_state_provenance: ObservationProvenance = ObservationProvenance.QUALIFIED
     preactivation_eligible: bool = False
+    routing_debt: bool = False
 
 
 @dataclass(frozen=True)
@@ -102,6 +104,7 @@ class DispatchDecision:
     selected_routing: Routing | None
     disposition: Literal["AUTHORIZE", "FAIL_CLOSED", "NO_WORK"]
     reason: str
+    selected_debt_disposition: DebtDisposition | None = None
 
 
 def _fail_closed(
@@ -155,6 +158,12 @@ def _eligible_preactivation(issue: RepositoryIssueSnapshot) -> bool:
     return False
 
 
+def _is_routing_debt(issue: RepositoryIssueSnapshot) -> bool:
+    """Treat full legacy tuples as debt while supporting explicit partial residue."""
+
+    return issue.state == "closed" and (issue.routing_debt or issue.routing is not None)
+
+
 def classify_open_dispatch(preflight: DispatchPreflight) -> DispatchDecision:
     """Select normal work from a complete provenance-qualified OPEN Issue snapshot.
 
@@ -197,7 +206,7 @@ def classify_open_dispatch(preflight: DispatchPreflight) -> DispatchDecision:
             selected_issue_id=selected.issue_number,
             selected_routing=selected.routing,
             disposition="AUTHORIZE",
-            reason="sole open formal workflow pending structural conflict clearance",
+            reason="sole open formal workflow with no current routing debt",
         )
 
     queued = tuple(
@@ -217,7 +226,7 @@ def classify_open_dispatch(preflight: DispatchPreflight) -> DispatchDecision:
             selected_issue_id=None,
             selected_routing=None,
             disposition="NO_WORK",
-            reason="no open formal or eligible pre-activation work",
+            reason="no open formal, eligible pre-activation work, or current routing debt",
         )
 
     selected = queued[0]
@@ -235,14 +244,11 @@ def classify_open_dispatch(preflight: DispatchPreflight) -> DispatchDecision:
 
 
 def classify_structural_conflicts(preflight: DispatchPreflight) -> StructuralConflictDisposition:
-    """Screen a complete bounded CLOSED Issue projection without detailed forensics.
+    """Compatibility classifier for callers that still project closed state.
 
-    A closed non-``unset`` workflow-looking Issue with a current legal routing
-    tuple is structurally capable of being an unfinished recovery conflict and
-    therefore cannot be cleared without detailed evidence. Closed state with no
-    current routing is structurally outside the bounded premature-close recovery
-    shape and does not require terminal-comment forensics merely for sole-formal
-    selection.
+    Any current closed workflow-routing residue is a possible conflict. Retired
+    closed history with no routing residue is clear. Production normal dispatch
+    no longer invokes this repository-history screen.
     """
 
     if not preflight.enumeration.complete:
@@ -256,41 +262,28 @@ def classify_structural_conflicts(preflight: DispatchPreflight) -> StructuralCon
     for issue in preflight.issues:
         if issue.state != "closed":
             return StructuralConflictDisposition.INDETERMINATE
-        if issue.change == "unset":
-            continue
-        if issue.routing is not None:
+        if _is_routing_debt(issue):
             return StructuralConflictDisposition.POSSIBLE_CONFLICT
     return StructuralConflictDisposition.CLEAR
 
 
+def _open_formal_issues(preflight: DispatchPreflight) -> tuple[RepositoryIssueSnapshot, ...]:
+    return tuple(
+        issue
+        for issue in preflight.issues
+        if issue.change != "unset" and issue.routing is not None and issue.state == "open"
+    )
+
+
 def _classify_exceptional_dispatch(preflight: DispatchPreflight) -> DispatchDecision:
-    """Classify detailed closed-workflow recovery/consistency evidence."""
+    """Classify current closed-routing debt with candidate-bound recovery evidence."""
 
     invalid = _validate_preflight(preflight)
     if invalid is not None:
         return invalid
 
-    terminal_indeterminate = tuple(
-        issue
-        for issue in preflight.issues
-        if issue.state == "closed"
-        and issue.change != "unset"
-        and issue.terminal_evidence == "indeterminate"
-    )
-    if terminal_indeterminate:
-        return _fail_closed(
-            completeness="COMPLETE",
-            provenance=ObservationProvenance.QUALIFIED,
-            reason="terminal completion evidence is indeterminate",
-        )
-
-    formal_issues = tuple(
-        issue
-        for issue in preflight.issues
-        if issue.change != "unset" and issue.routing is not None and issue.state == "open"
-    )
+    formal_issues = _open_formal_issues(preflight)
     formal_ids = tuple(sorted(issue.issue_number for issue in formal_issues))
-
     if len(formal_issues) > 1:
         return _fail_closed(
             completeness="COMPLETE",
@@ -299,89 +292,87 @@ def _classify_exceptional_dispatch(preflight: DispatchPreflight) -> DispatchDeci
             reason="multiple open formal workflows",
         )
 
-    closed_nonterminal = tuple(
+    debt = tuple(issue for issue in preflight.issues if _is_routing_debt(issue))
+    debt_ids = tuple(sorted(issue.issue_number for issue in debt))
+
+    ambiguous = tuple(
         issue
-        for issue in preflight.issues
-        if issue.state == "closed"
-        and issue.change != "unset"
-        and issue.terminal_evidence != "terminal-history"
+        for issue in debt
+        if issue.terminal_evidence == "indeterminate"
+        or (
+            issue.terminal_evidence != "terminal-history"
+            and issue.premature_close_recovery == "indeterminate"
+        )
     )
-    recovery_indeterminate = tuple(
-        issue
-        for issue in closed_nonterminal
-        if issue.routing is not None and issue.premature_close_recovery == "indeterminate"
-    )
-    if recovery_indeterminate:
+    if ambiguous:
         return _fail_closed(
             completeness="COMPLETE",
             provenance=ObservationProvenance.QUALIFIED,
             formal=formal_ids,
-            reason="premature-close recovery evidence is indeterminate",
+            recovery=debt_ids,
+            reason="closed routing debt evidence is ambiguous or contradictory",
         )
 
-    recovery = tuple(
+    terminal = tuple(issue for issue in debt if issue.terminal_evidence == "terminal-history")
+    unfinished = tuple(
         issue
-        for issue in closed_nonterminal
-        if issue.routing is not None and issue.premature_close_recovery == "qualifying"
+        for issue in debt
+        if issue.terminal_evidence == "not-terminal"
+        and issue.premature_close_recovery == "qualifying"
     )
-    recovery_ids = tuple(sorted(issue.issue_number for issue in recovery))
-
-    unclassified_closed = tuple(
-        issue
-        for issue in closed_nonterminal
-        if issue not in recovery and issue not in recovery_indeterminate
-    )
-    if unclassified_closed:
+    unresolved = tuple(issue for issue in debt if issue not in terminal and issue not in unfinished)
+    if unresolved:
         return _fail_closed(
             completeness="COMPLETE",
             provenance=ObservationProvenance.QUALIFIED,
             formal=formal_ids,
-            recovery=recovery_ids,
-            reason="closed nonterminal workflow state is unresolved",
+            recovery=debt_ids,
+            reason="closed routing debt is not classified as terminal or unfinished",
         )
 
-    if formal_issues and recovery:
-        return _fail_closed(
-            completeness="COMPLETE",
-            provenance=ObservationProvenance.QUALIFIED,
-            formal=formal_ids,
-            recovery=recovery_ids,
-            reason="open formal workflow conflicts with premature-close recovery candidate",
-        )
-
-    if len(formal_issues) == 1:
-        selected = formal_issues[0]
+    if terminal:
+        selected = min(terminal, key=lambda issue: issue.issue_number)
         return DispatchDecision(
             completeness="COMPLETE",
             observation_provenance=ObservationProvenance.QUALIFIED,
             formal_issue_ids=formal_ids,
-            recovery_candidate_ids=(),
-            preactivation_candidate_ids=(),
-            selected_issue_id=selected.issue_number,
-            selected_routing=selected.routing,
-            disposition="AUTHORIZE",
-            reason="sole open formal workflow after detailed conflict clearance",
-        )
-
-    if len(recovery) > 1:
-        return _fail_closed(
-            completeness="COMPLETE",
-            provenance=ObservationProvenance.QUALIFIED,
-            recovery=recovery_ids,
-            reason="multiple premature-close recovery candidates",
-        )
-    if len(recovery) == 1:
-        selected = recovery[0]
-        return DispatchDecision(
-            completeness="COMPLETE",
-            observation_provenance=ObservationProvenance.QUALIFIED,
-            formal_issue_ids=(),
-            recovery_candidate_ids=recovery_ids,
+            recovery_candidate_ids=debt_ids,
             preactivation_candidate_ids=(),
             selected_issue_id=selected.issue_number,
             selected_routing=("lead", "resolve-question"),
             disposition="AUTHORIZE",
-            reason="sole premature-close recovery candidate",
+            reason="deterministic terminal closed-routing-debt cleanup candidate",
+            selected_debt_disposition="terminal-cleanup",
+        )
+
+    if unfinished and formal_issues:
+        return _fail_closed(
+            completeness="COMPLETE",
+            provenance=ObservationProvenance.QUALIFIED,
+            formal=formal_ids,
+            recovery=debt_ids,
+            reason="unfinished closed routing debt conflicts with open formal workflow",
+        )
+    if len(unfinished) > 1:
+        return _fail_closed(
+            completeness="COMPLETE",
+            provenance=ObservationProvenance.QUALIFIED,
+            recovery=debt_ids,
+            reason="multiple unfinished closed-routing recovery candidates",
+        )
+    if len(unfinished) == 1:
+        selected = unfinished[0]
+        return DispatchDecision(
+            completeness="COMPLETE",
+            observation_provenance=ObservationProvenance.QUALIFIED,
+            formal_issue_ids=(),
+            recovery_candidate_ids=debt_ids,
+            preactivation_candidate_ids=(),
+            selected_issue_id=selected.issue_number,
+            selected_routing=("lead", "resolve-question"),
+            disposition="AUTHORIZE",
+            reason="sole unfinished closed-routing recovery candidate",
+            selected_debt_disposition="unfinished-recovery",
         )
 
     open_preflight = DispatchPreflight(
@@ -400,9 +391,8 @@ def _classify_exceptional_dispatch(preflight: DispatchPreflight) -> DispatchDeci
 def classify_dispatch(preflight: DispatchPreflight) -> DispatchDecision:
     """Classify a final runtime preflight.
 
-    Open-only preflights use the normal production selector. A preflight that
-    includes closed Issues represents the already-entered detailed exceptional
-    boundary and preserves bounded terminal/recovery safety semantics.
+    Open-only preflights use normal selection. A preflight containing closed
+    Issues represents the already-entered current routing-debt boundary.
     """
 
     if any(issue.state == "closed" for issue in preflight.issues):

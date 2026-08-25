@@ -251,7 +251,8 @@ def test_dispatch_decision_no_work_and_fail_closed_emit_no_tuple() -> None:
             "DISPATCH_DECISION\n"
             "Request-Comment-ID: 987\n"
             f"Default-Branch-Revision: {REVISION}\n"
-            f"Disposition: {disposition}"
+            f"Disposition: {disposition}\n"
+            "Reason: test decision"
         )
         for forbidden in ("Issue:", "Role:", "Action:"):
             assert forbidden not in rendered

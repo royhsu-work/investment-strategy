@@ -338,23 +338,11 @@ def test_runtime_does_not_invoke_second_propose_while_formal_wip_exists() -> Non
     assert request.issue_number == 100
 
 
-def _retired_issue_payload() -> dict[str, object]:
+def _closed_routed_issue_payload(*, state_reason: str = "completed") -> dict[str, object]:
     return {
         "number": 133,
         "state": "closed",
-        "state_reason": "not_planned",
-        "body": "Change: enforce-runtime-dispatch-preconditions",
-        "labels": [],
-        "created_at": "2026-08-21T17:21:27Z",
-        "closed_at": "2026-08-23T12:14:54Z",
-    }
-
-
-def _closed_routed_issue_payload() -> dict[str, object]:
-    return {
-        "number": 133,
-        "state": "closed",
-        "state_reason": "completed",
+        "state_reason": state_reason,
         "body": "Change: enforce-runtime-dispatch-preconditions",
         "labels": [
             {"name": "agent:executor"},
@@ -409,7 +397,71 @@ def _retirement_comment(*, app: object | None = None) -> dict[str, object]:
     }
 
 
-def test_sole_formal_structural_clear_skips_detailed_closed_forensics(
+def _closed_terminal_research_payload() -> dict[str, object]:
+    return {
+        "number": 141,
+        "state": "closed",
+        "state_reason": "completed",
+        "body": "Change: unset",
+        "labels": [{"name": "action:explore-change"}],
+        "created_at": "2026-08-25T14:00:00Z",
+        "closed_at": "2026-08-25T14:30:00Z",
+    }
+
+
+def _terminal_research_comment(result: str = "NO_CHANGE_REQUIRED") -> dict[str, object]:
+    return {
+        "id": 5412000000,
+        "body": (
+            "## ACTION_RESULT\n\n"
+            "Workflow: #141\n"
+            "Change: `unset`\n"
+            "Action: `Lead / explore-change`\n"
+            f"Result: `{result}`\n"
+            "Revision: `00a0e5a2c8068077faf5d18980e4a6f84f72f74e`"
+        ),
+        "user": {"login": "github-actions[bot]"},
+        "author_association": "NONE",
+        "created_at": "2026-08-25T14:29:00Z",
+        "updated_at": "2026-08-25T14:29:00Z",
+    }
+
+
+def test_interrupted_terminal_research_debt_routes_candidate_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "openspec" / "changes").mkdir(parents=True)
+    debt = _closed_terminal_research_payload()
+    comments = ((_terminal_research_comment(),),)
+
+    monkeypatch.setattr(runtime, "_github_open_issue_pages", lambda repository, token: ())
+    monkeypatch.setattr(
+        runtime,
+        "_github_closed_routing_issue_pages",
+        lambda repository, token: ((debt,),),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_github_issue_comment_pages",
+        lambda repository, token, issue_number: comments if issue_number == 141 else (),
+    )
+    monkeypatch.setattr(runtime, "_github_issue", lambda repository, token, issue_number: debt)
+
+    decision = classify_dispatch(
+        runtime.acquire_current_github_preflight(
+            "royhsu-work/investment-strategy",
+            "token",
+            repository_root=tmp_path,
+        )
+    )
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.selected_issue_id == 141
+    assert decision.selected_routing == ("lead", "resolve-question")
+    assert decision.selected_debt_disposition == "terminal-cleanup"
+
+
+def test_sole_formal_with_no_current_routing_debt_skips_detailed_forensics(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -418,14 +470,10 @@ def test_sole_formal_structural_clear_skips_detailed_closed_forensics(
         "_github_open_issue_pages",
         lambda repository, token: ((_formal_140_payload(),),),
     )
-    monkeypatch.setattr(
-        runtime,
-        "_github_closed_issue_pages",
-        lambda repository, token: ((_retired_issue_payload(),),),
-    )
+    monkeypatch.setattr(runtime, "_github_closed_routing_issue_pages", lambda repository, token: ())
 
     def forbidden(*args: object, **kwargs: object) -> object:
-        raise AssertionError("detailed closed-workflow forensics must not run on structural CLEAR")
+        raise AssertionError("retired closed history must not trigger detailed forensics")
 
     monkeypatch.setattr(runtime, "_github_issue_comment_pages", forbidden)
     monkeypatch.setattr(runtime, "_legacy_terminal_evidence_from_checkout", forbidden)
@@ -443,10 +491,11 @@ def test_sole_formal_structural_clear_skips_detailed_closed_forensics(
     assert all(item.state == "open" for item in preflight.issues)
 
 
-def test_sole_formal_possible_closed_conflict_enters_detailed_path(
+def test_sole_formal_current_routing_debt_enters_candidate_bound_detailed_path(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    debt = _closed_routed_issue_payload()
     monkeypatch.setattr(
         runtime,
         "_github_open_issue_pages",
@@ -454,14 +503,15 @@ def test_sole_formal_possible_closed_conflict_enters_detailed_path(
     )
     monkeypatch.setattr(
         runtime,
-        "_github_closed_issue_pages",
-        lambda repository, token: ((_closed_routed_issue_payload(),),),
+        "_github_closed_routing_issue_pages",
+        lambda repository, token: ((debt,),),
     )
     monkeypatch.setattr(
         runtime,
         "_github_issue_comment_pages",
         lambda repository, token, issue_number: ((),),
     )
+    monkeypatch.setattr(runtime, "_github_issue", lambda repository, token, issue_number: debt)
 
     preflight = runtime.acquire_current_github_preflight(
         "royhsu-work/investment-strategy",
@@ -472,11 +522,12 @@ def test_sole_formal_possible_closed_conflict_enters_detailed_path(
     assert any(item.state == "closed" for item in preflight.issues)
 
 
-def test_human_retirement_excludes_abandoned_workflow_and_allows_140(
+def test_human_retirement_routes_exact_closed_debt_candidate_for_cleanup(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     (tmp_path / "openspec" / "changes").mkdir(parents=True)
+    debt = _closed_routed_issue_payload(state_reason="not_planned")
     comments = ((_retirement_comment(),),)
 
     monkeypatch.setattr(
@@ -486,36 +537,35 @@ def test_human_retirement_excludes_abandoned_workflow_and_allows_140(
     )
     monkeypatch.setattr(
         runtime,
-        "_github_closed_issue_pages",
-        lambda repository, token: ((_retired_issue_payload(),),),
+        "_github_closed_routing_issue_pages",
+        lambda repository, token: ((debt,),),
     )
     monkeypatch.setattr(
         runtime,
         "_github_issue_comment_pages",
         lambda repository, token, issue_number: comments if issue_number == 133 else (),
     )
-    monkeypatch.setattr(
-        runtime,
-        "_github_issue",
-        lambda repository, token, issue_number: _retired_issue_payload(),
-    )
+    monkeypatch.setattr(runtime, "_github_issue", lambda repository, token, issue_number: debt)
 
-    preflight = runtime.acquire_current_github_preflight(
-        "royhsu-work/investment-strategy",
-        "token",
-        repository_root=tmp_path,
+    decision = classify_dispatch(
+        runtime.acquire_current_github_preflight(
+            "royhsu-work/investment-strategy",
+            "token",
+            repository_root=tmp_path,
+        )
     )
-    decision = classify_dispatch(preflight)
     assert decision.disposition == "AUTHORIZE"
-    assert decision.selected_issue_id == 140
-    assert decision.selected_routing == ("lead", "explore-change")
+    assert decision.selected_issue_id == 133
+    assert decision.selected_routing == ("lead", "resolve-question")
+    assert decision.selected_debt_disposition == "terminal-cleanup"
 
 
-def test_app_authored_retirement_does_not_release_closed_workflow(
+def test_app_authored_retirement_does_not_release_closed_routing_debt(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     (tmp_path / "openspec" / "changes").mkdir(parents=True)
+    debt = _closed_routed_issue_payload(state_reason="not_planned")
     comments = ((_retirement_comment(app={"id": 1144995}),),)
 
     monkeypatch.setattr(
@@ -525,14 +575,15 @@ def test_app_authored_retirement_does_not_release_closed_workflow(
     )
     monkeypatch.setattr(
         runtime,
-        "_github_closed_issue_pages",
-        lambda repository, token: ((_retired_issue_payload(),),),
+        "_github_closed_routing_issue_pages",
+        lambda repository, token: ((debt,),),
     )
     monkeypatch.setattr(
         runtime,
         "_github_issue_comment_pages",
         lambda repository, token, issue_number: comments if issue_number == 133 else (),
     )
+    monkeypatch.setattr(runtime, "_github_issue", lambda repository, token, issue_number: debt)
 
     preflight = runtime.acquire_current_github_preflight(
         "royhsu-work/investment-strategy",

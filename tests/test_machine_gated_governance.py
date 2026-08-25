@@ -17,6 +17,7 @@ from investment_strategy.workflow_dispatch import (
 
 ROOT = Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents" / "AGENTS.md"
+LEAD = ROOT / "agents" / "roles" / "lead.md"
 MESSAGES = ROOT / "agents" / "templates" / "messages.md"
 EXPLORE = ROOT / "agents" / "skills" / "openspec-explore" / "SKILL.md"
 CHANGE = ROOT / "agents" / "skills" / "openspec-change" / "SKILL.md"
@@ -66,8 +67,6 @@ def _terminal_124_payload() -> dict[str, object]:
         ],
         "created_at": "2026-08-21T05:56:01Z",
         "closed_at": "2026-08-21T09:33:25Z",
-        # GitHub currently reports 23 even though the REST comment list exposes
-        # the terminal journal as the 22nd/last visible comment.
         "comments": 23,
     }
 
@@ -103,29 +102,6 @@ def _legacy_terminal_21_payload() -> dict[str, object]:
         "created_at": "2026-08-12T11:42:38Z",
         "closed_at": "2026-08-12T23:51:29Z",
         "comments": 20,
-    }
-
-
-def _legacy_archive_merge_21_comment(
-    *, created_at: str = "2026-08-12T23:51:35Z"
-) -> dict[str, object]:
-    return {
-        "id": 5274149383,
-        "body": (
-            "Executor / merge-pr — ARCHIVE MERGED\n\n"
-            "Change: `align-issue-completion-with-archive`\n"
-            "Archive PR: #27\n"
-            "Authorized exact revision: `bcd52fae6367799d3e6a803834ed654f82cf4e82`\n\n"
-            "Merge executed with "
-            "`expected_head_sha=bcd52fae6367799d3e6a803834ed654f82cf4e82` and succeeded. "
-            "GitHub merge result commit: `40d48d61842fd5a1ab379f36d489857c1943e278`.\n\n"
-            "Outcome: Archive PR merge is durable. "
-            "Handoff target: Lead / `finalize-archive` to reconstruct terminal state."
-        ),
-        "user": {"login": "royhsu-work"},
-        "author_association": "OWNER",
-        "created_at": created_at,
-        "updated_at": created_at,
     }
 
 
@@ -193,6 +169,50 @@ def test_lead_workers_consume_machine_identity_and_request_durable_effects() -> 
         assert required in change
 
 
+def test_shared_governance_uses_current_routing_debt_not_structural_history_projection() -> None:
+    shared = _normalized(AGENTS)
+    for required in (
+        "complete current set of closed Issues",
+        "closed-routing debt",
+        "agent:*",
+        "action:*",
+        "mapped-Action boundary",
+        "unrelated labels are preserved",
+        "Lead / resolve-question",
+    ):
+        assert required.lower() in shared.lower()
+    for forbidden in (
+        "complete bounded structural closed-workflow conflict projection",
+        "after structural `CLEAR`",
+    ):
+        assert forbidden.lower() not in shared.lower()
+
+
+def test_lead_resolve_question_owns_exact_candidate_debt_disposition() -> None:
+    lead = _normalized(LEAD)
+    change = _normalized(CHANGE)
+
+    for required in (
+        "current closed-routing-debt boundary",
+        "exact executable-selected candidate",
+        "machine-derived debt disposition",
+        "terminal-cleanup",
+        "unfinished-recovery",
+        "closed + no workflow routing",
+    ):
+        assert required.lower() in lead.lower()
+
+    for required in (
+        "Machine-selected closed-routing debt branch",
+        "machine-derived debt disposition",
+        "terminal-retirement",
+        "terminal-cleanup",
+        "unfinished-recovery",
+        "exact selected closed-routing-debt candidate",
+    ):
+        assert required.lower() in change.lower()
+
+
 def test_direct_propose_is_not_queue_eligible_without_executable_admission() -> None:
     preflight = _complete(
         RepositoryIssueSnapshot(
@@ -209,13 +229,21 @@ def test_direct_propose_is_not_queue_eligible_without_executable_admission() -> 
     assert decision.preactivation_candidate_ids == ()
 
 
-def test_dispatch_exposes_open_selection_and_structural_conflict_surfaces() -> None:
+def test_dispatch_exposes_open_selection_without_structural_history_contract() -> None:
     assert hasattr(workflow_dispatch, "classify_open_dispatch")
-    assert hasattr(workflow_dispatch, "StructuralConflictDisposition")
-    assert hasattr(workflow_dispatch, "classify_structural_conflicts")
+    debt = RepositoryIssueSnapshot(
+        issue_number=124,
+        change="require-ci-reobservation-before-async-exit",
+        routing=("lead", "finalize-archive"),
+        state="closed",
+        routing_debt=True,
+        terminal_evidence="terminal-history",
+    )
+    decision = workflow_dispatch.classify_dispatch(_complete(debt))
+    assert decision.selected_debt_disposition == "terminal-cleanup"
 
 
-def test_terminal_retained_routing_is_structurally_clear_without_detailed_forensics(
+def test_terminal_retained_routing_is_current_debt_and_preempts_open_formal(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -226,22 +254,19 @@ def test_terminal_retained_routing_is_structurally_clear_without_detailed_forens
     )
     monkeypatch.setattr(
         runtime,
-        "_github_closed_issue_pages",
+        "_github_closed_routing_issue_pages",
         lambda repository, token: ((_terminal_124_payload(),),),
     )
-
-    def structural_page(url: str, token: str) -> tuple[dict[str, object], ...]:
-        assert url.endswith("/issues/124/comments?per_page=100&page=1")
-        return (_lifecycle_complete_124_comment(),)
-
-    monkeypatch.setattr(runtime, "_github_get_list_page", structural_page)
-
-    def forbidden(*args: object, **kwargs: object) -> object:
-        raise AssertionError("detailed closed-workflow forensics must not run for terminal history")
-
-    monkeypatch.setattr(runtime, "_github_issue_comment_pages", forbidden)
-    monkeypatch.setattr(runtime, "_legacy_terminal_evidence_from_checkout", forbidden)
-    monkeypatch.setattr(runtime, "_github_issue", forbidden)
+    monkeypatch.setattr(
+        runtime,
+        "_github_issue_comment_pages",
+        lambda repository, token, issue_number: ((_lifecycle_complete_124_comment(),),),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_github_issue",
+        lambda repository, token, issue_number: _terminal_124_payload(),
+    )
 
     preflight = runtime.acquire_current_github_preflight(
         "royhsu-work/investment-strategy",
@@ -251,12 +276,13 @@ def test_terminal_retained_routing_is_structurally_clear_without_detailed_forens
     decision = workflow_dispatch.classify_dispatch(preflight)
 
     assert decision.disposition == "AUTHORIZE"
-    assert decision.selected_issue_id == 140
-    assert decision.selected_routing == ("executor", "implement-change")
-    assert all(item.state == "open" for item in preflight.issues)
+    assert decision.formal_issue_ids == (140,)
+    assert decision.selected_issue_id == 124
+    assert decision.selected_routing == ("lead", "resolve-question")
+    assert decision.selected_debt_disposition == "terminal-cleanup"
 
 
-def test_pre_dynamic_archive_merge_terminal_is_structurally_clear_without_archive_lookup(
+def test_pre_dynamic_terminal_debt_uses_bounded_legacy_evidence_for_cleanup(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -267,75 +293,33 @@ def test_pre_dynamic_archive_merge_terminal_is_structurally_clear_without_archiv
     )
     monkeypatch.setattr(
         runtime,
-        "_github_closed_issue_pages",
+        "_github_closed_routing_issue_pages",
         lambda repository, token: ((_legacy_terminal_21_payload(),),),
     )
+    lookups: list[str] = []
 
-    def structural_page(url: str, token: str) -> tuple[dict[str, object], ...]:
-        assert url.endswith("/issues/21/comments?per_page=100&page=1")
-        return (_legacy_archive_merge_21_comment(),)
-
-    monkeypatch.setattr(runtime, "_github_get_list_page", structural_page)
-
-    def forbidden(*args: object, **kwargs: object) -> object:
-        raise AssertionError("proven legacy terminal history must not read archived Change")
-
-    monkeypatch.setattr(runtime, "_legacy_terminal_evidence_from_checkout", forbidden)
-    monkeypatch.setattr(runtime, "_github_issue_comment_pages", forbidden)
-    monkeypatch.setattr(runtime, "_github_issue", forbidden)
-
-    preflight = runtime.acquire_current_github_preflight(
-        "royhsu-work/investment-strategy",
-        "token",
-        repository_root=tmp_path,
-    )
-    decision = workflow_dispatch.classify_dispatch(preflight)
-
-    assert decision.disposition == "AUTHORIZE"
-    assert decision.selected_issue_id == 140
-    assert decision.selected_routing == ("executor", "implement-change")
-    assert all(item.state == "open" for item in preflight.issues)
-
-
-def test_pre_dynamic_archive_merge_marker_created_after_cutover_stays_nonclear(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setattr(
-        runtime,
-        "_github_open_issue_pages",
-        lambda repository, token: ((_formal_140_payload(),),),
-    )
-    monkeypatch.setattr(
-        runtime,
-        "_github_closed_issue_pages",
-        lambda repository, token: ((_legacy_terminal_21_payload(),),),
-    )
-    monkeypatch.setattr(
-        runtime,
-        "_github_get_list_page",
-        lambda url, token: (_legacy_archive_merge_21_comment(created_at="2026-08-14T00:00:00Z"),),
-    )
-    archive_lookups: list[str] = []
-
-    def exceptional_lookup(change: str, *, repository_root: Path) -> str:
+    def legacy_terminal(change: str, *, repository_root: Path) -> str:
         del repository_root
-        archive_lookups.append(change)
-        return "indeterminate"
+        lookups.append(change)
+        return "terminal-history"
 
-    monkeypatch.setattr(runtime, "_legacy_terminal_evidence_from_checkout", exceptional_lookup)
+    monkeypatch.setattr(runtime, "_legacy_terminal_evidence_from_checkout", legacy_terminal)
 
-    preflight = runtime.acquire_current_github_preflight(
-        "royhsu-work/investment-strategy",
-        "token",
-        repository_root=tmp_path,
+    decision = workflow_dispatch.classify_dispatch(
+        runtime.acquire_current_github_preflight(
+            "royhsu-work/investment-strategy",
+            "token",
+            repository_root=tmp_path,
+        )
     )
 
-    assert archive_lookups == ["align-issue-completion-with-archive"]
-    assert workflow_dispatch.classify_dispatch(preflight).disposition == "FAIL_CLOSED"
+    assert lookups == ["align-issue-completion-with-archive"]
+    assert decision.selected_issue_id == 21
+    assert decision.selected_routing == ("lead", "resolve-question")
+    assert decision.selected_debt_disposition == "terminal-cleanup"
 
 
-def test_pre_dynamic_completed_without_archive_merge_marker_stays_nonclear(
+def test_pre_dynamic_indeterminate_terminal_debt_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -346,31 +330,14 @@ def test_pre_dynamic_completed_without_archive_merge_marker_stays_nonclear(
     )
     monkeypatch.setattr(
         runtime,
-        "_github_closed_issue_pages",
+        "_github_closed_routing_issue_pages",
         lambda repository, token: ((_legacy_terminal_21_payload(),),),
     )
     monkeypatch.setattr(
         runtime,
-        "_github_get_list_page",
-        lambda url, token: (
-            {
-                "id": 1,
-                "body": "not an archive merge terminal marker",
-                "user": {"login": "royhsu-work"},
-                "author_association": "OWNER",
-                "created_at": "2026-08-12T23:51:35Z",
-                "updated_at": "2026-08-12T23:51:35Z",
-            },
-        ),
+        "_legacy_terminal_evidence_from_checkout",
+        lambda change, *, repository_root: "indeterminate",
     )
-    archive_lookups: list[str] = []
-
-    def exceptional_lookup(change: str, *, repository_root: Path) -> str:
-        del repository_root
-        archive_lookups.append(change)
-        return "indeterminate"
-
-    monkeypatch.setattr(runtime, "_legacy_terminal_evidence_from_checkout", exceptional_lookup)
 
     preflight = runtime.acquire_current_github_preflight(
         "royhsu-work/investment-strategy",
@@ -378,7 +345,6 @@ def test_pre_dynamic_completed_without_archive_merge_marker_stays_nonclear(
         repository_root=tmp_path,
     )
 
-    assert archive_lookups == ["align-issue-completion-with-archive"]
     assert workflow_dispatch.classify_dispatch(preflight).disposition == "FAIL_CLOSED"
 
 
@@ -393,27 +359,18 @@ def test_closed_finalize_archive_without_completion_marker_stays_nonclear(
     )
     monkeypatch.setattr(
         runtime,
-        "_github_closed_issue_pages",
+        "_github_closed_routing_issue_pages",
         lambda repository, token: ((_terminal_124_payload(),),),
-    )
-    monkeypatch.setattr(
-        runtime,
-        "_github_get_list_page",
-        lambda url, token: (
-            {
-                "id": 1,
-                "body": "not lifecycle complete",
-                "user": {"login": "royhsu-work"},
-                "author_association": "OWNER",
-                "created_at": "2026-08-21T09:33:16Z",
-                "updated_at": "2026-08-21T09:33:16Z",
-            },
-        ),
     )
     monkeypatch.setattr(
         runtime,
         "_github_issue_comment_pages",
         lambda repository, token, issue_number: ((),),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_github_issue",
+        lambda repository, token, issue_number: _terminal_124_payload(),
     )
 
     preflight = runtime.acquire_current_github_preflight(

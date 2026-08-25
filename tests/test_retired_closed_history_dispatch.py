@@ -53,7 +53,7 @@ def _retirement_comment(
     }
 
 
-def test_retired_133_clears_structurally_without_closed_change_lookup(
+def test_retired_history_is_not_enumerated_on_normal_formal_dispatch(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -62,25 +62,24 @@ def test_retired_133_clears_structurally_without_closed_change_lookup(
         "_github_open_issue_pages",
         lambda repository, token: ((_formal_140_payload(),),),
     )
+
+    def forbidden_closed_history(*args: object, **kwargs: object) -> object:
+        raise AssertionError("normal dispatch must not enumerate repository-wide closed history")
+
+    monkeypatch.setattr(runtime, "_github_closed_issue_pages", forbidden_closed_history)
     monkeypatch.setattr(
         runtime,
-        "_github_closed_issue_pages",
-        lambda repository, token: ((_retired_133_payload(),),),
+        "_github_closed_routing_issue_pages",
+        lambda repository, token: (),
+        raising=False,
     )
 
-    def structural_page(url: str, token: str) -> tuple[dict[str, object], ...]:
-        del token
-        assert url.endswith("/issues/133/comments?per_page=100&page=1")
-        return (_retirement_comment(),)
+    def forbidden_forensics(*args: object, **kwargs: object) -> object:
+        raise AssertionError("retired history must not enter exceptional forensics")
 
-    monkeypatch.setattr(runtime, "_github_get_list_page", structural_page)
-
-    def forbidden(*args: object, **kwargs: object) -> object:
-        raise AssertionError("retired history must not inspect closed Change state")
-
-    monkeypatch.setattr(runtime, "_legacy_terminal_evidence_from_checkout", forbidden)
-    monkeypatch.setattr(runtime, "_github_issue_comment_pages", forbidden)
-    monkeypatch.setattr(runtime, "_github_issue", forbidden)
+    monkeypatch.setattr(runtime, "_legacy_terminal_evidence_from_checkout", forbidden_forensics)
+    monkeypatch.setattr(runtime, "_github_issue_comment_pages", forbidden_forensics)
+    monkeypatch.setattr(runtime, "_github_issue", forbidden_forensics)
 
     preflight = runtime.acquire_current_github_preflight(
         "royhsu-work/investment-strategy",
