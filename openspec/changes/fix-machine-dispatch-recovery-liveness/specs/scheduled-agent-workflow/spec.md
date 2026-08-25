@@ -56,6 +56,15 @@ The diagnostic reason is observability only. It MUST NOT authorize routing, `Cha
 - THEN it rejects the other decision as uncorrelated
 - AND it does not use the other decision's tuple, reason, or disposition as current authorization
 
+#### Scenario: Real no-API machine dispatch is required before completion
+
+- GIVEN production dispatch and the decision-producing bridge are deployed on `main`
+- WHEN the Change is evaluated for final implementation completion
+- THEN one real ChatGPT Scheduled Task invocation obtains and consumes an exactly correlated production `DISPATCH_DECISION`
+- AND the evidence identifies the exact default-branch revision and returned disposition/tuple when authorized
+- AND mapped semantic work begins only from the machine-selected `AUTHORIZE` tuple
+- AND `NO_WORK` or `FAIL_CLOSED` does not gain a tuple through model interpretation
+
 #### Scenario: Real no-API machine dispatch remains the deployed authority
 
 - GIVEN production dispatch is deployed on `main`
@@ -137,6 +146,17 @@ This separation MUST NOT create a generic fault state machine, hidden recovery r
 - AND it authorizes the sole open formal workflow without fetching detailed historical terminal/recovery evidence merely for that selection
 - AND historical closed workflow state cannot override the current open formal winner by prose or stale context
 
+#### Scenario: Sole formal workflow with a possible closed unfinished conflict does not fast-path authorization
+
+- GIVEN current open-Issue enumeration is provenance-qualified and complete
+- AND exactly one open formal active workflow A exists
+- AND a different closed workflow-looking Issue B cannot be safely excluded by the structural projection as an unfinished/premature-close conflict candidate
+- WHEN workflow-dynamic dispatch evaluates sole-formal authorization
+- THEN the structural disposition is `POSSIBLE_CONFLICT` or `INDETERMINATE`
+- AND dispatch does not authorize A from the open-Issue snapshot alone
+- AND it performs bounded detailed exceptional recovery/consistency evaluation for B
+- AND qualifying or genuinely indeterminate recovery state preserves the existing fail-closed/recovery semantics
+
 #### Scenario: Formal zero with structural-clear history proceeds without detailed forensics
 
 - GIVEN current open-Issue enumeration is provenance-qualified and complete
@@ -167,6 +187,25 @@ This separation MUST NOT create a generic fault state machine, hidden recovery r
 - AND dispatch does not authorize a formal or pre-activation action from the open-Issue snapshot alone
 - AND it performs bounded detailed exceptional recovery/consistency evaluation for the relevant candidate
 - AND qualifying or genuinely indeterminate recovery state preserves the existing fail-closed/recovery semantics
+
+#### Scenario: Exceptional recovery runs before pre-activation selection
+
+- GIVEN complete current open-Issue state contains zero formal workflows
+- AND one or more open pre-activation candidates exist
+- AND the complete structural closed-workflow conflict projection is `POSSIBLE_CONFLICT` or `INDETERMINATE`
+- WHEN workflow-dynamic dispatch reaches the admission boundary
+- THEN it executes detailed exceptional closed-recovery evaluation before authorizing the queue winner
+- AND a qualifying or genuinely indeterminate recovery state blocks pre-activation
+- AND the queue is evaluated only after the exceptional candidate set is cleared
+
+#### Scenario: No formal or queued work still checks recoverable closed workflow state
+
+- GIVEN complete current open-Issue state contains zero formal workflows and no eligible pre-activation candidate
+- AND the complete structural closed-workflow conflict projection is `POSSIBLE_CONFLICT` or `INDETERMINATE`
+- WHEN workflow-dynamic dispatch evaluates whether the repository has no work
+- THEN it executes detailed exceptional recovery before returning `NO_WORK`
+- AND a qualifying premature-close candidate is selected for `Lead / resolve-question` instead of being stranded as history
+- AND genuinely indeterminate required recovery evidence produces `FAIL_CLOSED`
 
 #### Scenario: Equivalent duplicate terminal journals are one terminal fact
 
