@@ -553,6 +553,7 @@ class GitHubEffectAdapter:
         *,
         expected_change: str,
         require_closed: bool,
+        require_debt: bool = False,
     ) -> bool:
         if current is None:
             return False
@@ -567,7 +568,9 @@ class GitHubEffectAdapter:
         if require_closed and observation.state != "closed":
             return False
         if self.source.debt_disposition == "terminal-cleanup":
-            return observation.state == "closed" and observation.routing_debt
+            if observation.state != "closed":
+                return False
+            return observation.routing_debt if require_debt else True
         if self.source.debt_disposition is not None:
             return False
         if observation.state == "open":
@@ -585,6 +588,7 @@ class GitHubEffectAdapter:
                 self._current_issue(),
                 expected_change=cast(str, payload["expected_change"]),
                 require_closed=self.source.debt_disposition == "terminal-cleanup",
+                require_debt=self.source.debt_disposition == "terminal-cleanup",
             )
         if effect.kind != GITHUB_MUTATION_KIND:
             return True
@@ -597,6 +601,7 @@ class GitHubEffectAdapter:
             current,
             expected_change=expected_change,
             require_closed=self.source.debt_disposition == "terminal-cleanup",
+            require_debt=self.source.debt_disposition == "terminal-cleanup",
         ):
             raise RuntimeError("terminal retirement target is stale")
 
