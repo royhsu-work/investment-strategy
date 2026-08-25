@@ -58,12 +58,14 @@ The diagnostic reason is observability only. It MUST NOT authorize routing, `Cha
 
 #### Scenario: Real no-API machine dispatch is required before completion
 
-- GIVEN production dispatch and the decision-producing bridge are deployed on `main`
+- GIVEN transport-only `BRIDGE_OK` has already been proved
+- AND production dispatch and the decision-producing bridge are deployed on `main`
 - WHEN the Change is evaluated for final implementation completion
 - THEN one real ChatGPT Scheduled Task invocation obtains and consumes an exactly correlated production `DISPATCH_DECISION`
 - AND the evidence identifies the exact default-branch revision and returned disposition/tuple when authorized
 - AND mapped semantic work begins only from the machine-selected `AUTHORIZE` tuple
 - AND `NO_WORK` or `FAIL_CLOSED` does not gain a tuple through model interpretation
+- AND lifecycle completion is not claimed from transport-only evidence
 
 #### Scenario: Real no-API machine dispatch remains the deployed authority
 
