@@ -69,7 +69,7 @@ def test_dynamic_dispatch_fails_closed_for_invalid_or_multiple_active_workflows(
     text = _normalized(AGENTS)
     for required in (
         "multiple open formal workflows produces `FAIL_CLOSED`",
-        "invalid routing",
+        "invalid open routing",
         "Incomplete/provenance-invalid reconstruction",
         "A dispatch decision never substitutes for those downstream gates",
     ):
@@ -113,7 +113,8 @@ def test_combined_intake_is_executable_and_propose_keeps_activation_guards() -> 
         "coherent routed Explore",
         "executable-approved direct-Propose",
         "earliest GitHub `created_at` then lower Issue number ordering",
-        "A formal workflow always wins over intake",
+        "Current routing debt is handled before intake",
+        "A formal workflow otherwise wins over intake",
         "immediate pre-write and fresh post-write activation checks",
     ):
         assert required in text
@@ -308,8 +309,9 @@ def test_lifecycle_complete_precedes_issue_close_and_closed_is_terminal_history(
     finalize = _normalized(LIFECYCLE_FINALIZE)
     for required in (
         "LIFECYCLE_COMPLETE",
-        "Issue close is missing",
-        "observed closed Issue",
+        "Issue close/routing retirement is incomplete",
+        "closed + no workflow routing",
+        "current closed-routing debt",
         "terminal history",
         "excluded from formal WIP",
     ):
@@ -373,9 +375,9 @@ def test_dispatch_requires_complete_executable_evidence_before_queue_selection()
     text = _normalized(AGENTS)
     for required in (
         "observable enumeration/provenance completeness",
-        "A partial enumeration is never proof of zero formal WIP",
+        "A partial enumeration is never proof of zero formal WIP or zero current closed-routing debt",
         "multiple open formal workflows produces `FAIL_CLOSED`",
-        "detailed exceptional boundary runs before deterministic pre-activation selection",
-        "premature-close recovery cannot be bypassed",
+        "Any current closed-routing debt enters bounded candidate-specific exceptional classification before ordinary work",
+        "Current routing debt is handled before intake",
     ):
         assert required in text
