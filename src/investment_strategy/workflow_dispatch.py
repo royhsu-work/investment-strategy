@@ -298,8 +298,7 @@ def _classify_exceptional_dispatch(preflight: DispatchPreflight) -> DispatchDeci
     ambiguous = tuple(
         issue
         for issue in debt
-        if issue.change == "unset"
-        or issue.terminal_evidence == "indeterminate"
+        if issue.terminal_evidence == "indeterminate"
         or (
             issue.terminal_evidence != "terminal-history"
             and issue.premature_close_recovery == "indeterminate"
