@@ -22,11 +22,15 @@ DISPOSITION_PREFIX = "Disposition: "
 ISSUE_PREFIX = "Issue: "
 ROLE_PREFIX = "Role: "
 ACTION_PREFIX = "Action: "
+DEBT_DISPOSITION_PREFIX = "Debt-Disposition: "
+REASON_PREFIX = "Reason: "
 BRIDGE_OK = "BRIDGE_OK"
 _DECISION_DISPOSITIONS = {"AUTHORIZE", "NO_WORK", "FAIL_CLOSED"}
+_DEBT_DISPOSITIONS = {"terminal-cleanup", "unfinished-recovery"}
 _ROLES = {"lead", "reviewer", "executor"}
 _GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]"
 _GITHUB_ACTIONS_APP_SLUG = "github-actions"
+_MAX_REASON_LENGTH = 240
 
 
 @dataclass(frozen=True)
@@ -49,6 +53,8 @@ class MachineDispatchDecision:
     issue_number: int | None = None
     role: str | None = None
     action: str | None = None
+    debt_disposition: str | None = None
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -93,6 +99,21 @@ def _parse_revision(line: str) -> str | None:
     return revision
 
 
+def _parse_reason(line: str) -> str | None:
+    if not line.startswith(REASON_PREFIX):
+        return None
+    reason = line[len(REASON_PREFIX) :]
+    if (
+        not reason
+        or reason != reason.strip()
+        or "\r" in reason
+        or "\n" in reason
+        or len(reason) > _MAX_REASON_LENGTH
+    ):
+        return None
+    return reason
+
+
 def parse_dispatch_result(body: str) -> DispatchResult | None:
     lines = body.split("\n")
     if len(lines) != 4 or lines[0] != RESULT_MARKER:
@@ -127,7 +148,7 @@ def render_dispatch_result(*, request_comment_id: int, default_branch_revision: 
 
 def parse_dispatch_decision(body: str) -> MachineDispatchDecision | None:
     lines = body.split("\n")
-    if len(lines) not in {4, 7} or lines[0] != DECISION_MARKER:
+    if len(lines) not in {4, 5, 7, 8} or lines[0] != DECISION_MARKER:
         return None
     if not lines[1].startswith(REQUEST_COMMENT_ID_PREFIX):
         return None
@@ -142,15 +163,19 @@ def parse_dispatch_decision(body: str) -> MachineDispatchDecision | None:
     if disposition not in _DECISION_DISPOSITIONS:
         return None
     if disposition != "AUTHORIZE":
-        if len(lines) != 4:
+        if len(lines) not in {4, 5}:
+            return None
+        reason = None if len(lines) == 4 else _parse_reason(lines[4])
+        if len(lines) == 5 and reason is None:
             return None
         return MachineDispatchDecision(
             request_comment_id=request_comment_id,
             default_branch_revision=revision,
             disposition=disposition,
+            reason=reason,
         )
 
-    if len(lines) != 7:
+    if len(lines) not in {7, 8}:
         return None
     if not lines[4].startswith(ISSUE_PREFIX):
         return None
@@ -164,6 +189,16 @@ def parse_dispatch_decision(body: str) -> MachineDispatchDecision | None:
     if not action or action != action.strip():
         return None
 
+    debt_disposition = None
+    if len(lines) == 8:
+        if not lines[7].startswith(DEBT_DISPOSITION_PREFIX):
+            return None
+        debt_disposition = lines[7][len(DEBT_DISPOSITION_PREFIX) :]
+        if debt_disposition not in _DEBT_DISPOSITIONS:
+            return None
+        if role != "lead" or action != "resolve-question":
+            return None
+
     return MachineDispatchDecision(
         request_comment_id=request_comment_id,
         default_branch_revision=revision,
@@ -171,6 +206,7 @@ def parse_dispatch_decision(body: str) -> MachineDispatchDecision | None:
         issue_number=issue_number,
         role=role,
         action=action,
+        debt_disposition=debt_disposition,
     )
 
 
@@ -179,6 +215,18 @@ def _validate_result_identity(request_comment_id: int, default_branch_revision: 
         raise ValueError("request_comment_id must be positive")
     if not default_branch_revision or default_branch_revision != default_branch_revision.strip():
         raise ValueError("default_branch_revision must be non-empty and trimmed")
+
+
+def _validated_reason(reason: str) -> str:
+    if (
+        not reason
+        or reason != reason.strip()
+        or "\r" in reason
+        or "\n" in reason
+        or len(reason) > _MAX_REASON_LENGTH
+    ):
+        raise ValueError("dispatch reason must be one non-empty bounded line")
+    return reason
 
 
 def render_dispatch_decision(
@@ -208,8 +256,20 @@ def render_dispatch_decision(
                 f"{ACTION_PREFIX}{action}",
             )
         )
-    elif decision.selected_issue_id is not None or decision.selected_routing is not None:
-        raise ValueError("NO_WORK/FAIL_CLOSED must not carry an Issue/Role/Action tuple")
+        if decision.selected_debt_disposition is not None:
+            if (
+                decision.selected_debt_disposition not in _DEBT_DISPOSITIONS
+                or role != "lead"
+                or action != "resolve-question"
+            ):
+                raise ValueError("debt disposition requires Lead / resolve-question authorization")
+            lines.append(f"{DEBT_DISPOSITION_PREFIX}{decision.selected_debt_disposition}")
+    else:
+        if decision.selected_issue_id is not None or decision.selected_routing is not None:
+            raise ValueError("NO_WORK/FAIL_CLOSED must not carry an Issue/Role/Action tuple")
+        if decision.selected_debt_disposition is not None:
+            raise ValueError("NO_WORK/FAIL_CLOSED must not carry a debt disposition")
+        lines.append(f"{REASON_PREFIX}{_validated_reason(decision.reason)}")
     return "\n".join(lines)
 
 
