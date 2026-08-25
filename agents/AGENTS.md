@@ -50,21 +50,23 @@ completeness, and an executable admission result when a queued candidate require
 OpenSpec artifacts, review evidence, lifecycle-specific PR evidence, and effect-specific mutation guards are
 downstream action/effect inputs and MUST NOT become global Issue-selection prerequisites.
 
-Formal work is finish-first and WIP remains one. Incomplete/provenance-invalid reconstruction, invalid
-routing, or multiple open formal workflows produces `FAIL_CLOSED`. With one open formal workflow, executable
-acquisition MUST establish a complete bounded structural closed-workflow conflict projection with disposition
-`CLEAR`, `POSSIBLE_CONFLICT`, or `INDETERMINATE`; only `CLEAR` may authorize the sole formal tuple without
-detailed closed-history forensics. A non-clear structural result enters bounded detailed exceptional
-recovery/consistency evaluation and authorizes only after that executable boundary clears every conflict.
-With zero open formal workflows, the detailed exceptional boundary runs before deterministic pre-activation
-selection or `NO_WORK` so premature-close recovery cannot be bypassed.
+Formal work is finish-first and WIP remains one. Executable acquisition reconstructs complete current open-Issue
+state plus the complete current set of closed Issues retaining any repository-governed `agent:*` or `action:*`
+routing label. Incomplete/provenance-invalid reconstruction, invalid open routing, or multiple open formal
+workflows produces `FAIL_CLOSED`. When current closed-routing debt is empty, one open formal workflow may be
+authorized directly, while formal-zero proceeds to deterministic pre-activation selection or `NO_WORK` without
+re-enumerating retired terminal history. Any current closed-routing debt enters bounded candidate-specific
+exceptional classification before ordinary work: at most one proven terminal/retired candidate may route to
+`Lead / resolve-question` for routing cleanup; exactly one qualifying unfinished candidate at formal-zero may
+use the existing bounded recovery path; ambiguous, competing, contradictory, or incomplete debt fails closed.
+Closed terminal history with no workflow routing residue is not normal authorization input.
 
 Direct `Lead / propose-change + Change: unset` admission is executable input, not prose inference. It is
 eligible only when the existing provenance-bound Human-authority predicate proves the canonical
 `issue:<issue-number>:admission:lead:propose-change` decision. Ordinary routed Explore does not gain a Human
-approval requirement. Detailed candidate construction, ordering, structural-conflict mechanics, recovery
-evidence acquisition, and Human-admission evaluation belong to production executable code and regression
-tests rather than a second natural-language classifier in this file.
+approval requirement. Detailed candidate construction, routing-debt classification/ordering, recovery evidence
+acquisition, and Human-admission evaluation belong to production executable code and regression tests rather
+than a second natural-language classifier in this file.
 
 A selected action consumes a fresh executable dispatch decision as its action-entry identity precondition.
 `propose-change` retains its immediate pre-write and fresh post-write activation checks. After `AUTHORIZE`,
@@ -72,7 +74,9 @@ only the returned exact Issue/role/action may determine the mapped model worker.
 and consequential durable writes remain separately governed: repository-owned application fresh-reauthorizes
 the exact source action, validates the applicable effect-specific preconditions and legal successor against
 `agents/workflow.md`, applies only authorized effects, observes postconditions, and then executes fresh global
-dispatch. A dispatch decision never substitutes for those downstream gates.
+dispatch. A dispatch decision never substitutes for those downstream gates. Dispatch read-reduction stops at
+the mapped-Action boundary: every selected Action still reconstructs and consumes all durable evidence its
+existing default-branch contract requires, including older Issue comments when applicable.
 
 Issue comments and prior worker output are durable/audit context only. They are not transition commands and
 MUST NOT authorize mapped work, routing changes, or continuation. After machine-gated cutover the normal
@@ -146,18 +150,20 @@ finish-first: an active workflow first, and pre-activation intake only when form
 
 Normal workflow-dynamic selection and conflict/recovery branching are owned by the executable dispatch
 boundary above. This section states only durable admission and safety invariants used by that executable
-surface. A partial enumeration is never proof of zero formal WIP. Closed nonterminal workflow-looking state
-is contradiction/recovery input, not ordinary routing eligibility, and a closed Issue with valid terminal
-completion is historical rather than formal work.
+surface. A partial enumeration is never proof of zero formal WIP or zero current closed-routing debt. Any
+closed Issue retaining a repository-governed `agent:*` or `action:*` label is current routing debt rather than
+ordinary routing eligibility; partial residue containing only one side of the tuple still counts as debt. A
+closed Issue with valid terminal completion becomes retired terminal history for normal selection only after
+workflow routing residue is absent.
 
-A closed nonterminal Issue may be recovered only under the bounded premature-close contract already encoded
-by production recovery classification. Exactly one qualifying unfinished recovery candidate at formal-zero
-blocks intake and routes to `Lead / resolve-question`; conflicting, multiple, incomplete, or indeterminate
-recovery evidence fails closed. When one open formal workflow coexists with a qualifying unfinished closed
-conflict, dispatch fails closed rather than reopening a second formal workflow. Detailed terminal journal,
-Human-retirement, legacy archive, unfinished-Change, and current re-observation evidence remains confined to
-the detailed exceptional boundary and is not a mandatory sole-formal happy-path input after structural
-`CLEAR`.
+Current closed-routing debt is resolved only through the bounded candidate-specific executable boundary.
+Exactly one qualifying unfinished candidate may use premature-close recovery only at formal-zero and only when
+no second unresolved debt candidate exists. A proven terminal/retired candidate may instead route as the exact
+`Lead / resolve-question` cleanup candidate while remaining closed. An open formal workflow coexisting with
+unfinished or indeterminate debt fails closed; multiple unfinished candidates, any indeterminate candidate,
+or incomplete debt provenance likewise fails closed. Detailed terminal journals, Human-retirement evidence,
+legacy archive evidence, unfinished-Change evidence, and current re-observation remain candidate-bound and are
+not fetched merely to re-prove retired terminal history when the current debt set is empty.
 
 Ordinary routed Explore eligibility does not require Human approval. Open `Lead / explore-change + Change: unset`
 entries are legal queued pre-activation work when routing is coherent; origin does not control dispatcher
@@ -179,10 +185,11 @@ remains derived from its exact approved source defer decision/linkage; and direc
 the original Propose authority envelope. These producer/source rules MUST NOT be reinterpreted as dispatcher
 admission classes for an already coherent routed Explore.
 
-When formal WIP is absent and detailed exceptional recovery permits intake, executable dispatch applies the
-combined pre-activation candidate contract: coherent routed Explore plus executable-approved direct-Propose,
-with deterministic earliest GitHub `created_at` then lower Issue number ordering. A formal workflow always
-wins over intake. The model does not add an urgency score or role/action preference.
+When formal WIP is absent and current closed-routing debt is empty, executable dispatch applies the combined
+pre-activation candidate contract: coherent routed Explore plus executable-approved direct-Propose, with
+deterministic earliest GitHub `created_at` then lower Issue number ordering. Current routing debt is handled
+before intake. A formal workflow otherwise wins over intake. The model does not add an urgency score or
+role/action preference.
 
 Formal activation remains at-least-once and first-valid-write-wins. Immediately before a non-`unset`
 `Change:` write, repository application must fresh-reauthorize this exact `Lead / propose-change` candidate;
@@ -192,9 +199,13 @@ provenance-invalid evidence stops the activation. No lock, claim, lease, heartbe
 `status:exploring`, or `status:in-progress` state is introduced.
 
 A valid `LIFECYCLE_COMPLETE` result does not by itself remove an open Issue from formal WIP. If terminal
-verification is complete but the close mutation is missing, the same open `Lead / finalize-archive`
-workflow remains actionable only to finish/re-observe that final close. Once the completion result is valid
-and the Issue is observed closed, the Issue is terminal history and MUST NOT block later workflow admission.
+verification is complete but the terminal effect is incomplete, the same open `Lead / finalize-archive`
+workflow remains actionable only to finish/re-observe that terminal postcondition. Repository-owned terminal
+retirement closes Issue state without replacing the label set, fresh-observes the same Issue, and removes only
+currently observed workflow `agent:*`/`action:*` labels through narrow replay-safe effects with fresh checks.
+Unrelated labels are preserved. Interruption after close or partial routing removal leaves the remaining
+routing residue visible as current closed-routing debt. Only after a fresh observation proves `closed + no
+workflow routing` is the Issue retired terminal history that no longer blocks later workflow admission.
 
 ## Explore completion governance
 
@@ -235,8 +246,10 @@ with `HUMAN_DECISION_REQUIRED`. Ordinary technical approach selection inside app
 remains Lead-owned.
 
 `NO_CHANGE_REQUIRED` and `NO_GO` create no fake Change and do not enter the formal Archive lifecycle. Their
-terminal Issue behavior is defined only in `agents/workflow.md`. There is no independent `review-explore`
-gate, research database, completeness score, or hidden research state machine.
+terminal Issue behavior is defined only in `agents/workflow.md`. When that legal terminal research closure is
+applied, repository-owned application uses the same logical `closed + no workflow routing` postcondition and
+narrow routing-retirement behavior described above; no fake formal Change is created. There is no independent
+`review-explore` gate, research database, completeness score, or hidden research state machine.
 
 ## Orphan evidence and Human authority
 
@@ -331,10 +344,11 @@ PASS or any other merge precondition.
 
 An Issue is normally actionable only when it is open and has exactly one legal `agent:*` label and
 exactly one legal `action:*` label for the same role. Closed Issues are not normal routed action candidates.
-A closed Issue without valid terminal `LIFECYCLE_COMPLETE` may be considered only through the bounded
-premature-close recovery classification above; a closed Issue with valid completion is terminal history.
-Zero, multiple, contradictory, or illegal routing labels fail closed; model inference MUST NOT repair them.
-Unrelated labels are preserved during routing changes.
+Any closed Issue retaining at least one repository-governed `agent:*` or `action:*` label is current
+closed-routing debt and may be considered only through candidate-specific cleanup/recovery classification.
+A closed Issue with valid terminal completion and no workflow routing residue is retired terminal history.
+Zero, multiple, contradictory, or illegal routing labels on open work fail closed; model inference MUST NOT
+repair them. Unrelated labels are preserved during ordinary routing changes and terminal routing retirement.
 
 Legal tuples are exactly the ten role/action pairs listed above. Their lifecycle relationships are defined
 only in `agents/workflow.md`.
@@ -368,9 +382,10 @@ equal, lower numeric Issue number wins. Model-derived urgency, scoring, or discr
 prohibited.
 
 In workflow-dynamic mode, candidate construction and selection are consumed only from the production
-executable dispatch result described above. A sole formal workflow is formal-work-first; pre-activation is
-considered only at formal-zero after detailed exceptional recovery clearance. The model does not re-run the
-ordering or recovery classifier from this prose.
+executable dispatch result described above. A sole formal workflow is formal-work-first only after current
+closed-routing debt has been classified; pre-activation is considered only at formal-zero when current debt is
+empty or has been safely resolved by its exact selected debt action. The model does not re-run the ordering,
+debt, or recovery classifier from this prose.
 
 If the role has no eligible workflow work, it performs no ordinary workflow mutation. Only Lead may use
 the separate bounded idle advisory/discovery mode defined below.
@@ -814,8 +829,8 @@ Connector/App identity is never globally treated as Human identity. A valid in-s
 Propose without a generic Human proceed decision, while a new Human-reserved commitment must stop with
 `HUMAN_DECISION_REQUIRED`.
 
-Only when no formal active workflow, no bounded premature-close recovery candidate, and no already eligible
-pre-activation work can be advanced, Lead MAY materialize at most one bounded
+Only when no formal active workflow, no current closed-routing debt requiring cleanup/recovery, and no already
+eligible pre-activation work can be advanced, Lead MAY materialize at most one bounded
 `Change: unset + agent:lead + action:explore-change` candidate from idle discovery when creation is
 independently justified by one of these source classes:
 
@@ -873,8 +888,9 @@ A PASS, completion comment, merge result, or statement that an Issue "may be clo
 completion. The normal invariant is:
 
 ```text
-open coordination Issue  = formal workflow not yet terminal
-closed coordination Issue = terminal history only when valid LIFECYCLE_COMPLETE exists
+open coordination Issue                    = formal workflow not yet terminal
+closed Issue with workflow routing residue = current closed-routing debt
+closed + no workflow routing               = terminal history only with valid terminal completion
 ```
 
 The final Archive PR uses deterministic non-closing `Refs #<coordination-issue>` linkage, so Archive merge
@@ -888,22 +904,27 @@ to its legal owner and requires renewed independent review when the reviewed pre
 The normal `agent/archive-<change>` lifecycle branch is never inferred to be temporary cleanup input from its
 name.
 
-Terminal success requires both a valid durable `LIFECYCLE_COMPLETE` result and observation of the same
-coordination Issue as closed, in the order required by `agents/workflow.md`. A valid completion result with
-an open Issue remains the same formal workflow and is actionable only for the remaining legal terminal
-mutation/re-observation. A closed Issue without valid completion is not terminal success.
+Terminal success requires a valid durable `LIFECYCLE_COMPLETE` result plus a fresh observation that the same
+coordination Issue is closed and carries no workflow `agent:*` or `action:*` routing residue, in the order
+required by `agents/workflow.md`. A valid completion result with an open Issue remains the same formal workflow
+and is actionable only for the remaining legal terminal mutation/re-observation. A closed Issue retaining
+workflow routing remains current debt even when terminal evidence proves cleanup may safely retire that residue.
+A closed Issue without valid completion is not formal terminal success.
 
 Interruption is recovered from existing durable writes without adding a replacement state machine:
 
 - Archive merged but `LIFECYCLE_COMPLETE` absent: the open routed formal workflow remains active and later reconstruction resumes from current durable state;
-- valid `LIFECYCLE_COMPLETE` persisted but Issue close is missing: perform only the remaining legal close/re-observation work; do not rewrite completion evidence;
-- close mutation completed but re-observation/journal completion was interrupted: later reconstruction consumes the existing completion result and observed current Issue state; it does not replay a completed close;
-- valid `LIFECYCLE_COMPLETE` plus observed closed Issue: terminal history, excluded from formal WIP and ordinary cardinality.
+- valid `LIFECYCLE_COMPLETE` persisted but Issue close/routing retirement is incomplete: perform only the remaining legal terminal effect and re-observation work; do not rewrite completion evidence;
+- close mutation completed but some workflow routing residue remains: the Issue remains current closed-routing debt and only exact candidate cleanup may retire the missing routing state after fresh terminal proof;
+- close and routing retirement completed but final re-observation/journal completion was interrupted: later reconstruction consumes the existing completion result and observed current Issue state; it does not replay completed effects;
+- valid `LIFECYCLE_COMPLETE` plus freshly observed `closed + no workflow routing`: terminal history, excluded from formal WIP and current debt/cardinality.
 
-If the coordination Issue is observed closed without a valid `LIFECYCLE_COMPLETE`, including a manual or
-accidental close before terminal conditions, that state is premature and illegal. It is not terminal success
-and does not enter the normal action path. Only the bounded premature-close recovery predicate may reopen
-one unambiguous unfinished workflow; otherwise Scheduled roles fail closed.
+If the coordination Issue is observed closed without valid terminal completion and workflow routing residue
+remains, that state is premature and illegal. It is not terminal success and does not enter the normal action
+path. Only the bounded premature-close recovery predicate may reopen one unambiguous unfinished candidate;
+otherwise current debt classification fails closed. Out-of-band removal of every routing signal from unfinished
+work is administrative corruption/repair territory rather than a reason to reconstruct all retired history on
+every normal wake.
 
 ## Deliberately absent machinery
 
