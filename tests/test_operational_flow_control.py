@@ -17,10 +17,10 @@ def _normalized(path: Path) -> str:
 def test_closed_nonterminal_work_is_not_normal_routing_eligibility() -> None:
     text = _normalized(AGENTS)
     for required in (
-        "Closed nonterminal workflow-looking state",
-        "contradiction/recovery input",
-        "not ordinary routing eligibility",
-        "bounded premature-close contract",
+        "Any closed Issue retaining a repository-governed `agent:*` or `action:*` label",
+        "current routing debt rather than ordinary routing eligibility",
+        "partial residue containing only one side of the tuple still counts as debt",
+        "bounded candidate-specific executable boundary",
     ):
         assert required in text
 
@@ -29,18 +29,18 @@ def test_unique_premature_close_candidate_keeps_bounded_lead_recovery() -> None:
     shared = _normalized(AGENTS)
     lead = _normalized(LEAD)
     for required in (
-        "Exactly one qualifying unfinished recovery candidate at formal-zero",
+        "Exactly one qualifying unfinished candidate may use premature-close recovery only at formal-zero",
         "`Lead / resolve-question`",
-        "fails closed rather than reopening a second formal workflow",
-        "detailed exceptional boundary",
+        "An open formal workflow coexisting with unfinished or indeterminate debt fails closed",
+        "no second unresolved debt candidate exists",
     ):
         assert required in shared
     for required in (
-        "premature-close recovery",
+        "unfinished-recovery",
         "reopen",
-        "preserve",
-        "fresh-read",
-        "single coherent formal active workflow",
+        "preserving",
+        "fresh dispatch",
+        "no competing debt/open formal workflow",
     ):
         assert required in lead
 
@@ -48,9 +48,9 @@ def test_unique_premature_close_candidate_keeps_bounded_lead_recovery() -> None:
 def test_ambiguous_or_human_terminated_premature_close_stays_fail_closed() -> None:
     text = _normalized(AGENTS)
     for required in (
-        "conflicting, multiple, incomplete, or indeterminate recovery evidence fails closed",
-        "Human-retirement",
-        "detailed exceptional boundary",
+        "multiple unfinished candidates, any indeterminate candidate",
+        "Human-retirement evidence",
+        "candidate-bound",
         "no central workflow engine",
     ):
         assert required in text
