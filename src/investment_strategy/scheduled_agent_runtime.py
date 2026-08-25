@@ -105,7 +105,8 @@ _LEGACY_FINAL_ARCHIVE_MERGE_LINE = re.compile(
 )
 _TERMINAL_ARCHIVE_PR = re.compile(r"Archive PR #(?P<pr>[1-9][0-9]*)", re.IGNORECASE)
 _TERMINAL_ARCHIVE_HEAD = re.compile(
-    r"(?:exact(?: reviewed/accepted)? head|authorized/reviewed archive head|authorized exact revision)"
+    r"(?:exact(?: reviewed/accepted)? head|authorized/reviewed archive head|"
+    r"authorized exact revision)"
     r"[^0-9a-f]{0,48}`?(?P<head>[0-9a-f]{40})`?",
     re.IGNORECASE,
 )
@@ -276,7 +277,11 @@ def _routing_state_from_labels(
     if not agent_labels and not action_labels:
         return None, True, False
     if len(agent_labels) == 1 and len(action_labels) == 1:
-        return (_AGENT_LABELS[agent_labels[0]], _ACTION_LABELS[action_labels[0]]), True, routing_debt
+        return (
+            (_AGENT_LABELS[agent_labels[0]], _ACTION_LABELS[action_labels[0]]),
+            True,
+            routing_debt,
+        )
     if state == "closed":
         return None, True, True
     return None, False, False
