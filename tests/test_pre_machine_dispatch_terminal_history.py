@@ -55,7 +55,11 @@ def _install_current_debt(
     monkeypatch: pytest.MonkeyPatch,
     comment: dict[str, object],
 ) -> None:
-    monkeypatch.setattr(runtime, "_github_open_issue_pages", lambda repository, token: ((_formal_140_payload(),),))
+    monkeypatch.setattr(
+        runtime,
+        "_github_open_issue_pages",
+        lambda repository, token: ((_formal_140_payload(),),),
+    )
     monkeypatch.setattr(
         runtime,
         "_github_closed_routing_issue_pages",
