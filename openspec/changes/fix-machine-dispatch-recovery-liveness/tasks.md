@@ -4,10 +4,12 @@
 
 - [ ] 1.1 RED — Add a production-path regression with many completed closed workflows, including the #91-compatible duplicate-terminal shape, plus one current formal workflow; prove the current implementation still enumerates historical closed workflow state before authorization.
 - [ ] 1.2 RED — Add the formal-zero counterpart with one eligible queued `Lead / explore-change` candidate and with no queued work; instrument GitHub acquisition so the regression proves terminal-history Issue/comment reads are not permitted on the target normal path.
-- [ ] 1.3 GREEN — Change production acquisition/classification so steady-state normal selection consumes complete current open-Issue state plus complete current closed Issues that still retain workflow routing, without a repository-wide closed-history structural projection.
-- [ ] 1.4 GREEN — Preserve complete current enumeration/provenance, WIP=1, current routing/Change coherence, deterministic combined pre-activation ordering, fresh action-entry identity, and effect-time reauthorization.
-- [ ] 1.5 REFACTOR — Remove obsolete structural-projection plumbing from the normal authorization path without creating a second classifier, cache, cursor, or hidden workflow state.
-- [ ] 1.6 VERIFY — Run focused dispatch/runtime tests, the history-proportion regressions, full regression suite, mypy, ruff, and strict OpenSpec validation for the exact implementation revision.
+- [ ] 1.3 RED — Add a mapped-Action boundary regression where an older Issue comment is irrelevant to dispatch selection but required by the selected Action's existing evidence-reconstruction contract; prove the target behavior must preserve that comment/evidence after `AUTHORIZE` rather than filtering or truncating Action execution inputs.
+- [ ] 1.4 GREEN — Change production acquisition/classification so steady-state normal selection consumes complete current open-Issue state plus complete current closed Issues that still retain workflow routing, without a repository-wide closed-history structural projection.
+- [ ] 1.5 GREEN — Preserve complete current enumeration/provenance, WIP=1, current routing/Change coherence, deterministic combined pre-activation ordering, fresh action-entry identity, and effect-time reauthorization.
+- [ ] 1.6 GREEN — Keep the read-reduction strictly before the mapped-Action boundary; do not add latest-comment shortcuts, bounded-comment readers, filtering, truncation, summaries, or other changes to action-specific Issue-comment/durable-evidence reconstruction after `AUTHORIZE`.
+- [ ] 1.7 REFACTOR — Remove obsolete structural-projection plumbing from the normal authorization path without creating a second classifier, cache, cursor, hidden workflow state, or shared action-evidence filter.
+- [ ] 1.8 VERIFY — Run focused dispatch/runtime tests, the history-proportion and mapped-Action evidence-preservation regressions, full regression suite, mypy, ruff, and strict OpenSpec validation for the exact implementation revision.
 
 ## Slice 2 — Closed-routing recovery signal and terminal routing retirement
 
@@ -42,17 +44,19 @@
 
 ## Slice 5 — Governance alignment and end-to-end regression
 
-- [ ] 5.1 RED — Update/add governance regression coverage showing shared governance must no longer require a complete closed-history structural projection for normal selection and must instead require complete current open plus unresolved closed-routing observations.
-- [ ] 5.2 GREEN — Make the minimum `agents/AGENTS.md` wording change required to align with the approved canonical behavior; do not duplicate executable classifier mechanics into prose or change workflow topology.
+- [ ] 5.1 RED — Update/add governance regression coverage showing shared governance must no longer require a complete closed-history structural projection for normal selection and must instead require complete current open plus unresolved closed-routing observations while preserving the downstream mapped-Action evidence boundary.
+- [ ] 5.2 GREEN — Make the minimum `agents/AGENTS.md` wording change required to align with the approved canonical behavior; do not duplicate executable classifier mechanics into prose, change workflow topology, or alter existing role/Skill evidence-consumption semantics.
 - [ ] 5.3 GREEN — Add end-to-end production coverage proving normalized #91-like terminal history + one current legal queued Explore yields `AUTHORIZE` without reading #91/history as authorization input.
 - [ ] 5.4 GREEN — Add the companion current-recovery cases: one closed routed unfinished candidate at formal-zero routes `Lead / resolve-question`; the same candidate coexisting with an open formal workflow fails closed; multiple/indeterminate candidates fail closed.
 - [ ] 5.5 GREEN — Add end-to-end terminal-close coverage proving closed+unrouted is the durable terminal postcondition and a later wake excludes it from current unresolved recovery.
-- [ ] 5.6 REFACTOR — Remove obsolete tests/wording that equate safety with repeated historical reconstruction while preserving tests for multiple formal workflows, incomplete observations, stale current state, genuine recovery ambiguity, and exact action identity.
-- [ ] 5.7 VERIFY — Run all focused workflow/governance tests, complete pytest suite, mypy, ruff, and `openspec validate --all --strict --json --no-interactive` against the exact final implementation revision.
+- [ ] 5.6 GREEN — Add end-to-end coverage proving that once dispatch returns `AUTHORIZE`, the selected mapped Action still reconstructs all evidence required by its existing contract, including an older required Issue comment that dispatch itself did not need for selection.
+- [ ] 5.7 REFACTOR — Remove obsolete tests/wording that equate safety with repeated historical reconstruction while preserving tests for multiple formal workflows, incomplete observations, stale current state, genuine recovery ambiguity, exact action identity, and complete action-specific evidence reconstruction.
+- [ ] 5.8 VERIFY — Run all focused workflow/governance tests, complete pytest suite, mypy, ruff, and `openspec validate --all --strict --json --no-interactive` against the exact final implementation revision.
 
 ## Completion evidence
 
 - [ ] 6.1 Record the exact implementation PR head used for final verification and preserve test/quality/OpenSpec evidence for that revision.
 - [ ] 6.2 Record exact legacy-normalization evidence showing pre-existing terminal routed history was normalized or that any unresolved/ambiguous entry correctly blocked rollout rather than being silently ignored.
 - [ ] 6.3 Demonstrate from production-path evidence that completed terminal history no longer participates in normal authorization while current premature-close routing debt remains recoverable/fail-closed as specified.
-- [ ] 6.4 Confirm no lightweight-runtime/`uv`/packaging change, recovery registry/label, cursor/watermark/cache, lock/lease/heartbeat, second DAG, or unrelated #138 scope entered this Change.
+- [ ] 6.4 Demonstrate that dispatch read-reduction did not alter the selected mapped Action's existing durable evidence reconstruction/consumption semantics, including required Issue-comment completeness where applicable.
+- [ ] 6.5 Confirm no lightweight-runtime/`uv`/packaging change, recovery registry/label, cursor/watermark/cache, lock/lease/heartbeat, second DAG, or unrelated #138 scope entered this Change.
