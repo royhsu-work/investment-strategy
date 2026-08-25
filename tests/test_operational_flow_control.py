@@ -29,7 +29,10 @@ def test_unique_premature_close_candidate_keeps_bounded_lead_recovery() -> None:
     shared = _normalized(AGENTS)
     lead = _normalized(LEAD)
     for required in (
-        "Exactly one qualifying unfinished candidate may use premature-close recovery only at formal-zero",
+        (
+            "Exactly one qualifying unfinished candidate may use premature-close recovery "
+            "only at formal-zero"
+        ),
         "`Lead / resolve-question`",
         "An open formal workflow coexisting with unfinished or indeterminate debt fails closed",
         "no second unresolved debt candidate exists",
