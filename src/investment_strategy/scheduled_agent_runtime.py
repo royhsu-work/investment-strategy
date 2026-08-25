@@ -34,11 +34,9 @@ from investment_strategy.workflow_dispatch import (
     RepositoryIssueSnapshot,
     Role,
     Routing,
-    StructuralConflictDisposition,
     TerminalEvidence,
     classify_dispatch,
     classify_open_dispatch,
-    classify_structural_conflicts,
 )
 
 _AGENT_LABELS: dict[str, Role] = {
@@ -105,6 +103,17 @@ _LEGACY_FINAL_ARCHIVE_HEAD_LINE = re.compile(
 _LEGACY_FINAL_ARCHIVE_MERGE_LINE = re.compile(
     r"(?m)^Archive merge commit / current `main` HEAD:\s*`(?P<merge>[0-9a-f]{40})`\s*$"
 )
+_TERMINAL_ARCHIVE_PR = re.compile(r"Archive PR #(?P<pr>[1-9][0-9]*)", re.IGNORECASE)
+_TERMINAL_ARCHIVE_HEAD = re.compile(
+    r"(?:exact(?: reviewed/accepted)? head|authorized/reviewed archive head|authorized exact revision)"
+    r"[^0-9a-f]{0,48}`?(?P<head>[0-9a-f]{40})`?",
+    re.IGNORECASE,
+)
+_TERMINAL_MERGE_COMMIT = re.compile(
+    r"(?:merge commit(?: / current `main` HEAD)?|GitHub merge result commit)"
+    r"[^0-9a-f]{0,48}`?(?P<merge>[0-9a-f]{40})`?",
+    re.IGNORECASE,
+)
 
 # Default-branch activation of workflow-dynamic dispatch and its terminal journal contract.
 # Commit 0312a56fe38f1702ac8e53ddd7aa6a1deba1cb0d, 2026-08-13T18:11:21Z.
@@ -135,6 +144,7 @@ class GitHubIssueObservation:
     terminal_evidence: TerminalEvidence = "not-terminal"
     legacy_terminal_candidate: bool = False
     preactivation_eligible: bool = False
+    routing_debt: bool = False
 
 
 @dataclass(frozen=True)
@@ -153,6 +163,7 @@ class WorkerRequest:
     issue_number: int
     role: str
     action: str
+    debt_disposition: str | None = None
 
 
 def acquire_dispatch_preflight(
@@ -179,6 +190,7 @@ def acquire_dispatch_preflight(
                 else ObservationProvenance.INDETERMINATE
             ),
             preactivation_eligible=observation.preactivation_eligible,
+            routing_debt=observation.routing_debt,
         )
         for observation in observations
     )
@@ -218,6 +230,7 @@ def authorize_worker_request(
         issue_number=decision.selected_issue_id,
         role=role,
         action=action,
+        debt_disposition=decision.selected_debt_disposition,
     )
 
 
@@ -247,20 +260,31 @@ def _label_names(payload: Mapping[str, object]) -> tuple[set[str], bool]:
     return names, True
 
 
-def _routing_from_labels(labels: set[str]) -> tuple[Routing | None, bool]:
+def _routing_state_from_labels(
+    labels: set[str], *, state: str
+) -> tuple[Routing | None, bool, bool]:
     agent_labels = [name for name in labels if name.startswith("agent:")]
     action_labels = [name for name in labels if name.startswith("action:")]
+    routing_debt = state == "closed" and bool(agent_labels or action_labels)
 
+    if any(name not in _AGENT_LABELS for name in agent_labels) or any(
+        name not in _ACTION_LABELS for name in action_labels
+    ):
+        return None, False, routing_debt
+    if len(agent_labels) > 1 or len(action_labels) > 1:
+        return None, False, routing_debt
     if not agent_labels and not action_labels:
-        return None, True
-    if len(agent_labels) != 1 or len(action_labels) != 1:
-        return None, False
+        return None, True, False
+    if len(agent_labels) == 1 and len(action_labels) == 1:
+        return (_AGENT_LABELS[agent_labels[0]], _ACTION_LABELS[action_labels[0]]), True, routing_debt
+    if state == "closed":
+        return None, True, True
+    return None, False, False
 
-    role = _AGENT_LABELS.get(agent_labels[0])
-    action = _ACTION_LABELS.get(action_labels[0])
-    if role is None or action is None:
-        return None, False
-    return (role, action), True
+
+def _routing_from_labels(labels: set[str]) -> tuple[Routing | None, bool]:
+    routing, valid, _ = _routing_state_from_labels(labels, state="open")
+    return routing, valid
 
 
 def _github_timestamp(value: object) -> tuple[datetime | None, bool]:
@@ -291,7 +315,7 @@ def normalize_github_issue(payload: Mapping[str, object]) -> GitHubIssueObservat
         return None
 
     labels, labels_valid = _label_names(payload)
-    routing, routing_valid = _routing_from_labels(labels)
+    routing, routing_valid, routing_debt = _routing_state_from_labels(labels, state=state)
     created_order, created_valid = _created_order(payload.get("created_at"), number)
     closed_at, closed_valid = _github_timestamp(payload.get("closed_at"))
 
@@ -300,7 +324,7 @@ def normalize_github_issue(payload: Mapping[str, object]) -> GitHubIssueObservat
     change_valid = len(change_matches) <= 1
     if len(change_matches) == 1:
         change = change_matches[0]
-    elif routing is None:
+    elif routing is None and not routing_debt:
         change = "unset"
     else:
         change = "unset"
@@ -309,10 +333,9 @@ def normalize_github_issue(payload: Mapping[str, object]) -> GitHubIssueObservat
     recovery: RecoveryEvidence = "not-candidate"
     terminal_evidence: TerminalEvidence = "not-terminal"
     legacy_terminal_candidate = False
-    if state == "closed" and change != "unset":
+    if state == "closed" and change != "unset" and routing_debt:
         terminal_evidence = "indeterminate"
-        if routing is not None:
-            recovery = "indeterminate"
+        recovery = "indeterminate"
         legacy_terminal_candidate = (
             closed_valid and closed_at is not None and closed_at < _WORKFLOW_DYNAMIC_ACTIVATED_AT
         )
@@ -329,6 +352,7 @@ def normalize_github_issue(payload: Mapping[str, object]) -> GitHubIssueObservat
         premature_close_recovery=recovery,
         terminal_evidence=terminal_evidence,
         legacy_terminal_candidate=legacy_terminal_candidate,
+        routing_debt=routing_debt,
     )
 
 
@@ -347,7 +371,7 @@ def _normalize_closed_issue(payload: Mapping[str, object]) -> GitHubIssueObserva
         return observation
 
     labels, labels_valid = _label_names(payload)
-    routing, routing_valid = _routing_from_labels(labels)
+    routing, routing_valid, routing_debt = _routing_state_from_labels(labels, state="closed")
     created_order, created_valid = _created_order(
         payload.get("created_at"), observation.issue_number
     )
@@ -362,9 +386,10 @@ def _normalize_closed_issue(payload: Mapping[str, object]) -> GitHubIssueObserva
         state="closed",
         created_order=created_order,
         authoritative=(labels_valid and routing_valid and created_valid and closed_valid),
-        premature_close_recovery=("indeterminate" if routing is not None else "not-candidate"),
-        terminal_evidence="indeterminate",
-        legacy_terminal_candidate=True,
+        premature_close_recovery=("indeterminate" if routing_debt else "not-candidate"),
+        terminal_evidence=("indeterminate" if routing_debt else "not-terminal"),
+        legacy_terminal_candidate=routing_debt,
+        routing_debt=routing_debt,
     )
 
 
@@ -410,6 +435,30 @@ def _valid_lifecycle_complete_comment(
         "Result": "LIFECYCLE_COMPLETE",
     }
     return all(fields.get(name) == [value] for name, value in expected.items())
+
+
+def _terminal_identity(
+    payload: Mapping[str, object],
+) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
+    body = payload.get("body")
+    if not isinstance(body, str):
+        return frozenset(), frozenset(), frozenset()
+    return (
+        frozenset(_TERMINAL_ARCHIVE_PR.findall(body)),
+        frozenset(_TERMINAL_ARCHIVE_HEAD.findall(body)),
+        frozenset(_TERMINAL_MERGE_COMMIT.findall(body)),
+    )
+
+
+def _terminal_comments_compatible(comments: Iterable[Mapping[str, object]]) -> bool:
+    identities = tuple(_terminal_identity(comment) for comment in comments)
+    for index in range(3):
+        values: set[str] = set()
+        for identity in identities:
+            values.update(identity[index])
+        if len(values) > 1:
+            return False
+    return True
 
 
 def _valid_legacy_archive_merge_comment(
@@ -557,11 +606,11 @@ def _terminal_evidence_from_comments(
             repository_owner=repository_owner,
         )
     ]
-    if len(valid) == 1:
+    if not valid:
+        return "not-terminal"
+    if _terminal_comments_compatible(valid):
         return "terminal-history"
-    if len(valid) > 1:
-        return "indeterminate"
-    return "not-terminal"
+    return "indeterminate"
 
 
 def _has_human_retirement_comment(
@@ -601,7 +650,7 @@ def _apply_terminal_evidence(
             "indeterminate"
             if observation.state == "closed"
             and observation.change != "unset"
-            and observation.routing is not None
+            and observation.routing_debt
             else observation.premature_close_recovery
         ),
     )
@@ -707,6 +756,8 @@ def _github_closed_issue_pages(
     repository: str,
     token: str,
 ) -> tuple[tuple[Mapping[str, object], ...], ...]:
+    """Compatibility helper; production normal dispatch does not call this."""
+
     return _github_issue_pages_for_state(repository, token, "closed")
 
 
@@ -714,9 +765,9 @@ def _github_closed_routing_issue_pages(
     repository: str,
     token: str,
 ) -> tuple[tuple[Mapping[str, object], ...], ...]:
-    """Acquire only current closed Issues carrying governed workflow routing debt."""
+    """Acquire and fresh-observe only current Issues with workflow-routing debt."""
 
-    by_issue: dict[int, Mapping[str, object]] = {}
+    candidate_ids: set[int] = set()
     for label in _WORKFLOW_ROUTING_LABELS:
         page_number = 1
         while True:
@@ -731,14 +782,15 @@ def _github_closed_routing_issue_pages(
                 number = item.get("number")
                 if not isinstance(number, int):
                     raise RuntimeError("GitHub closed-routing query returned an invalid Issue")
-                by_issue[number] = item
+                candidate_ids.add(number)
             if len(page_items) < 100:
                 break
             page_number += 1
 
-    if not by_issue:
+    if not candidate_ids:
         return ()
-    return (tuple(by_issue[number] for number in sorted(by_issue)),)
+    fresh = tuple(_github_issue(repository, token, number) for number in sorted(candidate_ids))
+    return (fresh,)
 
 
 def _github_issue_pages(
@@ -873,7 +925,7 @@ def _structural_terminal_marker(
     raw_issue: Mapping[str, object],
     observation: GitHubIssueObservation,
 ) -> bool:
-    """Prove bounded modern or historical terminal shape from current GitHub facts."""
+    """Compatibility proof helper for historical regression fixtures."""
 
     if (
         not observation.authoritative
@@ -963,34 +1015,6 @@ def _structural_terminal_marker(
     )
 
 
-def _acquire_structural_closed_preflight(
-    repository: str,
-    token: str,
-    closed_pages: tuple[tuple[Mapping[str, object], ...], ...],
-) -> DispatchPreflight:
-    """Build the bounded closed-conflict projection for sole-formal selection."""
-
-    raw_by_issue = _raw_issue_map(closed_pages)
-    observations: list[GitHubIssueObservation] = []
-    for observation in _normalized_closed_observations(closed_pages):
-        raw_issue = raw_by_issue.get(observation.issue_number)
-        if raw_issue is not None and _structural_terminal_marker(
-            repository,
-            token,
-            raw_issue=raw_issue,
-            observation=observation,
-        ):
-            continue
-        observations.append(observation)
-
-    return acquire_dispatch_preflight(
-        observations=tuple(observations),
-        source_total_count=len(observations),
-        incomplete_results=False,
-        exhausted=True,
-    )
-
-
 def _direct_propose_admission_approved(
     repository: str,
     token: str,
@@ -1054,6 +1078,10 @@ def _apply_direct_propose_admission(
     return tuple(qualified)
 
 
+def _invalid_current_debt(observation: GitHubIssueObservation) -> GitHubIssueObservation:
+    return replace(observation, authoritative=False, premature_close_recovery="indeterminate")
+
+
 def _acquire_detailed_exceptional_preflight(
     repository: str,
     token: str,
@@ -1062,14 +1090,14 @@ def _acquire_detailed_exceptional_preflight(
     open_observations: tuple[GitHubIssueObservation, ...],
     closed_pages: tuple[tuple[Mapping[str, object], ...], ...],
 ) -> DispatchPreflight:
-    """Acquire terminal/recovery evidence only inside the exceptional boundary."""
+    """Acquire terminal/recovery evidence only for current closed-routing debt."""
 
     repository_owner = repository.split("/", 1)[0]
     observations: list[GitHubIssueObservation] = list(open_observations)
 
     for original in _normalized_closed_observations(closed_pages):
-        if original.change == "unset":
-            observations.append(original)
+        if original.state != "closed" or not original.routing_debt or original.change == "unset":
+            observations.append(_invalid_current_debt(original))
             continue
 
         if original.legacy_terminal_candidate:
@@ -1089,44 +1117,43 @@ def _acquire_detailed_exceptional_preflight(
             repository_owner=repository_owner,
         )
 
+        current_raw = _github_issue(repository, token, original.issue_number)
+        current = _normalize_closed_issue(current_raw)
+        if (
+            current is None
+            or not current.authoritative
+            or current.state != "closed"
+            or current.change != original.change
+            or not current.routing_debt
+        ):
+            observations.append(_invalid_current_debt(current or original))
+            continue
+
+        active_change = repository_root / "openspec" / "changes" / original.change
         if evidence == "not-terminal" and _has_human_retirement_comment(
             comments,
             issue_number=original.issue_number,
             change=original.change,
             repository_owner=repository_owner,
         ):
-            current_raw = _github_issue(repository, token, original.issue_number)
-            current = normalize_github_issue(current_raw)
-            active_change = repository_root / "openspec" / "changes" / original.change
-            if (
-                current is not None
-                and current.authoritative
-                and current.state == "closed"
-                and current.change == original.change
-                and current.routing is None
-                and current_raw.get("state_reason") == "not_planned"
-                and not active_change.exists()
-            ):
+            if current_raw.get("state_reason") == "not_planned" and not active_change.exists():
+                evidence = "terminal-history"
+            else:
+                evidence = "indeterminate"
+
+        if evidence == "not-terminal":
+            if current.routing is not None and active_change.exists():
+                observations.append(
+                    replace(
+                        current,
+                        terminal_evidence="not-terminal",
+                        premature_close_recovery="qualifying",
+                    )
+                )
                 continue
             evidence = "indeterminate"
 
-        observation = original
-        if evidence == "terminal-history":
-            current = normalize_github_issue(
-                _github_issue(repository, token, original.issue_number)
-            )
-            if (
-                current is None
-                or not current.authoritative
-                or current.state != "closed"
-                or current.change != original.change
-                or current.routing != original.routing
-            ):
-                evidence = "indeterminate"
-            else:
-                observation = current
-
-        observations.append(_apply_terminal_evidence(observation, evidence))
+        observations.append(_apply_terminal_evidence(current, evidence))
 
     return acquire_dispatch_preflight(
         observations=tuple(observations),
@@ -1172,7 +1199,6 @@ def acquire_current_github_preflight(
             incomplete_results=False,
             exhausted=True,
         )
-        open_decision = classify_open_dispatch(open_preflight)
 
     closed_pages = _github_closed_routing_issue_pages(repository, token)
     if not _normalized_closed_observations(closed_pages):
@@ -1200,6 +1226,7 @@ def _serialize_worker_request(
         "preactivation_candidate_ids": decision.preactivation_candidate_ids,
         "selected_issue_id": decision.selected_issue_id,
         "selected_routing": decision.selected_routing,
+        "selected_debt_disposition": decision.selected_debt_disposition,
         "worker_request": (
             None
             if request is None
@@ -1207,6 +1234,7 @@ def _serialize_worker_request(
                 "issue_number": request.issue_number,
                 "role": request.role,
                 "action": request.action,
+                "debt_disposition": request.debt_disposition,
             }
         ),
     }
@@ -1225,6 +1253,8 @@ def _write_github_outputs(request: WorkerRequest | None) -> None:
                 f"action={request.action}",
             )
         )
+        if request.debt_disposition is not None:
+            lines.append(f"debt_disposition={request.debt_disposition}")
     with Path(output_path).open("a", encoding="utf-8") as output:
         output.write("\n".join(lines) + "\n")
 
