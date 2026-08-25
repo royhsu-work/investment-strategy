@@ -77,7 +77,7 @@ The diagnostic reason is observability only. It MUST NOT authorize routing, `Cha
 
 A coordination Issue SHALL be actionable by scheduled roles only when it is open and contains exactly one valid `agent:<role>` label and exactly one valid `action:<action>` label forming a legal routing tuple for that role.
 
-A closed coordination Issue that still retains a workflow routing tuple SHALL NOT be normal actionable work. After the legacy routing-normalization migration has activated the new invariant, such a closed routed Issue SHALL represent an explicit unresolved recovery candidate until bounded recovery, retirement, or administrative repair resolves it.
+A closed coordination Issue that still retains a workflow routing tuple SHALL NOT be normal actionable work and SHALL represent unresolved routing/recovery debt until bounded recovery, terminal-retirement cleanup, legacy normalization, or administrative repair resolves it. During rollout, pre-existing terminal Issues that still carry legacy routing remain visible as such debt rather than being silently treated as safe history.
 
 Repository-owned terminal close effects SHALL close the Issue and retire all workflow `agent:*` and `action:*` routing labels as one logical Issue mutation after a fresh read, while preserving every unrelated label. This routing-retirement rule applies both to formal `LIFECYCLE_COMPLETE` closure and to legal pre-Change terminal research closure after `NO_CHANGE_REQUIRED` or `NO_GO`.
 
@@ -140,13 +140,13 @@ Zero, multiple, contradictory, or illegal routing labels on an open actionable I
 Workflow-dynamic Scheduled dispatch SHALL use repository-owned executable classification before loading any mapped Role or Skill. Steady-state production selection SHALL operate on two complete provenance-qualified current sets:
 
 1. current open Issues needed for formal WIP and pre-activation selection; and
-2. current closed Issues that still retain workflow routing labels and therefore represent unresolved recovery candidates.
+2. current closed Issues that still retain workflow routing labels and therefore represent unresolved recovery/routing debt.
 
 The normal classifier SHALL consume only facts required to select current work: Issue number/state, persisted `Change:` identity, current routing tuple derived from labels, GitHub `created_at` ordering for pre-activation candidates, and enumeration/provenance completeness. Any additional admission fact required for a queued candidate MUST come from its existing canonical executable admission predicate rather than model interpretation of prose.
 
 Completed closed workflow history, PR heads, CI state, OpenSpec artifacts, review evidence, lifecycle-specific PR evidence, and effect-specific mutation guards MUST NOT be prerequisites for global Issue selection. Completed terminal history SHALL NOT be re-enumerated or re-adjudicated merely to authorize unrelated current work. Action/effect-specific evidence SHALL be reconstructed only after an exact Issue/Role/Action or unresolved recovery candidate is selected by the boundary that owns those facts.
 
-Before this history-independent steady-state behavior is activated, repository migration/reconciliation SHALL completely enumerate the pre-existing closed routed workflow set and classify each entry from authoritative evidence. Entries proven terminal/retired SHALL have only workflow routing labels removed while preserving unrelated labels and historical body/comments/state. Genuine unfinished obligations SHALL remain explicit current recovery work. Missing, contradictory, incomplete, or unqualified migration evidence MUST fail the migration and MUST NOT activate the new steady-state selection contract. After successful normalization there SHALL be no recurring migration cursor, cutover watermark, terminal-history cache, or periodic full-history reconciliation requirement.
+The rollout SHALL include one bounded repository-owned migration/reconciliation that completely enumerates the pre-existing closed routed workflow set and classifies each entry from authoritative evidence. Entries proven terminal/retired SHALL have only workflow routing labels removed while preserving unrelated labels and historical body/comments/state. Genuine unfinished obligations SHALL remain explicit current recovery work. Missing, contradictory, incomplete, or unqualified migration evidence MUST fail closed and leave the unresolved routing debt visible. The repository MUST NOT require a separate activation flag or hide legacy routed entries merely to permit dispatch. After successful normalization there SHALL be no recurring migration cursor, cutover watermark, terminal-history cache, or periodic full-history reconciliation requirement.
 
 From the complete current open-Issue and unresolved closed-routing reconstruction, the executable classifier SHALL apply these rules before pre-activation selection:
 
@@ -155,15 +155,15 @@ From the complete current open-Issue and unresolved closed-routing reconstructio
 | exactly `1` open formal workflow and `0` unresolved closed-routing candidates | AUTHORIZE only that formal workflow using its current valid routing tuple |
 | `>1` open formal workflows | `FAIL_CLOSED` before any mapped action executes |
 | open formal cardinality indeterminate | `FAIL_CLOSED` before any mapped action executes |
-| exactly `1` open formal workflow and one or more unresolved closed-routing candidates | `FAIL_CLOSED`; current formal work MUST NOT coexist with an unresolved closed recovery obligation |
+| exactly `1` open formal workflow and one or more unresolved closed-routing candidates | `FAIL_CLOSED`; current formal work MUST NOT coexist with unresolved closed routing debt |
 | `0` open formal workflows and `0` unresolved closed-routing candidates | select the deterministic combined pre-activation winner, or return `NO_WORK` when none exists |
-| `0` open formal workflows and exactly `1` unresolved closed-routing candidate | perform detailed exceptional recovery for that candidate before pre-activation or `NO_WORK` |
-| `0` open formal workflows and `>1` unresolved closed-routing candidates | `FAIL_CLOSED` |
+| `0` open formal workflows and exactly `1` unresolved closed-routing candidate | perform detailed exceptional recovery/retirement evaluation for that candidate before pre-activation or `NO_WORK` |
+| `0` open formal workflows and `>1` unresolved closed-routing candidates | `FAIL_CLOSED` outside the bounded rollout migration path |
 | unresolved closed-routing enumeration/provenance indeterminate | `FAIL_CLOSED` |
 
 Production unresolved-recovery acquisition SHALL use complete paginated current GitHub observations constrained by `state=closed` and the existing workflow `agent:*` routing labels, deduplicate Issue identities, and validate the resulting current routing/Change shape. Because repository-owned terminal close and the one-time migration retire routing from terminal history, this acquisition SHALL scale with current unresolved routed closes rather than accumulated completed workflow history. It MUST NOT perform a repository-wide closed-history projection as a normal authorization prerequisite.
 
-Detailed exceptional recovery SHALL obtain detailed terminal/recovery evidence only for the exact current unresolved closed-routing candidate selected by the current-state boundary. With formal cardinality zero, exactly one qualifying premature-close recovery candidate SHALL authorize that closed Issue as `Lead / resolve-question` and SHALL block pre-activation intake. A candidate that proves terminal/retired is not normal work and SHALL be eligible only for the bounded cleanup/retirement effect required to restore the closed+unrouted invariant before normal dispatch proceeds. Multiple candidates, incomplete evidence, indeterminate required provenance, or genuine contradiction MUST produce `FAIL_CLOSED`.
+Detailed exceptional recovery SHALL obtain detailed terminal/recovery evidence only for the exact current unresolved closed-routing candidate selected by the current-state boundary. With formal cardinality zero, exactly one qualifying premature-close recovery candidate SHALL authorize that closed Issue as `Lead / resolve-question` and SHALL block pre-activation intake. A candidate that proves terminal/retired is not normal work and SHALL be eligible only for the bounded cleanup/retirement effect required to restore the closed+unrouted invariant before normal dispatch proceeds. Multiple candidates outside the one-time rollout migration, incomplete evidence, indeterminate required provenance, or genuine contradiction MUST produce `FAIL_CLOSED`.
 
 Canonical terminal completion evidence used by migration or detailed recovery SHALL be classified by semantic consistency rather than raw comment cardinality. Multiple valid `LIFECYCLE_COMPLETE` journals that identify the same coordination Issue, immutable Change, `Lead / finalize-archive` action, terminal result, and non-conflicting terminal revision/Archive identity SHALL represent idempotent at-least-once replay of one terminal fact. If otherwise valid terminal journals disagree on immutable terminal identity or carry materially contradictory completion evidence, terminal evidence SHALL remain `INDETERMINATE`. Additional non-conflicting metadata or a later journal supplying previously omitted compatible metadata MUST NOT by itself turn one terminal fact into a contradiction.
 
@@ -177,7 +177,7 @@ When repository durable state contains more than one open formal workflow, Sched
 
 A closed nonterminal Issue MAY be recovered automatically only for the demonstrated premature-close class when detailed exceptional recovery proves all existing predicates required for that recovery: persisted non-`unset` Change, one otherwise legal nonterminal routing tuple, unfinished lifecycle evidence, no valid terminal completion, no qualifying Human termination/non-resumption decision, no competing open formal workflow, and no second unresolved closed-routing candidate. Lead MAY reopen only that same Issue under `Lead / resolve-question`, preserve the immutable Change and pre-close routing identity, then fresh-reconstruct normal dispatch after reopening. The recovery invocation MUST NOT execute the preserved stale normal lifecycle action.
 
-This separation MUST NOT create a generic fault state machine, hidden recovery registry, new lifecycle status, lock, lease, heartbeat, retry counter, durable claim, cursor/watermark, cache-based authorization, or second workflow DAG. Deterministic normal-selection, unresolved-close, terminal-replay, migration, and exceptional-recovery mechanics SHALL be implemented and tested in production executable surfaces rather than duplicated as a second natural-language classifier for the model.
+This separation MUST NOT create a generic fault state machine, hidden recovery registry, new lifecycle status, activation flag, lock, lease, heartbeat, retry counter, durable claim, cursor/watermark, cache-based authorization, or second workflow DAG. Deterministic normal-selection, unresolved-close, terminal-replay, migration, and exceptional-recovery mechanics SHALL be implemented and tested in production executable surfaces rather than duplicated as a second natural-language classifier for the model.
 
 #### Scenario: One active workflow is missed by a partial search
 
@@ -214,7 +214,7 @@ This separation MUST NOT create a generic fault state machine, hidden recovery r
 
 - GIVEN current open-Issue and unresolved closed-routing enumeration are provenance-qualified and complete
 - AND exactly one open formal active workflow A exists
-- AND at least one different closed Issue still retains workflow routing and is therefore an unresolved recovery candidate
+- AND at least one different closed Issue still retains workflow routing and is therefore unresolved routing/recovery debt
 - WHEN workflow-dynamic dispatch evaluates authorization
 - THEN dispatch returns `FAIL_CLOSED`
 - AND it does not execute A or reopen the closed Issue into a second formal workflow
@@ -353,10 +353,10 @@ This separation MUST NOT create a generic fault state machine, hidden recovery r
 
 #### Scenario: Legacy routed terminal history is normalized once
 
-- GIVEN pre-existing closed workflow Issues still retain workflow routing labels before the new steady-state invariant is activated
+- GIVEN rollout encounters pre-existing closed workflow Issues that still retain workflow routing labels
 - WHEN the one-time migration/reconciliation runs
-- THEN it completely enumerates that pre-existing closed routed set
+- THEN it completely enumerates that bounded pre-existing closed routed set
 - AND removes only workflow routing labels from each entry proven terminal or retired while preserving unrelated labels and historical state/evidence
 - AND leaves or restores genuine unfinished obligations as explicit recovery work
-- AND any ambiguous or incomplete entry fails the migration
-- AND successful activation leaves no recurring migration cursor, watermark, or full-history scan
+- AND any ambiguous or incomplete entry keeps the migration and normal authorization fail closed
+- AND successful normalization leaves no activation flag, recurring migration cursor, watermark, or full-history scan
