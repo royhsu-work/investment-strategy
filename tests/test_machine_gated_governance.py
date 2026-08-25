@@ -202,7 +202,11 @@ def test_terminal_retained_routing_is_current_debt_and_preempts_open_formal(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(runtime, "_github_open_issue_pages", lambda repository, token: ((_formal_140_payload(),),))
+    monkeypatch.setattr(
+        runtime,
+        "_github_open_issue_pages",
+        lambda repository, token: ((_formal_140_payload(),),),
+    )
     monkeypatch.setattr(
         runtime,
         "_github_closed_routing_issue_pages",
@@ -237,7 +241,11 @@ def test_pre_dynamic_terminal_debt_uses_bounded_legacy_evidence_for_cleanup(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(runtime, "_github_open_issue_pages", lambda repository, token: ((_formal_140_payload(),),))
+    monkeypatch.setattr(
+        runtime,
+        "_github_open_issue_pages",
+        lambda repository, token: ((_formal_140_payload(),),),
+    )
     monkeypatch.setattr(
         runtime,
         "_github_closed_routing_issue_pages",
@@ -270,7 +278,11 @@ def test_pre_dynamic_indeterminate_terminal_debt_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(runtime, "_github_open_issue_pages", lambda repository, token: ((_formal_140_payload(),),))
+    monkeypatch.setattr(
+        runtime,
+        "_github_open_issue_pages",
+        lambda repository, token: ((_formal_140_payload(),),),
+    )
     monkeypatch.setattr(
         runtime,
         "_github_closed_routing_issue_pages",
@@ -295,7 +307,11 @@ def test_closed_finalize_archive_without_completion_marker_stays_nonclear(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(runtime, "_github_open_issue_pages", lambda repository, token: ((_formal_140_payload(),),))
+    monkeypatch.setattr(
+        runtime,
+        "_github_open_issue_pages",
+        lambda repository, token: ((_formal_140_payload(),),),
+    )
     monkeypatch.setattr(
         runtime,
         "_github_closed_routing_issue_pages",
