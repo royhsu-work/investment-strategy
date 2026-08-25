@@ -297,7 +297,8 @@ def test_final_completion_requires_lifecycle_complete_then_observed_issue_closur
     for required in (
         "PASS, completion comment, merge result",
         "open coordination Issue = formal workflow not yet terminal",
-        "valid `LIFECYCLE_COMPLETE` plus observed closed Issue",
+        "closed Issue with workflow routing residue = current closed-routing debt",
+        "valid `LIFECYCLE_COMPLETE` plus freshly observed `closed + no workflow routing`",
     ):
         assert required in shared
     ordered = (
