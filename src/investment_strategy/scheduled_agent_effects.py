@@ -729,7 +729,7 @@ class GitHubEffectAdapter:
             _github_json(
                 self.repository,
                 self.token,
-                f"contents/{quote(path, safe='/')}" ,
+                f"contents/{quote(path, safe='/')}",
                 method="DELETE",
                 payload={
                     "message": cast(str, payload["message"]),
