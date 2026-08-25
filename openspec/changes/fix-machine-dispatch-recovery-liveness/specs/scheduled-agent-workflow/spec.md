@@ -146,6 +146,8 @@ The normal classifier SHALL consume only facts required to select current work: 
 
 Completed closed workflow history, PR heads, CI state, OpenSpec artifacts, review evidence, lifecycle-specific PR evidence, and effect-specific mutation guards MUST NOT be prerequisites for global Issue selection. Completed terminal history SHALL NOT be re-enumerated or re-adjudicated merely to authorize unrelated current work. Action/effect-specific evidence SHALL be reconstructed only after an exact Issue/Role/Action or unresolved recovery candidate is selected by the boundary that owns those facts.
 
+Dispatch read-reduction SHALL stop at that selection boundary. After `AUTHORIZE` selects an exact mapped Action, this Change MUST preserve that Action's existing default-branch evidence-reconstruction and evidence-consumption contract. It MUST NOT filter, truncate, replace, summarize away, impose a latest-comment shortcut on, or otherwise narrow action-required Issue comments, review findings, prior `ACTION_RESULT`/`HANDOFF`, Human-decision evidence, PR/review state, CI evidence, OpenSpec artifacts, or other durable inputs. If the governing Action currently requires complete Issue-comment reconstruction, that completeness requirement remains unchanged by this Change.
+
 The rollout SHALL include one bounded repository-owned migration/reconciliation that completely enumerates the pre-existing closed routed workflow set and classifies each entry from authoritative evidence. Entries proven terminal/retired SHALL have only workflow routing labels removed while preserving unrelated labels and historical body/comments/state. Genuine unfinished obligations SHALL remain explicit current recovery work. Missing, contradictory, incomplete, or unqualified migration evidence MUST fail closed and leave the unresolved routing debt visible. The repository MUST NOT require a separate activation flag or hide legacy routed entries merely to permit dispatch. After successful normalization there SHALL be no recurring migration cursor, cutover watermark, terminal-history cache, or periodic full-history reconciliation requirement.
 
 From the complete current open-Issue and unresolved closed-routing reconstruction, the executable classifier SHALL apply these rules before pre-activation selection:
@@ -315,10 +317,11 @@ This separation MUST NOT create a generic fault state machine, hidden recovery r
 #### Scenario: Action-specific evidence is not a global selection prerequisite
 
 - GIVEN production dispatch has selected one exact formal Issue routed to `Reviewer / review-openspec`
-- AND that action later requires OpenSpec artifacts, exact validation evidence, and review-specific provenance
-- WHEN global Issue selection is performed
-- THEN those review-specific resources are not required to identify the Issue/Role/Action
-- AND Reviewer reconstructs them only after machine selection under the mapped action contract
+- AND that action later requires OpenSpec artifacts, exact validation evidence, review-specific provenance, and an older Issue comment under its existing reconstruction contract
+- WHEN global Issue selection is performed and the mapped Reviewer action subsequently starts
+- THEN those review-specific resources and the older comment are not required to identify the Issue/Role/Action
+- AND after `AUTHORIZE`, Reviewer reconstructs every one of those required inputs under the unchanged mapped-action contract
+- AND dispatch optimization does not filter, truncate, latest-only select, summarize away, or substitute for that older required comment or any other action-required durable evidence
 
 #### Scenario: Human or maintainer repairs a multiple-active repository state
 
