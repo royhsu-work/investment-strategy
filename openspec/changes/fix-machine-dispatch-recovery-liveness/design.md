@@ -10,7 +10,7 @@ The revised design changes the responsibility boundary rather than making the ol
 
 1. Keep normal selection proportional to current unresolved work, not accumulated terminal history.
 2. Preserve complete provenance-qualified current open-Issue reconstruction, WIP=1, deterministic pre-activation ordering, and model non-override.
-3. Preserve bounded premature-close recovery without a second workflow registry, cutover cursor, or hidden lifecycle status.
+3. Preserve bounded premature-close recovery without a second workflow registry, activation flag, cutover cursor, or hidden lifecycle status.
 4. Keep detailed terminal/recovery forensics exceptional and candidate-bound.
 5. Preserve bounded machine diagnostics for `NO_WORK` / `FAIL_CLOSED`.
 
@@ -66,17 +66,19 @@ This applies to formal terminal close and pre-Change terminal research close (`N
 
 An out-of-band actor that both closes unfinished work and deliberately removes its routing tuple has erased the repository's current recovery signal. That is administrative corruption/repair territory; normal dispatch does not reconstruct all history on every wake to defend against arbitrary destructive rewrites.
 
-## Decision 3: Normalize legacy routed history once, then remove migration state
+## Decision 3: Normalize legacy routed history once; transition fails closed until clean
 
-Existing terminal history predates the routing-retirement invariant, so some completed closed Issues may still retain workflow routing labels. Those old routed labels must not remain in the steady-state unresolved set.
+Existing terminal history predates the routing-retirement invariant, so some completed closed Issues may still retain workflow routing labels. Those old routed labels will initially appear in the same unresolved closed-routing set as a genuine premature close.
 
-Before activating the history-independent dispatcher behavior, run one bounded migration/reconciliation over the pre-existing closed routed workflow set:
+The rollout therefore includes one repository-owned bounded migration/reconciliation over the pre-existing closed routed set:
 
 - detailed evidence proves terminal/retired → remove only `agent:*` / `action:*` routing labels, preserve unrelated labels and all historical comments/body/state;
 - evidence proves a real unfinished obligation → leave/restore it as explicit current recovery work under the existing recovery contract;
-- ambiguous/incomplete evidence → migration fails closed and the new steady-state behavior is not activated.
+- ambiguous/incomplete evidence → migration fails closed and the routing debt remains visible.
 
-After that migration succeeds there is no cutover timestamp, cursor, watermark, migration registry, or recurring reconciliation state. The normalized durable invariant itself is sufficient:
+There is no separate activation flag or migration-complete marker. If the history-independent selector is present while legacy routed debt remains, that debt is visible as unresolved current state and normal dispatch may return `FAIL_CLOSED` until normalization succeeds. The repository MUST NOT hide or bypass those candidates merely to make rollout proceed.
+
+After normalization succeeds, no cutover timestamp, cursor, watermark, migration registry, or recurring reconciliation state remains. The normalized durable invariant itself is sufficient:
 
 ```text
 closed + workflow routing present = current unresolved recovery candidate
@@ -115,6 +117,8 @@ When exactly one candidate exists, detailed exceptional recovery evaluates only 
 - no second unresolved recovery candidate.
 
 One qualifying candidate at formal-zero routes `Lead / resolve-question`; coexistence with an open formal workflow, ambiguity, incomplete evidence, or multiple candidates remains `FAIL_CLOSED`.
+
+The one-time legacy migration is the only rollout path allowed to classify and retire a pre-existing multi-Issue routed history set. Steady-state dispatch does not generalize that migration into repeated all-history repair.
 
 ## Decision 6: Terminal replay semantics remain exceptional correctness
 
@@ -188,7 +192,7 @@ Expected:
 
 ### Legacy-migration regression
 
-Prove steady-state activation is blocked until a one-time migration classifies every pre-existing closed routed workflow Issue. Proven terminal/retired history becomes closed+unrouted; genuine unresolved work remains explicit; ambiguous migration evidence fails closed. After migration succeeds, no migration cursor/state or recurring history scan remains.
+Model rollout with pre-existing closed routed terminal history. The history-independent selector sees that routing debt as unresolved and remains fail closed where necessary. One-time normalization classifies the bounded legacy routed set; proven terminal/retired entries become closed+unrouted, genuine unfinished work remains explicit, and ambiguous evidence keeps rollout fail closed. After normalization succeeds, no activation flag, cursor/state, or recurring history scan remains.
 
 ### Diagnostic and safety regressions
 
@@ -213,14 +217,15 @@ No role or mapped Skill ownership change is intended.
 ### Chosen: existing routing labels + one-time normalization
 
 Pros:
-- no new registry, recovery label, lifecycle status, cursor, or watermark;
+- no new registry, recovery label, lifecycle status, activation flag, cursor, or watermark;
 - normal cost scales with unresolved work, not history;
 - premature close produces a durable signal naturally because close does not erase routing;
 - legitimate terminal close can retire routing in the same Issue mutation;
 - legacy cost is paid once, then migration state disappears.
 
 Cons:
-- one-time migration must inspect the bounded pre-existing closed routed set before rollout;
+- one-time migration must inspect the bounded pre-existing closed routed set during rollout;
+- rollout may temporarily fail closed while legacy routing debt remains;
 - out-of-band administrators can deliberately erase the recovery signal, which is treated as administrative corruption rather than something every normal wake must defend against by full-history replay.
 
 ### Rejected: structural projection of every closed workflow
@@ -230,6 +235,10 @@ Still `O(repository-history)` and is the Reviewer finding being corrected.
 ### Rejected: fixed cutover cursor/watermark
 
 A fixed boundary avoids old history but still introduces another durable semantic marker. One-time normalization achieves the same steady-state property with less persistent state.
+
+### Rejected: activation flag
+
+A migration-ready flag would create another authoritative state bit that must stay synchronized with GitHub Issue reality. Transitional fail-closed behavior already provides the safe rollout boundary without that state.
 
 ### Rejected: new durable recovery registry/label
 
