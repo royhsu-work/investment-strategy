@@ -89,6 +89,35 @@ Legal outcomes:
 
 ## `resolve-question`
 
+### Machine-selected closed-routing debt branch
+
+When the machine-authorized `Lead / resolve-question` worker carries a machine-derived debt disposition,
+handle that exact selected closed-routing-debt candidate before the ordinary specification-resolution steps
+below. The worker does not enumerate historical Issues, choose another candidate, or infer a disposition from
+Issue prose.
+
+- `terminal-cleanup`: require this exact Issue, immutable Change identity, and machine disposition
+  `terminal-cleanup`. Reconstruct the terminal/retired evidence required by current default-branch governance,
+  but do not turn that bounded candidate proof into repository-history enumeration. Request only the
+  `terminal-retirement` effect for the same `issue_number` and `expected_change`. Keep the Issue closed; do not
+  reopen it, edit OpenSpec artifacts, rewrite routing/history/body meaning, or request removal of unrelated
+  labels. Repository application fresh-reauthorizes the exact source/disposition, fresh-observes that the same
+  Issue remains closed with routing debt, removes only currently observed workflow `agent:*`/`action:*` labels
+  through narrow effects, preserves unrelated labels, and accepts completion only after fresh observation of
+  `closed + no workflow routing`. If another invocation already completed that postcondition, request no replay
+  and allow fresh dispatch to consume the resulting state.
+- `unfinished-recovery`: preserve the existing bounded premature-close recovery contract from
+  `agents/AGENTS.md` and `agents/roles/lead.md`. The exact selected Issue must remain the sole qualifying
+  unfinished debt candidate at formal-zero with no competing current debt or open formal workflow. Request only
+  the same-Issue reopen/restoration effect that preserves immutable Change identity and the proven pre-close
+  routing tuple. This recovery invocation does not execute that restored normal action; fresh dispatch selects
+  the next mapped worker from the postcondition.
+- Missing, indeterminate, contradictory, stale, or changed candidate/disposition evidence prohibits the debt
+  effect and fails closed to the existing diagnosis/authority boundary. A machine debt disposition never grants
+  broader specification-authoring authority.
+
+When no machine debt disposition is present, use the ordinary specification-resolution procedure below.
+
 1. Reconstruct the finding/blocker and the exact currently governed OpenSpec state.
 2. Decide whether the finding is accepted, rejected, or already resolved using approved scope and evidence. Explain the decision durably. When that approved specification/scope decision explicitly creates a required deferred follow-up that must still be handled as a separate change, express it as one routing-complete requested logical postcondition. First reconstruct the approved source obligation and all matching trackers from durable evidence; tracker prose is evidence only and never supplies missing authority.
    - If no matching tracker exists, request creation of exactly one source-linked tracker with the exact source coordination Issue/Change and defer-decision/reference, `Change: unset`, and `agent:lead + action:explore-change` routing without Human admission.
