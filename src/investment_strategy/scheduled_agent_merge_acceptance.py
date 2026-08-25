@@ -28,6 +28,7 @@ from investment_strategy.scheduled_agent_runtime import WorkerRequest
 _REVIEW_ACTIONS = ("review-implementation", "review-archive")
 _CLOSING_KEYWORDS = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)"
 _ACCEPTED_CHECK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
+_DEBT_DISPOSITIONS = frozenset({"terminal-cleanup", "unfinished-recovery"})
 
 
 @dataclass(frozen=True)
@@ -319,13 +320,22 @@ def _source_from_environment() -> WorkerRequest:
     issue = os.environ.get("AUTHORIZED_ISSUE")
     role = os.environ.get("AUTHORIZED_ROLE")
     action = os.environ.get("AUTHORIZED_ACTION")
+    raw_disposition = os.environ.get("AUTHORIZED_DEBT_DISPOSITION", "")
+    disposition = raw_disposition or None
     if not issue or not role or not action:
         raise RuntimeError("machine-authorized Issue/role/action environment is required")
+    if disposition is not None and disposition not in _DEBT_DISPOSITIONS:
+        raise RuntimeError("AUTHORIZED_DEBT_DISPOSITION is invalid")
     try:
         issue_number = int(issue)
     except ValueError as exc:
         raise RuntimeError("AUTHORIZED_ISSUE must be an integer") from exc
-    return WorkerRequest(issue_number=issue_number, role=role, action=action)
+    return WorkerRequest(
+        issue_number=issue_number,
+        role=role,
+        action=action,
+        debt_disposition=disposition,
+    )
 
 
 def _write_github_outputs(batch: EffectBatch, result: ApplyResult) -> None:
@@ -344,6 +354,8 @@ def _write_github_outputs(batch: EffectBatch, result: ApplyResult) -> None:
                 f"continuation_action={result.continuation.action}",
             )
         )
+        if result.continuation.debt_disposition is not None:
+            lines.append(f"continuation_debt_disposition={result.continuation.debt_disposition}")
     with Path(output_path).open("a", encoding="utf-8") as output:
         output.write("\n".join(lines) + "\n")
 
@@ -381,6 +393,7 @@ def main() -> int:
                         "issue_number": result.continuation.issue_number,
                         "role": result.continuation.role,
                         "action": result.continuation.action,
+                        "debt_disposition": result.continuation.debt_disposition,
                     }
                 ),
             },
