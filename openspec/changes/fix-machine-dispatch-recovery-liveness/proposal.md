@@ -66,14 +66,22 @@ No repository Skill is added or removed by this Change.
 
 - Coordination Issue: #155
 - First-principles investigation: `issuecomment-5405282007`
-- Decision-complete interactive Explore evidence: `issuecomment-5405497269`
-- Exceptional self-hosting bootstrap record: `issuecomment-5405643748`
-- Reviewer finding requiring current-unresolved-obligation semantics: `issuecomment-5406357205`
-- Reviewer findings requiring concurrency-safe retirement and governed normalization ownership: `issuecomment-5406912928`
+- Historical decision-complete interactive Explore evidence: `issuecomment-5405497269`; this remains contextual evidence and explicitly is not a canonical `ACTION_RESULT`.
+- Exceptional self-hosting bootstrap record: `issuecomment-5405643748`.
+- Reviewer finding requiring current-unresolved-obligation semantics: `issuecomment-5406357205`.
+- Reviewer findings requiring concurrency-safe retirement and governed normalization ownership: `issuecomment-5406912928`.
+- Reviewer provenance finding F5: `issuecomment-5407975502`.
+- Canonical Human escalation for F5: `issuecomment-5408263684`.
+- Direct-Human Option 1 decision: `issuecomment-5408291799`, declaring `Human-Decision-For: issuecomment-5408263684` and prospectively re-admitting the already-formalized Change scope.
+- Bound Human-only approval event: Issue event `29967025795`, a later `human:approved` label event by `royhsu-work` with no GitHub App provenance.
 - Production reproduction source: closed workflow #91 with canonical completion comments `5333895069` and `5335505763`; #91 is terminal history and is evidence of the responsibility-boundary defect, not a current recovery obligation.
 - Baseline default-branch revision for this correction: `00a0e5a2c8068077faf5d18980e4a6f84f72f74e`.
 
-The bootstrap record is audit provenance for this exceptional self-repair only; it is not a synthesized machine `AUTHORIZE` and does not become a reusable normal-dispatch bypass.
+### Current semantic-authority basis after F5
+
+The historical Explore evidence remains factual context and is not retyped, rewritten, or promoted into an `ACTION_RESULT`. No synthetic Explore lifecycle event is created.
+
+The provenance-qualified Human Option 1 decision prospectively establishes current Human authority for the already-formalized `fix-machine-dispatch-recovery-liveness` scope so this existing proposal can proceed without rewriting historical workflow evidence. This authority repair does not claim that the historical Explore produced the missing canonical result, does not turn the exceptional bootstrap into normal machine authorization, and does not alter the Change's behavioral scope. Independent `Reviewer / review-openspec` remains responsible for deciding whether this repaired provenance satisfies the current semantic review contract.
 
 ## Deferred work
 
