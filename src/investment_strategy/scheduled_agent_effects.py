@@ -594,7 +594,11 @@ class GitHubEffectAdapter:
             return True
         return self._guard_github_mutation(payload)
 
-    def _apply_terminal_retirement(self, effect: StagedEffect, payload: Mapping[str, object]) -> None:
+    def _apply_terminal_retirement(
+        self,
+        effect: StagedEffect,
+        payload: Mapping[str, object],
+    ) -> None:
         expected_change = cast(str, payload["expected_change"])
         current = self._current_issue()
         if not self._terminal_target_valid(
@@ -725,7 +729,7 @@ class GitHubEffectAdapter:
             _github_json(
                 self.repository,
                 self.token,
-                f"contents/{quote(path, safe='/')}",
+                f"contents/{quote(path, safe='/')}" ,
                 method="DELETE",
                 payload={
                     "message": cast(str, payload["message"]),
