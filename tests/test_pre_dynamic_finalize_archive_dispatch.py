@@ -36,7 +36,11 @@ def test_pre_dynamic_terminal_routing_debt_is_selected_for_cleanup(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(runtime, "_github_open_issue_pages", lambda repository, token: ((_formal_140_payload(),),))
+    monkeypatch.setattr(
+        runtime,
+        "_github_open_issue_pages",
+        lambda repository, token: ((_formal_140_payload(),),),
+    )
     monkeypatch.setattr(
         runtime,
         "_github_closed_routing_issue_pages",
@@ -66,7 +70,11 @@ def test_pre_dynamic_unproven_terminal_debt_stays_fail_closed(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(runtime, "_github_open_issue_pages", lambda repository, token: ((_formal_140_payload(),),))
+    monkeypatch.setattr(
+        runtime,
+        "_github_open_issue_pages",
+        lambda repository, token: ((_formal_140_payload(),),),
+    )
     monkeypatch.setattr(
         runtime,
         "_github_closed_routing_issue_pages",
