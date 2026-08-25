@@ -94,7 +94,7 @@ Zero, multiple, contradictory, or illegal routing labels on an open actionable I
 - WHEN Reviewer discovers eligible work
 - THEN the Issue is eligible for the Reviewer `review-openspec` action
 
-#### Scenario: Closed nonterminal Issue is routing debt
+#### Scenario: Closed terminal-pending Issue has the one legal exception
 
 - GIVEN a coordination Issue is closed
 - AND it still retains a valid nonterminal workflow routing tuple
@@ -244,7 +244,7 @@ This separation MUST NOT create a generic fault state machine, hidden recovery r
 - THEN it authorizes the sole open formal workflow without enumerating or fetching retired historical terminal workflow evidence merely for that selection
 - AND historical closed workflow state cannot override the current open formal winner by prose or stale context
 
-#### Scenario: Sole formal workflow with unfinished closed conflict does not fast-path authorization
+#### Scenario: Sole formal workflow with a possible closed unfinished conflict does not fast-path authorization
 
 - GIVEN current open-Issue and closed-routing-debt enumeration are provenance-qualified and complete
 - AND exactly one open formal active workflow A exists
@@ -294,7 +294,7 @@ This separation MUST NOT create a generic fault state machine, hidden recovery r
 - THEN it performs bounded detailed exceptional recovery for that exact Issue only
 - AND qualifying or genuinely indeterminate recovery state preserves the existing recovery/fail-closed semantics
 
-#### Scenario: Exceptional debt resolution runs before pre-activation selection
+#### Scenario: Exceptional recovery runs before pre-activation selection
 
 - GIVEN complete current open-Issue state contains zero formal workflows
 - AND one or more open pre-activation candidates exist
