@@ -284,7 +284,10 @@ def test_propose_preserves_required_followup_and_tracker_outside_current_scope()
 def test_propose_rejects_missing_or_ambiguous_required_tracker() -> None:
     change = _normalized(CHANGE)
 
-    assert "If no matching tracker exists for an Explore-originated required separate follow-up" in change
+    missing_tracker = (
+        "If no matching tracker exists for an Explore-originated required separate follow-up"
+    )
+    assert missing_tracker in change
     assert "multiple or ambiguous matching trackers for that Explore decision" in change
     assert "fail closed" in change
 
@@ -300,6 +303,9 @@ def test_propose_repairs_only_unique_incomplete_explore_tracker() -> None:
 def test_propose_does_not_upgrade_or_downgrade_from_presentation_wording() -> None:
     change = _normalized(CHANGE)
 
-    assert "presentation wording does not create or erase the required-follow-up classification" in change
+    presentation_rule = (
+        "presentation wording does not create or erase the required-follow-up classification"
+    )
+    assert presentation_rule in change
     assert "Deferred work" in change
     assert "out of scope" in change
