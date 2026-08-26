@@ -60,6 +60,7 @@ def test_required_followup_does_not_infer_authority_from_prose() -> None:
     assert expected in text
 
 
+# Keep these assertions literal: presentation wording must not become follow-up authority.
 def test_explore_classifies_required_followup_before_materialization() -> None:
     text = _openspec_explore_text()
 
