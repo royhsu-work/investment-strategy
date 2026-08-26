@@ -35,6 +35,6 @@ Trace: proposal `What Changes`; requirement scenarios `Propose preserves a requi
 - [ ] Confirm Proposal / Specs / Design / Tasks are bidirectionally traceable and the two prospective Skill modifications are explicitly declared with rationale/responsibility treatment.
 - [ ] Confirm the requirement preserves the existing semantic distinction among ordinary deferred/optional/non-goal, required separate follow-up, and already-tracked separate work without using presentation words as classification tokens.
 - [ ] Confirm no retrospective tracker is created for #140 or #155.
-- [ ] Run final exact-head Python quality gates and strict OpenSpec validation before `READY_FOR_OPENSPEC_REVIEW`.
+- [ ] Run final exact-head Python quality gates and strict OpenSpec validation before Executor reports `READY` and hands off to `Reviewer / review-implementation`.
 
 No implementation task is complete at Propose time; Executor owns RED/GREEN/REFACTOR/VERIFY completion evidence after independent OpenSpec PASS.
