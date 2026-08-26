@@ -267,3 +267,45 @@ def test_semantic_adapter_does_not_own_explore_handoff_semantics() -> None:
 
     assert "Explore-originated" not in adapter
     assert "PROPOSAL_READY" not in adapter
+
+
+def test_propose_preserves_required_followup_and_tracker_outside_current_scope() -> None:
+    change = _normalized(CHANGE)
+
+    for required in (
+        "For an Explore-originated required separate follow-up",
+        "preserve the required-follow-up classification",
+        "routing-complete tracker",
+        "outside the current Change implementation scope",
+    ):
+        assert required in change
+
+
+def test_propose_rejects_missing_or_ambiguous_required_tracker() -> None:
+    change = _normalized(CHANGE)
+
+    missing_tracker = (
+        "If no matching tracker exists for an Explore-originated required separate follow-up"
+    )
+    assert missing_tracker in change
+    assert "multiple or ambiguous matching trackers for that Explore decision" in change
+    assert "fail closed" in change
+
+
+def test_propose_repairs_only_unique_incomplete_explore_tracker() -> None:
+    change = _normalized(CHANGE)
+
+    assert "exactly one matching but incomplete Explore-originated tracker" in change
+    assert "repair only the missing durable fields/routing" in change
+    assert "must not create a duplicate" in change
+
+
+def test_propose_does_not_upgrade_or_downgrade_from_presentation_wording() -> None:
+    change = _normalized(CHANGE)
+
+    presentation_rule = (
+        "presentation wording does not create or erase the required-follow-up classification"
+    )
+    assert presentation_rule in change
+    assert "Deferred work" in change
+    assert "out of scope" in change

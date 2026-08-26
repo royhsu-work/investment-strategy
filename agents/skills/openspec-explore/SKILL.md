@@ -59,6 +59,25 @@ Before materializing autonomous work, deduplicate against open or reconstructabl
 5. Keep the work conversation-first and bounded. Explore MAY use simple diagrams or compact comparisons when useful, but it does not create a parallel artifact DAG or research-state machine.
 6. Exit only when the investigation is decision-complete: every material question that could change the disposition is resolved by evidence, shown non-blocking, identified as a genuine Human intent/authority decision, or sufficient to establish current no-change/no-go.
 
+## Required separate follow-up materialization
+
+When decision-complete Explore explicitly separates later work, classify each bounded item using the existing semantic distinction: **ordinary deferred / optional / non-goal**, **required separate follow-up**, or **already-tracked separate work**. These are decision meanings, not workflow states or labels, and presentation wording does not create or erase the classification. Words such as `Deferred work`, `out of scope`, `follow-up`, or `separately reviewable` therefore do not create a tracker obligation by themselves.
+
+For every **required separate follow-up**, record the classification and bounded follow-up identity in the final Explore result and persist the `PROPOSAL_READY` `ACTION_RESULT` before requesting tracker materialization. The exact durable result then supplies the defer-decision reference; tracker prose or conversation memory cannot replace that source authority.
+
+After that result is durable, reconstruct all matching trackers from the exact source coordination Issue/Change and defer-decision reference and request only the missing idempotent effect under the shared required-follow-up contract:
+
+- if no matching tracker exists, request creation of exactly one source-linked coordination Issue with `Change: unset` and `agent:lead + action:explore-change`;
+- if exactly one matching but incomplete tracker exists, request repair only of the missing durable identity/routing fields still authorized by the exact source evidence;
+- if exactly one matching tracker is already complete, reuse the complete tracker and must not create a duplicate;
+- if multiple or ambiguous matching trackers exist, fail closed, must not choose a winner, and must not create a duplicate.
+
+Materialization is complete only after a fresh observation proves the tracker is source-linked to the exact source coordination Issue/Change and exact durable Explore defer decision and also proves `Change: unset` plus `agent:lead + action:explore-change`. While a required tracker is missing, incomplete, ambiguous, or contradictory, Explore MUST NOT request routing to `Lead / propose-change`.
+
+If execution stops after the result is durable but before tracker materialization or successor routing finishes, later reconstruction consumes the same exact durable Explore result and completes only the missing idempotent effects. It does not create a second defer decision or reinterpret the classification from later prose. Already-tracked separate work reuses its exact durable tracker rather than creating another; ordinary deferred / optional / non-goal work remains untracked unless a separate approved decision later changes its semantic class.
+
+This is an action-local producer step only. It does not make Explore a generic Issue generator, does not add a tracker registry/status/second DAG, and does not allow Agent-authored follow-up prose or a newly created tracker to recursively authorize unrelated work.
+
 ## Authority boundary
 
 Explore MUST NOT create `openspec/changes/` artifacts, choose or persist a formal Change id, or author proposal/specs/design/tasks as an Explore output. Explore MUST NOT modify implementation code. `Change: unset` remains unchanged for the whole Explore action.
@@ -75,7 +94,7 @@ Explore does not require `status:exploring`; Explore does not require `review-ex
 
 Use when evidence supports a concrete/buildable direction and Lead would not need to invent a material requirement or solution choice to author a bounded proposal.
 
-`PROPOSAL_READY` does not persist a Change id. When the proposal-ready direction remains inside the bounded researched/current authoritative context and no new Human-reserved decision appears, return the bounded `ACTION_RESULT` plus the requested same-Issue routing effect `Lead / explore-change → Lead / propose-change` with `Change: unset`. Do not request a synthetic `HANDOFF` or generic Human `Proceed to Propose` decision. Repository application owns fresh reauthorization, result persistence, routing mutation, target observation, and post-apply redispatch. If the resulting state immediately selects `Lead / propose-change`, runtime creates a fresh Propose model invocation.
+`PROPOSAL_READY` does not persist a Change id. When the proposal-ready direction remains inside the bounded researched/current authoritative context and no new Human-reserved decision appears, first satisfy any required separate-follow-up materialization postcondition above. Only then return the bounded `ACTION_RESULT` plus the requested same-Issue routing effect `Lead / explore-change → Lead / propose-change` with `Change: unset`. Do not request a synthetic `HANDOFF` or generic Human `Proceed to Propose` decision. Repository application owns fresh reauthorization, result persistence, routing mutation, target observation, and post-apply redispatch. If the resulting state immediately selects `Lead / propose-change`, runtime creates a fresh Propose model invocation.
 
 If the proposal-ready direction crosses a Human-reserved boundary, do not request routing to Propose; return `HUMAN_DECISION_REQUIRED` and retain Explore until authoritative Human input resolves the decision.
 
@@ -114,7 +133,7 @@ Do not log chain-of-thought, every query, live progress, fixed option counts, a 
 
 Explore and direct-to-Propose entries participate in the shared combined pre-activation queue defined by `agents/AGENTS.md`; this skill does not redefine its ordering.
 
-- in-scope `PROPOSAL_READY`: return result plus the requested same-Issue `Lead / propose-change` routing effect with `Change: unset`; repository application persists/validates it, then runtime redispatches and creates a fresh Propose invocation if selected. No synthetic `HANDOFF` and no generic Human proceed boundary.
+- in-scope `PROPOSAL_READY`: after any required separate-follow-up tracker is durably routing-complete, return result plus the requested same-Issue `Lead / propose-change` routing effect with `Change: unset`; repository application persists/validates it, then runtime redispatches and creates a fresh Propose invocation if selected. No synthetic `HANDOFF` and no generic Human proceed boundary.
 - `PROPOSAL_READY` with a new Human-reserved decision: retain `Lead / explore-change` and request canonical `HUMAN_DECISION_REQUIRED` persistence.
 - `NO_CHANGE_REQUIRED` or `NO_GO`: return the terminal result and requested Issue-close effect; repository application observes `closed`. No OpenSpec Change or archive lifecycle is created.
 - unresolved Human question: retain Explore and follow the shared provenance-bound escalation/resume semantics through repository-owned effect application and a later fresh dispatch.
