@@ -13,7 +13,7 @@ The exact #158 Explore reconstruction found no retrospective required-follow-up 
 ## What Changes
 
 - Make decision-complete `Lead / explore-change` explicitly classify later work as one of: ordinary deferred/optional/non-goal, required separate follow-up, or already-tracked separate work.
-- When Explore semantically decides a required separate follow-up, require it to create, reuse, or repair exactly one source-linked tracker and fresh-verify the routing-complete postcondition before persisting `PROPOSAL_READY`.
+- When Explore semantically decides a required separate follow-up, require its durable `PROPOSAL_READY` `ACTION_RESULT` to record that exact classification/bounded follow-up decision; after that result supplies the exact defer-decision reference, create, reuse, or repair exactly one source-linked tracker and fresh-verify the routing-complete postcondition before completing the successor routing to `Lead / propose-change`.
 - Keep tracker materialization idempotent: no match creates one; one incomplete match repairs only missing durable fields/routing; multiple or ambiguous matches fail closed.
 - Make Explore-originated `Lead / propose-change` dereference the exact durable Explore `ACTION_RESULT`, preserve its required-follow-up classification, and verify/repair the required tracker before readiness/handoff. Formalization must neither downgrade a required obligation into ordinary deferred prose nor upgrade ordinary deferred prose from wording alone.
 - Keep the existing Reviewer and lifecycle responsibilities unchanged: Reviewer verifies the already-required tracker at the semantic gate; lifecycle remains a fail-safe rather than the normal producer.
