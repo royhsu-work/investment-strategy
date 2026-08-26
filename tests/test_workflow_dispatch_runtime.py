@@ -338,6 +338,139 @@ def test_runtime_does_not_invoke_second_propose_while_formal_wip_exists() -> Non
     assert request.issue_number == 100
 
 
+def _queued_propose_payload(
+    number: int = 158,
+    *,
+    created_at: str = "2026-08-25T17:46:32Z",
+) -> dict[str, object]:
+    return {
+        "number": number,
+        "state": "open",
+        "body": "Change: unset",
+        "labels": [
+            {"name": "agent:lead"},
+            {"name": "action:propose-change"},
+        ],
+        "created_at": created_at,
+        "closed_at": None,
+    }
+
+
+def _queued_explore_payload(
+    number: int = 159,
+    *,
+    created_at: str = "2026-08-25T18:54:19Z",
+) -> dict[str, object]:
+    return {
+        "number": number,
+        "state": "open",
+        "body": "Change: unset",
+        "labels": [
+            {"name": "agent:lead"},
+            {"name": "action:explore-change"},
+        ],
+        "created_at": created_at,
+        "closed_at": None,
+    }
+
+
+def _explore_action_result_comment(
+    *,
+    issue_number: int = 158,
+    result: str = "PROPOSAL_READY",
+    actor: str = "github-actions[bot]",
+    author_association: str = "NONE",
+) -> dict[str, object]:
+    return {
+        "id": 5422771356,
+        "body": (
+            "## ACTION_RESULT\n\n"
+            f"Workflow: #{issue_number}\n"
+            "Change: `unset`\n"
+            "Action: `Lead / explore-change`\n"
+            f"Result: `{result}`\n"
+            "Revision: `8be1f1dd9168b0db1301297d70b0c1e47a1e111f`"
+        ),
+        "user": {"login": actor},
+        "author_association": author_association,
+        "created_at": "2026-08-26T08:39:28Z",
+        "updated_at": "2026-08-26T08:39:28Z",
+    }
+
+
+def test_explore_originated_propose_is_eligible_without_direct_human_admission(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    successor = _queued_propose_payload()
+    later_explore = _queued_explore_payload()
+    proposal_ready = _explore_action_result_comment()
+
+    monkeypatch.setattr(
+        runtime,
+        "_github_open_issue_pages",
+        lambda repository, token: ((successor, later_explore),),
+    )
+    monkeypatch.setattr(runtime, "_github_closed_routing_issue_pages", lambda repository, token: ())
+    monkeypatch.setattr(
+        runtime,
+        "_github_issue_comment_pages",
+        lambda repository, token, issue_number: (
+            ((proposal_ready,),) if issue_number == 158 else ((),)
+        ),
+    )
+
+    def forbidden_events(*args: object, **kwargs: object) -> object:
+        raise AssertionError("Explore-originated Propose must not require Human admission events")
+
+    monkeypatch.setattr(runtime, "_github_issue_event_pages", forbidden_events)
+
+    decision = classify_dispatch(
+        runtime.acquire_current_github_preflight(
+            "royhsu-work/investment-strategy",
+            "token",
+            repository_root=tmp_path,
+        )
+    )
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.preactivation_candidate_ids == (158, 159)
+    assert decision.selected_issue_id == 158
+    assert decision.selected_routing == ("lead", "propose-change")
+
+
+def test_untrusted_explore_result_does_not_qualify_propose_successor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    successor = _queued_propose_payload()
+    later_explore = _queued_explore_payload()
+    untrusted = _explore_action_result_comment(actor="untrusted-user")
+
+    monkeypatch.setattr(
+        runtime,
+        "_github_open_issue_pages",
+        lambda repository, token: ((successor, later_explore),),
+    )
+    monkeypatch.setattr(runtime, "_github_closed_routing_issue_pages", lambda repository, token: ())
+    monkeypatch.setattr(
+        runtime,
+        "_github_issue_comment_pages",
+        lambda repository, token, issue_number: ((untrusted,),) if issue_number == 158 else ((),),
+    )
+
+    decision = classify_dispatch(
+        runtime.acquire_current_github_preflight(
+            "royhsu-work/investment-strategy",
+            "token",
+            repository_root=tmp_path,
+        )
+    )
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.preactivation_candidate_ids == (159,)
+    assert decision.selected_issue_id == 159
+    assert decision.selected_routing == ("lead", "explore-change")
+
+
 def _closed_routed_issue_payload(*, state_reason: str = "completed") -> dict[str, object]:
     return {
         "number": 133,

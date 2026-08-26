@@ -475,6 +475,41 @@ def _terminal_research_result_from_comment(
     return results[0]
 
 
+def _explore_action_result_from_comment(
+    payload: Mapping[str, object],
+    *,
+    issue_number: int,
+    repository_owner: str,
+) -> str | None:
+    """Return one trusted canonical Explore result for source provenance qualification."""
+
+    body = payload.get("body")
+    user = payload.get("user")
+    author_association = payload.get("author_association")
+    if not isinstance(body, str) or not isinstance(user, Mapping):
+        return None
+    actor = user.get("login")
+    trusted_owner = actor == repository_owner and author_association == "OWNER"
+    trusted_runtime = actor == "github-actions[bot]"
+    if not (trusted_owner or trusted_runtime):
+        return None
+    if "## ACTION_RESULT" not in body.splitlines():
+        return None
+
+    fields = _message_fields(body)
+    expected = {
+        "Workflow": f"#{issue_number}",
+        "Change": "unset",
+        "Action": "Lead / explore-change",
+    }
+    if not all(fields.get(name) == [value] for name, value in expected.items()):
+        return None
+    results = fields.get("Result")
+    if results is None or len(results) != 1:
+        return None
+    return results[0]
+
+
 def _terminal_research_evidence_from_comments(
     comments: Iterable[Mapping[str, object]],
     *,
@@ -1116,7 +1151,28 @@ def _direct_propose_admission_approved(
     )
 
 
-def _apply_direct_propose_admission(
+def _explore_propose_successor_eligible(
+    repository: str,
+    token: str,
+    issue_number: int,
+) -> bool:
+    """Qualify current Propose routing as the successor of a durable Explore result."""
+
+    repository_owner = repository.split("/", 1)[0]
+    latest_result: str | None = None
+    for page in _github_issue_comment_pages(repository, token, issue_number):
+        for raw in page:
+            result = _explore_action_result_from_comment(
+                raw,
+                issue_number=issue_number,
+                repository_owner=repository_owner,
+            )
+            if result is not None:
+                latest_result = result
+    return latest_result == "PROPOSAL_READY"
+
+
+def _apply_propose_preactivation_eligibility(
     repository: str,
     token: str,
     observations: tuple[GitHubIssueObservation, ...],
@@ -1126,17 +1182,21 @@ def _apply_direct_propose_admission(
     for observation in observations:
         if observation.change == "unset" and observation.routing == ("lead", "propose-change"):
             raw_issue = raw_by_issue.get(observation.issue_number)
-            approved = (
-                raw_issue is not None
-                and observation.authoritative
-                and _direct_propose_admission_approved(
+            eligible = False
+            if raw_issue is not None and observation.authoritative:
+                eligible = _direct_propose_admission_approved(
                     repository,
                     token,
                     raw_issue,
                     observation.issue_number,
                 )
-            )
-            observation = replace(observation, preactivation_eligible=approved)
+                if not eligible:
+                    eligible = _explore_propose_successor_eligible(
+                        repository,
+                        token,
+                        observation.issue_number,
+                    )
+            observation = replace(observation, preactivation_eligible=eligible)
         qualified.append(observation)
     return tuple(qualified)
 
@@ -1272,7 +1332,7 @@ def acquire_current_github_preflight(
         return open_preflight
 
     if not open_decision.formal_issue_ids:
-        open_observations = _apply_direct_propose_admission(
+        open_observations = _apply_propose_preactivation_eligibility(
             repository,
             token,
             open_observations,
