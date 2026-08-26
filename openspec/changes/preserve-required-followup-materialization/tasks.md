@@ -14,11 +14,11 @@ Trace: proposal `What Changes`; requirement scenarios `Explore materializes a ne
 
 ## Slice 2 — Preserve Explore classification through Propose
 
-- [ ] RED: extend `tests/test_explore_proposal_handoff.py` with a faithful case where exact Explore result E carries a required separate follow-up and Propose preserves E plus its tracker while keeping the later work outside current implementation scope.
-- [ ] RED: add negative cases proving Propose rejects/delays readiness when a required tracker is missing or ambiguously duplicated, may repair only one uniquely matching incomplete tracker under current source authority, and does not upgrade ordinary deferred wording into a required obligation.
-- [ ] GREEN: modify the `propose-change` procedure in `agents/skills/openspec-change/SKILL.md` to preserve required-follow-up classification from the exact durable Explore result and fresh-verify/repair the routing-complete tracker before OpenSpec readiness; leave its existing `resolve-question` materialization algorithm semantically unchanged.
-- [ ] REFACTOR: reuse the existing Explore-result handoff and required-follow-up contracts rather than duplicating Reviewer/lifecycle rules or creating a second classification vocabulary.
-- [ ] VERIFY: run the focused Explore→Propose tests and repository Skill quick validation for `openspec-change`; do not mark the slice complete until the exact implementation revision passes its required checks.
+- [x] RED: extend `tests/test_explore_proposal_handoff.py` with a faithful case where exact Explore result E carries a required separate follow-up and Propose preserves E plus its tracker while keeping the later work outside current implementation scope.
+- [x] RED: add negative cases proving Propose rejects/delays readiness when a required tracker is missing or ambiguously duplicated, may repair only one uniquely matching incomplete tracker under current source authority, and does not upgrade ordinary deferred wording into a required obligation.
+- [x] GREEN: modify the `propose-change` procedure in `agents/skills/openspec-change/SKILL.md` to preserve required-follow-up classification from the exact durable Explore result and fresh-verify/repair the routing-complete tracker before OpenSpec readiness; leave its existing `resolve-question` materialization algorithm semantically unchanged.
+- [x] REFACTOR: reuse the existing Explore-result handoff and required-follow-up contracts rather than duplicating Reviewer/lifecycle rules or creating a second classification vocabulary.
+- [x] VERIFY: run the focused Explore→Propose tests and repository Skill quick validation for `openspec-change`; do not mark the slice complete until the exact implementation revision passes its required checks.
 
 Trace: proposal `What Changes`; requirement scenarios `Propose preserves a required follow-up while keeping it outside current implementation scope`, `Propose repairs only a unique incomplete required tracker`; design `Propose preservation behavior`, `Ownership`.
 
