@@ -420,34 +420,36 @@ def test_continuation_requires_a_fresh_wake_for_any_selected_work() -> None:
     assert not continuation_requires_fresh_wake(source, None)
 
 
-def test_workflow_transports_worker_output_to_write_authorized_apply_boundary() -> None:
-    workflow = Path(".github/workflows/scheduled-agent-runtime.yml").read_text(encoding="utf-8")
-    assert "actions/upload-artifact@v4" in workflow
-    assert "actions/download-artifact@v4" in workflow
-    assert "scheduled-agent-result-${{ github.run_id }}-${{ github.run_attempt }}" in workflow
-    assert "uv run python -m investment_strategy.scheduled_agent_merge_acceptance" in workflow
-    assert "uv run python -m investment_strategy.scheduled_agent_worker_runtime" in workflow
-    assert "debt_disposition: ${{ steps.preflight.outputs.debt_disposition }}" in workflow
-    assert "AUTHORIZED_DEBT_DISPOSITION" in workflow
+def test_repository_deployment_has_no_scheduled_worker_apply_boundary() -> None:
+    runtime_workflow = Path(".github/workflows/scheduled-agent-runtime.yml").read_text(
+        encoding="utf-8"
+    )
+    bridge_workflow = Path(".github/workflows/scheduled-agent-bridge.yml").read_text(
+        encoding="utf-8"
+    )
 
-    worker_section = workflow.split("\n  worker:", 1)[1].split("\n  apply:", 1)[0]
-    assert "issues: write" not in worker_section
-    assert "pull-requests: write" not in worker_section
-    assert "contents: write" not in worker_section
+    for forbidden in (
+        "actions/upload-artifact@v4",
+        "actions/download-artifact@v4",
+        "scheduled_agent_merge_acceptance",
+        "scheduled_agent_worker_runtime",
+        "AUTHORIZED_DEBT_DISPOSITION",
+    ):
+        assert forbidden not in runtime_workflow
 
-    apply_section = workflow.split("\n  apply:", 1)[1]
-    assert "issues: write" in apply_section
-    assert "pull-requests: write" in apply_section
-    assert "contents: write" in apply_section
-    assert "actions: write" in apply_section
-    assert "GITHUB_TOKEN:" in apply_section
+    assert "issue_comment:" in bridge_workflow
+    assert "investment_strategy.issue_comment_bridge" in bridge_workflow
+    assert "issues: write" in bridge_workflow
 
 
-def test_continuation_wake_reenters_machine_dispatch_without_role_override() -> None:
-    workflow = Path(".github/workflows/scheduled-agent-runtime.yml").read_text(encoding="utf-8")
-    apply_section = workflow.split("\n  apply:", 1)[1]
-    assert "continuation_required" in apply_section
-    assert "/actions/workflows/scheduled-agent-runtime.yml/dispatches" in apply_section
-    continuation_step = apply_section.split("Trigger immediate fresh continuation wake", 1)[1]
-    assert "AUTHORIZED_ROLE" not in continuation_step
-    assert "AUTHORIZED_ACTION" not in continuation_step
+def test_continuation_is_owned_by_next_chatgpt_scheduled_wake_not_actions_retrigger() -> None:
+    runtime_workflow = Path(".github/workflows/scheduled-agent-runtime.yml").read_text(
+        encoding="utf-8"
+    )
+    migration = Path("agents/scheduled-task-migration.md").read_text(encoding="utf-8")
+
+    assert "continuation_required" not in runtime_workflow
+    assert "/actions/workflows/scheduled-agent-runtime.yml/dispatches" not in runtime_workflow
+    assert "workflow_dispatch:" in runtime_workflow
+    assert "Scheduled Task" in migration
+    assert "fresh repository-wide reconstruction" in migration
