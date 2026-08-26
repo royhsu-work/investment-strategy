@@ -24,17 +24,17 @@ Trace: proposal `What Changes`; requirement scenarios `Propose preserves a requi
 
 ## Slice 3 — Verify bounded contract and maintenance traceability
 
-- [ ] RED/GREEN: add or adjust only the minimum canonical/governance regression assertions needed to prove the new producer/preservation requirement is externally represented without copying the existing global required-follow-up algorithm into multiple owners.
-- [ ] GREEN: preserve the declared Skill-maintenance scope exactly: `openspec-explore` = Modified, `openspec-change` = Modified; no Skill Added/Removed and no responsibility transfer to Reviewer or lifecycle Skills.
-- [ ] REFACTOR: keep #140 and #155 as historical classification evidence only; do not create retrospective trackers or rewrite their durable history.
-- [ ] VERIFY: run focused tests, full Python quality gates, and exact-head strict OpenSpec validation; verify no workflow topology, WIP/cardinality, Human-authority, direct-Propose admission, runtime deployment, Reviewer ownership, or lifecycle ownership change was introduced.
+- [x] RED/GREEN: add or adjust only the minimum canonical/governance regression assertions needed to prove the new producer/preservation requirement is externally represented without copying the existing global required-follow-up algorithm into multiple owners.
+- [x] GREEN: preserve the declared Skill-maintenance scope exactly: `openspec-explore` = Modified, `openspec-change` = Modified; no Skill Added/Removed and no responsibility transfer to Reviewer or lifecycle Skills.
+- [x] REFACTOR: keep #140 and #155 as historical classification evidence only; do not create retrospective trackers or rewrite their durable history.
+- [x] VERIFY: run focused tests, full Python quality gates, and exact-head strict OpenSpec validation; verify no workflow topology, WIP/cardinality, Human-authority, direct-Propose admission, runtime deployment, Reviewer ownership, or lifecycle ownership change was introduced.
 
 ## Completion
 
-- [ ] Confirm exact Explore baseline #158 `issuecomment-5422771356` is identified in proposal/readiness evidence and all material decided scope/constraints/exclusions/direction are preserved.
-- [ ] Confirm Proposal / Specs / Design / Tasks are bidirectionally traceable and the two prospective Skill modifications are explicitly declared with rationale/responsibility treatment.
-- [ ] Confirm the requirement preserves the existing semantic distinction among ordinary deferred/optional/non-goal, required separate follow-up, and already-tracked separate work without using presentation words as classification tokens.
-- [ ] Confirm no retrospective tracker is created for #140 or #155.
-- [ ] Run final exact-head Python quality gates and strict OpenSpec validation before Executor reports `READY` and hands off to `Reviewer / review-implementation`.
+- [x] Confirm exact Explore baseline #158 `issuecomment-5422771356` is identified in proposal/readiness evidence and all material decided scope/constraints/exclusions/direction are preserved.
+- [x] Confirm Proposal / Specs / Design / Tasks are bidirectionally traceable and the two prospective Skill modifications are explicitly declared with rationale/responsibility treatment.
+- [x] Confirm the requirement preserves the existing semantic distinction among ordinary deferred/optional/non-goal, required separate follow-up, and already-tracked separate work without using presentation words as classification tokens.
+- [x] Confirm no retrospective tracker is created for #140 or #155.
+- [x] Run final exact-head Python quality gates and strict OpenSpec validation before Executor reports `READY` and hands off to `Reviewer / review-implementation`.
 
 No implementation task is complete at Propose time; Executor owns RED/GREEN/REFACTOR/VERIFY completion evidence after independent OpenSpec PASS.
