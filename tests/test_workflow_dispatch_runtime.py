@@ -415,7 +415,9 @@ def test_explore_originated_propose_is_eligible_without_direct_human_admission(
     monkeypatch.setattr(
         runtime,
         "_github_issue_comment_pages",
-        lambda repository, token, issue_number: ((proposal_ready,),) if issue_number == 158 else ((),),
+        lambda repository, token, issue_number: (
+            ((proposal_ready,),) if issue_number == 158 else ((),)
+        ),
     )
 
     def forbidden_events(*args: object, **kwargs: object) -> object:
