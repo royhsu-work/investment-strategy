@@ -4,11 +4,11 @@ Traceability baseline: #158 `issuecomment-5422771356` → proposal → `schedule
 
 ## Slice 1 — Make Explore produce a routing-complete required follow-up
 
-- [ ] RED: extend `tests/test_required_followup_materialization.py` with focused regressions proving `openspec-explore` distinguishes ordinary deferred/optional/non-goal work from a semantically required separate follow-up, records the required decision in the durable Explore result, and does not complete Propose successor routing until the exact source-linked tracker is freshly observed as `Change: unset + agent:lead + action:explore-change`.
-- [ ] RED: cover interrupted/replayed Explore materialization: a uniquely matching incomplete tracker is repaired idempotently, an already-complete tracker is reused, and multiple/ambiguous matches fail closed rather than creating a duplicate.
-- [ ] GREEN: modify `agents/skills/openspec-explore/SKILL.md` only as needed to operationalize the existing global required-follow-up contract at decision-complete Explore, sequencing durable `ACTION_RESULT` source identity before tracker materialization and successor routing.
-- [ ] REFACTOR: keep the global classification/materialization algorithm owned by canonical/shared workflow semantics; keep `openspec-explore` action-local and avoid a new status, tracker registry, workflow DAG, or generic issue-generation rule.
-- [ ] VERIFY: run the focused materialization tests and repository Skill quick validation for `openspec-explore`; do not mark the slice complete until the exact implementation revision passes its required checks.
+- [x] RED: extend `tests/test_required_followup_materialization.py` with focused regressions proving `openspec-explore` distinguishes ordinary deferred/optional/non-goal work from a semantically required separate follow-up, records the required decision in the durable Explore result, and does not complete Propose successor routing until the exact source-linked tracker is freshly observed as `Change: unset + agent:lead + action:explore-change`.
+- [x] RED: cover interrupted/replayed Explore materialization: a uniquely matching incomplete tracker is repaired idempotently, an already-complete tracker is reused, and multiple/ambiguous matches fail closed rather than creating a duplicate.
+- [x] GREEN: modify `agents/skills/openspec-explore/SKILL.md` only as needed to operationalize the existing global required-follow-up contract at decision-complete Explore, sequencing durable `ACTION_RESULT` source identity before tracker materialization and successor routing.
+- [x] REFACTOR: keep the global classification/materialization algorithm owned by canonical/shared workflow semantics; keep `openspec-explore` action-local and avoid a new status, tracker registry, workflow DAG, or generic issue-generation rule.
+- [x] VERIFY: run the focused materialization tests and repository Skill quick validation for `openspec-explore`; do not mark the slice complete until the exact implementation revision passes its required checks.
 
 Trace: proposal `What Changes`; requirement scenarios `Explore materializes a newly required separate follow-up before successor routing`, `Interrupted Explore materialization resumes from the same durable decision`, `Ordinary deferred wording creates no tracker obligation`; design `Explore producer behavior`, `Materialization mechanics`.
 
