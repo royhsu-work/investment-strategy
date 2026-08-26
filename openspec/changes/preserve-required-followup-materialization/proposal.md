@@ -21,7 +21,7 @@ The exact #158 Explore reconstruction found no retrospective required-follow-up 
 
 ## Affected Capabilities
 
-### Added
+### Modified
 
 - `scheduled-agent-workflow`
   - Explore-originated required-follow-up classification is materialized at the decision boundary and preserved through Propose.
