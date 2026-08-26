@@ -1,8 +1,8 @@
-name: Scheduled Agent Runtime
+name: Scheduled Agent Dispatch Diagnostic
 
+# Manual diagnostic only. The normal no-API Scheduled Agent path is the external
+# ChatGPT Scheduled Task -> scheduled-agent-bridge.yml -> production dispatcher.
 on:
-  schedule:
-    - cron: "*/20 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -11,19 +11,12 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: scheduled-agent-runtime-${{ github.repository }}
+  group: scheduled-agent-dispatch-diagnostic-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
   dispatch:
     runs-on: ubuntu-latest
-    outputs:
-      authorized: ${{ steps.preflight.outputs.authorized }}
-      issue_number: ${{ steps.preflight.outputs.issue_number }}
-      role: ${{ steps.preflight.outputs.role }}
-      action: ${{ steps.preflight.outputs.action }}
-      debt_disposition: ${{ steps.preflight.outputs.debt_disposition }}
-      dispatch_envelope_b64: ${{ steps.preflight.outputs.dispatch_envelope_b64 }}
     steps:
       - name: Check out authoritative default branch
         uses: actions/checkout@v4
@@ -41,166 +34,9 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Machine dispatch preflight
-        id: preflight
+      - name: Run read-only machine dispatch diagnostic
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PYTHONPATH: ${{ github.workspace }}/src
-        run: |
-          uv run python - <<'PY'
-          import base64
-          import json
-          import os
-          from pathlib import Path
-
-          from investment_strategy.scheduled_agent_runtime import (
-              RuntimeTrigger,
-              _write_github_outputs,
-              acquire_current_github_preflight,
-              authorize_worker_request,
-          )
-          from investment_strategy.workflow_dispatch import classify_dispatch
-
-          repository = os.environ["GITHUB_REPOSITORY"]
-          token = os.environ["GITHUB_TOKEN"]
-          preflight = acquire_current_github_preflight(repository, token)
-          decision = classify_dispatch(preflight)
-          request = authorize_worker_request(preflight, RuntimeTrigger())
-
-          envelope = {
-              "completeness": decision.completeness,
-              "observation_provenance": decision.observation_provenance.value,
-              "formal_issue_ids": decision.formal_issue_ids,
-              "recovery_candidate_ids": decision.recovery_candidate_ids,
-              "preactivation_candidate_ids": decision.preactivation_candidate_ids,
-              "selected_issue_id": decision.selected_issue_id,
-              "selected_routing": decision.selected_routing,
-              "disposition": decision.disposition,
-              "reason": decision.reason,
-              "selected_debt_disposition": decision.selected_debt_disposition,
-              "worker_request": (
-                  None
-                  if request is None
-                  else {
-                      "issue_number": request.issue_number,
-                      "role": request.role,
-                      "action": request.action,
-                      "debt_disposition": request.debt_disposition,
-                  }
-              ),
-          }
-
-          _write_github_outputs(request)
-          if request is not None:
-              canonical = json.dumps(envelope, sort_keys=True, separators=(",", ":"))
-              encoded = base64.b64encode(canonical.encode("utf-8")).decode("ascii")
-              with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
-                  output.write(f"dispatch_envelope_b64={encoded}\n")
-
-          print(json.dumps(envelope, sort_keys=True))
-          PY
-
-  worker:
-    needs: dispatch
-    if: needs.dispatch.outputs.authorized == 'true'
-    permissions:
-      contents: read
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out authoritative default branch without persisted credentials
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          version: "0.10.0"
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Invoke exact authorized Responses API worker
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
-          AUTHORIZED_ISSUE: ${{ needs.dispatch.outputs.issue_number }}
-          AUTHORIZED_ROLE: ${{ needs.dispatch.outputs.role }}
-          AUTHORIZED_ACTION: ${{ needs.dispatch.outputs.action }}
-          AUTHORIZED_DEBT_DISPOSITION: ${{ needs.dispatch.outputs.debt_disposition }}
-          AUTHORIZED_DISPATCH_ENVELOPE_B64: ${{ needs.dispatch.outputs.dispatch_envelope_b64 }}
-          PYTHONPATH: ${{ github.workspace }}/src
-        run: >-
-          uv run python -m investment_strategy.scheduled_agent_worker_runtime
-          > scheduled-agent-result.json
-
-      - name: Upload invocation-local staged worker result
-        uses: actions/upload-artifact@v4
-        with:
-          name: scheduled-agent-result-${{ github.run_id }}-${{ github.run_attempt }}
-          path: scheduled-agent-result.json
-          if-no-files-found: error
-          retention-days: 1
-
-  apply:
-    needs:
-      - dispatch
-      - worker
-    if: needs.dispatch.outputs.authorized == 'true'
-    permissions:
-      actions: write
-      contents: write
-      issues: write
-      pull-requests: write
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out authoritative default branch for application
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
-
-      - name: Download same-run staged worker result
-        uses: actions/download-artifact@v4
-        with:
-          name: scheduled-agent-result-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .scheduled-agent-result
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          version: "0.10.0"
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Freshly reauthorize merge acceptance and apply staged effects
-        id: apply
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          AUTHORIZED_ISSUE: ${{ needs.dispatch.outputs.issue_number }}
-          AUTHORIZED_ROLE: ${{ needs.dispatch.outputs.role }}
-          AUTHORIZED_ACTION: ${{ needs.dispatch.outputs.action }}
-          AUTHORIZED_DEBT_DISPOSITION: ${{ needs.dispatch.outputs.debt_disposition }}
-          PYTHONPATH: ${{ github.workspace }}/src
-        run: >-
-          uv run python -m investment_strategy.scheduled_agent_merge_acceptance
-          .scheduled-agent-result/scheduled-agent-result.json
-
-      - name: Trigger immediate fresh continuation wake
-        if: steps.apply.outputs.continuation_required == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: >-
-          gh api --method POST
-          "/repos/${GITHUB_REPOSITORY}/actions/workflows/scheduled-agent-runtime.yml/dispatches"
-          -f ref="${DEFAULT_BRANCH}"
+        run: uv run python -m investment_strategy.scheduled_agent_runtime
