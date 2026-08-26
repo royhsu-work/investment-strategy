@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import os
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any, cast
 
 import investment_strategy.scheduled_agent_worker as worker
 from investment_strategy.scheduled_agent_effect_contract import (
@@ -14,6 +19,21 @@ from investment_strategy.scheduled_agent_runtime import WorkerRequest
 _ORIGINAL_BUILD_WORKER_PROMPT = worker.build_worker_prompt
 _ORIGINAL_AUTHORIZED_REQUEST_FROM_ENVIRONMENT = worker._authorized_request_from_environment
 _DEBT_DISPOSITIONS = frozenset({"terminal-cleanup", "unfinished-recovery"})
+_REQUIRED_DISPATCH_ENVELOPE_FIELDS = frozenset(
+    {
+        "completeness",
+        "observation_provenance",
+        "formal_issue_ids",
+        "recovery_candidate_ids",
+        "preactivation_candidate_ids",
+        "selected_issue_id",
+        "selected_routing",
+        "disposition",
+        "reason",
+        "selected_debt_disposition",
+        "worker_request",
+    }
+)
 
 
 def _authorized_request_from_environment() -> WorkerRequest:
@@ -32,11 +52,89 @@ def _authorized_request_from_environment() -> WorkerRequest:
     )
 
 
+def _integer_id_list(value: object, *, field: str) -> list[int]:
+    if not isinstance(value, list) or any(type(item) is not int for item in value):
+        raise RuntimeError(f"dispatch envelope {field} is invalid")
+    return cast(list[int], value)
+
+
+def _dispatch_envelope_from_environment(request: WorkerRequest) -> dict[str, Any]:
+    """Decode and validate the exact repository-produced action-entry evidence."""
+
+    raw = os.environ.get("AUTHORIZED_DISPATCH_ENVELOPE_B64", "")
+    if not raw:
+        raise RuntimeError("AUTHORIZED_DISPATCH_ENVELOPE_B64 is required")
+
+    try:
+        decoded = base64.b64decode(raw.encode("ascii"), validate=True).decode("utf-8")
+        payload = json.loads(decoded)
+    except (UnicodeEncodeError, UnicodeDecodeError, binascii.Error, json.JSONDecodeError) as exc:
+        raise RuntimeError("AUTHORIZED_DISPATCH_ENVELOPE_B64 is invalid") from exc
+
+    if not isinstance(payload, Mapping):
+        raise RuntimeError("dispatch envelope must be a JSON object")
+    if set(payload) != _REQUIRED_DISPATCH_ENVELOPE_FIELDS:
+        raise RuntimeError("dispatch envelope fields are incomplete or unexpected")
+
+    if payload.get("completeness") != "COMPLETE":
+        raise RuntimeError("dispatch envelope completeness is not COMPLETE")
+    if payload.get("observation_provenance") != "QUALIFIED":
+        raise RuntimeError("dispatch envelope observation provenance is not QUALIFIED")
+    if payload.get("disposition") != "AUTHORIZE":
+        raise RuntimeError("dispatch envelope disposition is not AUTHORIZE")
+
+    reason = payload.get("reason")
+    if not isinstance(reason, str) or not reason:
+        raise RuntimeError("dispatch envelope reason is invalid")
+
+    for field in (
+        "formal_issue_ids",
+        "recovery_candidate_ids",
+        "preactivation_candidate_ids",
+    ):
+        _integer_id_list(payload.get(field), field=field)
+
+    routing = payload.get("selected_routing")
+    expected_routing = [request.role, request.action]
+    if payload.get("selected_issue_id") != request.issue_number or routing != expected_routing:
+        raise RuntimeError("dispatch envelope does not match authorized Issue/role/action")
+
+    selected_debt = payload.get("selected_debt_disposition")
+    if selected_debt is not None and selected_debt not in _DEBT_DISPOSITIONS:
+        raise RuntimeError("dispatch envelope selected_debt_disposition is invalid")
+    if selected_debt != request.debt_disposition:
+        raise RuntimeError("dispatch envelope debt disposition does not match authorized request")
+
+    worker_request = payload.get("worker_request")
+    if not isinstance(worker_request, Mapping):
+        raise RuntimeError("dispatch envelope worker_request is invalid")
+    if (
+        worker_request.get("issue_number"),
+        worker_request.get("role"),
+        worker_request.get("action"),
+        worker_request.get("debt_disposition"),
+    ) != (
+        request.issue_number,
+        request.role,
+        request.action,
+        request.debt_disposition,
+    ):
+        raise RuntimeError("dispatch envelope worker_request does not match authorized request")
+
+    return dict(payload)
+
+
+def _canonical_dispatch_envelope(request: WorkerRequest) -> str:
+    envelope = _dispatch_envelope_from_environment(request)
+    return json.dumps(envelope, sort_keys=True, separators=(",", ":"))
+
+
 def build_worker_prompt(request: WorkerRequest, checkout_root: Path) -> str:
-    """Add the shared staged-effect contract without granting write authority."""
+    """Add immutable dispatch evidence and staged-effect contract without write authority."""
 
     base = _ORIGINAL_BUILD_WORKER_PROMPT(request, checkout_root)
     operations = sorted(allowed_github_mutation_operations(request.role, request.action))
+    machine_envelope = _canonical_dispatch_envelope(request)
     debt_envelope = (
         "No closed-routing debt disposition is authorized for this invocation.\n"
         if request.debt_disposition is None
@@ -48,6 +146,12 @@ def build_worker_prompt(request: WorkerRequest, checkout_root: Path) -> str:
     return (
         base
         + "\n\n## Machine evidence envelope\n"
+        + "The canonical JSON below was produced by repository-owned dispatch for this exact "
+        + "worker invocation. Consume it as immutable action-entry evidence; do not rederive, "
+        + "replace, or weaken any field.\n"
+        + "```json\n"
+        + machine_envelope
+        + "\n```\n"
         + debt_envelope
         + "\n## Runtime staged-effect contract\n"
         + "Durable GitHub mutation remains repository-owned. Express requested effects only in "
