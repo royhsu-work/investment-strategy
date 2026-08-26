@@ -23,6 +23,7 @@ jobs:
       role: ${{ steps.preflight.outputs.role }}
       action: ${{ steps.preflight.outputs.action }}
       debt_disposition: ${{ steps.preflight.outputs.debt_disposition }}
+      dispatch_envelope_b64: ${{ steps.preflight.outputs.dispatch_envelope_b64 }}
     steps:
       - name: Check out authoritative default branch
         uses: actions/checkout@v4
@@ -45,7 +46,60 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: uv run python -m investment_strategy.scheduled_agent_runtime
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          uv run python - <<'PY'
+          import base64
+          import json
+          import os
+          from pathlib import Path
+
+          from investment_strategy.scheduled_agent_runtime import (
+              RuntimeTrigger,
+              _write_github_outputs,
+              acquire_current_github_preflight,
+              authorize_worker_request,
+          )
+          from investment_strategy.workflow_dispatch import classify_dispatch
+
+          repository = os.environ["GITHUB_REPOSITORY"]
+          token = os.environ["GITHUB_TOKEN"]
+          preflight = acquire_current_github_preflight(repository, token)
+          decision = classify_dispatch(preflight)
+          request = authorize_worker_request(preflight, RuntimeTrigger())
+
+          envelope = {
+              "completeness": decision.completeness,
+              "observation_provenance": decision.observation_provenance.value,
+              "formal_issue_ids": decision.formal_issue_ids,
+              "recovery_candidate_ids": decision.recovery_candidate_ids,
+              "preactivation_candidate_ids": decision.preactivation_candidate_ids,
+              "selected_issue_id": decision.selected_issue_id,
+              "selected_routing": decision.selected_routing,
+              "disposition": decision.disposition,
+              "reason": decision.reason,
+              "selected_debt_disposition": decision.selected_debt_disposition,
+              "worker_request": (
+                  None
+                  if request is None
+                  else {
+                      "issue_number": request.issue_number,
+                      "role": request.role,
+                      "action": request.action,
+                      "debt_disposition": request.debt_disposition,
+                  }
+              ),
+          }
+
+          _write_github_outputs(request)
+          if request is not None:
+              canonical = json.dumps(envelope, sort_keys=True, separators=(",", ":"))
+              encoded = base64.b64encode(canonical.encode("utf-8")).decode("ascii")
+              with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+                  output.write(f"dispatch_envelope_b64={encoded}\n")
+
+          print(json.dumps(envelope, sort_keys=True))
+          PY
 
   worker:
     needs: dispatch
@@ -78,6 +132,8 @@ jobs:
           AUTHORIZED_ROLE: ${{ needs.dispatch.outputs.role }}
           AUTHORIZED_ACTION: ${{ needs.dispatch.outputs.action }}
           AUTHORIZED_DEBT_DISPOSITION: ${{ needs.dispatch.outputs.debt_disposition }}
+          AUTHORIZED_DISPATCH_ENVELOPE_B64: ${{ needs.dispatch.outputs.dispatch_envelope_b64 }}
+          PYTHONPATH: ${{ github.workspace }}/src
         run: >-
           uv run python -m investment_strategy.scheduled_agent_worker_runtime
           > scheduled-agent-result.json
@@ -133,6 +189,7 @@ jobs:
           AUTHORIZED_ROLE: ${{ needs.dispatch.outputs.role }}
           AUTHORIZED_ACTION: ${{ needs.dispatch.outputs.action }}
           AUTHORIZED_DEBT_DISPOSITION: ${{ needs.dispatch.outputs.debt_disposition }}
+          PYTHONPATH: ${{ github.workspace }}/src
         run: >-
           uv run python -m investment_strategy.scheduled_agent_merge_acceptance
           .scheduled-agent-result/scheduled-agent-result.json
