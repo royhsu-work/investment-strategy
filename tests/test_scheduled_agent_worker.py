@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
@@ -49,6 +50,39 @@ def _result_json(*, role: str = "executor", action: str = "implement-change") ->
     )
 
 
+def _dispatch_envelope(request: WorkerRequest) -> dict[str, object]:
+    return {
+        "completeness": "COMPLETE",
+        "observation_provenance": "QUALIFIED",
+        "formal_issue_ids": [request.issue_number],
+        "recovery_candidate_ids": [],
+        "preactivation_candidate_ids": [],
+        "selected_issue_id": request.issue_number,
+        "selected_routing": [request.role, request.action],
+        "disposition": "AUTHORIZE",
+        "reason": "test machine authorization",
+        "selected_debt_disposition": request.debt_disposition,
+        "worker_request": {
+            "issue_number": request.issue_number,
+            "role": request.role,
+            "action": request.action,
+            "debt_disposition": request.debt_disposition,
+        },
+    }
+
+
+def _set_dispatch_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+    request: WorkerRequest,
+    *,
+    envelope: dict[str, object] | None = None,
+) -> None:
+    payload = _dispatch_envelope(request) if envelope is None else envelope
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    encoded = base64.b64encode(canonical.encode("utf-8")).decode("ascii")
+    monkeypatch.setenv("AUTHORIZED_DISPATCH_ENVELOPE_B64", encoded)
+
+
 _ALL_MAPPED_ACTIONS = (
     WorkerRequest(133, "lead", "explore-change"),
     WorkerRequest(133, "lead", "propose-change"),
@@ -92,8 +126,13 @@ def test_worker_prompt_loads_exact_authorized_role_and_mapped_skill(tmp_path: Pa
     assert "must not select or override" in prompt
 
 
-def test_runtime_prompt_exposes_exact_action_effect_contract(tmp_path: Path) -> None:
-    prompt = build_runtime_worker_prompt(_request(), _checkout(tmp_path))
+def test_runtime_prompt_exposes_exact_action_effect_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = _request()
+    _set_dispatch_envelope(monkeypatch, request)
+    prompt = build_runtime_worker_prompt(request, _checkout(tmp_path))
 
     assert "Runtime staged-effect contract" in prompt
     assert "contents-upsert" in prompt
@@ -105,7 +144,61 @@ def test_runtime_prompt_exposes_exact_action_effect_contract(tmp_path: Path) -> 
     assert "repository application fresh-reauthorizes" in prompt
 
 
-def test_runtime_reviewer_prompt_has_no_action_specific_github_mutation_ops(tmp_path: Path) -> None:
+def test_runtime_prompt_carries_complete_machine_dispatch_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = _request()
+    _set_dispatch_envelope(monkeypatch, request)
+
+    prompt = build_runtime_worker_prompt(request, _checkout(tmp_path))
+
+    for field in (
+        "completeness",
+        "observation_provenance",
+        "formal_issue_ids",
+        "recovery_candidate_ids",
+        "preactivation_candidate_ids",
+        "selected_issue_id",
+        "selected_routing",
+        "disposition",
+        "reason",
+        "selected_debt_disposition",
+    ):
+        assert f'"{field}"' in prompt
+    assert '"completeness":"COMPLETE"' in prompt
+    assert '"observation_provenance":"QUALIFIED"' in prompt
+    assert '"selected_issue_id":133' in prompt
+    assert '"selected_routing":["executor","implement-change"]' in prompt
+
+
+def test_runtime_prompt_rejects_missing_machine_dispatch_envelope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AUTHORIZED_DISPATCH_ENVELOPE_B64", raising=False)
+
+    with pytest.raises(RuntimeError, match="AUTHORIZED_DISPATCH_ENVELOPE_B64 is required"):
+        build_runtime_worker_prompt(_request(), _checkout(tmp_path))
+
+
+def test_runtime_prompt_rejects_machine_dispatch_identity_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = _request()
+    envelope = _dispatch_envelope(request)
+    envelope["selected_issue_id"] = 999
+    _set_dispatch_envelope(monkeypatch, request, envelope=envelope)
+
+    with pytest.raises(RuntimeError, match="authorized Issue/role/action"):
+        build_runtime_worker_prompt(request, _checkout(tmp_path))
+
+
+def test_runtime_reviewer_prompt_has_no_action_specific_github_mutation_ops(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     reviewer_role = tmp_path / "agents" / "roles" / "reviewer.md"
     reviewer_skill = tmp_path / "agents" / "skills" / "implementation-review" / "SKILL.md"
     reviewer_role.parent.mkdir(parents=True, exist_ok=True)
@@ -118,6 +211,7 @@ def test_runtime_reviewer_prompt_has_no_action_specific_github_mutation_ops(tmp_
     )
     reviewer_skill.write_text("# Implementation Review\nREVIEWER_ONLY_CONTEXT\n", encoding="utf-8")
     request = WorkerRequest(133, "reviewer", "review-implementation")
+    _set_dispatch_envelope(monkeypatch, request)
 
     prompt = build_runtime_worker_prompt(request, tmp_path)
     allowed = prompt.split("Allowed github-mutation operations", 1)[1].split(
@@ -234,3 +328,27 @@ def test_worker_job_has_no_model_controlled_github_write_credential() -> None:
     assert "contents: write" not in worker_section
     assert "issues: write" not in worker_section
     assert "pull-requests: write" not in worker_section
+
+
+def test_runtime_workflow_restores_src_import_and_transports_dispatch_envelope() -> None:
+    workflow = Path(".github/workflows/scheduled-agent-runtime.yml").read_text(encoding="utf-8")
+
+    assert workflow.count("PYTHONPATH: ${{ github.workspace }}/src") == 3
+    assert "dispatch_envelope_b64: ${{ steps.preflight.outputs.dispatch_envelope_b64 }}" in workflow
+    assert (
+        "AUTHORIZED_DISPATCH_ENVELOPE_B64: "
+        "${{ needs.dispatch.outputs.dispatch_envelope_b64 }}"
+    ) in workflow
+    for field in (
+        '"completeness"',
+        '"observation_provenance"',
+        '"formal_issue_ids"',
+        '"recovery_candidate_ids"',
+        '"preactivation_candidate_ids"',
+        '"selected_issue_id"',
+        '"selected_routing"',
+        '"disposition"',
+        '"reason"',
+        '"selected_debt_disposition"',
+    ):
+        assert field in workflow
