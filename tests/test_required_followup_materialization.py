@@ -3,6 +3,13 @@ from pathlib import Path
 OPEN_SPEC_EXPLORE = Path("agents/skills/openspec-explore/SKILL.md")
 OPEN_SPEC_CHANGE = Path("agents/skills/openspec-change/SKILL.md")
 LIFECYCLE_FINALIZE = Path("agents/skills/lifecycle-finalize/SKILL.md")
+CHANGE_PROPOSAL = Path(
+    "openspec/changes/preserve-required-followup-materialization/proposal.md"
+)
+CHANGE_SPEC = Path(
+    "openspec/changes/preserve-required-followup-materialization/specs/"
+    "scheduled-agent-workflow/spec.md"
+)
 
 
 def _openspec_explore_text() -> str:
@@ -95,6 +102,18 @@ def test_explore_does_not_promote_deferred_wording_into_required_followup() -> N
 
     assert "presentation wording does not create or erase the classification" in text
     assert "ordinary deferred / optional / non-goal" in text
+
+
+def test_change_contract_keeps_required_followup_scope_bounded() -> None:
+    proposal = CHANGE_PROPOSAL.read_text(encoding="utf-8")
+    delta = CHANGE_SPEC.read_text(encoding="utf-8")
+
+    assert "agents/skills/openspec-explore/SKILL.md" in proposal
+    assert "agents/skills/openspec-change/SKILL.md" in proposal
+    assert "No Skill is Added or Removed" in proposal
+    assert "Reviewer and lifecycle Skills retain their existing" in proposal
+    assert "retrospective tracker creation for #140 or #155" in proposal
+    assert "adds no new Reviewer producer authority or lifecycle topology" in delta
 
 
 def test_lifecycle_preparation_repairs_only_unique_required_tracker() -> None:
