@@ -336,8 +336,7 @@ def test_runtime_workflow_restores_src_import_and_transports_dispatch_envelope()
     assert workflow.count("PYTHONPATH: ${{ github.workspace }}/src") == 3
     assert "dispatch_envelope_b64: ${{ steps.preflight.outputs.dispatch_envelope_b64 }}" in workflow
     assert (
-        "AUTHORIZED_DISPATCH_ENVELOPE_B64: "
-        "${{ needs.dispatch.outputs.dispatch_envelope_b64 }}"
+        "AUTHORIZED_DISPATCH_ENVELOPE_B64: ${{ needs.dispatch.outputs.dispatch_envelope_b64 }}"
     ) in workflow
     for field in (
         '"completeness"',
