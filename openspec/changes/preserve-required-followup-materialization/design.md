@@ -8,7 +8,7 @@ The exact semantic baseline is #158 `issuecomment-5422771356`. It also establish
 
 ## Decision
 
-Keep classification semantic and bounded to the decision-producing Lead action, then make materialization mechanical once classification is decided.
+Keep classification semantic and bounded to the decision-producing Lead action, then make materialization mechanical once the exact durable defer decision exists.
 
 ```text
 Lead / explore-change
@@ -18,11 +18,11 @@ Lead / explore-change
       ├─ already-tracked separate work
       │    → reuse exact source-linked tracker
       └─ required separate follow-up
-           → create / reuse / repair exactly one tracker
-           → verify source linkage
+           → persist ACTION_RESULT E with exact required-follow-up decision
+           → create / reuse / repair exactly one tracker linked to E
            → verify Change: unset
            → verify agent:lead + action:explore-change
-           → only then persist PROPOSAL_READY
+           → only then complete routing to Lead / propose-change
                   ↓ exact ACTION_RESULT E
 Lead / propose-change
   → dereference E
@@ -30,6 +30,8 @@ Lead / propose-change
   → fresh verify / repair required tracker postcondition
   → formalize Proposal / Specs / Design / Tasks
 ```
+
+This sequencing matters: E must be durable before it can serve as the exact defer-decision reference. `PROPOSAL_READY` may therefore be persisted before its successor routing is completed, but Explore MUST NOT treat the disposition's transition/postcondition as complete or route to Propose until every required tracker is routing-complete. This is ordinary reconstructable at-least-once effect sequencing, not a new lifecycle state or topology edge.
 
 Reviewer and lifecycle contracts remain unchanged: Reviewer verifies the approved required tracker during semantic review, and lifecycle finalization remains a fail-safe if a previously approved obligation is missing or incomplete.
 
@@ -45,17 +47,17 @@ Words such as `Deferred work`, `out of scope`, `follow-up`, or `separately revie
 
 ## Durable source identity
 
-For an Explore-originated obligation, the durable semantic anchor is the exact same-Issue Explore `ACTION_RESULT` that records `PROPOSAL_READY`, together with:
+For an Explore-originated obligation, the durable semantic anchor is the exact same-Issue Explore `ACTION_RESULT` that records `PROPOSAL_READY` and the required-separate-follow-up decision, together with:
 
 - the exact source coordination Issue/Change where applicable;
 - a bounded follow-up problem/scope sufficient to identify the intended tracker;
 - the tracker source linkage required by the existing global follow-up contract.
 
-Propose must dereference that exact Explore result rather than reconstruct classification from conversation memory or editorial proposal wording.
+The result is persisted first so its exact durable reference can be used by tracker materialization. Propose must later dereference that exact Explore result rather than reconstruct classification from conversation memory or editorial proposal wording.
 
 ## Materialization mechanics
 
-After Lead has semantically classified a required separate follow-up, materialization uses the existing idempotent contract:
+After Lead has semantically classified a required separate follow-up and the exact durable decision reference exists, materialization uses the existing idempotent contract:
 
 1. **No matching tracker** — create exactly one source-linked coordination Issue.
 2. **Exactly one matching but incomplete tracker** — repair only the missing durable identity/routing fields still authorized by current source evidence.
@@ -77,10 +79,12 @@ An Issue that merely exists, or exists with only part of the routing tuple, is n
 When Explore reaches a decision-complete direction:
 
 - classify any explicitly separated later work before writing the final `ACTION_RESULT`;
-- materialize every **required separate follow-up** at that same decision boundary;
-- reuse already-tracked separate work;
+- record every **required separate follow-up** and its bounded identity in that durable result so it becomes the exact defer-decision source;
+- after the result is durable, materialize required trackers and reuse already-tracked separate work;
 - leave ordinary deferred/optional/non-goal material untracked;
-- do not persist `PROPOSAL_READY` while a required tracker postcondition is missing, ambiguous, or contradictory.
+- do not complete the `PROPOSAL_READY` successor routing while a required tracker postcondition is missing, ambiguous, or contradictory.
+
+If an invocation stops after the result is durable but before tracker/routing completion, the next `Lead / explore-change` reconstruction consumes that same durable result and completes only the missing idempotent materialization/routing effects. It must not create a second decision or reinterpret the classification.
 
 This adds an action-local producer step; it does not make Explore a generic issue generator and does not let Agent-authored prose recursively authorize new work.
 
@@ -99,7 +103,7 @@ The Proposal / Specs / Design / Tasks set may keep the separate work outside the
 
 ## Ownership
 
-- `openspec-explore` — semantic classification at Explore decision completion and normal producer materialization when Explore creates a required separate follow-up.
+- `openspec-explore` — semantic classification at Explore decision completion, durable source-result production, and normal tracker materialization before successor routing when Explore creates a required separate follow-up.
 - `openspec-change` — exact Explore-result dereference, classification preservation, and fresh verify/repair before Propose readiness; its existing `resolve-question` materialization behavior remains intact.
 - `openspec-review` — unchanged independent verification that required obligations have their durable tracker; no producer responsibility is moved here.
 - `lifecycle-finalize` — unchanged terminal fail-safe; it does not become the normal producer.
@@ -112,6 +116,7 @@ The Proposal / Specs / Design / Tasks set may keep the separate work outside the
 ## Alternatives rejected
 
 - **Track every `Deferred work` or `follow-up` sentence** — overproduces work and turns presentation vocabulary into authority.
+- **Create the tracker before the Explore result is durable** — cannot provide the exact durable Explore defer-decision reference required for reconstructable source linkage.
 - **Wait until finalize-archive to create trackers** — preserves a late safety net but leaves the known producer gap intact and risks semantic loss before review.
 - **Move creation to Reviewer** — violates separation of duties; Reviewer should verify Lead decisions, not create the decision it reviews.
 - **Add a new durable classification label/state** — unnecessary; exact approved source evidence plus existing tracker state is sufficient and avoids a second workflow state machine.
