@@ -1,4 +1,4 @@
-"""Responses API worker and credential-isolation regressions for #133 Slice 4B/4D."""
+"""Legacy Responses worker internals and no-API deployment-isolation regressions."""
 
 from __future__ import annotations
 
@@ -316,38 +316,32 @@ def test_worker_accepts_exact_structured_result(tmp_path: Path) -> None:
     assert result.requested_effects == ()
 
 
-def test_worker_job_has_no_model_controlled_github_write_credential() -> None:
-    workflow = Path(".github/workflows/scheduled-agent-runtime.yml").read_text(encoding="utf-8")
+def test_scheduled_agent_workflows_do_not_deploy_openai_api_worker() -> None:
+    workflows = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted(Path(".github/workflows").glob("scheduled-agent-*.yml"))
+    )
 
-    assert "worker:" in workflow
-    assert "persist-credentials: false" in workflow
-    assert "OPENAI_API_KEY:" in workflow
-    worker_section = workflow.split("\n  worker:", 1)[1].split("\n  apply:", 1)[0]
-    assert "GITHUB_TOKEN:" not in worker_section
-    assert "contents: read" in worker_section
-    assert "contents: write" not in worker_section
-    assert "issues: write" not in worker_section
-    assert "pull-requests: write" not in worker_section
-
-
-def test_runtime_workflow_restores_src_import_and_transports_dispatch_envelope() -> None:
-    workflow = Path(".github/workflows/scheduled-agent-runtime.yml").read_text(encoding="utf-8")
-
-    assert workflow.count("PYTHONPATH: ${{ github.workspace }}/src") == 3
-    assert "dispatch_envelope_b64: ${{ steps.preflight.outputs.dispatch_envelope_b64 }}" in workflow
-    assert (
-        "AUTHORIZED_DISPATCH_ENVELOPE_B64: ${{ needs.dispatch.outputs.dispatch_envelope_b64 }}"
-    ) in workflow
-    for field in (
-        '"completeness"',
-        '"observation_provenance"',
-        '"formal_issue_ids"',
-        '"recovery_candidate_ids"',
-        '"preactivation_candidate_ids"',
-        '"selected_issue_id"',
-        '"selected_routing"',
-        '"disposition"',
-        '"reason"',
-        '"selected_debt_disposition"',
+    for forbidden in (
+        "OPENAI_API_KEY",
+        "OPENAI_MODEL",
+        "scheduled_agent_worker_runtime",
+        "Invoke exact authorized Responses API worker",
     ):
-        assert field in workflow
+        assert forbidden not in workflows
+
+
+def test_runtime_workflow_is_manual_read_only_dispatch_diagnostic() -> None:
+    workflow = Path(".github/workflows/scheduled-agent-runtime.yml").read_text(encoding="utf-8")
+
+    assert "name: Scheduled Agent Dispatch Diagnostic" in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "schedule:" not in workflow
+    assert "worker:" not in workflow
+    assert "apply:" not in workflow
+    assert "contents: write" not in workflow
+    assert "issues: write" not in workflow
+    assert "pull-requests: write" not in workflow
+    assert workflow.count("PYTHONPATH: ${{ github.workspace }}/src") == 1
+    assert "uv run python -m investment_strategy.scheduled_agent_runtime" in workflow
+    assert "scheduled-agent-bridge.yml" in workflow
