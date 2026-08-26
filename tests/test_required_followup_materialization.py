@@ -3,9 +3,7 @@ from pathlib import Path
 OPEN_SPEC_EXPLORE = Path("agents/skills/openspec-explore/SKILL.md")
 OPEN_SPEC_CHANGE = Path("agents/skills/openspec-change/SKILL.md")
 LIFECYCLE_FINALIZE = Path("agents/skills/lifecycle-finalize/SKILL.md")
-CHANGE_PROPOSAL = Path(
-    "openspec/changes/preserve-required-followup-materialization/proposal.md"
-)
+CHANGE_PROPOSAL = Path("openspec/changes/preserve-required-followup-materialization/proposal.md")
 CHANGE_SPEC = Path(
     "openspec/changes/preserve-required-followup-materialization/specs/"
     "scheduled-agent-workflow/spec.md"
