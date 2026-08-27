@@ -127,7 +127,7 @@ def test_fresh_acquisition_rejects_included_native_closing_commit(
 
     result = acquire_native_closing_merge_result(
         repository=REPOSITORY,
-        token="token",
+        token=HEAD,
         coordination_issue=159,
         pr_number=167,
         expected_head_sha=HEAD,
@@ -144,7 +144,7 @@ def test_fresh_acquisition_rejects_stale_head_or_incomplete_commit_enumeration(
     _patch_github(monkeypatch, observed_head=STALE)
     stale = acquire_native_closing_merge_result(
         repository=REPOSITORY,
-        token="token",
+        token=HEAD,
         coordination_issue=159,
         pr_number=167,
         expected_head_sha=HEAD,
@@ -155,7 +155,7 @@ def test_fresh_acquisition_rejects_stale_head_or_incomplete_commit_enumeration(
     _patch_github(monkeypatch, declared_commit_count=2)
     incomplete = acquire_native_closing_merge_result(
         repository=REPOSITORY,
-        token="token",
+        token=HEAD,
         coordination_issue=159,
         pr_number=167,
         expected_head_sha=HEAD,
@@ -174,7 +174,7 @@ def test_selected_squash_presentation_is_recomputed_from_current_inputs(
 
     result = acquire_native_closing_merge_result(
         repository=REPOSITORY,
-        token="token",
+        token=HEAD,
         coordination_issue=159,
         pr_number=167,
         expected_head_sha=HEAD,
