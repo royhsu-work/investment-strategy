@@ -107,8 +107,7 @@ def evaluate_native_closing_preflight(
 
     surfaces: list[tuple[str, str]] = [("pr_body", evidence.pr_body)]
     surfaces.extend(
-        (f"commit[{index}]", message)
-        for index, message in enumerate(evidence.commit_messages)
+        (f"commit[{index}]", message) for index, message in enumerate(evidence.commit_messages)
     )
     if evidence.generated_message is not None:
         surfaces.append(("generated_message", evidence.generated_message))
