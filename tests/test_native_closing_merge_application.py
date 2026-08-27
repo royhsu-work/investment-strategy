@@ -43,9 +43,7 @@ def _evidence(**overrides: object) -> MergeApplicationEvidence:
 
 def test_merge_application_consumes_shared_native_closing_preflight() -> None:
     assert native_closing_merge_allows(_evidence())
-    assert not native_closing_merge_allows(
-        _evidence(commit_messages=("Resolve #159",))
-    )
+    assert not native_closing_merge_allows(_evidence(commit_messages=("Resolve #159",)))
 
 
 def test_merge_application_rejects_stale_or_incomplete_presentation() -> None:
