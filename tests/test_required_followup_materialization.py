@@ -3,11 +3,11 @@ from pathlib import Path
 OPEN_SPEC_EXPLORE = Path("agents/skills/openspec-explore/SKILL.md")
 OPEN_SPEC_CHANGE = Path("agents/skills/openspec-change/SKILL.md")
 LIFECYCLE_FINALIZE = Path("agents/skills/lifecycle-finalize/SKILL.md")
-CHANGE_PROPOSAL = Path("openspec/changes/preserve-required-followup-materialization/proposal.md")
-CHANGE_SPEC = Path(
-    "openspec/changes/preserve-required-followup-materialization/specs/"
-    "scheduled-agent-workflow/spec.md"
+CHANGE_ARCHIVE = Path(
+    "openspec/changes/archive/2026-08-26-preserve-required-followup-materialization"
 )
+CHANGE_PROPOSAL = CHANGE_ARCHIVE / "proposal.md"
+CHANGE_SPEC = CHANGE_ARCHIVE / "specs/scheduled-agent-workflow/spec.md"
 
 
 def _openspec_explore_text() -> str:

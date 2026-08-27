@@ -15,6 +15,9 @@ and next routing are reconstructed from the target type rather than encoded as a
 Read default-branch governance and Executor role, the coordination Issue and immutable `Change:`, the
 target PR and exact current head revision R, durable Reviewer gate evidence, current required gate/check
 state, and whether the target is an implementation/implementation-correction PR or the final Archive PR.
+Also reconstruct the selected merge strategy and the repository-owned deterministic native-closing
+preflight surface. That preflight is the single executable classifier for GitHub-native textual closing
+semantics; this Skill does not implement a second closing-keyword parser.
 
 For an implementation or implementation-correction PR, the applicable normal acceptance evidence is an
 unambiguous `Reviewer / review-implementation` `PASS` bound to R.
@@ -27,7 +30,7 @@ equivalent) to that same Issue, and reconstruct only the explicitly provenance-o
 correction/recovery branches and dispositions reviewed with the Archive target. The normal
 `agent/archive-<change>` branch is the final PR source lifecycle artifact and is never a temporary cleanup
 target merely because of its name. Non-closing linkage is structural lifecycle evidence only and never
-substitutes for Reviewer PASS or the other merge preconditions.
+substitutes for Reviewer PASS, the executable native-closing preflight, or the other merge preconditions.
 
 ## Merge preconditions
 
@@ -37,33 +40,50 @@ Execute a merge mutation only when all applicable conditions are simultaneously 
 2. The target PR current head still equals R.
 3. Required gates/checks remain valid and there is no contradictory current evidence.
 4. For an implementation or implementation-correction PR, the PR does not establish GitHub Issue-closing
-   linkage to its persistent coordination Issue; it uses only a non-closing reference.
+   linkage to its persistent coordination Issue; it uses the repository-approved non-closing reference.
 5. For the final Archive PR, the PR establishes exactly the repository-approved non-closing linkage to the
    same persistent coordination Issue reconstructed for the immutable change identity and MUST NOT establish
-   Issue-closing linkage.
-6. For the final Archive PR, the Lead preparation evidence reviewed with PASS remains materially current:
+   GitHub Issue-closing linkage.
+6. Immediately before the merge mutation, obtain a fresh repository-owned deterministic native-closing
+   preflight for the exact repository, persistent coordination Issue, PR, current head R, lifecycle context,
+   selected merge strategy, complete included commit messages, and effective generated merge/squash
+   presentation. The result must be complete, current, bound to those exact inputs, and allow the merge.
+   Missing/ambiguous presentation, incomplete commit acquisition, a changed head/strategy/message input,
+   or a rejecting result fails closed. Reviewer evidence may consume the same deterministic classifier, but
+   an earlier review/preflight result never substitutes for this application-time evaluation.
+7. For the final Archive PR, the Lead preparation evidence reviewed with PASS remains materially current:
    required deferred/separate-follow-up tracker state has not become contradictory, no new required
    obligation has appeared, and no reviewed cleanup/retention classification has materially changed.
-7. For the final Archive PR, every predeclared safely deletable temporary correction/recovery branch
+8. For the final Archive PR, every predeclared safely deletable temporary correction/recovery branch
    obligation is cleared immediately before merge, while every intentionally retained obligation still has
    its reviewed legal durable reason and owner.
-8. Immediately before the merge mutation, consume the shared `agents/AGENTS.md` substantive Human-input
+9. Immediately before the merge mutation, consume the shared `agents/AGENTS.md` substantive Human-input
    freshness/disposition invariant against the current coordination Issue. A newer material direct-Human
    comment that can affect the accepted gate, linkage, lifecycle preparation, or mutation assumptions must
    have a reconstructable exact-comment disposition; this Skill does not redefine the shared classifier or
    grant Human authority.
 
 A PASS for an earlier head is insufficient. A current PASS never waives unchanged-head, current-check,
-linkage, lifecycle-preparation, cleanup, contradiction, or substantive-Human-input freshness checks. No
-separate Lead merge-authorization token is required on either normal implementation or final Archive paths.
+structural linkage, fresh native-closing preflight, lifecycle-preparation, cleanup, contradiction, or
+substantive-Human-input freshness checks. No separate Lead merge-authorization token is required on either
+normal implementation or final Archive paths.
 
-A closing linkage on an implementation, implementation-correction, or final Archive PR is a lifecycle-contract violation. Even when every other gate is current, do not merge that PR; persist the violation and
-hand control to Lead for correction. Normal PRs in this lifecycle keep the persistent coordination Issue
-open until `Lead / finalize-archive` has durably recorded `LIFECYCLE_COMPLETE` and then closes it.
+A repository-owned native-closing preflight that detects an effective closing reference to the persistent
+coordination Issue is a lifecycle-contract violation. Even when every other gate is current, do not merge
+that PR. Persist the violation and hand control to Lead for correction. A missing, stale, incomplete, or
+ambiguous preflight also fails closed rather than being treated as safe. Normal PRs in this lifecycle keep
+the persistent coordination Issue open until `Lead / finalize-archive` has durably recorded
+`LIFECYCLE_COMPLETE` and then performs terminal closure.
 
-A final Archive PR with missing, ambiguous, wrong-Issue, or closing linkage also fails closed. Do not merge
-until the Archive PR identifies the same persistent coordination Issue with the repository-approved non-
-closing linkage while all independent revision-bound gates and reviewed lifecycle preparation remain current.
+A final Archive PR with missing, ambiguous, or wrong-Issue structural non-closing linkage also fails closed.
+Do not merge until it identifies the same persistent coordination Issue with the repository-approved
+non-closing linkage while the shared native-closing preflight and all independent revision-bound gates and
+reviewed lifecycle preparation remain current.
+
+If a previously reviewed head or effective presentation is rejected by the native-closing preflight, any
+correction creates a new exact acceptance target. The corrected head/presentation must re-enter the ordinary
+exact-head review and required-check gates. This action does not infer authority to force-push, rewrite
+history, change merge strategy as a waiver, or otherwise bypass the invariant.
 
 ## Final Archive pre-merge temporary branch cleanup
 
@@ -91,14 +111,18 @@ pattern.
 
 Legal pre-merge outcomes:
 
-- all applicable preconditions current and reviewed final-Archive cleanup obligations cleared/retained as
-  prepared → merge exactly R;
+- all applicable preconditions current, fresh native-closing preflight allows the exact selected
+  presentation, and reviewed final-Archive cleanup obligations are cleared/retained as prepared → merge
+  exactly R;
 - stale exact-head PASS or changed/contradictory check state → do not merge; return to the legal review or
   correction owner;
+- native-closing preflight missing/stale/incomplete/ambiguous → do not merge; fail closed until a complete
+  fresh exact-input result is available;
+- native-closing preflight rejects the implementation/implementation-correction/final Archive presentation
+  for the persistent coordination Issue → `LIFECYCLE_CONTRACT_VIOLATION`; do not merge and hand control to
+  Lead for ordinary correction and re-gating;
 - materially new/changed Archive lifecycle preparation evidence → do not merge; return to Lead and require
   renewed review when the reviewed meaning changed;
-- implementation/implementation-correction/final Archive PR contains coordination-Issue closing linkage →
-  `LIFECYCLE_CONTRACT_VIOLATION`; do not merge and hand control to Lead;
 - final Archive PR has missing/ambiguous/wrong coordination-Issue non-closing linkage →
   `LIFECYCLE_CONTRACT_VIOLATION`; do not merge and hand control to Lead;
 - final Archive cleanup obligation blocked/unsafe/unavailable → do not merge; keep the coordination Issue
@@ -159,7 +183,9 @@ If an accepted Archive PR is durably merged but the Issue is already closed with
 Preserve the contradictory evidence for the bounded repository-defined premature-close recovery owner.
 
 Do not infer downstream completion merely from a successful merge response; Lead owns lifecycle judgment
-after merged default-branch state is reconstructed.
+after merged default-branch state is reconstructed. In particular, a successful final Archive merge is not
+workflow terminal closure; `Lead / finalize-archive` retains exclusive normal ownership of
+`LIFECYCLE_COMPLETE` and Issue closure.
 
 ## Durable messages
 
