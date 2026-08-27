@@ -7,12 +7,24 @@ import json
 import pytest
 
 import investment_strategy.scheduled_agent_merge_acceptance as merge_acceptance
-from investment_strategy.native_closing_preflight import has_native_closing_reference
+from investment_strategy.native_closing_preflight import (
+    MergePresentationInput,
+    MergeStrategy,
+    NativeClosingPreflightResult,
+    evaluate_native_closing_preflight,
+    has_native_closing_reference,
+)
 from investment_strategy.scheduled_agent_merge_acceptance import (
     MergeAcceptanceSnapshot,
     merge_acceptance_allows,
 )
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
+from investment_strategy.workflow_dispatch import (
+    DispatchPreflight,
+    EnumerationEvidence,
+    ObservationProvenance,
+    RepositoryIssueSnapshot,
+)
 
 HEAD = "367ec125f919546443e2f006bec2a1ae1a78d4ce"
 STALE_HEAD = "0000000000000000000000000000000000000000"
@@ -58,6 +70,26 @@ def _merge_worker_result() -> str:
                 }
             ],
         }
+    )
+
+
+def _merge_dispatch_preflight() -> DispatchPreflight:
+    return DispatchPreflight(
+        issues=(
+            RepositoryIssueSnapshot(
+                issue_number=159,
+                change="prevent-native-closing-bypass",
+                routing=("executor", "merge-pr"),  # type: ignore[arg-type]
+                created_order=1,
+            ),
+        ),
+        enumeration=EnumerationEvidence(
+            observed_count=1,
+            source_total_count=1,
+            incomplete_results=False,
+            exhausted=True,
+            observation_provenance=ObservationProvenance.QUALIFIED,
+        ),
     )
 
 
@@ -141,34 +173,116 @@ def test_native_close_recurrence_is_rejected_before_durable_merge(
     assert result.reason == "fresh merge acceptance rejected"
 
 
-def test_merge_effect_rechecks_acceptance_after_initial_clearance(
+def test_merge_effect_rechecks_acceptance_on_real_application_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = WorkerRequest(issue_number=159, role="executor", action="merge-pr")
-    snapshots = iter((_accepted(), _accepted(native_closing_preflight_allowed=False)))
-    monkeypatch.setattr(
-        merge_acceptance,
-        "acquire_merge_acceptance_snapshot",
-        lambda **_kwargs: next(snapshots),
+    generated_messages = iter(
+        (
+            "Merge pull request #167\n\nRefs #159",
+            "Merge pull request #167\n\nResolve #159",
+        )
+    )
+    comments: tuple[dict[str, object], ...] = (
+        {
+            "id": 1,
+            "created_at": "2026-08-27T06:00:00Z",
+            "body": (
+                "## REVIEW_RESULT\n"
+                "Action: `Reviewer / review-implementation`\n"
+                "Result: `PASS`\n"
+                f"Revision: `{HEAD}`"
+            ),
+            "user": {"login": "royhsu-work"},
+            "performed_via_github_app": {"id": 1},
+        },
     )
 
-    def fake_run_effect_application(
-        raw_worker_result: str,
+    def fake_github_json(repository: str, token: str, api_path: str) -> object:
+        del repository, token
+        if api_path == "pulls/167":
+            return {
+                "state": "open",
+                "head": {"sha": HEAD},
+                "body": "Refs #159",
+            }
+        if api_path == f"commits/{HEAD}/check-runs?per_page=100":
+            return {
+                "total_count": 2,
+                "check_runs": [
+                    {"status": "completed", "conclusion": "success"},
+                    {"status": "completed", "conclusion": "success"},
+                ],
+            }
+        raise AssertionError(f"unexpected GitHub read: {api_path}")
+
+    def fake_native_closing_result(
         *,
-        source: WorkerRequest,
         repository: str,
         token: str,
-        workflow_text: str,
-        pre_apply_guard: object | None = None,
-    ) -> tuple[object, object]:
-        del repository, token, workflow_text
-        batch = merge_acceptance.parse_effect_batch(raw_worker_result, source)
-        assert callable(pre_apply_guard)
-        allowed = pre_apply_guard(batch.effects[0])
-        assert allowed is False
-        return batch, merge_acceptance.ApplyResult(False, "effect precondition became stale")
+        coordination_issue: int,
+        pr_number: int,
+        expected_head_sha: str,
+        lifecycle_context: str,
+        merge_strategy: MergeStrategy,
+    ) -> NativeClosingPreflightResult:
+        del token
+        return evaluate_native_closing_preflight(
+            MergePresentationInput(
+                repository_full_name=repository,
+                coordination_issue=coordination_issue,
+                pr_number=pr_number,
+                head_sha=expected_head_sha,
+                observed_head_sha=expected_head_sha,
+                lifecycle_context=lifecycle_context,
+                merge_strategy=merge_strategy,
+                pr_body="Refs #159",
+                commit_messages=("Safe implementation commit",),
+                commit_enumeration_complete=True,
+                presentation_complete=True,
+                generated_message=next(generated_messages),
+            )
+        )
 
-    monkeypatch.setattr(merge_acceptance, "run_effect_application", fake_run_effect_application)
+    monkeypatch.setattr(merge_acceptance, "_github_json", fake_github_json)
+    monkeypatch.setattr(
+        merge_acceptance,
+        "_paged_github_list",
+        lambda *_args, **_kwargs: comments,
+    )
+    monkeypatch.setattr(
+        merge_acceptance,
+        "acquire_native_closing_merge_result",
+        fake_native_closing_result,
+    )
+    monkeypatch.setattr(
+        merge_acceptance,
+        "acquire_current_github_preflight",
+        lambda *_args, **_kwargs: _merge_dispatch_preflight(),
+    )
+    monkeypatch.setattr(
+        merge_acceptance.GitHubEffectAdapter,
+        "_source_still_current",
+        lambda _self: True,
+    )
+    monkeypatch.setattr(
+        merge_acceptance.GitHubEffectAdapter,
+        "_guard_github_mutation",
+        lambda _self, _payload: True,
+    )
+
+    applied: list[object] = []
+
+    def forbidden_apply(_self: object, effect: object) -> None:
+        applied.append(effect)
+        raise AssertionError("merge adapter must not run after mutation-adjacent rejection")
+
+    monkeypatch.setattr(merge_acceptance.GitHubEffectAdapter, "apply", forbidden_apply)
+    monkeypatch.setattr(
+        merge_acceptance.GitHubEffectAdapter,
+        "observe_postcondition",
+        lambda _self, _effect: True,
+    )
 
     _batch, result = merge_acceptance.run_guarded_effect_application(
         _merge_worker_result(),
@@ -180,6 +294,7 @@ def test_merge_effect_rechecks_acceptance_after_initial_clearance(
 
     assert not result.applied
     assert result.reason == "effect precondition became stale"
+    assert applied == []
 
 
 @pytest.mark.parametrize(
