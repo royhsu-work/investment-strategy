@@ -30,78 +30,79 @@ def _input(**overrides: object) -> MergePresentationInput:
 
 
 def test_merge_preflight_requires_complete_exact_head_evidence() -> None:
-    assert (
-        evaluate_native_closing_preflight(
-            _input(commit_enumeration_complete=False)
-        ).disposition
-        is NativeClosingDisposition.FAIL_CLOSED
-    )
-    assert (
-        evaluate_native_closing_preflight(
-            _input(presentation_complete=False)
-        ).disposition
-        is NativeClosingDisposition.FAIL_CLOSED
-    )
-    assert (
-        evaluate_native_closing_preflight(
-            _input(observed_head_sha="b" * 40)
-        ).disposition
-        is NativeClosingDisposition.FAIL_CLOSED
-    )
+    commits = evaluate_native_closing_preflight(_input(commit_enumeration_complete=False))
+    presentation = evaluate_native_closing_preflight(_input(presentation_complete=False))
+    stale_head = evaluate_native_closing_preflight(_input(observed_head_sha="b" * 40))
+
+    assert commits.disposition is NativeClosingDisposition.FAIL_CLOSED
+    assert presentation.disposition is NativeClosingDisposition.FAIL_CLOSED
+    assert stale_head.disposition is NativeClosingDisposition.FAIL_CLOSED
 
 
 def test_merge_commit_checks_pr_body_commits_and_generated_message() -> None:
-    assert evaluate_native_closing_preflight(_input()).allowed
-    assert not evaluate_native_closing_preflight(
-        _input(commit_messages=("Resolve #159",))
-    ).allowed
-    assert not evaluate_native_closing_preflight(_input(pr_body="Closes #159")).allowed
-    assert not evaluate_native_closing_preflight(
-        _input(generated_message="Fixes #159")
-    ).allowed
+    safe = evaluate_native_closing_preflight(_input())
+    commit_close = evaluate_native_closing_preflight(_input(commit_messages=("Resolve #159",)))
+    body_close = evaluate_native_closing_preflight(_input(pr_body="Closes #159"))
+    generated_close = evaluate_native_closing_preflight(_input(generated_message="Fixes #159"))
+
+    assert safe.allowed
+    assert not commit_close.allowed
+    assert not body_close.allowed
+    assert not generated_close.allowed
 
 
 def test_squash_checks_effective_generated_message_inputs() -> None:
-    safe = _input(
-        merge_strategy=MergeStrategy.SQUASH,
-        generated_message="OpenSpec: prevent native closing bypass\n\nRefs #159",
+    safe = evaluate_native_closing_preflight(
+        _input(
+            merge_strategy=MergeStrategy.SQUASH,
+            generated_message="OpenSpec: prevent native closing bypass\n\nRefs #159",
+        )
     )
-    assert evaluate_native_closing_preflight(safe).allowed
-    assert not evaluate_native_closing_preflight(
+    closing = evaluate_native_closing_preflight(
         _input(
             merge_strategy=MergeStrategy.SQUASH,
             generated_message="OpenSpec: prevent native closing bypass\n\nResolves #159",
         )
-    ).allowed
+    )
+
+    assert safe.allowed
+    assert not closing.allowed
 
 
 def test_rebase_checks_every_effective_commit_message() -> None:
-    assert evaluate_native_closing_preflight(
+    safe = evaluate_native_closing_preflight(
         _input(
             merge_strategy=MergeStrategy.REBASE,
             generated_message=None,
             commit_messages=("Refs #159", "Continue implementation"),
         )
-    ).allowed
-    assert not evaluate_native_closing_preflight(
+    )
+    closing = evaluate_native_closing_preflight(
         _input(
             merge_strategy=MergeStrategy.REBASE,
             generated_message=None,
             commit_messages=("Refs #159", "Resolve #159"),
         )
-    ).allowed
+    )
+
+    assert safe.allowed
+    assert not closing.allowed
 
 
 def test_strategy_specific_presentation_must_be_unambiguous() -> None:
-    assert not evaluate_native_closing_preflight(
+    merge = evaluate_native_closing_preflight(
         _input(merge_strategy=MergeStrategy.MERGE, generated_message=None)
-    ).allowed
-    assert not evaluate_native_closing_preflight(
+    )
+    squash = evaluate_native_closing_preflight(
         _input(merge_strategy=MergeStrategy.SQUASH, generated_message=None)
-    ).allowed
-    assert evaluate_native_closing_preflight(
+    )
+    rebase = evaluate_native_closing_preflight(
         _input(merge_strategy=MergeStrategy.REBASE, generated_message=None)
-    ).allowed
+    )
+
+    assert not merge.allowed
+    assert not squash.allowed
+    assert rebase.allowed
 
 
 def test_unrelated_issue_closing_reference_remains_allowed() -> None:
