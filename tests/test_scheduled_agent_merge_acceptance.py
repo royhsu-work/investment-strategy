@@ -1,10 +1,13 @@
-"""Regressions for #133 application-time merge acceptance."""
+"""Regressions for application-time merge acceptance."""
 
 from __future__ import annotations
+
+import pytest
 
 from investment_strategy.scheduled_agent_merge_acceptance import (
     MergeAcceptanceSnapshot,
     merge_acceptance_allows,
+    native_closing_reference_detected,
 )
 
 HEAD = "367ec125f919546443e2f006bec2a1ae1a78d4ce"
@@ -46,3 +49,50 @@ def test_merge_acceptance_rejects_changed_acceptance_with_unchanged_head() -> No
 def test_merge_acceptance_rejects_closed_or_changed_head() -> None:
     assert not merge_acceptance_allows(_accepted(pr_open=False))
     assert not merge_acceptance_allows(_accepted(current_head_sha="new-head"))
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "Resolve #159",
+        "resolves #159.",
+        "Resolved: #159",
+        "Fix #159",
+        "fixes: #159",
+        "Fixed #159,",
+        "Close #159",
+        "closes: #159",
+        "Closed #159.",
+    ),
+)
+def test_native_closing_classifier_detects_exact_coordination_issue(text: str) -> None:
+    assert native_closing_reference_detected(text, repository="royhsu-work/investment-strategy", issue_number=159)
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "Refs #159",
+        "Related to #159",
+        "Resolve #158",
+        "Fixes #160",
+        "The word resolve appears without an issue reference.",
+        "`Resolve #159`",
+        "```text\nResolve #159\n```",
+    ),
+)
+def test_native_closing_classifier_preserves_non_closing_and_code_boundaries(text: str) -> None:
+    assert not native_closing_reference_detected(text, repository="royhsu-work/investment-strategy", issue_number=159)
+
+
+def test_native_closing_classifier_matches_same_repository_qualified_reference() -> None:
+    assert native_closing_reference_detected(
+        "Resolves royhsu-work/investment-strategy#159",
+        repository="royhsu-work/investment-strategy",
+        issue_number=159,
+    )
+    assert not native_closing_reference_detected(
+        "Resolves other/repository#159",
+        repository="royhsu-work/investment-strategy",
+        issue_number=159,
+    )
