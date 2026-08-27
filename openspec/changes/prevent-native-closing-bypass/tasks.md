@@ -10,12 +10,12 @@
 
 ## Slice 2 — Acquire complete exact-head merge presentation and fail closed
 
-- [ ] RED: add tests proving exact-head commit enumeration, PR description/linkage acquisition, and selected merge-strategy presentation are required inputs.
-- [ ] RED: add tests for incomplete commit/presentation acquisition, changed head, changed merge strategy/message input, and unsupported/ambiguous generated presentation; each must fail closed.
-- [ ] RED: cover merge-commit, squash, and rebase behavior enabled by repository settings, including title/body only when incorporated into an effective generated commit message.
-- [ ] GREEN: implement the minimum provenance-bound acquisition/preflight input model and strategy-specific effective-presentation construction/validation.
-- [ ] REFACTOR: keep acquisition/completeness separate from deterministic grammar classification while returning one repository-owned preflight result.
-- [ ] VERIFY: run focused tests, full regression suite, type checks, lint, and strict OpenSpec validation; persist the verified slice checkpoint before starting Slice 3.
+- [x] RED: add tests proving exact-head commit enumeration, PR description/linkage acquisition, and selected merge-strategy presentation are required inputs.
+- [x] RED: add tests for incomplete commit/presentation acquisition, changed head, changed merge strategy/message input, and unsupported/ambiguous generated presentation; each must fail closed.
+- [x] RED: cover merge-commit, squash, and rebase behavior enabled by repository settings, including title/body only when incorporated into an effective generated commit message.
+- [x] GREEN: implement the minimum provenance-bound acquisition/preflight input model and strategy-specific effective-presentation construction/validation.
+- [x] REFACTOR: keep acquisition/completeness separate from deterministic grammar classification while returning one repository-owned preflight result.
+- [x] VERIFY: run focused tests, full regression suite, type checks, lint, and strict OpenSpec validation; persist the verified slice checkpoint before starting Slice 3.
 
 ## Slice 3 — Consume one preflight in review and fresh merge application
 
