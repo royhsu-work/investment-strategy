@@ -89,7 +89,12 @@ def _patch_github(
     pr_title: str = "OpenSpec: prevent native closing bypass",
 ) -> None:
     pr: Mapping[str, object] = {
-        "head": {"sha": observed_head, "label": "royhsu-work:agent/prevent-native-closing-bypass"},
+        "head": {
+            "sha": observed_head,
+            "label": "royhsu-work:agent/prevent-native-closing-bypass",
+            "ref": "agent/prevent-native-closing-bypass",
+            "repo": {"owner": {"login": "royhsu-work"}},
+        },
         "title": pr_title,
         "body": "Refs #159",
         "commits": len(commit_messages) if declared_commit_count is None else declared_commit_count,
@@ -116,6 +121,32 @@ def _patch_github(
 
     monkeypatch.setattr(application, "_github_json", fake_github_json)
     monkeypatch.setattr(application, "_paged_github_list", fake_paged_list)
+
+
+def test_merge_message_matches_github_effective_owner_slash_ref_presentation() -> None:
+    pr: Mapping[str, object] = {
+        "head": {
+            "label": "royhsu-work:agent/prevent-native-closing-bypass",
+            "ref": "agent/prevent-native-closing-bypass",
+            "repo": {"owner": {"login": "royhsu-work"}},
+        },
+        "title": "OpenSpec: correct native-closing delta classification",
+        "body": "Refs #159",
+    }
+
+    generated, complete = application._generated_merge_message(
+        repository=_repository_settings(),
+        pr=pr,
+        pr_number=170,
+        strategy=MergeStrategy.MERGE,
+        commit_messages=("docs(openspec): align native-closing final traceability",),
+    )
+
+    assert complete
+    assert generated == (
+        "Merge pull request #170 from royhsu-work/agent/prevent-native-closing-bypass\n\n"
+        "OpenSpec: correct native-closing delta classification"
+    )
 
 
 def test_fresh_acquisition_rejects_included_native_closing_commit(

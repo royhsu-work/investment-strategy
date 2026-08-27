@@ -121,12 +121,23 @@ def _pull_request_head_sha(payload: Mapping[str, object]) -> str | None:
     return sha if isinstance(sha, str) else None
 
 
-def _pull_request_head_label(payload: Mapping[str, object]) -> str | None:
+def _pull_request_head_merge_source(payload: Mapping[str, object]) -> str | None:
+    """Return GitHub's effective MERGE_MESSAGE source in ``owner/ref`` form."""
+
     head = payload.get("head")
     if not isinstance(head, Mapping):
         return None
-    label = head.get("label")
-    return label if isinstance(label, str) and label else None
+    ref = head.get("ref")
+    repo = head.get("repo")
+    if not isinstance(ref, str) or not ref or not isinstance(repo, Mapping):
+        return None
+    owner = repo.get("owner")
+    if not isinstance(owner, Mapping):
+        return None
+    login = owner.get("login")
+    if not isinstance(login, str) or not login:
+        return None
+    return f"{login}/{ref}"
 
 
 def _complete_commit_messages(
@@ -187,10 +198,10 @@ def _generated_merge_message(
         if title_mode == "PR_TITLE":
             generated_title = title
         elif title_mode == "MERGE_MESSAGE":
-            head_label = _pull_request_head_label(pr)
-            if head_label is None:
+            merge_source = _pull_request_head_merge_source(pr)
+            if merge_source is None:
                 return None, False
-            generated_title = f"Merge pull request #{pr_number} from {head_label}"
+            generated_title = f"Merge pull request #{pr_number} from {merge_source}"
         else:
             return None, False
 
