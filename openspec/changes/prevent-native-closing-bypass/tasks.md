@@ -2,11 +2,11 @@
 
 ## Slice 1 — Detect native closing references for the exact coordination Issue
 
-- [ ] RED: add focused tests reproducing #140/#155 where PR presentation uses `Refs #N` but an included commit message uses GitHub-native closing grammar for N; verify the failure is the missing classifier behavior.
-- [ ] RED: add cases for legal non-closing references, case/punctuation variants required by GitHub grammar, code/prose false-positive boundaries, and closing references to unrelated Issues.
-- [ ] GREEN: implement the minimum repository-owned deterministic native-closing classifier for exact repository/coordination-Issue identity.
-- [ ] REFACTOR: centralize grammar/identity normalization so Reviewer and Executor consumers cannot diverge into separate parsers.
-- [ ] VERIFY: run focused tests, full regression suite, type checks, lint, and strict OpenSpec validation; persist the verified slice checkpoint before starting Slice 2.
+- [x] RED: add focused tests reproducing #140/#155 where PR presentation uses `Refs #N` but an included commit message uses GitHub-native closing grammar for N; verify the failure is the missing classifier behavior.
+- [x] RED: add cases for legal non-closing references, case/punctuation variants required by GitHub grammar, code/prose false-positive boundaries, and closing references to unrelated Issues.
+- [x] GREEN: implement the minimum repository-owned deterministic native-closing classifier for exact repository/coordination-Issue identity.
+- [x] REFACTOR: centralize grammar/identity normalization so Reviewer and Executor consumers cannot diverge into separate parsers.
+- [x] VERIFY: run focused tests, full regression suite, type checks, lint, and strict OpenSpec validation; persist the verified slice checkpoint before starting Slice 2.
 
 ## Slice 2 — Acquire complete exact-head merge presentation and fail closed
 
