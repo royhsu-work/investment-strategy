@@ -39,5 +39,5 @@
 
 - [x] Verify proposal/spec/design/tasks bidirectional traceability against #159 Explore `PROPOSAL_READY` comment `5429709143` and canonical `scheduled-agent-workflow` requirements.
 - [x] Verify Skill maintenance traceability accurately declares the material `merge-pr` Skill responsibility change and no fictional upstream metadata.
-- [x] Verify every modified requirement scenario maps to at least one implementation task/regression and every behavior/product task maps back to proposal/spec/design authority.
+- [x] Verify every added requirement scenario maps to at least one implementation task/regression and every behavior/product task maps back to proposal/spec/design authority.
 - [x] Obtain exact-revision strict OpenSpec validation evidence for the handoff revision before requesting `Reviewer / review-openspec`.

@@ -78,7 +78,7 @@ Diagnostics may identify the offending surface/commit but do not authorize corre
 ## Traceability
 
 - Proposal: executable exact-head native-close prevention scoped to the persistent coordination Issue.
-- Modified capability requirement: `Merge acceptance preserves persistent coordination-Issue terminal authority`.
+- Added capability requirement: `Merge acceptance preserves persistent coordination-Issue terminal authority`.
 - Historical regression evidence: #140 commit `4075cac3d1a8759a3299f67c8520a2b328b053ca`; #155 commit `163b60f1a98bb83180e337da858b298f214639a6`.
 - Upstream semantic baseline: #159 Explore `PROPOSAL_READY`, issue comment `5429709143`.
 - Existing terminal ordering: #115 remains unchanged.

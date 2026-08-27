@@ -1,4 +1,4 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Merge acceptance preserves persistent coordination-Issue terminal authority
 
