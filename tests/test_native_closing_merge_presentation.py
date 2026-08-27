@@ -69,6 +69,26 @@ def test_squash_checks_effective_generated_message_inputs() -> None:
     assert not closing.allowed
 
 
+def test_squash_scans_only_commit_messages_that_reach_effective_presentation() -> None:
+    discarded_commit_message = evaluate_native_closing_preflight(
+        _input(
+            merge_strategy=MergeStrategy.SQUASH,
+            commit_messages=("Resolve #159",),
+            generated_message="OpenSpec: prevent native closing bypass\n\nRefs #159",
+        )
+    )
+    propagated_commit_message = evaluate_native_closing_preflight(
+        _input(
+            merge_strategy=MergeStrategy.SQUASH,
+            commit_messages=("Resolve #159",),
+            generated_message="OpenSpec: prevent native closing bypass\n\nResolve #159",
+        )
+    )
+
+    assert discarded_commit_message.allowed
+    assert propagated_commit_message.disposition is NativeClosingDisposition.REJECT
+
+
 def test_rebase_checks_every_effective_commit_message() -> None:
     safe = evaluate_native_closing_preflight(
         _input(
