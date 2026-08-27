@@ -165,6 +165,38 @@ def test_fresh_acquisition_rejects_stale_head_or_incomplete_commit_enumeration(
     assert incomplete.disposition is NativeClosingDisposition.FAIL_CLOSED
 
 
+def test_strategy_change_requires_fresh_strategy_specific_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_github(
+        monkeypatch,
+        commit_messages=("Implement first part", "Implement second part"),
+        pr_title="Fixes #159",
+    )
+
+    rebase = acquire_native_closing_merge_result(
+        repository=REPOSITORY,
+        token=HEAD,
+        coordination_issue=159,
+        pr_number=167,
+        expected_head_sha=HEAD,
+        lifecycle_context="implementation",
+        merge_strategy=MergeStrategy.REBASE,
+    )
+    merge = acquire_native_closing_merge_result(
+        repository=REPOSITORY,
+        token=HEAD,
+        coordination_issue=159,
+        pr_number=167,
+        expected_head_sha=HEAD,
+        lifecycle_context="implementation",
+        merge_strategy=MergeStrategy.MERGE,
+    )
+
+    assert rebase.disposition is NativeClosingDisposition.ALLOW
+    assert merge.disposition is NativeClosingDisposition.REJECT
+
+
 def test_selected_squash_presentation_is_recomputed_from_current_inputs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
