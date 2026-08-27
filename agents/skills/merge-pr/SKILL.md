@@ -39,10 +39,11 @@ Execute a merge mutation only when all applicable conditions are simultaneously 
 1. Reviewer `PASS` exists for the exact revision R under the required implementation/archive gate.
 2. The target PR current head still equals R.
 3. Required gates/checks remain valid and there is no contradictory current evidence.
-4. For an implementation or implementation-correction PR, the PR establishes the repository-approved
-   non-closing reference to its persistent coordination Issue.
+4. For an implementation or implementation-correction PR, the PR does not establish GitHub Issue-closing
+   linkage to its persistent coordination Issue; it uses the repository-approved non-closing reference.
 5. For the final Archive PR, the PR establishes exactly the repository-approved non-closing linkage to the
-   same persistent coordination Issue reconstructed for the immutable change identity.
+   same persistent coordination Issue reconstructed for the immutable change identity and MUST NOT establish
+   GitHub Issue-closing linkage.
 6. Immediately before the merge mutation, obtain a fresh repository-owned deterministic native-closing
    preflight for the exact repository, persistent coordination Issue, PR, current head R, lifecycle context,
    selected merge strategy, complete included commit messages, and effective generated merge/squash
