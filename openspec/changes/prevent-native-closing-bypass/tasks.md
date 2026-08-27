@@ -28,12 +28,12 @@
 
 ## Slice 4 — Correction and lifecycle regression coverage
 
-- [ ] RED: add regression proving an already-reviewed offending head is rejected and a corrected successor head must satisfy ordinary exact-head review/check gates again.
-- [ ] RED: prove no test or production path treats force-push, history rewrite, merge-strategy change, or model waiver as implicit authority to bypass the preflight.
-- [ ] RED: retain bounded premature-close recovery tests as exceptional defense-in-depth while proving normal merge prevention handles the demonstrated #140/#155 recurrence before mutation.
-- [ ] GREEN: implement only correction-path integration needed to return/re-route through existing governed review/implementation flow; do not add a new lifecycle action/state.
-- [ ] REFACTOR: confirm #138 scope and #115 terminal ordering remain untouched and remove accidental complexity not required by the approved invariant.
-- [ ] VERIFY: run the full regression suite, type checks, lint, strict OpenSpec validation, and exact-head CI gates required by repository governance.
+- [x] RED: add regression proving an already-reviewed offending head is rejected and a corrected successor head must satisfy ordinary exact-head review/check gates again.
+- [x] RED: prove no test or production path treats force-push, history rewrite, merge-strategy change, or model waiver as implicit authority to bypass the preflight.
+- [x] RED: retain bounded premature-close recovery tests as exceptional defense-in-depth while proving normal merge prevention handles the demonstrated #140/#155 recurrence before mutation.
+- [x] GREEN: implement only correction-path integration needed to return/re-route through existing governed review/implementation flow; do not add a new lifecycle action/state.
+- [x] REFACTOR: confirm #138 scope and #115 terminal ordering remain untouched and remove accidental complexity not required by the approved invariant.
+- [x] VERIFY: run the full regression suite, type checks, lint, strict OpenSpec validation, and exact-head CI gates required by repository governance.
 
 ## Final readiness
 
