@@ -19,12 +19,12 @@
 
 ## Slice 3 — Consume one preflight in review and fresh merge application
 
-- [ ] RED: add integration regressions proving Reviewer consumes the repository-owned deterministic result without a second parser and Executor rejects merge when the fresh exact-head result is absent, stale, incomplete, or rejecting.
-- [ ] RED: add stale-between-review-and-merge cases where head or effective presentation changes after Reviewer evidence; prior acceptance must not authorize the mutation.
-- [ ] RED: prove the final Archive PR is also non-closing and merge success cannot substitute for `Lead / finalize-archive` terminal closure after `LIFECYCLE_COMPLETE`.
-- [ ] GREEN: wire the preflight into the real repository-owned merge/effect acceptance boundary and update `agents/skills/merge-pr/SKILL.md` plus only materially required shared governance/workflow references.
-- [ ] REFACTOR: remove/replace duplicated PR-only native-closing checks where the shared executable result now owns the predicate, without weakening other merge acceptance gates.
-- [ ] VERIFY: run focused tests, full regression suite, type checks, lint, strict OpenSpec validation, and mapped-action integration coverage; persist the verified slice checkpoint.
+- [x] RED: add integration regressions proving Reviewer consumes the repository-owned deterministic result without a second parser and Executor rejects merge when the fresh exact-head result is absent, stale, incomplete, or rejecting.
+- [x] RED: add stale-between-review-and-merge cases where head or effective presentation changes after Reviewer evidence; prior acceptance must not authorize the mutation.
+- [x] RED: prove the final Archive PR is also non-closing and merge success cannot substitute for `Lead / finalize-archive` terminal closure after `LIFECYCLE_COMPLETE`.
+- [x] GREEN: wire the preflight into the real repository-owned merge/effect acceptance boundary and update `agents/skills/merge-pr/SKILL.md` plus only materially required shared governance/workflow references.
+- [x] REFACTOR: remove/replace duplicated PR-only native-closing checks where the shared executable result now owns the predicate, without weakening other merge acceptance gates.
+- [x] VERIFY: run focused tests, full regression suite, type checks, lint, strict OpenSpec validation, and mapped-action integration coverage; persist the verified slice checkpoint.
 
 ## Slice 4 — Correction and lifecycle regression coverage
 
