@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
+import investment_strategy.scheduled_agent_merge_acceptance as merge_acceptance
 from investment_strategy.native_closing_preflight import has_native_closing_reference
 from investment_strategy.scheduled_agent_merge_acceptance import (
     MergeAcceptanceSnapshot,
     merge_acceptance_allows,
 )
+from investment_strategy.scheduled_agent_runtime import WorkerRequest
 
 HEAD = "367ec125f919546443e2f006bec2a1ae1a78d4ce"
 STALE_HEAD = "0000000000000000000000000000000000000000"
+CORRECTED_HEAD = "1111111111111111111111111111111111111111"
 
 
 def _accepted(**overrides: object) -> MergeAcceptanceSnapshot:
@@ -51,6 +56,86 @@ def test_merge_acceptance_rejects_changed_acceptance_with_unchanged_head() -> No
 def test_merge_acceptance_rejects_closed_or_changed_head() -> None:
     assert not merge_acceptance_allows(_accepted(pr_open=False))
     assert not merge_acceptance_allows(_accepted(current_head_sha="new-head"))
+
+
+def test_corrected_successor_requires_new_exact_head_review_checks_and_preflight() -> None:
+    old_review = _accepted(
+        current_head_sha=CORRECTED_HEAD,
+        expected_head_sha=CORRECTED_HEAD,
+        reviewer_pass_head_sha=HEAD,
+    )
+    new_review_without_checks = _accepted(
+        current_head_sha=CORRECTED_HEAD,
+        expected_head_sha=CORRECTED_HEAD,
+        reviewer_pass_head_sha=CORRECTED_HEAD,
+        required_checks_pass=False,
+    )
+    new_review_without_preflight = _accepted(
+        current_head_sha=CORRECTED_HEAD,
+        expected_head_sha=CORRECTED_HEAD,
+        reviewer_pass_head_sha=CORRECTED_HEAD,
+        native_closing_preflight_allowed=False,
+    )
+    fully_regated = _accepted(
+        current_head_sha=CORRECTED_HEAD,
+        expected_head_sha=CORRECTED_HEAD,
+        reviewer_pass_head_sha=CORRECTED_HEAD,
+    )
+
+    assert not merge_acceptance_allows(old_review)
+    assert not merge_acceptance_allows(new_review_without_checks)
+    assert not merge_acceptance_allows(new_review_without_preflight)
+    assert merge_acceptance_allows(fully_regated)
+
+
+def test_native_close_recurrence_is_rejected_before_durable_merge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(issue_number=159, role="executor", action="merge-pr")
+    raw_worker_result = json.dumps(
+        {
+            "issue_number": 159,
+            "role": "executor",
+            "action": "merge-pr",
+            "result_content": "MERGE_RESULT",
+            "requested_effects": [
+                {
+                    "kind": "github-mutation",
+                    "payload_json": json.dumps(
+                        {
+                            "issue_number": 159,
+                            "operation": "pull-request-merge",
+                            "number": 167,
+                            "expected_head_sha": HEAD,
+                            "merge_method": "merge",
+                        }
+                    ),
+                }
+            ],
+        }
+    )
+    rejected = _accepted(native_closing_preflight_allowed=False)
+    monkeypatch.setattr(
+        merge_acceptance,
+        "acquire_merge_acceptance_snapshot",
+        lambda **_kwargs: rejected,
+    )
+
+    def forbidden_durable_apply(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("durable merge application must not run after preflight rejection")
+
+    monkeypatch.setattr(merge_acceptance, "run_effect_application", forbidden_durable_apply)
+
+    _batch, result = merge_acceptance.run_guarded_effect_application(
+        raw_worker_result,
+        source=source,
+        repository="royhsu-work/investment-strategy",
+        token=HEAD,
+        workflow_text="unused before rejection",
+    )
+
+    assert not result.applied
+    assert result.reason == "fresh merge acceptance rejected"
 
 
 @pytest.mark.parametrize(
