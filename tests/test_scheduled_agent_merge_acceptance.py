@@ -36,6 +36,31 @@ def _accepted(**overrides: object) -> MergeAcceptanceSnapshot:
     return MergeAcceptanceSnapshot(**values)  # type: ignore[arg-type]
 
 
+def _merge_worker_result() -> str:
+    return json.dumps(
+        {
+            "issue_number": 159,
+            "role": "executor",
+            "action": "merge-pr",
+            "result_content": "MERGE_RESULT",
+            "requested_effects": [
+                {
+                    "kind": "github-mutation",
+                    "payload_json": json.dumps(
+                        {
+                            "issue_number": 159,
+                            "operation": "pull-request-merge",
+                            "number": 167,
+                            "expected_head_sha": HEAD,
+                            "merge_method": "merge",
+                        }
+                    ),
+                }
+            ],
+        }
+    )
+
+
 def test_merge_acceptance_allows_only_fresh_exact_accepted_state() -> None:
     assert merge_acceptance_allows(_accepted())
 
@@ -92,28 +117,6 @@ def test_native_close_recurrence_is_rejected_before_durable_merge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = WorkerRequest(issue_number=159, role="executor", action="merge-pr")
-    raw_worker_result = json.dumps(
-        {
-            "issue_number": 159,
-            "role": "executor",
-            "action": "merge-pr",
-            "result_content": "MERGE_RESULT",
-            "requested_effects": [
-                {
-                    "kind": "github-mutation",
-                    "payload_json": json.dumps(
-                        {
-                            "issue_number": 159,
-                            "operation": "pull-request-merge",
-                            "number": 167,
-                            "expected_head_sha": HEAD,
-                            "merge_method": "merge",
-                        }
-                    ),
-                }
-            ],
-        }
-    )
     rejected = _accepted(native_closing_preflight_allowed=False)
     monkeypatch.setattr(
         merge_acceptance,
@@ -127,7 +130,7 @@ def test_native_close_recurrence_is_rejected_before_durable_merge(
     monkeypatch.setattr(merge_acceptance, "run_effect_application", forbidden_durable_apply)
 
     _batch, result = merge_acceptance.run_guarded_effect_application(
-        raw_worker_result,
+        _merge_worker_result(),
         source=source,
         repository="royhsu-work/investment-strategy",
         token=HEAD,
@@ -136,6 +139,47 @@ def test_native_close_recurrence_is_rejected_before_durable_merge(
 
     assert not result.applied
     assert result.reason == "fresh merge acceptance rejected"
+
+
+def test_merge_effect_rechecks_acceptance_after_initial_clearance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(issue_number=159, role="executor", action="merge-pr")
+    snapshots = iter((_accepted(), _accepted(native_closing_preflight_allowed=False)))
+    monkeypatch.setattr(
+        merge_acceptance,
+        "acquire_merge_acceptance_snapshot",
+        lambda **_kwargs: next(snapshots),
+    )
+
+    def fake_run_effect_application(
+        raw_worker_result: str,
+        *,
+        source: WorkerRequest,
+        repository: str,
+        token: str,
+        workflow_text: str,
+        pre_apply_guard: object | None = None,
+    ) -> tuple[object, object]:
+        del repository, token, workflow_text
+        batch = merge_acceptance.parse_effect_batch(raw_worker_result, source)
+        assert callable(pre_apply_guard)
+        allowed = pre_apply_guard(batch.effects[0])
+        assert allowed is False
+        return batch, merge_acceptance.ApplyResult(False, "effect precondition became stale")
+
+    monkeypatch.setattr(merge_acceptance, "run_effect_application", fake_run_effect_application)
+
+    _batch, result = merge_acceptance.run_guarded_effect_application(
+        _merge_worker_result(),
+        source=source,
+        repository="royhsu-work/investment-strategy",
+        token=HEAD,
+        workflow_text="current workflow",
+    )
+
+    assert not result.applied
+    assert result.reason == "effect precondition became stale"
 
 
 @pytest.mark.parametrize(
