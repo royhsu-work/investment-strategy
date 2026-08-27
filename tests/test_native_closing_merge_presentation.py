@@ -30,15 +30,20 @@ def _input(**overrides: object) -> MergePresentationInput:
 
 
 def test_merge_preflight_requires_complete_exact_head_evidence() -> None:
-    assert evaluate_native_closing_preflight(
-        _input(commit_enumeration_complete=False)
-    ).disposition is NativeClosingDisposition.FAIL_CLOSED
-    assert evaluate_native_closing_preflight(
-        _input(presentation_complete=False)
-    ).disposition is NativeClosingDisposition.FAIL_CLOSED
-    assert evaluate_native_closing_preflight(
-        _input(observed_head_sha="b" * 40)
-    ).disposition is NativeClosingDisposition.FAIL_CLOSED
+    assert (
+        evaluate_native_closing_preflight(
+            _input(commit_enumeration_complete=False)
+        ).disposition
+        is NativeClosingDisposition.FAIL_CLOSED
+    )
+    assert (
+        evaluate_native_closing_preflight(_input(presentation_complete=False)).disposition
+        is NativeClosingDisposition.FAIL_CLOSED
+    )
+    assert (
+        evaluate_native_closing_preflight(_input(observed_head_sha="b" * 40)).disposition
+        is NativeClosingDisposition.FAIL_CLOSED
+    )
 
 
 def test_merge_commit_checks_pr_body_commits_and_generated_message() -> None:
@@ -46,9 +51,7 @@ def test_merge_commit_checks_pr_body_commits_and_generated_message() -> None:
     assert not evaluate_native_closing_preflight(
         _input(commit_messages=("Resolve #159",))
     ).allowed
-    assert not evaluate_native_closing_preflight(
-        _input(pr_body="Closes #159")
-    ).allowed
+    assert not evaluate_native_closing_preflight(_input(pr_body="Closes #159")).allowed
     assert not evaluate_native_closing_preflight(
         _input(generated_message="Fixes #159")
     ).allowed
