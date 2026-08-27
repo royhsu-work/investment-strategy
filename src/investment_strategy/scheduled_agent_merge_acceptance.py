@@ -6,7 +6,7 @@ import json
 import os
 import re
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -26,15 +26,26 @@ from investment_strategy.scheduled_agent_effect_contract import GITHUB_MUTATION_
 from investment_strategy.scheduled_agent_effects import (
     ApplyResult,
     EffectBatch,
+    GitHubEffectAdapter,
     StagedEffect,
+    apply_effect_batch,
     parse_effect_batch,
-    run_effect_application,
+    topology_allows_successor,
 )
-from investment_strategy.scheduled_agent_runtime import WorkerRequest
+from investment_strategy.scheduled_agent_runtime import (
+    WorkerRequest,
+    acquire_current_github_preflight,
+)
 
 _REVIEW_ACTIONS = ("review-implementation", "review-archive")
 _ACCEPTED_CHECK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
 _DEBT_DISPOSITIONS = frozenset({"terminal-cleanup", "unfinished-recovery"})
+
+PreApplyGuard = Callable[[StagedEffect], bool]
+
+
+class _EffectPreconditionStale(RuntimeError):
+    """Signal that a mutation-adjacent effect precondition changed."""
 
 
 @dataclass(frozen=True)
@@ -304,6 +315,79 @@ def acquire_merge_acceptance_snapshot(
     )
 
 
+def _merge_effect_allows(
+    effect: StagedEffect,
+    *,
+    source: WorkerRequest,
+    repository: str,
+    token: str,
+) -> bool:
+    """Freshly re-evaluate one merge effect at the mutation-adjacent boundary."""
+
+    payload = _merge_payload(effect)
+    if payload is None:
+        return True
+    number = payload.get("number")
+    expected_head_sha = payload.get("expected_head_sha")
+    merge_method = payload.get("merge_method", "merge")
+    if (
+        not isinstance(number, int)
+        or not isinstance(expected_head_sha, str)
+        or not isinstance(merge_method, str)
+    ):
+        return False
+    try:
+        merge_strategy = MergeStrategy(merge_method)
+    except ValueError:
+        return False
+    snapshot = acquire_merge_acceptance_snapshot(
+        repository=repository,
+        token=token,
+        issue_number=source.issue_number,
+        pr_number=number,
+        expected_head_sha=expected_head_sha,
+        merge_strategy=merge_strategy,
+    )
+    return merge_acceptance_allows(snapshot)
+
+
+def run_effect_application(
+    raw_worker_result: str,
+    *,
+    source: WorkerRequest,
+    repository: str,
+    token: str,
+    workflow_text: str,
+    pre_apply_guard: PreApplyGuard | None = None,
+) -> tuple[EffectBatch, ApplyResult]:
+    """Apply through shared effect guards plus an optional mutation-adjacent guard."""
+
+    batch = parse_effect_batch(raw_worker_result, source)
+    adapter = GitHubEffectAdapter(repository, token, source)
+
+    def apply_with_fresh_guard(effect: StagedEffect) -> None:
+        if pre_apply_guard is not None and not pre_apply_guard(effect):
+            raise _EffectPreconditionStale
+        adapter.apply(effect)
+
+    try:
+        result = apply_effect_batch(
+            batch,
+            fresh_preflight=lambda: acquire_current_github_preflight(repository, token),
+            effect_guard=adapter.guard,
+            topology_validator=lambda request, effect: topology_allows_successor(
+                workflow_text,
+                request,
+                effect,
+            ),
+            apply_effect=apply_with_fresh_guard,
+            observe_postcondition=adapter.observe_postcondition,
+        )
+    except _EffectPreconditionStale:
+        result = ApplyResult(False, "effect precondition became stale")
+    return batch, result
+
+
 def run_guarded_effect_application(
     raw_worker_result: str,
     *,
@@ -312,35 +396,18 @@ def run_guarded_effect_application(
     token: str,
     workflow_text: str,
 ) -> tuple[EffectBatch, ApplyResult]:
-    """Reject stale merge acceptance before entering the durable-effect applier."""
+    """Reject stale merge acceptance before and immediately adjacent to merge application."""
 
     batch = parse_effect_batch(raw_worker_result, source)
     for effect in batch.effects:
-        payload = _merge_payload(effect)
-        if payload is None:
+        if _merge_payload(effect) is None:
             continue
-        number = payload.get("number")
-        expected_head_sha = payload.get("expected_head_sha")
-        merge_method = payload.get("merge_method", "merge")
-        if (
-            not isinstance(number, int)
-            or not isinstance(expected_head_sha, str)
-            or not isinstance(merge_method, str)
-        ):
-            return batch, ApplyResult(False, "merge acceptance evidence is incomplete")
-        try:
-            merge_strategy = MergeStrategy(merge_method)
-        except ValueError:
-            return batch, ApplyResult(False, "merge acceptance strategy is unsupported")
-        snapshot = acquire_merge_acceptance_snapshot(
+        if not _merge_effect_allows(
+            effect,
+            source=source,
             repository=repository,
             token=token,
-            issue_number=source.issue_number,
-            pr_number=number,
-            expected_head_sha=expected_head_sha,
-            merge_strategy=merge_strategy,
-        )
-        if not merge_acceptance_allows(snapshot):
+        ):
             return batch, ApplyResult(False, "fresh merge acceptance rejected")
 
     return run_effect_application(
@@ -349,6 +416,12 @@ def run_guarded_effect_application(
         repository=repository,
         token=token,
         workflow_text=workflow_text,
+        pre_apply_guard=lambda effect: _merge_effect_allows(
+            effect,
+            source=source,
+            repository=repository,
+            token=token,
+        ),
     )
 
 
