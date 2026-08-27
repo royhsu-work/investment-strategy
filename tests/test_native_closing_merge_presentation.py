@@ -37,11 +37,15 @@ def test_merge_preflight_requires_complete_exact_head_evidence() -> None:
         is NativeClosingDisposition.FAIL_CLOSED
     )
     assert (
-        evaluate_native_closing_preflight(_input(presentation_complete=False)).disposition
+        evaluate_native_closing_preflight(
+            _input(presentation_complete=False)
+        ).disposition
         is NativeClosingDisposition.FAIL_CLOSED
     )
     assert (
-        evaluate_native_closing_preflight(_input(observed_head_sha="b" * 40)).disposition
+        evaluate_native_closing_preflight(
+            _input(observed_head_sha="b" * 40)
+        ).disposition
         is NativeClosingDisposition.FAIL_CLOSED
     )
 
