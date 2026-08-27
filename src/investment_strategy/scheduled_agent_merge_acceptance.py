@@ -15,6 +15,13 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from investment_strategy.human_authority import HUMAN_ACTOR
+from investment_strategy.native_closing_merge_application import (
+    acquire_native_closing_merge_result,
+)
+from investment_strategy.native_closing_preflight import (
+    MergeStrategy,
+    NativeClosingDisposition,
+)
 from investment_strategy.scheduled_agent_effect_contract import GITHUB_MUTATION_KIND
 from investment_strategy.scheduled_agent_effects import (
     ApplyResult,
@@ -26,7 +33,6 @@ from investment_strategy.scheduled_agent_effects import (
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 
 _REVIEW_ACTIONS = ("review-implementation", "review-archive")
-_CLOSING_KEYWORDS = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)"
 _ACCEPTED_CHECK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
 _DEBT_DISPOSITIONS = frozenset({"terminal-cleanup", "unfinished-recovery"})
 
@@ -41,6 +47,7 @@ class MergeAcceptanceSnapshot:
     reviewer_pass_head_sha: str | None
     required_checks_pass: bool
     non_closing_linkage: bool
+    native_closing_preflight_allowed: bool
     contradictory_evidence: bool
     human_input_fresh: bool
     complete: bool
@@ -56,6 +63,7 @@ def merge_acceptance_allows(snapshot: MergeAcceptanceSnapshot) -> bool:
         and snapshot.reviewer_pass_head_sha == snapshot.expected_head_sha
         and snapshot.required_checks_pass
         and snapshot.non_closing_linkage
+        and snapshot.native_closing_preflight_allowed
         and not snapshot.contradictory_evidence
         and snapshot.human_input_fresh
     )
@@ -144,7 +152,7 @@ def _review_record(body: object) -> tuple[str, str, str] | None:
 def _latest_matching_pass(
     comments: tuple[Mapping[str, object], ...],
     expected_head_sha: str,
-) -> tuple[str | None, datetime | None, bool, bool]:
+) -> tuple[str | None, str | None, datetime | None, bool, bool]:
     records: list[tuple[datetime, int, str, str, str]] = []
     complete = True
     for comment in comments:
@@ -162,7 +170,7 @@ def _latest_matching_pass(
     matching = [record for record in records if record[4] == expected_head_sha]
     passes = [record for record in matching if record[3] == "PASS" and record[2] in _REVIEW_ACTIONS]
     if not passes:
-        return None, None, False, complete
+        return None, None, None, False, complete
 
     latest_pass = max(passes, key=lambda item: (item[0], item[1]))
     later_contradiction = any(
@@ -171,15 +179,13 @@ def _latest_matching_pass(
         and record[3] != "PASS"
         for record in records
     )
-    return latest_pass[4], latest_pass[0], later_contradiction, complete
+    return latest_pass[4], latest_pass[2], latest_pass[0], later_contradiction, complete
 
 
 def _non_closing_linkage(body: object, issue_number: int) -> bool:
     if not isinstance(body, str):
         return False
-    non_closing = re.search(rf"(?im)^\s*Refs\s+#{issue_number}\b", body) is not None
-    closing = re.search(rf"(?i)\b{_CLOSING_KEYWORDS}\s*:?[ \t]+#{issue_number}\b", body) is not None
-    return non_closing and not closing
+    return re.search(rf"(?im)^\s*Refs\s+#{issue_number}\b", body) is not None
 
 
 def _required_checks_pass(repository: str, token: str, head_sha: str) -> tuple[bool, bool]:
@@ -233,6 +239,14 @@ def _human_input_fresh(
     return True, True
 
 
+def _lifecycle_context(review_action: str | None) -> str:
+    if review_action == "review-implementation":
+        return "implementation"
+    if review_action == "review-archive":
+        return "archive"
+    return ""
+
+
 def acquire_merge_acceptance_snapshot(
     *,
     repository: str,
@@ -240,6 +254,7 @@ def acquire_merge_acceptance_snapshot(
     issue_number: int,
     pr_number: int,
     expected_head_sha: str,
+    merge_strategy: MergeStrategy,
 ) -> MergeAcceptanceSnapshot:
     """Acquire current GitHub evidence for one staged merge immediately before application."""
 
@@ -248,22 +263,32 @@ def acquire_merge_acceptance_snapshot(
         comments = _paged_github_list(repository, token, f"issues/{issue_number}/comments")
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
         return MergeAcceptanceSnapshot(
-            False, None, expected_head_sha, None, False, False, True, False, False
+            False, None, expected_head_sha, None, False, False, False, True, False, False
         )
     if not isinstance(pr, Mapping):
         return MergeAcceptanceSnapshot(
-            False, None, expected_head_sha, None, False, False, True, False, False
+            False, None, expected_head_sha, None, False, False, False, True, False, False
         )
 
-    reviewer_pass_head, pass_time, contradiction, review_complete = _latest_matching_pass(
-        comments, expected_head_sha
+    reviewer_pass_head, review_action, pass_time, contradiction, review_complete = (
+        _latest_matching_pass(comments, expected_head_sha)
     )
     try:
         checks_pass, checks_complete = _required_checks_pass(repository, token, expected_head_sha)
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
         checks_pass, checks_complete = False, False
     human_fresh, human_complete = _human_input_fresh(comments, pass_time)
-    complete = review_complete and checks_complete and human_complete
+    native_result = acquire_native_closing_merge_result(
+        repository=repository,
+        token=token,
+        coordination_issue=issue_number,
+        pr_number=pr_number,
+        expected_head_sha=expected_head_sha,
+        lifecycle_context=_lifecycle_context(review_action),
+        merge_strategy=merge_strategy,
+    )
+    native_complete = native_result.disposition is not NativeClosingDisposition.FAIL_CLOSED
+    complete = review_complete and checks_complete and human_complete and native_complete
 
     return MergeAcceptanceSnapshot(
         pr_open=pr.get("state") == "open",
@@ -272,6 +297,7 @@ def acquire_merge_acceptance_snapshot(
         reviewer_pass_head_sha=reviewer_pass_head,
         required_checks_pass=checks_pass,
         non_closing_linkage=_non_closing_linkage(pr.get("body"), issue_number),
+        native_closing_preflight_allowed=native_result.allowed,
         contradictory_evidence=contradiction,
         human_input_fresh=human_fresh,
         complete=complete,
@@ -295,14 +321,24 @@ def run_guarded_effect_application(
             continue
         number = payload.get("number")
         expected_head_sha = payload.get("expected_head_sha")
-        if not isinstance(number, int) or not isinstance(expected_head_sha, str):
+        merge_method = payload.get("merge_method", "merge")
+        if (
+            not isinstance(number, int)
+            or not isinstance(expected_head_sha, str)
+            or not isinstance(merge_method, str)
+        ):
             return batch, ApplyResult(False, "merge acceptance evidence is incomplete")
+        try:
+            merge_strategy = MergeStrategy(merge_method)
+        except ValueError:
+            return batch, ApplyResult(False, "merge acceptance strategy is unsupported")
         snapshot = acquire_merge_acceptance_snapshot(
             repository=repository,
             token=token,
             issue_number=source.issue_number,
             pr_number=number,
             expected_head_sha=expected_head_sha,
+            merge_strategy=merge_strategy,
         )
         if not merge_acceptance_allows(snapshot):
             return batch, ApplyResult(False, "fresh merge acceptance rejected")
