@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+from investment_strategy.native_closing_preflight import has_native_closing_reference
 from investment_strategy.scheduled_agent_merge_acceptance import (
     MergeAcceptanceSnapshot,
     merge_acceptance_allows,
-    native_closing_reference_detected,
 )
 
 HEAD = "367ec125f919546443e2f006bec2a1ae1a78d4ce"
@@ -66,7 +66,11 @@ def test_merge_acceptance_rejects_closed_or_changed_head() -> None:
     ),
 )
 def test_native_closing_classifier_detects_exact_coordination_issue(text: str) -> None:
-    assert native_closing_reference_detected(text, repository="royhsu-work/investment-strategy", issue_number=159)
+    assert has_native_closing_reference(
+        text,
+        repository_full_name="royhsu-work/investment-strategy",
+        coordination_issue=159,
+    )
 
 
 @pytest.mark.parametrize(
@@ -82,17 +86,21 @@ def test_native_closing_classifier_detects_exact_coordination_issue(text: str) -
     ),
 )
 def test_native_closing_classifier_preserves_non_closing_and_code_boundaries(text: str) -> None:
-    assert not native_closing_reference_detected(text, repository="royhsu-work/investment-strategy", issue_number=159)
+    assert not has_native_closing_reference(
+        text,
+        repository_full_name="royhsu-work/investment-strategy",
+        coordination_issue=159,
+    )
 
 
 def test_native_closing_classifier_matches_same_repository_qualified_reference() -> None:
-    assert native_closing_reference_detected(
+    assert has_native_closing_reference(
         "Resolves royhsu-work/investment-strategy#159",
-        repository="royhsu-work/investment-strategy",
-        issue_number=159,
+        repository_full_name="royhsu-work/investment-strategy",
+        coordination_issue=159,
     )
-    assert not native_closing_reference_detected(
+    assert not has_native_closing_reference(
         "Resolves other/repository#159",
-        repository="royhsu-work/investment-strategy",
-        issue_number=159,
+        repository_full_name="royhsu-work/investment-strategy",
+        coordination_issue=159,
     )
