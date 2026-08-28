@@ -395,8 +395,8 @@ the separate bounded idle advisory/discovery mode defined below.
 Every scheduled wake behaves as if it may be the first execution to see the work item. The first
 repository-owned `AUTHORIZE` decision in one scheduled wake establishes the invocation-local `initial_role`
 for that wake. `initial_role` is runtime-local comparison context only and MUST NOT be persisted to an Issue,
-routing label, comment, OpenSpec artifact, transport record, queue, lease, heartbeat, sequence counter, or
-hidden repository state.
+routing label, comment, OpenSpec artifact, transport record, queue, lease, heartbeat, sequence-number state,
+or hidden repository state.
 
 ```text
 wake
@@ -537,10 +537,10 @@ preconditions.
 
 Multiple legal same-role action transitions may be work-conserving inside one scheduled wake, but every
 transition is mediated by durable effect application plus fresh global dispatch and every selected action gets
-a fresh mapped model invocation. Same-role transition does not mean same-model continuation. Cross-role
-transition is wake-terminal; it waits only for a later generic scheduled wake, not a dedicated fixed-role
-schedule slot. No transition may use prior worker context to process another workflow Issue or bypass global
-dispatch.
+a fresh mapped model invocation. Same-role transition does not mean same-model continuation. A cross-role
+transition is wake-terminal, and cross-role transition does not wait for a dedicated role schedule slot: it
+waits only for a later generic scheduled wake. No transition may use prior worker context to process another
+workflow Issue or bypass global dispatch.
 
 A catchable tool/runtime/execution failure does not become a hard-boundary Exit merely because an exception occurred. If execution opportunity remains, the current role first preserves the required raw exception evidence and applies the existing action-specific recovery/disposition contract. When legal same-authority recovery is immediately actionable, it MUST recover and continue within the same selected role/action. Only when current evidence proves that applicable same-authority recovery/disposition cannot legally continue may the failure support a hard execution-boundary Exit. A genuinely uncatchable hard termination may prevent current-run persistence and is handled by later at-least-once reconstruction.
 
@@ -787,9 +787,9 @@ before starting the next slice or handing off. Executor also persists one bounde
 the persistent coordination Issue before beginning the next slice or handing off.
 
 The bounded checkpoint identifies the completed slice/task IDs, durable checkpoint or verified revision,
-VERIFY/gate result, and remaining work or handoff. PR/commit remains the source of implementation state,
-task markers remain verified completion evidence, CI remains verification evidence, and the Issue checkpoint
-is only a completion-boundary journal; the comment does not replace those sources of truth.
+VERIFY/gate result, and remaining approved work or handoff. PR/commit remains the source of implementation
+state, task markers remain verified completion evidence, CI remains verification evidence, and the Issue
+checkpoint is only a completion-boundary journal; the comment does not replace those sources of truth.
 
 Marker persistence does not require a dedicated commit for each individual checkbox; it should normally
 be included with the corresponding implementation checkpoint. Markers for already verified slices must
