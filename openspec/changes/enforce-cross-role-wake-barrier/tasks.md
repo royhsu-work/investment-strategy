@@ -28,4 +28,4 @@ Refs #161
 Explore baseline: #161 comment `5440915970`
 Human decision: #161 comment `5452121226` (Option 3; machine/script enforcement no longer required)
 
-<!-- Verification trigger only: completion markers remain unset until exact-head VERIFY succeeds. -->
+<!-- Verification retry trigger only: completion markers remain unset until exact-head VERIFY succeeds. -->

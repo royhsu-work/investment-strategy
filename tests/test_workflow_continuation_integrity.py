@@ -90,7 +90,10 @@ def test_same_role_explore_to_propose_remains_work_conserving_after_fresh_dispat
     shared = _read("agents/AGENTS.md")
     topology = _read("agents/workflow.md")
 
-    assert "same-role continuation may proceed immediately when its own preconditions hold" in topology
+    same_role_explore_successor = (
+        "same-role continuation may proceed immediately when its own preconditions hold"
+    )
+    assert same_role_explore_successor in topology
     assert "fresh executable redispatch" in shared
     assert "another legal mapped action is selected for the same role" in shared
     assert "create a fresh model worker" in shared
@@ -102,21 +105,26 @@ def test_representative_cross_role_successors_use_prompt_level_wake_terminal_bou
     topology = _read("agents/workflow.md")
 
     for transition in (
-        "| `Lead / propose-change` | OpenSpec artifacts ready for independent semantic review | `Reviewer / review-openspec` |",
+        (
+            "| `Lead / propose-change` | OpenSpec artifacts ready for independent "
+            "semantic review | `Reviewer / review-openspec` |"
+        ),
         "| `Reviewer / review-openspec` | PASS | `Executor / implement-change` |",
         "| `Executor / merge-pr` | implementation PR merged | `Lead / finalize-change` |",
     ):
         assert transition in topology
 
+    cross_role_stop_instruction = (
+        "authoritative governance instructs the current model invocation to end before "
+        "invoking the target role"
+    )
+    prompt_level_boundary = (
+        "prompt/model-level role boundary rather than repository runtime state or a "
+        "script classifier"
+    )
     assert "fresh dispatch selects a successor owned by a different role" in shared
-    assert (
-        "authoritative governance instructs the current model invocation to end before invoking the target role"
-        in shared
-    )
-    assert (
-        "prompt/model-level role boundary rather than repository runtime state or a script classifier"
-        in shared
-    )
+    assert cross_role_stop_instruction in shared
+    assert prompt_level_boundary in shared
     assert "wake-terminal boundary is a prompt/model-level behavioral contract" in messages
     assert "verifiable proof that the external ChatGPT execution context terminated" in messages
 
