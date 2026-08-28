@@ -1,21 +1,27 @@
 ## Context
 
-Issue #161 established that the repository currently has two distinct execution identities that must not be conflated: a fresh mapped worker for one machine-selected role/action, and the enclosing Scheduled-Agent wake that may perform fresh redispatch after durable effects. Current canonical `scheduled-agent-workflow` truth already says a role handoff ends the current run, while `agents/AGENTS.md`, `agents/templates/messages.md`, and continuation tests still describe cross-role fresh-worker continuation inside one runtime execution.
+Issue #161 established that the repository has two distinct execution identities that must not be conflated: a fresh mapped worker for one machine-selected role/action, and the enclosing external Scheduled-Agent wake that may perform fresh redispatch after durable effects. Current canonical `scheduled-agent-workflow` truth and `agents/workflow.md` already say a cross-role handoff ends the current invocation, while shared runtime/presentation text has described cross-role fresh-worker continuation inside one execution opportunity.
 
-The exact Explore baseline is Issue #161 comment `5440915970`. The selected direction is Candidate B: same-role work-conserving continuation is allowed; a cross-role successor is durably selected but is wake-terminal.
+The exact Explore baseline is Issue #161 comment `5440915970`. The original selected direction was Candidate B: same-role work-conserving continuation is allowed and a cross-role successor is wake-terminal. Implementation review then established that the repository-owned continuation classifier is not itself an enclosing control boundary for the external ChatGPT Scheduled-Agent wake. A subsequent Candidate D attestation PoC remained `INDETERMINATE` because the available execution environment did not expose a testable Work webhook task surface.
+
+Human decision comment `5452121226`, approved by the later Human-only `human:approved` event `30162729509`, supersedes the earlier enforcement mechanism: choose Option 3 and downgrade the cross-role wake barrier to prompt/model-level enforcement. Machine/script enforcement is no longer required for this Change.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- Make `Role`, not `Action`, immutable for one scheduled wake.
+- Keep `Role`, not `Action`, conceptually immutable for one Scheduled-Agent wake as an authoritative model/governance instruction.
 - Preserve repository-owned dispatch as the only selector before every mapped worker.
-- Preserve fresh mapped-worker isolation for same-role continuation.
-- End the current wake when fresh dispatch selects a role different from the wake's initial role.
-- Keep the successor routing/dispatch result intact for ordinary reconstruction by the next wake.
-- Enforce the boundary mechanically with focused regression coverage.
+- Preserve fresh mapped-worker isolation and fresh authoritative reconstruction for every successor action.
+- Preserve same-role work-conserving continuation.
+- Instruct the current mapped model invocation to end when fresh dispatch selects a different role, leaving the durable successor routing intact for a later wake.
+- Align shared default-branch governance/presentation with the existing `agents/workflow.md` cross-role invocation-terminal topology.
+- Make the downgraded assurance boundary explicit: this Change does not claim that repository code can mechanically terminate the external ChatGPT execution context.
 
 **Non-Goals:**
-- No formal topology changes in `agents/workflow.md`.
+- No repository-owned mechanical hard-stop guarantee for the external Scheduled-Agent wake.
+- No OpenAI API key and no GitHub Actions-hosted model/Responses API worker.
+- No Work wake attestation requirement.
+- No formal topology changes in `agents/workflow.md` unless implementation discovers a real contradiction rather than presentation drift.
 - No fixed Lead/Reviewer/Executor schedule semantics.
 - No durable wake-role field, queue, lock, lease, heartbeat, sequence number, retry state, or second dispatcher.
 - No change to WIP=1, Human authority, action ownership, routing labels, or dispatch candidate ordering.
@@ -23,57 +29,51 @@ The exact Explore baseline is Issue #161 comment `5440915970`. The selected dire
 
 ## Decisions
 
-### 1. `initial_role` is invocation-local wake state
+### 1. The wake-role boundary is an authoritative model instruction, not repository runtime state
 
-The first repository-owned `AUTHORIZE` decision in a wake establishes `initial_role`. It is runtime-local context only and is never persisted to an Issue, comment, label, OpenSpec artifact, or hidden repository state.
+The first repository-owned `AUTHORIZE` decision selected in a Scheduled-Agent wake establishes the role that the active model is instructed to treat as fixed for that wake. The repository does not persist a wake-local `initial_role` and this Change no longer requires repository runtime code to retain or compare one in order to prove external-host isolation.
 
-Every subsequent action still begins from a fresh repository-owned dispatch result and a fresh mapped worker. The original role value is used only to decide whether the enclosing wake may consume that fresh continuation immediately.
+Every successor action still begins from a fresh repository-owned dispatch result and a fresh mapped worker that reloads current default-branch governance and reconstructs durable state. The wake-role rule constrains what the external model is instructed to execute during the current wake; it does not replace dispatch authorization.
 
 ### 2. Same-role continuation stays work-conserving
 
-After a successful effect batch and fresh dispatch:
+After durable effects and fresh dispatch:
 
 - no selected continuation ends the current action normally;
-- a selected continuation whose role equals `initial_role` may run in the same wake, but only as a fresh mapped worker that reloads default-branch role/Skill governance and reconstructs current durable state;
-- action identity may change while role identity remains fixed.
+- a selected continuation owned by the same role may execute during the same wake as a fresh mapped worker, subject to current governance and ordinary fresh reconstruction;
+- action identity may change while the wake-level role instruction remains fixed.
 
-This preserves existing same-authority liveness such as `Lead / explore-change → Lead / propose-change` without treating action completion as a voluntary yield point.
+This preserves same-authority liveness such as `Lead / explore-change → Lead / propose-change` without turning every action boundary into a scheduled-wake yield.
 
-### 3. Cross-role continuation ends the wake without rewriting routing
+### 3. Cross-role continuation is prompt/model-level wake-terminal behavior
 
-If fresh dispatch selects a role different from `initial_role`, the repository keeps that exact durable successor routing and machine selection as current state. The enclosing wake must not invoke the successor worker. A later scheduled wake performs ordinary fresh reconstruction and may select that role under then-current governance.
+When fresh dispatch selects a successor role different from the role being executed by the current wake, current default-branch governance instructs the model to stop the wake after the durable cross-role handoff is complete. The already-persisted successor routing remains current workflow state. A later Scheduled-Agent wake performs ordinary fresh reconstruction and dispatch before that role may execute.
 
-The wake barrier therefore does not add a queue or defer command and does not alter `AUTHORIZE | NO_WORK | FAIL_CLOSED` dispatch semantics.
+This is intentionally a prompt/model-level behavioral contract. The repository does not claim an unforgeable per-run wake identity, scheduler attestation, or script-owned ability to terminate the external ChatGPT task. Human has explicitly accepted that reduced assurance in Option 3.
 
-### 4. Narrow executable enforcement lives beside effect continuation
+### 4. Remove the superseded mechanical wake classifier requirement
 
-`apply_effect_batch()` already fresh-reauthorizes the source, applies effects with postconditions, and returns the newly machine-selected `WorkerRequest` as `ApplyResult.continuation`. The existing `continuation_requires_fresh_wake(source, continuation)` helper is the narrowest repository-owned classification point and currently treats every non-null continuation alike.
+The previous design required `continuation_requires_fresh_wake(source, continuation)` and an enclosing runner to mechanically classify same-role versus cross-role continuation. That implementation mechanism is no longer required by the approved contract because the actual external Scheduled-Agent wake is outside the repository-owned process boundary.
 
-Implementation should make this helper classify only a role change as requiring a new wake. Same-role selected work remains a fresh-worker continuation rather than a fresh-wake requirement. The enclosing runner consumes this decision; dispatch selection itself remains unchanged.
+Executor should reconcile implementation added solely for that superseded guarantee: remove or simplify wake-specific helper behavior/tests where they no longer serve another approved runtime invariant. This correction must preserve repository-owned dispatch freshness, effect reauthorization/postconditions, durable routing, fresh-worker isolation, same-role liveness, and all unrelated runtime safety behavior.
 
-Focused tests must distinguish:
-- same action / same role: fresh worker may continue in the wake;
-- different action / same role: fresh worker may continue in the wake;
-- Lead→Reviewer, Reviewer→Executor, Executor→Lead: require a new wake;
-- no continuation: no successor worker;
-- fresh dispatch remains authoritative regardless of the wake decision.
+### 5. Default-branch governance is the prompt contract; scheduler prompts stay bootstrap-only
 
-### 5. Shared prose aligns to capability truth
+`agents/workflow.md` remains the topology owner for same-role/cross-role successor relationships. `agents/AGENTS.md` and `agents/templates/messages.md` should align their execution/presentation wording with that topology: same-role continuation may remain in the wake as a fresh worker; cross-role handoff instructs the current invocation to end.
 
-`agents/AGENTS.md` and `agents/templates/messages.md` must stop implying that cross-role work can run inside the same scheduled execution opportunity. They should reference the same distinction: fresh worker on every action; same-role may remain in the wake; cross-role handoff is a durable ownership transfer and wake-terminal boundary.
-
-`agents/workflow.md` remains the sole topology owner and does not need a new edge or state.
+External Scheduled Task prompts should remain neutral bootstrap instructions that load current default-branch governance and obey the resulting wake-terminal decision. They must not copy the workflow DAG, role-specific successor rules, or a durable `initial_role` protocol into external product configuration. This avoids a second drifting policy surface while still implementing the Human-approved prompt/model enforcement boundary.
 
 ## Risks / Trade-offs
 
-- Cross-role lifecycle latency increases by up to one scheduler wake interval. This is intentional isolation cost and does not affect correctness/liveness because routing is already durable.
-- If an enclosing external runner ignores the repository-owned wake classification, prose alone cannot enforce the barrier. Regression coverage therefore must exercise the repository classification boundary, and deployment integration must consume it where same-wake continuation is orchestrated.
-- Terminology drift between `worker`, `invocation`, `run`, and `wake` could reintroduce ambiguity. The Change uses `scheduled wake` for the enclosing execution opportunity and `mapped worker` for each fresh role/action execution.
+- Cross-role lifecycle latency may increase by up to one scheduler wake interval when the model follows the wake-terminal instruction. This remains the intended isolation behavior.
+- Option 3 deliberately accepts weaker assurance: a prompt/model instruction cannot mechanically prove that the external ChatGPT host terminated or prevent platform/model noncompliance. Repository tests can verify that authoritative governance presents the correct instruction, not that the external host obeyed it.
+- Removing the superseded mechanical classifier must not accidentally remove unrelated fresh-dispatch/effect-application protections.
+- Terminology drift between `worker`, `invocation`, `run`, and `wake` could reintroduce ambiguity. Use `Scheduled-Agent wake` for the external execution opportunity and `mapped worker` for each fresh role/action execution.
 
 ## Migration Plan
 
-No durable-state migration is required. Existing routing tuples remain valid. Once merged to the default branch, later wakes apply the new continuation boundary; historical #155 execution remains historical evidence and is not retroactively invalidated.
+No durable-state migration is required. Existing routing tuples remain valid. The earlier mechanical implementation on PR #173 is treated as superseded work to be reconciled after independent OpenSpec review. Once the revised Change is merged to the default branch, later wakes consume the prompt/model-level cross-role termination instruction from authoritative governance. Historical #155 execution remains historical evidence and is not retroactively invalidated.
 
 ## Open Questions
 
-None requiring Human authority. The implementation mechanism is bounded by the exact Explore result and existing canonical capability requirement.
+None requiring further Human authority. Human comment `5452121226` explicitly accepts Option 3 and removes machine/script enforcement as a requirement for this Change.
