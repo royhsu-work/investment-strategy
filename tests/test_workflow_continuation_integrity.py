@@ -47,25 +47,33 @@ def test_action_transition_redispatches_same_issue_with_fresh_worker() -> None:
     assert "Same-role and cross-role boundaries" in topology
 
 
-def test_scheduled_wake_keeps_initial_role_and_cross_role_is_wake_terminal() -> None:
+def test_scheduled_wake_uses_prompt_role_boundary_and_cross_role_is_wake_terminal() -> None:
     shared = _read("agents/AGENTS.md")
     messages = _read("agents/templates/messages.md")
     topology = _read("agents/workflow.md")
 
     for required in (
+        "first repository-owned `AUTHORIZE` decision",
+        "authoritative model/governance instruction",
+        "same scheduled wake",
+        "cross-role",
+        "later scheduled wake",
+    ):
+        assert required in shared
+
+    for forbidden in (
         "invocation-local `initial_role`",
         "role == initial_role",
         "role != initial_role",
-        "end the current scheduled wake without invoking that role",
-        "cross-role transition does not wait for a dedicated role schedule slot",
     ):
-        assert required in shared
+        assert forbidden not in shared
 
     for required in (
         "same scheduled wake",
         "wake-terminal",
         "later scheduled wake",
         "fresh mapped model invocation",
+        "prompt/model-level",
     ):
         assert required in messages
 
@@ -78,18 +86,34 @@ def test_scheduled_wake_keeps_initial_role_and_cross_role_is_wake_terminal() -> 
     assert "invocation ends" in topology
 
 
-def test_wake_barrier_preserves_routing_and_adds_no_durable_scheduler_state() -> None:
+def test_wake_barrier_preserves_routing_without_mechanical_wake_state() -> None:
     shared = _read("agents/AGENTS.md")
 
     for required in (
-        "preserve the durable successor routing/selection",
-        "MUST NOT be persisted",
-        "queue, lease, heartbeat",
+        "durable successor routing",
+        "prompt/model-level",
         "does not wait for a dedicated fixed-role schedule slot",
         "second workflow DAG",
         "fixed role schedule slots are not part of the normal authorization contract",
     ):
         assert required in shared
+
+    for forbidden in (
+        "persist wake-role state",
+        "repository-owned mechanical hard-stop",
+    ):
+        assert forbidden not in shared
+
+
+def test_external_scheduled_task_guidance_remains_generic_bootstrap() -> None:
+    migration = _read("agents/scheduled-task-migration.md")
+
+    assert "common bootstrap prompt" in migration
+    assert "Scheduled Task prompts remain bootstrap-only" in migration
+    assert "load default-branch governance" in migration
+    assert "must not duplicate" in migration
+    assert "workflow DAG" not in migration
+    assert "initial_role" not in migration
 
 
 def test_handoff_is_cross_role_only_and_same_role_needs_no_synthetic_message() -> None:
