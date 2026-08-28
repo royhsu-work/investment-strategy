@@ -170,9 +170,9 @@ def test_same_role_continuation_requires_fresh_redispatch() -> None:
     assert result.continuation == _request(action="merge-pr")
 
 
-def test_same_action_remaining_work_stays_in_same_wake_with_fresh_worker() -> None:
+def test_same_action_remaining_work_also_requires_fresh_worker() -> None:
     source = _request()
-    assert not continuation_requires_fresh_wake(source, source)
+    assert continuation_requires_fresh_wake(source, source)
 
 
 def test_cross_role_continuation_is_new_machine_selected_identity() -> None:
@@ -409,23 +409,15 @@ def test_topology_validator_consumes_canonical_workflow_text() -> None:
     )
 
 
-def test_only_cross_role_continuation_requires_fresh_wake() -> None:
-    executor = _request()
-    assert not continuation_requires_fresh_wake(executor, executor)
-    assert not continuation_requires_fresh_wake(executor, _request(action="merge-pr"))
-    assert not continuation_requires_fresh_wake(executor, None)
-
-    lead = WorkerRequest(133, "lead", "propose-change")
-    reviewer = WorkerRequest(133, "reviewer", "review-openspec")
-    assert continuation_requires_fresh_wake(lead, reviewer)
-
-    reviewer = WorkerRequest(133, "reviewer", "review-implementation")
-    executor = WorkerRequest(133, "executor", "merge-pr")
-    assert continuation_requires_fresh_wake(reviewer, executor)
-
-    executor = WorkerRequest(133, "executor", "merge-pr")
-    lead = WorkerRequest(133, "lead", "finalize-change")
-    assert continuation_requires_fresh_wake(executor, lead)
+def test_continuation_requires_a_fresh_wake_for_any_selected_work() -> None:
+    source = _request()
+    assert continuation_requires_fresh_wake(source, source)
+    assert continuation_requires_fresh_wake(source, _request(action="merge-pr"))
+    assert continuation_requires_fresh_wake(
+        source,
+        _request(role="reviewer", action="review-implementation"),
+    )
+    assert not continuation_requires_fresh_wake(source, None)
 
 
 def test_repository_deployment_has_no_scheduled_worker_apply_boundary() -> None:
