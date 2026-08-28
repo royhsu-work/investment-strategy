@@ -16,7 +16,9 @@ After machine-gated runtime cutover, a mapped model worker does not make a canon
 
 A canonical message below exists as durable workflow evidence only after the repository-owned application boundary has successfully persisted it and any required postcondition is observed. Worker output or an Actions artifact is staged transport only: it is not a durable message, routing state, authorization token, or proof that a requested mutation succeeded.
 
-When an applied result changes routing, continuation always re-enters executable dispatch from the resulting current GitHub state. Same-role continuation may occur in the same GitHub Actions runtime execution, but it still receives a fresh mapped model invocation; cross-role continuation likewise receives a fresh invocation for the newly machine-selected role. No prior worker context or requested effect authorizes that continuation.
+When an applied result changes routing, continuation always re-enters executable dispatch from the resulting current GitHub state. Every selected successor uses a fresh mapped model invocation and reconstructs current durable evidence. A same-role successor may continue in the same scheduled wake after fresh dispatch. A cross-role successor is wake-terminal for the current scheduled wake: its durable routing and machine selection are preserved, but that successor role is not invoked until a later scheduled wake performs fresh reconstruction and executable dispatch. The boundary does not wait for a dedicated fixed-role schedule slot, and no prior worker context or requested effect authorizes any continuation.
+
+This wake-terminal boundary is a prompt/model-level behavioral contract for the external Scheduled-Agent host. Repository-owned code continues to own dispatch, effects, routing, and postconditions, but it does not claim a script-owned hard stop or verifiable proof that the external ChatGPT execution context terminated.
 
 The common workflow envelope is used whenever a field is applicable to the event:
 
@@ -104,9 +106,9 @@ Required evidence:
 - observed target routing after successful mutation;
 - next owner/action.
 
-A result message alone is not a handoff. `HANDOFF` is reconstructable evidence for the completed cross-role ownership boundary; the routing tuple remains canonical workflow state. Under the machine-gated worker/application split, the repository application boundary—not the model worker—owns the routing mutation, target observation, and durable `HANDOFF` write after fresh reauthorization.
+A result message alone is not a handoff. `HANDOFF` is reconstructable evidence for the completed cross-role ownership boundary; the routing tuple remains canonical workflow state. Under the machine-gated worker/application split, the repository application boundary—not the model worker—owns the routing mutation, target observation, and durable `HANDOFF` write after fresh reauthorization. The completed cross-role handoff is wake-terminal for the source scheduled wake; the observed target routing remains current for a later scheduled wake to reconstruct and dispatch.
 
-Same-role action transitions MUST NOT emit a synthetic `HANDOFF` or a new action-transition message. The source `ACTION_RESULT` or other action-defined result evidence, successful repository-owned routing mutation on the same coordination Issue, and subsequent fresh executable dispatch are sufficient durable evidence for that same-role boundary. If the resulting dispatch selects another same-role action immediately, it receives a fresh mapped model invocation rather than continuing the prior worker context.
+Same-role action transitions MUST NOT emit a synthetic `HANDOFF` or a new action-transition message. The source `ACTION_RESULT` or other action-defined result evidence, successful repository-owned routing mutation on the same coordination Issue, and subsequent fresh executable dispatch are sufficient durable evidence for that same-role boundary. If the resulting dispatch selects another same-role action immediately, it receives a fresh mapped model invocation in the same scheduled wake rather than continuing the prior worker context.
 
 ## `HUMAN_DECISION_REQUIRED`
 

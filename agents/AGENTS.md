@@ -392,7 +392,11 @@ the separate bounded idle advisory/discovery mode defined below.
 
 ## At-least-once execution and state reconstruction
 
-Every runtime execution behaves as if it may be the first execution to see the work item:
+Every scheduled wake behaves as if it may be the first execution to see the work item. The role from the
+first repository-owned `AUTHORIZE` decision is an authoritative model/governance instruction for the current
+Scheduled-Agent wake. This wake-local model instruction is not repository workflow state and MUST NOT be
+persisted to an Issue, routing label, comment, OpenSpec artifact, transport record, queue, lease, heartbeat,
+sequence-number state, or hidden repository state.
 
 ```text
 wake
@@ -400,18 +404,26 @@ wake
 → obtain authoritative current GitHub dispatch observations
 → execute the production dispatcher
 → if NO_WORK/FAIL_CLOSED: stop before any mapped model invocation
-→ if AUTHORIZE: create one fresh worker for the exact machine-selected Issue/role/action
+→ if AUTHORIZE: create one fresh worker for the exact machine-selected Issue/role/action; the active model treats that machine-selected role as fixed for the current scheduled wake
 → worker reconstructs mapped action evidence, performs bounded read/local work, and returns structured result/requested durable effects
 → repository-owned application fresh-reconstructs and reauthorizes that exact source action
 → validate effect-specific preconditions and legal successor against agents/workflow.md
 → apply only authorized durable effects and fresh-observe their postconditions
 → execute fresh production dispatch from resulting durable state
-→ if another legal mapped action is selected: create a fresh model worker for that exact Issue/role/action
+→ if another legal mapped action is selected for the same role: create a fresh model worker for that exact Issue/role/action in the same scheduled wake
+→ if fresh dispatch selects a different role: preserve the durable successor routing/selection and authoritative governance instructs the current model invocation to end without invoking that role
 ```
 
-This is an execution/reconstruction boundary, not an alternative lifecycle graph or natural-language
-selection algorithm; exact normal selection remains executable and the successor itself is resolved from
-`agents/workflow.md`.
+A later scheduled wake reconstructs from durable workflow state and performs ordinary repository-owned
+dispatch again; it does not consume a persisted wake-role marker and does not wait for a dedicated fixed-role
+schedule slot. This is an execution/reconstruction boundary, not an alternative lifecycle graph or natural-
+language selection algorithm; exact normal selection remains executable and the successor itself is resolved
+from `agents/workflow.md`.
+
+The cross-role wake boundary is intentionally a prompt/model-level behavioral contract. Repository-owned code
+still owns executable dispatch, durable effects, routing mutations, postcondition checks, and fresh redispatch,
+but it does not retain a wake-role comparator, claim a script-owned hard stop, or claim verifiable proof that
+the external ChatGPT Scheduled-Agent host terminated.
 
 Previous conversation memory is never required for correctness. A partial execution, tool failure, or
 missing final response does not transfer ownership. A later runtime execution reconstructs durable reality
@@ -519,16 +531,22 @@ The following intermediate facts MUST NOT independently constitute Exit Proof: a
 
 After action A's requested result/routing effects are fresh-reauthorized, durably applied, and observed, the
 repository runtime executes complete dispatch again from the resulting current state. If the legal successor
-from `agents/workflow.md` is immediately actionable, runtime MUST create a fresh model worker using the
-target action's mapped default-branch role/Skill and current durable evidence. The target action receives no
-inherited authority, hidden context, or authorization from action A; every unsafe durable mutation remains a
-new requested effect subject to fresh application-time preconditions.
+from `agents/workflow.md` is immediately actionable and is owned by the same role being executed in the current
+scheduled wake, runtime MUST create a fresh model worker using the target action's mapped default-branch
+role/Skill and current durable evidence in the same scheduled wake. If fresh dispatch selects a successor owned
+by a different role, the repository preserves the durable successor routing/selection, but authoritative
+governance instructs the current model invocation to end before invoking the target role. A later scheduled
+wake reconstructs and may select that role under then-current governance. This is a prompt/model-level role
+boundary rather than repository runtime state or a script classifier. Every target action receives no inherited
+authority, hidden context, or authorization from action A; every unsafe durable mutation remains a new requested
+effect subject to fresh application-time preconditions.
 
-Multiple legal action transitions may be work-conserving inside one GitHub Actions runtime execution, but
-every transition is mediated by durable effect application plus fresh global dispatch and every selected
-action gets a fresh mapped model invocation. Same-role transition does not mean same-model continuation;
-cross-role transition does not wait for a dedicated role schedule slot. No transition may use prior worker
-context to process another workflow Issue or bypass global dispatch.
+Multiple legal same-role action transitions may be work-conserving inside one scheduled wake, but every
+transition is mediated by durable effect application plus fresh global dispatch and every selected action gets
+a fresh mapped model invocation. Same-role transition does not mean same-model continuation. A cross-role
+transition is wake-terminal, and cross-role transition does not wait for a dedicated role schedule slot: it
+waits only for a later generic scheduled wake. No transition may use prior worker context to process another
+workflow Issue or bypass global dispatch.
 
 A catchable tool/runtime/execution failure does not become a hard-boundary Exit merely because an exception occurred. If execution opportunity remains, the current role first preserves the required raw exception evidence and applies the existing action-specific recovery/disposition contract. When legal same-authority recovery is immediately actionable, it MUST recover and continue within the same selected role/action. Only when current evidence proves that applicable same-authority recovery/disposition cannot legally continue may the failure support a hard execution-boundary Exit. A genuinely uncatchable hard termination may prevent current-run persistence and is handled by later at-least-once reconstruction.
 
@@ -552,18 +570,23 @@ persist result + revision-aware evidence
 → persist canonical `HANDOFF`
 → end the current model worker invocation
 → execute fresh global dispatch from resulting durable state
+→ preserve the selected cross-role successor; authoritative governance instructs the current model to end the scheduled wake without invoking it
 ```
 
-If the resulting state selects legal work, the same GitHub Actions runtime execution MAY continue by
-creating a fresh mapped worker for the newly selected role/action. This is a generic handoff mutation and
-redispatch protocol, not a global action-progression definition.
+If the resulting state selects legal cross-role work, that routing and machine selection remain durable/current
+for later reconstruction. A later generic scheduled wake performs fresh repository reconstruction and dispatch
+before creating the target role's mapped worker; the handoff does not wait for a dedicated fixed-role schedule
+slot. This wake-terminal behavior is a prompt/model-level instruction for the external Scheduled-Agent host;
+repository code does not claim a script-owned ability to terminate that host. This is a generic handoff mutation
+and redispatch protocol, not a global action-progression definition.
 
 `HANDOFF` follows successful cross-role routing mutation. If a prior invocation already persisted the result but source routing still matches the completed source action, a later eligible invocation preserves the already-durable result, performs only the missing cross-role routing mutation, observes the target tuple, persists canonical `HANDOFF`, and does not repeat completed implementation/review work or fabricate another result.
 
 For a same-role target, repository application persists the source action's required result first,
 fresh-reauthorizes and legally mutates routing, observes the target tuple, then executes fresh global
-dispatch. If that target action is selected, runtime creates a fresh mapped model invocation for it. Do not
-emit canonical `HANDOFF` for that same-role boundary and do not continue under inherited worker context.
+dispatch. If that target action is selected, runtime creates a fresh mapped model invocation for it in the same
+scheduled wake. Do not emit canonical `HANDOFF` for that same-role boundary and do not continue under inherited
+worker context.
 
 A normal cross-role handoff MUST NOT intentionally expose two role owners or two action owners. A same-role action transition likewise replaces the source action label rather than exposing two action owners.
 
