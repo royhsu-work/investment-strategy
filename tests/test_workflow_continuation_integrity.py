@@ -69,10 +69,11 @@ def test_scheduled_wake_keeps_initial_role_and_cross_role_is_wake_terminal() -> 
     ):
         assert required in messages
 
-    assert (
-        "cross-role continuation likewise receives a fresh invocation for the newly machine-selected role"
-        not in messages
+    old_cross_role_continuation = (
+        "cross-role continuation likewise receives a fresh invocation for the newly "
+        "machine-selected role"
     )
+    assert old_cross_role_continuation not in messages
     assert "target role differs from the fixed invocation role" in topology
     assert "invocation ends" in topology
 
