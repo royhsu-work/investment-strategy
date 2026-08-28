@@ -338,10 +338,9 @@ def continuation_requires_fresh_wake(
     source: WorkerRequest,
     continuation: WorkerRequest | None,
 ) -> bool:
-    """Return whether any authorized post-apply work needs a fresh mapped worker."""
+    """Return whether an authorized continuation needs a fresh scheduled wake."""
 
-    del source
-    return continuation is not None
+    return continuation is not None and continuation.role != source.role
 
 
 def _github_json(
