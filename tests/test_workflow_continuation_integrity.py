@@ -47,6 +47,50 @@ def test_action_transition_redispatches_same_issue_with_fresh_worker() -> None:
     assert "Same-role and cross-role boundaries" in topology
 
 
+def test_scheduled_wake_keeps_initial_role_and_cross_role_is_wake_terminal() -> None:
+    shared = _read("agents/AGENTS.md")
+    messages = _read("agents/templates/messages.md")
+    topology = _read("agents/workflow.md")
+
+    for required in (
+        "invocation-local `initial_role`",
+        "role == initial_role",
+        "role != initial_role",
+        "end the current scheduled wake without invoking that role",
+        "cross-role transition does not wait for a dedicated role schedule slot",
+    ):
+        assert required in shared
+
+    for required in (
+        "same scheduled wake",
+        "wake-terminal",
+        "later scheduled wake",
+        "fresh mapped model invocation",
+    ):
+        assert required in messages
+
+    assert (
+        "cross-role continuation likewise receives a fresh invocation for the newly machine-selected role"
+        not in messages
+    )
+    assert "target role differs from the fixed invocation role" in topology
+    assert "invocation ends" in topology
+
+
+def test_wake_barrier_preserves_routing_and_adds_no_durable_scheduler_state() -> None:
+    shared = _read("agents/AGENTS.md")
+
+    for required in (
+        "preserve the durable successor routing/selection",
+        "MUST NOT be persisted",
+        "queue, lease, heartbeat",
+        "does not wait for a dedicated fixed-role schedule slot",
+        "second workflow DAG",
+        "fixed role schedule slots are not part of the normal authorization contract",
+    ):
+        assert required in shared
+
+
 def test_handoff_is_cross_role_only_and_same_role_needs_no_synthetic_message() -> None:
     shared = _read("agents/AGENTS.md")
     messages = _read("agents/templates/messages.md")
