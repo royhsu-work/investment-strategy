@@ -18,6 +18,8 @@ A canonical message below exists as durable workflow evidence only after the rep
 
 When an applied result changes routing, continuation always re-enters executable dispatch from the resulting current GitHub state. Every selected successor uses a fresh mapped model invocation and reconstructs current durable evidence. A same-role successor may continue in the same scheduled wake after fresh dispatch. A cross-role successor is wake-terminal for the current scheduled wake: its durable routing and machine selection are preserved, but that successor role is not invoked until a later scheduled wake performs fresh reconstruction and executable dispatch. The boundary does not wait for a dedicated fixed-role schedule slot, and no prior worker context or requested effect authorizes any continuation.
 
+This wake-terminal boundary is a prompt/model-level behavioral contract for the external Scheduled-Agent host. Repository-owned code continues to own dispatch, effects, routing, and postconditions, but it does not claim a script-owned hard stop or verifiable proof that the external ChatGPT execution context terminated.
+
 The common workflow envelope is used whenever a field is applicable to the event:
 
 - `Workflow`: persistent coordination Issue identity.
