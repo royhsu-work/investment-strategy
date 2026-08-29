@@ -1,11 +1,11 @@
 ## 1. Slice: make current routing the only pre-activation operational selection state
 
-- [ ] 1.1 RED — add production-boundary regressions proving that, with no formal workflow or routing debt, an older coherent `Lead / propose-change + Change: unset` Issue wins over a newer Explore by `created_at`/Issue number without requiring historical comment/event eligibility reconstruction.
-- [ ] 1.2 RED — prove that duplicate or irrelevant Markdown fields such as an additional `- Workflow:` in prior comments cannot remove a current Propose tuple from the pre-activation candidate set.
-- [ ] 1.3 GREEN — remove `preactivation_eligible` from dispatcher/runtime observation contracts and make both coherent unset Explore and unset Propose routing participate directly in the common pre-activation FIFO.
-- [ ] 1.4 GREEN — remove the normal global `_apply_propose_preactivation_eligibility()` acquisition path and any comment/event reads used solely to authorize an already-current Propose tuple for queue participation.
-- [ ] 1.5 REFACTOR — delete dead eligibility/parser/admission plumbing that no longer belongs upstream of the mapped-action boundary; do not replace it with origin/provenance/readiness state.
-- [ ] 1.6 VERIFY — run targeted dispatcher/runtime tests plus existing invalid-routing, incomplete-enumeration, multiple-formal-workflow, closed-routing-debt, and stale-state regressions.
+- [x] 1.1 RED — add production-boundary regressions proving that, with no formal workflow or routing debt, an older coherent `Lead / propose-change + Change: unset` Issue wins over a newer Explore by `created_at`/Issue number without requiring historical comment/event eligibility reconstruction.
+- [x] 1.2 RED — prove that duplicate or irrelevant Markdown fields such as an additional `- Workflow:` in prior comments cannot remove a current Propose tuple from the pre-activation candidate set.
+- [x] 1.3 GREEN — remove `preactivation_eligible` from dispatcher/runtime observation contracts and make both coherent unset Explore and unset Propose routing participate directly in the common pre-activation FIFO.
+- [x] 1.4 GREEN — remove the normal global `_apply_propose_preactivation_eligibility()` acquisition path and any comment/event reads used solely to authorize an already-current Propose tuple for queue participation.
+- [x] 1.5 REFACTOR — delete dead eligibility/parser/admission plumbing that no longer belongs upstream of the mapped-action boundary; do not replace it with origin/provenance/readiness state.
+- [x] 1.6 VERIFY — run targeted dispatcher/runtime tests plus existing invalid-routing, incomplete-enumeration, multiple-formal-workflow, closed-routing-debt, and stale-state regressions.
 
 ## 2. Slice: retain Propose semantic evidence at the selected action and remove direct-Propose intake
 
