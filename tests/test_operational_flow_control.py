@@ -160,8 +160,7 @@ def test_selected_propose_without_baseline_retains_propose_and_never_falls_back(
         assert required in change
     assert (
         "A routed Propose that lacks such evidence fails at Propose rather than "
-        "routing backward to Explore"
-        in explore
+        "routing backward to Explore" in explore
     )
 
 
