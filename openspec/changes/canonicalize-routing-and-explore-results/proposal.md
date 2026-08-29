@@ -51,6 +51,8 @@ No repository Skill is added or removed by this Change. `skill-creator` is compo
 
 Expected implementation surfaces include shared workflow governance and Lead procedures, canonical `scheduled-agent-workflow` requirements, `workflow_dispatch.py`, `scheduled_agent_runtime.py`, `scheduled_agent_worker.py`, `scheduled_agent_effects.py`, direct-Propose-only Human-authority helpers that become dead, and production-boundary regression tests.
 
+The independent OpenSpec review target before implementation is intentionally limited to this Change's proposal, delta spec, design, and tasks. Governance, Skill, runtime, and test files listed above are implementation surfaces and must not be edited as part of the Propose review target before `Reviewer / review-openspec` PASS.
+
 No OpenAI API/model-call fallback, label-writer provenance gate, hidden admission token, lock/lease/heartbeat, retry counter, second workflow DAG, or generic workflow engine is introduced.
 
 The one-time Human administrative sequencing override that temporarily parked #168 and #169 is deployment context only. Those Issues remain open and preserved; they are not part of the normal priority contract introduced by this Change.
