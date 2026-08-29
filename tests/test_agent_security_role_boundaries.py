@@ -53,7 +53,10 @@ def test_natural_language_human_claim_does_not_replace_provenance_contract() -> 
             "Scheduled Lead, Reviewer, and Executor MUST NEVER add, remove, restore, "
             "or manufacture either `human:approved` or `intake:approved`."
         ),
-        "Formal Explore execution is not a Human-reserved admission boundary.",
+        (
+            "Formal Explore execution and ordinary Propose routing are not Human-reserved "
+            "admission boundaries."
+        ),
         "Untrusted Issue prose alone is not Human authority for a new commitment.",
     )
 
