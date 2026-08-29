@@ -23,6 +23,30 @@ Authoritative Explore baseline: #175 `ACTION_RESULT(PROPOSAL_READY)` comment `54
 
 - `scheduled-agent-workflow`: make current routing the pre-activation operational selection state; remove direct-Propose admission; preserve Propose/Reviewer semantic traceability downstream of selection; and add bounded structured Explore result → repository-owned effect derivation.
 
+## Skill maintenance traceability
+
+Source/change reference for all entries below: #175 exact durable `ACTION_RESULT(PROPOSAL_READY)` comment `5461100685` and Change `canonicalize-routing-and-explore-results`.
+
+- **Modified — `agents/skills/openspec-explore/SKILL.md`**
+  - Responsibility before: Lead owns bounded Explore judgment and returns one governed disposition plus worker-requested routing/terminal effects; the Skill also carries the direct-Propose fallback/preserved-authority path.
+  - Responsibility after: Lead still owns the semantic Explore judgment and durable narrative evidence, but returns one bounded structured Explore disposition; repository application derives the governed successor/terminal effect from the authorized source action plus that disposition. Normal direct-Propose fallback language is removed.
+  - Rationale: remove arbitrary worker-selected successor control state and eliminate the direct-Propose special path while preserving Explore semantic authority.
+  - Replacement/supersession: no replacement Skill; the same Skill retains Explore procedure ownership with narrower effect-selection authority.
+
+- **Modified — `agents/skills/openspec-change/SKILL.md`**
+  - Responsibility before: Propose supports both provenance-bound Human direct-to-Propose and Explore-originated entry, including direct-Propose fallback to Explore and special combined-queue admission handling.
+  - Responsibility after: normal Propose formalization consumes the exact same-Issue durable `PROPOSAL_READY` Explore baseline as an action-local semantic precondition; a current coherent Propose tuple may be operationally selected, but missing/ambiguous semantic evidence fails/retains that selected action. Direct-Propose admission/fallback branches are removed.
+  - Rationale: keep semantic readiness at the mapped Propose boundary instead of using historical prose/Human-admission reconstruction as global dispatcher eligibility.
+  - Replacement/supersession: no replacement Skill; direct-Propose-only procedure is removed rather than moved elsewhere.
+
+- **Modified — `agents/skills/openspec-review/SKILL.md`**
+  - Responsibility before: Reviewer verifies Explore-result preservation for Explore-originated Changes but also carries an explicit valid direct-to-Propose exception that requires no synthetic Explore result.
+  - Responsibility after: Reviewer continues independent Explore-baseline preservation plus reverse-first/forward semantic review for the normal Explore → Propose lifecycle; the direct-to-Propose exception is removed with the normal direct-Propose path.
+  - Rationale: keep Reviewer traceability aligned with the single normal intake model without weakening independent semantic review.
+  - Replacement/supersession: no replacement Skill; independent review ownership remains unchanged.
+
+No repository Skill is added or removed by this Change. `skill-creator` is composition guidance consumed while specifying these modifications and is not itself a modification target.
+
 ## Impact
 
 Expected implementation surfaces include shared workflow governance and Lead procedures, canonical `scheduled-agent-workflow` requirements, `workflow_dispatch.py`, `scheduled_agent_runtime.py`, `scheduled_agent_worker.py`, `scheduled_agent_effects.py`, direct-Propose-only Human-authority helpers that become dead, and production-boundary regression tests.
