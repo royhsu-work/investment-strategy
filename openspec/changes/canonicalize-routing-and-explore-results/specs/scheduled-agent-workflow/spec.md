@@ -4,9 +4,11 @@
 
 The workflow SHALL use one persistent coordination Issue for one routed work item through any optional pre-Propose Explore and, when a formal Change is authorized, through proposal, review, implementation, merge, archive review, archive merge, and final closure.
 
-Before the change id exists, `explore-change` and `propose-change` MAY operate with `Change: unset`. `explore-change` MUST keep `Change: unset` and MUST NOT create a formal OpenSpec change solely to represent research. The normal route into Propose SHALL be a same-Issue `Lead / explore-change` result of `PROPOSAL_READY` followed by the repository-owned routing effect to `Lead / propose-change`. Once Lead persists a change id during `propose-change`, that identity MUST remain immutable for that Issue.
+Before the change id exists, `explore-change` and `propose-change` MAY operate with `Change: unset`. `explore-change` MUST keep `Change: unset` and MUST NOT create a formal OpenSpec change solely to represent research. The normal route into Propose SHALL be a same-Issue `Lead / explore-change` result of evidence-backed `PROPOSAL_READY` followed by the repository-owned routing effect to `Lead / propose-change`. Once Lead persists a change id during `propose-change`, that identity MUST remain immutable for that Issue.
 
-A coherently routed `Lead / propose-change + Change: unset` Issue MAY be selected operationally from current routing, including after an out-of-band routing mutation, but selection alone MUST NOT satisfy Propose's action-local semantic preconditions. Before persisting a Change identity, Propose MUST dereference the exact durable same-Issue Explore `ACTION_RESULT(PROPOSAL_READY)` and verify that its still-applicable scope, constraints, exclusions, feasibility evidence, and selected direction support formalization. Missing, ambiguous, stale, or contradictory semantic evidence MUST retain/fail that selected Propose action and MUST NOT cause dispatch to skip to another pre-activation Issue.
+A coherently routed `Lead / propose-change + Change: unset` Issue MAY be selected operationally from current routing, including after an out-of-band routing mutation, but selection alone MUST NOT satisfy Propose's action-local semantic preconditions. Before persisting a Change identity, Propose MUST dereference the exact durable same-Issue Explore `ACTION_RESULT(PROPOSAL_READY)` and independently/reversely verify that each still-applicable material formalization claim is supported by the Explore claim's identified source/evidence and that feasibility evidence is sufficient for the meaning being formalized. `PROPOSAL_READY` MUST NOT be treated as permission to blindly trust unsupported Explore interpretation.
+
+If that pre-activation source/evidence/feasibility chain is missing, ambiguous, stale, contradictory, unsupported, or incomplete but the same bounded problem remains researchable without a new Human-reserved decision, no Change identity SHALL be persisted and the legal correction SHALL route the same Issue to `Lead / explore-change` with `Change: unset`. This correction preserves the same Issue identity and original queue position; it is not dispatcher fallback and MUST NOT cause dispatch to authorize a later pre-activation Issue merely because more research is required. If resolving the gap requires a genuinely new Human-reserved requirement, scope/risk/architecture commitment, Lead MUST use the existing Human decision boundary instead. Once `Change:` is non-`unset`, material semantic correction MUST use the formal `Lead / resolve-question` / independent review loop rather than the pre-Change Explore correction path.
 
 Normal clarification and review-correction transitions SHALL remain in the same coordination Issue unless a later repository contract explicitly introduces child workflow items.
 
@@ -25,22 +27,41 @@ A terminal Explore result that concludes `NO_CHANGE_REQUIRED` or `NO_GO` MAY com
 
 - GIVEN a coordination Issue has reached current `Lead / propose-change` routing
 - AND `Change:` is not yet set
-- AND the exact durable same-Issue Explore result is `PROPOSAL_READY`
-- AND its still-applicable semantic evidence supports the current formalization direction
+- AND the exact durable same-Issue Explore result is evidence-backed `PROPOSAL_READY`
+- AND Propose independently verifies the material source/evidence chain and feasibility support the current formalization direction
 - WHEN Lead creates or selects the OpenSpec change id
 - THEN Lead persists that change id on the coordination Issue
 - AND later scheduled runs treat the persisted change id as immutable workflow identity
 - AND no direct Human-to-Propose admission path is available as an alternative normal intake route
 
-#### Scenario: Routed Propose without semantic baseline does not fall through
+#### Scenario: Researchable Propose evidence gap returns the same Issue to Explore
 
 - GIVEN an open coordination Issue is coherently routed to `Lead / propose-change + Change: unset`
 - AND dispatch selects it from current operational routing
-- BUT Propose cannot dereference an unambiguous applicable same-Issue `PROPOSAL_READY` Explore baseline
+- AND Propose finds the material Explore source/evidence/feasibility chain incomplete, unsupported, stale, ambiguous, or contradictory
+- AND the same bounded problem remains researchable without a new Human-reserved decision
 - WHEN Lead evaluates formal activation
 - THEN no Change identity is persisted
-- AND the same Issue retains current Propose ownership for fail-closed diagnosis or legal correction
-- AND dispatch does not authorize a later queued Issue merely because this action-local evidence is missing
+- AND repository-owned application routes the same Issue to `Lead / explore-change + Change: unset`
+- AND the Issue retains its original GitHub identity and `created_at` queue position
+- AND dispatch does not authorize a later queued Issue merely because this action-local evidence requires more research
+
+#### Scenario: Propose evidence gap requiring Human authority does not invent a correction
+
+- GIVEN a selected pre-activation Propose cannot complete its evidence/feasibility basis
+- AND resolving the gap requires a genuinely new Human-reserved requirement, scope, risk, or architecture decision
+- WHEN Lead evaluates the gap
+- THEN Lead uses the existing provenance-bound Human decision boundary
+- AND the model does not weaken the requirement or choose a new commitment merely to avoid Human escalation
+- AND a later queued Issue is not selected as semantic fallback
+
+#### Scenario: Activated Change does not return to pre-Change Explore
+
+- GIVEN the coordination Issue already has a non-`unset` immutable Change identity
+- AND a material semantic correction is required
+- WHEN the workflow resolves that correction
+- THEN it uses `Lead / resolve-question` and independent `Reviewer / review-openspec` as governed
+- AND it does not route backward to pre-Change Explore
 
 #### Scenario: Explore concludes without a repository change
 
@@ -142,7 +163,7 @@ Open coherently routed `Lead / explore-change + Change: unset` and `Lead / propo
 
 Lead MUST NOT activate a queued proposal while another open active workflow exists or current closed-routing debt is unresolved. If no open active workflow exists and current closed-routing debt is empty, deterministic pre-activation selection SHALL be evaluated across the single combined set of coherently routed open `Lead / explore-change + Change: unset` and `Lead / propose-change + Change: unset` candidates using earliest GitHub `created_at`, then lower Issue number. Only that combined-queue winner may proceed. A `propose-change` runner MUST re-check that its Issue is still that same winner immediately before persisting a non-`unset` Change identity.
 
-A proposal-ready Explore remains pre-activation until repository-owned application legally routes that same Issue to `Lead / propose-change`. The transition SHALL NOT require a generic Human proceed confirmation when the proposal-ready direction remains inside the bounded researched/canonical evidence and introduces no Human-reserved decision. After routing, the same Issue retains its original queue position. Propose SHALL reconstruct the exact durable same-Issue `PROPOSAL_READY` semantic baseline before activation; an absent/invalid baseline blocks that selected action rather than changing dispatcher eligibility. If formalization would introduce a new Human-reserved product/project direction, material externally observable behavior or scope trade-off, explicit risk acceptance, or materially different security/privacy/cost/operational commitment, Lead MUST use the existing `HUMAN_DECISION_REQUIRED` boundary instead of treating routing or Explore execution as Human authority.
+A proposal-ready Explore remains pre-activation until repository-owned application legally routes that same Issue to `Lead / propose-change`. The transition SHALL NOT require a generic Human proceed confirmation when the proposal-ready direction remains inside the bounded researched/canonical evidence and introduces no Human-reserved decision. After routing, the same Issue retains its original queue position. Propose SHALL reconstruct the exact durable same-Issue `PROPOSAL_READY` semantic baseline and independently validate its material source/evidence and feasibility basis before activation. An absent/invalid/incomplete but researchable basis routes the same Issue back to Explore without changing queue identity; it does not change dispatcher eligibility or authorize later work. If formalization would introduce a new Human-reserved product/project direction, material externally observable behavior or scope trade-off, explicit risk acceptance, or materially different security/privacy/cost/operational commitment, Lead MUST use the existing `HUMAN_DECISION_REQUIRED` boundary instead of treating routing or Explore execution as Human authority.
 
 #### Scenario: Queued pre-activation work exists while another workflow is active
 
@@ -162,7 +183,7 @@ A proposal-ready Explore remains pre-activation until repository-owned applicati
 - AND only bounded recovery/terminal-retirement handling may act on that debt
 - AND the queued pre-activation work is not activated until the debt is legally resolved or retired
 
-#### Scenario: Older Explore prevents later direct-Propose activation
+#### Scenario: Older Explore remains ahead of a later Propose
 
 - GIVEN no open active workflow exists
 - AND current closed-routing debt is empty
@@ -172,15 +193,15 @@ A proposal-ready Explore remains pre-activation until repository-owned applicati
 - THEN the older Explore remains the deterministic combined-queue winner by creation order
 - AND the newer Propose remains queued because current routing participates in the same FIFO, not because a direct-Propose Human-admission predicate exists
 
-#### Scenario: Proposal-ready Explore keeps its queue position when Human authorizes Propose
+#### Scenario: Proposal-ready Explore keeps its queue position without Human proceed authorization
 
 - GIVEN an Explore Issue is the deterministic combined-queue winner
-- AND Lead returns structured `PROPOSAL_READY` within the bounded current context
+- AND Lead returns evidence-backed structured `PROPOSAL_READY` within the bounded current context
 - AND no new Human-reserved decision is introduced
 - WHEN repository-owned application routes the same Issue to `Lead / propose-change`
 - THEN no Human authorization is required for that normal transition under the new contract
 - AND the same Issue retains its original GitHub `created_at` and queue position
-- AND Propose may persist the immutable Change identity only after re-checking queue ownership and its action-local semantic baseline
+- AND Propose may persist the immutable Change identity only after re-checking queue ownership and independently validating its action-local source/evidence and feasibility basis
 
 #### Scenario: Oldest eligible Propose activates after older Explore terminates
 
@@ -190,16 +211,17 @@ A proposal-ready Explore remains pre-activation until repository-owned applicati
 - AND at least one coherently routed `Lead / propose-change + Change: unset` Issue remains
 - WHEN dispatch selects pre-activation work
 - THEN the earliest remaining coherent candidate is selected by `created_at`, then Issue number
-- AND Propose may activate only after its action-local semantic baseline and activation preconditions pass
+- AND Propose may activate only after its action-local source/evidence, feasibility, and activation preconditions pass
 - AND no Human direct-Propose admission predicate is evaluated
 
-#### Scenario: Selected Propose with missing semantic evidence retains ownership
+#### Scenario: Selected Propose evidence failure preserves Issue ownership without freezing the action
 
 - GIVEN the FIFO-selected pre-activation candidate is current `Lead / propose-change + Change: unset`
-- BUT the mapped Propose action cannot prove the required same-Issue Explore semantic baseline
+- BUT the mapped Propose action cannot establish a sufficient material source/evidence/feasibility basis
 - WHEN Propose evaluates activation
 - THEN no Change identity is persisted
-- AND the current Issue remains selected/owned for its legal fail-closed disposition
+- AND the current Issue remains the workflow/queue owner
+- AND, when the gap is researchable within the same bounded problem, the legal action changes to same-Issue `Lead / explore-change`
 - AND a later candidate is not silently authorized as fallback
 
 #### Scenario: Out-of-band coherent Propose routing is operational but not semantic authority
@@ -207,8 +229,9 @@ A proposal-ready Explore remains pre-activation until repository-owned applicati
 - GIVEN an administrator or connector writes a structurally coherent `Lead / propose-change + Change: unset` tuple
 - WHEN dispatch reconstructs current pre-activation state
 - THEN the Issue participates in deterministic selection from current routing without label-writer provenance reconstruction
-- AND that routing does not manufacture the required Explore semantic baseline
+- AND that routing does not manufacture a sufficient evidence-backed same-Issue Explore basis
 - AND consequential Propose activation still fails closed unless its action-local semantic preconditions are satisfied
+- AND a researchable pre-activation evidence gap may route the same Issue to Explore rather than disappearing from the queue
 
 ### Requirement: Human-required authority is bound to the repository Human actor
 
@@ -400,28 +423,80 @@ This authority rule SHALL remain prospective at its default-branch activation bo
 - THEN the current applicable provenance rule applies
 - AND insufficient evidence fails closed for fresh qualifying Human evidence
 
-#### Scenario: Direct Propose keeps existing Human approval contract
+#### Scenario: Historical direct Propose authority is not retroactively invalidated
 
-- GIVEN direct Human-to-Propose admission existed under an earlier authoritative contract
+- GIVEN direct Human-to-Propose admission existed and was legally consumed under an earlier authoritative contract
 - WHEN the new contract is active for normal intake
 - THEN no new direct-Propose admission is accepted or reconstructed
-- AND historical direct-Propose authority already legally consumed before activation remains historical evidence rather than being retroactively invalidated
-- AND any current coherent Propose routing is selected only as operational state and still requires its action-local Explore semantic baseline before activation
+- AND the historical authority remains historical evidence rather than being retroactively invalidated
+- AND any current coherent unset Propose routing is selected only as operational state and still requires its action-local evidence-backed same-Issue Explore basis before activation
 
 ## ADDED Requirements
 
+### Requirement: Explore material claims remain traceable to source evidence through Propose and independent review
+
+For `Lead / explore-change`, every material claim that can affect result disposition, scope, constraints, feasibility, selected direction, or a Human-reserved decision boundary MUST identify the supporting source/evidence and MUST distinguish source fact/evidence from Lead interpretation/inference and unresolved question/uncertainty. Unsupported material inference MUST NOT establish `PROPOSAL_READY`. A material feasibility assertion MUST use evidence appropriate to the claim, such as authoritative current repository observations, applicable authoritative documentation, or executable test/prototype evidence; model confidence alone MUST NOT count as feasibility evidence.
+
+For pre-activation `Lead / propose-change`, the exact durable same-Issue evidence-backed `PROPOSAL_READY` result SHALL be the semantic baseline, but Propose MUST independently/reversely validate the relevant material source/evidence and feasibility basis before formalizing Proposal/Specs/Design/Tasks or persisting a Change identity. A researchable evidence gap SHALL use the same-Issue Explore correction defined by this Change rather than mandatory Propose-action retention or dispatcher fallback.
+
+For `Reviewer / review-openspec`, the independent semantic gate MUST dereference the exact Explore result and its declared material source/evidence, verify that the material Explore conclusions are supported by those sources, and then verify the supported meaning is preserved through Proposal/Specs/Design/Tasks before the existing reverse-first and forward traceability checks can PASS. Reviewer MUST NOT re-run Explore, perform an unbounded new research exercise, reconstruct conversation history, or infer undocumented Human intent. Missing, ambiguous, contradictory, or insufficient durable source/evidence required to verify a material Explore conclusion SHALL be `FINDINGS` even when downstream OpenSpec artifacts are internally consistent.
+
+This traceability contract MUST NOT introduce a global citation registry, new `review-explore` action, fourth role/stage, or another model call. The durable claim/source chain MAY use the existing action-result/artifact evidence surfaces so long as it remains reconstructable by the governed consumers.
+
+#### Scenario: Unsupported material Explore inference cannot become proposal-ready
+
+- GIVEN Explore reaches a material conclusion that changes disposition, scope, constraints, feasibility, or selected direction
+- AND no identified source/evidence supports that material inference
+- WHEN Lead evaluates `PROPOSAL_READY`
+- THEN `PROPOSAL_READY` is not valid
+- AND the unsupported inference is not promoted into formal OpenSpec meaning
+
+#### Scenario: Explore distinguishes evidence from interpretation and unresolved questions
+
+- GIVEN Explore uses source material to reach a material conclusion
+- WHEN Lead persists the durable Explore evidence
+- THEN the supporting source fact/evidence is identifiable
+- AND Lead interpretation/inference is distinguishable from that source evidence
+- AND any unresolved material question remains identifiable rather than being silently completed by model guesswork
+
+#### Scenario: Propose independently rejects an insufficient Explore evidence chain
+
+- GIVEN the same-Issue Explore result says `PROPOSAL_READY`
+- BUT a material proposed requirement/direction cannot be traced through the Explore conclusion to sufficient supporting source/evidence or feasibility evidence
+- AND the gap remains researchable within the same bounded problem without a new Human-reserved decision
+- WHEN Propose performs its pre-activation semantic gate
+- THEN no Change identity is persisted
+- AND the same Issue routes to `Lead / explore-change + Change: unset`
+- AND later queued work does not leapfrog because of the evidence gap
+
+#### Scenario: Reviewer catches semantic expansion originating in Explore
+
+- GIVEN Explore contains a material conclusion
+- AND Proposal/Specs/Design/Tasks faithfully preserve that conclusion
+- BUT the identified source/evidence does not support the material conclusion
+- WHEN Reviewer performs `review-openspec`
+- THEN the result is `FINDINGS`
+- AND internal downstream consistency does not legitimize the unsupported Explore interpretation
+
+#### Scenario: Reviewer verifies declared evidence without re-running Explore
+
+- GIVEN an Explore-originated Change declares reconstructable material source/evidence references
+- WHEN Reviewer evaluates the semantic target
+- THEN Reviewer independently verifies those declared sources support the material Explore conclusions and downstream OpenSpec meaning
+- AND Reviewer does not reconstruct undocumented conversation intent or perform an unbounded replacement Explore
+
 ### Requirement: Explore dispositions are structured bounded results with repository-derived effects
 
-`Lead / explore-change` SHALL return exactly one structured bounded disposition from `PROPOSAL_READY`, `HUMAN_DECISION_REQUIRED`, `NO_CHANGE_REQUIRED`, or `NO_GO`. Lead remains responsible for the semantic judgment. Narrative result content MAY remain durable audit/traceability evidence, but repository application MUST consume the bounded disposition directly and MUST NOT re-extract machine control state from free-form Markdown, Issue comments, or another model call.
+`Lead / explore-change` SHALL return exactly one structured bounded disposition from `PROPOSAL_READY`, `HUMAN_DECISION_REQUIRED`, `NO_CHANGE_REQUIRED`, or `NO_GO`. Lead remains responsible for the semantic judgment. `PROPOSAL_READY` is valid only when the material evidence traceability contract above is satisfied. Narrative result content MAY remain durable audit/traceability evidence, including material source/evidence references, but repository application MUST consume the bounded disposition directly and MUST NOT re-extract machine control state from free-form Markdown, Issue comments, or another model call.
 
 After fresh source-action reauthorization, repository-owned application SHALL derive the legal Explore effect from source `Lead / explore-change` plus the bounded result: `PROPOSAL_READY` derives same-Issue `Lead / propose-change` with `Change: unset`; `HUMAN_DECISION_REQUIRED` retains Explore and uses the existing Human escalation path; `NO_CHANGE_REQUIRED` and `NO_GO` derive the existing pre-Change terminal research close/routing-retirement behavior.
 
-The worker MUST NOT independently choose an arbitrary successor routing tuple for Explore. Inconsistent/additional worker routing requests SHALL be rejected. Legal successor validation still consumes current default-branch `agents/workflow.md`. This bounded mapping MUST NOT become a second workflow DAG, generic workflow engine, OpenAI/model-call classifier, hidden result state, or generalized result-derived mechanism for unrelated actions.
+The worker MUST NOT independently choose an arbitrary successor routing tuple for Explore. Inconsistent/additional worker routing requests SHALL be rejected. Legal successor validation still consumes current default-branch `agents/workflow.md`. The same repository-owned application principle SHALL apply to the bounded pre-activation Propose correction defined by this Change: when the authorized Propose result means additional bounded research is required, application derives only the same-Issue `Lead / explore-change + Change: unset` correction and MUST NOT accept an arbitrary worker-chosen successor. These bounded mappings MUST NOT become a second workflow DAG, generic workflow engine, OpenAI/model-call classifier, hidden result state, or generalized result-derived mechanism for unrelated actions.
 
 #### Scenario: Structured proposal-ready result derives Propose routing
 
 - GIVEN current machine dispatch authorizes `Lead / explore-change` for Issue N
-- AND Lead returns structured `PROPOSAL_READY`
+- AND Lead returns valid evidence-backed structured `PROPOSAL_READY`
 - AND application freshly reauthorizes the same source action
 - WHEN the Explore effect is applied
 - THEN application derives same-Issue `Lead / propose-change`
@@ -436,6 +511,16 @@ The worker MUST NOT independently choose an arbitrary successor routing tuple fo
 - WHEN application validates effects
 - THEN the worker-chosen successor is rejected
 - AND only the result-derived legal Explore effect may be applied
+
+#### Scenario: Propose correction cannot choose an arbitrary successor
+
+- GIVEN current machine dispatch authorizes pre-activation `Lead / propose-change` for Issue N
+- AND Propose validly concludes that additional bounded research is required under the same-Issue correction contract
+- AND application freshly reauthorizes that same source action
+- WHEN the correction effect is applied
+- THEN application derives only same-Issue `Lead / explore-change + Change: unset`
+- AND a worker-supplied different Issue or successor action is rejected
+- AND the original Issue/queue identity is preserved
 
 #### Scenario: Human-decision result retains Explore ownership
 
