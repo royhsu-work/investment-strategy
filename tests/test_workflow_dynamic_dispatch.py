@@ -111,7 +111,7 @@ def test_combined_intake_is_executable_and_propose_keeps_activation_guards() -> 
     for required in (
         "combined pre-activation candidate contract",
         "coherent routed Explore",
-        "executable-approved direct-Propose",
+        "coherent routed Propose",
         "earliest GitHub `created_at` then lower Issue number ordering",
         "Current routing debt is handled before intake",
         "A formal workflow otherwise wins over intake",
@@ -119,20 +119,21 @@ def test_combined_intake_is_executable_and_propose_keeps_activation_guards() -> 
     ):
         assert required in text
     for required in (
-        "complete shared pre-activation candidate-set contract",
-        "every coherent open `Lead / explore-change + Change: unset` entry",
-        "every legally admitted `Lead / propose-change + Change: unset` entry",
-        "Do not maintain or infer an action-local Explore-origin admission enumeration",
+        "shared dispatcher owns one combined pre-activation queue",
         (
-            "A later proposal-ready direct-Propose Issue MUST NOT activate while an older "
-            "eligible Explore candidate"
+            "every coherent open `Lead / explore-change + Change: unset` and "
+            "`Lead / propose-change + Change: unset` entry"
         ),
-        "same-Issue direct-Propose fallback preserving its original authority envelope",
+        "MUST NOT reconstruct origin/admission history",
         "Require the consumed pre-write machine decision to authorize this exact Issue",
         "Repository application MUST fresh-reconstruct before applying the write",
+        "dereference exactly one same-Issue durable Explore `ACTION_RESULT(PROPOSAL_READY)`",
+        "action-local semantic preconditions still pass",
     ):
         assert required in change
     assert "approved Explore-origin set" not in change
+    assert "executable-approved direct-Propose" not in text
+    assert "same-Issue direct-Propose fallback" not in change
 
 
 def test_activation_overlap_keeps_first_valid_write_and_fresh_decisions() -> None:
