@@ -7,40 +7,49 @@
 - [x] 1.5 REFACTOR — delete dead eligibility/parser/admission plumbing that no longer belongs upstream of the mapped-action boundary; do not replace it with origin/provenance/readiness state.
 - [x] 1.6 VERIFY — run targeted dispatcher/runtime tests plus existing invalid-routing, incomplete-enumeration, multiple-formal-workflow, closed-routing-debt, and stale-state regressions.
 
-## 2. Slice: retain Propose semantic evidence at the selected action and remove direct-Propose intake
+Slice 1 remains complete after the semantic correction because its dispatcher/FIFO behavior is unchanged: current routing remains operational selection state and action-local semantic evidence must not delete the selected Issue before ordering.
 
-- [x] 2.1 RED — add a regression where an older current Propose tuple is selected but its required same-Issue Explore `PROPOSAL_READY` semantic baseline is missing/ambiguous; prove the action fails/retains that Issue and later queued work is not selected as fallback.
-- [x] 2.2 RED — add regressions proving normal Human direct-Propose admission is absent while advisory admission, `HUMAN_DECISION_REQUIRED` answer/resume, Human-input freshness, and other still-governed Human predicates continue to work.
-- [x] 2.3 GREEN — make Propose reconstruct and validate the exact same-Issue durable Explore `PROPOSAL_READY` baseline as an action-local activation precondition, preserving still-applicable scope, constraints, exclusions, feasibility evidence, and selected direction.
-- [x] 2.4 GREEN — remove direct-Propose governance/runtime/Skill branches and direct-Propose-only Human-authority decision-ref/helper code that becomes unreachable; do not weaken independent Human-reserved mechanisms.
-- [x] 2.5 GREEN — preserve Reviewer upstream semantic traceability to the exact Explore baseline without using that evidence as dispatcher state.
-- [x] 2.6 REFACTOR — remove obsolete direct-Propose fallback/review exceptions and keep one normal intake story: routed Explore → `PROPOSAL_READY` → Propose.
-- [x] 2.7 VERIFY — run targeted Propose/Human-authority/review regressions and confirm an out-of-band coherent Propose tuple is operationally selectable but cannot activate without required semantic evidence.
+## 2. Slice: enforce evidence-backed Explore and same-Issue Propose correction before activation
+
+The prior Slice 2 completion markers are intentionally reopened. Its earlier implementation encoded the superseded meaning that semantic evidence failure retained the Propose action. The corrected contract preserves the same Issue/queue ownership but allows the legal pre-activation action to return to Explore for additional research.
+
+- [ ] 2.1 RED — add Explore regressions proving every material claim that affects disposition, scope, constraints, feasibility, selected direction, or a Human-reserved boundary identifies supporting source/evidence and distinguishes source fact/evidence from Lead interpretation/inference and unresolved questions; unsupported material inference cannot establish `PROPOSAL_READY`.
+- [ ] 2.2 RED — add Propose regressions proving `PROPOSAL_READY` is not blindly trusted: Propose independently/reversely verifies material source → Explore conclusion traceability and feasibility sufficiency before any non-`unset` Change activation.
+- [ ] 2.3 RED — add a pre-activation regression where the FIFO-selected Propose has incomplete/unsupported/stale/ambiguous/contradictory source/evidence or feasibility that remains researchable within the same bounded problem; prove the same Issue routes to `Lead / explore-change + Change: unset`, keeps its original queue identity, and a later queued Issue is not selected as fallback.
+- [ ] 2.4 RED — distinguish correction boundaries: prove a genuinely new Human-reserved requirement/scope/risk/architecture choice stops at the existing Human decision boundary, while a non-`unset` Change uses `Lead / resolve-question` rather than the pre-Change Explore correction path.
+- [ ] 2.5 RED — add regressions proving normal Human direct-Propose admission and its legacy fallback are absent while advisory admission, `HUMAN_DECISION_REQUIRED` answer/resume, Human-input freshness, and other still-governed Human predicates continue to work.
+- [ ] 2.6 GREEN — make Explore durable result evidence preserve the reconstructable material claim/source chain required by 2.1 without introducing a global citation registry or another workflow state store.
+- [ ] 2.7 GREEN — make Propose consume the exact same-Issue durable Explore `PROPOSAL_READY` result, independently validate the material source/evidence and feasibility basis, and request the governed same-Issue Explore correction when that basis is incomplete but researchable before activation.
+- [ ] 2.8 GREEN — remove direct-Propose governance/runtime/Skill branches and direct-Propose-only Human-authority decision-ref/helper code that becomes unreachable; do not remove or weaken the distinct Propose → same-Issue Explore semantic-correction path.
+- [ ] 2.9 GREEN — ensure repository application derives only the action-defined same-Issue Propose → Explore correction effect from the authorized source/result; the worker must not choose an arbitrary successor and the correction must preserve `Change: unset` and Issue identity.
+- [ ] 2.10 VERIFY — run targeted Explore/Propose/Human-authority/application regressions and confirm an out-of-band coherent Propose tuple remains operationally selectable but cannot activate without a sufficient evidence-backed same-Issue Explore basis.
 
 ## 3. Slice: make Explore dispositions structured and derive their effects in repository application
 
 - [ ] 3.1 RED — add worker/application regressions for the exact structured Explore result vocabulary: `PROPOSAL_READY`, `HUMAN_DECISION_REQUIRED`, `NO_CHANGE_REQUIRED`, and `NO_GO`.
 - [ ] 3.2 RED — prove `PROPOSAL_READY` deterministically derives same-Issue `Lead / propose-change` routing and that a worker-supplied conflicting/arbitrary successor cannot override the result-derived effect.
-- [ ] 3.3 RED — prove narrative `result_content` containing additional `Workflow:`, `Action:`, or `Result:`-looking prose cannot redefine the structured result/effect.
+- [ ] 3.3 RED — prove narrative `result_content` containing additional `Workflow:`, `Action:`, or `Result:`-looking prose cannot redefine the structured result/effect while the narrative may still carry the material evidence/source trace required by Slice 2.
 - [ ] 3.4 GREEN — extend the worker/application result contract so the bounded Explore disposition is transported as validated structured data while narrative content remains audit/traceability evidence.
 - [ ] 3.5 GREEN — derive Explore effects from freshly reauthorized `Lead / explore-change` plus the bounded result: Propose routing, existing Human escalation retention, or existing terminal research close/routing retirement.
 - [ ] 3.6 GREEN — reject worker-chosen Explore routing transitions when repository result-derived application owns the successor/effect; continue validating legal successors against current default-branch topology.
-- [ ] 3.7 REFACTOR — keep result-derived behavior action-local to Explore and remove any accidental generic workflow-engine abstraction or duplicate topology registry.
-- [ ] 3.8 VERIFY — run targeted worker/effects/application tests for all four dispositions, stale-source reauthorization, fresh routing postconditions, and redispatch behavior.
+- [ ] 3.7 REFACTOR — keep result-derived behavior action-local to the bounded Explore and Propose-correction outcomes required by this Change; remove any accidental generic workflow-engine abstraction or duplicate topology registry.
+- [ ] 3.8 VERIFY — run targeted worker/effects/application tests for all four Explore dispositions, the governed Propose correction result/effect, stale-source reauthorization, fresh routing postconditions, and redispatch behavior.
 
-## 4. Slice: align authoritative governance and complete cross-boundary regression coverage
+## 4. Slice: align authoritative governance and independent source → Explore → OpenSpec review
 
-- [ ] 4.1 RED — add governance/spec regression checks that fail while default-branch-compatible surfaces still describe normal Human direct-Propose admission, Propose queue eligibility by semantic reconstruction, or worker-selected Explore successors.
-- [ ] 4.2 GREEN — align the approved implementation surfaces that genuinely own changed behavior: shared dispatch/Human-authority governance, workflow topology where Explore result effects are described, Lead role/Explore/Propose procedures, and canonical workflow-message guidance only where its presentation contract assumes worker-chosen routing.
-- [ ] 4.3 GREEN — preserve explicit separation between current routing state and durable semantic evidence so no governance text instructs dispatch to parse historical LLM prose for current queue eligibility.
-- [ ] 4.4 GREEN — preserve #137's evidence-backed `PROPOSAL_READY`/Propose revalidation intent at the action boundary; keep #138 as the broader executable-governance inventory and #168/#169 in their separate ownership scopes.
-- [ ] 4.5 VERIFY — run the full relevant Python test suite and repository quality checks, with no OpenAI API/model-call fallback, label-writer provenance gate, hidden admission token, lock/lease/heartbeat/retry state, or second workflow DAG introduced.
-- [ ] 4.6 VERIFY — run strict OpenSpec validation on the exact implementation revision and verify the approved proposal/spec/design/tasks traceability remains intact before implementation review.
+- [ ] 4.1 RED — add governance/spec regression checks that fail while default-branch-compatible surfaces still describe normal Human direct-Propose admission, Propose queue eligibility by semantic reconstruction, semantic failure as mandatory Propose-action retention, worker-selected Explore successors, or evidence-free material `PROPOSAL_READY` conclusions.
+- [ ] 4.2 RED — add `review-openspec` regressions proving Reviewer independently dereferences representative material Explore source/evidence and rejects an unsupported Explore conclusion even when Proposal/Specs/Design/Tasks preserve that conclusion consistently.
+- [ ] 4.3 GREEN — align the approved implementation surfaces that genuinely own changed behavior: shared dispatch/Human-authority governance, workflow topology, Lead role, Explore/Propose/Review procedures, and canonical workflow-message guidance only where its presentation contract needs material source/evidence traceability or result-derived routing semantics.
+- [ ] 4.4 GREEN — preserve explicit separation between current routing state and durable semantic evidence so no governance text instructs dispatch to parse historical LLM prose for current queue eligibility, while Propose/Reviewer still consume the evidence their own semantic gates require.
+- [ ] 4.5 GREEN — make Reviewer verify the durable material source/evidence → Explore conclusion → Proposal/Specs/Design/Tasks chain before ordinary reverse-first/forward traceability, without re-running Explore, reconstructing conversation history, inferring undocumented Human intent, or adding a `review-explore` action.
+- [ ] 4.6 GREEN — preserve #137's evidence-backed `PROPOSAL_READY`/Propose revalidation intent at the action boundary; keep #138 as the broader executable-governance inventory and #168/#169 in their separate ownership scopes.
+- [ ] 4.7 VERIFY — run the full relevant Python test suite and repository quality checks, with no OpenAI API/model-call fallback, label-writer provenance gate, hidden admission token, lock/lease/heartbeat/retry state, generic evidence registry, new review stage, or second workflow DAG introduced.
+- [ ] 4.8 VERIFY — run strict OpenSpec validation on the exact implementation revision and verify the approved source/evidence → Explore → proposal/spec/design/tasks traceability remains intact before implementation review.
 
 ## 5. Slice: verify migration semantics before implementation READY
 
 - [ ] 5.1 RED — add a migration regression that models the preserved parked state and later restoration of a coherent `Lead / propose-change + Change: unset` Issue; prove current routing participates directly in ordinary pre-activation FIFO without a manufactured provenance/admission token or special restoration priority.
-- [ ] 5.2 GREEN — keep the restored-current-routing behavior on the same production dispatcher/action boundary implemented by Slices 1–2, including the requirement that a selected restored Propose still enforces its exact same-Issue Explore `PROPOSAL_READY` semantic baseline before activation.
+- [ ] 5.2 GREEN — keep the restored-current-routing behavior on the same production dispatcher/action boundary implemented by Slices 1–2, including the requirement that a selected restored Propose independently verifies its exact same-Issue evidence-backed Explore basis and uses the governed same-Issue Explore correction when that basis requires more research.
 - [ ] 5.3 VERIFY — prove the one-time Human administrative sequencing used to park #168/#169 is absent from normal dispatcher/runtime priority, admission, and bypass behavior, and record in implementation verification evidence that the live unpark remains a post-cutover administrative obligation rather than unfinished `Executor / implement-change` Apply work.
 
 ### Post-cutover administrative obligation — not an Executor Apply task
