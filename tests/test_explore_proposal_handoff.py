@@ -37,18 +37,10 @@ class FormalizedTarget:
 
 def _classify_explore_preservation(
     *,
-    origin: str,
     explore_result: ExploreResult | None,
     target: FormalizedTarget,
 ) -> ReviewDisposition:
     """Executable fixture for the approved Explore-preservation review decision."""
-    if origin == "direct-propose":
-        if target.explore_result_comment_id is not None:
-            return ReviewDisposition.FINDINGS
-        return ReviewDisposition.ORDINARY_GATE
-
-    if origin != "explore":
-        raise ValueError(f"unsupported origin: {origin}")
     if explore_result is None:
         return ReviewDisposition.FINDINGS
     if target.explore_result_comment_id != explore_result.comment_id:
@@ -79,7 +71,7 @@ def _explore_result() -> ExploreResult:
         comment_id=5352138330,
         decided_scope=frozenset({"preserve-explore-result"}),
         constraints=frozenset({"reviewer-does-not-rerun-explore"}),
-        exclusions=frozenset({"no-synthetic-explore-for-direct-propose"}),
+        exclusions=frozenset({"no-synthetic-explore-baseline"}),
         selected_direction="exact-result-reference",
     )
 
@@ -89,7 +81,7 @@ def _faithful_target() -> FormalizedTarget:
         explore_result_comment_id=5352138330,
         decided_scope=frozenset({"preserve-explore-result"}),
         constraints=frozenset({"reviewer-does-not-rerun-explore"}),
-        exclusions=frozenset({"no-synthetic-explore-for-direct-propose"}),
+        exclusions=frozenset({"no-synthetic-explore-baseline"}),
         selected_direction="exact-result-reference",
     )
 
@@ -106,11 +98,11 @@ def test_shared_governance_owns_explore_to_propose_handoff_invariant() -> None:
         assert required in shared
 
 
-def test_explore_originated_propose_requires_exact_durable_result_reference() -> None:
+def test_propose_requires_exact_durable_explore_result_reference() -> None:
     change = _normalized(CHANGE)
 
     for required in (
-        "exact durable Explore",
+        "exactly one durable same-Issue Explore",
         "ACTION_RESULT",
         "PROPOSAL_READY",
         "preserve",
@@ -118,36 +110,19 @@ def test_explore_originated_propose_requires_exact_durable_result_reference() ->
         assert required in change
 
 
-def test_direct_propose_does_not_fabricate_explore_reference() -> None:
-    direct_target = FormalizedTarget(
+def test_propose_without_explore_baseline_fails_review_preservation_gate() -> None:
+    target = FormalizedTarget(
         explore_result_comment_id=None,
-        decided_scope=frozenset({"direct-scope"}),
+        decided_scope=frozenset({"scope"}),
         constraints=frozenset(),
         exclusions=frozenset(),
-        selected_direction="direct-direction",
+        selected_direction="direction",
     )
 
     assert (
         _classify_explore_preservation(
-            origin="direct-propose",
             explore_result=None,
-            target=direct_target,
-        )
-        is ReviewDisposition.ORDINARY_GATE
-    )
-
-    synthetic_target = FormalizedTarget(
-        explore_result_comment_id=5352138330,
-        decided_scope=direct_target.decided_scope,
-        constraints=direct_target.constraints,
-        exclusions=direct_target.exclusions,
-        selected_direction=direct_target.selected_direction,
-    )
-    assert (
-        _classify_explore_preservation(
-            origin="direct-propose",
-            explore_result=None,
-            target=synthetic_target,
+            target=target,
         )
         is ReviewDisposition.FINDINGS
     )
@@ -183,7 +158,6 @@ def test_review_rejects_internal_consistency_that_conflicts_with_explore() -> No
     assert contradictory.internally_consistent is True
     assert (
         _classify_explore_preservation(
-            origin="explore",
             explore_result=explore,
             target=contradictory,
         )
@@ -206,7 +180,6 @@ def test_review_rejects_omitted_explore_constraint_despite_internal_consistency(
     assert omitted_constraint.internally_consistent is True
     assert (
         _classify_explore_preservation(
-            origin="explore",
             explore_result=explore,
             target=omitted_constraint,
         )
@@ -217,7 +190,6 @@ def test_review_rejects_omitted_explore_constraint_despite_internal_consistency(
 def test_faithful_explore_formalization_reaches_ordinary_review_gate() -> None:
     assert (
         _classify_explore_preservation(
-            origin="explore",
             explore_result=_explore_result(),
             target=_faithful_target(),
         )
@@ -247,7 +219,6 @@ def test_missing_or_wrong_explore_result_reference_fails_closed() -> None:
     for target in (missing_reference, wrong_reference):
         assert (
             _classify_explore_preservation(
-                origin="explore",
                 explore_result=explore,
                 target=target,
             )
@@ -273,7 +244,7 @@ def test_propose_preserves_required_followup_and_tracker_outside_current_scope()
     change = _normalized(CHANGE)
 
     for required in (
-        "For an Explore-originated required separate follow-up",
+        "For a required separate follow-up recorded by the exact durable Explore result E",
         "preserve the required-follow-up classification",
         "routing-complete tracker",
         "outside the current Change implementation scope",
@@ -284,10 +255,7 @@ def test_propose_preserves_required_followup_and_tracker_outside_current_scope()
 def test_propose_rejects_missing_or_ambiguous_required_tracker() -> None:
     change = _normalized(CHANGE)
 
-    missing_tracker = (
-        "If no matching tracker exists for an Explore-originated required separate follow-up"
-    )
-    assert missing_tracker in change
+    assert "If no matching tracker exists for a required separate follow-up" in change
     assert "multiple or ambiguous matching trackers for that Explore decision" in change
     assert "fail closed" in change
 
@@ -295,7 +263,7 @@ def test_propose_rejects_missing_or_ambiguous_required_tracker() -> None:
 def test_propose_repairs_only_unique_incomplete_explore_tracker() -> None:
     change = _normalized(CHANGE)
 
-    assert "exactly one matching but incomplete Explore-originated tracker" in change
+    assert "exactly one matching but incomplete tracker" in change
     assert "repair only the missing durable fields/routing" in change
     assert "must not create a duplicate" in change
 
@@ -303,9 +271,6 @@ def test_propose_repairs_only_unique_incomplete_explore_tracker() -> None:
 def test_propose_does_not_upgrade_or_downgrade_from_presentation_wording() -> None:
     change = _normalized(CHANGE)
 
-    presentation_rule = (
-        "presentation wording does not create or erase the required-follow-up classification"
-    )
-    assert presentation_rule in change
+    assert "presentation wording does not create or erase the required-followup classification" in change
     assert "Deferred work" in change
     assert "out of scope" in change
