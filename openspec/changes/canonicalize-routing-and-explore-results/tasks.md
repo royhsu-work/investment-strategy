@@ -37,8 +37,12 @@
 - [ ] 4.5 VERIFY — run the full relevant Python test suite and repository quality checks, with no OpenAI API/model-call fallback, label-writer provenance gate, hidden admission token, lock/lease/heartbeat/retry state, or second workflow DAG introduced.
 - [ ] 4.6 VERIFY — run strict OpenSpec validation on the exact implementation revision and verify the approved proposal/spec/design/tasks traceability remains intact before implementation review.
 
-## 5. Deployment and migration verification
+## 5. Slice: verify migration semantics before implementation READY
 
-- [ ] 5.1 VERIFY — after the implementation is merged and the new default-branch contract is authoritative, restore/reconstruct the temporarily parked #168/#169 only from their preserved current Issue evidence and the new dispatcher rules; do not manufacture a new provenance/admission token.
-- [ ] 5.2 VERIFY — prove a restored coherent #168 Propose tuple participates in ordinary pre-activation FIFO directly from current routing while its Propose action still enforces the exact Explore semantic baseline.
-- [ ] 5.3 VERIFY — confirm the one-time Human administrative sequencing override used to prioritize #175 is not encoded as a normal dispatcher priority or reusable bypass mechanism.
+- [ ] 5.1 RED — add a migration regression that models the preserved parked state and later restoration of a coherent `Lead / propose-change + Change: unset` Issue; prove current routing participates directly in ordinary pre-activation FIFO without a manufactured provenance/admission token or special restoration priority.
+- [ ] 5.2 GREEN — keep the restored-current-routing behavior on the same production dispatcher/action boundary implemented by Slices 1–2, including the requirement that a selected restored Propose still enforces its exact same-Issue Explore `PROPOSAL_READY` semantic baseline before activation.
+- [ ] 5.3 VERIFY — prove the one-time Human administrative sequencing used to park #168/#169 is absent from normal dispatcher/runtime priority, admission, and bypass behavior, and record in implementation verification evidence that the live unpark remains a post-cutover administrative obligation rather than unfinished `Executor / implement-change` Apply work.
+
+### Post-cutover administrative obligation — not an Executor Apply task
+
+The live restoration of #168/#169 is intentionally outside this OpenSpec Apply task set and is not a prerequisite for implementation `READY`, independent implementation review, or implementation merge. It remains governed by the Human's existing one-time administrative sequencing authorization: keep #168/#169 parked until #175's corrected dispatcher is authoritative on `main`; only after that cutover, fresh-read each preserved Issue and perform only the authorized routing restoration needed to re-enter ordinary current-state dispatch, then let a fresh authoritative dispatcher decision determine subsequent processing. Do not manufacture a provenance/admission token, reuse remembered routing as authority, or encode this one-time sequencing as a normal dispatcher priority/bypass rule.
