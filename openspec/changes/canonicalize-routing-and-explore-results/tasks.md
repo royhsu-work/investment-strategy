@@ -9,13 +9,13 @@
 
 ## 2. Slice: retain Propose semantic evidence at the selected action and remove direct-Propose intake
 
-- [ ] 2.1 RED — add a regression where an older current Propose tuple is selected but its required same-Issue Explore `PROPOSAL_READY` semantic baseline is missing/ambiguous; prove the action fails/retains that Issue and later queued work is not selected as fallback.
-- [ ] 2.2 RED — add regressions proving normal Human direct-Propose admission is absent while advisory admission, `HUMAN_DECISION_REQUIRED` answer/resume, Human-input freshness, and other still-governed Human predicates continue to work.
-- [ ] 2.3 GREEN — make Propose reconstruct and validate the exact same-Issue durable Explore `PROPOSAL_READY` baseline as an action-local activation precondition, preserving still-applicable scope, constraints, exclusions, feasibility evidence, and selected direction.
-- [ ] 2.4 GREEN — remove direct-Propose governance/runtime/Skill branches and direct-Propose-only Human-authority decision-ref/helper code that becomes unreachable; do not weaken independent Human-reserved mechanisms.
-- [ ] 2.5 GREEN — preserve Reviewer upstream semantic traceability to the exact Explore baseline without using that evidence as dispatcher state.
-- [ ] 2.6 REFACTOR — remove obsolete direct-Propose fallback/review exceptions and keep one normal intake story: routed Explore → `PROPOSAL_READY` → Propose.
-- [ ] 2.7 VERIFY — run targeted Propose/Human-authority/review regressions and confirm an out-of-band coherent Propose tuple is operationally selectable but cannot activate without required semantic evidence.
+- [x] 2.1 RED — add a regression where an older current Propose tuple is selected but its required same-Issue Explore `PROPOSAL_READY` semantic baseline is missing/ambiguous; prove the action fails/retains that Issue and later queued work is not selected as fallback.
+- [x] 2.2 RED — add regressions proving normal Human direct-Propose admission is absent while advisory admission, `HUMAN_DECISION_REQUIRED` answer/resume, Human-input freshness, and other still-governed Human predicates continue to work.
+- [x] 2.3 GREEN — make Propose reconstruct and validate the exact same-Issue durable Explore `PROPOSAL_READY` baseline as an action-local activation precondition, preserving still-applicable scope, constraints, exclusions, feasibility evidence, and selected direction.
+- [x] 2.4 GREEN — remove direct-Propose governance/runtime/Skill branches and direct-Propose-only Human-authority decision-ref/helper code that becomes unreachable; do not weaken independent Human-reserved mechanisms.
+- [x] 2.5 GREEN — preserve Reviewer upstream semantic traceability to the exact Explore baseline without using that evidence as dispatcher state.
+- [x] 2.6 REFACTOR — remove obsolete direct-Propose fallback/review exceptions and keep one normal intake story: routed Explore → `PROPOSAL_READY` → Propose.
+- [x] 2.7 VERIFY — run targeted Propose/Human-authority/review regressions and confirm an out-of-band coherent Propose tuple is operationally selectable but cannot activate without required semantic evidence.
 
 ## 3. Slice: make Explore dispositions structured and derive their effects in repository application
 
