@@ -35,9 +35,11 @@ def test_explore_is_optional_and_cannot_create_formal_change_or_code() -> None:
         "Change: unset",
         "MUST NOT create `openspec/changes/`",
         "MUST NOT modify implementation code",
-        "direct-to-Propose",
+        "normal successful continuation",
+        "durable `PROPOSAL_READY`",
     ):
         assert required in explore
+    assert "direct-to-Propose" not in explore
 
 
 def test_explore_uses_decision_complete_outcomes_and_human_boundary() -> None:
@@ -55,17 +57,18 @@ def test_explore_uses_decision_complete_outcomes_and_human_boundary() -> None:
         assert required in explore
 
 
-def test_explore_and_direct_propose_share_executable_preactivation_contract() -> None:
+def test_explore_and_propose_share_current_routing_preactivation_contract() -> None:
     shared = _normalized(AGENTS)
     for required in (
         "combined pre-activation candidate contract",
         "coherent routed Explore",
-        "executable-approved direct-Propose",
+        "coherent routed Propose",
         "earliest GitHub `created_at` then lower Issue number ordering",
         "Current routing debt is handled before intake",
         "A formal workflow otherwise wins over intake",
     ):
         assert required in shared
+    assert "executable-approved direct-Propose" not in shared
 
 
 def test_explore_has_no_research_state_machine_or_review_gate() -> None:
