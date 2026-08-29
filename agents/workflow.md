@@ -42,8 +42,6 @@ The two `Executor / merge-pr` positions are distinguished by current durable PR/
 | `NO_CHANGE_REQUIRED` | persist the bounded result, close the research Issue, and re-observe closed; no formal Change/archive lifecycle is created |
 | `NO_GO` | persist the bounded result, close the research Issue, and re-observe closed; no formal Change/archive lifecycle is created |
 
-A valid Human-admitted direct-Propose entry may fall back to Explore without creating a new authority envelope; an in-scope `PROPOSAL_READY` returns to Propose under that preserved envelope.
-
 ## Correction loops
 
 Correction loops preserve the same persistent coordination Issue and immutable Change identity once formal activation has occurred.
