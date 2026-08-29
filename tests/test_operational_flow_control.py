@@ -93,8 +93,9 @@ def test_current_routed_intake_is_origin_neutral_but_creation_remains_bounded() 
     shared = _normalized(AGENTS)
     for required in (
         (
-            "Open `Lead / explore-change + Change: unset` and `Lead / propose-change + Change: unset` "
-            "entries are legal queued pre-activation work when routing is coherent"
+            "Open `Lead / explore-change + Change: unset` and "
+            "`Lead / propose-change + Change: unset` entries are legal queued pre-activation work "
+            "when routing is coherent"
         ),
         (
             "Origin, admission history, and semantic readiness do not control dispatcher "
@@ -158,7 +159,8 @@ def test_selected_propose_without_baseline_retains_propose_and_never_falls_back(
     ):
         assert required in change
     assert (
-        "A routed Propose that lacks such evidence fails at Propose rather than routing backward to Explore"
+        "A routed Propose that lacks such evidence fails at Propose rather than "
+        "routing backward to Explore"
         in explore
     )
 
