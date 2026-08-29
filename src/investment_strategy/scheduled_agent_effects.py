@@ -42,6 +42,7 @@ class EffectBatch:
 
     source: WorkerRequest
     effects: tuple[StagedEffect, ...]
+    explore_disposition: str | None = None
 
 
 @dataclass(frozen=True)
@@ -121,6 +122,44 @@ def apply_effect_batch(
     return ApplyResult(True, "applied", continuation)
 
 
+def _derived_explore_effects(
+    source: WorkerRequest,
+    disposition: str,
+    requested: tuple[StagedEffect, ...],
+) -> tuple[StagedEffect, ...]:
+    """Derive action-owned Explore effects from the structured disposition."""
+
+    for effect in requested:
+        if effect.kind == "routing-transition":
+            raise ValueError("worker-chosen Explore routing is not allowed")
+        if effect.kind == "terminal-retirement":
+            raise ValueError("worker-chosen Explore terminal retirement is not allowed")
+
+    if disposition == "PROPOSAL_READY":
+        derived = StagedEffect(
+            kind="routing-transition",
+            payload_json=json.dumps(
+                {
+                    "issue_number": source.issue_number,
+                    "role": "lead",
+                    "action": "propose-change",
+                },
+                sort_keys=True,
+            ),
+        )
+        return (*requested, derived)
+    if disposition in {"NO_CHANGE_REQUIRED", "NO_GO"}:
+        derived = StagedEffect(
+            kind="terminal-retirement",
+            payload_json=json.dumps(
+                {"issue_number": source.issue_number, "expected_change": "unset"},
+                sort_keys=True,
+            ),
+        )
+        return (*requested, derived)
+    return requested
+
+
 def parse_effect_batch(raw: str, source: WorkerRequest) -> EffectBatch:
     """Parse same-invocation worker output and bind it to the authorized source."""
 
@@ -129,7 +168,13 @@ def parse_effect_batch(raw: str, source: WorkerRequest) -> EffectBatch:
         StagedEffect(kind=effect.kind, payload_json=effect.payload_json)
         for effect in result.requested_effects
     )
-    return EffectBatch(source=source, effects=effects)
+    if result.explore_disposition is not None:
+        effects = _derived_explore_effects(source, result.explore_disposition, effects)
+    return EffectBatch(
+        source=source,
+        effects=effects,
+        explore_disposition=result.explore_disposition,
+    )
 
 
 def _effect_payload(effect: StagedEffect) -> dict[str, object] | None:
