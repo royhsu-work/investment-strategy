@@ -58,7 +58,6 @@ class RepositoryIssueSnapshot:
     premature_close_recovery: RecoveryEvidence = "not-candidate"
     terminal_evidence: TerminalEvidence = "not-terminal"
     current_state_provenance: ObservationProvenance = ObservationProvenance.QUALIFIED
-    preactivation_eligible: bool = False
     routing_debt: bool = False
 
 
@@ -149,13 +148,11 @@ def _validate_preflight(preflight: DispatchPreflight) -> DispatchDecision | None
 
 
 def _eligible_preactivation(issue: RepositoryIssueSnapshot) -> bool:
-    if issue.change != "unset" or issue.state != "open":
-        return False
-    if issue.routing == ("lead", "explore-change"):
-        return True
-    if issue.routing == ("lead", "propose-change"):
-        return issue.preactivation_eligible
-    return False
+    return (
+        issue.change == "unset"
+        and issue.state == "open"
+        and issue.routing in {("lead", "explore-change"), ("lead", "propose-change")}
+    )
 
 
 def _is_routing_debt(issue: RepositoryIssueSnapshot) -> bool:
@@ -167,9 +164,9 @@ def _is_routing_debt(issue: RepositoryIssueSnapshot) -> bool:
 def classify_open_dispatch(preflight: DispatchPreflight) -> DispatchDecision:
     """Select normal work from a complete provenance-qualified OPEN Issue snapshot.
 
-    Direct-Propose admission is not re-derived here. Runtime must set
-    ``preactivation_eligible`` only after consuming the canonical executable
-    Human-authority predicate.
+    Current coherent routing is the operational pre-activation state. Semantic
+    evidence required by a selected action is validated downstream by that
+    action and is not reconstructed as a global queue-eligibility predicate.
     """
 
     invalid = _validate_preflight(preflight)
@@ -226,7 +223,7 @@ def classify_open_dispatch(preflight: DispatchPreflight) -> DispatchDecision:
             selected_issue_id=None,
             selected_routing=None,
             disposition="NO_WORK",
-            reason="no open formal, eligible pre-activation work, or current routing debt",
+            reason="no open formal, pre-activation work, or current routing debt",
         )
 
     selected = queued[0]
@@ -239,7 +236,7 @@ def classify_open_dispatch(preflight: DispatchPreflight) -> DispatchDecision:
         selected_issue_id=selected.issue_number,
         selected_routing=selected.routing,
         disposition="AUTHORIZE",
-        reason="deterministic eligible pre-activation winner",
+        reason="deterministic pre-activation winner",
     )
 
 
