@@ -1179,7 +1179,10 @@ def acquire_current_github_preflight(
     )
 
 
-def _serialize_worker_request(request: WorkerRequest | None, preflight: DispatchPreflight) -> dict[str, Any]:
+def _serialize_worker_request(
+    request: WorkerRequest | None,
+    preflight: DispatchPreflight,
+) -> dict[str, Any]:
     decision = classify_dispatch(preflight)
     return {
         "disposition": decision.disposition,
