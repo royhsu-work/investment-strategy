@@ -64,9 +64,9 @@ For Reviewer, Executor, and the three higher-priority Lead actions above, select
 
 If fixed-role Lead has no eligible `resolve-question`, `finalize-archive`, or `finalize-change` work, every coherently routed open `Lead / explore-change + Change: unset` entry and every coherently routed open `Lead / propose-change + Change: unset` entry SHALL form one combined pre-activation intake queue ordered by earliest GitHub `created_at`, then lower Issue number. Dispatcher queue eligibility SHALL use current structural Issue/routing facts and MUST NOT depend on origin, Human admission, prior `ACTION_RESULT` prose, or action-local semantic readiness. The selected Issue's current routing determines whether Lead executes Explore or Propose. Fixed-role mode MUST NOT apply an `explore-change > propose-change` priority inside this combined intake queue.
 
-In `workflow-dynamic` mode, a formal active workflow or terminal-pending workflow SHALL be selected before pre-activation work; its valid routing tuple determines the role/action. The only closed-Issue active exception remains a terminal-pending `closed + agent:lead + action:finalize-archive` workflow with matching authorized merged Archive PR/native close and no valid Lead `LIFECYCLE_COMPLETE` evidence.
+In `workflow-dynamic` mode, an open formal active workflow SHALL be selected before pre-activation work; its valid routing tuple determines the role/action. A closed Issue retaining any repository-governed workflow routing label SHALL be current closed-routing debt rather than ordinary active workflow work and MUST enter the bounded recovery/terminal-retirement classification before pre-activation intake.
 
-If no formal active or terminal-pending workflow exists, every coherently routed open `Lead / explore-change + Change: unset` entry and every coherently routed open `Lead / propose-change + Change: unset` entry SHALL form the same deterministic pre-activation queue ordered by earliest GitHub `created_at`, then lower Issue number. Only that winner may proceed. Current routing SHALL remain operational truth for queue selection; dispatch MUST NOT re-read Issue comments/events to re-prove why a coherent Propose tuple exists. Action-local semantic evidence is reconstructed only after the mapped action is selected.
+If no open formal active workflow exists and current closed-routing debt is empty, every coherently routed open `Lead / explore-change + Change: unset` entry and every coherently routed open `Lead / propose-change + Change: unset` entry SHALL form the same deterministic pre-activation queue ordered by earliest GitHub `created_at`, then lower Issue number. Only that winner may proceed. Current routing SHALL remain operational truth for queue selection; dispatch MUST NOT re-read Issue comments/events to re-prove why a coherent Propose tuple exists. Action-local semantic evidence is reconstructed only after the mapped action is selected.
 
 The model MUST NOT substitute its own urgency or preference for either mode's deterministic selection rules.
 
@@ -83,7 +83,8 @@ The model MUST NOT substitute its own urgency or preference for either mode's de
 #### Scenario: Dynamic mode selects earliest pre-activation entry across Explore and Propose
 
 - GIVEN dispatch mode is `workflow-dynamic`
-- AND no formal active or terminal-pending workflow exists
+- AND no open formal active workflow exists
+- AND current closed-routing debt is empty
 - AND an older coherently routed `Lead / propose-change + Change: unset` Issue exists
 - AND a newer coherently routed `Lead / explore-change + Change: unset` Issue exists
 - WHEN Scheduled workflow selects pre-activation work
@@ -122,29 +123,24 @@ The model MUST NOT substitute its own urgency or preference for either mode's de
 #### Scenario: Dynamic mode selects terminal reconstruction before queued work
 
 - GIVEN dispatch mode is `workflow-dynamic`
-- AND a closed coordination Issue is terminal-pending under `Lead / finalize-archive`
+- AND a closed coordination Issue retains repository-governed workflow routing
 - AND queued Explore or Propose work exists
-- WHEN a Scheduled Task selects work
-- THEN the closed terminal-pending workflow is selected
-- AND Lead is the fixed invocation role
-- AND queued pre-activation work remains queued
+- WHEN a Scheduled Task reconstructs current work
+- THEN the closed Issue is treated as current closed-routing debt rather than ordinary active workflow work
+- AND only the bounded recovery/terminal-retirement classification may determine its legal disposition
+- AND queued pre-activation work remains unactivated until that debt is legally resolved or retired
 
 ### Requirement: Persisted Change identity defines the single active workflow boundary
 
 An open coordination Issue with a valid routing tuple and a persisted non-`unset` `Change:` identity SHALL be an active workflow. The repository MUST allow at most one such active workflow at a time.
 
-A closed coordination Issue SHALL also remain terminal-pending active workflow work only when all of the following hold:
+Normal formal lifecycle work SHALL remain open through final Archive merge and `Lead / finalize-archive`. It remains active while open with a valid routing tuple and non-`unset` Change identity until terminal conditions are satisfied, `LIFECYCLE_COMPLETE` is durably persisted, and repository-owned terminal retirement completes the `closed + no workflow routing` postcondition.
 
-- it has a persisted non-`unset` `Change:` identity;
-- its routing tuple is exactly `agent:lead + action:finalize-archive`;
-- the repository-approved Archive PR for that Change is durably merged and the Issue is natively closed by the approved closing linkage; and
-- no durable Lead `LIFECYCLE_COMPLETE` result bound to that archive merge exists yet.
-
-Once Lead records valid `LIFECYCLE_COMPLETE` evidence after terminal reconstruction, that closed tuple SHALL be terminal history, MUST NOT be selected as active work, and MUST NOT block later workflow admission.
+A closed coordination Issue retaining any repository-governed workflow routing label SHALL be current closed-routing debt rather than active workflow work. Its disposition MUST come only from bounded current debt classification: a qualifying unfinished premature closure MAY recover only under the existing recovery predicates, while proven terminal/retired routing residue MAY receive only narrow routing-retirement cleanup. Ambiguous, competing, contradictory, or incomplete debt MUST fail closed. A closed Issue with valid terminal completion and no workflow routing labels is terminal history and MUST NOT block later workflow admission.
 
 Open coherently routed `Lead / explore-change + Change: unset` and `Lead / propose-change + Change: unset` coordination Issues SHALL be queued pre-activation work based on current structural routing. Neither form counts as an active workflow before Propose persists an immutable Change identity. Dispatcher selection MUST NOT distinguish an unset Propose by origin, Human admission, comment provenance, or reconstructed semantic readiness.
 
-Lead MUST NOT activate a queued proposal while another active or terminal-pending workflow exists. If no active or terminal-pending workflow exists, deterministic pre-activation selection SHALL be evaluated across the single combined set of coherently routed open `Lead / explore-change + Change: unset` and `Lead / propose-change + Change: unset` candidates using earliest GitHub `created_at`, then lower Issue number. Only that combined-queue winner may proceed. A `propose-change` runner MUST re-check that its Issue is still that same winner immediately before persisting a non-`unset` Change identity.
+Lead MUST NOT activate a queued proposal while another open active workflow exists or current closed-routing debt is unresolved. If no open active workflow exists and current closed-routing debt is empty, deterministic pre-activation selection SHALL be evaluated across the single combined set of coherently routed open `Lead / explore-change + Change: unset` and `Lead / propose-change + Change: unset` candidates using earliest GitHub `created_at`, then lower Issue number. Only that combined-queue winner may proceed. A `propose-change` runner MUST re-check that its Issue is still that same winner immediately before persisting a non-`unset` Change identity.
 
 A proposal-ready Explore remains pre-activation until repository-owned application legally routes that same Issue to `Lead / propose-change`. The transition SHALL NOT require a generic Human proceed confirmation when the proposal-ready direction remains inside the bounded researched/canonical evidence and introduces no Human-reserved decision. After routing, the same Issue retains its original queue position. Propose SHALL reconstruct the exact durable same-Issue `PROPOSAL_READY` semantic baseline before activation; an absent/invalid baseline blocks that selected action rather than changing dispatcher eligibility. If formalization would introduce a new Human-reserved product/project direction, material externally observable behavior or scope trade-off, explicit risk acceptance, or materially different security/privacy/cost/operational commitment, Lead MUST use the existing `HUMAN_DECISION_REQUIRED` boundary instead of treating routing or Explore execution as Human authority.
 
@@ -158,17 +154,18 @@ A proposal-ready Explore remains pre-activation until repository-owned applicati
 
 #### Scenario: Closed terminal handoff still blocks new activation
 
-- GIVEN Change A has an authorized merged Archive PR and its coordination Issue is natively closed
-- AND that Issue is routed `Lead / finalize-archive`
-- AND no valid Lead `LIFECYCLE_COMPLETE` evidence exists for the archive merge
+- GIVEN Change A's coordination Issue is closed
+- AND it retains at least one repository-governed workflow routing label
 - AND queued Explore or Propose work exists with `Change: unset`
 - WHEN workflow-dynamic dispatch reconstructs work
-- THEN Change A is selected as terminal-pending workflow work
-- AND the queued pre-activation work is not activated
+- THEN Change A is treated as current closed-routing debt rather than active workflow work
+- AND only bounded recovery/terminal-retirement handling may act on that debt
+- AND the queued pre-activation work is not activated until the debt is legally resolved or retired
 
 #### Scenario: Older Explore prevents later direct-Propose activation
 
-- GIVEN no active or terminal-pending workflow exists
+- GIVEN no open active workflow exists
+- AND current closed-routing debt is empty
 - AND an older coherently routed `Lead / explore-change + Change: unset` Issue exists
 - AND a newer coherently routed `Lead / propose-change + Change: unset` Issue exists
 - WHEN dispatch selects pre-activation work after direct-Propose admission has been removed
@@ -187,7 +184,8 @@ A proposal-ready Explore remains pre-activation until repository-owned applicati
 
 #### Scenario: Oldest eligible Propose activates after older Explore terminates
 
-- GIVEN no active or terminal-pending workflow exists
+- GIVEN no open active workflow exists
+- AND current closed-routing debt is empty
 - AND an older Explore has legally reached terminal `NO_CHANGE_REQUIRED` or `NO_GO` and left pre-activation routing
 - AND at least one coherently routed `Lead / propose-change + Change: unset` Issue remains
 - WHEN dispatch selects pre-activation work
