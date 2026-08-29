@@ -29,10 +29,10 @@ def test_formal_wip_and_stable_order_still_dominate_pre_activation_explore() -> 
     assert "premature-close recovery" in text
 
 
-def test_direct_propose_human_admission_remains_distinct() -> None:
+def test_direct_propose_human_admission_is_removed() -> None:
     text = _governance()
-    assert "Human direct-Propose admission" in text
-    assert "issue:<issue-number>:admission:lead:propose-change" in text
+    assert "Human direct-Propose admission" not in text
+    assert "issue:<issue-number>:admission:lead:propose-change" not in text
 
 
 def test_explore_only_human_authority_api_is_removed() -> None:
@@ -47,13 +47,8 @@ def test_explore_only_human_authority_api_is_removed() -> None:
 
 
 def test_remaining_human_boundaries_keep_provenance_bound_refs() -> None:
-    assert (
-        human_authority.decision_ref_for_boundary(
-            human_authority.HumanDecisionBoundary.PROPOSE_ADMISSION,
-            issue_number=93,
-        )
-        == "issue:93:admission:lead:propose-change"
-    )
+    assert not hasattr(human_authority, "propose_admission_ref")
+    assert "PROPOSE_ADMISSION" not in human_authority.HumanDecisionBoundary.__members__
     assert (
         human_authority.decision_ref_for_boundary(
             human_authority.HumanDecisionBoundary.ADVISORY_ADMISSION,
