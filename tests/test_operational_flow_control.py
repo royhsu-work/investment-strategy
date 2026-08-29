@@ -89,41 +89,50 @@ def test_required_separate_follow_up_is_directly_routed_to_explore() -> None:
         assert required in change
 
 
-def test_routed_explore_is_origin_neutral_but_creation_remains_bounded() -> None:
+def test_current_routed_intake_is_origin_neutral_but_creation_remains_bounded() -> None:
     shared = _normalized(AGENTS)
     for required in (
-        "ordinary routed Explore eligibility does not require Human approval",
-        "origin does not control dispatcher eligibility",
+        (
+            "Open `Lead / explore-change + Change: unset` and `Lead / propose-change + Change: unset` "
+            "entries are legal queued pre-activation work when routing is coherent"
+        ),
+        (
+            "Origin, admission history, and semantic readiness do not control dispatcher "
+            "eligibility for either current tuple"
+        ),
         "Scheduled Agents MUST NOT create arbitrary routed Explore work",
         "deduplication and one-candidate limits",
         (
             "required separate follow-up routing remains derived from its exact "
             "approved source defer decision/linkage"
         ),
-        "direct-Propose fallback preserves the original Propose authority envelope",
     ):
         assert required in shared
     for obsolete in (
         "approved origin classes",
         "creation-bound Human Explore admission alternative",
         "complete approved origin set",
+        "direct-Propose fallback preserves the original Propose authority envelope",
     ):
         assert obsolete not in shared
 
 
-def test_propose_activation_consumes_origin_neutral_shared_queue() -> None:
+def test_propose_activation_consumes_current_routing_shared_queue() -> None:
     change = _normalized(OPEN_SPEC_CHANGE)
     for required in (
-        "complete shared pre-activation candidate-set contract",
-        "every coherent open `Lead / explore-change + Change: unset` entry",
-        "Do not maintain or infer an action-local Explore-origin admission enumeration",
-        "same-Issue direct-Propose fallback preserving its original authority envelope",
-        "MUST NOT activate while an older eligible Explore candidate",
-        "deterministic combined pre-activation winner",
+        "shared dispatcher owns one combined pre-activation queue",
+        (
+            "every coherent open `Lead / explore-change + Change: unset` and "
+            "`Lead / propose-change + Change: unset` entry"
+        ),
+        "MUST NOT reconstruct origin/admission history",
+        "Require the consumed pre-write machine decision to authorize this exact Issue",
+        "independently choose among queued candidates",
+        "action-local semantic preconditions still pass",
     ):
         assert required in change
     assert "approved Explore-origin set" not in change
-    assert "combine valid Human-admitted open `Lead / explore-change + Change: unset`" not in change
+    assert "same-Issue direct-Propose fallback" not in change
 
 
 def test_optional_or_plain_deferred_work_does_not_create_queue_admission() -> None:
@@ -138,32 +147,28 @@ def test_optional_or_plain_deferred_work_does_not_create_queue_admission() -> No
         assert required in shared
 
 
-def test_unset_direct_propose_may_fall_back_to_explore_without_second_admission() -> None:
+def test_selected_propose_without_baseline_retains_propose_and_never_falls_back() -> None:
     change = _normalized(OPEN_SPEC_CHANGE)
     explore = _normalized(EXPLORE)
     for required in (
-        "Change: unset",
-        "not yet proposal-ready",
-        "requested same-Issue routing effect to `Lead / explore-change`",
-        "do not request `HANDOFF` or a second Human admission",
-        "fresh post-apply dispatch",
+        "baseline is missing, ambiguous, stale, contradictory, or materially invalidated",
+        "retain this same Propose action",
+        "MUST NOT route backward to Explore",
+        "dispatcher fallback to a later candidate",
     ):
         assert required in change
-    for required in (
-        "pre-activation Propose fallback",
-        "same admitted authority envelope",
-        "returns to `Lead / propose-change`",
-        "no second Human admission",
-    ):
-        assert required in explore
+    assert (
+        "A routed Propose that lacks such evidence fails at Propose rather than routing backward to Explore"
+        in explore
+    )
 
 
-def test_activated_change_cannot_fall_back_from_propose_to_explore() -> None:
+def test_propose_never_uses_explore_as_a_backward_fallback() -> None:
     change = _normalized(OPEN_SPEC_CHANGE)
     for required in (
-        "non-`unset` Change",
         "MUST NOT route backward to Explore",
-        "`Lead / resolve-question`",
+        "retain Lead on the same Propose action",
+        "do not route backward to Explore",
     ):
         assert required in change
 
