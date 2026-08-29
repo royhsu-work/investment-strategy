@@ -271,6 +271,9 @@ def test_propose_repairs_only_unique_incomplete_explore_tracker() -> None:
 def test_propose_does_not_upgrade_or_downgrade_from_presentation_wording() -> None:
     change = _normalized(CHANGE)
 
-    assert "presentation wording does not create or erase the required-followup classification" in change
+    presentation_rule = (
+        "presentation wording does not create or erase the required-followup classification"
+    )
+    assert presentation_rule in change
     assert "Deferred work" in change
     assert "out of scope" in change
