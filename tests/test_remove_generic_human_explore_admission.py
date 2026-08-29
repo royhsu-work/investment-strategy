@@ -18,13 +18,11 @@ def test_current_routed_intake_is_origin_neutral_for_queue_eligibility() -> None
     text = _governance()
     assert (
         "Open `Lead / explore-change + Change: unset` and `Lead / propose-change + Change: unset` "
-        "entries are legal queued pre-activation work when routing is coherent"
-        in text
+        "entries are legal queued pre-activation work when routing is coherent" in text
     )
     assert (
         "Origin, admission history, and semantic readiness do not control dispatcher eligibility "
-        "for either current tuple"
-        in text
+        "for either current tuple" in text
     )
     assert "historical comments/events merely to re-prove current queue participation" in text
 
