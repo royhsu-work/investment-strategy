@@ -34,7 +34,6 @@ def issue(
     recovery: RecoveryEvidence = "not-candidate",
     terminal: TerminalEvidence = "not-terminal",
     provenance: ObservationProvenance = ObservationProvenance.QUALIFIED,
-    preactivation_eligible: bool = False,
 ) -> RepositoryIssueSnapshot:
     return RepositoryIssueSnapshot(
         issue_number=number,
@@ -45,7 +44,6 @@ def issue(
         premature_close_recovery=recovery,
         terminal_evidence=terminal,
         current_state_provenance=provenance,
-        preactivation_eligible=preactivation_eligible,
     )
 
 
