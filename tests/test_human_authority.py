@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import investment_strategy.human_authority as authority
 from investment_strategy.human_authority import (
     DecisionComment,
     HumanDecisionBoundary,
@@ -80,6 +81,24 @@ def _approved(
         comments=comments,
         label_events=events,
     )
+
+
+def test_normal_direct_propose_human_boundary_is_absent_while_others_remain() -> None:
+    assert not hasattr(authority, "propose_admission_ref")
+    assert set(HumanDecisionBoundary) == {
+        HumanDecisionBoundary.ADVISORY_ADMISSION,
+        HumanDecisionBoundary.ESCALATION_RESPONSE,
+    }
+    with pytest.raises(ValueError, match="unmapped Human-reserved boundary"):
+        decision_ref_for_boundary("propose-admission", issue_number=47)
+    assert decision_ref_for_boundary(
+        HumanDecisionBoundary.ADVISORY_ADMISSION,
+        issue_number=47,
+    ) == advisory_admission_ref(47)
+    assert decision_ref_for_boundary(
+        HumanDecisionBoundary.ESCALATION_RESPONSE,
+        escalation_comment_id=1234,
+    ) == escalation_response_ref(1234)
 
 
 def test_actor_identity_alone_is_not_human_authority() -> None:
