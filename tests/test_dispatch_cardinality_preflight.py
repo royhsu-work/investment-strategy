@@ -154,7 +154,7 @@ def test_production_fifo_does_not_read_history_to_qualify_current_propose(
         raise AssertionError("global dispatch must not re-derive current Propose eligibility")
 
     monkeypatch.setattr(runtime, "_github_issue_comment_pages", forbidden_history)
-    monkeypatch.setattr(runtime, "_github_issue_event_pages", forbidden_history)
+    assert not hasattr(runtime, "_github_issue_event_pages")
 
     decision = classify_dispatch(
         runtime.acquire_current_github_preflight(
@@ -189,11 +189,7 @@ def test_irrelevant_duplicate_markdown_fields_cannot_remove_current_propose_from
             ((duplicate_field,),) if issue_number == 168 else ((),)
         ),
     )
-
-    def forbidden_events(*args: object, **kwargs: object) -> object:
-        raise AssertionError("Markdown history must not fall back to Human-admission reconstruction")
-
-    monkeypatch.setattr(runtime, "_github_issue_event_pages", forbidden_events)
+    assert not hasattr(runtime, "_github_issue_event_pages")
 
     decision = classify_dispatch(
         runtime.acquire_current_github_preflight(
