@@ -431,6 +431,39 @@ def _workflow_label_names(payload: Mapping[str, object]) -> tuple[str, ...] | No
     return tuple(sorted(names))
 
 
+def _trusted_proposal_ready_explore_result(
+    payload: Mapping[str, object],
+    *,
+    issue_number: int,
+    repository_owner: str,
+) -> bool:
+    """Recognize only the canonical Explore ACTION_RESULT header for Propose semantics."""
+
+    body = payload.get("body")
+    user = payload.get("user")
+    author_association = payload.get("author_association")
+    if not isinstance(body, str) or not isinstance(user, Mapping):
+        return False
+    actor = user.get("login")
+    trusted_owner = actor == repository_owner and author_association == "OWNER"
+    trusted_runtime = actor == "github-actions[bot]"
+    if not (trusted_owner or trusted_runtime):
+        return False
+
+    lines = body.splitlines()
+    try:
+        marker = lines.index("## ACTION_RESULT")
+    except ValueError:
+        return False
+    expected = [
+        f"Workflow: #{issue_number}",
+        "Change: unset",
+        "Action: Lead / explore-change",
+        "Result: PROPOSAL_READY",
+    ]
+    return lines[marker + 1 : marker + 5] == expected
+
+
 class GitHubEffectAdapter:
     """Production adapter for bounded durable effects requested by mapped workers."""
 
@@ -472,6 +505,33 @@ class GitHubEffectAdapter:
                 and observation.routing_debt
             )
         return observation.routing == _routing_identity(self.source)
+
+    def _has_unique_proposal_ready_baseline(self) -> bool:
+        owner = self.repository.split("/", 1)[0]
+        page = 1
+        matches = 0
+        while True:
+            comments = _github_json(
+                self.repository,
+                self.token,
+                f"issues/{self.source.issue_number}/comments?per_page=100&page={page}",
+            )
+            if not isinstance(comments, list):
+                return False
+            for comment in comments:
+                if not isinstance(comment, Mapping):
+                    return False
+                if _trusted_proposal_ready_explore_result(
+                    comment,
+                    issue_number=self.source.issue_number,
+                    repository_owner=owner,
+                ):
+                    matches += 1
+                    if matches > 1:
+                        return False
+            if len(comments) < 100:
+                return matches == 1
+            page += 1
 
     def _guard_github_mutation(self, payload: Mapping[str, object]) -> bool:
         operation = cast(str, payload["operation"])
@@ -582,6 +642,12 @@ class GitHubEffectAdapter:
             return False
         payload = _effect_payload(effect)
         if payload is None:
+            return False
+        if (
+            _routing_identity(self.source) == ("lead", "propose-change")
+            and effect.kind != "issue-comment"
+            and not self._has_unique_proposal_ready_baseline()
+        ):
             return False
         if effect.kind == "terminal-retirement":
             return self._terminal_target_valid(
