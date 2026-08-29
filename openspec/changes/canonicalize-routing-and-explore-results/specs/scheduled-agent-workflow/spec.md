@@ -183,7 +183,7 @@ A proposal-ready Explore remains pre-activation until repository-owned applicati
 - AND only bounded recovery/terminal-retirement handling may act on that debt
 - AND the queued pre-activation work is not activated until the debt is legally resolved or retired
 
-#### Scenario: Older Explore remains ahead of a later Propose
+#### Scenario: Older Explore prevents later direct-Propose activation
 
 - GIVEN no open active workflow exists
 - AND current closed-routing debt is empty
@@ -193,13 +193,13 @@ A proposal-ready Explore remains pre-activation until repository-owned applicati
 - THEN the older Explore remains the deterministic combined-queue winner by creation order
 - AND the newer Propose remains queued because current routing participates in the same FIFO, not because a direct-Propose Human-admission predicate exists
 
-#### Scenario: Proposal-ready Explore keeps its queue position without Human proceed authorization
+#### Scenario: Proposal-ready Explore keeps its queue position when Human authorizes Propose
 
 - GIVEN an Explore Issue is the deterministic combined-queue winner
 - AND Lead returns evidence-backed structured `PROPOSAL_READY` within the bounded current context
 - AND no new Human-reserved decision is introduced
 - WHEN repository-owned application routes the same Issue to `Lead / propose-change`
-- THEN no Human authorization is required for that normal transition under the new contract
+- THEN no Human authorization is required for that normal transition under the new contract; the legacy scenario title is retained only as the canonical scenario identity
 - AND the same Issue retains its original GitHub `created_at` and queue position
 - AND Propose may persist the immutable Change identity only after re-checking queue ownership and independently validating its action-local source/evidence and feasibility basis
 
@@ -423,7 +423,7 @@ This authority rule SHALL remain prospective at its default-branch activation bo
 - THEN the current applicable provenance rule applies
 - AND insufficient evidence fails closed for fresh qualifying Human evidence
 
-#### Scenario: Historical direct Propose authority is not retroactively invalidated
+#### Scenario: Direct Propose keeps existing Human approval contract
 
 - GIVEN direct Human-to-Propose admission existed and was legally consumed under an earlier authoritative contract
 - WHEN the new contract is active for normal intake
