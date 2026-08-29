@@ -18,13 +18,6 @@ from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.request import Request, urlopen
 
-from investment_strategy.human_authority import (
-    APPROVAL_LABEL,
-    decision_comment_from_raw,
-    is_human_decision_approved,
-    label_event_from_raw,
-    propose_admission_ref,
-)
 from investment_strategy.workflow_dispatch import (
     Action,
     DispatchPreflight,
@@ -144,7 +137,6 @@ class GitHubIssueObservation:
     premature_close_recovery: RecoveryEvidence = "not-candidate"
     terminal_evidence: TerminalEvidence = "not-terminal"
     legacy_terminal_candidate: bool = False
-    preactivation_eligible: bool = False
     routing_debt: bool = False
 
 
@@ -190,7 +182,6 @@ def acquire_dispatch_preflight(
                 if observation.authoritative
                 else ObservationProvenance.INDETERMINATE
             ),
-            preactivation_eligible=observation.preactivation_eligible,
             routing_debt=observation.routing_debt,
         )
         for observation in observations
@@ -471,41 +462,6 @@ def _terminal_research_result_from_comment(
         return None
     results = fields.get("Result")
     if results is None or len(results) != 1 or results[0] not in {"NO_CHANGE_REQUIRED", "NO_GO"}:
-        return None
-    return results[0]
-
-
-def _explore_action_result_from_comment(
-    payload: Mapping[str, object],
-    *,
-    issue_number: int,
-    repository_owner: str,
-) -> str | None:
-    """Return one trusted canonical Explore result for source provenance qualification."""
-
-    body = payload.get("body")
-    user = payload.get("user")
-    author_association = payload.get("author_association")
-    if not isinstance(body, str) or not isinstance(user, Mapping):
-        return None
-    actor = user.get("login")
-    trusted_owner = actor == repository_owner and author_association == "OWNER"
-    trusted_runtime = actor == "github-actions[bot]"
-    if not (trusted_owner or trusted_runtime):
-        return None
-    if "## ACTION_RESULT" not in body.splitlines():
-        return None
-
-    fields = _message_fields(body)
-    expected = {
-        "Workflow": f"#{issue_number}",
-        "Change": "unset",
-        "Action": "Lead / explore-change",
-    }
-    if not all(fields.get(name) == [value] for name, value in expected.items()):
-        return None
-    results = fields.get("Result")
-    if results is None or len(results) != 1:
         return None
     return results[0]
 
@@ -919,25 +875,6 @@ def _github_issue_comment_pages(
         page_number += 1
 
 
-def _github_issue_event_pages(
-    repository: str,
-    token: str,
-    issue_number: int,
-) -> tuple[tuple[Mapping[str, object], ...], ...]:
-    pages: list[tuple[Mapping[str, object], ...]] = []
-    page_number = 1
-    while True:
-        url = (
-            f"https://api.github.com/repos/{repository}/issues/{issue_number}/events"
-            f"?per_page=100&page={page_number}"
-        )
-        page_items = _github_get_list_page(url, token)
-        pages.append(page_items)
-        if len(page_items) < 100:
-            return tuple(pages)
-        page_number += 1
-
-
 def _github_issue(repository: str, token: str, issue_number: int) -> Mapping[str, object]:
     url = f"https://api.github.com/repos/{repository}/issues/{issue_number}"
     request = Request(  # noqa: S310 - fixed trusted GitHub API host
@@ -975,20 +912,6 @@ def _normalized_closed_observations(
         for payload in page
         if (observation := _normalize_closed_issue(payload)) is not None
     )
-
-
-def _raw_issue_map(
-    pages: Iterable[Iterable[Mapping[str, object]]],
-) -> dict[int, Mapping[str, object]]:
-    result: dict[int, Mapping[str, object]] = {}
-    for page in pages:
-        for payload in page:
-            if "pull_request" in payload:
-                continue
-            number = payload.get("number")
-            if isinstance(number, int):
-                result[number] = payload
-    return result
 
 
 def _github_last_visible_issue_comment(
@@ -1111,94 +1034,6 @@ def _structural_terminal_marker(
             repository_owner=repository_owner,
         )
     )
-
-
-def _direct_propose_admission_approved(
-    repository: str,
-    token: str,
-    raw_issue: Mapping[str, object],
-    issue_number: int,
-) -> bool:
-    labels, labels_valid = _label_names(raw_issue)
-    if not labels_valid or APPROVAL_LABEL not in labels:
-        return False
-
-    comment_pages = _github_issue_comment_pages(repository, token, issue_number)
-    comments = []
-    for page in comment_pages:
-        for raw in page:
-            try:
-                comments.append(decision_comment_from_raw(raw))
-            except ValueError:
-                continue
-
-    event_pages = _github_issue_event_pages(repository, token, issue_number)
-    events = []
-    for page in event_pages:
-        for raw in page:
-            if raw.get("event") != "labeled":
-                continue
-            try:
-                events.append(label_event_from_raw(raw))
-            except ValueError:
-                continue
-
-    return is_human_decision_approved(
-        expected_ref=propose_admission_ref(issue_number),
-        approval_label_present=True,
-        comments=tuple(comments),
-        label_events=tuple(events),
-    )
-
-
-def _explore_propose_successor_eligible(
-    repository: str,
-    token: str,
-    issue_number: int,
-) -> bool:
-    """Qualify current Propose routing as the successor of a durable Explore result."""
-
-    repository_owner = repository.split("/", 1)[0]
-    latest_result: str | None = None
-    for page in _github_issue_comment_pages(repository, token, issue_number):
-        for raw in page:
-            result = _explore_action_result_from_comment(
-                raw,
-                issue_number=issue_number,
-                repository_owner=repository_owner,
-            )
-            if result is not None:
-                latest_result = result
-    return latest_result == "PROPOSAL_READY"
-
-
-def _apply_propose_preactivation_eligibility(
-    repository: str,
-    token: str,
-    observations: tuple[GitHubIssueObservation, ...],
-    raw_by_issue: Mapping[int, Mapping[str, object]],
-) -> tuple[GitHubIssueObservation, ...]:
-    qualified: list[GitHubIssueObservation] = []
-    for observation in observations:
-        if observation.change == "unset" and observation.routing == ("lead", "propose-change"):
-            raw_issue = raw_by_issue.get(observation.issue_number)
-            eligible = False
-            if raw_issue is not None and observation.authoritative:
-                eligible = _direct_propose_admission_approved(
-                    repository,
-                    token,
-                    raw_issue,
-                    observation.issue_number,
-                )
-                if not eligible:
-                    eligible = _explore_propose_successor_eligible(
-                        repository,
-                        token,
-                        observation.issue_number,
-                    )
-            observation = replace(observation, preactivation_eligible=eligible)
-        qualified.append(observation)
-    return tuple(qualified)
 
 
 def _invalid_current_debt(observation: GitHubIssueObservation) -> GitHubIssueObservation:
@@ -1331,20 +1166,6 @@ def acquire_current_github_preflight(
     if open_decision.disposition == "FAIL_CLOSED":
         return open_preflight
 
-    if not open_decision.formal_issue_ids:
-        open_observations = _apply_propose_preactivation_eligibility(
-            repository,
-            token,
-            open_observations,
-            _raw_issue_map(open_pages),
-        )
-        open_preflight = acquire_dispatch_preflight(
-            observations=open_observations,
-            source_total_count=len(open_observations),
-            incomplete_results=False,
-            exhausted=True,
-        )
-
     closed_pages = _github_closed_routing_issue_pages(repository, token)
     if not _normalized_closed_observations(closed_pages):
         return open_preflight
@@ -1358,10 +1179,7 @@ def acquire_current_github_preflight(
     )
 
 
-def _serialize_worker_request(
-    request: WorkerRequest | None,
-    preflight: DispatchPreflight,
-) -> dict[str, Any]:
+def _serialize_worker_request(request: WorkerRequest | None, preflight: DispatchPreflight) -> dict[str, Any]:
     decision = classify_dispatch(preflight)
     return {
         "disposition": decision.disposition,
