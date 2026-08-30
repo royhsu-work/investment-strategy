@@ -3,6 +3,9 @@
 from pathlib import Path
 from typing import Literal
 
+import pytest
+
+import investment_strategy.scheduled_agent_runtime as runtime
 import investment_strategy.workflow_dispatch as workflow_dispatch
 from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
@@ -31,7 +34,6 @@ def issue(
     recovery: RecoveryEvidence = "not-candidate",
     terminal: TerminalEvidence = "not-terminal",
     provenance: ObservationProvenance = ObservationProvenance.QUALIFIED,
-    preactivation_eligible: bool = False,
 ) -> RepositoryIssueSnapshot:
     return RepositoryIssueSnapshot(
         issue_number=number,
@@ -42,7 +44,6 @@ def issue(
         premature_close_recovery=recovery,
         terminal_evidence=terminal,
         current_state_provenance=provenance,
-        preactivation_eligible=preactivation_eligible,
     )
 
 
@@ -60,29 +61,147 @@ def snapshot(*issues: RepositoryIssueSnapshot, complete: bool = True) -> Dispatc
     )
 
 
+def _queued_propose_payload(
+    number: int = 168,
+    *,
+    created_at: str = "2026-08-27T01:00:00Z",
+) -> dict[str, object]:
+    return {
+        "number": number,
+        "state": "open",
+        "body": "Change: unset",
+        "labels": [
+            {"name": "agent:lead"},
+            {"name": "action:propose-change"},
+        ],
+        "created_at": created_at,
+        "closed_at": None,
+    }
+
+
+def _queued_explore_payload(
+    number: int = 169,
+    *,
+    created_at: str = "2026-08-27T02:00:00Z",
+) -> dict[str, object]:
+    return {
+        "number": number,
+        "state": "open",
+        "body": "Change: unset",
+        "labels": [
+            {"name": "agent:lead"},
+            {"name": "action:explore-change"},
+        ],
+        "created_at": created_at,
+        "closed_at": None,
+    }
+
+
+def _duplicate_workflow_field_comment() -> dict[str, object]:
+    return {
+        "id": 5460000000,
+        "body": (
+            "## ACTION_RESULT\n\n"
+            "Workflow: #168\n"
+            "Change: `unset`\n"
+            "Action: `Lead / explore-change`\n"
+            "Result: `PROPOSAL_READY`\n\n"
+            "Evidence notes:\n"
+            "- Workflow: Scheduled Agent Bridge\n"
+        ),
+        "user": {"login": "github-actions[bot]"},
+        "author_association": "NONE",
+        "created_at": "2026-08-27T01:30:00Z",
+        "updated_at": "2026-08-27T01:30:00Z",
+    }
+
+
 def test_zero_formal_work_selects_oldest_combined_pre_activation_candidate() -> None:
     decision = classify_dispatch(
         snapshot(
-            issue(
-                20,
-                "unset",
-                ("lead", "propose-change"),
-                created_order=2,
-                preactivation_eligible=True,
-            ),
-            issue(19, "unset", ("lead", "explore-change"), created_order=1),
+            issue(20, "unset", ("lead", "propose-change"), created_order=1),
+            issue(19, "unset", ("lead", "explore-change"), created_order=2),
         )
     )
-    assert decision.preactivation_candidate_ids == (19, 20)
-    assert decision.selected_issue_id == 19
+    assert decision.preactivation_candidate_ids == (20, 19)
+    assert decision.selected_issue_id == 20
+    assert decision.selected_routing == ("lead", "propose-change")
 
 
-def test_unapproved_direct_propose_is_not_a_preactivation_candidate() -> None:
+def test_current_propose_tuple_is_preactivation_candidate_without_admission_state() -> None:
     decision = classify_dispatch(
         snapshot(issue(20, "unset", ("lead", "propose-change"), created_order=1))
     )
-    assert decision.preactivation_candidate_ids == ()
-    assert decision.disposition == "NO_WORK"
+    assert decision.preactivation_candidate_ids == (20,)
+    assert decision.selected_issue_id == 20
+    assert decision.selected_routing == ("lead", "propose-change")
+
+
+def test_production_fifo_does_not_read_history_to_qualify_current_propose(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    propose = _queued_propose_payload()
+    explore = _queued_explore_payload()
+    monkeypatch.setattr(
+        runtime,
+        "_github_open_issue_pages",
+        lambda repository, token: ((propose, explore),),
+    )
+    monkeypatch.setattr(runtime, "_github_closed_routing_issue_pages", lambda repository, token: ())
+
+    def forbidden_history(*args: object, **kwargs: object) -> object:
+        raise AssertionError("global dispatch must not re-derive current Propose eligibility")
+
+    monkeypatch.setattr(runtime, "_github_issue_comment_pages", forbidden_history)
+    assert not hasattr(runtime, "_github_issue_event_pages")
+
+    decision = classify_dispatch(
+        runtime.acquire_current_github_preflight(
+            "royhsu-work/investment-strategy",
+            "token",
+            repository_root=tmp_path,
+        )
+    )
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.preactivation_candidate_ids == (168, 169)
+    assert decision.selected_issue_id == 168
+    assert decision.selected_routing == ("lead", "propose-change")
+
+
+def test_irrelevant_duplicate_markdown_fields_cannot_remove_current_propose_from_fifo(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    propose = _queued_propose_payload()
+    explore = _queued_explore_payload()
+    duplicate_field = _duplicate_workflow_field_comment()
+    monkeypatch.setattr(
+        runtime,
+        "_github_open_issue_pages",
+        lambda repository, token: ((propose, explore),),
+    )
+    monkeypatch.setattr(runtime, "_github_closed_routing_issue_pages", lambda repository, token: ())
+    monkeypatch.setattr(
+        runtime,
+        "_github_issue_comment_pages",
+        lambda repository, token, issue_number: (
+            ((duplicate_field,),) if issue_number == 168 else ((),)
+        ),
+    )
+    assert not hasattr(runtime, "_github_issue_event_pages")
+
+    decision = classify_dispatch(
+        runtime.acquire_current_github_preflight(
+            "royhsu-work/investment-strategy",
+            "token",
+            repository_root=tmp_path,
+        )
+    )
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.preactivation_candidate_ids == (168, 169)
+    assert decision.selected_issue_id == 168
+    assert decision.selected_routing == ("lead", "propose-change")
 
 
 def test_one_formal_work_wins_over_queued_explore() -> None:

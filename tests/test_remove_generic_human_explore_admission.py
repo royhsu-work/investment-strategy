@@ -14,11 +14,17 @@ def _governance() -> str:
     return " ".join(AGENTS.read_text(encoding="utf-8").split())
 
 
-def test_routed_formal_explore_is_origin_neutral_for_queue_eligibility() -> None:
+def test_current_routed_intake_is_origin_neutral_for_queue_eligibility() -> None:
     text = _governance()
-    assert "ordinary routed Explore eligibility does not require Human approval" in text
-    assert "open `Lead / explore-change + Change: unset`" in text
-    assert "origin does not control dispatcher eligibility" in text
+    assert (
+        "Open `Lead / explore-change + Change: unset` and `Lead / propose-change + Change: unset` "
+        "entries are legal queued pre-activation work when routing is coherent" in text
+    )
+    assert (
+        "Origin, admission history, and semantic readiness do not control dispatcher eligibility "
+        "for either current tuple" in text
+    )
+    assert "historical comments/events merely to re-prove current queue participation" in text
 
 
 def test_formal_wip_and_stable_order_still_dominate_pre_activation_explore() -> None:
@@ -29,10 +35,10 @@ def test_formal_wip_and_stable_order_still_dominate_pre_activation_explore() -> 
     assert "premature-close recovery" in text
 
 
-def test_direct_propose_human_admission_remains_distinct() -> None:
+def test_direct_propose_human_admission_is_removed() -> None:
     text = _governance()
-    assert "Human direct-Propose admission" in text
-    assert "issue:<issue-number>:admission:lead:propose-change" in text
+    assert "Human direct-Propose admission" not in text
+    assert "issue:<issue-number>:admission:lead:propose-change" not in text
 
 
 def test_explore_only_human_authority_api_is_removed() -> None:
@@ -47,13 +53,8 @@ def test_explore_only_human_authority_api_is_removed() -> None:
 
 
 def test_remaining_human_boundaries_keep_provenance_bound_refs() -> None:
-    assert (
-        human_authority.decision_ref_for_boundary(
-            human_authority.HumanDecisionBoundary.PROPOSE_ADMISSION,
-            issue_number=93,
-        )
-        == "issue:93:admission:lead:propose-change"
-    )
+    assert not hasattr(human_authority, "propose_admission_ref")
+    assert "PROPOSE_ADMISSION" not in human_authority.HumanDecisionBoundary.__members__
     assert (
         human_authority.decision_ref_for_boundary(
             human_authority.HumanDecisionBoundary.ADVISORY_ADMISSION,

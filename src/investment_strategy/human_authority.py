@@ -12,7 +12,6 @@ DECISION_REF_PREFIX = "Human-Decision-For: "
 
 
 class HumanDecisionBoundary(StrEnum):
-    PROPOSE_ADMISSION = "propose-admission"
     ADVISORY_ADMISSION = "advisory-admission"
     ESCALATION_RESPONSE = "escalation-response"
 
@@ -68,10 +67,6 @@ class HumanInputFreshnessResult:
         return not self.blocking_comment_ids and not self.fail_closed_comment_ids
 
 
-def propose_admission_ref(issue_number: int) -> str:
-    return f"issue:{_positive_id(issue_number, 'issue_number')}:admission:lead:propose-change"
-
-
 def advisory_admission_ref(issue_number: int) -> str:
     return f"issue:{_positive_id(issue_number, 'issue_number')}:advisory-admission"
 
@@ -91,8 +86,6 @@ def decision_ref_for_boundary(
     except ValueError as exc:
         raise ValueError("unmapped Human-reserved boundary") from exc
 
-    if boundary is HumanDecisionBoundary.PROPOSE_ADMISSION:
-        return propose_admission_ref(_required_id(issue_number, "issue_number"))
     if boundary is HumanDecisionBoundary.ADVISORY_ADMISSION:
         return advisory_admission_ref(_required_id(issue_number, "issue_number"))
     if boundary is HumanDecisionBoundary.ESCALATION_RESPONSE:

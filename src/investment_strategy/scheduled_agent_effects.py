@@ -34,6 +34,7 @@ class StagedEffect:
 
     kind: str
     payload_json: str
+    derived: bool = False
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,8 @@ class EffectBatch:
 
     source: WorkerRequest
     effects: tuple[StagedEffect, ...]
+    explore_disposition: str | None = None
+    propose_disposition: str | None = None
 
 
 @dataclass(frozen=True)
@@ -121,6 +124,97 @@ def apply_effect_batch(
     return ApplyResult(True, "applied", continuation)
 
 
+def _derived_explore_effects(
+    source: WorkerRequest,
+    disposition: str,
+    requested: tuple[StagedEffect, ...],
+) -> tuple[StagedEffect, ...]:
+    """Derive action-owned Explore effects from the structured disposition."""
+
+    for effect in requested:
+        if effect.kind == "routing-transition":
+            raise ValueError("worker-chosen Explore routing is not allowed")
+        if effect.kind == "terminal-retirement":
+            raise ValueError("worker-chosen Explore terminal retirement is not allowed")
+
+    if disposition == "PROPOSAL_READY":
+        derived = StagedEffect(
+            kind="routing-transition",
+            payload_json=json.dumps(
+                {
+                    "issue_number": source.issue_number,
+                    "role": "lead",
+                    "action": "propose-change",
+                },
+                sort_keys=True,
+            ),
+            derived=True,
+        )
+        return (*requested, derived)
+    if disposition in {"NO_CHANGE_REQUIRED", "NO_GO"}:
+        derived = StagedEffect(
+            kind="terminal-retirement",
+            payload_json=json.dumps(
+                {"issue_number": source.issue_number, "expected_change": "unset"},
+                sort_keys=True,
+            ),
+            derived=True,
+        )
+        return (*requested, derived)
+    return requested
+
+
+def _worker_routing_target(effect: StagedEffect) -> tuple[str, str] | None:
+    if effect.kind != "routing-transition":
+        return None
+    try:
+        payload = json.loads(effect.payload_json)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    role = payload.get("role")
+    action = payload.get("action")
+    if not isinstance(role, str) or not isinstance(action, str):
+        return None
+    return role, action
+
+
+def _derived_propose_effects(
+    source: WorkerRequest,
+    disposition: str | None,
+    requested: tuple[StagedEffect, ...],
+) -> tuple[StagedEffect, ...]:
+    """Derive only the bounded pre-activation Propose research correction."""
+
+    for effect in requested:
+        if _worker_routing_target(effect) == ("lead", "explore-change"):
+            raise ValueError("worker-chosen Propose correction is not allowed")
+
+    if disposition is None:
+        return requested
+
+    for effect in requested:
+        if effect.kind in {"routing-transition", "terminal-retirement", GITHUB_MUTATION_KIND}:
+            raise ValueError(
+                "Propose research correction cannot include consequential worker effects"
+            )
+
+    derived = StagedEffect(
+        kind="routing-transition",
+        payload_json=json.dumps(
+            {
+                "issue_number": source.issue_number,
+                "role": "lead",
+                "action": "explore-change",
+            },
+            sort_keys=True,
+        ),
+        derived=True,
+    )
+    return (*requested, derived)
+
+
 def parse_effect_batch(raw: str, source: WorkerRequest) -> EffectBatch:
     """Parse same-invocation worker output and bind it to the authorized source."""
 
@@ -129,7 +223,16 @@ def parse_effect_batch(raw: str, source: WorkerRequest) -> EffectBatch:
         StagedEffect(kind=effect.kind, payload_json=effect.payload_json)
         for effect in result.requested_effects
     )
-    return EffectBatch(source=source, effects=effects)
+    if result.explore_disposition is not None:
+        effects = _derived_explore_effects(source, result.explore_disposition, effects)
+    if (source.role, source.action) == ("lead", "propose-change"):
+        effects = _derived_propose_effects(source, result.propose_disposition, effects)
+    return EffectBatch(
+        source=source,
+        effects=effects,
+        explore_disposition=result.explore_disposition,
+        propose_disposition=result.propose_disposition,
+    )
 
 
 def _effect_payload(effect: StagedEffect) -> dict[str, object] | None:
@@ -431,6 +534,39 @@ def _workflow_label_names(payload: Mapping[str, object]) -> tuple[str, ...] | No
     return tuple(sorted(names))
 
 
+def _trusted_proposal_ready_explore_result(
+    payload: Mapping[str, object],
+    *,
+    issue_number: int,
+    repository_owner: str,
+) -> bool:
+    """Recognize only the canonical Explore ACTION_RESULT header for Propose semantics."""
+
+    body = payload.get("body")
+    user = payload.get("user")
+    author_association = payload.get("author_association")
+    if not isinstance(body, str) or not isinstance(user, Mapping):
+        return False
+    actor = user.get("login")
+    trusted_owner = actor == repository_owner and author_association == "OWNER"
+    trusted_runtime = actor == "github-actions[bot]"
+    if not (trusted_owner or trusted_runtime):
+        return False
+
+    lines = body.splitlines()
+    try:
+        marker = lines.index("## ACTION_RESULT")
+    except ValueError:
+        return False
+    expected = [
+        f"Workflow: #{issue_number}",
+        "Change: unset",
+        "Action: Lead / explore-change",
+        "Result: PROPOSAL_READY",
+    ]
+    return lines[marker + 1 : marker + 5] == expected
+
+
 class GitHubEffectAdapter:
     """Production adapter for bounded durable effects requested by mapped workers."""
 
@@ -472,6 +608,59 @@ class GitHubEffectAdapter:
                 and observation.routing_debt
             )
         return observation.routing == _routing_identity(self.source)
+
+    def _has_unique_proposal_ready_baseline(self) -> bool:
+        owner = self.repository.split("/", 1)[0]
+        page = 1
+        matches = 0
+        while True:
+            comments = _github_json(
+                self.repository,
+                self.token,
+                f"issues/{self.source.issue_number}/comments?per_page=100&page={page}",
+            )
+            if not isinstance(comments, list):
+                return False
+            for comment in comments:
+                if not isinstance(comment, Mapping):
+                    return False
+                if _trusted_proposal_ready_explore_result(
+                    comment,
+                    issue_number=self.source.issue_number,
+                    repository_owner=owner,
+                ):
+                    matches += 1
+                    if matches > 1:
+                        return False
+            if len(comments) < 100:
+                return matches == 1
+            page += 1
+
+    def _derived_preactivation_propose_correction(
+        self,
+        effect: StagedEffect,
+        payload: Mapping[str, object],
+    ) -> bool:
+        if (
+            not effect.derived
+            or _routing_identity(self.source) != ("lead", "propose-change")
+            or effect.kind != "routing-transition"
+            or payload.get("role") != "lead"
+            or payload.get("action") != "explore-change"
+        ):
+            return False
+        current = self._current_issue()
+        if current is None:
+            return False
+        observation = normalize_github_issue(current)
+        return (
+            observation is not None
+            and observation.authoritative
+            and observation.issue_number == self.source.issue_number
+            and observation.state == "open"
+            and observation.change == "unset"
+            and observation.routing == ("lead", "propose-change")
+        )
 
     def _guard_github_mutation(self, payload: Mapping[str, object]) -> bool:
         operation = cast(str, payload["operation"])
@@ -582,6 +771,14 @@ class GitHubEffectAdapter:
             return False
         payload = _effect_payload(effect)
         if payload is None:
+            return False
+        propose_correction = self._derived_preactivation_propose_correction(effect, payload)
+        if (
+            _routing_identity(self.source) == ("lead", "propose-change")
+            and effect.kind != "issue-comment"
+            and not propose_correction
+            and not self._has_unique_proposal_ready_baseline()
+        ):
             return False
         if effect.kind == "terminal-retirement":
             return self._terminal_target_valid(

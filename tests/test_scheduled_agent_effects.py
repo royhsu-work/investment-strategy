@@ -28,6 +28,7 @@ from investment_strategy.workflow_dispatch import (
     EnumerationEvidence,
     ObservationProvenance,
     RepositoryIssueSnapshot,
+    classify_dispatch,
 )
 
 
@@ -196,6 +197,146 @@ def test_worker_result_transport_is_bound_to_machine_authorized_source() -> None
     batch = parse_effect_batch(_worker_result(effect), _request())
     assert batch.source == _request()
     assert batch.effects == (effect,)
+
+
+def test_selected_propose_without_explore_baseline_fails_locally_without_queue_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preflight = DispatchPreflight(
+        issues=(
+            RepositoryIssueSnapshot(
+                issue_number=168,
+                change="unset",
+                routing=("lead", "propose-change"),
+                created_order=1,
+            ),
+            RepositoryIssueSnapshot(
+                issue_number=169,
+                change="unset",
+                routing=("lead", "explore-change"),
+                created_order=2,
+            ),
+        ),
+        enumeration=EnumerationEvidence(
+            observed_count=2,
+            source_total_count=2,
+            incomplete_results=False,
+            exhausted=True,
+            observation_provenance=ObservationProvenance.QUALIFIED,
+        ),
+    )
+    decision = classify_dispatch(preflight)
+    assert decision.selected_issue_id == 168
+    assert decision.selected_routing == ("lead", "propose-change")
+
+    issue: dict[str, object] = {
+        "number": 168,
+        "state": "open",
+        "body": "Change: unset\n",
+        "created_at": "2026-08-27T00:00:00Z",
+        "closed_at": None,
+        "labels": [{"name": "agent:lead"}, {"name": "action:propose-change"}],
+    }
+
+    def fake_github_json(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        del repository, token, allow_not_found
+        if api_path == "issues/168" and method == "GET":
+            return json.loads(json.dumps(issue))
+        if api_path.startswith("issues/168/comments") and method == "GET":
+            return []
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    source = WorkerRequest(168, "lead", "propose-change")
+    activation = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 168,
+                "operation": "issue-update",
+                "fields": {"body": "Change: canonical-change\n"},
+                "expected": {"body": "Change: unset\n"},
+            }
+        ),
+    )
+    adapter = GitHubEffectAdapter("royhsu-work/investment-strategy", "token", source)
+    result = apply_effect_batch(
+        EffectBatch(source=source, effects=(activation,)),
+        fresh_preflight=lambda: preflight,
+        effect_guard=adapter.guard,
+        topology_validator=lambda _source, _effect: True,
+        apply_effect=lambda _effect: None,
+        observe_postcondition=lambda _effect: True,
+    )
+
+    assert result.applied is False
+    assert result.reason == "effect precondition rejected"
+    assert classify_dispatch(preflight).selected_issue_id == 168
+
+
+def test_selected_propose_with_ambiguous_explore_baselines_fails_action_local_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    issue: dict[str, object] = {
+        "number": 168,
+        "state": "open",
+        "body": "Change: unset\n",
+        "created_at": "2026-08-27T00:00:00Z",
+        "closed_at": None,
+        "labels": [{"name": "agent:lead"}, {"name": "action:propose-change"}],
+    }
+    baseline = {
+        "body": (
+            "## ACTION_RESULT\n"
+            "Workflow: #168\n"
+            "Change: unset\n"
+            "Action: Lead / explore-change\n"
+            "Result: PROPOSAL_READY\n"
+        ),
+        "user": {"login": "royhsu-work"},
+        "author_association": "OWNER",
+    }
+
+    def fake_github_json(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        del repository, token, allow_not_found
+        if api_path == "issues/168" and method == "GET":
+            return json.loads(json.dumps(issue))
+        if api_path.startswith("issues/168/comments") and method == "GET":
+            return [json.loads(json.dumps(baseline)), json.loads(json.dumps(baseline))]
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    source = WorkerRequest(168, "lead", "propose-change")
+    activation = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 168,
+                "operation": "issue-update",
+                "fields": {"body": "Change: canonical-change\n"},
+                "expected": {"body": "Change: unset\n"},
+            }
+        ),
+    )
+    adapter = GitHubEffectAdapter("royhsu-work/investment-strategy", "token", source)
+
+    assert not adapter.guard(activation)
 
 
 def test_supported_effect_guard_rejects_foreign_issue_and_unknown_kind() -> None:

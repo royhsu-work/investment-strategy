@@ -5,13 +5,13 @@ from datetime import UTC, datetime
 from investment_strategy.human_authority import (
     DecisionComment,
     LabelEvent,
+    advisory_admission_ref,
     is_human_decision_approved,
-    propose_admission_ref,
 )
 
 
 def test_equal_timestamp_comment_and_approval_event_fails_closed() -> None:
-    decision_ref = propose_admission_ref(47)
+    decision_ref = advisory_admission_ref(47)
     timestamp = datetime(2026, 8, 16, 7, 1, tzinfo=UTC)
     comment = DecisionComment(
         id=10,

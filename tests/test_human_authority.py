@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import investment_strategy.human_authority as authority
 from investment_strategy.human_authority import (
     DecisionComment,
     HumanDecisionBoundary,
@@ -16,7 +17,6 @@ from investment_strategy.human_authority import (
     is_human_advisory_admission_approved,
     is_human_decision_approved,
     label_event_from_raw,
-    propose_admission_ref,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,8 +82,26 @@ def _approved(
     )
 
 
+def test_normal_direct_propose_human_boundary_is_absent_while_others_remain() -> None:
+    assert not hasattr(authority, "propose_admission_ref")
+    assert set(HumanDecisionBoundary) == {
+        HumanDecisionBoundary.ADVISORY_ADMISSION,
+        HumanDecisionBoundary.ESCALATION_RESPONSE,
+    }
+    with pytest.raises(ValueError, match="unmapped Human-reserved boundary"):
+        decision_ref_for_boundary("propose-admission", issue_number=47)
+    assert decision_ref_for_boundary(
+        HumanDecisionBoundary.ADVISORY_ADMISSION,
+        issue_number=47,
+    ) == advisory_admission_ref(47)
+    assert decision_ref_for_boundary(
+        HumanDecisionBoundary.ESCALATION_RESPONSE,
+        escalation_comment_id=1234,
+    ) == escalation_response_ref(1234)
+
+
 def test_actor_identity_alone_is_not_human_authority() -> None:
-    decision_ref = propose_admission_ref(47)
+    decision_ref = advisory_admission_ref(47)
     assert not _approved(
         decision_ref,
         comments=(_comment(id=1, minute=1, decision_ref=decision_ref, app="chatgpt"),),
@@ -109,7 +127,7 @@ def test_actor_identity_alone_is_not_human_authority() -> None:
 
 
 def test_valid_human_comment_and_later_human_approval_event_pass() -> None:
-    decision_ref = propose_admission_ref(47)
+    decision_ref = advisory_admission_ref(47)
     assert _approved(
         decision_ref,
         comments=(_comment(id=10, minute=1, decision_ref=decision_ref),),
@@ -120,12 +138,12 @@ def test_valid_human_comment_and_later_human_approval_event_pass() -> None:
 def test_missing_or_mismatched_decision_ref_cannot_satisfy_boundary() -> None:
     comments = (_comment(id=10, minute=1, decision_ref=advisory_admission_ref(47)),)
     events = (_event(id=20, minute=2),)
-    assert not _approved(propose_admission_ref(47), comments=comments, events=events)
+    assert not _approved(escalation_response_ref(47), comments=comments, events=events)
 
 
 def test_event_first_binding_prevents_one_event_from_fanning_out() -> None:
     ref_one = advisory_admission_ref(47)
-    ref_two = propose_admission_ref(47)
+    ref_two = escalation_response_ref(47)
     comments = (
         _comment(id=10, minute=1, decision_ref=ref_one),
         _comment(id=11, minute=2, decision_ref=ref_two),
@@ -168,7 +186,7 @@ def test_current_approval_label_and_qualifying_labeled_event_are_required() -> N
 
 
 def test_raw_adapter_preserves_missing_provenance_as_fail_closed_evidence() -> None:
-    decision_ref = propose_admission_ref(47)
+    decision_ref = advisory_admission_ref(47)
     raw_comment: dict[str, object] = {
         "id": 10,
         "created_at": "2026-08-16T07:01:00Z",
@@ -231,13 +249,8 @@ def test_unlabeled_event_never_establishes_authority() -> None:
 
 
 def test_current_human_reserved_boundaries_use_exact_serialized_anchors() -> None:
-    assert propose_admission_ref(52) == "issue:52:admission:lead:propose-change"
     assert advisory_admission_ref(52) == "issue:52:advisory-admission"
     assert escalation_response_ref(5303804185) == "issuecomment:5303804185"
-    assert decision_ref_for_boundary(
-        HumanDecisionBoundary.PROPOSE_ADMISSION,
-        issue_number=52,
-    ) == propose_admission_ref(52)
     assert decision_ref_for_boundary(
         HumanDecisionBoundary.ADVISORY_ADMISSION,
         issue_number=52,
@@ -252,11 +265,11 @@ def test_unmapped_or_incomplete_human_reserved_boundary_fails_closed() -> None:
     with pytest.raises(ValueError, match="unmapped Human-reserved boundary"):
         decision_ref_for_boundary("explore-admission", issue_number=47)
     with pytest.raises(ValueError, match="issue_number is required"):
-        decision_ref_for_boundary(HumanDecisionBoundary.PROPOSE_ADMISSION)
+        decision_ref_for_boundary(HumanDecisionBoundary.ADVISORY_ADMISSION)
     with pytest.raises(ValueError, match="escalation_comment_id is required"):
         decision_ref_for_boundary(HumanDecisionBoundary.ESCALATION_RESPONSE)
     with pytest.raises(ValueError, match="positive integer"):
-        propose_admission_ref(0)
+        advisory_admission_ref(0)
 
 
 def test_human_advisory_admission_requires_distinct_intake_capability() -> None:

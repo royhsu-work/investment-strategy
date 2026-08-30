@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from investment_strategy.scheduled_agent_effects import parse_effect_batch
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 from investment_strategy.scheduled_agent_worker import (
     WorkerToolRuntime,
@@ -44,8 +45,27 @@ def _result_json(*, role: str = "executor", action: str = "implement-change") ->
             "issue_number": 133,
             "role": role,
             "action": action,
+            "explore_disposition": None,
             "result_content": "completed bounded local work",
             "requested_effects": [],
+        }
+    )
+
+
+def _explore_result_json(
+    disposition: str,
+    *,
+    result_content: str = "bounded Explore result",
+    requested_effects: list[dict[str, str]] | None = None,
+) -> str:
+    return json.dumps(
+        {
+            "issue_number": 133,
+            "role": "lead",
+            "action": "explore-change",
+            "explore_disposition": disposition,
+            "result_content": result_content,
+            "requested_effects": requested_effects or [],
         }
     )
 
@@ -312,8 +332,103 @@ def test_worker_accepts_exact_structured_result(tmp_path: Path) -> None:
         "executor",
         "implement-change",
     )
+    assert result.explore_disposition is None
     assert result.result_content == "completed bounded local work"
     assert result.requested_effects == ()
+
+
+@pytest.mark.parametrize(
+    "disposition",
+    ("PROPOSAL_READY", "HUMAN_DECISION_REQUIRED", "NO_CHANGE_REQUIRED", "NO_GO"),
+)
+def test_explore_worker_transports_exact_bounded_disposition(disposition: str) -> None:
+    source = WorkerRequest(133, "lead", "explore-change")
+    batch = parse_effect_batch(_explore_result_json(disposition), source)
+
+    assert batch.explore_disposition == disposition
+
+
+def test_explore_worker_rejects_unknown_structured_disposition() -> None:
+    source = WorkerRequest(133, "lead", "explore-change")
+
+    with pytest.raises(ValueError, match="Explore disposition"):
+        parse_effect_batch(_explore_result_json("SPECIFICATION_BLOCKED"), source)
+
+
+def test_proposal_ready_derives_same_issue_propose_routing() -> None:
+    source = WorkerRequest(133, "lead", "explore-change")
+    batch = parse_effect_batch(_explore_result_json("PROPOSAL_READY"), source)
+
+    assert len(batch.effects) == 1
+    assert batch.effects[0].kind == "routing-transition"
+    assert json.loads(batch.effects[0].payload_json) == {
+        "issue_number": 133,
+        "role": "lead",
+        "action": "propose-change",
+    }
+
+
+def test_terminal_explore_dispositions_derive_terminal_retirement() -> None:
+    source = WorkerRequest(133, "lead", "explore-change")
+
+    for disposition in ("NO_CHANGE_REQUIRED", "NO_GO"):
+        batch = parse_effect_batch(_explore_result_json(disposition), source)
+        terminal = [effect for effect in batch.effects if effect.kind == "terminal-retirement"]
+        assert len(terminal) == 1
+        assert json.loads(terminal[0].payload_json) == {
+            "issue_number": 133,
+            "expected_change": "unset",
+        }
+
+
+def test_explore_worker_chosen_routing_is_rejected() -> None:
+    source = WorkerRequest(133, "lead", "explore-change")
+    worker_routing = {
+        "kind": "routing-transition",
+        "payload_json": json.dumps(
+            {"issue_number": 133, "role": "reviewer", "action": "review-openspec"}
+        ),
+    }
+
+    with pytest.raises(ValueError, match="worker-chosen Explore routing"):
+        parse_effect_batch(
+            _explore_result_json("PROPOSAL_READY", requested_effects=[worker_routing]),
+            source,
+        )
+
+
+def test_narrative_result_fields_cannot_redefine_structured_explore_disposition() -> None:
+    source = WorkerRequest(133, "lead", "explore-change")
+    narrative = (
+        "Workflow: #999\n"
+        "Action: Reviewer / review-openspec\n"
+        "Result: NO_GO\n"
+        "This is narrative evidence only."
+    )
+    batch = parse_effect_batch(
+        _explore_result_json("PROPOSAL_READY", result_content=narrative),
+        source,
+    )
+
+    assert batch.explore_disposition == "PROPOSAL_READY"
+    assert len(batch.effects) == 1
+    assert json.loads(batch.effects[0].payload_json)["action"] == "propose-change"
+
+
+def test_human_decision_result_retains_explore_without_routing_derivation() -> None:
+    source = WorkerRequest(133, "lead", "explore-change")
+    escalation = {
+        "kind": "issue-comment",
+        "payload_json": json.dumps({"issue_number": 133, "body": "HUMAN_DECISION_REQUIRED"}),
+    }
+    batch = parse_effect_batch(
+        _explore_result_json("HUMAN_DECISION_REQUIRED", requested_effects=[escalation]),
+        source,
+    )
+
+    assert batch.explore_disposition == "HUMAN_DECISION_REQUIRED"
+    assert all(effect.kind != "routing-transition" for effect in batch.effects)
+    assert any(effect.kind == "issue-comment" for effect in batch.effects)
 
 
 def test_scheduled_agent_workflows_do_not_deploy_openai_api_worker() -> None:

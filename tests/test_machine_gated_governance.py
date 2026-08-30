@@ -213,7 +213,7 @@ def test_lead_resolve_question_owns_exact_candidate_debt_disposition() -> None:
         assert required.lower() in change.lower()
 
 
-def test_direct_propose_is_not_queue_eligible_without_executable_admission() -> None:
+def test_current_propose_is_queue_eligible_without_global_admission_state() -> None:
     preflight = _complete(
         RepositoryIssueSnapshot(
             issue_number=137,
@@ -225,8 +225,10 @@ def test_direct_propose_is_not_queue_eligible_without_executable_admission() -> 
 
     decision = workflow_dispatch.classify_dispatch(preflight)
 
-    assert decision.disposition == "NO_WORK"
-    assert decision.preactivation_candidate_ids == ()
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.preactivation_candidate_ids == (137,)
+    assert decision.selected_issue_id == 137
+    assert decision.selected_routing == ("lead", "propose-change")
 
 
 def test_dispatch_exposes_open_selection_without_structural_history_contract() -> None:

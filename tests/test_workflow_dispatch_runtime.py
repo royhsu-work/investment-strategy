@@ -30,7 +30,6 @@ def issue(
     *,
     created_order: int = 0,
     provenance: ObservationProvenance = ObservationProvenance.QUALIFIED,
-    preactivation_eligible: bool = False,
 ) -> RepositoryIssueSnapshot:
     return RepositoryIssueSnapshot(
         issue_number=number,
@@ -39,7 +38,6 @@ def issue(
         state="open",
         created_order=created_order,
         current_state_provenance=provenance,
-        preactivation_eligible=preactivation_eligible,
     )
 
 
@@ -159,7 +157,6 @@ def test_zero_formal_work_selects_oldest_preactivation_candidate() -> None:
                 "unset",
                 ("lead", "propose-change"),
                 created_order=2,
-                preactivation_eligible=True,
             ),
             issue(19, "unset", ("lead", "explore-change"), created_order=1),
         )
@@ -177,7 +174,6 @@ def test_propose_prewrite_requires_same_issue_authorization() -> None:
             "unset",
             ("lead", "propose-change"),
             created_order=2,
-            preactivation_eligible=True,
         ),
     )
     assert not action_entry_authorized(preflight, 20, ("lead", "propose-change"))
@@ -398,13 +394,12 @@ def _explore_action_result_comment(
     }
 
 
-def test_explore_originated_propose_is_eligible_without_direct_human_admission(
+def test_current_propose_routing_is_selected_without_history_admission(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     successor = _queued_propose_payload()
     later_explore = _queued_explore_payload()
-    proposal_ready = _explore_action_result_comment()
 
     monkeypatch.setattr(
         runtime,
@@ -412,18 +407,11 @@ def test_explore_originated_propose_is_eligible_without_direct_human_admission(
         lambda repository, token: ((successor, later_explore),),
     )
     monkeypatch.setattr(runtime, "_github_closed_routing_issue_pages", lambda repository, token: ())
-    monkeypatch.setattr(
-        runtime,
-        "_github_issue_comment_pages",
-        lambda repository, token, issue_number: (
-            ((proposal_ready,),) if issue_number == 158 else ((),)
-        ),
-    )
 
-    def forbidden_events(*args: object, **kwargs: object) -> object:
-        raise AssertionError("Explore-originated Propose must not require Human admission events")
+    def forbidden_comments(*args: object, **kwargs: object) -> object:
+        raise AssertionError("normal dispatch must not read history to admit current Propose")
 
-    monkeypatch.setattr(runtime, "_github_issue_event_pages", forbidden_events)
+    monkeypatch.setattr(runtime, "_github_issue_comment_pages", forbidden_comments)
 
     decision = classify_dispatch(
         runtime.acquire_current_github_preflight(
@@ -438,7 +426,7 @@ def test_explore_originated_propose_is_eligible_without_direct_human_admission(
     assert decision.selected_routing == ("lead", "propose-change")
 
 
-def test_untrusted_explore_result_does_not_qualify_propose_successor(
+def test_untrusted_explore_history_cannot_remove_current_propose_from_fifo(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -466,9 +454,9 @@ def test_untrusted_explore_result_does_not_qualify_propose_successor(
         )
     )
     assert decision.disposition == "AUTHORIZE"
-    assert decision.preactivation_candidate_ids == (159,)
-    assert decision.selected_issue_id == 159
-    assert decision.selected_routing == ("lead", "explore-change")
+    assert decision.preactivation_candidate_ids == (158, 159)
+    assert decision.selected_issue_id == 158
+    assert decision.selected_routing == ("lead", "propose-change")
 
 
 def _closed_routed_issue_payload(*, state_reason: str = "completed") -> dict[str, object]:

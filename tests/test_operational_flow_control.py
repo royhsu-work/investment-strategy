@@ -89,41 +89,51 @@ def test_required_separate_follow_up_is_directly_routed_to_explore() -> None:
         assert required in change
 
 
-def test_routed_explore_is_origin_neutral_but_creation_remains_bounded() -> None:
+def test_current_routed_intake_is_origin_neutral_but_creation_remains_bounded() -> None:
     shared = _normalized(AGENTS)
     for required in (
-        "ordinary routed Explore eligibility does not require Human approval",
-        "origin does not control dispatcher eligibility",
+        (
+            "Open `Lead / explore-change + Change: unset` and "
+            "`Lead / propose-change + Change: unset` entries are legal queued pre-activation work "
+            "when routing is coherent"
+        ),
+        (
+            "Origin, admission history, and semantic readiness do not control dispatcher "
+            "eligibility for either current tuple"
+        ),
         "Scheduled Agents MUST NOT create arbitrary routed Explore work",
         "deduplication and one-candidate limits",
         (
             "required separate follow-up routing remains derived from its exact "
             "approved source defer decision/linkage"
         ),
-        "direct-Propose fallback preserves the original Propose authority envelope",
     ):
         assert required in shared
     for obsolete in (
         "approved origin classes",
         "creation-bound Human Explore admission alternative",
         "complete approved origin set",
+        "direct-Propose fallback preserves the original Propose authority envelope",
     ):
         assert obsolete not in shared
 
 
-def test_propose_activation_consumes_origin_neutral_shared_queue() -> None:
+def test_propose_activation_consumes_current_routing_shared_queue() -> None:
     change = _normalized(OPEN_SPEC_CHANGE)
     for required in (
-        "complete shared pre-activation candidate-set contract",
-        "every coherent open `Lead / explore-change + Change: unset` entry",
-        "Do not maintain or infer an action-local Explore-origin admission enumeration",
-        "same-Issue direct-Propose fallback preserving its original authority envelope",
-        "MUST NOT activate while an older eligible Explore candidate",
-        "deterministic combined pre-activation winner",
+        "shared dispatcher owns one combined pre-activation queue",
+        (
+            "every coherent open `Lead / explore-change + Change: unset` and "
+            "`Lead / propose-change + Change: unset` entry"
+        ),
+        "MUST NOT reconstruct origin/admission history",
+        "Require the consumed pre-write machine decision to authorize this exact Issue",
+        "independently choose among queued candidates",
+        "action-local semantic preconditions still pass",
     ):
         assert required in change
     assert "approved Explore-origin set" not in change
-    assert "combine valid Human-admitted open `Lead / explore-change + Change: unset`" not in change
+    assert "same-Issue direct-Propose fallback" not in change
 
 
 def test_optional_or_plain_deferred_work_does_not_create_queue_admission() -> None:
@@ -138,32 +148,35 @@ def test_optional_or_plain_deferred_work_does_not_create_queue_admission() -> No
         assert required in shared
 
 
-def test_unset_direct_propose_may_fall_back_to_explore_without_second_admission() -> None:
+def test_selected_propose_research_gap_returns_same_issue_without_dispatcher_fallback() -> None:
     change = _normalized(OPEN_SPEC_CHANGE)
     explore = _normalized(EXPLORE)
     for required in (
-        "Change: unset",
-        "not yet proposal-ready",
-        "requested same-Issue routing effect to `Lead / explore-change`",
-        "do not request `HANDOFF` or a second Human admission",
-        "fresh post-apply dispatch",
+        (
+            "Missing, ambiguous, stale, contradictory, unsupported, or materially invalidated "
+            "baseline/source evidence does not cause dispatcher fallback to another queued Issue"
+        ),
+        "`RESEARCH_REQUIRED`",
+        "same Issue `Lead / propose-change → Lead / explore-change` correction",
+        "preserving `Change: unset` and the Issue's original queue identity",
     ):
         assert required in change
     for required in (
-        "pre-activation Propose fallback",
-        "same admitted authority envelope",
-        "returns to `Lead / propose-change`",
-        "no second Human admission",
+        "`RESEARCH_REQUIRED`",
+        "repository application derives the same-Issue correction back to `Lead / explore-change`",
+        "This retains the selected Issue rather than falling through to later work",
     ):
         assert required in explore
 
 
-def test_activated_change_cannot_fall_back_from_propose_to_explore() -> None:
+def test_propose_research_correction_is_bounded_by_human_and_formal_boundaries() -> None:
     change = _normalized(OPEN_SPEC_CHANGE)
     for required in (
-        "non-`unset` Change",
-        "MUST NOT route backward to Explore",
-        "`Lead / resolve-question`",
+        "the worker MUST NOT request the correction routing itself",
+        "still researchable within the same bounded problem",
+        "new Human-reserved requirement, scope/risk acceptance, or architecture decision",
+        "Once a non-`unset` Change identity exists",
+        "formal semantic correction uses `Lead / resolve-question`",
     ):
         assert required in change
 

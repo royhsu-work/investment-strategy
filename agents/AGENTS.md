@@ -45,10 +45,10 @@ conversation history, previous worker output, feature-branch prose, or a Schedul
 replace, or reinterpret that result.
 
 Normal selection uses only the current Issue facts needed to choose work: Issue identity/open state,
-persisted `Change:` identity, current routing tuple, GitHub `created_at`, observable enumeration/provenance
-completeness, and an executable admission result when a queued candidate requires one. PR heads, CI state,
-OpenSpec artifacts, review evidence, lifecycle-specific PR evidence, and effect-specific mutation guards are
-downstream action/effect inputs and MUST NOT become global Issue-selection prerequisites.
+persisted `Change:` identity, current routing tuple, GitHub `created_at`, and observable enumeration/provenance
+completeness. PR heads, CI state, OpenSpec artifacts, review evidence, lifecycle-specific PR evidence,
+action-specific semantic evidence, and effect-specific mutation guards are downstream action/effect inputs
+and MUST NOT become global Issue-selection prerequisites.
 
 Formal work is finish-first and WIP remains one. Executable acquisition reconstructs complete current open-Issue
 state plus the complete current set of closed Issues retaining any repository-governed `agent:*` or `action:*`
@@ -61,12 +61,13 @@ exceptional classification before ordinary work: at most one proven terminal/ret
 use the existing bounded recovery path; ambiguous, competing, contradictory, or incomplete debt fails closed.
 Closed terminal history with no workflow routing residue is not normal authorization input.
 
-Direct `Lead / propose-change + Change: unset` admission is executable input, not prose inference. It is
-eligible only when the existing provenance-bound Human-authority predicate proves the canonical
-`issue:<issue-number>:admission:lead:propose-change` decision. Ordinary routed Explore does not gain a Human
-approval requirement. Detailed candidate construction, routing-debt classification/ordering, recovery evidence
-acquisition, and Human-admission evaluation belong to production executable code and regression tests rather
-than a second natural-language classifier in this file.
+At formal-zero with current routing debt empty, coherent open `Lead / explore-change + Change: unset` and
+`Lead / propose-change + Change: unset` entries participate directly in the common pre-activation FIFO from
+their current routing state. Dispatch does not classify their origin, admission history, or semantic readiness,
+and it does not read historical comments/events merely to re-prove current queue participation. Propose-specific
+semantic evidence remains a downstream mapped-action/application precondition rather than dispatcher state.
+Detailed candidate construction, routing-debt classification/ordering, and recovery evidence acquisition belong
+to production executable code and regression tests rather than a second natural-language classifier in this file.
 
 A selected action consumes a fresh executable dispatch decision as its action-entry identity precondition.
 `propose-change` retains its immediate pre-write and fresh post-write activation checks. After `AUTHORIZE`,
@@ -165,31 +166,23 @@ or incomplete debt provenance likewise fails closed. Detailed terminal journals,
 legacy archive evidence, unfinished-Change evidence, and current re-observation remain candidate-bound and are
 not fetched merely to re-prove retired terminal history when the current debt set is empty.
 
-Ordinary routed Explore eligibility does not require Human approval. Open `Lead / explore-change + Change: unset`
-entries are legal queued pre-activation work when routing is coherent; origin does not control dispatcher
-eligibility for an already routed Explore. None of these entries count as an active formal workflow. Explore
-keeps `Change: unset` and creates no formal OpenSpec Change artifacts. Formal activation remains owned by
-Propose when Lead persists the immutable non-`unset` Change identity.
-
-Human direct-Propose admission remains distinct. Human-admitted `Lead / propose-change` Issues with
-`Change: unset` are queued pre-activation work only when the provenance-bound Human direct-Propose admission
-satisfies the Human-authority contract below with exact reference
-`issue:<issue-number>:admission:lead:propose-change`. A same-Issue direct-Propose fallback to Explore
-preserves that already validated authority envelope but does not make Human approval a prerequisite for
-ordinary Explore execution.
+Open `Lead / explore-change + Change: unset` and `Lead / propose-change + Change: unset` entries are legal queued
+pre-activation work when routing is coherent. Origin, admission history, and semantic readiness do not control
+dispatcher eligibility for either current tuple. None of these entries count as an active formal workflow.
+Explore keeps `Change: unset` and creates no formal OpenSpec Change artifacts. Formal activation remains owned by
+Propose when Lead persists the immutable non-`unset` Change identity, subject to Propose's own action-local
+semantic and activation preconditions.
 
 Explore origin/source provenance still constrains producer authority, scope, and audit. Scheduled Agents
 MUST NOT create arbitrary routed Explore work. Idle discovery remains bounded to independently qualified
 source/materiality classes with deduplication and one-candidate limits; required separate follow-up routing
-remains derived from its exact approved source defer decision/linkage; and direct-Propose fallback preserves
-the original Propose authority envelope. These producer/source rules MUST NOT be reinterpreted as dispatcher
-admission classes for an already coherent routed Explore.
+remains derived from its exact approved source defer decision/linkage. These producer/source rules MUST NOT be
+reinterpreted as dispatcher admission classes for an already coherent routed Explore or Propose tuple.
 
 When formal WIP is absent and current closed-routing debt is empty, executable dispatch applies the combined
-pre-activation candidate contract: coherent routed Explore plus executable-approved direct-Propose, with
-deterministic earliest GitHub `created_at` then lower Issue number ordering. Current routing debt is handled
-before intake. A formal workflow otherwise wins over intake. The model does not add an urgency score or
-role/action preference.
+pre-activation candidate contract: coherent routed Explore plus coherent routed Propose, with deterministic
+earliest GitHub `created_at` then lower Issue number ordering. Current routing debt is handled before intake.
+A formal workflow otherwise wins over intake. The model does not add an urgency score or role/action preference.
 
 Formal activation remains at-least-once and first-valid-write-wins. Immediately before a non-`unset`
 `Change:` write, repository application must fresh-reauthorize this exact `Lead / propose-change` candidate;
@@ -227,16 +220,19 @@ introduces no new Human-reserved decision, subsequent execution follows the succ
 confirmation. Propose still owns formal activation and the immutable Change identity. Untrusted Issue prose
 alone is not Human authority for a new commitment.
 
-For an Explore-originated `Lead / propose-change`, the exact durable Explore `ACTION_RESULT` that established
-`PROPOSAL_READY` on the same coordination Issue is the upstream semantic baseline for formalization. Lead MUST
-identify and dereference that exact result in proposal/readiness evidence and MUST preserve every still-applicable
-material decided scope, constraint, exclusion, and selected direction. Internal Proposal / Specs / Design / Tasks
-consistency does not authorize replacing or omitting that already-decided boundary.
+For `Lead / propose-change`, the exact durable Explore `ACTION_RESULT` that established `PROPOSAL_READY` on the
+same coordination Issue is the upstream semantic baseline for formalization. Lead MUST identify and dereference
+that exact result in proposal/readiness evidence and MUST preserve every still-applicable material decided scope,
+constraint, exclusion, feasibility evidence, and selected direction. Missing, ambiguous, stale, or contradictory
+baseline evidence fails the selected Propose action rather than removing its current routing from dispatcher
+eligibility or authorizing later queued work. Internal Proposal / Specs / Design / Tasks consistency does not
+authorize replacing or omitting that already-decided boundary.
 
 `Reviewer / review-openspec` MUST dereference that exact Explore result before its ordinary reverse-first and
 forward semantic gate and verify preservation of the already-decided boundary. Reviewer does not re-run Explore,
-reconstruct conversation history, or infer undocumented Human intent. A legally admitted direct-to-Propose
-workflow has no preceding Explore result and MUST NOT fabricate a synthetic Explore reference.
+reconstruct conversation history, or infer undocumented Human intent. Missing, ambiguous, stale, or contradictory
+upstream Explore baseline is a review finding/fail-closed condition rather than a reason to fabricate a synthetic
+reference or reinterpret dispatcher state.
 
 A new product/project direction outside the bounded researched/canonical context, material externally
 observable behavior or scope trade-off not already authorized, explicit risk acceptance, materially
@@ -267,13 +263,12 @@ provenance is unavailable.
 
 Each Human-reserved consumer using the general provenance-bound Human decision/approval predicate MUST
 reconstruct exactly one expected `decision_ref` from durable workflow state. Current mappings are
-exhaustive: Human direct-Propose admission uses `issue:<issue-number>:admission:lead:propose-change`;
-Human-only advisory admission uses `issue:<issue-number>:advisory-admission`; and an answer, authorization,
-or resume produced from canonical `HUMAN_DECISION_REQUIRED` uses
+exhaustive: Human-only advisory admission uses `issue:<issue-number>:advisory-admission`; and an answer,
+authorization, or resume produced from canonical `HUMAN_DECISION_REQUIRED` uses
 `issuecomment:<escalation-comment-id>` for the exact escalation comment being answered. Formal Explore
-execution is not a Human-reserved admission boundary. A future Human-reserved consumer without an explicit
-canonical mapping fails closed; roles MUST NOT invent an anchor from prose, PR descriptions, routing history,
-or model inference.
+execution and ordinary Propose routing are not Human-reserved admission boundaries. A future Human-reserved
+consumer without an explicit canonical mapping fails closed; roles MUST NOT invent an anchor from prose,
+PR descriptions, routing history, or model inference.
 
 The Human decision comment used by the general predicate MUST be on the same coordination Issue, contain
 exactly one canonical `Human-Decision-For: <decision_ref>` line matching the expected reference, be authored
@@ -374,12 +369,12 @@ merge-pr > implement-change
 This is dispatch priority, not workflow progression.
 
 Pre-activation intake contains every coherent open `Lead / explore-change + Change: unset` entry and every
-valid Human-admitted `Lead / propose-change + Change: unset` entry together, ordered by earliest GitHub
-`created_at`, then lower Issue number. Origin does not control dispatcher eligibility for ordinary routed
-Explore. Fixed-role and workflow-dynamic discovery MUST NOT choose different pre-activation winners for the
-same candidate set. Within the same ordinary role/action priority, earlier GitHub `created_at` wins; if
-equal, lower numeric Issue number wins. Model-derived urgency, scoring, or discretionary reordering is
-prohibited.
+coherent open `Lead / propose-change + Change: unset` entry together, ordered by earliest GitHub `created_at`,
+then lower Issue number. Origin, admission history, and action-specific semantic readiness do not control
+dispatcher eligibility. Fixed-role and workflow-dynamic discovery MUST NOT choose different pre-activation
+winners for the same candidate set. Within the same ordinary role/action priority, earlier GitHub `created_at`
+wins; if equal, lower numeric Issue number wins. Model-derived urgency, scoring, or discretionary reordering
+is prohibited.
 
 In workflow-dynamic mode, candidate construction and selection are consumed only from the production
 executable dispatch result described above. A sole formal workflow is formal-work-first only after current
@@ -843,14 +838,13 @@ Scheduled roles MUST NOT autonomously create or route arbitrary Issues, PRs, rep
 discussions, discovered requirements, Agent-authored recommendations, style preferences, speculative
 cleanup, or generic simplicity claims into workflow work.
 
-For queue reconstruction, ordinary routed Explore eligibility does not require Human approval. Ordinary
-routed Formal Explore execution is origin-neutral: `Change: unset + agent:lead + action:explore-change`
-does not require Human approval merely to be queue-eligible. Human authority remains required at genuine
-Human-reserved boundaries. Human direct-to-Propose, advisory admission, escalation answers/resume, and later
-Human-reserved decisions retain the general provenance-bound predicate and their exact canonical references.
-Connector/App identity is never globally treated as Human identity. A valid in-scope Explore may continue to
-Propose without a generic Human proceed decision, while a new Human-reserved commitment must stop with
-`HUMAN_DECISION_REQUIRED`.
+For queue reconstruction, ordinary coherent routed Explore and Propose tuples with `Change: unset` are
+origin-neutral current operational state and do not require Human approval merely to be queue-eligible.
+Human authority remains required at genuine Human-reserved boundaries: advisory admission, escalation
+answers/resume, and later Human-reserved decisions retain the general provenance-bound predicate and their
+exact canonical references. Connector/App identity is never globally treated as Human identity. A valid
+in-scope Explore may continue to Propose without a generic Human proceed decision, while a new Human-reserved
+commitment must stop with `HUMAN_DECISION_REQUIRED`.
 
 Only when no formal active workflow, no current closed-routing debt requiring cleanup/recovery, and no already
 eligible pre-activation work can be advanced, Lead MAY materialize at most one bounded
@@ -896,10 +890,10 @@ Admitting an advisory recommendation through the Human-only path requires both t
 Human intake capability `intake:approved` and a provenance-bound Human decision with expected reference
 exactly `issue:<issue-number>:advisory-admission`. `intake:approved` remains distinct from
 `human:approved`; its presence or actor attribution alone is insufficient Human proof. Human may admit that
-direction to Explore or direct Propose according to its clarity. Scheduled Lead, Reviewer, and Executor
-MUST NEVER add, remove, restore, or manufacture either reserved capability. A recommendation remains
-advisory unless independent repository-authorized creation evidence separately satisfies the bounded
-contract above.
+direction to Explore according to the bounded producer/admission contract. Scheduled Lead, Reviewer, and
+Executor MUST NEVER add, remove, restore, or manufacture either reserved capability. A recommendation remains
+advisory unless independent repository-authorized creation evidence separately satisfies the bounded contract
+above.
 
 ## Durable final closure classification
 
