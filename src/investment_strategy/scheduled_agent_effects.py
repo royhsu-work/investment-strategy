@@ -196,7 +196,9 @@ def _derived_propose_effects(
 
     for effect in requested:
         if effect.kind in {"routing-transition", "terminal-retirement", GITHUB_MUTATION_KIND}:
-            raise ValueError("Propose research correction cannot include consequential worker effects")
+            raise ValueError(
+                "Propose research correction cannot include consequential worker effects"
+            )
 
     derived = StagedEffect(
         kind="routing-transition",
