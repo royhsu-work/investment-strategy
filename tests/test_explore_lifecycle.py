@@ -7,6 +7,13 @@ import pytest
 
 from investment_strategy.scheduled_agent_effects import parse_effect_batch
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
+from investment_strategy.workflow_dispatch import (
+    DispatchPreflight,
+    EnumerationEvidence,
+    ObservationProvenance,
+    RepositoryIssueSnapshot,
+    classify_dispatch,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents" / "AGENTS.md"
@@ -40,6 +47,21 @@ def _propose_result(
             "result_content": "researchable material evidence gap",
             "requested_effects": requested_effects or [],
         }
+    )
+
+
+def _complete_preactivation(
+    *issues: RepositoryIssueSnapshot,
+) -> DispatchPreflight:
+    return DispatchPreflight(
+        issues=issues,
+        enumeration=EnumerationEvidence(
+            observed_count=len(issues),
+            source_total_count=len(issues),
+            incomplete_results=False,
+            exhausted=True,
+            observation_provenance=ObservationProvenance.QUALIFIED,
+        ),
     )
 
 
@@ -193,3 +215,31 @@ def test_workflow_topology_contains_pre_activation_propose_research_correction()
     assert "`Lead / explore-change`" in workflow
     assert "researchable" in workflow
     assert "Change: unset" in workflow
+
+
+def test_restored_current_propose_reenters_ordinary_fifo_without_migration_token() -> None:
+    parked = RepositoryIssueSnapshot(
+        issue_number=168,
+        change="unset",
+        routing=None,
+        created_order=1,
+    )
+    later_explore = RepositoryIssueSnapshot(
+        issue_number=169,
+        change="unset",
+        routing=("lead", "explore-change"),
+        created_order=2,
+    )
+    before_restore = classify_dispatch(_complete_preactivation(parked, later_explore))
+    assert before_restore.selected_issue_id == 169
+
+    restored = RepositoryIssueSnapshot(
+        issue_number=168,
+        change="unset",
+        routing=("lead", "propose-change"),
+        created_order=1,
+    )
+    after_restore = classify_dispatch(_complete_preactivation(restored, later_explore))
+    assert after_restore.preactivation_candidate_ids == (168, 169)
+    assert after_restore.selected_issue_id == 168
+    assert after_restore.selected_routing == ("lead", "propose-change")
