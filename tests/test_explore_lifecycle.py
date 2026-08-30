@@ -63,7 +63,7 @@ def test_explore_is_optional_and_cannot_create_formal_change_or_code() -> None:
         "MUST NOT create `openspec/changes/`",
         "MUST NOT modify implementation code",
         "normal successful continuation",
-        "durable `PROPOSAL_READY`",
+        "durable evidence-backed structured `PROPOSAL_READY`",
     ):
         assert required in explore
     assert "direct-to-Propose" not in explore
