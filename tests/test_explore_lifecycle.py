@@ -5,7 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from investment_strategy.scheduled_agent_effects import parse_effect_batch
+from investment_strategy.scheduled_agent_effects import (
+    parse_effect_batch,
+    topology_allows_successor,
+)
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
@@ -226,12 +229,17 @@ def test_propose_and_reviewer_independently_verify_source_evidence_before_formal
 
 
 def test_workflow_topology_contains_pre_activation_propose_research_correction() -> None:
-    workflow = _normalized(WORKFLOW)
+    workflow_text = _read(WORKFLOW)
+    workflow = " ".join(workflow_text.split())
     assert "pre-activation" in workflow
     assert "`Lead / propose-change`" in workflow
     assert "`Lead / explore-change`" in workflow
     assert "researchable" in workflow
     assert "Change: unset" in workflow
+
+    source = WorkerRequest(175, "lead", "propose-change")
+    batch = parse_effect_batch(_propose_result(disposition="RESEARCH_REQUIRED"), source)
+    assert topology_allows_successor(workflow_text, source, batch.effects[0])
 
 
 def test_restored_current_propose_reenters_ordinary_fifo_without_migration_token() -> None:
