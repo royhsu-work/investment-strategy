@@ -23,6 +23,7 @@ class ExploreResult:
     constraints: frozenset[str]
     exclusions: frozenset[str]
     selected_direction: str
+    source_supported: bool = True
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,7 @@ def _classify_explore_preservation(
     target: FormalizedTarget,
 ) -> ReviewDisposition:
     """Executable fixture for the approved Explore-preservation review decision."""
-    if explore_result is None:
+    if explore_result is None or not explore_result.source_supported:
         return ReviewDisposition.FINDINGS
     if target.explore_result_comment_id != explore_result.comment_id:
         return ReviewDisposition.FINDINGS
@@ -142,6 +143,28 @@ def test_review_dereferences_explore_result_before_bidirectional_gate() -> None:
     assert dereference_at >= 0
     assert reverse_at >= 0
     assert dereference_at < reverse_at
+
+
+def test_review_rejects_unsupported_explore_source_even_when_formalization_is_consistent() -> None:
+    supported = _explore_result()
+    unsupported = ExploreResult(
+        comment_id=supported.comment_id,
+        decided_scope=supported.decided_scope,
+        constraints=supported.constraints,
+        exclusions=supported.exclusions,
+        selected_direction=supported.selected_direction,
+        source_supported=False,
+    )
+    target = _faithful_target()
+
+    assert target.internally_consistent is True
+    assert (
+        _classify_explore_preservation(
+            explore_result=unsupported,
+            target=target,
+        )
+        is ReviewDisposition.FINDINGS
+    )
 
 
 def test_review_rejects_internal_consistency_that_conflicts_with_explore() -> None:
