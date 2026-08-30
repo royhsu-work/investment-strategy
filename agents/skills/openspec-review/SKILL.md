@@ -36,7 +36,9 @@ that mechanical evidence is required.
 
 If the coordination Issue or current OpenSpec artifacts contain declared upstream authoritative decision/gate references, Reviewer MUST dereference those sources before deciding the gate. A cross-Issue summary is orientation only and is not replacement authority for the declared source evidence.
 
-Before ordinary traceability review, require the proposal/readiness evidence to identify the exact same-Issue Explore `ACTION_RESULT` that established `PROPOSAL_READY`, dereference that exact durable result, and verify that the formalized Proposal / Specs / Design / Tasks preserve every still-applicable material decided scope, constraint, exclusion, feasibility evidence, and selected direction. Missing, ambiguous, stale, contradictory, or materially omitted upstream Explore evidence is `FINDINGS`/fail-closed even when the formal artifacts are internally bidirectionally consistent. This is preservation verification only: Reviewer MUST NOT re-run Explore, repeat Explore research, reconstruct conversation intent, infer undocumented Human intent, or use this evidence as dispatcher state.
+Before ordinary traceability review, require the proposal/readiness evidence to identify the exact same-Issue Explore `ACTION_RESULT` that established `PROPOSAL_READY` and independently dereference that exact durable result plus the supporting source/evidence for every material Explore conclusion relied on by formalization. Verify that each material scope, constraint, exclusion, feasibility conclusion, selected direction, and Human-boundary conclusion is actually supported by the identified source/evidence, and that source fact/evidence is distinguishable from Lead interpretation/inference and unresolved questions. Then verify that the formalized Proposal / Specs / Design / Tasks preserve every still-applicable supported material conclusion.
+
+Missing, ambiguous, stale, contradictory, unsupported, or materially omitted upstream source/evidence or Explore conclusions are `FINDINGS`/fail-closed even when the formal artifacts are internally bidirectionally consistent. An unsupported material Explore interpretation/inference cannot become valid merely because Proposal/Specs/Design/Tasks repeat it. This is independent source-chain verification, not a re-run of Explore: Reviewer MUST NOT repeat broad Explore research, reconstruct conversation intent, infer undocumented Human intent, or use this evidence as dispatcher state. When the material gap is researchable pre-activation, the finding identifies the missing support; Lead/Propose owns the governed same-Issue correction decision rather than Reviewer routing directly to Explore.
 
 For continuity terminology, the action-specific accepted baseline B is the last independently accepted
 semantic OpenSpec state that remains applicable, and the current target R is the exact semantic target
@@ -66,7 +68,7 @@ Do not rely on a previous conversation or a prior PASS for materially changed Op
 
 ## Minimum gate
 
-For the exact semantic target R, the exact Explore-result preservation check above runs first; only after that upstream semantic boundary is verified does Reviewer apply the ordinary reverse-first inspection. PASS still requires both traceability directions on that same target revision:
+For the exact semantic target R, the exact upstream source/evidence → Explore conclusion verification above runs first. Reviewer MUST independently verify source/evidence support and feasibility sufficiency before relying on downstream artifact consistency. Only after that upstream semantic boundary is supported does Reviewer apply the ordinary reverse-first inspection. PASS still requires both traceability directions on that same target revision:
 
 1. Verify reverse traceability `tasks → design → specs → proposal`.
 2. Verify forward traceability `proposal → specs → design → tasks`.
@@ -85,9 +87,8 @@ Reverse-first is an inspection order only. It does not replace bidirectional tra
 
 ## Legal results
 
-- `PASS` — all minimum semantic checks are satisfied for the exact reviewed revision, which is the exact
-  semantic target actually inspected, and the consequential-boundary Human-input freshness check is clear.
-- `FINDINGS` — one or more actionable material findings exist, including any upstream Explore-result preservation contradiction, omission, ambiguity, or stale evidence.
+- `PASS` — all minimum semantic checks are satisfied for the exact reviewed revision, including independent upstream source/evidence support and feasibility verification, which is the exact semantic target actually inspected, and the consequential-boundary Human-input freshness check is clear.
+- `FINDINGS` — one or more actionable material findings exist, including any unsupported source/evidence → Explore conclusion, upstream Explore-result preservation contradiction, omission, ambiguity, stale evidence, or feasibility insufficiency.
 
 The result MUST identify the exact reviewed revision and semantic target. A later material semantic
 OpenSpec change requires a new gate; a bookkeeping-only OpenSpec revision does not stale an applicable
