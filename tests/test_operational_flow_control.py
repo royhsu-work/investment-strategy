@@ -148,28 +148,32 @@ def test_optional_or_plain_deferred_work_does_not_create_queue_admission() -> No
         assert required in shared
 
 
-def test_selected_propose_without_baseline_retains_propose_and_never_falls_back() -> None:
+def test_selected_propose_research_gap_returns_same_issue_without_dispatcher_fallback() -> None:
     change = _normalized(OPEN_SPEC_CHANGE)
     explore = _normalized(EXPLORE)
     for required in (
-        "baseline is missing, ambiguous, stale, contradictory, or materially invalidated",
-        "retain this same Propose action",
-        "MUST NOT route backward to Explore",
-        "dispatcher fallback to a later candidate",
+        "Missing, ambiguous, stale, contradictory, unsupported, or materially invalidated baseline/source evidence does not cause dispatcher fallback to another queued Issue",
+        "`RESEARCH_REQUIRED`",
+        "same Issue `Lead / propose-change → Lead / explore-change` correction",
+        "preserving `Change: unset` and the Issue's original queue identity",
     ):
         assert required in change
-    assert (
-        "A routed Propose that lacks such evidence fails at Propose rather than "
-        "routing backward to Explore" in explore
-    )
+    for required in (
+        "`RESEARCH_REQUIRED`",
+        "repository application derives the same-Issue correction back to `Lead / explore-change`",
+        "This retains the selected Issue rather than falling through to later work",
+    ):
+        assert required in explore
 
 
-def test_propose_never_uses_explore_as_a_backward_fallback() -> None:
+def test_propose_research_correction_is_bounded_by_human_and_formal_boundaries() -> None:
     change = _normalized(OPEN_SPEC_CHANGE)
     for required in (
-        "MUST NOT route backward to Explore",
-        "retain Lead on the same Propose action",
-        "do not route backward to Explore",
+        "the worker MUST NOT request the correction routing itself",
+        "still researchable within the same bounded problem",
+        "new Human-reserved requirement, scope/risk acceptance, or architecture decision",
+        "Once a non-`unset` Change identity exists",
+        "formal semantic correction uses `Lead / resolve-question`",
     ):
         assert required in change
 
