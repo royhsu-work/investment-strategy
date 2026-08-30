@@ -34,6 +34,7 @@ class StagedEffect:
 
     kind: str
     payload_json: str
+    derived: bool = False
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ class EffectBatch:
     source: WorkerRequest
     effects: tuple[StagedEffect, ...]
     explore_disposition: str | None = None
+    propose_disposition: str | None = None
 
 
 @dataclass(frozen=True)
@@ -146,6 +148,7 @@ def _derived_explore_effects(
                 },
                 sort_keys=True,
             ),
+            derived=True,
         )
         return (*requested, derived)
     if disposition in {"NO_CHANGE_REQUIRED", "NO_GO"}:
@@ -155,9 +158,59 @@ def _derived_explore_effects(
                 {"issue_number": source.issue_number, "expected_change": "unset"},
                 sort_keys=True,
             ),
+            derived=True,
         )
         return (*requested, derived)
     return requested
+
+
+def _worker_routing_target(effect: StagedEffect) -> tuple[str, str] | None:
+    if effect.kind != "routing-transition":
+        return None
+    try:
+        payload = json.loads(effect.payload_json)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    role = payload.get("role")
+    action = payload.get("action")
+    if not isinstance(role, str) or not isinstance(action, str):
+        return None
+    return role, action
+
+
+def _derived_propose_effects(
+    source: WorkerRequest,
+    disposition: str | None,
+    requested: tuple[StagedEffect, ...],
+) -> tuple[StagedEffect, ...]:
+    """Derive only the bounded pre-activation Propose research correction."""
+
+    for effect in requested:
+        if _worker_routing_target(effect) == ("lead", "explore-change"):
+            raise ValueError("worker-chosen Propose correction is not allowed")
+
+    if disposition is None:
+        return requested
+
+    for effect in requested:
+        if effect.kind in {"routing-transition", "terminal-retirement", GITHUB_MUTATION_KIND}:
+            raise ValueError("Propose research correction cannot include consequential worker effects")
+
+    derived = StagedEffect(
+        kind="routing-transition",
+        payload_json=json.dumps(
+            {
+                "issue_number": source.issue_number,
+                "role": "lead",
+                "action": "explore-change",
+            },
+            sort_keys=True,
+        ),
+        derived=True,
+    )
+    return (*requested, derived)
 
 
 def parse_effect_batch(raw: str, source: WorkerRequest) -> EffectBatch:
@@ -170,10 +223,13 @@ def parse_effect_batch(raw: str, source: WorkerRequest) -> EffectBatch:
     )
     if result.explore_disposition is not None:
         effects = _derived_explore_effects(source, result.explore_disposition, effects)
+    if (source.role, source.action) == ("lead", "propose-change"):
+        effects = _derived_propose_effects(source, result.propose_disposition, effects)
     return EffectBatch(
         source=source,
         effects=effects,
         explore_disposition=result.explore_disposition,
+        propose_disposition=result.propose_disposition,
     )
 
 
@@ -578,6 +634,32 @@ class GitHubEffectAdapter:
                 return matches == 1
             page += 1
 
+    def _derived_preactivation_propose_correction(
+        self,
+        effect: StagedEffect,
+        payload: Mapping[str, object],
+    ) -> bool:
+        if (
+            not effect.derived
+            or _routing_identity(self.source) != ("lead", "propose-change")
+            or effect.kind != "routing-transition"
+            or payload.get("role") != "lead"
+            or payload.get("action") != "explore-change"
+        ):
+            return False
+        current = self._current_issue()
+        if current is None:
+            return False
+        observation = normalize_github_issue(current)
+        return (
+            observation is not None
+            and observation.authoritative
+            and observation.issue_number == self.source.issue_number
+            and observation.state == "open"
+            and observation.change == "unset"
+            and observation.routing == ("lead", "propose-change")
+        )
+
     def _guard_github_mutation(self, payload: Mapping[str, object]) -> bool:
         operation = cast(str, payload["operation"])
         if operation == "issue-create" or operation == "issue-label-add":
@@ -688,9 +770,11 @@ class GitHubEffectAdapter:
         payload = _effect_payload(effect)
         if payload is None:
             return False
+        propose_correction = self._derived_preactivation_propose_correction(effect, payload)
         if (
             _routing_identity(self.source) == ("lead", "propose-change")
             and effect.kind != "issue-comment"
+            and not propose_correction
             and not self._has_unique_proposal_ready_baseline()
         ):
             return False
