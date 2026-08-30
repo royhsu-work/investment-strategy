@@ -260,3 +260,16 @@ def test_restored_current_propose_reenters_ordinary_fifo_without_migration_token
     assert after_restore.preactivation_candidate_ids == (168, 169)
     assert after_restore.selected_issue_id == 168
     assert after_restore.selected_routing == ("lead", "propose-change")
+
+    earlier_explore = RepositoryIssueSnapshot(
+        issue_number=167,
+        change="unset",
+        routing=("lead", "explore-change"),
+        created_order=0,
+    )
+    ordinary_fifo = classify_dispatch(
+        _complete_preactivation(earlier_explore, restored, later_explore)
+    )
+    assert ordinary_fifo.preactivation_candidate_ids == (167, 168, 169)
+    assert ordinary_fifo.selected_issue_id == 167
+    assert ordinary_fifo.selected_routing == ("lead", "explore-change")
