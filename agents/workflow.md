@@ -42,6 +42,12 @@ The two `Executor / merge-pr` positions are distinguished by current durable PR/
 | `NO_CHANGE_REQUIRED` | persist the bounded result, close the research Issue, and re-observe closed; no formal Change/archive lifecycle is created |
 | `NO_GO` | persist the bounded result, close the research Issue, and re-observe closed; no formal Change/archive lifecycle is created |
 
+### Pre-activation Propose research correction
+
+Before formal activation, a selected `Lead / propose-change` with `Change: unset` may discover that its exact durable Explore baseline has a material source/evidence or feasibility gap. When that gap is still researchable within the same bounded problem and no new Human-reserved decision is required, the action emits bounded `RESEARCH_REQUIRED`; repository-owned application derives only the same-Issue `Lead / propose-change → Lead / explore-change` correction while preserving `Change: unset` and the Issue's original queue identity. This correction retains the selected Issue; it is not dispatcher fallback to a later candidate and does not authorize the worker to choose an arbitrary successor.
+
+If the missing basis instead requires a new Human-reserved requirement, scope/risk acceptance, or architecture decision, use the governed Human boundary. If the Issue already has a non-`unset` Change identity, this pre-activation correction is illegal and formal correction uses `Lead / resolve-question`.
+
 ## Correction loops
 
 Correction loops preserve the same persistent coordination Issue and immutable Change identity once formal activation has occurred.
