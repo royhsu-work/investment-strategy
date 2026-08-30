@@ -79,7 +79,8 @@ def test_explore_required_followup_requires_routing_complete_postcondition_befor
     assert "fresh observation proves the tracker is source-linked" in text
     assert "`Change: unset`" in text
     assert "`agent:lead + action:explore-change`" in text
-    assert "MUST NOT request routing to `Lead / propose-change`" in text
+    assert "The worker MUST NOT request `routing-transition`" in text
+    assert "deterministically derives same-Issue `Lead / propose-change + Change: unset`" in text
 
 
 def test_explore_replays_same_required_followup_decision_idempotently() -> None:
