@@ -132,7 +132,8 @@ def test_review_dereferences_explore_result_before_bidirectional_gate() -> None:
     review = _read(REVIEW)
     normalized = " ".join(review.split())
 
-    assert "exact Explore" in normalized
+    assert "exact same-Issue Explore" in normalized
+    assert "supporting source/evidence" in normalized
     assert "dereference" in normalized
     assert "preserv" in normalized
 
@@ -229,8 +230,9 @@ def test_missing_or_wrong_explore_result_reference_fails_closed() -> None:
 def test_review_does_not_rerun_explore_or_reconstruct_conversation_intent() -> None:
     review = _normalized(REVIEW)
 
-    assert "re-run Explore" in review or "repeat Explore" in review
-    assert "conversation" in review
+    assert "not a re-run of Explore" in review
+    assert "MUST NOT repeat broad Explore research" in review
+    assert "reconstruct conversation intent" in review
 
 
 def test_semantic_adapter_does_not_own_explore_handoff_semantics() -> None:
