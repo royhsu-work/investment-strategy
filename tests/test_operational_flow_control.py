@@ -152,7 +152,10 @@ def test_selected_propose_research_gap_returns_same_issue_without_dispatcher_fal
     change = _normalized(OPEN_SPEC_CHANGE)
     explore = _normalized(EXPLORE)
     for required in (
-        "Missing, ambiguous, stale, contradictory, unsupported, or materially invalidated baseline/source evidence does not cause dispatcher fallback to another queued Issue",
+        (
+            "Missing, ambiguous, stale, contradictory, unsupported, or materially invalidated "
+            "baseline/source evidence does not cause dispatcher fallback to another queued Issue"
+        ),
         "`RESEARCH_REQUIRED`",
         "same Issue `Lead / propose-change → Lead / explore-change` correction",
         "preserving `Change: unset` and the Issue's original queue identity",
