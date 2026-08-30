@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents" / "AGENTS.md"
 LEAD = ROOT / "agents" / "roles" / "lead.md"
 WORKFLOW = ROOT / "agents" / "workflow.md"
+MESSAGES = ROOT / "agents" / "templates" / "messages.md"
 EXPLORE = ROOT / "agents" / "skills" / "openspec-explore" / "SKILL.md"
 CHANGE = ROOT / "agents" / "skills" / "openspec-change" / "SKILL.md"
 REVIEW = ROOT / "agents" / "skills" / "openspec-review" / "SKILL.md"
@@ -184,6 +185,22 @@ def test_explore_contract_requires_reconstructable_material_claim_source_chain()
         "cannot establish `PROPOSAL_READY`",
     ):
         assert required in explore
+
+
+def test_explore_action_result_preserves_claim_sources_without_routing_prose_control() -> None:
+    messages = _normalized(MESSAGES)
+    for required in (
+        "every material conclusion",
+        "supporting source/evidence",
+        "source fact/evidence",
+        "Lead interpretation/inference",
+        "unresolved questions",
+        "bounded structured Explore disposition",
+        "does not encode a worker-chosen successor",
+        "repository-owned application derives and observes that effect",
+        "without turning narrative routing prose into control state",
+    ):
+        assert required in messages
 
 
 def test_propose_and_reviewer_independently_verify_source_evidence_before_formalization() -> None:
