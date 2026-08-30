@@ -47,7 +47,7 @@ Lead owns specification authority and lifecycle authorization.
 ## Actions
 
 - `explore-change` uses `agents/skills/openspec-explore/SKILL.md`.
-- `propose-change` and `resolve-question` uses `agents/skills/openspec-change/SKILL.md`.
-- `finalize-change` and `finalize-archive` uses `agents/skills/lifecycle-finalize/SKILL.md`.
+- `propose-change` and `resolve-question` use `agents/skills/openspec-change/SKILL.md`.
+- `finalize-change` and `finalize-archive` use `agents/skills/lifecycle-finalize/SKILL.md`.
 
 If a required implementation mutation is needed, hand off to Executor. If an independent gate is needed, hand off to Reviewer. Preserve durable evidence before routing changes.
