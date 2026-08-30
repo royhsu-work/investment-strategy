@@ -42,6 +42,7 @@ _MAPPED_ACTIONS = frozenset(
 _EXPLORE_DISPOSITIONS = frozenset(
     {"PROPOSAL_READY", "HUMAN_DECISION_REQUIRED", "NO_CHANGE_REQUIRED", "NO_GO"}
 )
+_PROPOSE_DISPOSITIONS = frozenset({"RESEARCH_REQUIRED"})
 _SECRET_ENV_NAMES = frozenset(
     {
         "OPENAI_API_KEY",
@@ -69,6 +70,7 @@ class WorkerActionResult:
     role: str
     action: str
     explore_disposition: str | None
+    propose_disposition: str | None
     result_content: str
     requested_effects: tuple[WorkerRequestedEffect, ...]
 
@@ -306,6 +308,19 @@ def _explore_disposition(decoded: Mapping[str, object], request: WorkerRequest) 
     return None
 
 
+def _propose_disposition(decoded: Mapping[str, object], request: WorkerRequest) -> str | None:
+    value = decoded.get("propose_disposition")
+    if (request.role, request.action) == ("lead", "propose-change"):
+        if value is None:
+            return None
+        if not isinstance(value, str) or value not in _PROPOSE_DISPOSITIONS:
+            raise ValueError("worker result has invalid Propose disposition")
+        return value
+    if value is not None:
+        raise ValueError("non-Propose worker result must use null propose_disposition")
+    return None
+
+
 def parse_worker_result(raw: str, request: WorkerRequest) -> WorkerActionResult:
     """Validate structured output and reject any model attempt to change identity."""
 
@@ -335,6 +350,7 @@ def parse_worker_result(raw: str, request: WorkerRequest) -> WorkerActionResult:
         role=role,
         action=action,
         explore_disposition=_explore_disposition(decoded, request),
+        propose_disposition=_propose_disposition(decoded, request),
         result_content=result_content,
         requested_effects=tuple(_effect_from_payload(effect) for effect in requested_effects),
     )
@@ -370,6 +386,10 @@ def _response_schema() -> dict[str, Any]:
                     None,
                 ],
             },
+            "propose_disposition": {
+                "type": ["string", "null"],
+                "enum": ["RESEARCH_REQUIRED", None],
+            },
             "result_content": {"type": "string"},
             "requested_effects": {
                 "type": "array",
@@ -389,6 +409,7 @@ def _response_schema() -> dict[str, Any]:
             "role",
             "action",
             "explore_disposition",
+            "propose_disposition",
             "result_content",
             "requested_effects",
         ],
@@ -552,6 +573,7 @@ def main() -> int:
                 "role": result.role,
                 "action": result.action,
                 "explore_disposition": result.explore_disposition,
+                "propose_disposition": result.propose_disposition,
                 "result_content": result.result_content,
                 "requested_effects": [
                     {"kind": effect.kind, "payload_json": effect.payload_json}
