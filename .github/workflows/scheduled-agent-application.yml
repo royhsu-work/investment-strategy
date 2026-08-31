@@ -12,6 +12,7 @@ jobs:
   apply:
     if: startsWith(github.event.comment.body, 'EFFECT_REQUEST')
     permissions:
+      actions: write
       contents: write
       issues: write
       pull-requests: write
@@ -52,6 +53,7 @@ jobs:
             > "$RUNNER_TEMP/issue-comment-pages.json"
 
       - name: Validate correlation and apply repository-owned effects
+        id: apply
         env:
           AGENT_RUNTIME_CHECKIN_ISSUE: ${{ vars.AGENT_RUNTIME_CHECKIN_ISSUE }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -63,3 +65,23 @@ jobs:
           --comments-path "$RUNNER_TEMP/issue-comment-pages.json"
           --check-in-issue "$AGENT_RUNTIME_CHECKIN_ISSUE"
           --revision "${{ steps.revision.outputs.sha }}"
+
+      - name: Dispatch exact-revision OpenSpec validation
+        if: steps.apply.outputs.validation_required == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          VALIDATION_TARGET_REPOSITORY: ${{ steps.apply.outputs.validation_target_repository }}
+          VALIDATION_TARGET_REVISION: ${{ steps.apply.outputs.validation_target_revision }}
+          VALIDATION_CORRELATION: ${{ steps.apply.outputs.validation_correlation }}
+          VALIDATOR_WORKFLOW_REF: ${{ github.event.repository.default_branch }}
+        run: |
+          payload="$(jq -nc \
+            --arg ref "$VALIDATOR_WORKFLOW_REF" \
+            --arg target_repository "$VALIDATION_TARGET_REPOSITORY" \
+            --arg target_revision "$VALIDATION_TARGET_REVISION" \
+            --arg correlation "$VALIDATION_CORRELATION" \
+            '{ref: $ref, inputs: {target_repository: $target_repository, target_revision: $target_revision, correlation: $correlation}}')"
+          gh api --method POST \
+            "/repos/${GITHUB_REPOSITORY}/actions/workflows/openspec-validate.yml/dispatches" \
+            --input - <<< "$payload"
