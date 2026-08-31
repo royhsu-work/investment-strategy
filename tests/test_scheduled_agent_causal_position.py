@@ -317,9 +317,7 @@ def test_formal_explore_route_preserves_change_and_rebinds_exact_cause(
         action="explore-change",
         body=f"Change: {change}\nCause-Ref: issuecomment-22\n\nIntent remains.\n",
     )
-    comment_payload = json.dumps(
-        {"issue_number": 168, "body": _result_body(change=change)}
-    )
+    comment_payload = json.dumps({"issue_number": 168, "body": _result_body(change=change)})
     comment = StagedEffect(kind="issue-comment", payload_json=comment_payload)
     route = StagedEffect(
         kind="routing-transition",
