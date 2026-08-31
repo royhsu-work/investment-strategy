@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import cast
 
 import pytest
 
@@ -176,7 +177,8 @@ def test_wrong_explicit_cause_fails_without_falling_back_to_history(
             return json.loads(json.dumps(issue))
         if api_path == "issues/comments/22" and method == "GET":
             wrong = _durable_comment(22)
-            wrong["body"] = wrong["body"].replace("PROPOSAL_READY", "NO_GO")
+            wrong_body = cast(str, wrong["body"])
+            wrong["body"] = wrong_body.replace("PROPOSAL_READY", "NO_GO")
             return wrong
         if api_path.startswith("issues/168/comments"):
             raise AssertionError("invalid explicit Cause-Ref must fail, not search history")
@@ -233,16 +235,14 @@ def test_explore_route_persists_exact_new_comment_cause_before_routing(
             return json.loads(json.dumps(issue))
         if api_path == "issues/168/labels/action%3Aexplore-change" and method == "DELETE":
             mutations.append("remove-route")
-            issue["labels"] = [
-                item
-                for item in issue["labels"]  # type: ignore[union-attr]
-                if item.get("name") != "action:explore-change"  # type: ignore[union-attr]
-            ]
+            labels = cast(list[dict[str, object]], issue["labels"])
+            issue["labels"] = [item for item in labels if item.get("name") != "action:explore-change"]
             return None
         if api_path == "issues/168/labels" and method == "POST":
             assert payload == {"labels": ["action:propose-change"]}
             mutations.append("add-route")
-            issue["labels"].append({"name": "action:propose-change"})  # type: ignore[union-attr]
+            labels = cast(list[dict[str, object]], issue["labels"])
+            labels.append({"name": "action:propose-change"})
             return json.loads(json.dumps(issue))
         raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
 
