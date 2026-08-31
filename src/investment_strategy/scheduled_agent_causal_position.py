@@ -1,4 +1,4 @@
-"""Bounded causal-position helpers for pre-activation Scheduled Agent state."""
+"""Bounded causal-position helpers for Scheduled Agent Explore results."""
 
 from __future__ import annotations
 
@@ -84,28 +84,48 @@ def bind_issue_cause_ref(body: object, comment_id: int) -> str | None:
     return "".join(lines)
 
 
-def proposal_ready_result_body(body: object, issue_number: int) -> bool:
-    """Recognize the canonical Explore PROPOSAL_READY ACTION_RESULT envelope."""
+def proposal_ready_result_change(body: object, issue_number: int) -> str | None:
+    """Return the exact Change from a canonical Explore PROPOSAL_READY envelope."""
 
     if not isinstance(body, str) or issue_number <= 0:
-        return False
+        return None
     lines = body.splitlines()
-    expected = [
-        f"Workflow: #{issue_number}",
-        "Change: unset",
-        "Action: Lead / explore-change",
-        "Result: PROPOSAL_READY",
-    ]
     for index, line in enumerate(lines):
-        if line == "## ACTION_RESULT" and lines[index + 1 : index + 5] == expected:
-            return True
-    return False
+        if line != "## ACTION_RESULT":
+            continue
+        envelope = lines[index + 1 : index + 5]
+        if len(envelope) != 4:
+            continue
+        if envelope[0] != f"Workflow: #{issue_number}":
+            continue
+        change_match = _CHANGE_LINE.fullmatch(envelope[1])
+        if change_match is None:
+            continue
+        if envelope[2] != "Action: Lead / explore-change":
+            continue
+        if envelope[3] != "Result: PROPOSAL_READY":
+            continue
+        return change_match.group(1)
+    return None
+
+
+def proposal_ready_result_body(
+    body: object,
+    issue_number: int,
+    *,
+    expected_change: str | None = None,
+) -> bool:
+    """Recognize a canonical Explore PROPOSAL_READY ACTION_RESULT envelope."""
+
+    change = proposal_ready_result_change(body, issue_number)
+    return change is not None and (expected_change is None or change == expected_change)
 
 
 def requested_proposal_ready_comment_payload(
     payload_json: str,
     *,
     issue_number: int,
+    expected_change: str | None = None,
 ) -> bool:
     """Validate an invocation-local issue-comment payload as the causal Explore result."""
 
@@ -119,7 +139,11 @@ def requested_proposal_ready_comment_payload(
         isinstance(payload, Mapping)
         and set(payload) == {"issue_number", "body"}
         and payload.get("issue_number") == issue_number
-        and proposal_ready_result_body(payload.get("body"), issue_number)
+        and proposal_ready_result_body(
+            payload.get("body"),
+            issue_number,
+            expected_change=expected_change,
+        )
     )
 
 
@@ -129,6 +153,7 @@ def trusted_proposal_ready_comment(
     issue_number: int,
     repository_owner: str,
     expected_comment_id: int,
+    expected_change: str | None = None,
 ) -> bool:
     """Validate one exact durable causal comment without scanning Issue history."""
 
@@ -144,5 +169,7 @@ def trusted_proposal_ready_comment(
     trusted_owner = actor == repository_owner and payload.get("author_association") == "OWNER"
     trusted_runtime = actor == "github-actions[bot]"
     return (trusted_owner or trusted_runtime) and proposal_ready_result_body(
-        payload.get("body"), issue_number
+        payload.get("body"),
+        issue_number,
+        expected_change=expected_change,
     )
