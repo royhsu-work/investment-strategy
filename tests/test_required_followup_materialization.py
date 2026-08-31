@@ -80,7 +80,9 @@ def test_explore_required_followup_requires_routing_complete_postcondition_befor
     assert "`Change: unset`" in text
     assert "`agent:lead + action:explore-change`" in text
     assert "The worker MUST NOT request `routing-transition`" in text
-    assert "deterministically derives same-Issue `Lead / propose-change + Change: unset`" in text
+    assert "deterministically derives same-Issue `Lead / propose-change`" in text
+    assert "Pre-Change mode therefore remains `Change: unset`" in text
+    assert "formal correction mode preserves the same existing non-`unset` Change" in text
 
 
 def test_explore_replays_same_required_followup_decision_idempotently() -> None:
