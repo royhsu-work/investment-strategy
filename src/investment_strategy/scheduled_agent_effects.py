@@ -805,7 +805,9 @@ class GitHubEffectAdapter:
             or observation.routing != ("lead", "propose-change")
         ):
             return False
-        return observation.change == "unset" or not self._has_review_openspec_pass(observation.change)
+        return observation.change == "unset" or not self._has_review_openspec_pass(
+            observation.change
+        )
 
     def _guard_github_mutation(self, payload: Mapping[str, object]) -> bool:
         operation = cast(str, payload["operation"])
