@@ -157,7 +157,10 @@ def test_selected_propose_research_gap_returns_same_issue_without_dispatcher_fal
             "baseline/source evidence does not cause dispatcher fallback to another Issue"
         ),
         "`RESEARCH_REQUIRED`",
-        "repository-owned application derives the same Issue `Lead / propose-change → Lead / explore-change` correction",
+        (
+            "repository-owned application derives the same Issue "
+            "`Lead / propose-change → Lead / explore-change` correction"
+        ),
         "preserving `Change: unset` and the Issue's original queue identity",
     ):
         assert required in change
@@ -177,7 +180,10 @@ def test_propose_research_correction_is_bounded_by_human_and_formal_boundaries()
         "gap remains researchable within the same bounded problem",
         "new Human-reserved requirement, scope/risk acceptance, or architecture decision",
         "After activation, the same correction is legal only before the first independent",
-        "After the first independent OpenSpec acceptance, material formal correction uses `Lead / resolve-question`",
+        (
+            "After the first independent OpenSpec acceptance, material formal correction uses "
+            "`Lead / resolve-question`"
+        ),
     ):
         assert required in change
 
