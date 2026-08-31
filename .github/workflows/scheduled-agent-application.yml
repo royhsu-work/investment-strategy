@@ -1,0 +1,65 @@
+name: Scheduled Agent Application Bridge
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: scheduled-agent-application-${{ github.event.comment.id }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: startsWith(github.event.comment.body, 'EFFECT_REQUEST')
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out authoritative default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.10.0"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Record exact checked-out default-branch revision
+        id: revision
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Freshly read configured check-in Issue comments
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CHECKIN_ISSUE: ${{ vars.AGENT_RUNTIME_CHECKIN_ISSUE }}
+        run: |
+          if [[ ! "$CHECKIN_ISSUE" =~ ^[1-9][0-9]*$ ]]; then
+            echo "AGENT_RUNTIME_CHECKIN_ISSUE must be a positive Issue number" >&2
+            exit 1
+          fi
+          gh api --paginate --slurp \
+            "/repos/${GITHUB_REPOSITORY}/issues/${CHECKIN_ISSUE}/comments?per_page=100" \
+            > "$RUNNER_TEMP/issue-comment-pages.json"
+
+      - name: Validate correlation and apply repository-owned effects
+        env:
+          AGENT_RUNTIME_CHECKIN_ISSUE: ${{ vars.AGENT_RUNTIME_CHECKIN_ISSUE }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: >-
+          uv run python -m investment_strategy.scheduled_agent_application_bridge
+          --event-path "$GITHUB_EVENT_PATH"
+          --comments-path "$RUNNER_TEMP/issue-comment-pages.json"
+          --check-in-issue "$AGENT_RUNTIME_CHECKIN_ISSUE"
+          --revision "${{ steps.revision.outputs.sha }}"
