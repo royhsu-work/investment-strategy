@@ -84,6 +84,66 @@ def _terminal_retirement_effect(change: str = "archived-change") -> StagedEffect
     )
 
 
+def _formal_issue(*, action: str, change: str) -> dict[str, object]:
+    return {
+        "number": 133,
+        "state": "open",
+        "body": f"Change: {change}\nCause-Ref: issuecomment-22\n",
+        "created_at": "2026-08-31T00:00:00Z",
+        "closed_at": None,
+        "labels": [{"name": "agent:lead"}, {"name": f"action:{action}"}],
+    }
+
+
+def _review_pass(change: str) -> dict[str, object]:
+    return {
+        "id": 91,
+        "issue_url": "https://api.github.com/repos/royhsu-work/investment-strategy/issues/133",
+        "body": (
+            "## REVIEW_RESULT\n\n"
+            "Workflow: #133\n"
+            f"Change: `{change}`\n"
+            "Action: `Reviewer / review-openspec`\n"
+            "Result: `PASS`\n"
+            "Revision: `0123456789012345678901234567890123456789`\n"
+        ),
+        "user": {"login": "royhsu-work"},
+        "author_association": "OWNER",
+    }
+
+
+def _proposal_ready_comment(change: str = "unset") -> dict[str, object]:
+    return {
+        "id": 22,
+        "issue_url": "https://api.github.com/repos/royhsu-work/investment-strategy/issues/133",
+        "body": (
+            "## ACTION_RESULT\n"
+            "Workflow: #133\n"
+            f"Change: {change}\n"
+            "Action: Lead / explore-change\n"
+            "Result: PROPOSAL_READY\n"
+        ),
+        "user": {"login": "github-actions[bot]"},
+        "author_association": "CONTRIBUTOR",
+    }
+
+
+def _propose_research_batch() -> EffectBatch:
+    source = WorkerRequest(133, "lead", "propose-change")
+    raw = json.dumps(
+        {
+            "issue_number": 133,
+            "role": "lead",
+            "action": "propose-change",
+            "explore_disposition": None,
+            "propose_disposition": "RESEARCH_REQUIRED",
+            "result_content": "bounded research correction",
+            "requested_effects": [],
+        }
+    )
+    return parse_effect_batch(raw, source)
+
+
 def test_apply_reauthorizes_same_source_before_any_effect() -> None:
     applied: list[StagedEffect] = []
     result = apply_effect_batch(
@@ -337,6 +397,164 @@ def test_selected_propose_with_ambiguous_explore_baselines_fails_action_local_gu
     adapter = GitHubEffectAdapter("royhsu-work/investment-strategy", "token", source)
 
     assert not adapter.guard(activation)
+
+
+def test_formal_propose_research_correction_allowed_before_first_review_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    change = "simplify-scheduled-agent-control-plane"
+    issue = _formal_issue(action="propose-change", change=change)
+
+    def fake_github_json(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        del repository, token, payload, allow_not_found
+        if api_path == "issues/133" and method == "GET":
+            return json.loads(json.dumps(issue))
+        if api_path == "issues/133/comments?per_page=100&page=1" and method == "GET":
+            return []
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    batch = _propose_research_batch()
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        batch.source,
+    )
+
+    assert len(batch.effects) == 1
+    assert adapter.guard(batch.effects[0])
+
+
+def test_formal_propose_research_correction_rejected_after_first_review_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    change = "simplify-scheduled-agent-control-plane"
+    issue = _formal_issue(action="propose-change", change=change)
+
+    def fake_github_json(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        del repository, token, payload, allow_not_found
+        if api_path == "issues/133" and method == "GET":
+            return json.loads(json.dumps(issue))
+        if api_path == "issues/133/comments?per_page=100&page=1" and method == "GET":
+            return [_review_pass(change)]
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    batch = _propose_research_batch()
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        batch.source,
+    )
+
+    assert not adapter.guard(batch.effects[0])
+
+
+def test_formal_active_propose_preserves_preactivation_exact_cause_compatibility(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    change = "simplify-scheduled-agent-control-plane"
+    issue = _formal_issue(action="propose-change", change=change)
+    effect = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 133,
+                "operation": "issue-label-add",
+                "label": "human:notified",
+            }
+        ),
+    )
+
+    def fake_github_json(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        del repository, token, payload, allow_not_found
+        if api_path == "issues/133" and method == "GET":
+            return json.loads(json.dumps(issue))
+        if api_path == "issues/comments/22" and method == "GET":
+            return _proposal_ready_comment("unset")
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        WorkerRequest(133, "lead", "propose-change"),
+    )
+
+    assert adapter.guard(effect)
+
+
+def test_formal_explore_successor_rejected_if_first_review_pass_already_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    change = "simplify-scheduled-agent-control-plane"
+    issue = _formal_issue(action="explore-change", change=change)
+    result_body = (
+        "## ACTION_RESULT\n"
+        "Workflow: #133\n"
+        f"Change: {change}\n"
+        "Action: Lead / explore-change\n"
+        "Result: PROPOSAL_READY\n"
+    )
+    cause_payload = json.dumps({"issue_number": 133, "body": result_body})
+    route = StagedEffect(
+        kind="routing-transition",
+        payload_json=json.dumps(
+            {"issue_number": 133, "role": "lead", "action": "propose-change"},
+            sort_keys=True,
+        ),
+        derived=True,
+        cause_payload_json=cause_payload,
+    )
+
+    def fake_github_json(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        del repository, token, payload, allow_not_found
+        if api_path == "issues/133" and method == "GET":
+            return json.loads(json.dumps(issue))
+        if api_path == "issues/133/comments?per_page=100&page=1" and method == "GET":
+            return [_review_pass(change)]
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        WorkerRequest(133, "lead", "explore-change"),
+    )
+
+    assert not adapter.guard(route)
 
 
 def test_supported_effect_guard_rejects_foreign_issue_and_unknown_kind() -> None:

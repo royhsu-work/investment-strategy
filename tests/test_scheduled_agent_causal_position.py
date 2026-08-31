@@ -1,4 +1,4 @@
-"""Regressions for the bounded pre-activation causal-position bootstrap."""
+"""Regressions for the bounded Explore causal-position bootstrap."""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ import investment_strategy.scheduled_agent_effects as effects
 from investment_strategy.scheduled_agent_causal_position import (
     bind_issue_cause_ref,
     cause_ref_from_issue_body,
+    proposal_ready_result_body,
+    proposal_ready_result_change,
 )
 from investment_strategy.scheduled_agent_effects import (
     GitHubEffectAdapter,
@@ -20,24 +22,28 @@ from investment_strategy.scheduled_agent_effects import (
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 
 
-def _result_body(issue_number: int = 168) -> str:
+def _result_body(issue_number: int = 168, change: str = "unset") -> str:
     return (
         "## ACTION_RESULT\n"
         f"Workflow: #{issue_number}\n"
-        "Change: unset\n"
+        f"Change: {change}\n"
         "Action: Lead / explore-change\n"
         "Result: PROPOSAL_READY\n"
         "\nEvidence: bounded.\n"
     )
 
 
-def _durable_comment(comment_id: int, issue_number: int = 168) -> dict[str, object]:
+def _durable_comment(
+    comment_id: int,
+    issue_number: int = 168,
+    change: str = "unset",
+) -> dict[str, object]:
     return {
         "id": comment_id,
         "issue_url": (
             f"https://api.github.com/repos/royhsu-work/investment-strategy/issues/{issue_number}"
         ),
-        "body": _result_body(issue_number),
+        "body": _result_body(issue_number, change),
         "user": {"login": "github-actions[bot]"},
         "author_association": "CONTRIBUTOR",
     }
@@ -97,6 +103,18 @@ def test_duplicate_or_malformed_top_level_cause_ref_fails_closed() -> None:
     assert cause_ref_from_issue_body(malformed) == (None, False)
 
 
+def test_proposal_ready_result_helpers_preserve_exact_formal_change() -> None:
+    body = _result_body(change="simplify-scheduled-agent-control-plane")
+
+    assert proposal_ready_result_change(body, 168) == "simplify-scheduled-agent-control-plane"
+    assert proposal_ready_result_body(
+        body,
+        168,
+        expected_change="simplify-scheduled-agent-control-plane",
+    )
+    assert not proposal_ready_result_body(body, 168, expected_change="other-change")
+
+
 def test_proposal_ready_batch_binds_derived_route_to_invocation_result_payload() -> None:
     source = WorkerRequest(168, "lead", "explore-change")
     comment_payload = json.dumps({"issue_number": 168, "body": _result_body()})
@@ -118,6 +136,31 @@ def test_proposal_ready_batch_binds_derived_route_to_invocation_result_payload()
     assert route.kind == "routing-transition"
     assert route.derived is True
     assert route.cause_payload_json == comment_payload
+
+
+def test_formal_proposal_ready_batch_binds_same_change_result_payload() -> None:
+    source = WorkerRequest(168, "lead", "explore-change")
+    comment_payload = json.dumps(
+        {
+            "issue_number": 168,
+            "body": _result_body(change="simplify-scheduled-agent-control-plane"),
+        }
+    )
+    raw = json.dumps(
+        {
+            "issue_number": 168,
+            "role": "lead",
+            "action": "explore-change",
+            "explore_disposition": "PROPOSAL_READY",
+            "propose_disposition": None,
+            "result_content": "bounded formal correction result",
+            "requested_effects": [{"kind": "issue-comment", "payload_json": comment_payload}],
+        }
+    )
+
+    batch = parse_effect_batch(raw, source)
+
+    assert batch.effects[-1].cause_payload_json == comment_payload
 
 
 def test_propose_uses_exact_cause_without_scanning_multiple_history(
@@ -263,4 +306,83 @@ def test_explore_route_persists_exact_new_comment_cause_before_routing(
     assert adapter.observe_postcondition(route)
 
     assert cause_ref_from_issue_body(issue["body"]) == (33, True)
+    assert mutations == ["comment", "cause", "remove-route", "add-route"]
+
+
+def test_formal_explore_route_preserves_change_and_rebinds_exact_cause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    change = "simplify-scheduled-agent-control-plane"
+    issue = _issue(
+        action="explore-change",
+        body=f"Change: {change}\nCause-Ref: issuecomment-22\n\nIntent remains.\n",
+    )
+    comment_payload = json.dumps({"issue_number": 168, "body": _result_body(change=change)})
+    comment = StagedEffect(kind="issue-comment", payload_json=comment_payload)
+    route = StagedEffect(
+        kind="routing-transition",
+        payload_json=json.dumps(
+            {"issue_number": 168, "role": "lead", "action": "propose-change"},
+            sort_keys=True,
+        ),
+        derived=True,
+        cause_payload_json=comment_payload,
+    )
+    mutations: list[str] = []
+
+    def fake_github_json(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        del repository, token, allow_not_found
+        if api_path == "issues/168" and method == "GET":
+            return json.loads(json.dumps(issue))
+        if api_path == "issues/168/comments?per_page=100&page=1" and method == "GET":
+            return []
+        if api_path == "issues/168/comments" and method == "POST":
+            mutations.append("comment")
+            return {"id": 44}
+        if api_path == "issues/comments/44" and method == "GET":
+            return _durable_comment(44, change=change)
+        if api_path == "issues/168" and method == "PATCH":
+            assert payload is not None and isinstance(payload.get("body"), str)
+            mutations.append("cause")
+            issue["body"] = payload["body"]
+            return json.loads(json.dumps(issue))
+        if api_path == "issues/168/labels/action%3Aexplore-change" and method == "DELETE":
+            mutations.append("remove-route")
+            labels = cast(list[dict[str, object]], issue["labels"])
+            issue["labels"] = [
+                item for item in labels if item.get("name") != "action:explore-change"
+            ]
+            return None
+        if api_path == "issues/168/labels" and method == "POST":
+            assert payload == {"labels": ["action:propose-change"]}
+            mutations.append("add-route")
+            labels = cast(list[dict[str, object]], issue["labels"])
+            labels.append({"name": "action:propose-change"})
+            return json.loads(json.dumps(issue))
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        WorkerRequest(168, "lead", "explore-change"),
+    )
+
+    assert adapter.guard(comment)
+    assert adapter.guard(route)
+    adapter.apply(comment)
+    assert adapter.observe_postcondition(comment)
+    adapter.apply(route)
+    assert adapter.observe_postcondition(route)
+
+    assert cast(str, issue["body"]).startswith(f"Change: {change}\n")
+    assert cause_ref_from_issue_body(issue["body"]) == (44, True)
     assert mutations == ["comment", "cause", "remove-route", "add-route"]
