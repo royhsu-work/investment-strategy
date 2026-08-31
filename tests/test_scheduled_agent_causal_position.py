@@ -236,7 +236,9 @@ def test_explore_route_persists_exact_new_comment_cause_before_routing(
         if api_path == "issues/168/labels/action%3Aexplore-change" and method == "DELETE":
             mutations.append("remove-route")
             labels = cast(list[dict[str, object]], issue["labels"])
-            issue["labels"] = [item for item in labels if item.get("name") != "action:explore-change"]
+            issue["labels"] = [
+                item for item in labels if item.get("name") != "action:explore-change"
+            ]
             return None
         if api_path == "issues/168/labels" and method == "POST":
             assert payload == {"labels": ["action:propose-change"]}
