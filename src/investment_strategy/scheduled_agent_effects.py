@@ -203,7 +203,7 @@ def _derived_propose_effects(
     disposition: str | None,
     requested: tuple[StagedEffect, ...],
 ) -> tuple[StagedEffect, ...]:
-    """Derive only the bounded pre-activation Propose research correction."""
+    """Derive only the bounded Propose research correction."""
 
     for effect in requested:
         if _worker_routing_target(effect) == ("lead", "explore-change"):
@@ -569,6 +569,66 @@ def _workflow_label_names(payload: Mapping[str, object]) -> tuple[str, ...] | No
     return tuple(sorted(names))
 
 
+def _strip_code(value: str) -> str:
+    normalized = value.strip()
+    if len(normalized) >= 2 and normalized.startswith("`") and normalized.endswith("`"):
+        return normalized[1:-1].strip()
+    return normalized
+
+
+def _review_openspec_pass_body(body: object, *, issue_number: int, change: str) -> bool:
+    """Recognize one canonical independent review-openspec PASS envelope."""
+
+    if not isinstance(body, str):
+        return False
+    lines = body.splitlines()
+    if not lines or lines[0] != "## REVIEW_RESULT":
+        return False
+    index = 1
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    envelope = lines[index : index + 4]
+    if len(envelope) != 4:
+        return False
+
+    expected_names = ("Workflow", "Change", "Action", "Result")
+    values: list[str] = []
+    for name, line in zip(expected_names, envelope, strict=True):
+        prefix = f"{name}:"
+        if not line.startswith(prefix):
+            return False
+        values.append(_strip_code(line[len(prefix) :]))
+    return values == [
+        f"#{issue_number}",
+        change,
+        "Reviewer / review-openspec",
+        "PASS",
+    ]
+
+
+def _trusted_review_openspec_pass(
+    payload: Mapping[str, object],
+    *,
+    issue_number: int,
+    change: str,
+    repository_owner: str,
+) -> bool:
+    issue_url = payload.get("issue_url")
+    if not isinstance(issue_url, str) or not issue_url.endswith(f"/issues/{issue_number}"):
+        return False
+    user = payload.get("user")
+    if not isinstance(user, Mapping):
+        return False
+    actor = user.get("login")
+    trusted_owner = actor == repository_owner and payload.get("author_association") == "OWNER"
+    trusted_runtime = actor == "github-actions[bot]"
+    return (trusted_owner or trusted_runtime) and _review_openspec_pass_body(
+        payload.get("body"),
+        issue_number=issue_number,
+        change=change,
+    )
+
+
 class GitHubEffectAdapter:
     """Production adapter for bounded durable effects requested by mapped workers."""
 
@@ -635,6 +695,7 @@ class GitHubEffectAdapter:
                     issue_number=self.source.issue_number,
                     repository_owner=owner,
                     expected_comment_id=comment_id,
+                    expected_change="unset",
                 ):
                     if match is not None:
                         return None
@@ -647,10 +708,15 @@ class GitHubEffectAdapter:
         current = self._current_issue()
         if current is None:
             return None
+        observation = normalize_github_issue(current)
+        if observation is None or not observation.authoritative:
+            return None
         comment_id, valid = cause_ref_from_issue_body(current.get("body"))
         if not valid:
             return None
         if comment_id is None:
+            if observation.change != "unset":
+                return None
             return self._legacy_unique_proposal_ready_baseline()
         comment = _github_json(
             self.repository,
@@ -658,14 +724,48 @@ class GitHubEffectAdapter:
             f"issues/comments/{comment_id}",
         )
         owner = self.repository.split("/", 1)[0]
-        if not isinstance(comment, Mapping) or not trusted_proposal_ready_comment(
-            comment,
-            issue_number=self.source.issue_number,
-            repository_owner=owner,
-            expected_comment_id=comment_id,
+        if not isinstance(comment, Mapping):
+            return None
+        accepted_changes = {"unset", observation.change}
+        if not any(
+            trusted_proposal_ready_comment(
+                comment,
+                issue_number=self.source.issue_number,
+                repository_owner=owner,
+                expected_comment_id=comment_id,
+                expected_change=expected_change,
+            )
+            for expected_change in accepted_changes
         ):
             return None
         return comment_id
+
+    def _has_review_openspec_pass(self, change: str) -> bool:
+        """Return whether the active Change has ever crossed first independent OpenSpec PASS."""
+
+        owner = self.repository.split("/", 1)[0]
+        page = 1
+        while True:
+            comments = _github_json(
+                self.repository,
+                self.token,
+                f"issues/{self.source.issue_number}/comments?per_page=100&page={page}",
+            )
+            if not isinstance(comments, list):
+                return True
+            for comment in comments:
+                if not isinstance(comment, Mapping):
+                    return True
+                if _trusted_review_openspec_pass(
+                    comment,
+                    issue_number=self.source.issue_number,
+                    change=change,
+                    repository_owner=owner,
+                ):
+                    return True
+            if len(comments) < 100:
+                return False
+            page += 1
 
     def _derived_explore_propose_transition(
         self,
@@ -680,7 +780,7 @@ class GitHubEffectAdapter:
             and payload.get("action") == "propose-change"
         )
 
-    def _derived_preactivation_propose_correction(
+    def _derived_propose_correction(
         self,
         effect: StagedEffect,
         payload: Mapping[str, object],
@@ -697,14 +797,15 @@ class GitHubEffectAdapter:
         if current is None:
             return False
         observation = normalize_github_issue(current)
-        return (
-            observation is not None
-            and observation.authoritative
-            and observation.issue_number == self.source.issue_number
-            and observation.state == "open"
-            and observation.change == "unset"
-            and observation.routing == ("lead", "propose-change")
-        )
+        if (
+            observation is None
+            or not observation.authoritative
+            or observation.issue_number != self.source.issue_number
+            or observation.state != "open"
+            or observation.routing != ("lead", "propose-change")
+        ):
+            return False
+        return observation.change == "unset" or not self._has_review_openspec_pass(observation.change)
 
     def _guard_github_mutation(self, payload: Mapping[str, object]) -> bool:
         operation = cast(str, payload["operation"])
@@ -820,9 +921,27 @@ class GitHubEffectAdapter:
             if effect.cause_payload_json is None:
                 return False
             current = self._current_issue()
-            if current is None or bind_issue_cause_ref(current.get("body"), 1) is None:
+            if current is None:
                 return False
-        propose_correction = self._derived_preactivation_propose_correction(effect, payload)
+            observation = normalize_github_issue(current)
+            if (
+                observation is None
+                or not observation.authoritative
+                or observation.state != "open"
+                or observation.routing != _routing_identity(self.source)
+                or not requested_proposal_ready_comment_payload(
+                    effect.cause_payload_json,
+                    issue_number=self.source.issue_number,
+                    expected_change=observation.change,
+                )
+                or bind_issue_cause_ref(current.get("body"), 1) is None
+                or (
+                    observation.change != "unset"
+                    and self._has_review_openspec_pass(observation.change)
+                )
+            ):
+                return False
+        propose_correction = self._derived_propose_correction(effect, payload)
         if (
             _routing_identity(self.source) == ("lead", "propose-change")
             and effect.kind != "issue-comment"
@@ -1084,9 +1203,19 @@ class GitHubEffectAdapter:
             observation is None
             or not observation.authoritative
             or observation.routing != _routing_identity(self.source)
-            or observation.change != "unset"
+            or not requested_proposal_ready_comment_payload(
+                effect.cause_payload_json,
+                issue_number=self.source.issue_number,
+                expected_change=(observation.change if observation is not None else None),
+            )
+            or (
+                observation is not None
+                and observation.change != "unset"
+                and self._has_review_openspec_pass(observation.change)
+            )
         ):
             raise RuntimeError("causal routing source became stale")
+        expected_change = observation.change
         updated_body = bind_issue_cause_ref(current.get("body"), comment_id)
         if updated_body is None:
             raise RuntimeError("causal routing body is structurally invalid")
@@ -1109,7 +1238,7 @@ class GitHubEffectAdapter:
             or observed_state is None
             or not observed_state.authoritative
             or observed_state.routing != _routing_identity(self.source)
-            or observed_state.change != "unset"
+            or observed_state.change != expected_change
         ):
             raise RuntimeError("causal routing binding postcondition not observed")
         self._routing_cause_refs[effect] = comment_id
