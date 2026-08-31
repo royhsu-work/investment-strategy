@@ -15,6 +15,12 @@ from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
+from investment_strategy.scheduled_agent_causal_position import (
+    bind_issue_cause_ref,
+    cause_ref_from_issue_body,
+    requested_proposal_ready_comment_payload,
+    trusted_proposal_ready_comment,
+)
 from investment_strategy.scheduled_agent_effect_contract import (
     GITHUB_MUTATION_KIND,
     allowed_github_mutation_operations,
@@ -35,6 +41,7 @@ class StagedEffect:
     kind: str
     payload_json: str
     derived: bool = False
+    cause_payload_json: str | None = None
 
 
 @dataclass(frozen=True)
@@ -138,6 +145,16 @@ def _derived_explore_effects(
             raise ValueError("worker-chosen Explore terminal retirement is not allowed")
 
     if disposition == "PROPOSAL_READY":
+        causal_payloads = tuple(
+            effect.payload_json
+            for effect in requested
+            if effect.kind == "issue-comment"
+            and requested_proposal_ready_comment_payload(
+                effect.payload_json,
+                issue_number=source.issue_number,
+            )
+        )
+        cause_payload_json = causal_payloads[0] if len(causal_payloads) == 1 else None
         derived = StagedEffect(
             kind="routing-transition",
             payload_json=json.dumps(
@@ -149,6 +166,7 @@ def _derived_explore_effects(
                 sort_keys=True,
             ),
             derived=True,
+            cause_payload_json=cause_payload_json,
         )
         return (*requested, derived)
     if disposition in {"NO_CHANGE_REQUIRED", "NO_GO"}:
@@ -380,20 +398,37 @@ def supported_effect_guard(source: WorkerRequest, effect: StagedEffect) -> bool:
 
     if effect.kind == "issue-comment":
         return (
-            set(payload) == {"issue_number", "body"}
+            effect.cause_payload_json is None
+            and set(payload) == {"issue_number", "body"}
             and isinstance(payload.get("body"), str)
             and bool(cast(str, payload["body"]).strip())
         )
 
     if effect.kind == "routing-transition":
-        return (
+        basic = (
             set(payload) == {"issue_number", "role", "action"}
             and isinstance(payload.get("role"), str)
             and isinstance(payload.get("action"), str)
             and bool(cast(str, payload["role"]).strip())
             and bool(cast(str, payload["action"]).strip())
         )
+        if not basic:
+            return False
+        if effect.cause_payload_json is None:
+            return True
+        return (
+            effect.derived
+            and _routing_identity(source) == ("lead", "explore-change")
+            and payload.get("role") == "lead"
+            and payload.get("action") == "propose-change"
+            and requested_proposal_ready_comment_payload(
+                effect.cause_payload_json,
+                issue_number=source.issue_number,
+            )
+        )
 
+    if effect.cause_payload_json is not None:
+        return False
     if effect.kind == "terminal-retirement":
         return _terminal_retirement_structurally_valid(source, payload)
 
@@ -534,39 +569,6 @@ def _workflow_label_names(payload: Mapping[str, object]) -> tuple[str, ...] | No
     return tuple(sorted(names))
 
 
-def _trusted_proposal_ready_explore_result(
-    payload: Mapping[str, object],
-    *,
-    issue_number: int,
-    repository_owner: str,
-) -> bool:
-    """Recognize only the canonical Explore ACTION_RESULT header for Propose semantics."""
-
-    body = payload.get("body")
-    user = payload.get("user")
-    author_association = payload.get("author_association")
-    if not isinstance(body, str) or not isinstance(user, Mapping):
-        return False
-    actor = user.get("login")
-    trusted_owner = actor == repository_owner and author_association == "OWNER"
-    trusted_runtime = actor == "github-actions[bot]"
-    if not (trusted_owner or trusted_runtime):
-        return False
-
-    lines = body.splitlines()
-    try:
-        marker = lines.index("## ACTION_RESULT")
-    except ValueError:
-        return False
-    expected = [
-        f"Workflow: #{issue_number}",
-        "Change: unset",
-        "Action: Lead / explore-change",
-        "Result: PROPOSAL_READY",
-    ]
-    return lines[marker + 1 : marker + 5] == expected
-
-
 class GitHubEffectAdapter:
     """Production adapter for bounded durable effects requested by mapped workers."""
 
@@ -576,6 +578,7 @@ class GitHubEffectAdapter:
         self.source = source
         self._comment_ids: dict[StagedEffect, int] = {}
         self._routing_targets: dict[StagedEffect, tuple[str, str]] = {}
+        self._routing_cause_refs: dict[StagedEffect, int] = {}
         self._created_issue_numbers: dict[StagedEffect, int] = {}
         self._created_pr_numbers: dict[StagedEffect, int] = {}
         self._content_shas: dict[StagedEffect, str] = {}
@@ -609,10 +612,12 @@ class GitHubEffectAdapter:
             )
         return observation.routing == _routing_identity(self.source)
 
-    def _has_unique_proposal_ready_baseline(self) -> bool:
+    def _legacy_unique_proposal_ready_baseline(self) -> int | None:
+        """Resolve only one unambiguous pre-bootstrap baseline for bounded migration."""
+
         owner = self.repository.split("/", 1)[0]
         page = 1
-        matches = 0
+        match: int | None = None
         while True:
             comments = _github_json(
                 self.repository,
@@ -620,21 +625,60 @@ class GitHubEffectAdapter:
                 f"issues/{self.source.issue_number}/comments?per_page=100&page={page}",
             )
             if not isinstance(comments, list):
-                return False
+                return None
             for comment in comments:
-                if not isinstance(comment, Mapping):
-                    return False
-                if _trusted_proposal_ready_explore_result(
+                if not isinstance(comment, Mapping) or not isinstance(comment.get("id"), int):
+                    return None
+                comment_id = cast(int, comment["id"])
+                if trusted_proposal_ready_comment(
                     comment,
                     issue_number=self.source.issue_number,
                     repository_owner=owner,
+                    expected_comment_id=comment_id,
                 ):
-                    matches += 1
-                    if matches > 1:
-                        return False
+                    if match is not None:
+                        return None
+                    match = comment_id
             if len(comments) < 100:
-                return matches == 1
+                return match
             page += 1
+
+    def _proposal_ready_baseline_comment_id(self) -> int | None:
+        current = self._current_issue()
+        if current is None:
+            return None
+        comment_id, valid = cause_ref_from_issue_body(current.get("body"))
+        if not valid:
+            return None
+        if comment_id is None:
+            return self._legacy_unique_proposal_ready_baseline()
+        comment = _github_json(
+            self.repository,
+            self.token,
+            f"issues/comments/{comment_id}",
+        )
+        owner = self.repository.split("/", 1)[0]
+        if not isinstance(comment, Mapping) or not trusted_proposal_ready_comment(
+            comment,
+            issue_number=self.source.issue_number,
+            repository_owner=owner,
+            expected_comment_id=comment_id,
+        ):
+            return None
+        return comment_id
+
+    def _derived_explore_propose_transition(
+        self,
+        effect: StagedEffect,
+        payload: Mapping[str, object],
+    ) -> bool:
+        return (
+            effect.derived
+            and _routing_identity(self.source) == ("lead", "explore-change")
+            and effect.kind == "routing-transition"
+            and payload.get("role") == "lead"
+            and payload.get("action") == "propose-change"
+        )
 
     def _derived_preactivation_propose_correction(
         self,
@@ -772,12 +816,18 @@ class GitHubEffectAdapter:
         payload = _effect_payload(effect)
         if payload is None:
             return False
+        if self._derived_explore_propose_transition(effect, payload):
+            if effect.cause_payload_json is None:
+                return False
+            current = self._current_issue()
+            if current is None or bind_issue_cause_ref(current.get("body"), 1) is None:
+                return False
         propose_correction = self._derived_preactivation_propose_correction(effect, payload)
         if (
             _routing_identity(self.source) == ("lead", "propose-change")
             and effect.kind != "issue-comment"
             and not propose_correction
-            and not self._has_unique_proposal_ready_baseline()
+            and self._proposal_ready_baseline_comment_id() is None
         ):
             return False
         if effect.kind == "terminal-retirement":
@@ -1014,6 +1064,56 @@ class GitHubEffectAdapter:
             return
         raise RuntimeError(f"unsupported GitHub mutation operation: {operation}")
 
+    def _bind_explore_route_cause(self, effect: StagedEffect) -> None:
+        if effect.cause_payload_json is None:
+            raise RuntimeError("Explore -> Propose routing has no causal result payload")
+        matches = [
+            comment_id
+            for candidate, comment_id in self._comment_ids.items()
+            if candidate.kind == "issue-comment"
+            and candidate.payload_json == effect.cause_payload_json
+        ]
+        if len(matches) != 1:
+            raise RuntimeError("Explore -> Propose causal result was not durably identified")
+        comment_id = matches[0]
+        current = self._current_issue()
+        if current is None:
+            raise RuntimeError("causal routing target disappeared")
+        observation = normalize_github_issue(current)
+        if (
+            observation is None
+            or not observation.authoritative
+            or observation.routing != _routing_identity(self.source)
+            or observation.change != "unset"
+        ):
+            raise RuntimeError("causal routing source became stale")
+        updated_body = bind_issue_cause_ref(current.get("body"), comment_id)
+        if updated_body is None:
+            raise RuntimeError("causal routing body is structurally invalid")
+        if updated_body != current.get("body"):
+            _github_json(
+                self.repository,
+                self.token,
+                f"issues/{self.source.issue_number}",
+                method="PATCH",
+                payload={"body": updated_body},
+            )
+        observed = self._current_issue()
+        if observed is None:
+            raise RuntimeError("causal routing target disappeared after binding")
+        observed_id, valid = cause_ref_from_issue_body(observed.get("body"))
+        observed_state = normalize_github_issue(observed)
+        if (
+            not valid
+            or observed_id != comment_id
+            or observed_state is None
+            or not observed_state.authoritative
+            or observed_state.routing != _routing_identity(self.source)
+            or observed_state.change != "unset"
+        ):
+            raise RuntimeError("causal routing binding postcondition not observed")
+        self._routing_cause_refs[effect] = comment_id
+
     def apply(self, effect: StagedEffect) -> None:
         payload = _effect_payload(effect)
         if payload is None:
@@ -1035,6 +1135,8 @@ class GitHubEffectAdapter:
         if effect.kind == "routing-transition":
             target_role = cast(str, payload["role"])
             target_action = cast(str, payload["action"])
+            if self._derived_explore_propose_transition(effect, payload):
+                self._bind_explore_route_cause(effect)
             source_role_label = f"agent:{self.source.role}"
             source_action_label = f"action:{self.source.action}"
             target_role_label = f"agent:{target_role}"
@@ -1240,11 +1342,17 @@ class GitHubEffectAdapter:
             if current is None:
                 return False
             observation = normalize_github_issue(current)
-            return (
-                observation is not None
-                and observation.authoritative
-                and observation.routing == target
-            )
+            if (
+                observation is None
+                or not observation.authoritative
+                or observation.routing != target
+            ):
+                return False
+            cause_ref = self._routing_cause_refs.get(effect)
+            if cause_ref is None:
+                return True
+            observed_ref, valid = cause_ref_from_issue_body(current.get("body"))
+            return valid and observed_ref == cause_ref
 
         if effect.kind == "terminal-retirement":
             if effect not in self._terminal_retirements:
