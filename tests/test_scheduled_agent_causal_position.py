@@ -11,7 +11,11 @@ from investment_strategy.scheduled_agent_causal_position import (
     bind_issue_cause_ref,
     cause_ref_from_issue_body,
 )
-from investment_strategy.scheduled_agent_effects import GitHubEffectAdapter, StagedEffect, parse_effect_batch
+from investment_strategy.scheduled_agent_effects import (
+    GitHubEffectAdapter,
+    StagedEffect,
+    parse_effect_batch,
+)
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 
 
