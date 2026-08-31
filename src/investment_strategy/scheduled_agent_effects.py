@@ -941,11 +941,20 @@ class GitHubEffectAdapter:
                 )
             ):
                 return False
+        propose_correction_shape = (
+            effect.derived
+            and _routing_identity(self.source) == ("lead", "propose-change")
+            and effect.kind == "routing-transition"
+            and payload.get("role") == "lead"
+            and payload.get("action") == "explore-change"
+        )
         propose_correction = self._derived_propose_correction(effect, payload)
+        if propose_correction_shape and not propose_correction:
+            return False
         if (
             _routing_identity(self.source) == ("lead", "propose-change")
             and effect.kind != "issue-comment"
-            and not propose_correction
+            and not propose_correction_shape
             and self._proposal_ready_baseline_comment_id() is None
         ):
             return False
