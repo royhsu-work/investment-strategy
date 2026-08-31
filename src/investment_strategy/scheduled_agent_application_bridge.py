@@ -71,12 +71,8 @@ def parse_application_request(body: str) -> ApplicationRequest | None:
     if not lines[3].startswith(WORKER_RESULT_B64_PREFIX):
         raise ValueError("EFFECT_REQUEST worker result is missing")
 
-    request_comment_id = _positive_decimal(
-        lines[1][len(DISPATCH_REQUEST_COMMENT_ID_PREFIX) :]
-    )
-    decision_comment_id = _positive_decimal(
-        lines[2][len(DISPATCH_DECISION_COMMENT_ID_PREFIX) :]
-    )
+    request_comment_id = _positive_decimal(lines[1][len(DISPATCH_REQUEST_COMMENT_ID_PREFIX) :])
+    decision_comment_id = _positive_decimal(lines[2][len(DISPATCH_DECISION_COMMENT_ID_PREFIX) :])
     encoded_result = lines[3][len(WORKER_RESULT_B64_PREFIX) :]
     if request_comment_id is None or decision_comment_id is None or not encoded_result:
         raise ValueError("EFFECT_REQUEST identity is invalid")
