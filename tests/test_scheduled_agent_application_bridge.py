@@ -25,6 +25,7 @@ _BRANCH = "agent/simplify-scheduled-agent-control-plane"
 _BEFORE = "1111111111111111111111111111111111111111"
 _COMMIT_ONE = "2222222222222222222222222222222222222222"
 _AFTER = "3333333333333333333333333333333333333333"
+_FIXTURE_VALUE = "fixture-value"
 
 
 def _app(slug: str) -> dict[str, object]:
@@ -288,7 +289,7 @@ def test_prepare_and_prove_exact_openspec_validation_from_application_commit_cha
 
     def fake_github_json(repository: str, token: str, api_path: str) -> object:
         assert repository == _REPOSITORY
-        assert token == "token"
+        assert token == _FIXTURE_VALUE
         if api_path == "branches/agent%2Fsimplify-scheduled-agent-control-plane":
             return {"commit": {"sha": next(branch_heads)}}
         if api_path == f"compare/{_BEFORE}...{_AFTER}":
@@ -333,7 +334,7 @@ def test_prepare_and_prove_exact_openspec_validation_from_application_commit_cha
         raw,
         source=source,
         repository=_REPOSITORY,
-        token="token",
+        token=_FIXTURE_VALUE,
     )
 
     assert probe is not None
@@ -344,7 +345,7 @@ def test_prepare_and_prove_exact_openspec_validation_from_application_commit_cha
     target = prove_exact_openspec_validation(
         probe,
         repository=_REPOSITORY,
-        token="token",
+        token=_FIXTURE_VALUE,
         correlation="effect-request-102",
     )
 
@@ -381,7 +382,7 @@ def test_exact_openspec_validation_fails_closed_on_interleaved_branch_commit(
         raw,
         source=source,
         repository=_REPOSITORY,
-        token="token",
+        token=_FIXTURE_VALUE,
     )
     assert probe is not None
 
@@ -389,7 +390,7 @@ def test_exact_openspec_validation_fails_closed_on_interleaved_branch_commit(
         prove_exact_openspec_validation(
             probe,
             repository=_REPOSITORY,
-            token="token",
+            token=_FIXTURE_VALUE,
             correlation="effect-request-102",
         )
 
