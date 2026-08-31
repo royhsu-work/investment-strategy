@@ -34,8 +34,7 @@ def _durable_comment(comment_id: int, issue_number: int = 168) -> dict[str, obje
     return {
         "id": comment_id,
         "issue_url": (
-            "https://api.github.com/repos/royhsu-work/investment-strategy/"
-            f"issues/{issue_number}"
+            f"https://api.github.com/repos/royhsu-work/investment-strategy/issues/{issue_number}"
         ),
         "body": _result_body(issue_number),
         "user": {"login": "github-actions[bot]"},
@@ -70,13 +69,7 @@ def _activation(body: str) -> StagedEffect:
 
 def test_cause_ref_insertion_preserves_unrelated_and_fenced_text() -> None:
     original = (
-        "Change: unset\n"
-        "\n"
-        "## Intent\n"
-        "Keep this text.\n"
-        "```text\n"
-        "Cause-Ref: issuecomment-999\n"
-        "```\n"
+        "Change: unset\n\n## Intent\nKeep this text.\n```text\nCause-Ref: issuecomment-999\n```\n"
     )
 
     updated = bind_issue_cause_ref(original, 42)
@@ -95,11 +88,7 @@ def test_cause_ref_insertion_preserves_unrelated_and_fenced_text() -> None:
 
 
 def test_duplicate_or_malformed_top_level_cause_ref_fails_closed() -> None:
-    duplicate = (
-        "Change: unset\n"
-        "Cause-Ref: issuecomment-1\n"
-        "Cause-Ref: issuecomment-2\n"
-    )
+    duplicate = "Change: unset\nCause-Ref: issuecomment-1\nCause-Ref: issuecomment-2\n"
     malformed = "Change: unset\nCause-Ref: latest\n"
 
     assert cause_ref_from_issue_body(duplicate) == (None, False)
@@ -118,9 +107,7 @@ def test_proposal_ready_batch_binds_derived_route_to_invocation_result_payload()
             "explore_disposition": "PROPOSAL_READY",
             "propose_disposition": None,
             "result_content": "bounded result",
-            "requested_effects": [
-                {"kind": "issue-comment", "payload_json": comment_payload}
-            ],
+            "requested_effects": [{"kind": "issue-comment", "payload_json": comment_payload}],
         }
     )
 
