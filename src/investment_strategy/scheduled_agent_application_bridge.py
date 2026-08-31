@@ -458,7 +458,9 @@ def prove_exact_openspec_validation(
             expected_parent=parent_sha,
             expected_sha=commit_sha,
         ):
-            raise RuntimeError("OpenSpec application commit proof does not match the requested effect")
+            raise RuntimeError(
+                "OpenSpec application commit proof does not match the requested effect"
+            )
         parent_sha = commit_sha
 
     if parent_sha != after_sha:
