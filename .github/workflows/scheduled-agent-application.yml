@@ -177,7 +177,8 @@ jobs:
             echo "::error::Invalid .github/openspec-version: $openspec_version"
             exit 1
           }
-          npm install -g "@fission-ai/openspec@$openspec_version"
+          openspec_package="@fission-ai/openspec"
+          npm install -g "${openspec_package}@${openspec_version}"
           echo "qualified_openspec_version=$openspec_version"
 
       - name: Qualify pinned OpenSpec compatibility
