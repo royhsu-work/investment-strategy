@@ -209,7 +209,10 @@ def plan_validation_resource(
     if dispatch_request_comment is None or not _trusted_connector_comment(dispatch_request_comment):
         raise ValueError("validation resource dispatch request is missing or untrusted")
     dispatch_request_body = dispatch_request_comment.get("body")
-    if not isinstance(dispatch_request_body, str) or parse_dispatch_request(dispatch_request_body) is None:
+    if (
+        not isinstance(dispatch_request_body, str)
+        or parse_dispatch_request(dispatch_request_body) is None
+    ):
         raise ValueError("validation resource dispatch request is malformed")
     if dispatch_decision_comment is None or not _trusted_actions_comment(dispatch_decision_comment):
         raise ValueError("validation resource dispatch decision is missing or untrusted")
@@ -289,7 +292,12 @@ def _pr_has_nonclosing_issue_link(body: object, issue_number: int) -> bool:
 
 
 def _open_pr_target(
-    *, repository: str, token: str, pr_number: int, source: WorkerRequest, expected_change: str,
+    *,
+    repository: str,
+    token: str,
+    pr_number: int,
+    source: WorkerRequest,
+    expected_change: str,
     default_branch: str,
 ) -> str:
     issue = _as_mapping(_github_json(repository, token, f"issues/{source.issue_number}"))
@@ -338,7 +346,9 @@ def _open_pr_target(
             if change_name and change_name != "archive":
                 active_change_names.add(change_name)
     if not has_expected_change or active_change_names != {expected_change}:
-        raise RuntimeError("validation resource target PR does not uniquely represent the source Change")
+        raise RuntimeError(
+            "validation resource target PR does not uniquely represent the source Change"
+        )
 
     revision = head.get("sha")
     if not isinstance(revision, str) or not revision:
