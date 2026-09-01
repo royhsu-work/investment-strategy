@@ -477,19 +477,19 @@ def test_application_workflow_is_no_api_and_uses_dedicated_write_boundary() -> N
 
     assert "issue_comment:" in workflow
     assert "startsWith(github.event.comment.body, 'EFFECT_REQUEST')" in workflow
+    assert "startsWith(github.event.comment.body, 'VALIDATION_RESOURCE_REQUEST')" in workflow
     assert "contents: write" in workflow
     assert "issues: write" in workflow
     assert "pull-requests: write" in workflow
-    assert "actions: write" in workflow
     assert "id: apply" in workflow
     assert "validation_required" in workflow
     assert "validation_target_repository" in workflow
     assert "validation_target_revision" in workflow
     assert "validation_correlation" in workflow
-    assert "actions/workflows/openspec-validate.yml/dispatches" in workflow
-    assert "target_repository" in workflow
-    assert "target_revision" in workflow
-    assert "correlation" in workflow
     assert "scheduled_agent_application_bridge" in workflow
+    assert "scheduled_agent_validation_resource" in workflow
+    assert "Checkout exact validation target" in workflow
+    assert "openspec validate --all --strict --json --no-interactive" in workflow
+    assert "actions/workflows/openspec-validate.yml/dispatches" not in workflow
     assert "openai" not in workflow.lower()
     assert "responses" not in workflow.lower()
