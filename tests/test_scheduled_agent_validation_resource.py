@@ -13,6 +13,7 @@ _REPOSITORY = "royhsu-work/investment-strategy"
 _REVISION = "013510b12c5d3cde869308a319a1e2fb12cdfa60"
 _PR_HEAD = "05e1e84523651c6a9bc4ebbe4b275b12dae74dbf"
 _CHANGE = "simplify-scheduled-agent-control-plane"
+_FIXTURE_VALUE = "fixture-value"
 
 
 def _app(slug: str) -> dict[str, object]:
@@ -20,11 +21,12 @@ def _app(slug: str) -> dict[str, object]:
 
 
 def _comment(comment_id: int, body: str, *, actions: bool = False) -> dict[str, object]:
+    app_slug = "github-actions" if actions else "chatgpt-codex-connector"
     return {
         "id": comment_id,
         "body": body,
         "user": {"login": "github-actions[bot]" if actions else "royhsu-work"},
-        "performed_via_github_app": _app("github-actions" if actions else "chatgpt-codex-connector"),
+        "performed_via_github_app": _app(app_slug),
     }
 
 
@@ -127,7 +129,7 @@ def test_resource_derives_already_current_pr_head_after_fresh_reauthorization(
 
     def fake_github_json(repository: str, token: str, api_path: str) -> object:
         assert repository == _REPOSITORY
-        assert token == "fixture-token"
+        assert token == _FIXTURE_VALUE
         if api_path == "issues/138":
             return {"state": "open", "body": f"Change: {_CHANGE}\n"}
         if api_path == "pulls/178":
@@ -159,7 +161,7 @@ def test_resource_derives_already_current_pr_head_after_fresh_reauthorization(
     target = resource.resolve_validation_resource_target(
         plan,
         repository=_REPOSITORY,
-        token="fixture-token",
+        token=_FIXTURE_VALUE,
         default_branch="main",
         workflow_text=workflow,
     )
@@ -188,7 +190,7 @@ def test_resource_rejects_source_without_review_openspec_gate(
         resource.resolve_validation_resource_target(
             plan,
             repository=_REPOSITORY,
-            token="fixture-token",
+            token=_FIXTURE_VALUE,
             default_branch="main",
             workflow_text=(
                 "| `Executor / implement-change` | implementation READY | "
@@ -235,7 +237,7 @@ def test_resource_rejects_pr_that_mixes_another_active_change(
         resource.resolve_validation_resource_target(
             plan,
             repository=_REPOSITORY,
-            token="fixture-token",
+            token=_FIXTURE_VALUE,
             default_branch="main",
             workflow_text=(
                 "| `Lead / resolve-question` | material semantic correction ready | "
