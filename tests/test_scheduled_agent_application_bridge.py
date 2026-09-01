@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 
@@ -78,6 +79,21 @@ def _content_effect(*, path: str, message: str, content: str) -> dict[str, str]:
                 "message": message,
                 "content": content,
                 "expected_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            },
+            sort_keys=True,
+        ),
+    }
+
+
+def _ref_create_effect(*, sha: str = _BEFORE) -> dict[str, str]:
+    return {
+        "kind": "github-mutation",
+        "payload_json": json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "ref-create",
+                "ref": f"refs/heads/{_BRANCH}",
+                "sha": sha,
             },
             sort_keys=True,
         ),
@@ -352,6 +368,67 @@ def test_prepare_and_prove_exact_openspec_validation_from_application_commit_cha
     assert target.repository == _REPOSITORY
     assert target.revision == _AFTER
     assert target.correlation == "effect-request-102"
+
+
+def test_prepare_exact_openspec_validation_accepts_matching_ref_create_for_new_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker_result = _propose_worker_result()
+    worker_result["requested_effects"] = [
+        _ref_create_effect(),
+        *worker_result["requested_effects"],
+    ]
+
+    def fake_github_json(repository: str, token: str, api_path: str) -> object:
+        assert repository == _REPOSITORY
+        assert token == _FIXTURE_VALUE
+        if api_path == "branches/agent%2Fsimplify-scheduled-agent-control-plane":
+            raise HTTPError(
+                url="https://api.github.test/branch",
+                code=404,
+                msg="Not Found",
+                hdrs=None,
+                fp=None,
+            )
+        raise AssertionError(f"unexpected GitHub read: {api_path}")
+
+    monkeypatch.setattr(bridge, "_github_json", fake_github_json)
+    probe = prepare_exact_openspec_validation(
+        json.dumps(worker_result, sort_keys=True),
+        source=WorkerRequest(138, "lead", "propose-change"),
+        repository=_REPOSITORY,
+        token=_FIXTURE_VALUE,
+    )
+
+    assert probe is not None
+    assert probe.branch == _BRANCH
+    assert probe.before_sha == _BEFORE
+
+
+def test_prepare_exact_openspec_validation_rejects_missing_branch_without_ref_create(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_github_json(repository: str, token: str, api_path: str) -> object:
+        assert repository == _REPOSITORY
+        assert token == _FIXTURE_VALUE
+        if api_path == "branches/agent%2Fsimplify-scheduled-agent-control-plane":
+            raise HTTPError(
+                url="https://api.github.test/branch",
+                code=404,
+                msg="Not Found",
+                hdrs=None,
+                fp=None,
+            )
+        raise AssertionError(f"unexpected GitHub read: {api_path}")
+
+    monkeypatch.setattr(bridge, "_github_json", fake_github_json)
+    with pytest.raises(RuntimeError, match="absent without a matching ref-create"):
+        prepare_exact_openspec_validation(
+            json.dumps(_propose_worker_result(), sort_keys=True),
+            source=WorkerRequest(138, "lead", "propose-change"),
+            repository=_REPOSITORY,
+            token=_FIXTURE_VALUE,
+        )
 
 
 def test_exact_openspec_validation_fails_closed_on_interleaved_branch_commit(
