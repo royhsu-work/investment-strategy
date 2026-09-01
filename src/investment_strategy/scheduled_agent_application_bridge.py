@@ -12,6 +12,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
+from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
@@ -315,6 +316,59 @@ def _branch_head_sha(repository: str, token: str, branch: str) -> str:
     return sha
 
 
+def _branch_head_sha_if_present(repository: str, token: str, branch: str) -> str | None:
+    try:
+        return _branch_head_sha(repository, token, branch)
+    except HTTPError as exc:
+        if exc.code == 404:
+            return None
+        raise
+
+
+def _matching_ref_create_sha(
+    raw_worker_result: str,
+    source: WorkerRequest,
+    branch: str,
+) -> str | None:
+    batch = parse_effect_batch(raw_worker_result, source)
+    target_ref = f"refs/heads/{branch}"
+    matching_creates: list[tuple[int, str]] = []
+    first_content_index: int | None = None
+
+    for index, effect in enumerate(batch.effects):
+        if effect.kind != GITHUB_MUTATION_KIND:
+            continue
+        try:
+            decoded = json.loads(effect.payload_json)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("branch mutation payload became malformed") from exc
+        payload = _as_mapping(decoded)
+        if payload is None:
+            continue
+
+        operation = payload.get("operation")
+        if (
+            first_content_index is None
+            and operation in _CONTENT_OPERATIONS
+            and payload.get("branch") == branch
+        ):
+            first_content_index = index
+        if operation == "ref-create" and payload.get("ref") == target_ref:
+            sha = payload.get("sha")
+            if not isinstance(sha, str) or not sha:
+                raise RuntimeError("OpenSpec validation branch creation identity is incomplete")
+            matching_creates.append((index, sha))
+        if operation in {"ref-update", "ref-delete"} and payload.get("ref") == target_ref:
+            raise RuntimeError("OpenSpec validation target branch ref history is ambiguous")
+
+    if first_content_index is None:
+        return None
+    eligible = [sha for index, sha in matching_creates if index < first_content_index]
+    if len(matching_creates) > 1 or len(eligible) > 1:
+        raise RuntimeError("OpenSpec validation target branch creation is ambiguous")
+    return eligible[0] if len(eligible) == 1 else None
+
+
 def _content_mutations_for_validation(
     raw_worker_result: str,
     source: WorkerRequest,
@@ -383,9 +437,16 @@ def prepare_exact_openspec_validation(
     if not mutations:
         return None
     branch = mutations[0].branch
+    before_sha = _branch_head_sha_if_present(repository, token, branch)
+    if before_sha is None:
+        before_sha = _matching_ref_create_sha(raw_worker_result, source, branch)
+        if before_sha is None:
+            raise RuntimeError(
+                "OpenSpec validation target branch is absent without a matching ref-create"
+            )
     return ExactValidationProbe(
         branch=branch,
-        before_sha=_branch_head_sha(repository, token, branch),
+        before_sha=before_sha,
         mutations=mutations,
     )
 
