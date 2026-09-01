@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+from email.message import Message
 from pathlib import Path
 from urllib.error import HTTPError
 
@@ -374,10 +375,9 @@ def test_prepare_exact_openspec_validation_accepts_matching_ref_create_for_new_b
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     worker_result = _propose_worker_result()
-    worker_result["requested_effects"] = [
-        _ref_create_effect(),
-        *worker_result["requested_effects"],
-    ]
+    requested_effects = worker_result["requested_effects"]
+    assert isinstance(requested_effects, list)
+    worker_result["requested_effects"] = [_ref_create_effect(), *requested_effects]
 
     def fake_github_json(repository: str, token: str, api_path: str) -> object:
         assert repository == _REPOSITORY
@@ -387,7 +387,7 @@ def test_prepare_exact_openspec_validation_accepts_matching_ref_create_for_new_b
                 url="https://api.github.test/branch",
                 code=404,
                 msg="Not Found",
-                hdrs=None,
+                hdrs=Message(),
                 fp=None,
             )
         raise AssertionError(f"unexpected GitHub read: {api_path}")
@@ -416,7 +416,7 @@ def test_prepare_exact_openspec_validation_rejects_missing_branch_without_ref_cr
                 url="https://api.github.test/branch",
                 code=404,
                 msg="Not Found",
-                hdrs=None,
+                hdrs=Message(),
                 fp=None,
             )
         raise AssertionError(f"unexpected GitHub read: {api_path}")
