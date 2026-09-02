@@ -1,73 +1,81 @@
 ## Context
 
-Current formalization is governed by #138 formal-correction Explore `issuecomment-5482546619` on `main@f8f2c49d255997889dcdd406cabd504f03367f07`. That result preserves the earlier root-cause evidence from `issuecomment-5474475020` without changing the approved architecture outcome. Human clarification `issuecomment-5475109024` makes #168 de-mailbox part of #138, permits bounded pre-acceptance Explore correction, and requires staged N-1 delivery. Human clarification `issuecomment-5477274582` establishes that exact-revision validation must self-host inside the repository-owned deterministic boundary: earlier formalization head `611157a43b9eb0c42345fa56ca93ebb0d524e2b8` produced OpenSpec Validate run `33380560988` with `conclusion=action_required` and no validator job, proving an execution-boundary deadlock rather than authority to relax the gate. Merged PR #185 deployed the first validator-bootstrap mechanism on `main`, but current implementation evidence shows that mechanism remains too source-action-specific for the required Stage 1A contract.
+#138 preserves formal Explore `issuecomment-5482546619`, Human architecture decisions `issuecomment-5475109024` / `issuecomment-5477274582`, and #168 transport source `issuecomment-5442745071`.
+
+Two observed execution-boundary defects require this correction. First, exact revision `R` can exist while event validation is `action_required` with no validator job, so exact-`R` readiness must self-host deterministically. Second, repository effect authority is conflated with the Actions `GITHUB_TOKEN` mutation identity. Human environment constraint `issuecomment-5303723685` rejects enabling `Allow GitHub Actions to create and approve pull requests` as the target solution; Executor `SPEC_BLOCKER` `issuecomment-5504609193` records the resulting `pull-request-create` HTTP 403.
+
+This changes mechanism, not Human outcome.
 
 ## Decisions
 
-### 1. Minimum state and explicit merge phase
+### 1. Executable authority and current state
 
-After cutover, normal routed state is `Issue + open/closed + immutable Change + exactly one Action`; Role is derived. Results/reviews/Human decisions are semantic evidence; transport/HANDOFF/history are not routing. Replace generic `merge-pr` with `merge-implementation-pr` and `merge-archive-pr`, both using the existing merge procedure Skill while preserving their distinct review/head/check/linkage/cleanup gates.
+After cutover, current workflow position is `Issue lifecycle + immutable Change + one Action + exact causal input`; Role derives from Action. A default-branch kernel solely owns Action vocabulary, Action→Role, finite result/transition/effect rules, WIP/FIFO/debt classification, effect capabilities, carrier eligibility, fresh authorization, stale/replay handling, and structural postconditions. `agents/workflow.md` is generated/mechanically verified presentation, not a parsed competing DAG. Semantic judgment remains with Lead/Reviewer/Executor.
 
-### 2. One executable machine authority
+Generic `merge-pr` becomes `merge-implementation-pr` and `merge-archive-pr`.
 
-A small kernel owns Action vocabulary, Action->Role, finite result->transition/effect mappings, WIP/FIFO/debt classification, effect capabilities, source reauthorization, stale/replay handling and structural postconditions. Dispatch, application and tests consume it directly. `agents/workflow.md` becomes generated or mechanically verified presentation. AGENTS/roles/Skills retain shared protocol, role authority and semantic procedure without a competing executable transition table.
+### 2. Effect authority is separate from mutation carrier
 
-### 3. Typed semantic/application boundary
+An authorized worker returns exact source Issue/Action, typed result, evidence, and bounded effect inputs. Repository application:
 
-One authorized worker returns its source Issue/Action, bounded action-owned typed result, narrative/source evidence and bounded effect inputs. The worker cannot select arbitrary successors. Application validates the result, derives legal effects, fresh-reauthorizes source/effect predicates, mutates narrowly and fresh-observes postconditions. Meaning-dependent Explore/Human/OpenSpec/review/implementation judgments remain model-owned.
+```text
+typed result
+ -> derive kernel-legal effect
+ -> bind exact target/preconditions/revision
+ -> select legal carrier class
+ -> fresh authorize
+ -> carrier executes only that plan
+ -> repository fresh-reads resulting object/head/state
+ -> accept postcondition or reject
+```
 
-### 4. #168 run-scoped transport and daily check-in lifecycle
+The carrier is an actuator only. It MUST NOT choose Issue/Action/effect, weaken preconditions, infer retry, or make API success authoritative. Replacing a carrier does not change workflow semantics.
 
-Runtime check-in comments are request/trigger/audit only. Dispatch/application/validation results belong to the exact Actions run caused by the request and are consumed from that run-scoped surface. Exact request->run->structured-result correlation is mandatory. Missing, ambiguous, failed, cancelled, malformed or expired evidence fails closed; no response-comment fallback exists. Coordination-Issue semantic comments remain separate governed evidence.
+### 3. Exact-revision validation remains application-owned
 
-Each wake fresh-discovers the `Asia/Taipei` current-day runtime check-in from authoritative GitHub state using a dedicated non-workflow identity plus canonical local-date identity; exactly one open current-day check-in is usable, and no permanent `AGENT_RUNTIME_CHECKIN_ISSUE`-style pointer or conversation memory selects it. Daily rollover is repository-owned and idempotent: establish and fresh-observe today's usable check-in before closing prior check-in Issues, and fail closed on zero, duplicate, or ambiguous current-day identity. Closing a prior-day check-in does not invalidate an already-triggered immutable request `C -> exact run R -> structured result` chain; new wakes use today's check-in while that in-flight prior-day correlation remains consumable.
+When readiness requires exact OpenSpec validation for `R`, application obtains deterministic evidence independent of a source-Action whitelist. `R` may be newly produced or already current; no dummy-touch is allowed.
 
-### 5. Exact-revision validation is a gate-derived deterministic application resource
+Accepted evidence proves target `R`, validator checkout `HEAD == R`, qualified pinned compatibility, and strict PASS. Stale CI, `run.head_sha` without checkout proof, manual approval workaround, ungoverned connector mutation, or another model wake cannot satisfy the gate. `Lead / resolve-question` gets the same gate-derived resource availability as Propose.
 
-When the governed readiness contract requires exact-revision OpenSpec validation before ownership transfer, repository application must be able to obtain an exact-resource result for target revision `R` independently of a hard-coded source Role/Action whitelist. `R` may be the revision just produced by the current authorized OpenSpec mutation or an already-current Change/PR head that requires validation but no artifact rewrite. Application MUST NOT rewrite or dummy-touch an already-correct artifact merely to manufacture a mutation-triggered validator path.
+### 4. Identity-sensitive PR effects use a legal event-capable carrier
 
-The implementation may run pinned strict validation directly against `R` or explicitly trigger a dedicated deterministic validator bound to `R`; mechanism choice is implementation-owned. Accepted evidence must prove all of: target revision `R`; validator checkout `HEAD == R`; pinned OpenSpec compatibility is qualified; strict OpenSpec validation is PASS. The structured validation result belongs to the exact deterministic application/validation execution and is consumed by the already selected semantic Action. Missing, failed, cancelled, ambiguous, revision-mismatched, checkout-mismatched, malformed or expired evidence fails closed. Stale CI, `run.head_sha == R` without checkout proof, manual approval workarounds, a direct connector write outside repository application, or another semantic Action/model wake cannot satisfy the gate.
+Actions may execute only mutations whose identity and event semantics satisfy the lifecycle. PR create/presentation/head/ready/merge effects requiring ordinary GitHub event propagation, or forbidden to Actions, use an event-capable Scheduled-Agent connector/GitHub-App carrier after application authorizes an exact plan.
 
-This resource does not create a second orchestration plane: GitHub Actions remains deterministic-only and one-action-per-wake remains unchanged. A material `Lead / resolve-question` correction requiring exact-R readiness must be able to consume the same resource as `Lead / propose-change`; source Action identity can constrain semantic ownership, but MUST NOT suppress a readiness resource required by the governed gate.
+The target MUST NOT enable `Allow GitHub Actions to create and approve pull requests`.
 
-### 6. One mapped Action per wake
+Preserve #58 Archive ownership: automation ends successfully at validated archive-branch push; `Lead / finalize-change` presents/reuses final Archive PR through the legal carrier; independent archive review, exact-head gates, Executor merge, native close, and terminal reconstruction remain.
 
-Normal wake: fresh bootstrap -> exact dispatch -> one mapped Action -> deterministic application/postcondition/exact-resource consumption -> exit. No successor Action executes in that wake even when Role is unchanged. The selected Action remains internally work-conserving through immediately actionable RED->GREEN->REFACTOR->VERIFY, local correction and bounded exact-resource consumption. Same-role chaining, cross-role wake barriers, fresh-worker same-wake identity and continuation flags are deleted.
+Recovery is reuse-first. Reuse an existing legal PR when it can represent the exact authorized head/linkage. Create replacement only when fresh authoritative state plus exact effect requires one. Actions inability is never authority to create a duplicate. No durable `waiting-for-carrier`, retry counter, lock/lease, or second DAG is added.
 
-### 7. Bounded formalization correction
+### 5. Run-scoped transport and one Action per wake
 
-Before first independent semantic `review-openspec` acceptance, if Propose proves its Explore source/evidence/feasibility premise materially invalid, the executable contract may return the same Issue to `explore-change` even after provisional non-`unset` Change activation. Preserve Change identity, Proposal/PR history and audit evidence; this is not a scope reset or generic backward transition. After independent semantic acceptance, material correction uses `resolve-question` -> independent review.
+Runtime check-in comments are request/trigger/audit only. Dispatch/application/validation results belong to the exact Actions run. Exact request→run→result correlation is mandatory; no response-comment fallback. Each wake fresh-discovers exactly one open `Asia/Taipei` current-day check-in; rollover establishes today before closing yesterday and preserves in-flight prior-day correlations.
 
-### 8. Stale/replay and execution-boundary safety
+A normal wake executes `fresh dispatch -> one mapped Action -> application -> legal carrier if required -> fresh postcondition/exact-resource consumption -> exit`. No successor Action executes in the same wake. The selected Action remains work-conserving internally.
 
-Every consequence fresh-reads exact source state and effect-specific evidence. Already-satisfied legal postconditions are idempotent and never rewound. Recovery reconstructs actual completed mutations and causal descendants rather than replaying historical routing. Before consequential results/effects/ownership changes, direct-Human freshness/disposition remains the shared bounded provenance check and never grants separately Human-reserved authority. A just-triggered exact external resource may be boundedly re-observed inside the selected Action without permitting successor Action execution in that wake. Catchable failures retain canonical `EXECUTION_EXCEPTION` evidence and legal same-authority recovery while source routing/revision/preconditions remain current; no generic blocked/retry/fault state machine is added. Incompatible state, incomplete provenance, ambiguous transport or invalid exact-revision validation fails closed. Fresh read is not a mutex/CAS.
+### 6. Correction, replay, and migration
 
-### 9. Typed absorbed-source retirement at canonical-state cutover
+Before first independent `review-openspec` acceptance, a material formalization defect may return the same Issue to Explore without a new Human-reserved commitment while preserving Change, artifacts/PR history, evidence, and WIP. After acceptance, material correction uses Resolve then independent review.
 
-Absorption is a one-time migration fact, not a normal workflow state or classifier branch. Stage 5 consumes a finite reviewed machine-readable retirement plan whose entry schema binds: exact source Issue; expected source open/closed state, `Change:` and workflow routing tuple; exact absorbing coordination Issue/Change; and exact durable source/assignment references for audit. The migration enumerates candidates from this typed plan and complete current GitHub observations, never by searching Issue prose, comments, history, task names or model inference. The plan is bounded cutover input and is not retained as a permanent exception registry after accepted migration.
+Satisfied postconditions are idempotent. Carrier failure preserves exact plan/error/observed mutation; same-authority recovery continues only while source/effect remain current. Changed preconditions make the plan stale. No generic retry/fault state machine is introduced.
 
-For each entry, application first fresh-verifies plan uniqueness/shape, source and absorber identities/state, complete provenance, current authority, and substantive-Human-input disposition. A mismatch, duplicate, missing field, incomplete observation, contradictory state, or unresolved newer Human input stops before mutation. The authorized effect sequence is narrow and replay-safe: close the source if open; fresh-observe closed; remove only currently observed workflow `agent:*`/`action:*` labels; preserve body/comments/results and unrelated labels; then accept only fresh-observed `closed + no workflow routing`. Interruption after close exposes ordinary closed-routing debt and the same entry may resume only missing retirement effects; an already-satisfied postcondition is a no-op.
-
-The first reviewed plan includes the live #168 case: expected source `open + Change: unset + agent:lead + action:explore-change`, absorbing #138 / `simplify-scheduled-agent-control-plane`, and exact #168 Explore plus Human assignment references. This generic typed migration mechanism preserves #168 as provenance while preventing future FIFO re-entry without a #138-specific production branch or history-text suppression rule.
+Stage 5 uses a finite reviewed typed retirement plan plus complete current observations; prose/history/model inference never selects migration candidates. The first plan includes #168 as provenance-only after absorption into #138.
 
 ## Mandatory N-1 delivery
 
-Each stage must be independently executable/testable/mergeable/deployable on N-1; otherwise split it. #138 completes only after stage 6 and full parent verification. Stage 1 is explicitly ordered: Stage 1A exact-revision application resource first, then Stage 1B transport de-mailbox. Stage 1A is the prerequisite for this materially revising Resolve action's eventual ownership transfer because the exact current handoff revision must be validatable without an artifact rewrite or source-action whitelist. Stage 1B remains mandatory before Stage 2 consumes run-scoped transport, but is not a prerequisite for semantic OpenSpec review readiness. A green but unmerged implementation proves buildability only; it is not deployed substrate and cannot substitute for exact-`R` validation evidence for the actual #178 handoff revision.
+1. **1A Exact-revision application resource** — exact-`R` validation for newly produced/already-current targets.
+2. **1B Transport de-mailbox** — run-scoped results and daily check-in lifecycle.
+3. **1C PR mutation carrier boundary** — authority/identity split, legal event-capable carrier, reuse-first recovery, no Actions PR-create permission.
+4. **2 Kernel shadow** — executable topology including carrier eligibility; no mutation cutover.
+5. **3 Typed application** — typed result → exact effect/carrier plan → fresh postcondition.
+6. **4 Wake simplification** — one mapped Action/wake.
+7. **5 Canonical cutover** — Action-only routing, explicit merge Actions, typed source retirement.
+8. **6 Deletion/context reduction** — remove superseded control paths.
 
-| Stage | Advances | Still incomplete | N-1 / boundary | Next |
-| --- | --- | --- | --- | --- |
-| 1A Exact-revision application resource | Gate-derived exact-R validation for both newly produced and already-current targets; checkout/compatibility/strict-PASS structured evidence consumable by the selected Action | Transport/kernel/state/wake unchanged | Current comment-trigger/application bridge and qualified pinned OpenSpec remain; no dummy-touch and no source-Action whitelist may be required to obtain the resource | 1B |
-| 1B Transport de-mailbox + daily check-in | #168 run-scoped dispatch/application/validation results, fresh unique current-day check-in discovery, idempotent rollover, preserved in-flight prior-day correlation, and no normal response comments/permanent check-in pointer | Kernel/state/wake unchanged | Stage 1A remains deployed; transport adapter/check-in administration change only carriage/discovery lifecycle and may roll back without changing workflow semantics | 2 |
-| 2 Kernel shadow | One executable topology computes shadow decisions | Old production control still owns effects | Stages 1A+1B carry shadow evidence and exact-revision resources; no mutation cutover | 3 |
-| 3 Typed result/application | Typed result->kernel effect->fresh application | Wake and Role+Action state unchanged | Stage 2 equivalence proven on the Stage-1 closed loop; rollback before cutover | 4 |
-| 4 Wake simplification | Exactly one mapped Action/wake | Canonical state still old | Stage 3 safely persists successor for later wake | 5 |
-| 5 Canonical-state cutover | Action-only routing + explicit merge Actions + typed retirement of explicitly absorbed sources, including live #168 | Legacy code/prose remains cleanup | Complete reviewed machine-readable live-state plan; fresh close/narrow-label postconditions; irreversible semantic cutover | 6 |
-| 6 Deletion/context reduction | Removes superseded selectors/parsers/mailbox/continuation/model-host/prose | Parent outcome complete after full gates | Rollback translates from new state; never restores permanent second authority | Verify |
+Each stage must be executable/testable/mergeable/deployable on N-1 or be split. Stage 1A remains this materially revised Resolve action's semantic-review prerequisite. Stage 1B/1C block Stage 2 but do not add a separate semantic review gate after valid Stage-1A evidence.
 
 ## Validation and deletion
 
-Stage 1A tests cover both forms of the same readiness resource: (a) a live repository-owned OpenSpec write that produces exact revision `R`; and (b) an already-current exact Change/PR head `R` that needs validation with no artifact rewrite. Both must obtain structured deterministic evidence proving target `R`, validator checkout `R`, qualified pinned OpenSpec compatibility and strict PASS, and make that evidence consumable by the same selected Action. A focused regression must prove materially revising `Lead / resolve-question` cannot be excluded by a Propose-only resource whitelist. The current `action_required`/no-validator-job failure remains a required RED case, not an allowed bypass.
+Stage 1C tests carrier eligibility, no carrier-side selection/retry inference, exact target/head/precondition binding, reuse-first PR recovery, no Actions PR-create permission dependency, ordinary event propagation, fresh repository postconditions, carrier failure/stale-plan behavior, and preservation of the validated-archive-branch boundary.
 
-Stage 1B tests cover exact request->run->structured dispatch/application result correlation, fresh unique current-day `Asia/Taipei` check-in discovery, fail-closed zero/duplicate identity, idempotent establish-before-close rollover, preservation of an in-flight prior-day `C -> R -> result` chain, removal of the permanent check-in pointer, and no normal machine-response mailbox. Stage 5 migration tests cover typed-plan uniqueness/shape, exact source/absorber/current-state verification, pre-mutation fail-closed behavior, close-then-narrow-routing replay, unrelated-label/evidence preservation, and the live #168 postcondition `closed + no workflow routing` without runtime prose/history selection. Later tests also cover exhaustive kernel topology, fresh application/stale/replay, one-action wake with internal work conservation, governance projection, complete live-state migration, full Python quality and exact-revision strict OpenSpec.
-
-Final production removes normal `agent:*` routing, generic merge-phase inference, Issue-response result mailbox/history correlation, Markdown topology/effect parsing, same-wake successor/wake-barrier logic, obsolete historical compatibility, legacy Responses/model-worker host code and corresponding redundant tests/prose. Historical evidence remains readable but non-authoritative.
+Final production removes normal `agent:*` routing, generic merge-phase inference, response mailbox/history correlation, Markdown topology/effect parsing, same-wake continuation/barriers, obsolete compatibility, legacy model-host code, Actions-owned identity-sensitive PR lifecycle paths, and redundant tests/prose.
