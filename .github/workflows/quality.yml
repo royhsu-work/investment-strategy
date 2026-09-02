@@ -20,6 +20,10 @@ on:
       - ".github/workflows/openspec-archive.yml"
       - ".github/workflows/quality.yml"
 
+permissions:
+  contents: read
+  issues: read
+
 jobs:
   quality:
     runs-on: ubuntu-latest
@@ -32,6 +36,101 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Diagnose current dispatch preflight
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          uv run python - <<'PY'
+          import os
+          from investment_strategy import scheduled_agent_runtime as runtime
+          from investment_strategy import workflow_dispatch
+
+          repository = os.environ["GITHUB_REPOSITORY"]
+          token = os.environ["GITHUB_TOKEN"]
+
+          open_pages = runtime._github_open_issue_pages(repository, token)
+          raw_open = runtime._raw_issue_map(open_pages)
+          open_observations = runtime._normalized_observations(open_pages)
+          open_preflight = runtime.acquire_dispatch_preflight(
+              observations=open_observations,
+              source_total_count=len(open_observations),
+              incomplete_results=False,
+              exhausted=True,
+          )
+          open_decision = workflow_dispatch.classify_open_dispatch(open_preflight)
+          print(
+              "OPEN_DECISION "
+              f"disposition={open_decision.disposition} reason={open_decision.reason!r} "
+              f"formal={open_decision.formal_issue_ids} selected={open_decision.selected_issue_id} "
+              f"routing={open_decision.selected_routing}"
+          )
+          for observation in open_observations:
+              if (
+                  observation.change != "unset"
+                  or observation.routing is not None
+                  or not observation.authoritative
+              ):
+                  raw_issue = raw_open[observation.issue_number]
+                  labels = [
+                      item.get("name")
+                      for item in raw_issue.get("labels", [])
+                      if isinstance(item, dict)
+                  ]
+                  print(
+                      "OPEN_OBSERVATION "
+                      f"issue={observation.issue_number} change={observation.change} "
+                      f"routing={observation.routing} authoritative={observation.authoritative} "
+                      f"state_reason={raw_issue.get('state_reason')} labels={labels}"
+                  )
+
+          closed_pages = runtime._github_closed_issue_pages(repository, token)
+          raw_closed = runtime._raw_issue_map(closed_pages)
+          closed_observations = runtime._normalized_closed_observations(closed_pages)
+          unresolved = []
+          for observation in closed_observations:
+              raw_issue = raw_closed[observation.issue_number]
+              if not observation.authoritative:
+                  labels = [
+                      item.get("name")
+                      for item in raw_issue.get("labels", [])
+                      if isinstance(item, dict)
+                  ]
+                  body = raw_issue.get("body")
+                  body_text = body if isinstance(body, str) else ""
+                  change_matches = runtime._CHANGE_LINE.findall(body_text)
+                  print(
+                      "CLOSED_UNQUALIFIED "
+                      f"issue={observation.issue_number} change={observation.change} "
+                      f"routing={observation.routing} state_reason={raw_issue.get('state_reason')} "
+                      f"labels={labels} change_matches={change_matches} "
+                      f"created_at={raw_issue.get('created_at')} closed_at={raw_issue.get('closed_at')}"
+                  )
+              if observation.change == "unset" or observation.routing is None:
+                  continue
+              cleared = runtime._structural_terminal_marker(
+                  repository,
+                  token,
+                  raw_issue=raw_issue,
+                  observation=observation,
+              )
+              if not cleared:
+                  unresolved.append(observation.issue_number)
+          structural_preflight = runtime._acquire_structural_closed_preflight(
+              repository,
+              token,
+              closed_pages,
+          )
+          structural = workflow_dispatch.classify_structural_conflicts(structural_preflight)
+          print(f"STRUCTURAL_DECISION disposition={structural} unresolved={unresolved}")
+          for item in structural_preflight.issues:
+              if item.current_state_provenance is not workflow_dispatch.ObservationProvenance.QUALIFIED:
+                  print(
+                      "STRUCTURAL_UNQUALIFIED "
+                      f"issue={item.issue_number} change={item.change} routing={item.routing}"
+                  )
+          PY
       - name: Run tests
         run: uv run pytest
       - name: Ruff lint
