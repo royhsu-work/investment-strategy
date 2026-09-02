@@ -40,6 +40,7 @@ def test_workflow_topology_owns_current_legal_progression() -> None:
         ("Executor / implement-change", "Lead / resolve-question"),
         ("Reviewer / review-implementation", "Executor / implement-change"),
         ("Reviewer / review-implementation", "Executor / merge-pr"),
+        ("Executor / merge-pr", "Lead / resolve-question"),
         ("Executor / merge-pr", "Lead / finalize-change"),
         ("Lead / finalize-change", "Executor / implement-change"),
         ("Lead / finalize-change", "Reviewer / review-archive"),
@@ -48,6 +49,20 @@ def test_workflow_topology_owns_current_legal_progression() -> None:
         ("Executor / merge-pr", "Lead / finalize-archive"),
     }
     assert required <= transitions
+
+
+def test_merge_rejection_recovery_distinguishes_implementation_and_archive() -> None:
+    text = WORKFLOW.read_text()
+    assert (
+        "| `Executor / merge-pr` | implementation or implementation-correction PR exact "
+        "accepted presentation is rejected with a lifecycle-contract violation that cannot be "
+        "repaired within merge-pr authority | `Lead / resolve-question` |"
+    ) in text
+    assert (
+        "| `Executor / merge-pr` | final Archive PR exact accepted presentation, linkage, or "
+        "reviewed lifecycle preparation is rejected with a lifecycle-contract violation "
+        "requiring Lead correction | `Lead / finalize-change` |"
+    ) in text
 
 
 def test_workflow_preserves_explore_terminal_outcomes() -> None:

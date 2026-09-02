@@ -22,11 +22,13 @@ The persistent coordination Issue remains open throughout the formal lifecycle. 
 | `Executor / implement-change` | specification meaning must change or be invented | `Lead / resolve-question` |
 | `Reviewer / review-implementation` | implementation finding within approved meaning | `Executor / implement-change` |
 | `Reviewer / review-implementation` | PASS for exact implementation head | `Executor / merge-pr` |
+| `Executor / merge-pr` | implementation or implementation-correction PR exact accepted presentation is rejected with a lifecycle-contract violation that cannot be repaired within merge-pr authority | `Lead / resolve-question` |
 | `Executor / merge-pr` | implementation PR merged | `Lead / finalize-change` |
 | `Lead / finalize-change` | `MORE_IMPLEMENTATION_REQUIRED`: approved implementation still incomplete | `Executor / implement-change` |
 | `Lead / finalize-change` | validated final Archive PR ready | `Reviewer / review-archive` |
 | `Reviewer / review-archive` | archive/preparation finding | `Lead / finalize-change` |
 | `Reviewer / review-archive` | PASS for exact Archive head | `Executor / merge-pr` |
+| `Executor / merge-pr` | final Archive PR exact accepted presentation, linkage, or reviewed lifecycle preparation is rejected with a lifecycle-contract violation requiring Lead correction | `Lead / finalize-change` |
 | `Executor / merge-pr` | final Archive PR merged, coordination Issue still open | `Lead / finalize-archive` |
 | `Lead / finalize-archive` | terminal conditions satisfied | durable `LIFECYCLE_COMPLETE`, then coordination Issue close and closed re-observation |
 
@@ -67,8 +69,10 @@ Correction loops preserve the same persistent coordination Issue and immutable C
 - OpenSpec semantic finding: `Reviewer / review-openspec → Lead / resolve-question → Reviewer / review-openspec` when semantic artifacts materially change.
 - Implementation specification blocker: `Executor / implement-change → Lead / resolve-question → Reviewer / review-openspec → Executor / implement-change` when a material semantic correction is required.
 - Implementation finding: `Reviewer / review-implementation → Executor / implement-change → Reviewer / review-implementation` on a new exact implementation head.
+- Implementation merge-acceptance lifecycle-contract blocker: `Executor / merge-pr → Lead / resolve-question → Executor / implement-change → Reviewer / review-implementation → Executor / merge-pr` when the accepted implementation presentation cannot be merged and correction requires authority outside merge-pr while approved semantic meaning remains unchanged; a material semantic correction returns through `Reviewer / review-openspec` instead.
 - Incomplete post-merge implementation: `Executor / merge-pr → Lead / finalize-change → Executor / implement-change` when approved work remains.
 - Archive finding: `Reviewer / review-archive → Lead / finalize-change → Reviewer / review-archive` on the corrected exact Archive target.
+- Archive merge-acceptance lifecycle-contract blocker: `Executor / merge-pr → Lead / finalize-change → Reviewer / review-archive → Executor / merge-pr` when the final Archive presentation, linkage, or reviewed lifecycle preparation requires Lead correction and renewed exact-head archive review.
 
 Reviewer acceptance never transfers merge authority. Executor merge never transfers Lead lifecycle authority. Every action consumes its own current preconditions and evidence under `agents/AGENTS.md`.
 
