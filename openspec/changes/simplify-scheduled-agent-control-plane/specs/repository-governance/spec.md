@@ -10,7 +10,8 @@ The minimum ownership model SHALL be:
 | --- | --- | --- |
 | Repository overview / Human entry point | `README.md` | MAY link to authoritative governance; MUST NOT redefine runtime protocol |
 | Shared Scheduled-Agent execution protocol / cross-role invariants | `agents/AGENTS.md` | roles/skills MAY reference; MUST NOT duplicate shared normative contract |
-| Machine-decidable Scheduled-Agent Action vocabulary, Action→Role mapping, finite result/transition topology, deterministic dispatch/cardinality, effect capabilities, fresh application authorization, and structural postconditions | repository executable workflow topology/kernel selected by current default-branch governance | `agents/workflow.md` SHALL be generated or mechanically verified Human-readable presentation; AGENTS/roles/skills/runtime/transport MUST NOT maintain a competing executable transition DAG or parse Human prose as the normal topology authority |
+| Machine-decidable Scheduled-Agent Action vocabulary, Action→Role mapping, finite result/transition topology, deterministic dispatch/cardinality, effect capabilities, mutation-carrier eligibility, fresh application authorization, stale/replay classification, and structural postconditions | repository executable workflow topology/kernel selected by current default-branch governance | `agents/workflow.md` SHALL be generated or mechanically verified Human-readable presentation; AGENTS/roles/skills/runtime/transport/carriers MUST NOT maintain a competing executable transition DAG or parse Human prose as the normal topology authority |
+| GitHub mutation execution identity / carrier mechanics | replaceable carrier selected only from repository-authorized carrier eligibility | Actions `GITHUB_TOKEN`, Scheduled-Agent connector, or GitHub App MAY execute an exact already-authorized mutation plan; a carrier MUST NOT select Issue/Action/effect, weaken preconditions, infer retry, or make API success authoritative |
 | Role mission / semantic authority / ownership / role-specific invariant | `agents/roles/*.md` | AGENTS/skills MAY orient/reference; MUST NOT create a competing authority definition or redefine executable Action→Role/transition tables |
 | Action-specific semantic procedure / action-local evidence and result meaning | `agents/skills/*` | role/AGENTS MAY map/reference; MUST NOT duplicate machine-decidable topology/effect bodies owned by the executable kernel |
 | OpenSpec authoring/validation conventions | `openspec/config.yaml` | change artifacts follow them; MUST NOT restate them as independent runtime rules |
@@ -20,9 +21,11 @@ The minimum ownership model SHALL be:
 | External Scheduled Task cadence/configuration and transport wiring | external product configuration / replaceable transport adapter as applicable | repository docs MAY describe migration/current setup informationally; transport MUST NOT define workflow topology or durable routing state |
 | Project-wide proportionality / simplicity contract | `openspec/specs/repository-governance/spec.md` | runtime/documentation surfaces MAY implement or reference it; MUST NOT maintain a competing workflow-only normative definition |
 
-The executable workflow topology/kernel becomes authoritative for machine-decidable workflow semantics only after the approved implementation and governance that delegate that ownership are merged to the current default branch. An active Change or feature branch containing a future kernel remains review input and MUST NOT govern its own invocation.
+The executable workflow topology/kernel becomes authoritative for machine-decidable workflow semantics and effect/carrier eligibility only after the approved implementation and governance that delegate that ownership are merged to the current default branch. An active Change or feature branch containing a future kernel remains review input and MUST NOT govern its own invocation.
 
-A Human-readable workflow surface MAY include explanatory lifecycle rationale and semantic guidance that cannot be generated from a finite topology. Any machine-decidable Action/Role/transition table represented there MUST be produced from or mechanically checked against the executable owner so a divergence fails repository validation instead of depending on manual synchronization.
+A Human-readable workflow surface MAY include explanatory lifecycle rationale and semantic guidance that cannot be generated from a finite topology. Any machine-decidable Action/Role/transition/effect/carrier rule represented there MUST be produced from or mechanically checked against the executable owner so a divergence fails repository validation instead of depending on manual synchronization.
+
+Effect authority and mutation identity SHALL remain separate. Repository application/kernel authorization binds an exact effect to its exact target, preconditions, revision, and legal carrier class. A selected carrier is an actuator only; replacing the carrier MUST NOT change workflow semantics, effect eligibility, or success criteria. Repository-owned fresh observation of the resulting object/head/state is required before any routing, review, lifecycle, merge, or successor consequence can consume the mutation as successful.
 
 #### Scenario: Shared rule appears in a role or skill
 
@@ -48,7 +51,7 @@ A Human-readable workflow surface MAY include explanatory lifecycle rationale an
 #### Scenario: Human-readable topology drifts from executable topology
 
 - GIVEN current default-branch governance delegates machine-decidable workflow topology to the repository executable kernel
-- AND `agents/workflow.md` presents an Action/Role/transition that differs from that executable topology
+- AND `agents/workflow.md` presents an Action/Role/transition/effect/carrier rule that differs from that executable topology
 - WHEN repository governance validation runs
 - THEN validation fails
 - AND production dispatch/application continue to consume the executable topology rather than resolving the conflict by parsing or preferring Markdown prose
@@ -58,5 +61,14 @@ A Human-readable workflow surface MAY include explanatory lifecycle rationale an
 - GIVEN the current Scheduled Task transport uses Issue comments to trigger deterministic GitHub Actions
 - AND a future supported transport can invoke the same deterministic dispatch/application entry points directly
 - WHEN the adapter changes
-- THEN Action vocabulary, Action→Role derivation, typed result/transition semantics, WIP/cardinality, and effect authorization remain unchanged
+- THEN Action vocabulary, Action→Role derivation, typed result/transition semantics, WIP/cardinality, effect authorization, and carrier eligibility remain unchanged
 - AND transport messages do not become a second workflow-semantics authority
+
+#### Scenario: Mutation carrier changes without gaining workflow authority
+
+- GIVEN repository application has fresh-authorized one exact GitHub effect with exact target, preconditions, revision, and legal carrier class
+- AND the current Actions `GITHUB_TOKEN` identity cannot legally execute that effect or preserve required event semantics
+- WHEN an eligible Scheduled-Agent connector or GitHub App carrier executes the exact authorized plan
+- THEN the carrier does not select or reinterpret workflow state, Action, successor, effect, retry, or success
+- AND repository application accepts completion only after fresh observation proves the exact governed postcondition
+- AND replacing the carrier does not change the workflow contract
