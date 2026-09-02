@@ -1,6 +1,6 @@
 ## Delivery invariant
 
-#138 is one parent outcome delivered through mandatory N-1 stages. Every stage MUST be independently executable/testable/mergeable/deployable on then-current N-1; otherwise split it further. A stage never completes #138 while later stages remain. Stage 1 is explicitly ordered: **1A exact-revision application resource first**, then **1B transport de-mailbox**. Stage 1A must be merged and deployed to then-current N-1 before a materially authoring or revising `Lead / propose-change` or `Lead / resolve-question` action may hand #138 to independent OpenSpec review; an unmerged implementation or green checks alone are insufficient. Stage 1B remains mandatory before Stage 2 consumes the run-scoped transport contract, but is not a prerequisite for semantic OpenSpec review readiness. Both Stage 1A and Stage 1B must be deployed before Stage 2.
+#138 is one parent outcome delivered through mandatory N-1 stages. Every stage MUST be independently executable/testable/mergeable/deployable on then-current N-1; otherwise split it further. A stage never completes #138 while later stages remain. Stage 1 is explicitly ordered: **1A exact-revision application resource first**, then **1B transport de-mailbox**, then **1C PR mutation carrier boundary**. Stage 1A must be merged and deployed to then-current N-1 before a materially authoring or revising `Lead / propose-change` or `Lead / resolve-question` action may hand #138 to independent OpenSpec review; an unmerged implementation or green checks alone are insufficient. Stage 1B and Stage 1C remain mandatory before Stage 2, but neither is an additional semantic OpenSpec review-readiness prerequisite after valid Stage-1A evidence. Stages 1A, 1B and 1C must all be deployed before Stage 2.
 
 ## 1A. Exact-revision application resource
 
@@ -18,7 +18,7 @@ Parent advances: gate-derived exact-revision OpenSpec validation usable by the a
 
 ## 1B. Transport de-mailbox + daily check-in lifecycle
 
-Parent advances: #168 exact run-scoped dispatch/application/validation transport plus fresh daily-bounded runtime check-in discovery/rollover, with request/trigger/audit-only runtime comments, no normal machine-response mailbox, and no permanent check-in pointer. Remaining: kernel, typed application, wake/state cutover, deletion. N-1: Stage 1A is deployed. Boundary: transport adapter and repository-owned check-in administration only; workflow semantics and canonical state remain unchanged. Next: Stage 2.
+Parent advances: #168 exact run-scoped dispatch/application/validation transport plus fresh daily-bounded runtime check-in discovery/rollover, with request/trigger/audit-only runtime comments, no normal machine-response mailbox, and no permanent check-in pointer. Remaining: PR mutation carrier boundary, kernel, typed application, wake/state cutover, deletion. N-1: Stage 1A is deployed. Boundary: transport adapter and repository-owned check-in administration only; workflow semantics and canonical state remain unchanged. Next: Stage 1C.
 
 - [ ] 1B.1 RED — prove exact request->run->structured dispatch/application result correlation; reject `latest`, timing/title inference, response fallback, and missing/multiple/failed/cancelled/malformed/expired evidence.
 - [ ] 1B.2 RED — prove each wake must fresh-discover exactly one open `Asia/Taipei` current-day check-in by dedicated non-workflow + canonical local-date identity; zero/duplicate/ambiguous current-day identity and reliance on a permanent `AGENT_RUNTIME_CHECKIN_ISSUE`-style pointer fail closed.
@@ -28,9 +28,23 @@ Parent advances: #168 exact run-scoped dispatch/application/validation transport
 - [ ] 1B.6 REFACTOR — remove normal response-mailbox correlation/dedup and permanent check-in-pointer coupling without moving workflow semantics into transport or adding recursive workflow-trigger dependence.
 - [ ] 1B.7 VERIFY — live Scheduled Task dispatch+application E2E discovers exactly one current-day check-in, proves request C -> exact run R -> terminal -> exact structured result with no machine response comment, exercises idempotent close/create rollover with an in-flight prior-day request, and confirms no model API in Actions.
 
+## 1C. PR mutation carrier boundary
+
+Parent advances: separates repository effect authority from GitHub mutation identity for identity-sensitive PR lifecycle effects while preserving exact postcondition ownership. Remaining: kernel, typed application, wake/state cutover, deletion. N-1: Stages 1A+1B are deployed and current repository application still owns authorization/postcondition semantics. Boundary: carrier execution only; no topology/routing/wake cutover and no durable carrier wait/retry state. Next: Stage 2.
+
+- [ ] 1C.1 RED — reproduce an exact repository-authorized PR lifecycle effect that Actions `GITHUB_TOKEN` cannot legally execute or whose bot-authored event propagation would require routine Human workflow approval; prove widening Actions PR-create/approve permission is not the target fix.
+- [ ] 1C.2 RED — prove carrier execution cannot select Issue/Action/successor/effect, weaken target/head/base/linkage/preconditions, infer retry, or make its own API success authoritative.
+- [ ] 1C.3 RED — prove failed lookup, Actions permission failure, or carrier error cannot authorize a duplicate/replacement PR when an already-open legal PR can represent the exact authorized head/base/linkage/lifecycle position.
+- [ ] 1C.4 GREEN — make repository kernel/application derive carrier eligibility and emit an exact target/precondition/revision-bound mutation plan for identity-sensitive PR create/presentation/head/ready/merge effects.
+- [ ] 1C.5 GREEN — execute eligible plans through an event-capable Scheduled-Agent connector or GitHub App carrier, with no workflow-semantic decision in the carrier and no dependency on `Allow GitHub Actions to create and approve pull requests`.
+- [ ] 1C.6 GREEN — implement reuse-first bootstrap/recovery: fresh-discover and converge/reuse an existing legal PR presentation when exact head/base/linkage can be preserved; create a replacement only from a fresh exact authorized effect.
+- [ ] 1C.7 GREEN — require repository-owned fresh observation of resulting PR/object/head/state before routing, review, lifecycle, merge, or successor consequence consumes carrier completion.
+- [ ] 1C.8 REFACTOR — preserve the validated-archive-branch automation success boundary and route final Archive PR presentation through the legal carrier without adding `waiting-for-carrier`, generic retry counters, locks/leases, or a second DAG.
+- [ ] 1C.9 VERIFY — E2E covers legal carrier eligibility, ordinary PR-event propagation, exact target/head/base/linkage binding, reuse-first recovery, stale-plan rejection, carrier failure reconstruction, no Actions PR-create permission dependency, and unchanged independent review/merge/archive gates.
+
 ## 2. Executable kernel shadow
 
-Parent advances: one executable machine topology computes shadow decisions. Remaining: N-1 production still owns effects/state/wakes. N-1: complete Stages 1A+1B provide run-scoped transport plus exact-revision validation resources. Boundary: no mutation cutover. Next: Stage 3.
+Parent advances: one executable machine topology computes shadow decisions. Remaining: N-1 production still owns effects/state/wakes. N-1: complete Stages 1A+1B+1C provide run-scoped transport, exact-revision validation resources, and legal PR mutation carriers. Boundary: no mutation cutover. Next: Stage 3.
 
 - [ ] 2.1 RED — exhaustively cover Action vocabulary, Action→Role, explicit merge Actions, finite transitions/effects, WIP/FIFO/debt, illegal states, stale/replay and postconditions.
 - [ ] 2.2 GREEN — consolidate smallest kernel and feed it the same authoritative observations as production without owning mutations.
@@ -39,10 +53,10 @@ Parent advances: one executable machine topology computes shadow decisions. Rema
 
 ## 3. Typed result/application
 
-Parent advances: typed semantic result→kernel effect→fresh application/postcondition. Remaining: old routing/wake representation. N-1: Stage 2 equivalence on the Stage-1A+1B closed loop. Boundary: routing/wake unchanged; rollback to N-1 effect path. Next: Stage 4.
+Parent advances: typed semantic result→kernel effect/carrier plan→fresh application/postcondition. Remaining: old routing/wake representation. N-1: Stage 2 equivalence on the Stage-1A+1B+1C closed loop. Boundary: routing/wake unchanged; rollback to N-1 effect path. Next: Stage 4.
 
 - [ ] 3.1 RED — bind result to exact Issue/source Action; reject arbitrary successors, Markdown control extraction, stale/contradictory state and replay rewind.
-- [ ] 3.2 GREEN — generalize action-owned typed results plus narrative/source evidence; derive effects, fresh-reauthorize, mutate narrowly and observe postconditions.
+- [ ] 3.2 GREEN — generalize action-owned typed results plus narrative/source evidence; derive exact effects and legal carrier plans, fresh-reauthorize, execute narrowly and observe repository-owned postconditions.
 - [ ] 3.3 REFACTOR — retain action-specific result vocabularies, not a generic outcome state machine.
 - [ ] 3.4 VERIFY — cover Explore, pre-acceptance Propose correction, review/implementation/merge/lifecycle finite boundaries plus direct-Human freshness/disposition, partial-mutation/causal-descendant replay, bounded exact-resource observation, and `EXECUTION_EXCEPTION` evidence.
 
@@ -57,7 +71,7 @@ Parent advances: exactly one mapped Action/wake with work-conserving action inte
 
 ## 5. Canonical-state cutover
 
-Parent advances: Action-only routing, Role derivation, explicit merge Actions, typed retirement of explicitly absorbed pre-activation sources, and live-state migration. Remaining: legacy cleanup. N-1: Stages 1A–4. Boundary: complete authoritative dry-run and reviewed machine-readable retirement plan required; this is semantic cutover. Post-cutover rollback translates from new state only. Next: Stage 6.
+Parent advances: Action-only routing, Role derivation, explicit merge Actions, typed retirement of explicitly absorbed pre-activation sources, and live-state migration. Remaining: legacy cleanup. N-1: Stages 1A–1C and 2–4. Boundary: complete authoritative dry-run and reviewed machine-readable retirement plan required; this is semantic cutover. Post-cutover rollback translates from new state only. Next: Stage 6.
 
 - [ ] 5.1 RED — cover terminal/current/debt/legacy/ambiguous live Issue shapes; preserve unrelated labels and immutable Change.
 - [ ] 5.2 RED — for the generic absorbed-source retirement entry and live #168 fixture, reject missing/duplicate/malformed plan entries, prose/history/model-discovered candidates, source/absorber identity or state mismatch, incomplete provenance, contradictory observations, and unresolved newer direct-Human input before mutation.
@@ -72,7 +86,7 @@ Parent advances: Action-only routing, Role derivation, explicit merge Actions, t
 Parent advances: removes superseded production paths and completes #138 after full gates. Remaining: none after verification. N-1: Stage 5 canonical state. Boundary: rollback never restores permanent dual authority. Next: ordinary lifecycle.
 
 - [ ] 6.1 RED — deleted representations cannot re-enter normal control; history remains readable but non-authoritative.
-- [ ] 6.2 GREEN — delete normal `agent:*` routing, generic merge-phase inference, response-mailbox/history coupling, Markdown topology/effect parsing, same-wake continuation/barriers, obsolete history compatibility, legacy Responses/model-worker host code and redundant machine-control prose/tests.
+- [ ] 6.2 GREEN — delete normal `agent:*` routing, generic merge-phase inference, response-mailbox/history coupling, Markdown topology/effect parsing, same-wake continuation/barriers, obsolete history compatibility, legacy Responses/model-worker host code, Actions-owned identity-sensitive PR lifecycle paths, and redundant machine-control prose/tests.
 - [ ] 6.3 REFACTOR — remove compatibility helpers that only preserve deleted paths; retain bounded migration/audit fixtures.
 - [ ] 6.4 VERIFY — full Python/Ruff/mypy/governance/Skill/live-E2E/migration/production tests plus exact-revision strict OpenSpec.
 - [ ] 6.5 VERIFY — record architectural subtraction versus current `main`.
