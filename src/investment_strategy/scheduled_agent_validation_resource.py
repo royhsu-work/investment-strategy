@@ -1279,48 +1279,48 @@ def main() -> int:
     workflow_text = Path("agents/workflow.md").read_text(encoding="utf-8")
     target: ValidationResourceTarget | None = None
     if body.startswith(RESOURCE_REQUEST_MARKER):
-        plan = plan_validation_resource(
+        validation_plan = plan_validation_resource(
             event=event,
             comments_payload=comments_payload,
             configured_issue_number=args.check_in_issue,
             repository=repository,
             current_revision=args.revision,
         )
-        if plan.should_validate:
+        if validation_plan.should_validate:
             target = resolve_validation_resource_target(
-                plan,
+                validation_plan,
                 repository=repository,
                 token=token,
                 default_branch=args.default_branch,
                 workflow_text=workflow_text,
             )
     elif body.startswith(WORK_PRODUCT_REQUEST_MARKER):
-        plan = plan_work_product_application(
+        work_product_plan = plan_work_product_application(
             event=event,
             comments_payload=comments_payload,
             configured_issue_number=args.check_in_issue,
             repository=repository,
             current_revision=args.revision,
         )
-        if plan.should_apply:
+        if work_product_plan.should_apply:
             target = apply_work_product(
-                plan,
+                work_product_plan,
                 repository=repository,
                 token=token,
                 default_branch=args.default_branch,
                 workflow_text=workflow_text,
             )
     elif body.startswith(HANDOFF_COMPLETION_REQUEST_MARKER):
-        plan = plan_handoff_completion(
+        handoff_plan = plan_handoff_completion(
             event=event,
             comments_payload=comments_payload,
             configured_issue_number=args.check_in_issue,
             repository=repository,
             current_revision=args.revision,
         )
-        if plan.should_complete:
+        if handoff_plan.should_complete:
             comment_id = complete_cross_role_handoff(
-                plan,
+                handoff_plan,
                 repository=repository,
                 token=token,
             )
