@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import base64
 import json
+from email.message import Message
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 
@@ -325,6 +327,7 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
     blob_sha = "b" * 40
     tree_sha = "c" * 40
     revision = "d" * 40
+    path = f"openspec/changes/{_CHANGE}/design.md"
     plan = resource.WorkProductPlan(
         True,
         source=source,
@@ -337,7 +340,7 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
             message="Correct #138 N-1 ordering",
             files=(
                 resource.WorkProductFile(
-                    path=f"openspec/changes/{_CHANGE}/design.md",
+                    path=path,
                     blob_sha=blob_sha,
                     expected_sha=expected_sha,
                 ),
@@ -377,19 +380,20 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
                 "base": {"ref": "main", "repo": {"full_name": _REPOSITORY}},
             }
         if api_path == "pulls/178/files?per_page=100" and method == "GET":
-            return [{"filename": f"openspec/changes/{_CHANGE}/design.md"}]
-        if (
-            api_path.startswith(f"contents/openspec/changes/{_CHANGE}/design.md?")
-            and method == "GET"
-        ):
+            return [{"filename": path}]
+        if api_path.startswith(f"contents/{path}?") and method == "GET":
             return {"sha": expected_sha if f"ref={_PR_HEAD}" in api_path else blob_sha}
-        if api_path == f"git/blobs/{blob_sha}" and method == "GET":
-            return {"sha": blob_sha}
         if api_path == f"git/commits/{_PR_HEAD}" and method == "GET":
             return {"sha": _PR_HEAD, "tree": {"sha": "e" * 40}, "parents": []}
         if api_path == "git/trees" and method == "POST":
             tree_payloads.append(payload)
             return {"sha": tree_sha}
+        if api_path == f"git/trees/{tree_sha}?recursive=1" and method == "GET":
+            return {
+                "sha": tree_sha,
+                "truncated": False,
+                "tree": [{"path": path, "type": "blob", "sha": blob_sha}],
+            }
         if api_path == "git/commits" and method == "POST":
             commit_payloads.append(payload)
             return {"sha": revision}
@@ -430,6 +434,93 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
         "tree": tree_sha,
         "parents": [_PR_HEAD],
     }
+
+
+def test_apply_work_product_rejects_unresolvable_blob_before_commit_or_ref(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "lead", "resolve-question")
+    expected_sha = "a" * 40
+    blob_sha = "b" * 40
+    path = f"openspec/changes/{_CHANGE}/design.md"
+    plan = resource.WorkProductPlan(
+        True,
+        source=source,
+        request_comment_id=102,
+        pr_number=178,
+        expected_change=_CHANGE,
+        manifest=resource.WorkProductManifest(
+            branch=f"agent/{_CHANGE}",
+            base_sha=_PR_HEAD,
+            message="Correct #138 N-1 ordering",
+            files=(
+                resource.WorkProductFile(
+                    path=path,
+                    blob_sha=blob_sha,
+                    expected_sha=expected_sha,
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda repository, token: source)
+
+    def fake_github_json(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        del repository, token, payload, allow_not_found
+        if api_path == "issues/138" and method == "GET":
+            return {"state": "open", "body": f"Change: {_CHANGE}\n"}
+        if api_path == "pulls/178" and method == "GET":
+            return {
+                "state": "open",
+                "merged": False,
+                "body": "Refs #138\n",
+                "head": {
+                    "sha": _PR_HEAD,
+                    "ref": f"agent/{_CHANGE}",
+                    "repo": {"full_name": _REPOSITORY},
+                },
+                "base": {"ref": "main", "repo": {"full_name": _REPOSITORY}},
+            }
+        if api_path == "pulls/178/files?per_page=100" and method == "GET":
+            return [{"filename": path}]
+        if api_path.startswith(f"contents/{path}?") and method == "GET":
+            return {"sha": expected_sha}
+        if api_path == f"git/commits/{_PR_HEAD}" and method == "GET":
+            return {"sha": _PR_HEAD, "tree": {"sha": "e" * 40}, "parents": []}
+        if api_path == "git/trees" and method == "POST":
+            raise HTTPError(
+                "https://api.github.com/repos/example/repo/git/trees",
+                422,
+                "Validation Failed",
+                Message(),
+                None,
+            )
+        if api_path == "git/commits" and method == "POST":
+            raise AssertionError("commit must not be created after tree resolution failure")
+        if method == "PATCH":
+            raise AssertionError("ref must not be updated after tree resolution failure")
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path}")
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
+
+    with pytest.raises(RuntimeError, match="referenced blob is unavailable"):
+        resource.apply_work_product(
+            plan,
+            repository=_REPOSITORY,
+            token=_FIXTURE_VALUE,
+            default_branch="main",
+            workflow_text=(
+                "| `Lead / resolve-question` | material semantic correction ready | "
+                "`Reviewer / review-openspec` |\n"
+            ),
+        )
 
 
 def test_apply_work_product_rejects_stale_current_file_before_git_construction(
