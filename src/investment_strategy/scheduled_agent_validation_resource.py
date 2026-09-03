@@ -353,10 +353,7 @@ def parse_handoff_completion_request(body: str) -> HandoffCompletionRequest | No
     for line, prefix in zip(lines[1:], prefixes, strict=True):
         if not line.startswith(prefix):
             raise ValueError("HANDOFF_COMPLETION_REQUEST field order is invalid")
-    values = [
-        _positive_decimal(lines[index][len(prefixes[index - 1]) :])
-        for index in range(1, 5)
-    ]
+    values = [_positive_decimal(lines[index][len(prefixes[index - 1]) :]) for index in range(1, 5)]
     expected_change = lines[5][len(prefixes[4]) :]
     if any(value is None for value in values) or not _valid_change(expected_change):
         raise ValueError("HANDOFF_COMPLETION_REQUEST identity is invalid")
@@ -1012,11 +1009,7 @@ def apply_work_product(
     )
     observed_tree = None if observed_commit is None else _as_mapping(observed_commit.get("tree"))
     parents = None if observed_commit is None else observed_commit.get("parents")
-    parent = (
-        None
-        if not isinstance(parents, list) or len(parents) != 1
-        else _as_mapping(parents[0])
-    )
+    parent = None if not isinstance(parents, list) or len(parents) != 1 else _as_mapping(parents[0])
     if (
         observed_commit is None
         or observed_commit.get("sha") != revision
@@ -1088,8 +1081,7 @@ def _cross_role_target(raw_worker_result: str, source: WorkerRequest) -> tuple[s
     targets = [
         target
         for effect in batch.effects
-        if (target := _routing_target_from_effect(effect)) is not None
-        and target[0] != source.role
+        if (target := _routing_target_from_effect(effect)) is not None and target[0] != source.role
     ]
     if len(targets) != 1:
         raise RuntimeError("HANDOFF completion requires exactly one cross-role routing target")
