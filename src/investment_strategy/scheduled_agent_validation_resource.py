@@ -985,8 +985,7 @@ def apply_work_product(
         matches = [
             entry
             for raw_entry in tree_entries
-            if (entry := _as_mapping(raw_entry)) is not None
-            and entry.get("path") == file.path
+            if (entry := _as_mapping(raw_entry)) is not None and entry.get("path") == file.path
         ]
         if (
             len(matches) != 1
