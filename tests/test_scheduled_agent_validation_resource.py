@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+from email.message import Message
 from pathlib import Path
 from urllib.error import HTTPError
 
@@ -498,7 +499,7 @@ def test_apply_work_product_rejects_unresolvable_blob_before_commit_or_ref(
                 "https://api.github.com/repos/example/repo/git/trees",
                 422,
                 "Validation Failed",
-                None,
+                Message(),
                 None,
             )
         if api_path == "git/commits" and method == "POST":
