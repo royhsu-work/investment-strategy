@@ -920,11 +920,6 @@ def apply_work_product(
         )
         if current_sha != file.expected_sha:
             raise RuntimeError("work-product expected content SHA is stale")
-        blob = _as_mapping(
-            cast(object, _github_json(repository, token, f"git/blobs/{file.blob_sha}"))
-        )
-        if blob is None or blob.get("sha") != file.blob_sha:
-            raise RuntimeError("work-product referenced blob is missing or mismatched")
 
     base_commit = _as_mapping(
         cast(object, _github_json(repository, token, f"git/commits/{plan.manifest.base_sha}"))
@@ -934,32 +929,71 @@ def apply_work_product(
     if not _valid_sha(base_tree_sha):
         raise RuntimeError("work-product base tree identity is incomplete")
 
-    tree_response = _as_mapping(
+    try:
+        tree_response = _as_mapping(
+            cast(
+                object,
+                _github_json(
+                    repository,
+                    token,
+                    "git/trees",
+                    method="POST",
+                    payload={
+                        "base_tree": cast(str, base_tree_sha),
+                        "tree": [
+                            {
+                                "path": file.path,
+                                "mode": "100644",
+                                "type": "blob",
+                                "sha": file.blob_sha,
+                            }
+                            for file in plan.manifest.files
+                        ],
+                    },
+                ),
+            )
+        )
+    except HTTPError as exc:
+        if exc.code in {404, 422}:
+            raise RuntimeError(
+                "work-product referenced blob is unavailable to application tree construction"
+            ) from exc
+        raise
+    tree_sha = None if tree_response is None else tree_response.get("sha")
+    if not _valid_sha(tree_sha):
+        raise RuntimeError("work-product tree creation returned no SHA")
+
+    observed_tree = _as_mapping(
         cast(
             object,
             _github_json(
                 repository,
                 token,
-                "git/trees",
-                method="POST",
-                payload={
-                    "base_tree": cast(str, base_tree_sha),
-                    "tree": [
-                        {
-                            "path": file.path,
-                            "mode": "100644",
-                            "type": "blob",
-                            "sha": file.blob_sha,
-                        }
-                        for file in plan.manifest.files
-                    ],
-                },
+                f"git/trees/{tree_sha}?recursive=1",
             ),
         )
     )
-    tree_sha = None if tree_response is None else tree_response.get("sha")
-    if not _valid_sha(tree_sha):
-        raise RuntimeError("work-product tree creation returned no SHA")
+    tree_entries = None if observed_tree is None else observed_tree.get("tree")
+    if (
+        observed_tree is None
+        or observed_tree.get("sha") != tree_sha
+        or observed_tree.get("truncated") is True
+        or not isinstance(tree_entries, list)
+    ):
+        raise RuntimeError("work-product tree postcondition is incomplete")
+    for file in plan.manifest.files:
+        matches = [
+            entry
+            for raw_entry in tree_entries
+            if (entry := _as_mapping(raw_entry)) is not None
+            and entry.get("path") == file.path
+        ]
+        if (
+            len(matches) != 1
+            or matches[0].get("type") != "blob"
+            or matches[0].get("sha") != file.blob_sha
+        ):
+            raise RuntimeError("work-product referenced blob was not resolved into exact tree path")
 
     commit_response = _as_mapping(
         cast(
