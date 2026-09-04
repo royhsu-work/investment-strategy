@@ -379,9 +379,7 @@ def test_empty_github_api_path_uses_repository_endpoint(
 
     monkeypatch.setattr(effects, "urlopen", fake_urlopen)
 
-    assert effects._github_json("owner/repo", "token", "") == {
-        "default_branch": "main"
-    }
+    assert effects._github_json("owner/repo", "token", "") == {"default_branch": "main"}
     assert urls == ["https://api.github.com/repos/owner/repo"]
 
 
