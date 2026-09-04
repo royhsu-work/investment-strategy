@@ -24,6 +24,7 @@ def _event(
     comment_id: int = 987,
     body: str = REQUEST_BODY,
     title: str = "[Agent Runtime] 2026-09-03",
+    state: Literal["open", "closed"] = "open",
     labels: list[dict[str, str]] | None = None,
 ) -> dict[str, object]:
     return {
@@ -31,7 +32,7 @@ def _event(
         "issue": {
             "number": issue_number,
             "title": title,
-            "state": "open",
+            "state": state,
             "labels": [] if labels is None else labels,
         },
         "comment": {"id": comment_id, "body": body},
@@ -241,3 +242,16 @@ def test_runtime_checkin_identity_uses_local_date_and_non_workflow_shape() -> No
     pull_request = dict(payload)
     pull_request["pull_request"] = {}
     assert parse_checkin_day(pull_request) is None
+
+
+
+def test_closed_shard_keeps_inflight_dispatch_identity_after_rollover() -> None:
+    decision = _decision("NO_WORK")
+    plan = bridge.plan_dispatch_decision(
+        event=_event(state="closed"),
+        default_branch_revision=REVISION,
+        decision=decision,
+    )
+    assert plan.should_emit is True
+    assert plan.issue_number == 321
+    assert plan.request_comment_id == 987
