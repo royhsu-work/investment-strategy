@@ -29,3 +29,16 @@ The exact archive preparation uses Refs #<coordination-issue> and the same persi
 Issue. It does not perform normal PR merge mutation. There is no duplicate Change, PR, lifecycle state,
 recovery state, or control mailbox.
 Archive preparation is a Lead Action. It uses Refs #<coordination-issue> and the same persistent coordination Issue, and does not perform normal PR merge mutation. There is no duplicate Change, PR, lifecycle state, recovery state, or control mailbox.
+
+
+## Archive activation carrier
+
+When `finalize-change` returns `archive-ready`, request both invocation-local effects:
+the exact five-line `ARCHIVE_REQUEST` evidence comment and one `github-mutation` with
+`operation=workflow-dispatch`. The dispatch payload must use workflow
+`openspec-archive.yml`, the freshly observed default branch, and exactly these string inputs:
+`change=<authorized Change>`, `issue=<coordination Issue number>`,
+`revision=<fresh exact default-branch revision>`, and
+`request_key=archive-<coordination Issue number>-<revision>`. The application verifies the
+current Issue, default-branch revision, workflow identity, input set, and resulting workflow run.
+An archive evidence comment alone is not an archive actuator invocation.

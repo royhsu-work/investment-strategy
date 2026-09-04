@@ -24,6 +24,7 @@ _ACTION_OPERATIONS: Final[dict[RoleAction, frozenset[str]]] = {
             "issue-label-add",
             "pull-request-create",
             "pull-request-update",
+            "workflow-dispatch",
         }
     ),
     ("lead", "finalize-archive"): frozenset({"issue-update", "issue-label-add"}),

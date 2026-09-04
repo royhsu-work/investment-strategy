@@ -707,3 +707,101 @@ def test_github_adapter_binds_pr_and_ref_targets_to_authorized_change(
 
     assert ref_adapter.guard(correct_ref)
     assert not ref_adapter.guard(foreign_ref)
+
+
+def test_application_archive_workflow_dispatch_is_exact_revision_and_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = "royhsu-work/investment-strategy"
+    source = WorkerRequest(138, "lead", "finalize-change")
+    revision = "d" * 40
+    request_key = f"archive-138-{revision}"
+    issue = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "labels": [{"name": "agent:lead"}, {"name": "action:finalize-change"}],
+    }
+    runs: list[dict[str, object]] = []
+    dispatches: list[object] = []
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        if api_path == "issues/138":
+            return issue
+        if api_path == "":
+            return {"default_branch": "main"}
+        if api_path == "git/ref/heads/main":
+            return {"object": {"sha": revision}}
+        if api_path == (
+            "actions/workflows/openspec-archive.yml/runs"
+            "?event=workflow_dispatch&branch=main&per_page=100"
+        ):
+            return {"workflow_runs": list(runs)}
+        if api_path == "actions/workflows/openspec-archive.yml/dispatches" and method == "POST":
+            assert isinstance(payload, dict)
+            dispatches.append(payload)
+            inputs = payload["inputs"]
+            assert isinstance(inputs, dict)
+            runs.append(
+                {
+                    "id": 1201,
+                    "display_title": f"OpenSpec Archive {inputs['request_key']}",
+                    "event": "workflow_dispatch",
+                    "path": ".github/workflows/openspec-archive.yml",
+                    "head_branch": "main",
+                    "head_sha": revision,
+                }
+            )
+            return None
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        repository,
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        current_revision=revision,
+    )
+    effect = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "workflow-dispatch",
+                "workflow_id": "openspec-archive.yml",
+                "ref": "main",
+                "inputs": {
+                    "change": _CHANGE,
+                    "issue": "138",
+                    "revision": revision,
+                    "request_key": request_key,
+                },
+            }
+        ),
+    )
+
+    assert adapter.guard(effect)
+    adapter.apply(effect)
+    assert adapter.observe_postcondition(effect)
+    adapter.apply(effect)
+    assert adapter.observe_postcondition(effect)
+    assert dispatches == [
+        {
+            "ref": "main",
+            "inputs": {
+                "change": _CHANGE,
+                "issue": "138",
+                "revision": revision,
+                "request_key": request_key,
+            },
+        }
+    ]

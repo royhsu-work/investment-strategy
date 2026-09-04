@@ -229,6 +229,9 @@ _ALLOWED_PR_FIELDS = frozenset({"title", "body", "base"})
 _ALLOWED_MERGE_METHODS = frozenset({"merge", "squash", "rebase"})
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
+_ARCHIVE_WORKFLOW_ID = "openspec-archive.yml"
+_ARCHIVE_WORKFLOW_PATH = ".github/workflows/openspec-archive.yml"
+_WORKFLOW_DISPATCH_INPUTS = frozenset({"change", "issue", "revision", "request_key"})
 
 
 def _is_nonempty_string(value: object) -> bool:
@@ -237,6 +240,10 @@ def _is_nonempty_string(value: object) -> bool:
 
 def _valid_sha(value: object) -> bool:
     return isinstance(value, str) and _SHA.fullmatch(value) is not None
+
+
+def _valid_positive_decimal(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[1-9][0-9]*", value) is not None
 
 
 def _valid_repo_path(value: object) -> bool:
@@ -335,6 +342,22 @@ def _github_mutation_structurally_valid(
         )
     if operation == "issue-label-add":
         return _is_nonempty_string(payload.get("label")) and _routing_label(payload.get("label"))
+    if operation == "workflow-dispatch":
+        inputs = payload.get("inputs")
+        if (
+            payload.get("workflow_id") != _ARCHIVE_WORKFLOW_ID
+            or not _valid_branch(payload.get("ref"))
+            or not isinstance(inputs, Mapping)
+            or set(inputs) != _WORKFLOW_DISPATCH_INPUTS
+            or not _is_nonempty_string(inputs.get("change"))
+            or not _valid_positive_decimal(inputs.get("issue"))
+            or not _valid_sha(inputs.get("revision"))
+            or not isinstance(inputs.get("request_key"), str)
+        ):
+            return False
+        issue = cast(str, inputs["issue"])
+        revision = cast(str, inputs["revision"])
+        return inputs["request_key"] == f"archive-{issue}-{revision}"
     if operation == "ref-delete":
         return _valid_ref(payload.get("ref")) and _valid_sha(payload.get("expected_sha"))
     if operation == "pull-request-create":
@@ -594,11 +617,13 @@ class GitHubEffectAdapter:
         source: WorkerRequest,
         *,
         authorized_change: str,
+        current_revision: str | None = None,
     ) -> None:
         self.repository = repository
         self.token = token
         self.source = source
         self.authorized_change = authorized_change
+        self.current_revision = current_revision
         self._comment_ids: dict[StagedEffect, int] = {}
         self._routing_targets: dict[StagedEffect, str] = {}
         self._created_pr_numbers: dict[StagedEffect, int] = {}
@@ -642,6 +667,21 @@ class GitHubEffectAdapter:
             return None
         branch = payload.get("default_branch")
         return branch if _valid_branch(branch) else None
+
+    def _default_branch_revision(self, branch: str) -> str | None:
+        payload = _github_json(
+            self.repository,
+            self.token,
+            _ref_api_path(f"refs/heads/{branch}"),
+            allow_not_found=True,
+        )
+        if not isinstance(payload, Mapping):
+            return None
+        obj = payload.get("object")
+        if not isinstance(obj, Mapping):
+            return None
+        sha = obj.get("sha")
+        return sha if _valid_sha(sha) else None
 
     def _pull_request_matches_source(
         self,
@@ -694,6 +734,41 @@ class GitHubEffectAdapter:
         payload = _github_json(self.repository, self.token, query)
         return isinstance(payload, list) and not payload
 
+    def _existing_workflow_dispatch(
+        self,
+        payload: Mapping[str, object],
+    ) -> Mapping[str, object] | None:
+        workflow_id = cast(str, payload["workflow_id"])
+        ref = cast(str, payload["ref"])
+        inputs = cast(Mapping[str, object], payload["inputs"])
+        revision = cast(str, inputs["revision"])
+        request_key = cast(str, inputs["request_key"])
+        query = (
+            f"actions/workflows/{quote(workflow_id, safe='')}/runs"
+            f"?event=workflow_dispatch&branch={quote(ref, safe='')}&per_page=100"
+        )
+        response = _github_json(self.repository, self.token, query)
+        runs = response.get("workflow_runs") if isinstance(response, Mapping) else None
+        if not isinstance(runs, list):
+            return None
+        expected_title = f"OpenSpec Archive {request_key}"
+        for run in runs:
+            if not isinstance(run, Mapping):
+                continue
+            run_id = run.get("id")
+            if (
+                isinstance(run_id, int)
+                and not isinstance(run_id, bool)
+                and run_id > 0
+                and run.get("display_title") == expected_title
+                and run.get("event") == "workflow_dispatch"
+                and run.get("path") == _ARCHIVE_WORKFLOW_PATH
+                and run.get("head_branch") == ref
+                and run.get("head_sha") == revision
+            ):
+                return run
+        return None
+
     def _historical_merged_pr(
         self,
         payload: Mapping[str, object],
@@ -716,6 +791,23 @@ class GitHubEffectAdapter:
         operation = cast(str, payload["operation"])
         if operation == "issue-label-add":
             return True
+        if operation == "workflow-dispatch":
+            default_branch = self._default_branch()
+            inputs = cast(Mapping[str, object], payload["inputs"])
+            issue = cast(str, inputs["issue"])
+            revision = cast(str, inputs["revision"])
+            request_key = cast(str, inputs["request_key"])
+            return (
+                default_branch is not None
+                and payload.get("ref") == default_branch
+                and self.current_revision is not None
+                and _valid_sha(self.current_revision)
+                and self._default_branch_revision(default_branch) == self.current_revision
+                and inputs.get("change") == self.authorized_change
+                and issue == str(self.source.issue_number)
+                and revision == self.current_revision
+                and request_key == f"archive-{issue}-{revision}"
+            )
         if operation == "issue-update":
             current_issue = self._current_issue()
             current_observation = self._authorized_issue_observation(current_issue)
@@ -884,6 +976,21 @@ class GitHubEffectAdapter:
                 self.token,
                 _ref_mutation_path(cast(str, payload["ref"])),
                 method="DELETE",
+            )
+            return
+        if operation == "workflow-dispatch":
+            if self._existing_workflow_dispatch(payload) is not None:
+                return
+            inputs = cast(Mapping[str, object], payload["inputs"])
+            _github_json(
+                self.repository,
+                self.token,
+                f"actions/workflows/{quote(cast(str, payload['workflow_id']), safe='')}/dispatches",
+                method="POST",
+                payload={
+                    "ref": cast(str, payload["ref"]),
+                    "inputs": {key: cast(str, value) for key, value in inputs.items()},
+                },
             )
             return
         if operation == "pull-request-create":
@@ -1066,6 +1173,8 @@ class GitHubEffectAdapter:
                 )
                 is None
             )
+        if operation == "workflow-dispatch":
+            return self._existing_workflow_dispatch(payload) is not None
         if operation == "pull-request-create":
             number = self._created_pr_numbers.get(effect)
             if number is None:
@@ -1195,6 +1304,7 @@ def run_effect_application(
         token,
         source,
         authorized_change=batch.typed_result.change,
+        current_revision=current_revision,
     )
     result = apply_effect_batch(
         batch,

@@ -17,6 +17,10 @@ ARCHIVE_REQUEST_ACTION = "finalize-change"
 _ARCHIVE_REVISION = re.compile(r"^[0-9a-f]{40}$")
 
 
+def _archive_request_key(issue_number: str, revision: str) -> str:
+    return f"archive-{issue_number}-{revision}"
+
+
 def _fail(message: str) -> NoReturn:
     print(message, file=sys.stderr)
     raise SystemExit(2)
@@ -103,19 +107,49 @@ def _classify_archive_request(args: argparse.Namespace) -> None:
         reason="application-archive-request",
         request_issue=issue_number,
         request_revision=revision,
+        request_key=_archive_request_key(issue_number, revision),
     )
 
 
-def _classify(args: argparse.Namespace) -> None:
+def _classify_workflow_dispatch(args: argparse.Namespace) -> None:
+    request_fields = (args.request_issue, args.request_revision, args.request_key)
+    if any(request_fields):
+        if not all(request_fields):
+            _fail("Application archive dispatch requires issue, revision, and request_key")
+        if not args.manual_change:
+            _fail("Application archive dispatch requires --manual-change")
+        if re.fullmatch(r"[1-9][0-9]*", args.request_issue) is None:
+            _fail("Application archive dispatch Issue is invalid")
+        if _ARCHIVE_REVISION.fullmatch(args.request_revision) is None:
+            _fail("Application archive dispatch revision is invalid")
+        expected_key = _archive_request_key(args.request_issue, args.request_revision)
+        if args.request_key != expected_key:
+            _fail("Application archive dispatch request_key is invalid")
+        change = _validate_change_name(args.manual_change)
+        _emit(
+            action="evaluate",
+            change=change,
+            mode="request",
+            reason="application-archive-dispatch",
+            request_issue=args.request_issue,
+            request_revision=args.request_revision,
+            request_key=args.request_key,
+        )
+        return
+
+    if not args.manual_change:
+        _fail("workflow_dispatch requires --manual-change")
+    change = _validate_change_name(args.manual_change)
+    _emit(action="evaluate", change=change, mode="manual", reason="manual-dispatch")
+
+
+def _classify(args: argparse.Namespace) -> None
     if args.event_name == "issue_comment":
         _classify_archive_request(args)
         return
 
     if args.event_name == "workflow_dispatch":
-        if not args.manual_change:
-            _fail("workflow_dispatch requires --manual-change")
-        change = _validate_change_name(args.manual_change)
-        _emit(action="evaluate", change=change, mode="manual", reason="manual-dispatch")
+        _classify_workflow_dispatch(args)
         return
 
     if args.event_name != "pull_request":
@@ -414,6 +448,9 @@ def _parser() -> argparse.ArgumentParser:
     classify.add_argument("--changed-files", default="")
     classify.add_argument("--changes-root", default="openspec/changes")
     classify.add_argument("--manual-change")
+    classify.add_argument("--request-issue", default="")
+    classify.add_argument("--request-revision", default="")
+    classify.add_argument("--request-key", default="")
     classify.add_argument("--comment-body", default="")
     classify.add_argument("--comment-actor", default="")
     classify.add_argument("--comment-issue", default="")

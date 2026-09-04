@@ -397,6 +397,10 @@ def test_archive_workflow_keeps_reviewed_lifecycle_guards() -> None:
 
     for required in (
         "workflow_dispatch:",
+        "run-name: OpenSpec Archive",
+        "request_key",
+        "issue:",
+        "revision:",
         "issue_comment:",
         "- created",
         "pull_request:",
@@ -443,6 +447,6 @@ def test_readme_documents_state_driven_archive_contract() -> None:
         "unsupported automatic source",
         "cancel-in-progress: false",
         "in-flight request/run/result chain",
-        "workflow_dispatch` 保留為 recovery / migration fallback",
+        "workflow_dispatch` carries application-authorized archive requests and remains available for recovery / migration fallback",
     ):
         assert required in readme

@@ -39,6 +39,9 @@ def _args(*, body: str, actor: str = "github-actions[bot]") -> Any:
         comment_repository=_REPOSITORY,
         expected_repository=_REPOSITORY,
         manual_change=None,
+        request_issue="",
+        request_revision="",
+        request_key="",
         merged="false",
         head_ref="",
         head_repo="",
@@ -64,6 +67,7 @@ def test_application_archive_request_is_exactly_classified(
         "reason=application-archive-request",
         "request_issue=138",
         f"request_revision={_REVISION}",
+        f"request_key=archive-138-{_REVISION}",
     ]
 
 
@@ -79,3 +83,41 @@ def test_archive_request_rejects_extra_lines() -> None:
 
     with pytest.raises(SystemExit):
         module["_classify"](_args(body=_request_body() + "\nextra"))
+
+
+def test_application_workflow_dispatch_is_exactly_classified(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = _archive_script()
+    args = _args(body="")
+    args.event_name = "workflow_dispatch"
+    args.manual_change = _CHANGE
+    args.request_issue = "138"
+    args.request_revision = _REVISION
+    args.request_key = f"archive-138-{_REVISION}"
+
+    module["_classify"](args)
+
+    output = capsys.readouterr().out.splitlines()
+    assert output == [
+        "action=evaluate",
+        f"change={_CHANGE}",
+        "mode=request",
+        "reason=application-archive-dispatch",
+        "request_issue=138",
+        f"request_revision={_REVISION}",
+        f"request_key=archive-138-{_REVISION}",
+    ]
+
+
+def test_application_workflow_dispatch_rejects_wrong_request_key() -> None:
+    module = _archive_script()
+    args = _args(body="")
+    args.event_name = "workflow_dispatch"
+    args.manual_change = _CHANGE
+    args.request_issue = "138"
+    args.request_revision = _REVISION
+    args.request_key = "archive-138-wrong"
+
+    with pytest.raises(SystemExit):
+        module["_classify"](args)
