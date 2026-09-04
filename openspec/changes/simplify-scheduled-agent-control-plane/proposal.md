@@ -29,13 +29,13 @@ Required outcome: ChatGPT Scheduled Tasks are the only normal model wake; GitHub
 
 Merged PR #185 is deployed on N-1 at `main@013510b12c5d3cde869308a319a1e2fb12cdfa60`; its replacement PR preserved exact head `bbc2928839bc0cfac7a1fb383b6ece9e9e1bb291`, and PR #185's exact-head OpenSpec Validate (`33472126991`) and Python Quality (`33472127041`) both passed before merge. That proves the initial bootstrap is buildable and deployed, but fresh current evidence shows it is still too narrow for the approved Stage 1A contract: `prepare_exact_openspec_validation()` currently creates a probe only for `Lead / propose-change`, while #138 is machine-authorized `Lead / resolve-question`.
 
-The exact current #178 head remains `52a9a61c74c269ce85b6c8ab4be923fd220c6a9b`; its only observed `OpenSpec Validate` run is `33477885739`, terminal `action_required`, with zero validator jobs. Therefore Stage 1A remains incomplete and the current handoff revision has no qualifying exact-`R` checkout/compatibility/strict-PASS evidence. Review readiness stays fail closed. The required N-1 correction is application-owned, gate-derived exact-revision validation that can validate this already-current head without an artifact rewrite and without an Action whitelist suppressing the resource.
+The exact current #178 head remains `52a9a61c74c269ce85b6c8ab4be923fd220c6a9b`; its only observed `OpenSpec Validate` run is `33477885739`, terminal `action_required`, with zero validator jobs. Therefor Stage 1A remains incomplete and the current handoff revision has no qualifying exact-`R` checkout/compatibility/strict-PASS evidence. Review readiness stays fail closed. The required N-1 correction is application-owned, gate-derived exact-revision validation that can validate this already-current head without an artifact rewrite and without an Action whitelist suppressing the resource.
 
 The #168 transport direction is already decision-complete source evidence through `issuecomment-5442745071` and Human clarification `issuecomment-5475109024`; its production deployment is Stage 1B. Stage 1B blocks Stage 2, not the current semantic OpenSpec review gate.
 
 ## Skill maintenance traceability
 
-Current causal source for every entry: #138 formal-correction Explore `issuecomment-5482546619`; preserved upstream architecture `issuecomment-5474475020`; #168 transport Explore result `issuecomment-5442745071`; Human clarifications `issuecomment-5475109024` and `issuecomment-5477274582`; Change `simplify-scheduled-agent-control-plane`.
+Current causal source for every entry: #138 formal-correction Explore `issuecomment-5482546619`; preserved upstream architecture evidence `issuecomment-5474475020`; #168 transport Explore result `issuecomment-5442745071`; Human clarifications `issuecomment-5475109024` and `issuecomment-5477274582`; Change `simplify-scheduled-agent-control-plane`.
 
 | Skill | Class | Before / preserved responsibility | After / rationale / supersession |
 | --- | --- | --- | --- |
