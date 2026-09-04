@@ -124,6 +124,12 @@ def _propose_worker_result() -> dict[str, object]:
     }
 
 
+def _resolve_worker_result() -> dict[str, object]:
+    worker_result = _propose_worker_result()
+    worker_result["action"] = "resolve-question"
+    return worker_result
+
+
 def _effect_request(
     *,
     dispatch_request_comment_id: int = 100,
@@ -369,6 +375,33 @@ def test_prepare_and_prove_exact_openspec_validation_from_application_commit_cha
     assert target.repository == _REPOSITORY
     assert target.revision == _AFTER
     assert target.correlation == "effect-request-102"
+
+
+def test_prepare_exact_openspec_validation_accepts_topology_eligible_resolve_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_github_json(repository: str, token: str, api_path: str) -> object:
+        assert repository == _REPOSITORY
+        assert token == _FIXTURE_VALUE
+        if api_path == "branches/agent%2Fsimplify-scheduled-agent-control-plane":
+            return {"commit": {"sha": _BEFORE}}
+        raise AssertionError(f"unexpected GitHub read: {api_path}")
+
+    monkeypatch.setattr(bridge, "_github_json", fake_github_json)
+    probe = prepare_exact_openspec_validation(
+        json.dumps(_resolve_worker_result(), sort_keys=True),
+        source=WorkerRequest(138, "lead", "resolve-question"),
+        repository=_REPOSITORY,
+        token=_FIXTURE_VALUE,
+        workflow_text=(
+            "| `Lead / resolve-question` | semantic correction ready | "
+            "`Reviewer / review-openspec` |\n"
+        ),
+    )
+
+    assert probe is not None
+    assert probe.branch == _BRANCH
+    assert probe.before_sha == _BEFORE
 
 
 def test_prepare_exact_openspec_validation_accepts_matching_ref_create_for_new_branch(
