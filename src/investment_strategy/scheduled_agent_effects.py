@@ -657,10 +657,10 @@ class GitHubEffectAdapter:
     def _no_open_source_pull_request(self, branch: str, base: str) -> bool:
         owner = self.repository.split("/", 1)[0]
         head = f"{owner}:{branch}"
-        query = (
-            f"pulls?state=open&head={quote(head, safe='')}"
-            f"&base={quote(base, safe='')}&per_page=100"
-        )
+        query = "pulls?state=open"
+        query += f"&head={quote(head, safe='')}"
+        query += f"&base={quote(base, safe='')}"
+        query += "&per_page=100"
         payload = _github_json(self.repository, self.token, query)
         return isinstance(payload, list) and not payload
 
