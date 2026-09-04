@@ -95,9 +95,7 @@ def test_github_json_uses_repository_endpoint_for_empty_api_path(
 
     monkeypatch.setattr(resource, "urlopen", fake_urlopen)
 
-    assert resource._github_json(_REPOSITORY, _FIXTURE_VALUE, "") == {
-        "default_branch": "main"
-    }
+    assert resource._github_json(_REPOSITORY, _FIXTURE_VALUE, "") == {"default_branch": "main"}
     assert requested_urls == [f"https://api.github.com/repos/{_REPOSITORY}"]
 
 
