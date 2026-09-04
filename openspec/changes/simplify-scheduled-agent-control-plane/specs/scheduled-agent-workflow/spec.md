@@ -1,210 +1,96 @@
 ## ADDED Requirements
 
-### Requirement: Executable kernel owns Action-only current workflow control
+### Requirement: Executable kernel owns Action-only workflow control
+After cutover one default-branch kernel SHALL own Action→Role, typed transitions/effects, WIP/FIFO/debt dispatch, capability, fresh authorization, stale/replay and postconditions. Open routed Issues SHALL have exactly one valid `action:*`; Role is derived, `Change:` immutable after activation, WIP one. Evidence/history/legacy `agent:*` MUST NOT route. Normal dynamic order SHALL be active non-`unset` → closed-routing debt → unset Explore/Propose FIFO (`created_at`, Issue number) from complete current GitHub state. Fixed-role is N-1 compatibility only; production SHALL consume the kernel and workflow prose SHALL be generated/mechanically verified.
+#### Scenario: Action selects work
+- GIVEN one active Issue has one valid Action plus stale alternate routing
+- WHEN neutral dispatch observes complete state
+- THEN it selects that Issue and derives Role only from Action
 
-After cutover, one default-branch executable kernel SHALL solely own Action vocabulary, Action→Role, finite typed result→transition/effect rules, WIP/FIFO/debt dispatch, effect capabilities, fresh authorization, stale/replay classification, and structural postconditions. An open routed Issue SHALL have exactly one valid `action:*`; Role is derived, `Change:` remains immutable formal identity after activation, and Issue open/closed remains lifecycle state. Results/reviews/Human decisions are evidence; HANDOFF/transport/history and legacy `agent:*` are not current routing authority. Zero/multiple/unknown Actions fail closed; `closed + action:*` is debt until retirement to `closed + no action:*`, preserving unrelated labels. WIP remains one.
-
-Normal selection SHALL be neutral `workflow-dynamic`: active non-`unset` workflow first, then closed-routing debt, else one combined unset Explore/Propose FIFO by `created_at`, then Issue number, using complete authoritative current GitHub state. Task names, conversation/prior roles, feature-branch governance, Role labels, response comments, prose, and model inference MUST NOT select work. Fixed-role MAY survive only as bounded N-1 compatibility. Production dispatch/application/migration/tests consume the kernel directly; `agents/workflow.md` is generated/mechanically verified presentation, not a parsed competing DAG; AGENTS/roles/Skills retain semantic procedure/judgment. An unmerged kernel is review input only.
-
-#### Scenario: Current Action is the one selector
-
-- GIVEN one active Issue has `action:review-openspec` while queued work, stale Role labels, and historical routing prose exist
-- WHEN neutral dispatch reconstructs complete current state
-- THEN that Issue is selected and Reviewer is derived from Action without using alternate selectors
-
-### Requirement: Cutover retires explicitly absorbed pre-activation sources without history selection
-
-Stage 5 migration SHALL accept a finite reviewed machine-readable absorbed-source retirement plan as bounded cutover input. Every entry SHALL name one exact source Issue, its expected open/closed state, exact expected `Change:` identity and workflow routing labels, one exact absorbing coordination Issue/Change, and exact durable source/assignment references for audit traceability. The plan and current authoritative GitHub observations, rather than runtime prose/history/model inference, SHALL select the source candidate. Missing, duplicate, structurally invalid, stale, contradictory, or ambiguous entries, mismatched source or absorber state, incomplete observation/provenance, or newer material direct-Human input without a durable disposition SHALL fail closed before mutation.
-
-For an authorized entry whose source outcome has been absorbed by the named active Change and is no longer a separate implementation owner, repository application SHALL fresh-reauthorize the migration entry and expected source/absorber state, close the source Issue when still open, remove only currently observed workflow `agent:*`/`action:*` labels, preserve its body, comments, results, immutable evidence and unrelated labels, and fresh-observe `closed + no workflow routing` as the accepted retirement postcondition. Interruption after close or partial routing removal SHALL leave visible closed-routing debt and SHALL resume only the missing narrow retirement effects from the same entry; an already-satisfied postcondition is idempotent. Normal dispatch SHALL NOT consult the retirement plan after cutover, and the plan MUST NOT become a permanent exception registry, hidden selector, or Issue-specific production branch.
-
-#### Scenario: Live absorbed #168 becomes provenance-only at cutover
-
-- GIVEN the reviewed Stage 5 plan contains exactly one entry for source Issue #168 with expected `open + Change: unset + agent:lead + action:explore-change`, absorbing Issue #138 / Change `simplify-scheduled-agent-control-plane`, and exact durable #168 source plus Human-assignment references
-- AND fresh authoritative state matches that entry with no unresolved newer Human input
-- WHEN repository application executes the entry during canonical-state cutover
-- THEN #168 is closed and only its workflow routing labels are removed
-- AND its body, comments, `ACTION_RESULT(PROPOSAL_READY)`, and unrelated labels remain provenance/audit evidence
-- AND success is accepted only after fresh observation of `closed + no workflow routing`
-- AND later normal dispatch cannot select #168 or suppress another Issue by reading the plan, prose, or history
+### Requirement: Cutover retires explicitly absorbed pre-activation sources
+Stage 5 SHALL use a finite reviewed machine-readable plan binding exact source Issue/state/`Change:`/workflow labels, absorber Issue/Change, and durable source/assignment refs. Entry plus current authoritative observations, never prose/history/model inference, selects the source; invalid/stale/ambiguous/contradictory/incomplete or newer-undispositioned-Human evidence fails closed. Application SHALL fresh-reauthorize, close if needed, remove only workflow routing, preserve evidence/unrelated labels, and accept only fresh `closed + no workflow routing`; interruption is debt and replay idempotent. The plan MUST NOT become a runtime selector/exception registry.
+#### Scenario: Absorbed #168 retires
+- GIVEN the reviewed entry binds #168 to #138 / `simplify-scheduled-agent-control-plane` and fresh state matches
+- WHEN Stage 5 applies it
+- THEN #168 is `closed + no workflow routing` with evidence/unrelated labels preserved
 
 ### Requirement: Persistent Issue permits bounded pre-acceptance Explore correction
+Before first independent `review-openspec` acceptance, a material defect in the causal Explore source/evidence/feasibility MAY return the same Issue to `explore-change` when the same bounded problem is researchable without new Human-reserved commitment. Non-`unset` Change, Issue, PR/artifacts/history/evidence and WIP SHALL remain; Change MUST NOT be unset/replaced or work requeued. After acceptance use `resolve-question` plus independent review; `NO_CHANGE_REQUIRED`/`NO_GO` remain pre-activation only.
+#### Scenario: Provisional Change returns
+- GIVEN unaccepted Change C has a researchable causal-Explore defect
+- WHEN Lead returns it to Explore
+- THEN C, Issue, history and WIP remain intact
 
-The same coordination Issue SHALL persist through Explore and formal lifecycle. Ordinary pre-Propose Explore keeps `Change: unset`, and Propose still verifies exact same-Issue durable `PROPOSAL_READY`. Before first independent semantic `review-openspec` acceptance, if formalization materially invalidates that Explore source/evidence/feasibility premise and the same bounded problem remains researchable without new Human-reserved requirement/scope/risk/architecture commitment, the same Issue MAY return to `explore-change` after provisional non-`unset` Change activation. It SHALL preserve Change identity, Proposal/PR/results/history, Issue identity, and active WIP; it MUST NOT unset/replace Change, erase history, create a replacement Issue, or release work to queued intake. New Human-reserved commitment still requires Human authority. After independent semantic acceptance, material correction uses `Lead / resolve-question` plus renewed independent review. Terminal `NO_CHANGE_REQUIRED`/`NO_GO` Explore is pre-activation only.
+### Requirement: Runtime transport uses exact run-scoped results
+Scheduled Task SHALL be the only normal model wake; Actions MUST NOT host/invoke model APIs/workers. Check-in comments MAY be request/trigger/audit only. Dispatch/application/validation results SHALL be consumed only from the exact caused Actions run; response-mailbox fallback and latest/time/title/model/history inference are forbidden. Exact correlation is mandatory; missing/multiple/failed/cancelled/malformed/expired evidence fails closed. Each wake SHALL fresh-discover exactly one current-day Asia/Taipei check-in by non-workflow identity+date; permanent pointers are forbidden. Rollover SHALL establish/observe today before closing prior days without invalidating an in-flight request→run chain.
+#### Scenario: Exact run carries result
+- GIVEN request C caused exact run R
+- WHEN its result is consumed
+- THEN only R qualifies and no response comment may substitute
 
-#### Scenario: Provisional Change returns without reset
+### Requirement: Repository readiness self-hosts exact-revision validation
+When readiness requires OpenSpec validation for R, repository deterministic application SHALL provide the resource from the gate/artifact requirement, not a Role/Action whitelist. R MAY be new or already current and correct artifacts MUST NOT be dummy-rewritten. Evidence SHALL prove target R, validator `HEAD == R`, qualified pinned compatibility and strict PASS; stale CI, `run.head_sha` alone, manual approval workaround, ungoverned connector mutation or another semantic wake MUST NOT qualify. Material `resolve-question` SHALL have the same required resource as Propose.
+#### Scenario: Resolve validates current R
+- GIVEN materially revised Resolve requires readiness for already-current R
+- WHEN validation runs
+- THEN no dummy mutation occurs and evidence proves R, checkout R, compatibility and strict PASS
 
-- GIVEN Change `C` is provisional, OpenSpec acceptance has not occurred, and formalization invalidates a bounded research premise without new Human authority
-- WHEN Lead dispositions it
-- THEN the same Issue may return to Explore while `Change: C`, existing Proposal/PR/history, and WIP stay intact
-
-### Requirement: Runtime transport uses exact run-scoped results without response mailbox
-
-ChatGPT Scheduled Task SHALL be the only normal model wake; GitHub Actions MAY run deterministic control-plane code but MUST NOT host or invoke OpenAI/Responses/other model APIs or a repository-owned model worker. Runtime check-in comments MAY carry request/trigger/audit only. Normal dispatch/application/validation results SHALL belong to the exact Actions run caused by the request and be consumed only from that run-scoped surface; normal `DISPATCH_RESULT`, `DISPATCH_DECISION`, application-result response comments, or response-comment fallback are forbidden. Exact request→run→structured-result correlation is mandatory; latest/time/title/model/history inference is forbidden. Dispatch exposes `AUTHORIZE | NO_WORK | FAIL_CLOSED`; application exposes exact applied/already-satisfied/failed outcome plus postcondition evidence. Missing, multiple, failed, cancelled, malformed, or expired evidence fails closed. Coordination-Issue semantic comments remain governed evidence, and transport replacement MUST NOT change workflow semantics.
-
-Each wake SHALL fresh-discover exactly one open `Asia/Taipei` current-day runtime check-in from authoritative GitHub state using dedicated non-workflow identity plus canonical local-date identity; zero, duplicate, or ambiguous identity fails closed. Permanent check-in pointers (including `AGENT_RUNTIME_CHECKIN_ISSUE`), conversation memory, and prior-wake identity MUST NOT select it. Daily rollover SHALL be repository-owned and idempotent: establish and fresh-observe today's usable check-in before closing prior-day check-ins. Closing a prior-day check-in MUST NOT invalidate an already-triggered immutable `request C → exact run R → structured result` chain; new wakes use today while that chain remains consumable.
-
-#### Scenario: Exact run is the normal result carrier
-
-- GIVEN request R causes exact run A
-- WHEN Scheduled Task consumes dispatch/application
-- THEN only A's valid run-scoped result is accepted, and missing/ambiguous/failed A cannot fall back to a plausible response comment
-
-#### Scenario: Daily lifecycle is unique, pointerless, and correlation-safe
-
-- GIVEN a wake needs today's check-in and prior-day request C has exact run R still in flight
-- WHEN repository-owned rollover runs
-- THEN exactly one open current-day identity is fresh-discovered without a permanent pointer; zero/duplicate/ambiguous identity fails closed; today is established and fresh-observed before yesterday closes
-- AND closing yesterday does not invalidate C→R→structured-result correlation
-
-### Requirement: Repository-owned readiness gate self-hosts exact-revision strict validation
-
-Whenever the governed readiness contract requires exact-revision OpenSpec validation before ownership transfer, the repository-owned deterministic application boundary SHALL be able to obtain exact-resource validation evidence for target revision `R`. Eligibility for that resource SHALL derive from the governed readiness/effect/artifact requirement and MUST NOT depend on a hard-coded source Role/Action whitelist.
-
-Target `R` MAY be the exact revision just produced by the current authorized OpenSpec mutation or an already-current exact Change/PR head that requires readiness validation without an artifact rewrite. Repository application MUST NOT rewrite, dummy-touch, or otherwise mutate an already-correct artifact solely to manufacture a validator trigger. It MAY run pinned strict validation directly against `R` or explicitly invoke a dedicated deterministic validator bound to `R`; the mechanism is implementation-owned and MUST NOT create another semantic Action or model wake.
-
-Accepted evidence SHALL prove target revision `R`, validator checkout `HEAD == R`, qualified pinned OpenSpec compatibility, and strict OpenSpec validation PASS. That structured validation result SHALL belong to the exact deterministic application/validation execution and be consumable by the already selected semantic Action as exact-resource evidence. Missing, failed, cancelled, ambiguous, revision-mismatched, checkout-mismatched, malformed, or expired evidence SHALL fail closed. Stale validation, `run.head_sha == R` without checkout proof, manual approval/operator workarounds, direct connector bypass, or another semantic Action/model wake SHALL NOT satisfy the gate.
-
-A materially revising `Lead / resolve-question` that requires exact-revision readiness SHALL be able to consume the same governed exact-resource validation capability as `Lead / propose-change`. Source Action identity MAY constrain semantic ownership or which readiness gate applies, but MUST NOT suppress a validation resource required by that gate.
-
-#### Scenario: Event validation cannot execute
-
-- GIVEN repository application produced revision `R`
-- AND an event-triggered validation reports `action_required` with no validator job
-- WHEN Lead evaluates exact-revision readiness
-- THEN `R` is not validated
-- AND ownership does not transfer
-- AND repository application must self-host or explicitly trigger exact-`R` deterministic validation, otherwise fail closed
-
-#### Scenario: Already-current revision validates without rewrite
-
-- GIVEN exact Change/PR head `R` is already current
-- AND the governed readiness gate still requires exact-revision OpenSpec validation for `R`
-- AND no OpenSpec artifact needs semantic or editorial modification
-- WHEN repository application obtains the required exact-resource validation
-- THEN it validates `R` without rewriting or dummy-touching an artifact merely to create a validator trigger
-- AND accepted evidence still proves target `R`, validator checkout `HEAD == R`, qualified pinned compatibility, and strict PASS
-
-#### Scenario: Resolve is not excluded by a Propose-only whitelist
-
-- GIVEN `Lead / resolve-question` materially revised OpenSpec artifacts
-- AND the governed handoff gate requires exact-revision validation for target revision `R`
-- WHEN repository application determines validation-resource eligibility
-- THEN the required resource is available from the gate and target artifact state
-- AND a hard-coded `Lead / propose-change` source whitelist MUST NOT suppress that resource
-
-#### Scenario: Exact-R validation completes inside the selected Action
-
-- GIVEN the selected semantic Action requires exact-revision readiness for target revision `R`
-- WHEN the exact deterministic validation execution proves target `R`, checkout `R`, qualified pinned compatibility, and strict PASS
-- THEN the same selected semantic Action may consume that structured result for readiness
-- AND no second semantic Action or model wake is created
+### Requirement: Repository effect authority is independent from mutation carrier
+Kernel/application SHALL own legal-effect derivation, exact target/preconditions/revision, carrier eligibility, fresh authorization and accepted postconditions. A carrier SHALL execute only the exact authorized plan and MUST NOT select Issue/Action/effect, weaken preconditions, infer retry/successor, change meaning or declare authoritative success; repository code SHALL fresh-observe the result before routing/gate/lifecycle consequence. Actions MAY carry effects only where its identity/event semantics satisfy lifecycle; identity-sensitive PR create/presentation/head/ready/merge effects requiring normal event propagation or forbidden to Actions SHALL use an event-capable Scheduled-Agent connector/GitHub-App carrier. The target MUST NOT enable `Allow GitHub Actions to create and approve pull requests`. Preserve Archive automation ending at validated branch; final Archive PR is a normal Lead carrier effect, then independent review and Executor merge. Bootstrap/recovery SHALL reuse a legal exact-head PR where possible and MUST NOT replace it merely because Actions PR-create returns 403.
+#### Scenario: Actions identity cannot create PR
+- GIVEN application authorizes exact PR presentation but Actions identity cannot legally create it
+- WHEN that effect executes
+- THEN repository authority remains and a legal carrier executes it without widening Actions permission
 
 ### Requirement: One wake executes one typed semantic Action with fresh application
-
-A normal wake SHALL fresh neutral-dispatch, execute exactly one authorized mapped semantic Action, submit its bounded typed result plus narrative/source evidence, let repository application fresh-reauthorize exact Issue/Action/immutable Change/revision/effect predicates, derive only kernel-legal narrow effects, observe postconditions, and end. Workers MUST NOT choose arbitrary successors or make Markdown authoritative control. Historical dispatch proves entry only, not current mutation authority. The source Action's required durable result/evidence and legal effects SHALL be persisted and observed before any successor becomes current. Stale/contradictory state fails closed; already-satisfied legal postconditions are idempotent and MUST NOT rewind or execute successor work. A successor, same Role or not, always waits for later fresh neutral dispatch.
-
-Each selected Action SHALL reconstruct the durable repository, Issue, PR, OpenSpec, Actions, and specifically awaited external-resource state required by that Action before deciding what remains. Correctness MUST NOT depend on prior conversation memory or a previous wake exiting cleanly. Partial execution, interruption, tool failure, or a missing final response MUST NOT transfer ownership. Recovery SHALL distinguish observed durable mutations from intended-but-uncompleted work and SHALL NOT rewind an already-consumed transition when valid causal-descendant evidence proves later lifecycle work has consumed it; contradictory consumption evidence fails closed.
-
-Immediately before a consequential action result, effect request, or ownership transition, the acting role SHALL fresh-read workflow-relevant coordination-Issue activity newer than the durable evidence boundary on which that consequence relies. A candidate direct-Human comment counts for this freshness contract only when raw creation provenance identifies the designated Human and `performed_via_github_app == null`; missing or ambiguous provenance fails closed. Material newer direct-Human input SHALL have a durable exact-comment disposition before the consequence proceeds: address it within current authority, classify it non-blocking with concrete rationale, convert it to an existing finding/blocker/correction result, or route/escalate it to the legal owner/Human boundary. This freshness classification MUST NOT itself satisfy a separately Human-reserved decision predicate. Later wakes SHALL reconstruct prior exact-comment dispositions without adding a comment queue, unread counter, acknowledgement label/state, cursor, hidden registry, lock, lease, heartbeat, or second workflow DAG.
-
-The selected Action remains work-conserving internally through immediately actionable RED→GREEN→REFACTOR→VERIFY, local correction, and bounded exact-resource consumption until its result or genuine Human/external/stale/contradictory/hard boundary. The first observation of the exact resource just triggered by that Action as absent, queued, or in progress MUST NOT by itself end the Action while bounded same-action observation remains possible. The Action MAY re-observe only that exact resource and consume its terminal result if the source remains authorized; a later wake resuming a real wait SHALL fresh-read that exact resource again. This bounded observation MUST NOT become a generic polling/retry scheduler or permit successor Action execution in the same wake.
-
-When a catchable tool/runtime/execution failure is observable and repository evidence remains writable, the current role SHALL persist canonical `EXECUTION_EXCEPTION` evidence containing the raw observable error after platform redaction, selected role/action, attempted operation/tool, relevant revision/base when applicable, known completed durable mutations, and unfinished work boundary. Classification and interpretation remain separate and `UNCLASSIFIED_EXECUTION_EXCEPTION` is legal. Exception evidence MUST NOT itself authorize retry, result, transition, or ownership transfer. Legal same-authority recovery MAY continue only while routing, revision, preconditions, and execution context remain current; otherwise use the governed disposition path. A truly uncatchable termination is reconstructed from actual durable state and MUST NOT be retroactively fabricated. This contract MUST NOT introduce a universal blocked result, generic retry engine, fault state machine, retry counter, or hidden execution status.
-
-Correctness MUST NOT depend on same-role successor continuation, cross-role wake barriers, same-wake worker/model chaining, fixed wake Role, continuation tokens/cursors, locks/leases/heartbeats/retry-state, or hidden wake ownership.
-
-#### Scenario: Completion or replay cannot chain/rewind
-
-- GIVEN Action A completes to successor B, or a duplicate result for A arrives after B is current
-- WHEN application observes current state
-- THEN the wake ends at A's applied postcondition, replay is idempotent, and B executes only after later fresh dispatch
-
-#### Scenario: Newer direct-Human input blocks a stale consequence
-
-- GIVEN Action A relies on durable evidence E
-- AND a newer workflow-relevant direct-Human comment has qualifying raw provenance but no legal durable disposition
-- WHEN A reaches a consequential result, effect, or ownership boundary
-- THEN A fails closed at that boundary
-- AND neither actor identity nor the freshness classifier grants any Human-reserved authority
-
-#### Scenario: Exact resource may finish inside the selected Action
-
-- GIVEN Action A has just triggered exact external resource R
-- AND the first observation of R is absent, queued, or in progress
-- WHEN bounded same-action observation remains possible and A is still authorized
-- THEN A may re-observe only R and consume its terminal result
-- AND no successor Action executes in that wake
-
-#### Scenario: Catchable failure is evidence, not a transition
-
-- GIVEN Action A encounters an observable catchable failure and repository evidence remains writable
-- WHEN A cannot complete the attempted operation
-- THEN canonical `EXECUTION_EXCEPTION` preserves the raw observable failure and unfinished boundary
-- AND the exception alone does not authorize retry, routing, result, or ownership transfer
+A wake SHALL fresh-dispatch, execute exactly one mapped Action, return typed result/evidence, then let application fresh-reauthorize exact Issue/Action/Change/revision/effects, apply legal narrow effects, observe postconditions and end; every successor waits for later dispatch. Each Action SHALL reconstruct required durable state. Interruption MUST NOT transfer ownership/rewind consumed descendants. Before consequential result/effect/transfer, newer workflow-relevant direct-Human input with qualifying provenance SHALL be durably dispositioned or fail closed. Bounded same-Action observation of one exact resource is allowed but MUST NOT become generic polling/successor execution. Catchable exception evidence MUST NOT itself authorize retry/transition. Correctness MUST NOT depend on cursors/locks/leases/heartbeats/retry state/same-wake chaining/fixed wake Role.
+#### Scenario: Successor waits
+- GIVEN Action A reaches an observed postcondition and successor B becomes current
+- WHEN this wake completes
+- THEN B executes only after later fresh dispatch
 
 ### Requirement: Independent semantic gates use explicit merge Actions
-
-`review-openspec` remains independent, reverse-first then forward, source/Human-intent preserving and semantic-target bound. `review-implementation` independently assesses exact implementation head and PASS derives `merge-implementation-pr`; `review-archive` independently assesses exact Archive head/canonicalization/lifecycle preparation/cleanup-retention and PASS derives `merge-archive-pr`. Executor retains exact phase-appropriate PASS/current head/checks/non-closing linkage/Human freshness and applicable phase predicates; Archive additionally retains lifecycle preparation and cleanup/retention. No second Lead merge token is required. Recovery uses explicit merge Action + exact PR/head/merge state, is idempotent, and MUST NOT infer phase or reuse implementation PASS for Archive. `finalize-change`/`finalize-archive` retain existing Lead lifecycle, multi-PR, archive-automation, Human freshness, immutable Change, terminal evidence, and close obligations.
-
-#### Scenario: PASS selects one explicit unchanged merge phase
-
-- GIVEN Reviewer passes exact implementation or Archive revision R
-- WHEN application/Executor evaluates the gate
-- THEN the matching explicit merge Action is derived and changed-head or wrong-phase PASS does not authorize merge
+`review-openspec` remains independent. `review-implementation` PASS SHALL derive `merge-implementation-pr`; `review-archive` PASS SHALL derive `merge-archive-pr`. Executor SHALL retain exact phase PASS/current-head/check/linkage/Human-freshness predicates; Archive also retains lifecycle preparation/cleanup-retention. Recovery SHALL use explicit merge Action+exact PR/head state, be idempotent, and MUST NOT infer phase or reuse implementation PASS for Archive. Lead finalize authority remains.
+#### Scenario: PASS selects merge phase
+- GIVEN Reviewer passes exact implementation or Archive R
+- WHEN merge authorization is derived
+- THEN only the matching explicit merge Action for unchanged R is legal
 
 ### Requirement: Architecture reset is mandatory N-1 delivery with deletion
-
-#138 SHALL remain one parent outcome. Every stage MUST be independently executable/testable/mergeable/deployable on then-current N-1 or be split without weakening the parent, and SHALL record outcomes advanced/still incomplete, N-1 prerequisites, rollback/cutover boundary, and required continuation. No intermediate stage completes #138.
-
-Order is mandatory: **(1A) exact-revision application resource first; (1B) transport de-mailbox + daily exact run-scoped dispatch/application/validation results second; (2) executable-kernel shadow without mutation cutover; (3) typed result→kernel effect + fresh application; (4) one-action-per-wake; (5) Action-only/Role-derived/explicit-merge cutover plus typed retirement of explicitly absorbed pre-activation sources; (6) deletion/context reduction.** Stage 1A SHALL be merged and deployed before a materially authoring or revising `Lead / propose-change` or `Lead / resolve-question` may hand #138 to independent OpenSpec review, and the final exact handoff revision SHALL satisfy the governed exact-revision validation gate through that resource. Stage 1B remains mandatory before Stage 2 consumes the run-scoped transport contract, but Stage 1B SHALL NOT become an additional semantic OpenSpec review-readiness prerequisite once Stage 1A has supplied otherwise-valid exact-revision evidence. Both Stage 1A and Stage 1B SHALL be deployed before Stage 2.
-
-Dual paths MAY coexist only for bounded N-1 proof/cutover. After cutover, production MUST delete/disable superseded Role routing, response-mailbox/history coupling, Markdown topology/effect parsing, same-wake continuation/wake barriers, obsolete compatibility hot paths, legacy Responses/model-worker host code, and redundant machine-control tests/prose. Historical evidence remains audit only.
-
-#### Scenario: Stage cannot self-host or complete early
-
-- GIVEN a stage cannot run on N-1 or later mandatory stages remain
+#138 SHALL remain one parent outcome and every stage MUST be N-1 executable/testable/mergeable/deployable or split without weakening it; intermediate completion MUST NOT complete #138. Order is **1A exact-R resource → 1B run-scoped transport/daily check-in → 1C PR authority/carrier split → 2 kernel shadow → 3 typed application → 4 one-action-per-wake → 5 Action-only/Role-derived/explicit merges + absorbed-source retirement → 6 deletion/context reduction**. 1A SHALL precede materially revised Propose/Resolve handoff and validate final R. 1B+1C SHALL precede Stage 2 but MUST NOT add semantic review prerequisites once valid 1A exists. 1C SHALL include existing-PR reuse. After cutover production MUST delete superseded Role routing, response/history mailbox, Markdown topology/effect parsing, continuation/wake barriers, compatibility/model-worker paths, Actions-owned identity-sensitive PR mutation, and redundant machine-control prose/tests.
+#### Scenario: Stage cannot finish early
+- GIVEN a stage cannot self-host on N-1 or later stages remain
 - WHEN completion is evaluated
-- THEN it is split or continuation remains mandatory and #138 stays incomplete through Stage 6 deletion/full verification
-
-#### Scenario: Stage 1 transport does not become an OpenSpec review gate
-
-- GIVEN Stage 1A is deployed
-- AND the exact final handoff revision has qualifying Stage 1A validation evidence
-- AND all other semantic OpenSpec readiness conditions pass
-- WHEN Lead evaluates handoff to independent OpenSpec review
-- THEN incomplete Stage 1B transport deployment does not by itself invalidate semantic OpenSpec review readiness
-- AND Stage 1B remains mandatory before Stage 2 kernel shadow begins
+- THEN it is split or continuation remains mandatory through Stage 6
 
 ## REMOVED Requirements
-
 ### Requirement: Actionable workflow routing is one logical role/action tuple
-**Reason**: Role+Action duplicates authority. **Migration**: Stage 5 Action-only; Stage 6 retires Role routing.
+**Reason/Migration**: Action becomes canonical; Role routing retires.
 ### Requirement: One persistent coordination Issue represents the normal OpenSpec workflow lifecycle
-**Reason**: It forbids approved bounded post-activation pre-acceptance Explore. **Migration**: Replacement preserves Issue/Change/history and formal correction after acceptance.
+**Reason/Migration**: Replacement permits bounded pre-acceptance formal Explore while preserving Issue/Change/history/WIP.
 ### Requirement: Review and finalize actions have Lead-owned minimum gate contracts
-**Reason**: It embeds generic `merge-pr`. **Migration**: Replacement preserves gates/finalize and uses explicit merge Actions.
+**Reason/Migration**: Preserve gates with explicit merge Actions.
 ### Requirement: Scheduled execution is at-least-once and state reconstructable
-**Reason**: Its same-wake successor mechanics conflict with the one-Action wake boundary. **Migration**: The replacement preserves action-specific durable reconstruction, direct-Human freshness/disposition, partial-mutation and causal-descendant replay safety, bounded exact-resource observation, and execution-exception evidence while moving every successor Action to a later fresh wake.
+**Reason/Migration**: Durable Action reconstruction remains; successors use later dispatch.
 ### Requirement: Routing handoff persists evidence before ownership transfer
-**Reason**: Synthetic Role-oriented HANDOFF is no longer a control primitive. **Migration**: The source Action's result/evidence and legal effects remain durable before its successor becomes current; HANDOFF may remain audit/provenance only, and every successor waits for later fresh dispatch.
+**Reason/Migration**: HANDOFF becomes audit; source result/effects precede successor.
 ### Requirement: Fresh-read plus label update is not treated as mutual exclusion
-**Reason**: Tuple wording is obsolete. **Migration**: Fresh typed application preserves no-mutex/stale/idempotent safety.
+**Reason/Migration**: Fresh typed application retains stale/idempotent safety.
 ### Requirement: Executor merges only an explicitly authorized unchanged revision
-**Reason**: Generic merge hides phase. **Migration**: Explicit merge Actions preserve exact-head gates.
+**Reason/Migration**: Explicit phase merge Actions preserve exact-head authorization.
 ### Requirement: Merge recovery is idempotent and reconstructable
-**Reason**: Generic recovery infers phase. **Migration**: Explicit merge Action + PR state drives recovery.
+**Reason/Migration**: Explicit merge Action+PR state replaces phase inference.
 ### Requirement: Each scheduled run processes at most one actionable work item using a fixed stable order
-**Reason**: It keeps fixed-role normal selection. **Migration**: Neutral dynamic dispatch preserves WIP/debt/FIFO; fixed-role is bounded compatibility.
+**Reason/Migration**: Neutral dynamic Action dispatch replaces fixed-role selection.
 ### Requirement: Repository agent artifacts expose the governance contract
-**Reason**: Machine topology is distributed in prose. **Migration**: Kernel owns machine semantics; workflow.md is generated/verified.
+**Reason/Migration**: Kernel owns machine semantics; prose becomes generated/verified.
 ### Requirement: Default-branch governance declares the scheduled dispatch mode
-**Reason**: It permits peer normal fixed-role mode. **Migration**: Dynamic is normal; fixed-role is bounded N-1 compatibility.
+**Reason/Migration**: Dynamic is normal; fixed-role is bounded N-1 only.
 ### Requirement: Workflow-dynamic dispatch derives one fixed invocation role from durable workflow state
-**Reason**: It freezes wake Role/same-wake successors. **Migration**: Role derives for one Action; successor waits.
+**Reason/Migration**: Role derives per Action; successor waits.
 ### Requirement: Selected Scheduled Agent actions are work-conserving within an invocation
-**Reason**: It extends same-Action progress into same-Role successor execution. **Migration**: Same-Action RED→GREEN→REFACTOR→VERIFY, local correction, and bounded exact-resource observation remain work-conserving; application ends the wake before any successor Action.
+**Reason/Migration**: Work conservation stays inside one Action only.
 ### Requirement: Persisted Change identity defines the single active workflow boundary
-**Reason**: It binds WIP to Role tuples/pre-activation-only correction. **Migration**: WIP is Issue+Change+Action and bounded correction preserves it.
+**Reason/Migration**: Current position includes Issue+Change+Action+causal binding.
 ### Requirement: Dynamic dispatch tolerates overlapping wakes without hidden ownership state
-**Reason**: Wording is tied to old routing. **Migration**: Fresh typed application preserves overlap safety without hidden owner.
+**Reason/Migration**: Fresh typed application preserves overlap safety without hidden owner.
