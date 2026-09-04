@@ -11,8 +11,8 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from investment_strategy.scheduled_agent_action_model import Action as ModelAction
 from investment_strategy.scheduled_agent_action_model import (
-    Action as ModelAction,
     BoundedActionResult,
     ResultKind,
     TypedResult,

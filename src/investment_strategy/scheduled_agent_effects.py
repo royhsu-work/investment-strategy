@@ -14,15 +14,17 @@ from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from investment_strategy.scheduled_agent_action_model import Action as ModelAction
 from investment_strategy.scheduled_agent_action_model import (
-    Action as ModelAction,
     ActionApplicationDecision,
     ActionObservation,
     ActionSource,
     ApplicationRejection,
     BoundedActionResult,
-    ObservationProvenance as ModelObservationProvenance,
     plan_action_application,
+)
+from investment_strategy.scheduled_agent_action_model import (
+    ObservationProvenance as ModelObservationProvenance,
 )
 from investment_strategy.scheduled_agent_effect_contract import (
     GITHUB_MUTATION_KIND,

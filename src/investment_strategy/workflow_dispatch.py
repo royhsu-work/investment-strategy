@@ -11,16 +11,20 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
+from investment_strategy.scheduled_agent_action_model import Action as ModelAction
 from investment_strategy.scheduled_agent_action_model import (
-    Action as ModelAction,
     AuthoritativeObservations,
     IssueObservation,
-    ObservationProvenance as ModelObservationProvenance,
     SelectionDecision,
-    SelectionDisposition as ModelSelectionDisposition,
+    role_for,
     select_work,
     shadow_compare_selection,
-    role_for,
+)
+from investment_strategy.scheduled_agent_action_model import (
+    ObservationProvenance as ModelObservationProvenance,
+)
+from investment_strategy.scheduled_agent_action_model import (
+    SelectionDisposition as ModelSelectionDisposition,
 )
 
 Role = Literal["lead", "reviewer", "executor"]

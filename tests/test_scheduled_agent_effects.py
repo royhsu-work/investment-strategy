@@ -23,7 +23,6 @@ from investment_strategy.scheduled_agent_runtime import (
     acquire_dispatch_preflight,
 )
 
-
 _REVISION = "a" * 40
 _CHANGE = "simplify-scheduled-agent-control-plane"
 

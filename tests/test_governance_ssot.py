@@ -55,7 +55,10 @@ def test_shared_governance_defines_one_wake_and_fresh_application() -> None:
         "fail closed",
     ):
         assert required in shared
-    assert "worker cannot select an Issue, Role, Action, target, successor, retry, or success" in shared
+    assert (
+        "worker cannot select an Issue, Role, Action, target, successor, retry, or success"
+        in shared
+    )
 
 
 def test_shared_governance_keeps_independent_safety_boundaries() -> None:

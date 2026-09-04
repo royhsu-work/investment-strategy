@@ -23,7 +23,6 @@ def test_pre_activation_queue_is_action_only_and_bounded() -> None:
 
 
 def test_agent_creation_and_explore_stay_non_recursive() -> None:
-    shared = _governance()
     lead = " ".join(LEAD.read_text(encoding="utf-8").split())
     explore = " ".join(EXPLORE.read_text(encoding="utf-8").split())
     assert "optional or merely deferred prose creates no routed work" in lead

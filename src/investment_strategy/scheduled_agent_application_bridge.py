@@ -19,7 +19,6 @@ from investment_strategy.scheduled_agent_dispatch_result import fetch_dispatch_r
 from investment_strategy.scheduled_agent_merge_acceptance import run_guarded_effect_application
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 
-
 APPLICATION_REQUEST_MARKER = "EFFECT_REQUEST"
 DISPATCH_REQUEST_COMMENT_ID_PREFIX = "Dispatch-Request-Comment-ID: "
 DISPATCH_RUN_ID_PREFIX = "Dispatch-Run-ID: "

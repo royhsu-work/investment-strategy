@@ -7,7 +7,7 @@ import os
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 from urllib.request import Request, urlopen
@@ -254,7 +254,7 @@ def acquire_from_issue_pages(
 
 
 def _github_get_list_page(url: str, token: str) -> tuple[Mapping[str, object], ...]:
-    request = Request(
+    request = Request(  # noqa: S310 - fixed trusted GitHub API host
         url,
         headers={
             "Accept": "application/vnd.github+json",

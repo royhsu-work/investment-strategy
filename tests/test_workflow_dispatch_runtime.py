@@ -2,20 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import date
 from pathlib import Path
 
-import pytest
-
 from investment_strategy.scheduled_agent_action_model import Action
-from investment_strategy.scheduled_agent_checkin import checkin_title
 from investment_strategy.scheduled_agent_runtime import (
     GitHubIssueObservation,
     acquire_dispatch_preflight,
 )
 from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
-    ObservationProvenance,
     action_entry_authorized,
     action_model_shadow,
     activation_postwrite_accepted,

@@ -22,7 +22,9 @@ EXPECTED_ACTION_DECLARATIONS = {
     "implementation-review": "Mapped Action: Reviewer / review-implementation.",
     "implementation": "Mapped Action: Executor / implement-change.",
     "lifecycle-finalize": "Mapped Actions: Lead / finalize-change and Lead / finalize-archive.",
-    "merge-pr": "Mapped Actions: Executor / merge-implementation-pr and Executor / merge-archive-pr.",
+    "merge-pr": (
+        "Mapped Actions: Executor / merge-implementation-pr and Executor / merge-archive-pr."
+    ),
     "openspec-change": "Mapped Actions: Lead / propose-change and Lead / resolve-question.",
     "openspec-explore": "Mapped Action: Lead / explore-change.",
     "openspec-review": "Mapped Action: Reviewer / review-openspec.",
