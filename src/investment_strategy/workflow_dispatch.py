@@ -419,7 +419,6 @@ def classify_dispatch(preflight: DispatchPreflight) -> DispatchDecision:
     return classify_open_dispatch(preflight)
 
 
-
 def _action_model_observations(
     preflight: DispatchPreflight,
 ) -> AuthoritativeObservations:
