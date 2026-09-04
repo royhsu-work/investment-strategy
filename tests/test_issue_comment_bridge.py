@@ -384,3 +384,102 @@ def test_bridge_workflow_supplies_only_transport_and_repository_credentials_to_d
         "requested_action",
     ):
         assert forbidden not in workflow
+
+
+def test_run_name_binds_exact_request_identity() -> None:
+    from investment_strategy.issue_comment_bridge import (
+        parse_dispatch_run_name,
+        render_dispatch_run_name,
+    )
+
+    assert render_dispatch_run_name(987) == "Scheduled Agent Dispatch 987"
+    assert parse_dispatch_run_name("Scheduled Agent Dispatch 987") == 987
+    assert parse_dispatch_run_name("Scheduled Agent Dispatch 0987") is None
+    assert parse_dispatch_run_name("Scheduled Agent Dispatch 987 extra") is None
+    assert parse_dispatch_run_name("Scheduled Agent Dispatch 0") is None
+
+
+def test_run_scoped_result_is_one_strict_decision_block() -> None:
+    from investment_strategy.issue_comment_bridge import (
+        parse_run_scoped_dispatch_result,
+        render_run_scoped_dispatch_result,
+    )
+
+    decision = _decision(
+        "AUTHORIZE",
+        issue_number=138,
+        routing=("executor", "implement-change"),
+    )
+    block = render_run_scoped_dispatch_result(
+        request_comment_id=987,
+        default_branch_revision=REVISION,
+        decision=decision,
+    )
+
+    parsed = parse_run_scoped_dispatch_result(
+        f"runner noise\n{block}\npost-step noise",
+        request_comment_id=987,
+    )
+    assert parsed is not None
+    assert parsed.request_comment_id == 987
+    assert parsed.issue_number == 138
+    assert parsed.role == "executor"
+    assert parsed.action == "implement-change"
+
+    assert (
+        parse_run_scoped_dispatch_result(
+            f"{block}\n{block}",
+            request_comment_id=987,
+        )
+        is None
+    )
+    assert (
+        parse_run_scoped_dispatch_result(
+            block,
+            request_comment_id=988,
+        )
+        is None
+    )
+
+
+def test_bridge_workflow_uses_run_scoped_log_without_mailbox_response() -> None:
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert "run-name: Scheduled Agent Dispatch ${{ github.event.comment.id }}" in workflow
+    assert "BEGIN_SCHEDULED_AGENT_DISPATCH_RESULT" in workflow
+    assert "END_SCHEDULED_AGENT_DISPATCH_RESULT" in workflow
+    for forbidden in (
+        "AGENT_RUNTIME_CHECKIN_ISSUE",
+        "--comments-path",
+        "Post correlated machine dispatch decision",
+        "DISPATCH_RESULT",
+        "ISSUE_NUMBER",
+    ):
+        assert forbidden not in workflow
+
+
+def test_runtime_checkin_identity_uses_local_date_and_non_workflow_shape() -> None:
+    from datetime import UTC, date, datetime
+
+    from investment_strategy.scheduled_agent_checkin import (
+        checkin_title,
+        parse_checkin_day,
+        taipei_day,
+    )
+
+    assert taipei_day(datetime(2026, 9, 2, 16, 30, tzinfo=UTC)) == date(2026, 9, 3)
+    payload = {
+        "number": 142,
+        "title": checkin_title(date(2026, 9, 3)),
+        "state": "open",
+        "labels": [],
+    }
+    assert parse_checkin_day(payload) == date(2026, 9, 3)
+
+    routed = dict(payload)
+    routed["labels"] = [{"name": "action:implement-change"}]
+    assert parse_checkin_day(routed) is None
+
+    pull_request = dict(payload)
+    pull_request["pull_request"] = {}
+    assert parse_checkin_day(pull_request) is None
