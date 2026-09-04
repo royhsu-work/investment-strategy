@@ -62,9 +62,9 @@ def test_bridge_is_run_scoped_transport_without_mailbox_semantics() -> None:
 
     assert "issue_comment:" in workflow
     assert "types: [created]" in workflow
-    assert "run-name: Scheduled Agent Dispatch \${{ github.event.comment.id }}" in workflow
+    assert "run-name: Scheduled Agent Dispatch ${{ github.event.comment.id }}" in workflow
     assert "issues: read" in workflow
-    assert "ref: \${{ github.event.repository.default_branch }}" in workflow
+    assert "ref: ${{ github.event.repository.default_branch }}" in workflow
     assert "persist-credentials: false" in workflow
     assert "uv run python -m investment_strategy.issue_comment_bridge" in workflow
     assert "BEGIN_SCHEDULED_AGENT_DISPATCH_RESULT" in workflow

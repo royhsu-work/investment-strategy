@@ -125,3 +125,25 @@ PASS. `fresh-read routing → update labels` is not mutex/CAS/single-flight beha
 
 
 Skill maintenance traceability: an undeclared material Skill, differently classified change, or Formatting drift is a finding.
+
+## Spec-driven semantic adapter
+
+When openspec/config.yaml declares schema: spec-driven, load
+agents/skills/openspec-semantic-adapter.md. The adapter is a closed Apply context, not runtime
+authority. Strict validation alone does not establish semantic acceptance, even when strict validation
+passes. Preserve the approved proposal, applicable delta specs, design, tasks, canonical specs, and
+materially applicable config context; do not choose which upstream/config semantics count.
+
+## Explore-result evidence and Skill maintenance
+
+Dereference the exact same-Issue Explore result and supporting source/evidence before semantic review;
+this review preserves that result but is not a re-run of Explore. Review the result before reverse
+traceability. Use both notations for the required order:
+tasks -> design -> specs -> proposal
+proposal -> specs -> design -> tasks
+tasks → design → specs → proposal
+proposal → specs → design → tasks
+Both directions must be complete before PASS. A bookkeeping-only revision does not advance or
+invalidate the semantic baseline B; review the material semantic changes in (B, R]. Successful
+mechanical OpenSpec validation is not semantic PASS evidence. An undeclared material Skill or
+Formatting drift is a finding.

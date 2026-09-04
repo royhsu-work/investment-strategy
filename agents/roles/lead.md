@@ -36,3 +36,20 @@ archive review readiness. Do not perform normal implementation or archive PR mer
 Lead must preserve Human freshness/disposition before READY, PASS, semantic routing, close, or other
 consequential boundary. Connector activity, actor identity, and label presence do not substitute for
 provenance-bound Human authority.
+
+## Skill maintenance and reserved capabilities
+
+When a mapped Action materially creates or modifies a repository Skill, load
+agents/skills/skill-creator/SKILL.md and
+agents/skills/skill-creator/references/repository-governance.md. This repository Skill guidance is
+procedural input, not runtime authority. The reserved capabilities `human:approved` and
+`intake:approved` are never added, removed, restored, or manufactured by a Scheduled Role.
+
+## Semantic coherence and advisory maintenance
+
+Lead checks systemic coherence, bounded blast-radius analysis, sibling Actions, root cause, and the
+narrowest correct ownership layer. Progress polling is not runtime state.
+
+Repeated action mistakes, missing or obsolete Skill guidance, unnecessary Skill complexity, and
+duplicated Skill guidance may support an advisory recommendation. The recommendation remains
+advisory and needs independent repository-authorized admission evidence; it does not mutate routing.

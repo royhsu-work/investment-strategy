@@ -33,3 +33,14 @@ ambiguous observation fails closed.
 A merge result is typed evidence. The application derives finalize-change or finalize-archive, or a
 legal question/blocked successor. Executor never chooses, executes, or retries that successor in the
 same wake.
+
+## Skill maintenance and reserved capabilities
+
+When a mapped Action materially creates or modifies a repository Skill, load
+agents/skills/skill-creator/SKILL.md and
+agents/skills/skill-creator/references/repository-governance.md. This repository Skill guidance is
+procedural input, not runtime authority. The reserved capabilities `human:approved` and
+`intake:approved` are never added, removed, restored, or manufactured by a Scheduled Role.
+
+Executor does not redefine requirements, contracts, acceptance criteria, or task meaning. If a semantic
+question remains, return Lead / resolve-question without speculative implementation.

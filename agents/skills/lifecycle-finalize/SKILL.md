@@ -12,7 +12,7 @@ Human input, and exact gates. For finalize-change, determine whether more approv
 required or whether the Change is ready for independent archive review. For finalize-archive, verify
 the Change is complete and archive terminal evidence is ready.
 
-Archive preparation owns semantic completeness, exact Change/Issue linkage, non-closing linkage,
+archive preparation owns semantic completeness, exact Change/Issue linkage, non-closing linkage,
 deterministic cleanup obligations, and the evidence needed by Reviewer / review-archive. It does not
 perform normal PR merge mutation. A premature close or ambiguous cleanup condition is blocked.
 
@@ -20,5 +20,7 @@ Return one structured archive-ready, more-implementation-required, lifecycle-com
 human-decision-required, no-go, or blocked result. The executable model derives review-archive,
 implement-change, finalize-archive, or terminal state; the successor executes only on a later wake.
 
+
+The lifecycle result is evidence, not runtime state; successor execution happens only on a later wake.
 Do not create a duplicate Change, PR, lifecycle state, recovery state, or control mailbox. Optional or
 deferred prose is not a lifecycle obligation.

@@ -18,3 +18,6 @@ complete. A stale or contradictory observation is blocked.
 Return one structured PASS, FINDINGS, HUMAN_DECISION_REQUIRED, NO_GO, or BLOCKED result. PASS on the
 exact unchanged head derives merge-archive-pr. Reviewer does not merge, mutate routing, or execute
 the successor.
+
+The exact-current-head gate is mandatory. A semantic OpenSpec bookkeeping exception does not weaken
+this gate.

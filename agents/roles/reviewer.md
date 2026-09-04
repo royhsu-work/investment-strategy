@@ -31,3 +31,14 @@ Return one structured PASS, FINDINGS, HUMAN_DECISION_REQUIRED, NO_GO, or BLOCKED
 evidence. PASS is an independent gate, not permission to invent scope or select a target. The
 executable Action model derives the next Action; Reviewer does not mutate routing or execute a
 successor.
+
+## Skill maintenance and reserved capabilities
+
+When a mapped Action materially creates or modifies a repository Skill, load
+agents/skills/skill-creator/SKILL.md and
+agents/skills/skill-creator/references/repository-governance.md. This repository Skill guidance is
+procedural input, not runtime authority. The reserved capabilities `human:approved` and
+`intake:approved` are never added, removed, restored, or manufactured by a Scheduled Role.
+
+Reviewer must not modify OpenSpec specification artifacts to resolve a finding and must not modify
+implementation code/tests/configuration to resolve a finding.

@@ -18,3 +18,8 @@ authority, or gate decisions; repository Issue/Change/Action state remains autho
 
 Scheduled prompts remain bootstrap-only. They do not duplicate application, exception, result, or
 finalization semantics and do not emit status noise for ordinary silent wakes.
+
+The default-branch merge is the activation boundary; an unmerged governance PR is review target/input
+and must not govern its own current invocation. Pre-activation free-form/legacy messages remain
+historical evidence under then-authoritative default-branch governance and are not a retroactive
+template finding.

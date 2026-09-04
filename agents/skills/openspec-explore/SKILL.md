@@ -22,3 +22,10 @@ The next Action is executed only by a later fresh wake.
 
 Human authority requires provenance-bound evidence. Connector activity, labels, and model output do not
 satisfy a Human decision.
+
+## Conditional skill composition
+
+When this Action materially creates or modifies a repository Skill, load
+agents/skills/skill-creator/SKILL.md and
+agents/skills/skill-creator/references/repository-governance.md. This repository Skill guidance is
+procedural input and does not grant runtime authority.

@@ -37,3 +37,19 @@ for correction and fresh independent review.
 
 Skill maintenance traceability: implementation consumes approved declarations; it does not claim
 semantic review. Executor does not perform semantic bidirectional OpenSpec review.
+
+## Spec-driven semantic adapter
+
+When openspec/config.yaml declares schema: spec-driven, load
+agents/skills/openspec-semantic-adapter.md. The adapter is a closed Apply context, not runtime
+authority. Strict validation alone does not establish semantic acceptance, even when strict validation
+passes. Preserve the approved proposal, applicable delta specs, design, tasks, canonical specs, and
+materially applicable config context; do not choose which upstream/config semantics count.
+
+## Completion boundary
+
+When there is no material semantic OpenSpec change, implementation completion routes directly to
+Reviewer / review-implementation. A material semantic OpenSpec change routes to Lead / resolve-question
+and then Reviewer / review-openspec. The exact-current-head gate and semantic OpenSpec bookkeeping
+exception do not weaken exact-head review.
+

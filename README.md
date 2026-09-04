@@ -75,7 +75,7 @@ External Scheduled Task slot count, topology, cadence, notification, and associa
 configuration are product/deployment configuration. The repository governs bootstrap and bounded
 dispatch behavior. The Asia/Taipei daily shard is transport/audit only and is not workflow state.
 
-Implementation review PASS and archive review PASS select the explicit merge-implementation-pr and
+Implementation review PASS and archive review PASS select review-implementation and the explicit merge-implementation-pr and
 merge-archive-pr Actions. Exact-R validation, content-addressed ingress, WIP=1, finish-first,
 Human authority, independent review, exact-head merge safety, and mutation-carrier separation remain
 required. Detailed semantics belong to the default-branch governance, role, Skill, OpenSpec, and
@@ -348,3 +348,8 @@ openspec validate --all --strict --json --no-interactive
 - intraday acquisition beyond the existing observational overlay contract
 - prediction
 - execution/fill/portfolio state
+
+The default-branch merge is the activation boundary. An unmerged governance PR is review target/input
+and must not govern its own current invocation. A run head_sha is association metadata; validator
+checkout `HEAD` and exact target identity are the checkout proof, and synthetic merge validation
+is not exact-head validation for another PR head.
