@@ -147,7 +147,6 @@ def test_corrected_successor_requires_new_exact_head_review_checks_and_preflight
     assert merge_acceptance_allows(fully_regated)
 
 
-
 def test_merge_acceptance_allows_explicit_historical_merged_carrier() -> None:
     accepted = _accepted(
         pr_open=False,
@@ -187,7 +186,6 @@ def test_merge_action_requires_its_matching_review_action() -> None:
     assert archive[0] == HEAD
 
 
-
 def test_review_pass_carries_current_default_branch_revision() -> None:
     default_revision = "a" * 40
     comments = (
@@ -209,7 +207,6 @@ def test_review_pass_carries_current_default_branch_revision() -> None:
     )
     assert record[0] == HEAD
     assert record[5] == default_revision
-
 
 
 def test_historical_merged_carrier_requires_current_main_ancestry(
