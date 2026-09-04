@@ -662,7 +662,8 @@ def _review_openspec_required(source: WorkerRequest) -> bool:
         action = ModelAction(source.action)
     except ValueError:
         return False
-    return any(successor is ModelAction.REVIEW_OPENSPEC for successor in TRANSITIONS[action].values())
+    successors = TRANSITIONS[action].values()
+    return any(successor is ModelAction.REVIEW_OPENSPEC for successor in successors)
 
 
 def resolve_validation_resource_target(
