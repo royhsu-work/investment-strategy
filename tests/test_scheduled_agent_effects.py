@@ -265,10 +265,7 @@ def test_merged_carrier_merge_is_idempotent_without_put(
         "number": 167,
         "state": "closed",
         "merged": True,
-        "body": "Implementation
-
-Refs #159
-",
+        "body": "Implementation\n\nRefs #159\n",
         "head": {
             "ref": f"agent/{change}",
             "sha": expected_head,
