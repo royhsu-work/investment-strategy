@@ -185,7 +185,4 @@ def test_github_text_reads_signed_redirect_without_forwarding_bearer(
     monkeypatch.setattr(transport, "build_opener", fake_build_opener)
     monkeypatch.setattr(transport, "urlopen", fake_urlopen)
 
-    assert (
-        transport._github_text("owner/repo", "token", "actions/jobs/300/logs")
-        == "signed log"
-    )
+    assert transport._github_text("owner/repo", "token", "actions/jobs/300/logs") == "signed log"

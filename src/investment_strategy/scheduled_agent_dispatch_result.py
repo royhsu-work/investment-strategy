@@ -28,8 +28,6 @@ class _NoRedirect(HTTPRedirectHandler):
         raise HTTPError(req.full_url, code, msg, headers, fp)
 
 
-
-
 def _github_json(repository: str, token: str, api_path: str) -> object:
     if _REPOSITORY.fullmatch(repository) is None or not token:
         raise RuntimeError("repository/token identity is invalid")
