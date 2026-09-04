@@ -79,11 +79,7 @@ def _github_text(repository: str, token: str, api_path: str) -> str:
             raise RuntimeError("exact dispatch run log redirect is not trusted") from exc
         parsed = urlsplit(location)
         host = parsed.hostname.lower() if parsed.hostname is not None else None
-        if (
-            parsed.scheme != "https"
-            or host is None
-            or _LOG_REDIRECT_HOST.fullmatch(host) is None
-        ):
+        if parsed.scheme != "https" or host is None or _LOG_REDIRECT_HOST.fullmatch(host) is None:
             raise RuntimeError("exact dispatch run log redirect is not trusted") from exc
         redirected_request = Request(  # noqa: S310 - location is validated as a GitHub Actions host
             location,
