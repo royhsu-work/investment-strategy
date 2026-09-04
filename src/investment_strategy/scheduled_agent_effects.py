@@ -132,7 +132,8 @@ def _typed_application_plan(
     typed_result = batch.typed_result
     if typed_result is None:
         return None, None, ApplyResult(False, "typed application rejected:result-missing")
-    if any(effect.kind in {"routing-transition", "terminal-transition"} for effect in batch.effects):
+    transition_kinds = {"routing-transition", "terminal-transition"}
+    if any(effect.kind in transition_kinds for effect in batch.effects):
         return None, None, ApplyResult(False, "typed application rejected:worker-transition-effect")
     if current_revision is None or not re.fullmatch(r"[0-9a-f]{40}", current_revision):
         return None, None, ApplyResult(False, "typed application rejected:revision-unavailable")
