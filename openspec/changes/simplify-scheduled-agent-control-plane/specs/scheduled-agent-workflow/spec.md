@@ -18,7 +18,7 @@ The same coordination Issue SHALL persist through Explore and formal lifecycle. 
 
 #### Scenario: Provisional Change returns without reset
 
-- GIVEN Change `C` is provisional, OpenSpec acceptance has not occurred, and formalization a bounded research premise without new Human authority
+- GIVEN Change `C` is provisional, OpenSpec acceptance has not occurred, and formalization invalidates a bounded research premise without new Human authority
 - WHEN Lead dispositions it
 - THEN the same Issue may return to Explore while `Change: C`, existing Proposal/PR/history, and WIP stay intact
 
