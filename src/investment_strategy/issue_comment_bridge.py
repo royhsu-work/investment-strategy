@@ -99,9 +99,7 @@ def render_run_scoped_dispatch_result(
         default_branch_revision=default_branch_revision,
         decision=decision,
     )
-    return f"{RUN_RESULT_START_MARKER}
-{body}
-{RUN_RESULT_END_MARKER}"
+    return f"{RUN_RESULT_START_MARKER}\n{body}\n{RUN_RESULT_END_MARKER}"
 
 
 def parse_run_scoped_dispatch_result(
@@ -116,8 +114,7 @@ def parse_run_scoped_dispatch_result(
     ends = [index for index, line in enumerate(lines) if line == RUN_RESULT_END_MARKER]
     if len(starts) != 1 or len(ends) != 1 or starts[0] >= ends[0]:
         return None
-    body = "
-".join(lines[starts[0] + 1 : ends[0]])
+    body = "\n".join(lines[starts[0] + 1 : ends[0]])
     decision = parse_dispatch_decision(body)
     if decision is None or decision.request_comment_id != request_comment_id:
         return None
@@ -399,16 +396,13 @@ def _write_outputs(path: Path, plan: BridgePlan) -> None:
         lines.append(f"issue_number={plan.issue_number}")
     if plan.request_comment_id is not None:
         lines.append(f"request_comment_id={plan.request_comment_id}")
-    path.write_text("
-".join(lines) + "
-", encoding="utf-8")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _write_result_payload(path: Path, plan: BridgePlan) -> None:
     if not plan.should_emit or plan.result_body is None:
         return
-    path.write_text(json.dumps({"body": plan.result_body}) + "
-", encoding="utf-8")
+    path.write_text(json.dumps({"body": plan.result_body}) + "\n", encoding="utf-8")
 
 
 def main() -> int:
