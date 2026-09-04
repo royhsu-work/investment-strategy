@@ -570,8 +570,7 @@ def test_apply_work_product_uses_current_ref_for_merged_carrier(
         if api_path == "" and method == "GET":
             return {"default_branch": "main"}
         if api_path == "issues/138" and method == "GET":
-            return {"state": "open", "body": f"Change: {_CHANGE}
-"}
+            return {"state": "open", "body": f"Change: {_CHANGE}\n"}
         if api_path == "pulls/178" and method == "GET":
             return merged_pr
         if api_path == "pulls/178/files?per_page=100" and method == "GET":
