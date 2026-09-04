@@ -37,8 +37,10 @@ in-flight request/run/result chain.
 ## Explicit merge Actions
 
 Implementation review PASS selects merge-implementation-pr. Archive review PASS selects
-merge-archive-pr. Executor rechecks exact current PR head, required gates, linkage, Human freshness,
-and archive cleanup immediately before mutation. A changed or contradictory observation fails closed.
+merge-archive-pr. For an open PR, Executor rechecks the exact current head, required gates, linkage,
+Human freshness, and archive cleanup immediately before mutation. For a closed+merged carrier, it
+rechecks the immutable historical head, merge metadata, current default-branch revision, and ancestry
+through an explicit read-only reconciliation. A changed or contradictory observation fails closed.
 
 ## Human notes
 

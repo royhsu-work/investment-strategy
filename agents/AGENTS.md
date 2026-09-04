@@ -158,10 +158,14 @@ pinned OpenSpec baseline, and strict validation PASS. Eligibility is derived fro
 required gate rather than a source-role/action whitelist.
 
 Implementation review and archive review are independent. Their PASS results select the explicit
-Actions merge-implementation-pr and merge-archive-pr. Executor merge application rechecks current
-PR open state, exact head, linkage, required checks, Human freshness, contradictory evidence, and
-archive-specific cleanup requirements immediately before mutation. A changed or ambiguous head fails
-closed.
+Actions merge-implementation-pr and merge-archive-pr. Executor merge application rechecks the exact
+target, linkage, required checks, Human freshness, contradictory evidence, and archive-specific cleanup
+immediately before mutation. For an open implementation or Archive PR, this includes current open state
+and exact unchanged head. For a closed+merged implementation carrier, the only legal reconciliation is
+read-only verification of its immutable historical head, repositories/base/ref, merge metadata, current
+default-branch revision, and ancestry against the current review/application authorization; the carrier
+MUST NOT be reopened, rewritten, force-moved, or sent a duplicate merge write. A changed or ambiguous
+observation fails closed.
 
 Mutation carriers are replaceable actuators. They receive an already-authorized repository plan,
 execute only allowed operations, and return raw observed results; they cannot choose workflow meaning,

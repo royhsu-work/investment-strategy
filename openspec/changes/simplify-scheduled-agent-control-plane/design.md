@@ -1,6 +1,6 @@
 ## Context
 
-This Design was authored from a fresh read of default-branch governance at main@e8c3dc7b256bc167217e25a397e98181bdf6f123 and the PR #178 source implementation checkpoint 9efc1df5ca09cae1a0e553e606a7e20a6d452654. Current main still carries the older role-label and continuation model; the PR branch is the reviewed implementation vehicle that removes those paths. The prior Lead correction target 01f53775dbfb4d07dcec310276afc884e191bcfb and its independent OpenSpec PASS are historical semantic-review evidence, not a runtime authority. The Human intent in issuecomment-5528834334 remains the controlling meaning, and any later material revision must be validated at its own exact revision.
+This Design was initially authored from default-branch governance at main@e8c3dc7b256bc167217e25a397e98181bdf6f123 and the PR #178 source implementation checkpoint 9efc1df5ca09cae1a0e553e606a7e20a6d452654. The current default branch now carries the Action-only cutover and repository-owned application; PR #178 is the historical implementation carrier, and its post-merge carrier ref remains a separate work-product/evidence surface. The prior Lead correction target 01f53775dbfb4d07dcec310276afc884e191bcfb and its independent OpenSpec PASS are historical semantic-review evidence, not a runtime authority. The Human intent in issuecomment-5528834334 remains the controlling meaning, and any later material revision must be validated at its own exact revision.
 
 The design therefore separates semantic responsibility, workflow action, and mutation capability. Lead/Reviewer/Executor retain semantic judgment in their mapped Skills. A small repository-owned executable model makes mechanical decisions. Repository application authorizes and observes mutations. External transport and identity-sensitive carriers remain adapters. No layer infers authority from prose, historical ordering, a worker's arbitrary successor, or a successful API call alone.
 
@@ -57,6 +57,8 @@ Rollover establishes and freshly observes today's shard before retiring an older
 
 Independent review-implementation and review-archive gates remain separate and exact-revision/exact-head bound. Their PASS results derive merge-implementation-pr and merge-archive-pr respectively. Executor retains exact target, head, linkage, Human-freshness, and unchanged-revision checks; Archive retains lifecycle preparation and cleanup obligations. Merge recovery reuses an exact current PR/head when legal and never infers a phase from a generic merge Action.
 
+If an implementation or Archive carrier is already closed and merged, the merge Action has one narrow idempotent path: reauthorize the immutable historical PR head together with its merge metadata, exact repositories/base/ref, current default-branch revision and ancestry, and the matching review PASS bound to that revision tuple. The carrier performs no merge write and the application observes the existing merged postcondition. This is not broad historical compatibility or phase inference; it never reopens, rewrites, force-moves, or substitutes a PR.
+
 Human authority, WIP=1/finish-first, complete and provenance-qualified observations, stale/concurrency fail-closed behavior, exact-head merge safety, content-addressed ingress, and deterministic archive completion remain. Carrier identity is replaceable and executes only a repository-authorized plan; it cannot select work, effects, successors, retries, or success.
 
 ### 7. Safe delivery and deletion
@@ -79,6 +81,7 @@ Each boundary must be independently testable, reviewable, and deployable on the 
 - Exact-R validation and content-addressed ingress pass their independent production tests.
 - Daily transport is bounded and exact-run correlated; it is not a lifecycle mailbox.
 - Independent review, exact-head merge, Human authority, WIP=1, and archive safety remain intact.
+- Already-merged carrier recovery is explicit, read-only, exact historical-head/current-main bound, and never reopens, rewrites, force-merges, rewinds, or creates a duplicate PR.
 - The cutover measurably reduces canonical state dimensions and executable paths, and deletion removes rather than hides superseded mechanisms.
 
 ## Non-goals

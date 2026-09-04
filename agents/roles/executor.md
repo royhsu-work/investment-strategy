@@ -24,11 +24,14 @@ Lead correction and requires a new independent review-openspec gate.
 Before READY or review handoff, verify the exact current implementation PR head is non-Draft and
 all required checks are current. The implementation-review Action is the next model-derived Action.
 
-For merge-implementation-pr, fresh-read the exact open PR, current head, non-closing linkage, exact
+For merge-implementation-pr, fresh-read the exact PR, current head, non-closing linkage, exact
 implementation PASS, required checks, Human freshness, and contradictory evidence immediately before
-mutation. For merge-archive-pr, also verify archive preparation, non-closing linkage, terminal
-cleanup, and archive review PASS. Merge only the unchanged exact accepted head. A changed or
-ambiguous observation fails closed.
+the merge boundary. For merge-archive-pr, also verify archive preparation, non-closing linkage,
+terminal cleanup, and archive review PASS. An open PR requires the unchanged exact accepted head. A
+closed+merged carrier may use only explicit idempotent reconciliation: verify the immutable historical
+head, repositories/base/ref, merge metadata, current default-branch revision and ancestry, and the
+matching revision-bound PASS; then observe the merged postcondition without reopening, rewriting,
+force-moving, or sending a duplicate merge write. A changed or ambiguous observation fails closed.
 
 A merge result is typed evidence. The application derives finalize-change or finalize-archive, or a
 legal question/blocked successor. Executor never chooses, executes, or retries that successor in the

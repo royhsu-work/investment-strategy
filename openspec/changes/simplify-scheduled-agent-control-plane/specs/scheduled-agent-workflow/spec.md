@@ -142,6 +142,29 @@ review-implementation and review-archive SHALL remain independent exact-revision
 - THEN it selects only the matching explicit merge Action
 - AND the other merge Action is not authorized
 
+### Requirement: Already-merged carriers use exact read-only reconciliation
+
+For any explicit merge Action, a closed and merged implementation or Archive carrier MAY be reconciled only when fresh repository application evidence establishes the exact expected historical PR head, repository/base/head/ref identity, immutable merge commit and merged-at metadata, current default-branch revision, and current default-branch ancestry containing that merge commit. The independent PASS used for the Action MUST bind both the historical PR head and the current default-branch revision. All common Issue/Change linkage, required-check, Human-freshness, contradiction, and no-rewind guards remain mandatory.
+
+The legal merged-carrier path is idempotent and read-only at the carrier boundary: it MUST NOT reopen or rewrite the PR, move or force any ref, substitute an open or different PR, send a duplicate merge write, create a duplicate branch/Change/PR, or infer lifecycle meaning from historical prose. Application MUST fresh-observe the existing merged postcondition and metadata before deriving the successor.
+
+#### Scenario: Already-merged implementation carrier is reconciled
+
+- GIVEN the explicit merge-implementation-pr Action identifies a closed+merged PR with historical head R
+- AND current default-branch revision D contains its merge commit
+- AND independent implementation PASS is bound to R and D
+- WHEN application fresh-reauthorizes the exact carrier and merge plan
+- THEN it performs no merge write
+- AND it observes the exact merged head/metadata postcondition
+- AND it may derive finalize-change only from the typed merged result
+
+#### Scenario: Historical carrier identity mismatch fails closed
+
+- GIVEN a closed+merged carrier has a different head, merge metadata, base/ref, or current-main ancestry than the authorized evidence
+- WHEN the merge Action is evaluated
+- THEN application returns a machine-readable stale/contradictory guard result
+- AND it does not reopen, rewrite, substitute, or replay the merge.
+
 ### Requirement: Cutover deletes superseded normal control paths
 
 The Change SHALL be delivered through Shadow, Cutover, and Delete boundaries. After Cutover is accepted, normal production correctness MUST NOT depend on separately persisted role labels, canonical cross-role journal/completion records, same-role continuation, cross-role barriers, response-mailbox history, Markdown topology/effect parsing, generic merge-phase inference, or legacy model-host compatibility paths. Historical records remain auditable evidence and migration/source-retirement input only.

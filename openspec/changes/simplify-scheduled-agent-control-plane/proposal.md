@@ -1,6 +1,6 @@
 ## Why
 
-#138 remains the parent Change simplify-scheduled-agent-control-plane, and PR #178 remains the single implementation/review vehicle. Fresh authoring state at main@e8c3dc7b256bc167217e25a397e98181bdf6f123 and pre-correction PR #178 head 5592ee855406c065c54c137832a85f532f617898 showed that the existing PR artifacts still described the superseded routing-label, continuation, and cross-role journal design. Human architecture direction issuecomment-5528834334 is newer material meaning and explicitly resets the design from first principles while preserving the Change, Issue, PR, evidence, and safety invariants.
+#138 remains the parent Change simplify-scheduled-agent-control-plane, and PR #178 remains the single implementation/review vehicle. The original authoring checkpoint at main@e8c3dc7b256bc167217e25a397e98181bdf6f123 and pre-correction PR #178 head 5592ee855406c065c54c137832a85f532f617898 showed that the existing PR artifacts still described the superseded routing-label, continuation, and cross-role journal design; those revisions are historical evidence. Human architecture direction issuecomment-5528834334 is newer material meaning and explicitly resets the design from first principles while preserving the Change, Issue, PR, evidence, and safety invariants.
 
 The current structure is not an isolated execution edge case. It makes the repository depend on several overlapping control facts: role labels, action labels, prose topology, worker-selected continuation, cross-role handoff records, permanent response history, and phase inference. That duplication is the structural problem #138 must remove. A correction that only adds another bridge or recovery phase would preserve the same failure shape.
 
@@ -42,13 +42,15 @@ Content-addressed OpenSpec ingress, exact-revision validation, repository-owned 
 
 Independent Reviewer gates remain required. Implementation and Archive merge positions become explicit Actions (merge-implementation-pr and merge-archive-pr) so phase is not inferred from a generic merge Action. WIP=1, finish-first, Human authority, semantic role separation, completeness/provenance, stale/replay/no-rewind/fail-closed behavior, exact-head review and merge gates, and deterministic archive safety remain required.
 
+When an identified implementation or Archive carrier is already closed and merged, the matching merge Action may perform only exact historical-carrier reconciliation: current review/application authorization must bind the immutable PR head, repositories/base/ref, merge metadata, current default-branch revision, and ancestry. The carrier then performs no merge write and verifies the existing postcondition. It must not reopen, rewrite, force-move, substitute, or duplicate the carrier.
+
 The delivery resets to the smallest safe N-1 shape: Shadow the executable model, Cut over the bounded transport/application and Action-only routing, then Delete superseded agent:* routing, normal cross-role journal/continuation/recovery machinery, response-mailbox coupling, Markdown runtime parsing, generic merge-phase inference, and obsolete compatibility/model-host paths. Historical evidence remains evidence and is not a live control path.
 
 ## Capabilities
 
 ### Modified Capabilities
 
-- scheduled-agent-workflow: replace role/action tuple routing and continuation protocols with Action-only state, derived Role, one Action per wake, a small executable transition model, bounded run-scoped transport, fresh application, explicit merge Actions, and safe deletion.
+- scheduled-agent-workflow: replace role/action tuple routing and continuation protocols with Action-only state, derived Role, one Action per wake, a small executable transition model, bounded run-scoped transport, fresh application, explicit merge Actions, exact historical-carrier reconciliation, and safe deletion.
 - repository-governance: make the executable Action model the sole machine-decidable workflow authority while keeping Human-readable governance, semantic Skills, effect/carrier separation, and OpenSpec authority distinct.
 
 ## Skill maintenance traceability
@@ -61,10 +63,10 @@ This Change materially affects existing repository Skills because the cutover re
 | `agents/skills/openspec-explore/SKILL.md` | Modified | Human reset `issuecomment-5528834334`; one-Action wake requirement | Retain semantic Explore/proposal judgment and Human-boundary handling; remove same-role continuation and normal HANDOFF dependence | Explore remains semantic, but ownership is the persisted Action | Typed result plus application postconditions replace continuation/journal semantics |
 | `agents/skills/openspec-review/SKILL.md` | Modified | Human reset `issuecomment-5528834334`; independent-gate and cutover requirements | Retain independent B/R, traceability, Human-freshness, and exact-R review; replace HANDOFF routing with Action-derived successor handling | Review independence and safety remain required | `review-openspec` result routes through the executable model; later wake loads the mapped Skill |
 | `agents/skills/implementation/SKILL.md` | Modified | Human reset `issuecomment-5528834334`; one-Action wake and exact-ingress requirements | Retain semantic implementation slices, exact validation, and content ingress; remove same-wake continuation, barriers, and HANDOFF completion | Keep implementation safety while deleting wake orchestration | Typed result/application effects persist one successor and exit |
-| `agents/skills/implementation-review/SKILL.md` | Modified | Human reset `issuecomment-5528834334`; independent implementation-gate requirement | Retain exact-head implementation review and finding classification; remove normal HANDOFF ownership-transfer dependence | The review gate is independent; transfer journaling is not canonical state | Result-derived Action transition plus a later fresh dispatch |
+| `agents/skills/implementation-review/SKILL.md` | Modified | Human reset `issuecomment-5528834334`; independent implementation-gate requirement | Retain exact-head implementation review, merged-carrier current-main binding, and finding classification; remove normal HANDOFF ownership-transfer dependence | The review gate is independent; transfer journaling is not canonical state | Result-derived Action transition plus a later fresh dispatch |
 | `agents/skills/archive-review/SKILL.md` | Modified | Human reset `issuecomment-5528834334`; explicit archive-merge requirement | Retain archive correctness and exact-head review; remove normal HANDOFF dependence | Archive safety remains an independent gate | The explicit archive merge Action is derived by the executable model |
 | `agents/skills/lifecycle-finalize/SKILL.md` | Modified | Human reset `issuecomment-5528834334`; Action-only lifecycle and deletion requirements | Retain Lead lifecycle/archive authority; remove same-wake continuation, transfer journals, and generic phase inference | Lifecycle authority is semantic and must not be recreated as a second machine state | Persist the derived Action/terminal state and let a later wake redispatch |
-| `agents/skills/merge-pr/SKILL.md` | Modified | Human reset `issuecomment-5528834334`; explicit `merge-implementation-pr` / `merge-archive-pr` requirements | Retain only reusable exact-head merge mechanics; remove generic `merge-pr` phase inference and HANDOFF machinery | Merge safety is retained, while hidden lifecycle phase is removed | Explicit merge Actions own eligibility and successor meaning; the generic mapped phase is superseded or split during cutover |
+| `agents/skills/merge-pr/SKILL.md` | Modified | Human reset `issuecomment-5528834334`; explicit `merge-implementation-pr` / `merge-archive-pr` requirements | Retain reusable exact-head merge mechanics plus read-only merged-carrier reconciliation; remove generic `merge-pr` phase inference and HANDOFF machinery | Merge safety is retained, while hidden lifecycle phase is removed | Explicit merge Actions own eligibility and successor meaning; the generic mapped phase is superseded or split during cutover |
 
 The repository `skill-creator` composition and `openspec-semantic-adapter.md` remain reusable inputs without a material responsibility change. Role documents, templates, and runtime modules are separate governance/application surfaces and will be updated by the implementation tasks where the cutover requires it.
 
@@ -89,12 +91,12 @@ The causal same-Issue Explore result remains `issuecomment-5482546619` (`PROPOSA
 
 ## Implementation checkpoint evidence
 
-- Fresh default branch observed: `main@e8c3dc7b256bc167217e25a397e98181bdf6f123`.
-- Earlier implementation checkpoint observed on PR #178: `e0fb3f0079cf664a60d43e37ecced5d5f6e5d531`; its Quality run `33819765763` passed 419 tests with Ruff lint/format and mypy clean.
-- Latest source implementation checkpoint on PR #178: `9efc1df5ca09cae1a0e553e606a7e20a6d452654`; it binds every GitHub effect to the fresh authorized Change target, removes arbitrary worker Issue/ref mutation capabilities, and adds target-binding regression coverage.
-- Python Quality run `33823252717` passed at that checkpoint: 420 tests passed; Ruff lint, Ruff format, and mypy all passed with no issues in 110 source files.
-- The unchanged OpenSpec artifact checkpoint `31eaffb0a37b5f676c0099f40277b3808b37c344` passed strict OpenSpec validation in run `33807567484`; the checklist/evidence refresh in this commit requires a new exact-revision validation run.
-- Current #138 still carries the historical `agent:executor` label and the PR is not merged; those deployment-bound facts are retained as migration evidence. They do not reintroduce role labels into the target model.
+- Historical pre-cutover default branch: `main@e8c3dc7b256bc167217e25a397e98181bdf6f123`; it identifies the original authoring checkpoint only.
+- Earlier implementation checkpoints on PR #178 and their Quality/OpenSpec runs remain historical evidence for the architecture-reset path; they do not authorize the current implementation surface.
+- Current source-repair checkpoint: default branch `main@bd13b1b7a4b65440f30b612e87fa9bdc8466414d`; PR #178 is closed/merged at historical head `717f88e2f250e468c5c1607b70a5750e8bbef7e0` with merge commit `394afa46797e101e2cb079ed943505eca23c242c`, and carrier ref `agent/simplify-scheduled-agent-control-plane@f06c061e78e97aa567092ab42f602b3ee48c95ba` remains separate evidence.
+- Python Quality run `33843825042` passed at that exact source-repair checkpoint: 439 tests passed; Ruff lint, Ruff format, and mypy all passed.
+- The merge correction is now recorded in this Change and requires fresh exact-revision OpenSpec validation and independent implementation review at the resulting default-branch revision.
+- Current #138 routing and all carrier/evidence identities remain deployment-bound facts that are freshly re-read at each Action boundary; they do not reintroduce role labels into the target model.
 
 ## Impact
 

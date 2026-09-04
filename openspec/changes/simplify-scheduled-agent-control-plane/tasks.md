@@ -53,6 +53,7 @@ The target state is Issue lifecycle + immutable Change + action:<action> with Ro
 - [x] B5.3 Separate repository effect authority from mutation-carrier identity; the carrier executes only the bound plan and cannot select workflow meaning.
 - [x] B5.4 Preserve the observed Actions PR-create limitation without enabling Actions PR-create/approve permission; use a legal event-capable carrier where required.
 - [x] B5.5 Verify reuse-first recovery and exact-head postconditions for implementation and Archive PRs.
+- [x] B5.6 Implement and verify explicit idempotent reconciliation for already-merged carriers: exact historical PR head, immutable merge metadata, exact base/head/ref, current default-branch revision/ancestry, and revision-bound independent PASS; no reopen, rewrite, force, duplicate merge write, or duplicate PR.
 
 ## C. Delete superseded production paths and context
 
@@ -67,11 +68,11 @@ The target state is Issue lifecycle + immutable Change + action:<action> with Ro
 
 ## Current verification record
 
-- Fresh observations for this execution: default branch `main@3710cda3db4d967d37d9e1b0bbd3d6969d0ad570`, open #138 (`action:implement-change`, `human:notified`), open #142 with no labels, PR #178 closed/merged with historical head `717f88e2f250e468c5c1607b70a5750e8bbef7e0` and merge commit `394afa46797e101e2cb079ed943505eca23c242c`, and carrier ref `agent/simplify-scheduled-agent-control-plane@f06c061e78e97aa567092ab42f602b3ee48c95ba`.
-- Python Quality run `33840023540` passed at exact main revision `3710cda3db4d967d37d9e1b0bbd3d6969d0ad570`: 435 tests passed; Ruff lint, Ruff format, and mypy all passed.
-- OpenSpec run `33826939202` passed at exact PR head `15c6a19744f3b5feca3bb15de7adf62ba1027df4`: the validator checked out the PR head explicitly and strict validation reported 8 passed, 0 failed against qualified OpenSpec `2826b8889e5223a9a8095d4428b60b56597e1020`.
-- B4.5 is complete: application run `33840190228` / job `100920738957` consumed request `5536087990`, built exact tree/commit/ref revision `f06c061e78e97aa567092ab42f602b3ee48c95ba`, and the exact-R validator checked out that revision with compatibility `PASS` and strict validation `PASS`. C.1 is complete for current live routing: fresh open-Issue inventory has no `agent:*` labels; historical labels remain only as bounded migration/retirement evidence.
-- The branch removes the obsolete runtime modules and machine-control tests, and current source tests cover the reduced Action model, transport, application, validation, merge, stale/replay/no-rewind, and archive contracts.
+- Fresh observations for the source-repair checkpoint: default branch `main@bd13b1b7a4b65440f30b612e87fa9bdc8466414d`, open #138 (`action:implement-change`, `human:notified`), open #142 with no labels, PR #178 closed/merged with historical head `717f88e2f250e468c5c1607b70a5750e8bbef7e0` and merge commit `394afa46797e101e2cb079ed943505eca23c242c`, and carrier ref `agent/simplify-scheduled-agent-control-plane@f06c061e78e97aa567092ab42f602b3ee48c95ba`.
+- Python Quality run `33843825042` passed at exact source-repair revision `bd13b1b7a4b65440f30b612e87fa9bdc8466414d`: 439 tests passed; Ruff lint, Ruff format, and mypy all passed.
+- Earlier OpenSpec run `33826939202` passed at exact historical PR head `15c6a19744f3b5feca3bb15de7adf62ba1027df4`; it remains historical evidence, and this governance/merge correction requires fresh exact-revision validation.
+- B4.5 remains complete: application run `33840190228` / job `100920738957` consumed request `5536087990`, built exact tree/commit/ref revision `f06c061e78e97aa567092ab42f602b3ee48c95ba`, and the exact-R validator checked out that revision with compatibility `PASS` and strict validation `PASS`. C.1 remains complete for current live routing: fresh open-Issue inventory has no `agent:*` labels; historical labels remain only as bounded migration/retirement evidence.
+- The source repair adds explicit merged-carrier acceptance/no-op coverage while preserving the reduced Action model, transport, application, validation, stale/replay/no-rewind, and archive contracts. The resulting governance correction must pass fresh OpenSpec and independent implementation review before routing advances.
 
 ## Required semantic review
 
