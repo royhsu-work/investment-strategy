@@ -1079,7 +1079,14 @@ def run_effect_application(
     """Freshly reauthorize and apply one typed invocation-local effect batch."""
 
     batch = parse_effect_batch(raw_worker_result, source)
-    adapter = GitHubEffectAdapter(repository, token, source)
+    if batch.typed_result is None:
+        return batch, ApplyResult(False, "typed application rejected:result-missing")
+    adapter = GitHubEffectAdapter(
+        repository,
+        token,
+        source,
+        authorized_change=batch.typed_result.change,
+    )
     result = apply_effect_batch(
         batch,
         fresh_preflight=lambda: acquire_current_github_preflight(repository, token),
