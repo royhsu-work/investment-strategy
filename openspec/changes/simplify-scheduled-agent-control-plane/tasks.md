@@ -4,6 +4,8 @@
 
 Stage 1A is the materially revised Resolve action's exact-handoff semantic-review prerequisite. Stages 1B/1C remain mandatory before Stage 2 but add no separate semantic OpenSpec review gate after valid Stage-1A evidence.
 
+Within each machine-authorized Action, plan the primary execution objective as one bounded verified vertical slice: `Reconstruct → RED exact gap/blocker → GREEN legal correction → VERIFY exact postcondition/revision/gate → durable checkpoint`. A file write, API call, Actions run, or first nonterminal resource is not a completed slice. If the slice cannot reasonably reach VERIFY in one normal invocation, split it before execution at a meaningful outcome boundary rather than fragmenting it opportunistically.
+
 ## 1A. Exact-revision application resource
 
 Advances exact-R readiness for newly produced and already-current heads. Boundary: validation resource only. Next: 1B.
@@ -48,21 +50,21 @@ Advances one executable machine topology in shadow. N-1: 1A–1C deployed. Bound
 
 ## 3. Typed result/application
 
-Advances typed semantic result→exact kernel effect/carrier plan→fresh application/postcondition. N-1: Stage 2 equivalence. Routing/wake unchanged. Next: 4.
+Advances typed semantic result→exact kernel effect/carrier plan→fresh application/postcondition, including deterministic rejection observability. N-1: Stage 2 equivalence. Routing/wake unchanged. Next: 4.
 
-- [ ] 3.1 RED — bind result to exact Issue/source Action; reject arbitrary successor, Markdown control extraction, stale/contradictory state, replay rewind.
-- [ ] 3.2 GREEN — action-owned typed results + narrative/source evidence; derive exact effect/carrier plan, fresh-reauthorize, execute narrowly, accept only repository-observed postcondition.
-- [ ] 3.3 REFACTOR — retain action-specific result vocabularies, not a generic outcome state machine.
-- [ ] 3.4 VERIFY — cover Explore/correction/review/implementation/merge/lifecycle, Human freshness, partial mutation/causal descendants, exact-resource observation, carrier failure, `EXECUTION_EXCEPTION`.
+- [ ] 3.1 RED — bind result to exact Issue/source Action; reject arbitrary successor, Markdown control extraction, stale/contradictory state, replay rewind, and aggregate-only deterministic guard failure reporting that hides which predicate failed.
+- [ ] 3.2 GREEN — action-owned typed results + narrative/source evidence; derive exact effect/carrier plan, fresh-reauthorize, execute narrowly, accept only repository-observed postcondition, and emit machine-readable exact failed guard class plus relevant expected/observed evidence on deterministic rejection.
+- [ ] 3.3 REFACTOR — retain action-specific result vocabularies and structured rejection evidence at the executable owner; do not create a generic outcome/retry state machine or move workflow authority into the carrier.
+- [ ] 3.4 VERIFY — cover Explore/correction/review/implementation/merge/lifecycle, Human freshness, partial mutation/causal descendants, exact-resource observation, carrier failure, `EXECUTION_EXCEPTION`, and representative rejection classes such as stale source, expected-SHA mismatch, unsupported operation, and failed effect-specific structural guard without semantic reverse engineering.
 
 ## 4. One-Action wake
 
-Advances exactly one mapped Action per wake with work-conserving internals. N-1: Stage 3 persists successor for later dispatch. Next: 5.
+Advances exactly one mapped Action per wake with one bounded verified vertical slice as the primary execution objective and work-conserving internals. N-1: Stage 3 persists successor for later dispatch. Next: 5.
 
-- [ ] 4.1 RED — completed Action ends wake even for same Role; local RED→GREEN→REFACTOR→VERIFY stays inside Action; first nonterminal exact resource is not alone Exit Proof; no successor Action executes.
-- [ ] 4.2 GREEN — remove same-role chaining, cross-role barriers, fresh-worker same-wake identity, fixed-role successor comparison, continuation flags.
-- [ ] 4.3 REFACTOR — shorten governance/Skills/messages without weakening semantic/evidence/carrier/exception obligations.
-- [ ] 4.4 VERIFY — no OpenAI/Responses/other model API or Actions-hosted model worker.
+- [ ] 4.1 RED — completed Action ends wake even for same Role; the authorized Action's bounded `Reconstruct→RED→GREEN→VERIFY→checkpoint` slice stays inside the Action; file/API/Actions intermediate success or first nonterminal exact resource is not alone Exit Proof; no successor Action executes.
+- [ ] 4.2 GREEN — execute the bounded same-Action slice through exact VERIFY and durable checkpoint when legal; split before execution when the objective cannot reasonably reach VERIFY in one normal invocation; remove same-role chaining, cross-role barriers, fresh-worker same-wake identity, fixed-role successor comparison, continuation flags.
+- [ ] 4.3 REFACTOR — shorten governance/Skills/messages without weakening semantic/evidence/carrier/exception obligations or the verified-slice stop boundaries.
+- [ ] 4.4 VERIFY — prove intermediate mechanical success cannot be reported as slice completion, verify governed stop boundaries, and prove no OpenAI/Responses/other model API or Actions-hosted model worker.
 
 ## 5. Canonical cutover + typed source retirement
 
