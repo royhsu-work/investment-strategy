@@ -220,7 +220,9 @@ def normalize_github_issue(
         state=cast(str, state),
         created_order=created_order,
         authoritative=all((labels_valid, routing_valid, created_valid, change_valid, closed_valid)),
-        routing_debt=any(name.startswith(_ROUTING_LABEL_PREFIXES) for name in labels),
+        routing_debt=state == "closed" and any(
+            name.startswith(_ROUTING_LABEL_PREFIXES) for name in labels
+        ),
     )
 
 
