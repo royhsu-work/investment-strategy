@@ -662,9 +662,10 @@ class GitHubEffectAdapter:
 
     def _no_open_source_pull_request(self, branch: str, base: str) -> bool:
         owner = self.repository.split("/", 1)[0]
+        head = f"{owner}:{branch}"
         query = (
             "pulls?state=open"
-            f"&head={quote(f'{owner}:{branch}', safe='')}"
+            f"&head={quote(head, safe='')}"
             f"&base={quote(base, safe='')}"
             "&per_page=100"
         )
@@ -689,10 +690,7 @@ class GitHubEffectAdapter:
                 and isinstance(expected, Mapping)
                 and isinstance(fields, Mapping)
                 and _shallow_matches(current_issue, expected)
-                and (
-                    "body" not in fields
-                    or _body_change(fields["body"]) == self.authorized_change
-                )
+                and ("body" not in fields or _body_change(fields["body"]) == self.authorized_change)
             )
         expected_ref = _source_ref(observation.change)
         if operation in {"ref-update", "ref-delete"}:
@@ -789,10 +787,7 @@ class GitHubEffectAdapter:
         ):
             raise RuntimeError("terminal transition identity is invalid")
         observation = self._authorized_issue_observation()
-        if (
-            observation is None
-            or observation.change != payload.get("expected_change")
-        ):
+        if observation is None or observation.change != payload.get("expected_change"):
             raise RuntimeError("terminal transition source is stale")
         _github_json(
             self.repository,
