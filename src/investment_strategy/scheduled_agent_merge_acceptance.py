@@ -515,6 +515,11 @@ def _merge_effect_allows(
         return False
     if not isinstance(expected_change, str) or not expected_change.strip():
         return False
+    expected_branch = (
+        f"agent/archive-{expected_change}"
+        if source.action == "merge-archive-pr"
+        else f"agent/{expected_change}"
+    )
     snapshot = acquire_merge_acceptance_snapshot(
         repository=repository,
         token=token,
@@ -524,7 +529,7 @@ def _merge_effect_allows(
         merge_strategy=merge_strategy,
         required_review_action=required_review_action,
         current_revision=current_revision,
-        expected_branch=f"agent/{expected_change}",
+        expected_branch=expected_branch,
     )
     return merge_acceptance_allows(snapshot)
 

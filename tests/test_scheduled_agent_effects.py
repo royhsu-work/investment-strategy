@@ -873,3 +873,102 @@ def test_issue_comment_reuses_existing_bot_comment_on_later_page(
         "issues/138/comments?per_page=100&sort=created&direction=desc&page=2",
     ]
     assert adapter.observe_postcondition(effect)
+
+
+def test_archive_pull_request_create_binds_exact_branch_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = "owner/repo"
+    source = WorkerRequest(138, "lead", "finalize-change")
+    base_revision = "c" * 40
+    archive_revision = "b" * 40
+    branch = f"agent/archive-{_CHANGE}"
+    body = (
+        "Archive OpenSpec change `simplify-scheduled-agent-control-plane`.\\n\\n"
+        "This pull request is the repository-owned final archive snapshot. Its non-closing linkage "
+        "preserves traceability while the coordination Issue remains open; independent Reviewer PASS, "
+        "unchanged-head verification, current gates, and Lead terminal finalization remain required.\\n\\n"
+        "Refs #138"
+    )
+    issue = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\\n",
+        "labels": [{"name": "action:finalize-change"}],
+        "created_at": "2026-09-04T00:00:00Z",
+        "closed_at": None,
+    }
+    pull_request = {
+        "number": 200,
+        "state": "open",
+        "merged": False,
+        "title": "Archive OpenSpec change simplify-scheduled-agent-control-plane",
+        "body": body,
+        "draft": False,
+        "head": {
+            "ref": branch,
+            "sha": archive_revision,
+            "repo": {"full_name": repository},
+        },
+        "base": {
+            "ref": "main",
+            "sha": base_revision,
+            "repo": {"full_name": repository},
+        },
+    }
+    calls: list[tuple[str, str]] = []
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        calls.append((path, method))
+        if path == "issues/138":
+            return issue
+        if path == "":
+            return {"default_branch": "main"}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": base_revision}}
+        if path == f"git/ref/heads/{branch}":
+            return {"object": {"sha": archive_revision}}
+        if path.startswith("pulls?state=all"):
+            return []
+        if path == "pulls" and method == "POST":
+            return {"number": 200}
+        if path == "pulls/200":
+            return pull_request
+        raise AssertionError(f"unexpected GitHub call: {method} {path} {payload!r}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        repository,
+        HEAD,
+        source,
+        authorized_change=_CHANGE,
+        current_revision=base_revision,
+    )
+    effect = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "pull-request-create",
+                "title": "Archive OpenSpec change simplify-scheduled-agent-control-plane",
+                "body": body,
+                "head": branch,
+                "base": "main",
+                "draft": False,
+                "expected_head_sha": archive_revision,
+            }
+        ),
+    )
+
+    assert adapter.guard(effect)
+    adapter.apply(effect)
+    assert adapter.observe_postcondition(effect)
+    assert ("pulls", "POST") in calls

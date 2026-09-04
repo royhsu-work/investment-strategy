@@ -278,8 +278,20 @@ def _source_branch(change: object) -> str | None:
     return branch if _valid_branch(branch) else None
 
 
+def _archive_branch(change: object) -> str | None:
+    if not isinstance(change, str) or change in {"", "unset"}:
+        return None
+    branch = f"agent/archive-{change}"
+    return branch if _valid_branch(branch) else None
+
+
 def _source_ref(change: object) -> str | None:
     branch = _source_branch(change)
+    return None if branch is None else f"refs/heads/{branch}"
+
+
+def _archive_ref(change: object) -> str | None:
+    branch = _archive_branch(change)
     return None if branch is None else f"refs/heads/{branch}"
 
 
@@ -361,13 +373,18 @@ def _github_mutation_structurally_valid(
     if operation == "ref-delete":
         return _valid_ref(payload.get("ref")) and _valid_sha(payload.get("expected_sha"))
     if operation == "pull-request-create":
-        return (
-            _is_nonempty_string(payload.get("title"))
-            and isinstance(payload.get("body", ""), str)
-            and _valid_branch(payload.get("head"))
-            and _valid_branch(payload.get("base"))
-            and isinstance(payload.get("draft", False), bool)
-        )
+        head = payload.get("head")
+        if (
+            not _is_nonempty_string(payload.get("title"))
+            or not isinstance(payload.get("body", ""), str)
+            or not _valid_branch(head)
+            or not _valid_branch(payload.get("base"))
+            or not isinstance(payload.get("draft", False), bool)
+        ):
+            return False
+        if isinstance(head, str) and head.startswith("agent/archive-"):
+            return _valid_sha(payload.get("expected_head_sha"))
+        return "expected_head_sha" not in payload
     if operation == "pull-request-update":
         number = payload.get("number")
         if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
@@ -694,7 +711,11 @@ class GitHubEffectAdapter:
         base = payload.get("base")
         if not isinstance(head, Mapping) or not isinstance(base, Mapping):
             return False
-        expected_branch = _source_branch(observation.change)
+        expected_branch = (
+            _archive_branch(observation.change)
+            if self.source.action == "merge-archive-pr"
+            else _source_branch(observation.change)
+        )
         return (
             payload.get("number") == number
             and _references_issue(payload.get("body"), self.source.issue_number)
@@ -704,6 +725,39 @@ class GitHubEffectAdapter:
             and _repository_full_name(head.get("repo")) == self.repository
             and _repository_full_name(base.get("repo")) == self.repository
         )
+
+    def _pull_request_matches_create(
+        self,
+        current: Mapping[str, object],
+        number: int,
+        request: Mapping[str, object],
+    ) -> bool:
+        default_branch = self._default_branch()
+        head = current.get("head")
+        base = current.get("base")
+        if (
+            default_branch is None
+            or not isinstance(head, Mapping)
+            or not isinstance(base, Mapping)
+            or current.get("number") != number
+            or current.get("state") != "open"
+            or current.get("merged") is True
+            or current.get("title") != request.get("title")
+            or current.get("body", "") != request.get("body", "")
+            or current.get("draft") != request.get("draft", False)
+            or request.get("base") != default_branch
+            or head.get("ref") != request.get("head")
+            or base.get("ref") != request.get("base")
+            or _repository_full_name(head.get("repo")) != self.repository
+            or _repository_full_name(base.get("repo")) != self.repository
+        ):
+            return False
+        expected_head_sha = request.get("expected_head_sha")
+        if expected_head_sha is not None and head.get("sha") != expected_head_sha:
+            return False
+        if request.get("head") == _archive_branch(self.authorized_change):
+            return _valid_sha(self.current_revision) and base.get("sha") == self.current_revision
+        return True
 
     def _source_pull_request(
         self,
@@ -821,7 +875,11 @@ class GitHubEffectAdapter:
                 and _shallow_matches(current_issue, expected)
                 and ("body" not in fields or _body_change(fields["body"]) == self.authorized_change)
             )
-        expected_ref = _source_ref(observation.change)
+        expected_ref = (
+            _archive_ref(observation.change)
+            if self.source.action == "merge-archive-pr"
+            else _source_ref(observation.change)
+        )
         if operation == "ref-delete":
             if expected_ref is None or payload.get("ref") != expected_ref:
                 return False
@@ -837,14 +895,30 @@ class GitHubEffectAdapter:
             return isinstance(obj, Mapping) and obj.get("sha") == payload.get("expected_sha")
         if operation == "pull-request-create":
             default_branch = self._default_branch()
-            expected_branch = _source_branch(observation.change)
+            source_branch = _source_branch(observation.change)
+            archive_branch = _archive_branch(observation.change)
+            requested_branch = payload.get("head")
             if (
                 default_branch is None
-                or expected_branch is None
-                or payload.get("head") != expected_branch
+                or not isinstance(requested_branch, str)
                 or payload.get("base") != default_branch
                 or not _references_issue(payload.get("body"), self.source.issue_number)
             ):
+                return False
+            if requested_branch == archive_branch:
+                if self.source.action != "finalize-change":
+                    return False
+                expected_head_sha = payload.get("expected_head_sha")
+                if not _valid_sha(expected_head_sha):
+                    return False
+                expected_branch = archive_branch
+            elif requested_branch == source_branch:
+                if "expected_head_sha" in payload:
+                    return False
+                expected_branch = source_branch
+            else:
+                return False
+            if expected_branch is None:
                 return False
             head_ref = _github_json(
                 self.repository,
@@ -858,11 +932,20 @@ class GitHubEffectAdapter:
                 _ref_api_path(f"refs/heads/{default_branch}"),
                 allow_not_found=True,
             )
-            return (
-                isinstance(head_ref, Mapping)
-                and isinstance(base_ref, Mapping)
-                and self._no_existing_source_pull_request(expected_branch, default_branch)
-            )
+            if not isinstance(head_ref, Mapping) or not isinstance(base_ref, Mapping):
+                return False
+            head_object = head_ref.get("object")
+            base_object = base_ref.get("object")
+            if not isinstance(head_object, Mapping) or not isinstance(base_object, Mapping):
+                return False
+            if requested_branch == archive_branch:
+                return (
+                    head_object.get("sha") == payload.get("expected_head_sha")
+                    and _valid_sha(self.current_revision)
+                    and base_object.get("sha") == self.current_revision
+                    and self._no_existing_source_pull_request(expected_branch, default_branch)
+                )
+            return self._no_existing_source_pull_request(expected_branch, default_branch)
         if operation == "pull-request-merge":
             number = cast(int, payload["number"])
             expected_head_sha = cast(str, payload["expected_head_sha"])
@@ -1186,18 +1269,10 @@ class GitHubEffectAdapter:
             number = self._created_pr_numbers.get(effect)
             if number is None:
                 return False
-            current = self._source_pull_request(number, require_open=True)
-            head = None if current is None else current.get("head")
-            base = None if current is None else current.get("base")
+            current = _github_json(self.repository, self.token, f"pulls/{number}")
             return (
-                current is not None
-                and current.get("title") == payload.get("title")
-                and current.get("body", "") == payload.get("body", "")
-                and current.get("draft") == payload.get("draft", False)
-                and isinstance(head, Mapping)
-                and head.get("ref") == payload.get("head")
-                and isinstance(base, Mapping)
-                and base.get("ref") == payload.get("base")
+                isinstance(current, Mapping)
+                and self._pull_request_matches_create(current, number, payload)
             )
         if operation == "pull-request-update":
             current = self._source_pull_request(cast(int, payload["number"]), require_open=True)

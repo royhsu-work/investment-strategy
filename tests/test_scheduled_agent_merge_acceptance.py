@@ -497,3 +497,43 @@ def test_run_effect_application_forwards_current_revision_to_effect_adapter(
 
     assert result.applied
     assert captured["current_revision"] == HEAD
+
+
+def test_archive_merge_acceptance_binds_archive_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(issue_number=138, role="executor", action="merge-archive-pr")
+    change = "simplify-scheduled-agent-control-plane"
+    effect = merge_acceptance.StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "pull-request-merge",
+                "number": 200,
+                "expected_head_sha": HEAD,
+                "merge_method": "merge",
+            }
+        ),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_snapshot(**kwargs: object) -> MergeAcceptanceSnapshot:
+        captured.update(kwargs)
+        return _accepted()
+
+    monkeypatch.setattr(
+        merge_acceptance,
+        "acquire_merge_acceptance_snapshot",
+        fake_snapshot,
+    )
+
+    assert merge_acceptance._merge_effect_allows(
+        effect,
+        source=source,
+        repository="royhsu-work/investment-strategy",
+        token=HEAD,
+        current_revision=CORRECTED_HEAD,
+        expected_change=change,
+    )
+    assert captured["expected_branch"] == f"agent/archive-{change}"
