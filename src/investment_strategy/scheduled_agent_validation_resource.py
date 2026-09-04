@@ -10,7 +10,7 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import cast
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
