@@ -539,9 +539,10 @@ def main() -> int:
     observed_comment = _as_mapping(
         _github_json(repository, token, f"issues/comments/{event_comment_id}")
     )
+    if observed_comment is None:
+        raise RuntimeError("EFFECT_REQUEST current comment observation is incomplete")
     if (
-        observed_comment is None
-        or observed_comment.get("id") != event_comment_id
+        observed_comment.get("id") != event_comment_id
         or observed_comment.get("body") != body
         or not _trusted_connector_comment(observed_comment, repository_owner)
     ):

@@ -101,7 +101,7 @@ def test_plan_resource_rejects_stale_dispatch_revision() -> None:
         resource.plan_validation_resource(
             event=_event(),
             dispatch_result=_dispatch_result(revision="0" * 40),
-                repository=_REPOSITORY,
+            repository=_REPOSITORY,
             current_revision=_REVISION,
         )
 
@@ -145,17 +145,11 @@ def test_resource_derives_already_current_pr_head_after_fresh_reauthorization(
         raise AssertionError(f"unexpected GitHub read: {api_path}")
 
     monkeypatch.setattr(resource, "_github_json", fake_github_json)
-    workflow = (
-        "| `Lead / resolve-question` | material semantic correction ready | "
-        "`Reviewer / review-openspec` |\n"
-    )
-
     target = resource.resolve_validation_resource_target(
         plan,
         repository=_REPOSITORY,
         token=_FIXTURE_VALUE,
         default_branch="main",
-        
     )
 
     assert target.repository == _REPOSITORY
