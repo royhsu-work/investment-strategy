@@ -253,7 +253,6 @@ def test_worker_cannot_mutate_reserved_authority_labels(label: str) -> None:
     assert not supported_effect_guard(source, effect)
 
 
-
 def test_merged_carrier_merge_is_idempotent_without_put(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
