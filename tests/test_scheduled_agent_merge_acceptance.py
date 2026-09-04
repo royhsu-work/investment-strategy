@@ -491,7 +491,7 @@ def test_run_effect_application_forwards_current_revision_to_effect_adapter(
         _merge_worker_result(),
         source=source,
         repository="royhsu-work/investment-strategy",
-        token="token",
+        token=HEAD,
         current_revision=HEAD,
     )
 
