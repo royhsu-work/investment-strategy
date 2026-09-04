@@ -814,14 +814,10 @@ def test_issue_comment_reuses_existing_bot_comment_on_later_page(
     repository = "royhsu-work/investment-strategy"
     source = WorkerRequest(138, "lead", "finalize-change")
     body = (
-        "ARCHIVE_REQUEST
-"
-        "Workflow: #138
-"
-        f"Change: {_CHANGE}
-"
-        "Action: finalize-change
-"
+        "ARCHIVE_REQUEST\n"
+        "Workflow: #138\n"
+        f"Change: {_CHANGE}\n"
+        "Action: finalize-change\n"
         f"Revision: {_REVISION}"
     )
     existing = {
