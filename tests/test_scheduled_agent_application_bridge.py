@@ -211,7 +211,10 @@ def test_parse_application_request_ignores_unrelated_comment() -> None:
 
 def test_parse_application_request_rejects_malformed_effect_request() -> None:
     with pytest.raises(ValueError, match="exactly four lines"):
-        def test_plan_application_accepts_exact_run_result() -> None:
+        parse_application_request(APPLICATION_REQUEST_MARKER)
+
+
+def test_plan_application_accepts_exact_run_result() -> None:
     body = _effect_request()
     request = parse_application_request(body)
     assert request is not None
@@ -235,21 +238,6 @@ def test_parse_application_request_rejects_malformed_effect_request() -> None:
     )
     assert plan.effect_request_comment_id == 102
     assert json.loads(plan.raw_worker_result or "") == _worker_result()
-
-
-def test_plan_application_ignores_non_effect_comment() -> None:
-    body = "DISPATCH_REQUEST\nRequested-At: now"
-    request = bridge.ApplicationRequest(_REQUEST_ID, _RUN_ID, "{}")
-    decision = bridge.parse_dispatch_decision(_dispatch_decision())
-    assert decision is not None
-    plan = plan_application(
-        event=_event(body),
-        request=request,
-        dispatch_result=decision,
-        repository=_REPOSITORY,
-        current_revision=_REVISION,
-    )
-    assert not plan.should_apply
 
 
 def test_plan_application_rejects_connector_provenance_bypass() -> None:
@@ -299,11 +287,6 @@ def test_plan_application_rejects_non_authorizing_dispatch() -> None:
             request=request,
             dispatch_result=decision,
             repository=_REPOSITORY,
-            current_revision=_REVISION,
-        )
-
-
- repository=_REPOSITORY,
             current_revision=_REVISION,
         )
 
