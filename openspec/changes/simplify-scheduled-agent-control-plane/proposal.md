@@ -73,14 +73,14 @@ The repository `skill-creator` composition and `openspec-semantic-adapter.md` re
 This correction is based on:
 
 - Human architecture reset issuecomment-5528834334;
-- current #138 ACTION_RESULT/routing transition issuecomment-5529009343;
-- the fresh Lead / resolve-question dispatch decision issuecomment-5529083195;
+- prior architecture-reset blocker issuecomment-5529009343 and prior Lead dispatch decision issuecomment-5529083195, both retained as historical pre-correction evidence;
+- current Lead correction dispatch decision issuecomment-5529654634;
 - current default-branch governance at main@e8c3dc7b256bc167217e25a397e98181bdf6f123;
-- pre-correction PR #178 head 5592ee855406c065c54c137832a85f532f617898 and resulting exact target 9a9f131a03e5b22df3a43258fa6cc14cb3bd22cd;
+- previous semantic target 9a9f131a03e5b22df3a43258fa6cc14cb3bd22cd and current exact correction target 872c7e988beb4bd684eeee6916bcc950509e7bb4;
 - openspec/config.yaml with schema: spec-driven;
 - the independent safety evidence retained by the existing Change history;
-- current Lead readiness result issuecomment-5529289349 and its exact validation evidence; and
-- reviewer finding issuecomment-5529497150, which required this Skill maintenance declaration before implementation.
+- current Lead readiness result issuecomment-5529602299 and exact validation run 33785030285, job 100747605621, correlation validation-resource-request-5529577659; and
+- resolved Reviewer finding issuecomment-5529497150 plus current Reviewer finding issuecomment-5529644414.
 
 This is a material semantic correction. 
 

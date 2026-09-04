@@ -1,6 +1,6 @@
 ## Context
 
-Fresh current governance remains Scheduled-Dispatch-Mode: workflow-dynamic and currently selects #138 from agent:lead + action:resolve-question. Current main@e8c3dc7b256bc167217e25a397e98181bdf6f123 still carries the older role-label and continuation model, while PR #178 at head 5592ee855406c065c54c137832a85f532f617898 contains the prior incremental plan. Human intent issuecomment-5528834334 explicitly supersedes that plan and requires a first-principles reset.
+Fresh current governance remains Scheduled-Dispatch-Mode: workflow-dynamic and currently selects #138 from agent:lead + action:resolve-question. Current main@e8c3dc7b256bc167217e25a397e98181bdf6f123 still carries the older role-label and continuation model, while PR #178 pre-reset head 5592ee855406c065c54c137832a85f532f617898 contained the prior incremental plan. The current corrected PR target is 872c7e988beb4bd684eeee6916bcc950509e7bb4. Human intent issuecomment-5528834334 explicitly supersedes that plan and requires a first-principles reset.
 
 The design therefore separates semantic responsibility, workflow action, and mutation capability. Lead/Reviewer/Executor retain semantic judgment in their mapped Skills. A small repository-owned executable model makes mechanical decisions. Repository application authorizes and observes mutations. External transport and identity-sensitive carriers remain adapters. No layer infers authority from prose, historical ordering, a worker's arbitrary successor, or a successful API call alone.
 
