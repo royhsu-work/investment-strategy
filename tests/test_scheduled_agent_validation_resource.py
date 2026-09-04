@@ -293,6 +293,63 @@ def test_plan_work_product_binds_same_exact_dispatch_without_file_content() -> N
     assert plan.manifest.files[0].blob_sha == "b" * 40
 
 
+def test_open_pr_payload_requires_explicit_historical_merged_carrier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    merged_pr = {
+        "number": 178,
+        "state": "closed",
+        "merged": True,
+        "merged_at": "2026-09-04T03:31:44Z",
+        "merge_commit_sha": "e" * 40,
+        "body": "Refs #138\\n",
+        "head": {
+            "sha": _PR_HEAD,
+            "ref": f"agent/{_CHANGE}",
+            "repo": {"full_name": _REPOSITORY},
+        },
+        "base": {"ref": "main", "repo": {"full_name": _REPOSITORY}},
+    }
+
+    def fake_github_json(repository: str, token: str, api_path: str) -> object:
+        assert repository == _REPOSITORY
+        assert token == _FIXTURE_VALUE
+        if api_path == "":
+            return {"default_branch": "main"}
+        if api_path == "issues/138":
+            return {"state": "open", "body": f"Change: {_CHANGE}\\n"}
+        if api_path == "pulls/178":
+            return merged_pr
+        if api_path == "pulls/178/files?per_page=100":
+            return [
+                {"filename": f"openspec/changes/{_CHANGE}/proposal.md"},
+                {"filename": "tests/scheduled_agent_b45_canary.txt"},
+            ]
+        raise AssertionError(f"unexpected GitHub call: {api_path}")
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
+    with pytest.raises(RuntimeError, match="allowed current carrier"):
+        resource._open_pr_payload(
+            repository=_REPOSITORY,
+            token=_FIXTURE_VALUE,
+            pr_number=178,
+            source=source,
+            expected_change=_CHANGE,
+            default_branch="main",
+        )
+
+    assert resource._open_pr_payload(
+        repository=_REPOSITORY,
+        token=_FIXTURE_VALUE,
+        pr_number=178,
+        source=source,
+        expected_change=_CHANGE,
+        default_branch="main",
+        allow_historical_merged_carrier=True,
+    ) == merged_pr
+
+
 def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

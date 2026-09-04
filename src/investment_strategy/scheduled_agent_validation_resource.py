@@ -581,6 +581,17 @@ def _current_default_branch(repository: str, token: str) -> str:
     return cast(str, branch)
 
 
+def _is_historical_merged_carrier(payload: Mapping[str, object]) -> bool:
+    merged_at = payload.get("merged_at")
+    return (
+        payload.get("state") == "closed"
+        and payload.get("merged") is True
+        and _valid_sha(payload.get("merge_commit_sha"))
+        and isinstance(merged_at, str)
+        and bool(merged_at.strip())
+    )
+
+
 def _open_pr_payload(
     *,
     repository: str,
@@ -589,6 +600,7 @@ def _open_pr_payload(
     source: WorkerRequest,
     expected_change: str,
     default_branch: str,
+    allow_historical_merged_carrier: bool = False,
 ) -> Mapping[str, object]:
     if _current_default_branch(repository, token) != default_branch:
         raise RuntimeError("validation resource repository default branch changed")
@@ -607,8 +619,13 @@ def _open_pr_payload(
         raise RuntimeError("validation resource source Issue/Change identity changed")
 
     pr = _as_mapping(cast(object, _github_json(repository, token, f"pulls/{pr_number}")))
-    if pr is None or pr.get("state") != "open" or pr.get("merged") is True:
-        raise RuntimeError("validation resource target PR is not one current open PR")
+    if pr is None or not (
+        (pr.get("state") == "open" and pr.get("merged") is not True)
+        or (allow_historical_merged_carrier and _is_historical_merged_carrier(pr))
+    ):
+        raise RuntimeError(
+            "validation resource target PR is not an allowed current carrier"
+        )
     head = _as_mapping(pr.get("head"))
     base = _as_mapping(pr.get("base"))
     head_repo = None if head is None else _as_mapping(head.get("repo"))
@@ -807,6 +824,7 @@ def apply_work_product(
         source=plan.source,
         expected_change=plan.expected_change,
         default_branch=default_branch,
+        allow_historical_merged_carrier=True,
     )
     head = _as_mapping(pr.get("head"))
     current_head = None if head is None else head.get("sha")
@@ -934,6 +952,7 @@ def apply_work_product(
         source=plan.source,
         expected_change=plan.expected_change,
         default_branch=default_branch,
+        allow_historical_merged_carrier=True,
     )
     observed_head = _as_mapping(observed_pr.get("head"))
     if (
