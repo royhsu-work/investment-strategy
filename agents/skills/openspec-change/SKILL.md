@@ -54,3 +54,5 @@ and `agents/skills/skill-creator/references/repository-governance.md`.
 This repository Skill guidance is procedural input, not runtime authority.
 
 For the semantic gate, strict validation alone does not create semantic acceptance; missing or contradictory context fails closed. The Lead must record the source decision, and an independent Reviewer / review-openspec must review the resulting exact revision.
+
+The semantic gate treats missing or contradictory context as fail closed. Strict validation alone does not create semantic acceptance.
