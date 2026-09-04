@@ -17,9 +17,9 @@ from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from investment_strategy.issue_comment_bridge import MachineDispatchDecision
+from investment_strategy.scheduled_agent_action_model import TRANSITIONS
 from investment_strategy.scheduled_agent_action_model import (
     Action as ModelAction,
-    TRANSITIONS,
 )
 from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
 from investment_strategy.scheduled_agent_dispatch_result import fetch_dispatch_result
@@ -775,8 +775,9 @@ def apply_work_product(
         for file in plan.manifest.files
     ):
         raise RuntimeError("work-product path is outside source Action capability")
-    if any(file.path.startswith("openspec/") for file in plan.manifest.files) and not _review_openspec_required(
-        plan.source
+    if (
+        any(file.path.startswith("openspec/") for file in plan.manifest.files)
+        and not _review_openspec_required(plan.source)
     ):
         raise RuntimeError("work-product source has no required OpenSpec review gate")
 

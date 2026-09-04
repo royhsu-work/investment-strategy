@@ -376,11 +376,6 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
         raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
 
     monkeypatch.setattr(resource, "_github_json", fake_github_json)
-    workflow = (
-        "| `Lead / resolve-question` | material semantic correction ready | "
-        "`Reviewer / review-openspec` |\n"
-    )
-
     target = resource.apply_work_product(
         plan,
         repository=_REPOSITORY,
