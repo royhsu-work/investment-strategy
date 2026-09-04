@@ -424,13 +424,9 @@ def _action_model_observations(
     preflight: DispatchPreflight,
 ) -> AuthoritativeObservations:
     provenance = ModelObservationProvenance.QUALIFIED
-    if (
-        preflight.enumeration.observation_provenance
-        is not ObservationProvenance.QUALIFIED
-        or any(
-            issue.current_state_provenance is not ObservationProvenance.QUALIFIED
-            for issue in preflight.issues
-        )
+    if preflight.enumeration.observation_provenance is not ObservationProvenance.QUALIFIED or any(
+        issue.current_state_provenance is not ObservationProvenance.QUALIFIED
+        for issue in preflight.issues
     ):
         provenance = ModelObservationProvenance.INDETERMINATE
     return AuthoritativeObservations(
