@@ -5,11 +5,8 @@ from __future__ import annotations
 import pytest
 
 import investment_strategy.scheduled_agent_dispatch_result as transport
-from investment_strategy.issue_comment_bridge import (
-    DispatchDecision,
-    ObservationProvenance,
-    render_run_scoped_dispatch_result,
-)
+from investment_strategy.issue_comment_bridge import render_run_scoped_dispatch_result
+from investment_strategy.workflow_dispatch import DispatchDecision, ObservationProvenance
 
 _REVISION = "cb8f9ec12d826e0d71897a4c73ece961d00df59e"
 _REQUEST_ID = 100

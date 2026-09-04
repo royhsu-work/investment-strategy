@@ -211,7 +211,7 @@ def test_parse_application_request_ignores_unrelated_comment() -> None:
 
 def test_parse_application_request_rejects_malformed_effect_request() -> None:
     with pytest.raises(ValueError, match="exactly four lines"):
-        pardef test_plan_application_accepts_exact_run_result() -> None:
+        def test_plan_application_accepts_exact_run_result() -> None:
     body = _effect_request()
     request = parse_application_request(body)
     assert request is not None
