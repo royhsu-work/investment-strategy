@@ -30,7 +30,6 @@ from investment_strategy.scheduled_agent_effects import (
     StagedEffect,
     apply_effect_batch,
     parse_effect_batch,
-    topology_allows_successor,
 )
 from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
@@ -39,7 +38,6 @@ from investment_strategy.scheduled_agent_runtime import (
 
 _REVIEW_ACTIONS = ("review-implementation", "review-archive")
 _ACCEPTED_CHECK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
-_DEBT_DISPOSITIONS = frozenset({"terminal-cleanup", "unfinished-recovery"})
 
 PreApplyGuard = Callable[[StagedEffect], bool]
 
@@ -357,7 +355,6 @@ def run_effect_application(
     source: WorkerRequest,
     repository: str,
     token: str,
-    workflow_text: str,
     pre_apply_guard: PreApplyGuard | None = None,
     current_revision: str | None = None,
 ) -> tuple[EffectBatch, ApplyResult]:
@@ -376,11 +373,6 @@ def run_effect_application(
             batch,
             fresh_preflight=lambda: acquire_current_github_preflight(repository, token),
             effect_guard=adapter.guard,
-            topology_validator=lambda request, effect: topology_allows_successor(
-                workflow_text,
-                request,
-                effect,
-            ),
             apply_effect=apply_with_fresh_guard,
             observe_postcondition=adapter.observe_postcondition,
             current_revision=current_revision,
@@ -396,7 +388,6 @@ def run_guarded_effect_application(
     source: WorkerRequest,
     repository: str,
     token: str,
-    workflow_text: str,
     current_revision: str | None = None,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Reject stale merge acceptance before and immediately adjacent to merge application."""
@@ -418,7 +409,6 @@ def run_guarded_effect_application(
         source=source,
         repository=repository,
         token=token,
-        workflow_text=workflow_text,
         current_revision=current_revision,
         pre_apply_guard=lambda effect: _merge_effect_allows(
             effect,
@@ -433,12 +423,8 @@ def _source_from_environment() -> WorkerRequest:
     issue = os.environ.get("AUTHORIZED_ISSUE")
     role = os.environ.get("AUTHORIZED_ROLE")
     action = os.environ.get("AUTHORIZED_ACTION")
-    raw_disposition = os.environ.get("AUTHORIZED_DEBT_DISPOSITION", "")
-    disposition = raw_disposition or None
     if not issue or not role or not action:
         raise RuntimeError("machine-authorized Issue/role/action environment is required")
-    if disposition is not None and disposition not in _DEBT_DISPOSITIONS:
-        raise RuntimeError("AUTHORIZED_DEBT_DISPOSITION is invalid")
     try:
         issue_number = int(issue)
     except ValueError as exc:
@@ -447,34 +433,17 @@ def _source_from_environment() -> WorkerRequest:
         issue_number=issue_number,
         role=role,
         action=action,
-        debt_disposition=disposition,
     )
 
 
-def _write_github_outputs(batch: EffectBatch, result: ApplyResult) -> None:
+def _write_github_outputs(result: ApplyResult) -> None:
     output_path = os.environ.get("GITHUB_OUTPUT")
     if not output_path:
         return
-    lines = [
-        f"applied={'true' if result.applied else 'false'}",
-        f"continuation_required={'true' if result.continuation is not None else 'false'}",
-    ]
-    if result.continuation is not None:
-        lines.extend(
-            (
-                f"continuation_issue={result.continuation.issue_number}",
-                f"continuation_role={result.continuation.role}",
-                f"continuation_action={result.continuation.action}",
-            )
-        )
-        if result.continuation.debt_disposition is not None:
-            lines.append(f"continuation_debt_disposition={result.continuation.debt_disposition}")
     with Path(output_path).open("a", encoding="utf-8") as output:
-        output.write("\n".join(lines) + "\n")
-
-
+        output.write(f"applied={'true' if result.applied else 'false'}\n")
 def main() -> int:
-    """Apply one same-run result through merge acceptance plus effect reauthorization."""
+    """Apply one result through merge acceptance plus effect reauthorization."""
 
     if len(sys.argv) != 2:
         raise RuntimeError("worker result path argument is required")
@@ -485,30 +454,19 @@ def main() -> int:
 
     source = _source_from_environment()
     raw_worker_result = Path(sys.argv[1]).read_text(encoding="utf-8")
-    workflow_text = Path("agents/workflow.md").read_text(encoding="utf-8")
     batch, result = run_guarded_effect_application(
         raw_worker_result,
         source=source,
         repository=repository,
         token=token,
-        workflow_text=workflow_text,
     )
-    _write_github_outputs(batch, result)
+    _write_github_outputs(result)
     print(
         json.dumps(
             {
                 "applied": result.applied,
                 "reason": result.reason,
-                "continuation": (
-                    None
-                    if result.continuation is None
-                    else {
-                        "issue_number": result.continuation.issue_number,
-                        "role": result.continuation.role,
-                        "action": result.continuation.action,
-                        "debt_disposition": result.continuation.debt_disposition,
-                    }
-                ),
+                "effects": len(batch.effects),
             },
             sort_keys=True,
         )

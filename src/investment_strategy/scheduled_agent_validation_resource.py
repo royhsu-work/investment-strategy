@@ -379,7 +379,6 @@ def _source_from_dispatch(
         dispatch_result.issue_number,
         dispatch_result.role,
         dispatch_result.action,
-        debt_disposition=dispatch_result.debt_disposition,
     )
 
 
@@ -549,7 +548,6 @@ def _current_authorized_request(repository: str, token: str) -> WorkerRequest | 
         decision.selected_issue_id,
         role,
         action,
-        debt_disposition=decision.selected_debt_disposition,
     )
 
 
