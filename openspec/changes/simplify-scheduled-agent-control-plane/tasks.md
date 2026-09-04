@@ -25,18 +25,18 @@ The target state is Issue lifecycle + immutable Change + action:<action> with Ro
 
 ### B2. Fresh typed application
 
-- [ ] B2.1 Fresh-reauthorize the exact source Issue/Change/Action and derive next_action from the current Action plus bounded typed result.
-- [ ] B2.2 Apply only the exact necessary issue, routing, tree/commit/ref, validation, PR, or carrier effects and freshly observe every postcondition.
-- [ ] B2.3 Preserve stale/concurrency fail-closed behavior, idempotent still-required reconciliation, no replay of durable work, and no rewind of consumed descendants.
-- [ ] B2.4 Emit machine-readable deterministic rejection classification with relevant expected/observed evidence; rejection never authorizes retry or a weaker plan.
+- [x] B2.1 Fresh-reauthorize the exact source Issue/Change/Action and derive next_action from the current Action plus bounded typed result.
+- [x] B2.2 Apply only the exact necessary issue, routing, tree/commit/ref, validation, PR, or carrier effects and freshly observe every postcondition.
+- [x] B2.3 Preserve stale/concurrency fail-closed behavior, idempotent still-required reconciliation, no replay of durable work, and no rewind of consumed descendants.
+- [x] B2.4 Emit machine-readable deterministic rejection classification with relevant expected/observed evidence; rejection never authorizes retry or a weaker plan.
 
 ### B3. One Action per wake
 
 - [ ] B3.1 Load one fresh machine-selected Action and its derived Role/Skill per Scheduled Task wake.
-- [ ] B3.2 Execute one bounded verified semantic slice and record its typed result/evidence.
-- [ ] B3.3 Persist the unique derived successor or terminal state, then exit before executing the successor.
+- [x] B3.2 Execute one bounded verified semantic slice and record its typed result/evidence.
+- [x] B3.3 Persist the unique derived successor or terminal state, then exit before executing the successor.
 - [ ] B3.4 Verify same-Role and cross-Role successors both require a later fresh dispatch and no continuation/barrier protocol.
-- [ ] B3.5 Keep semantic judgment in the mapped Role/Skill; workers cannot self-select Issues, Roles, Actions, successors, targets, retries, or success.
+- [x] B3.5 Keep semantic judgment in the mapped Role/Skill; workers cannot self-select Issues, Roles, Actions, successors, targets, retries, or success.
 
 ### B4. Exact revision and work-product ingress
 
