@@ -43,11 +43,7 @@ def test_fetch_dispatch_result_reads_only_exact_successful_run(
         "status": "completed",
         "conclusion": "success",
     }
-    jobs = {
-        "jobs": [
-            {"id": 300, "name": "bridge", "status": "completed", "conclusion": "success"}
-        ]
-    }
+    jobs = {"jobs": [{"id": 300, "name": "bridge", "status": "completed", "conclusion": "success"}]}
     log = render_run_scoped_dispatch_result(
         request_comment_id=_REQUEST_ID,
         default_branch_revision=_REVISION,
