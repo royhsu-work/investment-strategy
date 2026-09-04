@@ -947,7 +947,7 @@ def test_archive_pull_request_create_binds_exact_branch_head(
     monkeypatch.setattr(effects, "_github_json", fake_github_json)
     adapter = GitHubEffectAdapter(
         repository,
-        HEAD,
+        archive_revision,
         source,
         authorized_change=_CHANGE,
         current_revision=base_revision,

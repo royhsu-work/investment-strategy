@@ -13,6 +13,7 @@ required or whether the Change is ready for independent archive review. For fina
 the Change is complete and archive terminal evidence is ready.
 
 Archive preparation owns semantic completeness, exact Change/Issue linkage, non-closing linkage,
+archive preparation is a Lead-only semantic step with no duplicate Change, PR, lifecycle state, recovery state, or control mailbox.
 deterministic cleanup obligations, and the evidence needed by Reviewer / review-archive. It does not
 perform normal PR merge mutation. A premature close or ambiguous cleanup condition is blocked.
 
@@ -22,7 +23,8 @@ Return one structured `archive-ready`, `more-implementation-required`, `lifecycl
 only on a later wake.
 
 The lifecycle result is evidence, not runtime state. Do not create a duplicate Change, PR, lifecycle
-state, recovery state, or control mailbox. Optional or deferred prose is not a lifecycle obligation.
+state, recovery state, or control mailbox. There is no duplicate Change, PR, lifecycle state, recovery
+state, or control mailbox. Optional or deferred prose is not a lifecycle obligation.
 
 ## Archive activation carrier
 
