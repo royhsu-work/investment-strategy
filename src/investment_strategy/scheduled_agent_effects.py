@@ -519,7 +519,8 @@ def _github_json(
     payload: Mapping[str, object] | None = None,
     allow_not_found: bool = False,
 ) -> object | None:
-    url = f"https://api.github.com/repos/{repository}/{api_path.lstrip('/')}"
+    repository_url = f"https://api.github.com/repos/{repository}"
+    url = repository_url if not api_path else f"{repository_url}/{api_path.lstrip('/')}"
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     request = Request(
         url,

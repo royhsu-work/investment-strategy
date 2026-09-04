@@ -355,6 +355,36 @@ def test_merged_carrier_merge_is_idempotent_without_put(
     assert not any(path.endswith("/merge") and method == "PUT" for path, method in calls)
 
 
+def test_empty_github_api_path_uses_repository_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    urls: list[str] = []
+
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"default_branch":"main"}'
+
+    def fake_urlopen(request: object, timeout: int) -> FakeResponse:
+        assert timeout == 30
+        url = getattr(request, "full_url", None)
+        assert isinstance(url, str)
+        urls.append(url)
+        return FakeResponse()
+
+    monkeypatch.setattr(effects, "urlopen", fake_urlopen)
+
+    assert effects._github_json("owner/repo", "token", "") == {
+        "default_branch": "main"
+    }
+    assert urls == ["https://api.github.com/repos/owner/repo"]
+
+
 def test_transition_validator_is_not_a_runtime_dependency() -> None:
     source = inspect.getsource(apply_effect_batch)
     assert "topology" not in source
