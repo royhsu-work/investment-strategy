@@ -32,11 +32,15 @@ ChatGPT Scheduled Task SHALL be the only normal model wake. GitHub Actions MAY r
 - WHEN Scheduled Task consumes dispatch/application
 - THEN only A's valid run-scoped result is accepted, and missing/ambiguous/failed A cannot fall back to a plausible response comment
 
-### Requirement: Repository-owned artifact mutation self-hosts exact-revision strict validation
+### Requirement: Repository-owned readiness gate self-hosts exact-revision strict validation
 
-When an authorized selected Action changes OpenSpec artifacts and exact-revision validation is a readiness gate, the repository-owned deterministic application boundary SHALL obtain validation evidence for the exact resulting revision `R` before ownership transfer. It MAY run pinned strict validation directly after mutation/postcondition or explicitly invoke a dedicated deterministic validator bound to `R`; the mechanism is implementation-owned and MUST NOT create another semantic Action or model wake.
+Whenever the governed readiness contract requires exact-revision OpenSpec validation before ownership transfer, the repository-owned deterministic application boundary SHALL be able to obtain exact-resource validation evidence for target revision `R`. Eligibility for that resource SHALL derive from the governed readiness/effect/artifact requirement and MUST NOT depend on a hard-coded source Role/Action whitelist.
+
+Target `R` MAY be the exact revision just produced by the current authorized OpenSpec mutation or an already-current exact Change/PR head that requires readiness validation without an artifact rewrite. Repository application MUST NOT rewrite, dummy-touch, or otherwise mutate an already-correct artifact solely to manufacture a validator trigger. It MAY run pinned strict validation directly against `R` or explicitly invoke a dedicated deterministic validator bound to `R`; the mechanism is implementation-owned and MUST NOT create another semantic Action or model wake.
 
 Accepted evidence SHALL prove target revision `R`, validator checkout `HEAD == R`, qualified pinned OpenSpec compatibility, and strict OpenSpec validation PASS. That structured validation result SHALL belong to the exact deterministic application/validation execution and be consumable by the already selected semantic Action as exact-resource evidence. Missing, failed, cancelled, ambiguous, revision-mismatched, checkout-mismatched, malformed, or expired evidence SHALL fail closed. Stale validation, `run.head_sha == R` without checkout proof, manual approval/operator workarounds, direct connector bypass, or another semantic Action/model wake SHALL NOT satisfy the gate.
+
+A materially revising `Lead / resolve-question` that requires exact-revision readiness SHALL be able to consume the same governed exact-resource validation capability as `Lead / propose-change`. Source Action identity MAY constrain semantic ownership or which readiness gate applies, but MUST NOT suppress a validation resource required by that gate.
 
 #### Scenario: Event validation cannot execute
 
@@ -47,9 +51,26 @@ Accepted evidence SHALL prove target revision `R`, validator checkout `HEAD == R
 - AND ownership does not transfer
 - AND repository application must self-host or explicitly trigger exact-`R` deterministic validation, otherwise fail closed
 
+#### Scenario: Already-current revision validates without rewrite
+
+- GIVEN exact Change/PR head `R` is already current
+- AND the governed readiness gate still requires exact-revision OpenSpec validation for `R`
+- AND no OpenSpec artifact needs semantic or editorial modification
+- WHEN repository application obtains the required exact-resource validation
+- THEN it validates `R` without rewriting or dummy-touching an artifact merely to create a validator trigger
+- AND accepted evidence still proves target `R`, validator checkout `HEAD == R`, qualified pinned compatibility, and strict PASS
+
+#### Scenario: Resolve is not excluded by a Propose-only whitelist
+
+- GIVEN `Lead / resolve-question` materially revised OpenSpec artifacts
+- AND the governed handoff gate requires exact-revision validation for target revision `R`
+- WHEN repository application determines validation-resource eligibility
+- THEN the required resource is available from the gate and target artifact state
+- AND a hard-coded `Lead / propose-change` source whitelist MUST NOT suppress that resource
+
 #### Scenario: Exact-R validation completes inside the selected Action
 
-- GIVEN repository application produced revision `R`
+- GIVEN the selected semantic Action requires exact-revision readiness for target revision `R`
 - WHEN the exact deterministic validation execution proves target `R`, checkout `R`, qualified pinned compatibility, and strict PASS
 - THEN the same selected semantic Action may consume that structured result for readiness
 - AND no second semantic Action or model wake is created
@@ -109,13 +130,26 @@ Correctness MUST NOT depend on same-role successor continuation, cross-role wake
 
 ### Requirement: Architecture reset is mandatory N-1 delivery with deletion
 
-#138 SHALL remain one parent outcome. Every stage MUST be independently executable/testable/mergeable/deployable on then-current N-1 or be split without weakening the parent, and SHALL record outcomes advanced/still incomplete, N-1 prerequisites, rollback/cutover boundary, and required continuation. No intermediate stage completes #138. Order is mandatory: (1) transport de-mailbox + daily run-scoped dispatch/application/validation results + exact-revision validation bootstrap; (2) executable-kernel shadow without mutation cutover; (3) typed result→kernel effect + fresh application; (4) one-action-per-wake; (5) Action-only/Role-derived/explicit-merge cutover; (6) deletion/context reduction. Stage 1 MAY split into independently executable transport and validation-bootstrap sub-slices, but both SHALL be deployed before later stages depend on repository-owned OpenSpec artifact mutation. Dual paths MAY coexist only for bounded N-1 proof/cutover. After cutover, production MUST delete/disable superseded Role routing, response-mailbox/history coupling, Markdown topology/effect parsing, same-wake continuation/wake barriers, obsolete compatibility hot paths, legacy Responses/model-worker host code, and redundant machine-control tests/prose. Historical evidence remains audit only.
+#138 SHALL remain one parent outcome. Every stage MUST be independently executable/testable/mergeable/deployable on then-current N-1 or be split without weakening the parent, and SHALL record outcomes advanced/still incomplete, N-1 prerequisites, rollback/cutover boundary, and required continuation. No intermediate stage completes #138.
+
+Order is mandatory: **(1A) exact-revision application resource first; (1B) transport de-mailbox + daily exact run-scoped dispatch/application/validation results second; (2) executable-kernel shadow without mutation cutover; (3) typed result→kernel effect + fresh application; (4) one-action-per-wake; (5) Action-only/Role-derived/explicit-merge cutover; (6) deletion/context reduction.** Stage 1A SHALL be merged and deployed before a materially authoring or revising `Lead / propose-change` or `Lead / resolve-question` may hand #138 to independent OpenSpec review, and the final exact handoff revision SHALL satisfy the governed exact-revision validation gate through that resource. Stage 1B remains mandatory before Stage 2 consumes the run-scoped transport contract, but Stage 1B SHALL NOT become an additional semantic OpenSpec review-readiness prerequisite once Stage 1A has supplied otherwise-valid exact-revision evidence. Both Stage 1A and Stage 1B SHALL be deployed before Stage 2.
+
+Dual paths MAY coexist only for bounded N-1 proof/cutover. After cutover, production MUST delete/disable superseded Role routing, response-mailbox/history coupling, Markdown topology/effect parsing, same-wake continuation/wake barriers, obsolete compatibility hot paths, legacy Responses/model-worker host code, and redundant machine-control tests/prose. Historical evidence remains audit only.
 
 #### Scenario: Stage cannot self-host or complete early
 
 - GIVEN a stage cannot run on N-1 or later mandatory stages remain
 - WHEN completion is evaluated
 - THEN it is split or continuation remains mandatory and #138 stays incomplete through Stage 6 deletion/full verification
+
+#### Scenario: Stage 1 transport does not become an OpenSpec review gate
+
+- GIVEN Stage 1A is deployed
+- AND the exact final handoff revision has qualifying Stage 1A validation evidence
+- AND all other semantic OpenSpec readiness conditions pass
+- WHEN Lead evaluates handoff to independent OpenSpec review
+- THEN incomplete Stage 1B transport deployment does not by itself invalidate semantic OpenSpec review readiness
+- AND Stage 1B remains mandatory before Stage 2 kernel shadow begins
 
 ## REMOVED Requirements
 
