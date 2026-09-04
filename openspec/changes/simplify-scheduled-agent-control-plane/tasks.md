@@ -16,14 +16,17 @@ Parent advances: gate-derived exact-revision OpenSpec validation usable by the a
 - [ ] 1A.8 REFACTOR — keep validation a bounded deterministic application resource, not another semantic Action/model wake, manual approval, stale-CI shortcut, direct-connector bypass, artifact dummy-touch, source-Action whitelist, or generic polling scheduler.
 - [ ] 1A.9 VERIFY — live N-1 closed loop for both target forms: newly produced `R` and already-current `R` each obtain checkout proof, qualified pinned strict PASS, and structured evidence consumed by the same selected Action; retain `action_required`/no-validator-job and Resolve-whitelist exclusion as RED regressions.
 
-## 1B. Transport de-mailbox
+## 1B. Transport de-mailbox + daily check-in lifecycle
 
-Parent advances: #168 exact run-scoped dispatch/application/validation transport with request/trigger/audit-only runtime comments and no normal machine-response mailbox. Remaining: kernel, typed application, wake/state cutover, deletion. N-1: Stage 1A is deployed. Boundary: transport adapter only; workflow semantics and canonical state remain unchanged. Next: Stage 2.
+Parent advances: #168 exact run-scoped dispatch/application/validation transport plus fresh daily-bounded runtime check-in discovery/rollover, with request/trigger/audit-only runtime comments, no normal machine-response mailbox, and no permanent check-in pointer. Remaining: kernel, typed application, wake/state cutover, deletion. N-1: Stage 1A is deployed. Boundary: transport adapter and repository-owned check-in administration only; workflow semantics and canonical state remain unchanged. Next: Stage 2.
 
 - [ ] 1B.1 RED — prove exact request->run->structured dispatch/application result correlation; reject `latest`, timing/title inference, response fallback, and missing/multiple/failed/cancelled/malformed/expired evidence.
-- [ ] 1B.2 GREEN — make runtime Issue request/trigger/audit only and consume dispatch/application/validation results from exact run-scoped surfaces; retain coordination-Issue semantic evidence.
-- [ ] 1B.3 REFACTOR — remove normal response-mailbox correlation/dedup without moving workflow semantics into transport.
-- [ ] 1B.4 VERIFY — live Scheduled Task dispatch+application E2E; no model API in Actions and no normal machine-response mailbox.
+- [ ] 1B.2 RED — prove each wake must fresh-discover exactly one open `Asia/Taipei` current-day check-in by dedicated non-workflow + canonical local-date identity; zero/duplicate/ambiguous current-day identity and reliance on a permanent `AGENT_RUNTIME_CHECKIN_ISSUE`-style pointer fail closed.
+- [ ] 1B.3 RED — prove daily rollover cannot close the prior-day check-in before today's usable check-in is established and fresh-observed, and prove closing the prior-day Issue does not break an already-triggered immutable request `C -> exact run R -> structured result` chain.
+- [ ] 1B.4 GREEN — implement idempotent repository-owned daily rollover: establish and fresh-observe today's unique usable check-in before closing prior check-ins; new wakes discover today's Issue from current GitHub state without conversation memory or a permanent pointer.
+- [ ] 1B.5 GREEN — make runtime Issue comments request/trigger/audit only and consume dispatch/application/validation results from exact run-scoped surfaces while preserving an in-flight prior-day `C -> R -> result` chain and coordination-Issue semantic evidence.
+- [ ] 1B.6 REFACTOR — remove normal response-mailbox correlation/dedup and permanent check-in-pointer coupling without moving workflow semantics into transport or adding recursive workflow-trigger dependence.
+- [ ] 1B.7 VERIFY — live Scheduled Task dispatch+application E2E discovers exactly one current-day check-in, proves request C -> exact run R -> terminal -> exact structured result with no machine response comment, exercises idempotent close/create rollover with an in-flight prior-day request, and confirms no model API in Actions.
 
 ## 2. Executable kernel shadow
 
