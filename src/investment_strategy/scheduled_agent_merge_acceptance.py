@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import cast
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from investment_strategy.human_authority import HUMAN_ACTOR
@@ -41,6 +41,11 @@ _MERGE_REVIEW_ACTION = {
     "merge-archive-pr": "review-archive",
 }
 _ACCEPTED_CHECK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
+_SHA = re.compile(r"^[0-9a-f]{40}$")
+
+def _valid_sha(value: object) -> bool:
+    return isinstance(value, str) and _SHA.fullmatch(value) is not None
+
 
 PreApplyGuard = Callable[[StagedEffect], bool]
 
@@ -63,6 +68,7 @@ class MergeAcceptanceSnapshot:
     contradictory_evidence: bool
     human_input_fresh: bool
     complete: bool
+    historical_merged_carrier_allowed: bool = False
 
 
 def merge_acceptance_allows(snapshot: MergeAcceptanceSnapshot) -> bool:
@@ -70,7 +76,7 @@ def merge_acceptance_allows(snapshot: MergeAcceptanceSnapshot) -> bool:
 
     return (
         snapshot.complete
-        and snapshot.pr_open
+        and (snapshot.pr_open or snapshot.historical_merged_carrier_allowed)
         and snapshot.current_head_sha == snapshot.expected_head_sha
         and snapshot.reviewer_pass_head_sha == snapshot.expected_head_sha
         and snapshot.required_checks_pass
@@ -82,8 +88,12 @@ def merge_acceptance_allows(snapshot: MergeAcceptanceSnapshot) -> bool:
 
 
 def _github_json(repository: str, token: str, api_path: str) -> object:
+    normalized_path = api_path.lstrip("/")
+    api_url = f"https://api.github.com/repos/{repository}"
+    if normalized_path:
+        api_url = f"{api_url}/{normalized_path}"
     request = Request(  # noqa: S310 - fixed trusted GitHub API host
-        f"https://api.github.com/repos/{repository}/{api_path.lstrip('/')}",
+        api_url,
         headers={
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {token}",
@@ -150,15 +160,33 @@ def _merge_payload(effect: StagedEffect) -> Mapping[str, object] | None:
     return cast(Mapping[str, object], payload)
 
 
-def _review_record(body: object) -> tuple[str, str, str] | None:
+def _review_record(body: object) -> tuple[str, str, str, str | None] | None:
     if not isinstance(body, str):
         return None
-    action_match = re.search(r"Action:\s*`?Reviewer / (review-(?:implementation|archive))`?", body)
-    result_match = re.search(r"Result:\s*`?(PASS|IMPLEMENTATION_FINDINGS|FINDINGS)`?", body)
-    revision_match = re.search(r"Revision:\s*`?([0-9a-f]{40})`?", body)
+    action_match = re.search(
+        r"Action:\s*\x60?Reviewer / (review-(?:implementation|archive))\x60?",
+        body,
+    )
+    result_match = re.search(
+        r"Result:\s*\x60?(PASS|IMPLEMENTATION_FINDINGS|FINDINGS)\x60?",
+        body,
+    )
+    revision_match = re.search(r"Revision:\s*\x60?([0-9a-f]{40})\x60?", body)
+    default_revision_match = re.search(
+        r"Default-Branch-Revision:\s*\x60?([0-9a-f]{40})\x60?",
+        body,
+    )
     if action_match is None or result_match is None or revision_match is None:
         return None
-    return action_match.group(1), result_match.group(1), revision_match.group(1)
+    default_revision = (
+        None if default_revision_match is None else default_revision_match.group(1)
+    )
+    return (
+        action_match.group(1),
+        result_match.group(1),
+        revision_match.group(1),
+        default_revision,
+    )
 
 
 def _latest_matching_pass(
@@ -166,8 +194,8 @@ def _latest_matching_pass(
     expected_head_sha: str,
     *,
     required_review_action: str,
-) -> tuple[str | None, str | None, datetime | None, bool, bool]:
-    records: list[tuple[datetime, int, str, str, str]] = []
+) -> tuple[str | None, str | None, datetime | None, bool, bool, str | None]:
+    records: list[tuple[datetime, int, str, str, str, str | None]] = []
     complete = True
     for comment in comments:
         record = _review_record(comment.get("body"))
@@ -178,15 +206,15 @@ def _latest_matching_pass(
         if created_at is None or not isinstance(comment_id, int):
             complete = False
             continue
-        action, result, revision = record
-        records.append((created_at, comment_id, action, result, revision))
+        action, result, revision, default_revision = record
+        records.append((created_at, comment_id, action, result, revision, default_revision))
 
     matching = [record for record in records if record[4] == expected_head_sha]
     passes = [
         record for record in matching if record[3] == "PASS" and record[2] == required_review_action
     ]
     if not passes:
-        return None, None, None, False, complete
+        return None, None, None, False, complete, None
 
     latest_pass = max(passes, key=lambda item: (item[0], item[1]))
     later_contradiction = any(
@@ -195,7 +223,7 @@ def _latest_matching_pass(
         and record[3] != "PASS"
         for record in records
     )
-    return latest_pass[4], latest_pass[2], latest_pass[0], later_contradiction, complete
+    return latest_pass[4], latest_pass[2], latest_pass[0], later_contradiction, complete, latest_pass[5]
 
 
 def _non_closing_linkage(body: object, issue_number: int) -> bool:
@@ -255,6 +283,111 @@ def _human_input_fresh(
     return True, True
 
 
+def _is_historical_merged_carrier(payload: Mapping[str, object]) -> bool:
+    return (
+        payload.get("state") == "closed"
+        and payload.get("merged") is True
+        and _valid_sha(payload.get("merge_commit_sha"))
+        and _pull_request_head_sha(payload) is not None
+        and _timestamp(payload.get("merged_at")) is not None
+    )
+
+
+def _repository_default_branch_sha(
+    repository: str,
+    token: str,
+) -> tuple[str | None, str | None]:
+    try:
+        payload = _github_json(repository, token, "")
+        if not isinstance(payload, Mapping):
+            return None, None
+        default_branch = payload.get("default_branch")
+        if not isinstance(default_branch, str) or not default_branch.strip():
+            return None, None
+        ref = _github_json(
+            repository,
+            token,
+            f"git/ref/heads/{quote(default_branch, safe='/')}",
+        )
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return None, None
+    if not isinstance(ref, Mapping):
+        return default_branch, None
+    obj = ref.get("object")
+    if not isinstance(obj, Mapping):
+        return default_branch, None
+    sha = obj.get("sha")
+    return default_branch, sha if _valid_sha(sha) else None
+
+
+def _default_branch_contains_commit(
+    repository: str,
+    token: str,
+    *,
+    merge_commit_sha: str,
+    default_branch: str,
+) -> bool:
+    try:
+        comparison = _github_json(
+            repository,
+            token,
+            f"compare/{merge_commit_sha}...{quote(default_branch, safe='/')}",
+        )
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return False
+    if not isinstance(comparison, Mapping):
+        return False
+    return (
+        comparison.get("status") in {"ahead", "identical"}
+        and comparison.get("behind_by") == 0
+    )
+
+
+def _historical_merged_carrier_allowed(
+    payload: Mapping[str, object],
+    *,
+    repository: str,
+    token: str,
+    expected_head_sha: str,
+    current_revision: str | None,
+    expected_branch: str | None,
+) -> bool:
+    if (
+        not _is_historical_merged_carrier(payload)
+        or _pull_request_head_sha(payload) != expected_head_sha
+        or not _valid_sha(current_revision)
+    ):
+        return False
+    head = payload.get("head")
+    base = payload.get("base")
+    if not isinstance(head, Mapping) or not isinstance(base, Mapping):
+        return False
+    head_repo = head.get("repo")
+    base_repo = base.get("repo")
+    if (
+        not isinstance(head_repo, Mapping)
+        or not isinstance(base_repo, Mapping)
+        or head_repo.get("full_name") != repository
+        or base_repo.get("full_name") != repository
+        or (expected_branch is not None and head.get("ref") != expected_branch)
+    ):
+        return False
+    default_branch, current_default_sha = _repository_default_branch_sha(repository, token)
+    if (
+        default_branch is None
+        or current_default_sha != current_revision
+        or base.get("ref") != default_branch
+    ):
+        return False
+    merge_commit_sha = payload.get("merge_commit_sha")
+    return _valid_sha(merge_commit_sha) and _default_branch_contains_commit(
+        repository,
+        token,
+        merge_commit_sha=cast(str, merge_commit_sha),
+        default_branch=default_branch,
+    )
+
+
 def _lifecycle_context(review_action: str | None) -> str:
     if review_action == "review-implementation":
         return "implementation"
@@ -272,6 +405,8 @@ def acquire_merge_acceptance_snapshot(
     expected_head_sha: str,
     merge_strategy: MergeStrategy,
     required_review_action: str,
+    current_revision: str | None = None,
+    expected_branch: str | None = None,
 ) -> MergeAcceptanceSnapshot:
     """Acquire current GitHub evidence for one staged merge immediately before application."""
 
@@ -287,12 +422,17 @@ def acquire_merge_acceptance_snapshot(
             False, None, expected_head_sha, None, False, False, False, True, False, False
         )
 
-    reviewer_pass_head, review_action, pass_time, contradiction, review_complete = (
-        _latest_matching_pass(
-            comments,
-            expected_head_sha,
-            required_review_action=required_review_action,
-        )
+    (
+        reviewer_pass_head,
+        review_action,
+        pass_time,
+        contradiction,
+        review_complete,
+        reviewer_pass_default_branch_revision,
+    ) = _latest_matching_pass(
+        comments,
+        expected_head_sha,
+        required_review_action=required_review_action,
     )
     try:
         checks_pass, checks_complete = _required_checks_pass(repository, token, expected_head_sha)
@@ -309,6 +449,20 @@ def acquire_merge_acceptance_snapshot(
         merge_strategy=merge_strategy,
     )
     native_complete = native_result.disposition is not NativeClosingDisposition.FAIL_CLOSED
+    historical_merged_carrier_allowed = False
+    if pr.get("state") != "open":
+        historical_merged_carrier_allowed = _historical_merged_carrier_allowed(
+            pr,
+            repository=repository,
+            token=token,
+            expected_head_sha=expected_head_sha,
+            current_revision=current_revision,
+            expected_branch=expected_branch,
+        )
+    if historical_merged_carrier_allowed and (
+        reviewer_pass_default_branch_revision != current_revision
+    ):
+        historical_merged_carrier_allowed = False
     complete = review_complete and checks_complete and human_complete and native_complete
 
     return MergeAcceptanceSnapshot(
@@ -322,6 +476,7 @@ def acquire_merge_acceptance_snapshot(
         contradictory_evidence=contradiction,
         human_input_fresh=human_fresh,
         complete=complete,
+        historical_merged_carrier_allowed=historical_merged_carrier_allowed,
     )
 
 
@@ -331,6 +486,7 @@ def _merge_effect_allows(
     source: WorkerRequest,
     repository: str,
     token: str,
+    current_revision: str | None = None,
 ) -> bool:
     """Freshly re-evaluate one merge effect at the mutation-adjacent boundary."""
 
@@ -361,6 +517,8 @@ def _merge_effect_allows(
         expected_head_sha=expected_head_sha,
         merge_strategy=merge_strategy,
         required_review_action=required_review_action,
+        current_revision=current_revision,
+        expected_branch=f"agent/{source.change}",
     )
     return merge_acceptance_allows(snapshot)
 
@@ -424,6 +582,7 @@ def run_guarded_effect_application(
             source=source,
             repository=repository,
             token=token,
+            current_revision=current_revision,
         ):
             return batch, ApplyResult(False, "fresh merge acceptance rejected")
 
@@ -438,6 +597,7 @@ def run_guarded_effect_application(
             source=source,
             repository=repository,
             token=token,
+            current_revision=current_revision,
         ),
     )
 

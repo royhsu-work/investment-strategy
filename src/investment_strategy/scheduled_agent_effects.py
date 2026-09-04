@@ -602,6 +602,8 @@ class GitHubEffectAdapter:
         self._routing_targets: dict[StagedEffect, str] = {}
         self._created_pr_numbers: dict[StagedEffect, int] = {}
         self._terminal_transitions: set[StagedEffect] = set()
+        self._idempotent_merges: set[StagedEffect] = set()
+        self._merge_metadata: dict[str, tuple[str, str]] = {}
 
     def _current_issue(self) -> Mapping[str, object] | None:
         payload = _github_json(
@@ -691,6 +693,21 @@ class GitHubEffectAdapter:
         payload = _github_json(self.repository, self.token, query)
         return isinstance(payload, list) and not payload
 
+    def _historical_merged_pr(
+        self,
+        payload: Mapping[str, object],
+        expected_head_sha: str,
+    ) -> bool:
+        merged_at = payload.get("merged_at")
+        return (
+            payload.get("state") == "closed"
+            and payload.get("merged") is True
+            and _valid_sha(payload.get("merge_commit_sha"))
+            and isinstance(merged_at, str)
+            and bool(merged_at.strip())
+            and _pull_request_head_sha(payload) == expected_head_sha
+        )
+
     def _guard_github_mutation(self, payload: Mapping[str, object]) -> bool:
         observation = self._authorized_issue_observation()
         if observation is None:
@@ -753,7 +770,25 @@ class GitHubEffectAdapter:
                 and isinstance(base_ref, Mapping)
                 and self._no_existing_source_pull_request(expected_branch, default_branch)
             )
-        if operation in {"pull-request-update", "pull-request-ready", "pull-request-merge"}:
+        if operation == "pull-request-merge":
+            number = cast(int, payload["number"])
+            expected_head_sha = cast(str, payload["expected_head_sha"])
+            pr_state = self._source_pull_request(number, require_open=False)
+            if pr_state is None or _pull_request_head_sha(pr_state) != expected_head_sha:
+                return False
+            if self._historical_merged_pr(pr_state, expected_head_sha):
+                metadata = (
+                    cast(str, pr_state["merge_commit_sha"]),
+                    cast(str, pr_state["merged_at"]),
+                )
+                key = json.dumps(payload, sort_keys=True)
+                previous = self._merge_metadata.get(key)
+                if previous is not None and previous != metadata:
+                    return False
+                self._merge_metadata[key] = metadata
+                return True
+            return pr_state.get("state") == "open" and pr_state.get("merged") is not True
+        if operation in {"pull-request-update", "pull-request-ready"}:
             number = cast(int, payload["number"])
             pr_state = self._source_pull_request(number, require_open=True)
             if pr_state is None or _pull_request_head_sha(pr_state) != payload.get(
@@ -890,13 +925,28 @@ class GitHubEffectAdapter:
             )
             return
         if operation == "pull-request-merge":
+            number = cast(int, payload["number"])
+            expected_head_sha = cast(str, payload["expected_head_sha"])
+            current = self._source_pull_request(number, require_open=False)
+            if current is None or _pull_request_head_sha(current) != expected_head_sha:
+                raise RuntimeError("pull request merge source became stale")
+            if self._historical_merged_pr(current, expected_head_sha):
+                key = json.dumps(payload, sort_keys=True)
+                self._merge_metadata.setdefault(
+                    key,
+                    (cast(str, current["merge_commit_sha"]), cast(str, current["merged_at"])),
+                )
+                self._idempotent_merges.add(effect)
+                return
+            if current.get("state") != "open" or current.get("merged") is True:
+                raise RuntimeError("pull request merge source is not open")
             _github_json(
                 self.repository,
                 self.token,
-                f"pulls/{cast(int, payload['number'])}/merge",
+                f"pulls/{number}/merge",
                 method="PUT",
                 payload={
-                    "sha": cast(str, payload["expected_head_sha"]),
+                    "sha": expected_head_sha,
                     "merge_method": cast(str, payload.get("merge_method", "merge")),
                 },
             )
@@ -1030,11 +1080,17 @@ class GitHubEffectAdapter:
             )
         if operation == "pull-request-merge":
             current = self._source_pull_request(cast(int, payload["number"]), require_open=False)
-            return (
-                current is not None
-                and current.get("merged") is True
-                and _pull_request_head_sha(current) == payload.get("expected_head_sha")
+            if current is None or not self._historical_merged_pr(
+                current,
+                cast(str, payload["expected_head_sha"]),
+            ):
+                return False
+            metadata = (
+                cast(str, current["merge_commit_sha"]),
+                cast(str, current["merged_at"]),
             )
+            expected_metadata = self._merge_metadata.get(json.dumps(payload, sort_keys=True))
+            return expected_metadata is None or expected_metadata == metadata
         return False
 
     def observe_postcondition(self, effect: StagedEffect) -> bool:

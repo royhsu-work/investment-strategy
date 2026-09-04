@@ -7,6 +7,8 @@ import json
 
 import pytest
 
+import investment_strategy.scheduled_agent_effects as effects
+
 from investment_strategy.scheduled_agent_action_model import ResultKind
 from investment_strategy.scheduled_agent_effect_contract import (
     allowed_github_mutation_operations,
@@ -250,6 +252,114 @@ def test_worker_cannot_mutate_reserved_authority_labels(label: str) -> None:
     )
 
     assert not supported_effect_guard(source, effect)
+
+
+
+def test_merged_carrier_merge_is_idempotent_without_put(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    change = "prevent-native-closing-bypass"
+    source = WorkerRequest(159, "executor", "merge-implementation-pr")
+    expected_head = "b" * 40
+    pr = {
+        "number": 167,
+        "state": "closed",
+        "merged": True,
+        "body": "Implementation
+
+Refs #159
+",
+        "head": {
+            "ref": f"agent/{change}",
+            "sha": expected_head,
+            "repo": {"full_name": "owner/repo"},
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"full_name": "owner/repo"},
+        },
+        "merge_commit_sha": "c" * 40,
+        "merged_at": "2026-08-27T06:00:00Z",
+    }
+    issue = {
+        "number": 159,
+        "state": "open",
+        "body": f"Change: {change}",
+        "labels": [{"name": "action:merge-implementation-pr"}],
+        "created_at": "2026-08-27T05:00:00Z",
+        "closed_at": None,
+    }
+    calls: list[tuple[str, str]] = []
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        calls.append((path, method))
+        if path == "issues/159" and method == "PATCH":
+            labels = payload["labels"] if isinstance(payload, dict) else []
+            issue["labels"] = [{"name": name} for name in labels]
+        return issue
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        "owner/repo",
+        "token",
+        source,
+        authorized_change=change,
+    )
+    monkeypatch.setattr(adapter, "_source_still_current", lambda: True)
+    monkeypatch.setattr(adapter, "_current_issue", lambda: issue)
+    monkeypatch.setattr(
+        adapter,
+        "_source_pull_request",
+        lambda _number, require_open: pr,
+    )
+    effect = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 159,
+                "operation": "pull-request-merge",
+                "number": 167,
+                "expected_head_sha": expected_head,
+                "merge_method": "merge",
+            }
+        ),
+    )
+    raw = json.dumps(
+        {
+            "issue_number": 159,
+            "role": "executor",
+            "action": "merge-implementation-pr",
+            "change": change,
+            "result_kind": "merged",
+            "result_content": "MERGE_RESULT",
+            "requested_effects": [
+                {"kind": effect.kind, "payload_json": effect.payload_json}
+            ],
+        }
+    )
+    batch = parse_effect_batch(raw, source)
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=lambda: _preflight(
+            issue_number=159,
+            action="merge-implementation-pr",
+            change=change,
+        ),
+        effect_guard=adapter.guard,
+        apply_effect=adapter.apply,
+        observe_postcondition=adapter.observe_postcondition,
+        current_revision=_REVISION,
+    )
+    assert result.applied
+    assert not any(path.endswith("/merge") and method == "PUT" for path, method in calls)
 
 
 def test_transition_validator_is_not_a_runtime_dependency() -> None:

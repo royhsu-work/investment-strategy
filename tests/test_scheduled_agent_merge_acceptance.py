@@ -147,6 +147,22 @@ def test_corrected_successor_requires_new_exact_head_review_checks_and_preflight
     assert merge_acceptance_allows(fully_regated)
 
 
+
+def test_merge_acceptance_allows_explicit_historical_merged_carrier() -> None:
+    accepted = _accepted(
+        pr_open=False,
+        historical_merged_carrier_allowed=True,
+    )
+    assert merge_acceptance_allows(accepted)
+    assert not merge_acceptance_allows(
+        _accepted(
+            pr_open=False,
+            historical_merged_carrier_allowed=True,
+            current_head_sha="new-head",
+        )
+    )
+
+
 def test_merge_action_requires_its_matching_review_action() -> None:
     comments = (
         {
@@ -169,6 +185,79 @@ def test_merge_action_requires_its_matching_review_action() -> None:
 
     assert implementation[0] is None
     assert archive[0] == HEAD
+
+
+
+def test_review_pass_carries_current_default_branch_revision() -> None:
+    default_revision = "a" * 40
+    comments = (
+        {
+            "id": 1,
+            "created_at": "2026-08-27T06:00:00Z",
+            "body": (
+                "Action: Reviewer / review-implementation
+"
+                "Result: PASS
+"
+                f"Revision: {HEAD}
+"
+                f"Default-Branch-Revision: {default_revision}"
+            ),
+        },
+    )
+    record = merge_acceptance._latest_matching_pass(
+        comments,
+        HEAD,
+        required_review_action="review-implementation",
+    )
+    assert record[0] == HEAD
+    assert record[5] == default_revision
+
+
+
+def test_historical_merged_carrier_requires_current_main_ancestry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current_revision = "a" * 40
+    merge_commit = "b" * 40
+    repository = "owner/repo"
+    payload = {
+        "state": "closed",
+        "merged": True,
+        "merge_commit_sha": merge_commit,
+        "merged_at": "2026-08-27T06:00:00Z",
+        "head": {
+            "ref": "agent/prevent-native-closing-bypass",
+            "sha": HEAD,
+            "repo": {"full_name": repository},
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"full_name": repository},
+        },
+    }
+    reads: list[str] = []
+
+    def fake_github_json(_repository: str, _token: str, path: str) -> object:
+        reads.append(path)
+        if path == "":
+            return {"default_branch": "main"}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": current_revision}}
+        if path == f"compare/{merge_commit}...main":
+            return {"status": "ahead", "behind_by": 0}
+        raise AssertionError(f"unexpected GitHub read: {path}")
+
+    monkeypatch.setattr(merge_acceptance, "_github_json", fake_github_json)
+    assert merge_acceptance._historical_merged_carrier_allowed(
+        payload,
+        repository=repository,
+        token="token",
+        expected_head_sha=HEAD,
+        current_revision=current_revision,
+        expected_branch="agent/prevent-native-closing-bypass",
+    )
+    assert reads == ["", "git/ref/heads/main", f"compare/{merge_commit}...main"]
 
 
 def test_native_close_recurrence_is_rejected_before_durable_merge(
