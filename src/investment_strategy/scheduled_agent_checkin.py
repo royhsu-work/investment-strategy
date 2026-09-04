@@ -396,14 +396,15 @@ def _retire_exact_targets(
             raise RuntimeError("daily shard rollover became stale before retirement")
         target = min(remaining)
         observed = _github_issue(repository, token, target)
+        target_day = parse_checkin_day(observed)
         if (
             _issue_number(observed.get("number")) != target
-            or parse_checkin_day(observed) is None
-            or parse_checkin_day(observed) >= today
+            or target_day is None
+            or target_day >= today
             or observed.get("state") != "open"
         ):
             raise RuntimeError("daily shard retirement target became stale")
-        _close_shard(repository, token, target, parse_checkin_day(observed))
+        _close_shard(repository, token, target, target_day)
         remaining.remove(target)
         retired.append(target)
     return retired
