@@ -44,91 +44,6 @@ The repository SHALL define exactly the scheduled roles `Lead`, `Reviewer`, and 
 - THEN Reviewer does not edit the specification to make its own review pass
 - AND Lead remains the authority that resolves or revises the specification
 
-### Requirement: Actionable workflow routing is one logical role/action tuple
-
-A coordination Issue SHALL be actionable as ordinary open workflow work only when it is open and contains exactly one valid `agent:<role>` label and exactly one valid `action:<action>` label forming a legal routing tuple for that role.
-
-A closed coordination Issue retaining any repository-governed workflow `agent:*` or `action:*` label SHALL NOT be ordinary actionable work and SHALL represent current closed-routing debt until bounded recovery, terminal-retirement cleanup, or administrative repair resolves it. This includes a complete retained tuple and partial residue containing only an `agent:*` or only an `action:*` label. Pre-existing terminal Issues that still carry legacy routing remain visible as debt rather than being silently treated as safe history.
-
-Repository-owned terminal closure SHALL make `closed + no workflow routing labels` the logical postcondition for both formal `LIFECYCLE_COMPLETE` closure and legal pre-Change terminal research closure after `NO_CHANGE_REQUIRED` or `NO_GO`. The effect MUST be idempotent and MUST preserve every unrelated label under concurrent changes. It MUST NOT compute a complete label set from a fresh read and replace all labels as if that fresh read were a mutex or CAS primitive. Repository-owned application SHALL close Issue state without replacing labels, fresh-observe the Issue, remove only exact currently observed workflow routing labels through narrow label-removal effects with fresh preconditions/postconditions, and finish only after a fresh observation proves the Issue is closed and contains no workflow routing label.
-
-If that logical effect is interrupted after close or after removal of only part of the workflow routing tuple, any remaining `agent:*` or `action:*` residue SHALL remain current closed-routing debt and MUST stay discoverable by production acquisition until cleanup completes. An already-completed close or already-removed routing label MUST NOT be replayed merely to simulate atomicity.
-
-A closed coordination Issue with valid terminal completion and no workflow routing labels is terminal history and MUST NOT participate in normal formal-workflow routing/cardinality or current closed-routing-debt enumeration. A closed Issue with workflow routing residue MUST NOT be treated as terminal merely from age, prose, or prior model output.
-
-Zero, multiple, contradictory, or illegal routing labels on an open actionable Issue MUST fail closed and MUST NOT be resolved by model inference. Unrelated Issue labels MUST be preserved during ordinary routing changes and terminal routing retirement.
-
-#### Scenario: Open coordination Issue has valid routing
-
-- GIVEN an open coordination Issue has exactly one `agent:reviewer` label
-- AND exactly one `action:review-openspec` label
-- WHEN Reviewer discovers eligible work
-- THEN the Issue is eligible for the Reviewer `review-openspec` action
-
-#### Scenario: Closed terminal-pending Issue has the one legal exception
-
-- GIVEN a coordination Issue is closed
-- AND it still retains a valid nonterminal workflow routing tuple
-- AND valid terminal completion for final terminal conditions is absent
-- WHEN scheduled work discovery evaluates current unresolved obligations
-- THEN the Issue is not eligible as ordinary routed work
-- AND it remains current closed-routing debt
-- AND only the bounded `Lead / resolve-question` recovery or fail-closed contract may apply
-
-#### Scenario: Closed completed Issue is terminal history
-
-- GIVEN a coordination Issue has valid `LIFECYCLE_COMPLETE` evidence for its final reviewed and merged Archive revision
-- AND repository-owned terminal closure completes
-- WHEN the terminal postcondition is freshly observed
-- THEN the Issue is closed
-- AND workflow `agent:*` and `action:*` routing labels are absent
-- AND unrelated labels are preserved
-- AND the Issue is terminal history that does not consume formal WIP or current closed-routing-debt capacity
-
-#### Scenario: Terminal research closure retires routing
-
-- GIVEN a pre-Change Explore has a legal terminal `NO_CHANGE_REQUIRED` or `NO_GO` result
-- AND the coordination Issue still has `Change: unset`
-- WHEN repository-owned application performs the terminal close effect
-- THEN it closes the Issue without replacing its label set
-- AND it removes only workflow `agent:*` and `action:*` labels through narrow retirement effects
-- AND preserves unrelated labels
-- AND later normal dispatch does not rediscover that completed research after routing retirement finishes
-
-#### Scenario: Concurrent unrelated label survives terminal routing retirement
-
-- GIVEN a terminal close effect has been authorized for one exact Issue
-- AND the Issue has workflow routing plus unrelated label `foo`
-- AND another actor adds unrelated label `security-review` after a fresh read but before a routing-label removal
-- WHEN repository-owned application completes routing retirement
-- THEN it removes only the exact workflow routing labels
-- AND both `foo` and `security-review` remain present
-- AND no stale complete-label replacement can erase the concurrent unrelated label
-
-#### Scenario: Partial routing retirement remains observable
-
-- GIVEN a terminal Issue is closed
-- AND an interrupted retirement removed its `agent:*` label but left `action:finalize-archive`
-- WHEN production acquisition reconstructs current closed-routing debt
-- THEN the Issue is discovered from the retained action label
-- AND it is not classified as retired terminal history merely because the role label is already absent
-- AND candidate-bound cleanup may remove only the remaining routing residue after fresh terminal proof
-
-#### Scenario: Premature close retains an explicit recovery signal
-
-- GIVEN a nonterminal coordination Issue is closed outside the repository-owned terminal close effect
-- AND one or more workflow routing labels remain attached
-- WHEN production acquisition reconstructs current closed-routing debt
-- THEN that exact Issue remains a closed-routing candidate
-- AND normal dispatch does not infer terminal completion merely because the Issue is closed
-
-#### Scenario: Coordination Issue has conflicting role labels
-
-- GIVEN an open coordination Issue has both `agent:lead` and `agent:reviewer`
-- WHEN a scheduled role evaluates eligibility
-- THEN the routing is invalid
-- AND no role proceeds by guessing which role owns the work
-
 ### Requirement: One persistent coordination Issue represents the normal OpenSpec workflow lifecycle
 
 The workflow SHALL use one persistent coordination Issue for one routed work item through any optional pre-Propose Explore and, when a formal Change is authorized, through proposal, review, implementation, merge, archive review, archive merge, and final closure.
@@ -363,152 +278,6 @@ The repository specification SHALL define the minimum checks and legal result ca
 - AND closes the Issue only after that evidence is durable
 - AND re-observes `closed` before declaring workflow terminal
 
-### Requirement: Scheduled execution is at-least-once and state reconstructable
-
-Every scheduled action SHALL reconstruct relevant durable repository, Issue, PR, OpenSpec, GitHub Actions, and any specifically awaited external resource state before deciding what remains to be done.
-
-The workflow MUST NOT require previous conversation memory or a previous scheduled run to have exited cleanly.
-
-Partial execution, interruption, tool failure, or missing final response MUST NOT transfer ownership merely because some work was attempted.
-
-Before a Scheduled role persists a consequential workflow result or completes a routing ownership transition, it SHALL fresh-read the persistent coordination Issue for direct-Human comments newer than the durable workflow evidence boundary on which the pending decision relies. The same freshness/disposition contract applies at an unsafe merge mutation through the merge requirement below.
-
-A candidate comment counts as direct-Human input for this freshness contract only when durable raw creation provenance identifies the designated Human actor and shows creation was not performed via a GitHub App. This classification is an input-freshness safeguard only and MUST NOT itself satisfy a Human-reserved admission, answer, authorization, resume, or risk/scope decision; those boundaries continue to require their separately governed provenance-bound predicate and exact decision reference.
-
-If newer direct-Human input could materially affect correctness, approved scope, traceability, gate validity, lifecycle preparation, or mutation assumptions, the current role MUST NOT silently proceed from its older snapshot. Before the consequential boundary completes, the exact comment id SHALL have one reconstructable durable disposition that is legal for the current authority boundary: addressed within current authority with bounded rationale; classified non-blocking with a bounded reason when clearly informational, administrative, or immaterial; converted into an existing action-defined finding/blocker/correction result; or routed/escalated to the legal role or Human-reserved boundary. A role MUST NOT answer outside its existing authority merely to clear the disposition requirement.
-
-A prior valid disposition SHALL identify the exact Human comment id so later wakes can reconstruct that it is already handled without a comment queue, unread counter, acknowledgement label, hidden registry, or new lifecycle state. A direct-Human comment that appears after action start but before the consequential boundary is newer evidence at the final fresh-read. Missing raw provenance, ambiguous materiality, or an unresolved legal disposition MUST fail closed at that boundary rather than assume the older snapshot remains complete.
-
-When a prior operation failed after only some durable mutations completed, recovery SHALL distinguish observed durable mutations from intended-but-uncompleted work. If the current invocation can still write repository evidence, it SHALL preserve the existing canonical action/result/`EXECUTION_EXCEPTION`/cross-role `HANDOFF` evidence required by the owning action. If no repository evidence surface is writable, the run MUST NOT manufacture a durable workflow transition from external Scheduled Task output; a later wake SHALL reconstruct correctness from the repository state that actually exists.
-
-When recovery evaluates an already-completed durable mutation or handoff, it SHALL also reconstruct whether valid causal-descendant evidence within the same coordination workflow proves that exact transition was already consumed by later lifecycle work. If such descendant evidence exists, recovery MUST NOT overwrite canonical routing to replay the earlier transition. It MAY repair only still-required non-routing journal evidence when that repair is non-contradictory. Ambiguous or contradictory consumption evidence MUST fail closed rather than authorize backward routing repair.
-
-This consumed-transition guard is recovery-specific and MUST NOT be interpreted as a generic forward-only lifecycle rule; normal governed correction loops remain legal.
-
-After a selected action persists its durable result and legally changes routing, the invocation MAY continue to the next action only when all of the following are true:
-
-- the selected coordination Issue is unchanged;
-- the target role equals the fixed invocation role;
-- the target routing is current after a fresh read;
-- the target action is immediately actionable without Human authority, a real external asynchronous wait, ambiguity, or unsafe/stale state; and
-- the target action reloads its mapped default-branch skill and reconstructs its own required durable state and preconditions before mutation.
-
-The invocation MUST stop at the first cross-role transfer, unresolved Human boundary, real external asynchronous wait, ambiguity/unsafe state, stale/concurrency loss, or actual execution interruption. Same-role continuation MUST NOT process a second coordination Issue or introduce a timer, continuation counter, lease, heartbeat, hidden dispatcher, or second workflow state machine.
-
-A first `absent`, `queued`, or `in_progress` observation of the exact required external resource just created or triggered by the selected action MUST NOT by itself be treated as a real cross-invocation asynchronous wait while bounded same-invocation execution opportunity remains. The action SHALL confine bounded observation to that same exact resource and, if it becomes terminal during the invocation, SHALL consume that terminal result immediately when the current action remains authorized. A later wake resuming a real wait SHALL fresh-read the exact awaited resource before yielding again.
-
-#### Scenario: Run stops after durable work but before handoff
-
-- GIVEN a scheduled role completes durable action work
-- AND the run terminates before routing changes
-- WHEN a later run observes the same routing tuple
-- THEN it reconstructs whether the durable action work already exists
-- AND it performs only remaining legal work or the missing transition/handoff
-- AND it does not require memory of the previous run
-
-#### Scenario: Normal evidence write itself is unavailable
-
-- GIVEN a catchable execution failure occurs
-- AND the current invocation cannot write the normal coordination-Issue evidence surface
-- WHEN no other repository-governed durable evidence surface is legally available
-- THEN the invocation does not claim that a result, handoff, or ownership transfer became durable merely because external Scheduled Task output exists
-- AND a later wake reconstructs from actual repository mutations and current routing
-
-#### Scenario: Same-role action becomes immediately actionable
-
-- GIVEN one invocation selected coordination Issue I with fixed role Lead
-- AND Lead action A persisted its result and legally routed I to another Lead action B
-- AND no Human, asynchronous, ambiguous, stale, or unsafe boundary exists
-- WHEN the invocation fresh-reads I and reconstructs B
-- THEN it loads B's mapped default-branch skill
-- AND continues B in the same invocation
-- AND it does not select another Issue or redispatch to another role
-
-#### Scenario: Cross-role routing ends the invocation
-
-- GIVEN an invocation selected Issue I with fixed role Lead
-- AND the current action legally routes I to Reviewer
-- WHEN the routing mutation succeeds
-- THEN the Lead invocation records the required cross-role handoff evidence
-- AND ends without executing Reviewer work
-
-#### Scenario: Just-triggered exact validation completes quickly
-
-- GIVEN the selected action created or triggered exact required validation resource R
-- AND the first observation of R is queued or in progress
-- AND bounded same-invocation execution opportunity remains
-- WHEN R becomes terminal during that invocation
-- THEN the action consumes R's terminal result immediately when still authorized
-- AND it does not voluntarily yield merely because the first observation was nonterminal
-
-#### Scenario: Later wake resumes a real asynchronous wait
-
-- GIVEN an earlier invocation yielded because exact awaited resource R remained nonterminal after bounded execution opportunity ended
-- WHEN a later wake reconstructs the selected action
-- THEN it fresh-reads R itself before concluding the wait still exists
-- AND historical waiting evidence alone cannot justify another yield
-
-#### Scenario: Earlier merge transition already has causal descendants
-
-- GIVEN merge mutation M and its accepted revision are already durable
-- AND valid later lifecycle evidence in the same coordination workflow proves M's handoff was consumed
-- AND a stale recovery attempt reconstructs M as already completed
-- WHEN recovery evaluates whether to repair M's routing transition
-- THEN recovery does not rewrite canonical routing back to M's immediate downstream owner/action
-- AND it may repair only still-required non-routing journal evidence when safe
-- AND legitimate separately governed correction loops remain unaffected
-
-#### Scenario: Consumption evidence is contradictory
-
-- GIVEN recovery reconstructs an already-completed durable mutation
-- AND available same-workflow evidence is contradictory about whether its transition was consumed
-- WHEN recovery evaluates routing repair
-- THEN it fails closed
-- AND it does not choose a lifecycle position by model inference
-
-#### Scenario: Human input arrives while Executor is preparing READY
-
-- GIVEN Executor reconstructed an implementation snapshot and is correcting approved findings
-- AND before Executor persists `READY`, a newer direct-Human comment appears that could materially affect correctness or scope
-- WHEN Executor performs the consequential-boundary fresh-read
-- THEN the older implementation snapshot is insufficient for READY
-- AND Executor MUST disposition the exact comment within Executor authority or route the unresolved meaning to its legal owner before READY can be persisted
-
-#### Scenario: Clearly non-substantive Human comment does not create lifecycle waiting state
-
-- GIVEN a newer direct-Human comment is administrative or clearly immaterial to the pending workflow decision
-- WHEN the current role evaluates the consequential boundary
-- THEN it MAY record a bounded non-blocking disposition referencing that exact comment id
-- AND the workflow MAY continue without creating a new waiting status, lifecycle action, blocker label, or Human-approval ceremony
-
-#### Scenario: Human-reserved decision remains provenance-bound
-
-- GIVEN a newer direct-Human comment contains a statement about a decision that governance reserves to Human authority
-- WHEN a Scheduled role evaluates that statement
-- THEN this freshness/disposition contract does not itself authorize the decision
-- AND the existing exact `Human-Decision-For` plus qualifying provenance-bound approval predicate remains required at the mapped Human-reserved boundary
-
-#### Scenario: Question belongs to another role authority
-
-- GIVEN a newer direct-Human comment raises a material specification/scope question while Executor or Reviewer owns the current action
-- WHEN the current role cannot legally resolve that meaning within its authority
-- THEN it MUST NOT answer outside its role merely to mark the comment handled
-- AND it dispositions the comment by using the existing finding/blocker and routing path to the legal owner
-
-#### Scenario: Repeated wake recognizes prior exact-comment disposition
-
-- GIVEN a direct-Human comment C was previously durably dispositioned by exact comment id under a legal action result, finding, answer, or routing boundary
-- WHEN a later wake reconstructs the same coordination Issue
-- THEN C does not require a duplicate acknowledgement or disposition
-- AND only newer or materially unresolved direct-Human input remains relevant to the current consequential-boundary fresh-read
-
-#### Scenario: Connector-authored workflow message is not reclassified as direct-Human input
-
-- GIVEN a coordination-Issue comment is attributed to the designated account but raw creation provenance shows it was performed via a GitHub App
-- WHEN a Scheduled role evaluates the Human-input freshness contract
-- THEN that comment is not classified as direct-Human input
-- AND its actor identity alone neither creates this disposition obligation nor grants Human authority
-
 ### Requirement: Executor persists task completion at verified vertical-slice checkpoints
 
 Executor SHALL treat OpenSpec task checkboxes as durable completion evidence rather than fine-grained live progress state.
@@ -544,64 +313,6 @@ If execution is interrupted during the current incomplete or unverified slice, t
 - WHEN a later Executor run reconstructs implementation state
 - THEN previously verified slice markers remain durable
 - AND the current slice is reconstructed from repository, test, and task reality without treating missing current-slice markers as proof that no work exists
-
-### Requirement: Routing handoff persists evidence before ownership transfer
-
-A scheduled role SHALL persist the required action/review result, governed artifact state, and revision-aware evidence before changing the logical routing tuple. The result evidence MAY therefore exist while the source routing tuple is still current and MUST NOT by itself be treated as proof that ownership transferred.
-
-Before the routing mutation, the role SHALL fresh-read current Issue routing. If routing no longer matches the source action being completed, the role MUST NOT overwrite the newer routing and MUST stop as stale/contradictory rather than manufacture a transition.
-
-If the source tuple still matches and the target role differs from the fixed invocation role, the role SHALL replace the routing tuple with the target owner/action and observe the successful routing mutation. After the routing mutation succeeds, the role SHALL persist the handoff lifecycle-journal evidence required by the currently authoritative presentation contract and SHALL describe the resulting target ownership. When the canonical template contract is active on the default branch, this record uses `HANDOFF`. A required cross-role handoff is durably complete only when both target routing and required handoff evidence are durable, and the invocation SHALL end without executing the target role.
-
-If the source tuple still matches and the target role equals the fixed invocation role, the role SHALL replace the routing tuple with the target action and observe the successful routing mutation. The source action result plus successful routing mutation is sufficient transition evidence; the workflow MUST NOT require a synthetic `HANDOFF` or a new transition message type. After fresh reconstruction, same-role continuation follows the at-least-once requirement above.
-
-The workflow MUST NOT intentionally expose an intermediate state with two role owners or two action owners during either a same-role transition or a cross-role handoff. Routing labels remain canonical workflow ownership; handoff evidence is reconstructable evidence of a completed cross-role transfer rather than a substitute for routing state.
-
-If an actual interruption occurs after result evidence is durable but before routing mutation completes, a later eligible run SHALL preserve the completed result and perform only the missing legal routing work. If a cross-role routing mutation already succeeded but the handoff write was interrupted, recovery SHALL preserve the target routing and repair only the missing handoff evidence; it MUST NOT replay the completed source action merely to recreate the journal. If a same-role routing mutation already succeeded, recovery SHALL reconstruct the target action from current routing without manufacturing a `HANDOFF`.
-
-#### Scenario: Result is durable before ownership transfer
-
-- GIVEN a role has durably persisted the action/review result and required revision-aware evidence
-- AND the coordination Issue still carries the matching source routing tuple
-- AND the legal target belongs to a different role
-- WHEN the role performs the required cross-role handoff
-- THEN it fresh-reads the source routing
-- AND changes routing to the legal target tuple
-- AND observes the successful routing mutation
-- AND only then persists the required handoff evidence using the currently authoritative presentation contract
-
-#### Scenario: Another run has already changed routing
-
-- GIVEN a role has completed work and persisted its result/revision evidence
-- AND a fresh read shows that another run has already changed the Issue routing tuple
-- WHEN the first run reaches its routing transition step
-- THEN it does not overwrite the newer routing
-- AND it does not persist false handoff evidence claiming a cross-role transition it did not perform
-- AND it stops for later reconstruction under the current durable owner/action
-
-#### Scenario: Routing changed but handoff write was interrupted
-
-- GIVEN a legal cross-role handoff already changed routing to the target tuple
-- BUT the run ended before required handoff evidence was persisted
-- WHEN a later eligible run reconstructs the durable state
-- THEN it preserves the already changed routing
-- AND repairs only the missing handoff evidence before a later lifecycle transition
-- AND it does not replay the completed source action
-
-#### Scenario: Same-role transition does not create synthetic handoff
-
-- GIVEN Lead action A has durable result evidence
-- AND A legally routes the same Issue to Lead action B
-- WHEN the routing mutation succeeds
-- THEN no `HANDOFF` is required solely for the same-role action transition
-- AND B reconstructs from durable result, current routing, and current repository state
-
-#### Scenario: Cross-role transfer still requires handoff
-
-- GIVEN Executor completes an action and legally routes the Issue to Lead
-- WHEN the routing mutation succeeds
-- THEN Executor persists canonical `HANDOFF` evidence describing Lead ownership
-- AND Executor does not execute Lead work in the same invocation
 
 ### Requirement: Fresh-read plus label update is not treated as mutual exclusion
 
@@ -824,86 +535,6 @@ The normal validated `agent/archive-<change>` branch is a lifecycle artifact and
 - WHEN later lifecycle gates evaluate that PR
 - THEN the linkage does not substitute for independent archive Reviewer PASS, Executor exact-head/current-check merge preconditions, or terminal lifecycle reconstruction
 
-### Requirement: Each scheduled run processes at most one actionable work item using a fixed stable order
-
-A scheduled invocation SHALL process at most one eligible actionable coordination Issue per run.
-
-In `fixed-role` mode, role-local lifecycle/blocker priority SHALL remain deterministic:
-
-- Lead: `resolve-question` > `finalize-archive` > `finalize-change` > pre-activation intake;
-- Reviewer: `review-archive` > `review-implementation` > `review-openspec`;
-- Executor: `merge-pr` > `implement-change`.
-
-For Reviewer, Executor, and the three higher-priority Lead actions above, selection within the same fixed-role role/action priority SHALL choose earliest GitHub `created_at`, then lower Issue number.
-
-If fixed-role Lead has no eligible `resolve-question`, `finalize-archive`, or `finalize-change` work, every coherently routed open `Lead / explore-change + Change: unset` entry and every coherently routed open `Lead / propose-change + Change: unset` entry SHALL form one combined pre-activation intake queue ordered by earliest GitHub `created_at`, then lower Issue number. Dispatcher queue eligibility SHALL use current structural Issue/routing facts and MUST NOT depend on origin, Human admission, prior `ACTION_RESULT` prose, or action-local semantic readiness. The selected Issue's current routing determines whether Lead executes Explore or Propose. Fixed-role mode MUST NOT apply an `explore-change > propose-change` priority inside this combined intake queue.
-
-In `workflow-dynamic` mode, an open formal active workflow SHALL be selected before pre-activation work; its valid routing tuple determines the role/action. A closed Issue retaining any repository-governed workflow routing label SHALL be current closed-routing debt rather than ordinary active workflow work and MUST enter the bounded recovery/terminal-retirement classification before pre-activation intake.
-
-If no open formal active workflow exists and current closed-routing debt is empty, every coherently routed open `Lead / explore-change + Change: unset` entry and every coherently routed open `Lead / propose-change + Change: unset` entry SHALL form the same deterministic pre-activation queue ordered by earliest GitHub `created_at`, then lower Issue number. Only that winner may proceed. Current routing SHALL remain operational truth for queue selection; dispatch MUST NOT re-read Issue comments/events to re-prove why a coherent Propose tuple exists. Action-local semantic evidence is reconstructed only after the mapped action is selected.
-
-The model MUST NOT substitute its own urgency or preference for either mode's deterministic selection rules.
-
-#### Scenario: Dynamic mode follows the formal active workflow
-
-- GIVEN dispatch mode is `workflow-dynamic`
-- AND exactly one formal active workflow routes to `Executor / implement-change`
-- AND queued Explore and Propose Issues also exist
-- WHEN a Scheduled Task selects work
-- THEN the formal active workflow is selected
-- AND Executor is the fixed invocation role
-- AND the queued pre-activation work remains queued
-
-#### Scenario: Dynamic mode selects earliest pre-activation entry across Explore and Propose
-
-- GIVEN dispatch mode is `workflow-dynamic`
-- AND no open formal active workflow exists
-- AND current closed-routing debt is empty
-- AND an older coherently routed `Lead / propose-change + Change: unset` Issue exists
-- AND a newer coherently routed `Lead / explore-change + Change: unset` Issue exists
-- WHEN Scheduled workflow selects pre-activation work
-- THEN the older Propose Issue is selected by GitHub creation order
-- AND the newer Explore Issue remains queued
-- AND dispatch does not read prior `ACTION_RESULT` prose or Human-admission evidence to decide whether the older current routing may participate
-
-#### Scenario: Irrelevant result prose cannot alter pre-activation selection
-
-- GIVEN the deterministic pre-activation winner is a coherently routed `Lead / propose-change + Change: unset` Issue
-- AND an earlier Issue comment contains additional prose fields such as another bullet beginning `- Workflow:`
-- WHEN dispatch reconstructs the current pre-activation queue
-- THEN that comment is not parsed for queue eligibility
-- AND the current Propose routing remains in the queue
-- AND FIFO selection is unchanged by the prose shape
-
-#### Scenario: Fixed-role Lead uses the same combined pre-activation winner
-
-- GIVEN dispatch mode is `fixed-role`
-- AND the scheduled role is Lead
-- AND no eligible `resolve-question`, `finalize-archive`, or `finalize-change` work exists
-- AND an older coherently routed Propose Issue and a newer coherently routed Explore Issue are both valid with `Change: unset`
-- WHEN Lead selects pre-activation intake
-- THEN the older Propose Issue is selected
-- AND the newer Explore Issue remains queued
-- AND action type does not override the combined queue's creation-order winner
-
-#### Scenario: Open Explore remains selected without an in-progress marker
-
-- GIVEN the oldest valid pre-activation entry is an open `Lead / explore-change` Issue
-- AND it has not reached a terminal result or transitioned to Propose
-- WHEN a later wake reconstructs the same queue
-- THEN that same Issue remains the deterministic winner by stable creation order
-- AND no `status:exploring`, lease, heartbeat, approval token, or hidden ownership state is required
-
-#### Scenario: Dynamic mode selects terminal reconstruction before queued work
-
-- GIVEN dispatch mode is `workflow-dynamic`
-- AND a closed coordination Issue retains repository-governed workflow routing
-- AND queued Explore or Propose work exists
-- WHEN a Scheduled Task reconstructs current work
-- THEN the closed Issue is treated as current closed-routing debt rather than ordinary active workflow work
-- AND only the bounded recovery/terminal-retirement classification may determine its legal disposition
-- AND queued pre-activation work remains unactivated until that debt is legally resolved or retired
-
 ### Requirement: Coordination Issue closure is the durable final lifecycle transition
 
 A completion comment, Reviewer PASS, Archive merge, Lead terminal-verification decision, or statement that an Issue may be closed MUST NOT constitute completed coordination lifecycle by itself.
@@ -1018,257 +649,6 @@ A Scheduled Task MUST determine dispatch mode from that marker after loading def
 - WHEN a legacy role Scheduled Task wakes
 - THEN it uses its externally assigned legacy role
 - AND follows the existing role-local deterministic discovery contract
-
-### Requirement: Workflow-dynamic dispatch derives one fixed invocation role from durable workflow state
-
-In `workflow-dynamic` mode, a scheduled wake SHALL reconstruct current durable workflow state before selecting a role. If exactly one active workflow exists, its valid routing tuple SHALL determine the first invocation role/action and mapped skill.
-
-Authoritative default-branch Scheduled-Agent governance MUST instruct the active model to treat the role from the first repository-owned `AUTHORIZE` decision as fixed for the remainder of that Scheduled-Agent wake. Every later mapped action in the same wake MUST still come from fresh repository-owned dispatch and MUST use a fresh mapped worker that reloads current default-branch governance and reconstructs its own durable preconditions.
-
-A fresh dispatch MAY select another action owned by the same role; when that successor is immediately actionable, it MAY continue within the same Scheduled-Agent wake as a fresh mapped worker. Action identity is therefore not wake-immutable.
-
-A routing handoff MAY persist a different next role/action and fresh dispatch MAY select that durable successor. When the selected role differs from the role being executed by the current wake, authoritative governance MUST instruct the current model invocation to end without executing the different-role successor. A later Scheduled-Agent wake SHALL reconstruct current durable state and perform ordinary repository-owned dispatch before that role executes. The wake barrier MUST NOT rewrite the successor routing, invent a defer command, or persist wake-role state in repository workflow state.
-
-This cross-role wake boundary is a prompt/model-level behavioral contract. This capability MUST NOT require repository runtime code to retain or compare an invocation-local `initial_role`, provide a script-owned hard stop for the external ChatGPT execution context, use an OpenAI API key or GitHub Actions-hosted model worker, require a Work wake attestation, or claim repository-verifiable proof that the external host terminated. Repository tests MAY prove that authoritative governance presents the required instruction; they MUST NOT represent that evidence as mechanical proof of external-host compliance.
-
-External Scheduled Task prompts MUST remain bootstrap/delegation surfaces that load and follow current default-branch governance rather than duplicating the workflow DAG or role-specific successor policy. The dispatcher MUST NOT introduce model-derived global urgency, cross-role priority scoring, fixed-role scheduler semantics, or a second workflow DAG.
-
-#### Scenario: Active workflow routes to Reviewer
-
-- GIVEN dispatch mode is `workflow-dynamic`
-- AND the single active workflow has valid routing `agent:reviewer + action:review-openspec`
-- WHEN a Scheduled Task dispatches the wake
-- THEN Reviewer is selected as the role for that wake
-- AND authoritative governance instructs the active model to keep that role for the current wake
-- AND the `review-openspec` skill is loaded for a fresh mapped worker
-- AND any legacy external Lead/Reviewer/Executor assignment is ignored for role selection
-
-#### Scenario: Handoff changes the next owner
-
-- GIVEN the current Scheduled-Agent wake is executing Lead
-- AND Lead durably completes its action and legally hands off to Reviewer
-- WHEN fresh repository-owned dispatch selects the Reviewer successor
-- THEN the durable Reviewer routing and machine selection are preserved
-- AND authoritative governance instructs the current Lead wake to end
-- AND the current model does not execute Reviewer work in that same wake
-- AND a later Scheduled-Agent wake must fresh-reconstruct before Reviewer may execute
-
-#### Scenario: Same-role successor remains work-conserving
-
-- GIVEN the current Scheduled-Agent wake is executing Lead
-- AND Lead durably completes one action on the selected coordination Issue
-- AND fresh repository-owned dispatch selects another immediately actionable Lead action on that same Issue
-- WHEN the wake evaluates continuation under current governance
-- THEN the wake may continue
-- AND the successor executes as a fresh Lead mapped worker
-- AND the prior worker context does not authorize or supply current-state evidence for that successor
-
-#### Scenario: Cross-role barrier does not create durable wake state
-
-- GIVEN a fresh dispatch selects a successor owned by a role different from the current wake role
-- WHEN authoritative governance instructs the current wake to terminate at the cross-role boundary
-- THEN no Issue field, routing label, comment protocol, lease, heartbeat, queue entry, attestation field, or hidden repository state is created to remember the wake role
-- AND the already durable workflow routing remains the only successor workflow state consumed by the next wake
-
-#### Scenario: Prompt-level boundary does not claim a mechanical host guarantee
-
-- GIVEN the external ChatGPT Scheduled-Agent host does not expose a repository-owned hard-stop or repository-verifiable per-run wake attestation
-- AND Human has approved prompt/model-level enforcement for this capability
-- WHEN the repository verifies the cross-role wake policy
-- THEN tests verify the authoritative governance instruction and durable routing behavior
-- AND no test claims that repository code can mechanically prove termination of the external ChatGPT task
-- AND no OpenAI API key or GitHub Actions-hosted model execution is required
-
-### Requirement: Selected Scheduled Agent actions are work-conserving within an invocation
-
-After a Scheduled Agent invocation selects one legal role/action, continuation SHALL be the default and that selected action SHALL continue all immediately actionable work within the same invocation while the routing still matches the selected action, required revision/preconditions and authority remain current, and no legal blocking condition exists.
-
-Before the invocation returns, it MUST positively classify and prove from current evidence one legal Invocation Exit. If no legal Exit class is proven, the invocation MUST continue the selected workflow under the fixed invocation role while routing, authority, revision/preconditions, and execution capability remain current.
-
-A durable checkpoint, remaining approved local work, a recoverable same-role failure, or a failed-but-actionable validation MUST NOT by itself be treated as a voluntary yield point. When the correction is within the selected role/action authority and approved contract, the invocation SHALL perform that correction and continue the action instead of deferring it solely to a later wake.
-
-A selected action MAY end before its normal completion only when current evidence positively proves at least one of these bounded Invocation Exit classes:
-
-- a completed cross-role handoff with the target routing durably observed, or a true workflow/action terminal result under the authoritative lifecycle topology;
-- a genuine Human-reserved authority boundary whose current contract prevents further same-invocation work;
-- a genuine external asynchronous wait that cannot be further consumed within the current legal execution opportunity and identifies the exact awaited resource/evidence;
-- stale routing, revision, concurrency, or precondition loss that makes continued execution unsafe;
-- materially ambiguous or contradictory durable state requiring fail-closed disposition; or
-- a hard tool, permission, runtime, or execution boundary after any applicable same-authority recovery/disposition procedure has been evaluated from current evidence and no legal local continuation remains.
-
-Exit Proof SHALL be an internal execution precondition and MUST NOT require a new lifecycle action, workflow status, progress comment, timer, retry counter, heartbeat, lease, hidden runtime cursor, durable waiter state, or second workflow DAG. Existing action results, review results, handoffs, execution exceptions, exact-resource observations, and lifecycle journals remain the durable evidence surfaces.
-
-The following intermediate facts MUST NOT independently constitute Exit Proof: an intended RED is established; GREEN or REFACTOR completes; validation fails but correction is actionable within current authority; a commit or push completes; the first observation of an exact external resource is absent, queued, or in progress; a verified Slice checkpoint exists while approved same-action work remains; an action completes with an immediately actionable successor owned by the fixed invocation role; or the exact next legal step is already known and executable.
-
-For an exact required external resource just created or triggered by the selected action, ordinary asynchronous-wait Exit evidence MUST be sequence-derived. After the first current observation is absent, queued, or in progress, the same invocation MUST perform at least one subsequent fresh observation of the same exact target/resource before that resource can support the existing asynchronous-wait Exit class. If the subsequent observation is terminal, the selected action MUST consume that terminal result immediately. If the subsequent fresh observation remains absent or nonterminal, current routing/revision/preconditions remain valid, and no other same-authority work is immediately actionable, that completed bounded re-observation MAY establish the existing genuine asynchronous-wait Exit. This fixed minimum re-observation floor MUST NOT introduce a wall-clock delay policy, sleep requirement, polling counter, heartbeat, retry state, durable waiter, or hidden runtime state.
-
-A catchable tool/runtime/execution failure does not by itself waive exception capture or invocation finalization and does not become a hard-boundary Exit merely because an exception occurred. If the invocation still has execution opportunity, it MUST first preserve the required raw exception evidence, then apply the existing action-specific recovery/disposition contract. When legal same-authority recovery is immediately actionable, it MUST recover and continue within the same selected role/action. Only when current evidence proves that applicable same-authority recovery/disposition cannot legally continue may the failure support a hard execution-boundary Exit. A genuinely uncatchable hard termination MAY prevent current-run persistence and is handled by later at-least-once reconstruction.
-
-The generic continuation/termination, catchable-exception, and normal-finalization contracts SHALL be owned once by shared governance in `agents/AGENTS.md`. Role and skill documents MUST NOT duplicate or weaken these shared rules; they MAY define only action-specific results, authority boundaries, waits, local recovery, blockers, and handoffs.
-
-#### Scenario: Failed validation is locally actionable
-
-- GIVEN a selected action still owns the current routing
-- AND its validation fails for a clear correction inside that same action's approved authority
-- AND the execution revision/preconditions remain current
-- WHEN the invocation evaluates whether to stop
-- THEN the validation failure is not a voluntary yield point
-- AND the invocation corrects the failure and reruns the required validation in the same invocation
-
-#### Scenario: Verified implementation checkpoint has more approved work
-
-- GIVEN Executor is selected for `implement-change`
-- AND one approved Slice reaches successful VERIFY and its required checkpoint is persisted
-- AND another approved Slice is immediately actionable under the same current routing and approved contract
-- WHEN Executor completes the checkpoint boundary
-- THEN the checkpoint is a durable recovery boundary rather than a scheduled-run termination boundary
-- AND Executor continues the next approved Slice in the same invocation
-
-#### Scenario: External asynchronous evidence is genuinely pending
-
-- GIVEN Lead is selected for a finalize action
-- AND the action has completed all immediately actionable Lead work
-- AND legal continuation depends on repository automation that is still running and whose exact result is not yet available
-- AND current evidence proves that exact resource cannot be further consumed within the current legal execution opportunity
-- WHEN Lead evaluates continuation
-- THEN retaining the current routing and ending the invocation is a legal external-wait outcome
-- AND the Exit Proof identifies the exact awaited resource/evidence for later reconstruction
-
-#### Scenario: Competing durable state invalidates the execution base
-
-- GIVEN an invocation selected a role/action from durable revision R
-- AND another run wins a competing durable mutation so the required base/preconditions are no longer current
-- WHEN the first invocation rechecks its preconditions
-- THEN it stops as stale rather than rebasing or continuing speculative work inside the same invocation
-
-#### Scenario: RED with immediately actionable GREEN cannot exit
-
-- GIVEN Executor has established an intended RED for approved implementation work
-- AND the exact GREEN correction is already known and executable within `Executor / implement-change`
-- WHEN the invocation evaluates whether it may return
-- THEN RED is not valid Exit Proof
-- AND Executor continues into GREEN while current routing and preconditions remain valid
-
-#### Scenario: Failed but actionable validation cannot exit
-
-- GIVEN a required validation fails for a correction that remains inside the selected role/action authority and approved contract
-- AND the failure is actionable from current evidence
-- WHEN the invocation evaluates Exit Proof
-- THEN the failed validation is not a legal Exit by itself
-- AND the invocation corrects and continues under the existing work-conserving contract
-
-#### Scenario: First nonterminal exact-resource observation cannot exit
-
-- GIVEN the selected action has just created or triggered an exact external resource such as a required CI run
-- AND its first current observation is absent, queued, or in progress
-- AND current routing, authority, and execution opportunity still allow bounded consumption of that exact resource
-- WHEN the invocation evaluates Exit Proof
-- THEN that first nonterminal observation is not a genuine asynchronous-wait Exit
-- AND the invocation continues bounded observation of the same exact resource
-
-#### Scenario: Genuine unconsumable external wait may exit
-
-- GIVEN an exact required external resource remains nonterminal
-- AND current evidence proves the current legal execution opportunity cannot further consume it without inventing waiter state or crossing an authority boundary
-- WHEN the invocation evaluates Exit Proof
-- THEN it MAY classify a genuine external asynchronous wait
-- AND the Exit Proof identifies the exact awaited resource/evidence for later reconstruction
-
-#### Scenario: First nonterminal exact-resource observation requires re-observation
-
-- GIVEN the selected action has just created or triggered an exact required external resource such as a CI run
-- AND its first current observation is absent, queued, or in progress
-- AND current routing, authority, revision/preconditions, and execution capability remain valid
-- WHEN the invocation evaluates Exit Proof
-- THEN that first nonterminal observation is not a genuine asynchronous-wait Exit
-- AND the invocation performs at least one subsequent fresh observation of the same exact target/resource before ordinary async-wait Exit can be classified
-
-#### Scenario: Subsequent terminal success is consumed
-
-- GIVEN the first observation of a just-triggered exact required resource was absent, queued, or in progress
-- AND a subsequent fresh same-invocation observation of that exact resource is terminal success
-- WHEN the selected action evaluates its next step
-- THEN it consumes the terminal success in the same invocation
-- AND it does not classify asynchronous-wait Exit from the earlier nonterminal observation
-
-#### Scenario: Subsequent terminal actionable failure is consumed
-
-- GIVEN the first observation of a just-triggered exact required resource was absent, queued, or in progress
-- AND a subsequent fresh same-invocation observation of that exact resource is terminal failure
-- AND the failure has a correction immediately actionable inside the selected action's approved authority
-- WHEN the selected action evaluates its next step
-- THEN it consumes the failure and performs the legal correction in the same invocation
-- AND the terminal failure does not become asynchronous-wait Exit
-
-#### Scenario: Genuine unconsumable external wait may exit after bounded re-observation
-
-- GIVEN an exact required external resource was first observed absent, queued, or in progress
-- AND the same invocation performs a subsequent fresh observation of the same exact target/resource
-- AND that later observation remains absent or nonterminal
-- AND no other same-authority work is immediately actionable
-- AND current routing, revision, and preconditions remain valid
-- WHEN the invocation evaluates Exit Proof
-- THEN it MAY classify the existing genuine external asynchronous-wait Exit
-- AND the Exit Proof identifies the exact awaited target/resource for later reconstruction
-
-#### Scenario: Async wait without required re-observation is rejected
-
-- GIVEN a just-triggered exact required resource has only one current absent, queued, or in-progress observation
-- AND no subsequent fresh observation of that same exact target/resource has occurred in the invocation
-- WHEN the invocation attempts to classify asynchronous-wait Exit
-- THEN the Exit is not proven
-- AND the invocation must continue the bounded observation procedure while current routing and preconditions remain valid
-
-#### Scenario: Stale state during re-observation permits fail-closed exit
-
-- GIVEN a just-triggered exact required resource had a first nonterminal observation
-- AND before the required subsequent observation can be legally consumed the selected routing, head, or another required precondition becomes stale
-- WHEN the invocation rechecks current state
-- THEN it uses the existing stale/precondition fail-closed Exit
-- AND it does not continue observing or acting from the obsolete revision
-
-#### Scenario: Same-role successor continues
-
-- GIVEN Lead durably completes one action on the selected coordination Issue
-- AND the legal successor action remains Lead-owned on that same Issue
-- AND the successor is immediately actionable under current routing and preconditions
-- WHEN the invocation evaluates Exit Proof
-- THEN action completion alone is not a legal Exit
-- AND Lead continues into the successor action without a cross-role HANDOFF
-
-#### Scenario: Completed cross-role handoff may exit
-
-- GIVEN Reviewer has durably persisted its gate result
-- AND routing has been legally transferred to another role
-- AND the target routing is freshly observed
-- WHEN the invocation evaluates Exit Proof
-- THEN the completed cross-role handoff is a legal Invocation Exit
-- AND Reviewer does not execute the target role's work in the same invocation
-
-#### Scenario: Stale precondition permits fail-closed exit
-
-- GIVEN the selected action fresh-reads routing, revision, or another required precondition
-- AND discovers that the evidence relied on by the current invocation is stale or has been superseded
-- WHEN continued execution would be unsafe
-- THEN stale/precondition loss is a legal fail-closed Exit
-- AND the invocation does not continue from the obsolete snapshot
-
-#### Scenario: Hard execution boundary may exit only after legal local recovery is unavailable
-
-- GIVEN a tool, permission, runtime, or execution failure prevents the next required operation
-- AND any applicable same-authority recovery/disposition procedure has been evaluated from current evidence
-- AND no legal local continuation can proceed without weakening a gate or crossing role authority
-- WHEN the invocation evaluates Exit Proof
-- THEN the hard execution boundary is a legal Exit
-- AND the invocation preserves the existing exception/disposition evidence rather than inventing new workflow state
-
-#### Scenario: No proven Exit class rejects return
-
-- GIVEN the invocation remains on the selected workflow under current routing and authority
-- AND none of the bounded legal Invocation Exit classes is proven from current evidence
-- WHEN the invocation attempts to return
-- THEN return is not authorized
-- AND execution continues with the next immediately actionable legal step
 
 ### Requirement: Catchable execution exceptions preserve raw observable evidence before disposition
 
@@ -1965,38 +1345,6 @@ RED/GREEN/refactor/test-trigger/compatibility-correction commits and ordinary go
 - THEN it does not rerun or clear the already verified slice merely to recreate progress
 - AND it persists the missing bounded checkpoint from current durable evidence using the currently authoritative presentation contract before beginning another slice or handing off
 
-### Requirement: Material workflow lifecycle transitions are journaled on the coordination Issue
-
-A Scheduled Agent MUST persist one bounded coordination-Issue journal entry when it completes a material workflow lifecycle transition that changes durable workflow ownership or lifecycle state. Covered boundaries include routing handoff, PR merge, Archive native close/post-merge terminal handoff, Lead `LIFECYCLE_COMPLETE`, and Human escalation/specification-resolution boundaries.
-
-When the canonical template contract is active on the default branch and an approved canonical typed message represents the covered transition, that typed message SHALL be the required journal entry for the boundary: routing ownership transfer uses `HANDOFF`; PR merge uses `MERGE_RESULT`; Lead terminal or other non-review lifecycle result uses `ACTION_RESULT`; and Human escalation uses `HUMAN_DECISION_REQUIRED`. Before template activation, the same lifecycle evidence remains required under the then-authoritative presentation contract. The workflow MUST NOT add a duplicate generic `LIFECYCLE_JOURNAL` message solely to restate a boundary already represented by its applicable typed event.
-
-Related low-level writes that together implement one legal lifecycle transition MAY be represented by the single boundary journal. Ordinary implementation mutations inside an unverified slice are governed by the verified-Slice checkpoint requirement above and MUST NOT become per-commit, per-file, or per-mutation Issue logging. The journal comment itself SHALL NOT recursively require another meta-comment.
-
-If a lifecycle transition succeeds but its required journal write is interrupted, a later eligible run MUST reconstruct the already durable transition and persist the missing bounded journal message before performing a later lifecycle transition or handoff; it MUST NOT replay the completed unsafe mutation merely to recreate journal evidence.
-
-#### Scenario: Routing handoff is durably changed
-
-- GIVEN a Scheduled Agent legally completes an action and changes the coordination Issue routing tuple
-- WHEN the routing handoff succeeds
-- THEN the Agent records one bounded handoff journal describing the completed boundary, resulting durable state/evidence, and next role/action using the currently authoritative presentation contract
-- AND no recursive meta-comment is required for that journal write
-
-#### Scenario: Intermediate implementation commit is persisted
-
-- GIVEN Executor is inside an approved slice that has not reached successful VERIFY
-- WHEN a RED, GREEN, refactor, test-trigger, compatibility-correction, artifact, or task-edit mutation is persisted
-- THEN that mutation does not independently require a lifecycle journal comment
-- AND the eventual successful Slice VERIFY is journaled exactly once under the verified-Slice checkpoint requirement
-
-#### Scenario: Lifecycle transition succeeds but journal write is interrupted
-
-- GIVEN a Scheduled Agent completed a material lifecycle transition
-- BUT the run ended before its required bounded journal message was persisted
-- WHEN a later eligible run reconstructs that state
-- THEN it preserves the already durable transition
-- AND writes only the missing journal record before a later lifecycle transition or handoff
-
 ### Requirement: Native Archive close hands off to terminal Lead reconstruction
 
 The final Archive PR SHALL retain the repository-approved GitHub closing linkage to the persistent coordination Issue.
@@ -2240,26 +1588,6 @@ Before Lead persists terminal `LIFECYCLE_COMPLETE`, Lead SHALL verify that no te
 - THEN Lead verifies whether the branch is still needed, safely deleted, or durably retained for a stated reason
 - AND Lead does not claim lifecycle completion while an unused safely deletable temporary branch remains without disposition
 
-### Requirement: External wake topology is deployment configuration, not repository workflow state
-
-The repository SHALL define the bootstrap and dynamic-dispatch behavior a Scheduled Task must follow, but SHALL NOT require an exact number of external wake slots, exact cadence, or scheduler topology as durable workflow state or permanent runtime governance.
-
-Repository migration documentation MAY record the currently deployed slot arrangement as informational context. Changing slot count or cadence is an external product/deployment decision unless a separate Human-approved repository requirement explicitly defines an observable responsiveness target.
-
-#### Scenario: Dynamic dispatch uses a different number of wake slots
-
-- GIVEN default-branch governance is `workflow-dynamic`
-- AND the external product configuration uses one, two, three, or another supported number of wake slots
-- WHEN a wake runs
-- THEN repository dispatch semantics are derived from durable workflow state and default-branch governance
-- AND the slot count itself does not become repository routing, ownership, waiting, or completion state
-
-#### Scenario: Repository has no approved responsiveness SLO
-
-- GIVEN no Human-approved repository requirement defines a workflow reaction-time SLO
-- WHEN scheduler cadence is discussed or changed externally
-- THEN repository governance does not invent a fixed slot count or cadence as a normative requirement
-
 ### Requirement: Final Archive native-close occurs only after known terminal cleanup obligations are cleared
 
 Before Lead routes the final Archive PR to `Reviewer / review-archive`, Lead SHALL reconstruct any workflow-owned temporary correction/recovery branch known from explicit durable provenance and identify any terminal cleanup obligation that would become unreachable after native Issue closure. The normal validated `agent/archive-<change>` branch MUST NOT be inferred to be temporary cleanup input from its name or ordinary archive role.
@@ -2302,31 +1630,6 @@ The workflow SHALL prefer this pre-close ordering over adding a generic post-clo
 - WHEN Lead, Reviewer, or Executor reconstructs temporary correction/recovery cleanup obligations
 - THEN that normal archive branch is not treated as temporary cleanup input merely because its name begins with `agent/`
 - AND only separately provenance-owned temporary correction/recovery branches participate in the cleanup contract
-
-### Requirement: The MVP exposes exactly ten normal scheduled actions
-
-The normal scheduled workflow SHALL support these action contracts:
-
-- Lead: `explore-change`, `propose-change`, `resolve-question`, `finalize-change`, `finalize-archive`;
-- Reviewer: `review-openspec`, `review-implementation`, `review-archive`;
-- Executor: `implement-change`, `merge-pr`.
-
-Procedural skills SHOULD be reusable across materially similar actions and MUST NOT create a second artifact DAG that duplicates OpenSpec's proposal/specs/design/tasks lifecycle. `explore-change` MUST remain a pre-artifact investigation action rather than an alternative OpenSpec artifact lifecycle.
-
-#### Scenario: Explore and Propose are distinct Lead actions
-
-- GIVEN Human-admitted work has a fuzzy problem or unresolved feasibility/scope
-- WHEN it is routed to `Lead / explore-change`
-- THEN Lead may investigate without creating formal OpenSpec artifacts
-- AND formal artifact authoring remains owned by `Lead / propose-change`
-
-#### Scenario: Merge target is an implementation PR or archive PR
-
-- GIVEN Executor is routed to `merge-pr`
-- AND Lead authorization identifies the target PR and authorized revision
-- WHEN Executor evaluates the merge
-- THEN the same merge action contract applies regardless of whether the target is an implementation PR or archive PR
-- AND lifecycle-specific next routing is reconstructed from durable state after merge
 
 ### Requirement: Optional pre-Propose Explore preserves upstream investigation semantics
 
@@ -3284,45 +2587,6 @@ A valid direct-to-Propose Change has no preceding Explore result and MUST NOT be
 - THEN the workflow does not require a synthetic Explore-result reference
 - AND existing direct-Propose authority and ordinary OpenSpec review contracts remain applicable
 
-### Requirement: Runtime workflow topology has one authoritative repository owner
-
-The Scheduled-Agent runtime SHALL define end-to-end workflow topology and lifecycle relationships in exactly one authoritative repository surface, `agents/workflow.md`. That topology owner SHALL cover legal action progression, same-role and cross-role successor relationships, correction loops, pre-Change Explore terminal outcomes, and formal terminal completion.
-
-`agents/AGENTS.md` SHALL remain authoritative for shared runtime execution invariants such as dispatch/cardinality, reconstruction, Human authority, work-conserving execution, Invocation Exit, evidence consumption, and concurrency safety, and SHALL reference rather than independently redefine global workflow topology. Role files SHALL remain authoritative for role mission/authority/ownership. Mapped Skills SHALL remain authoritative for action-local executable procedure and MAY name local predecessor/successor actions only as operational references consistent with `agents/workflow.md`, not as competing global topology definitions.
-
-Canonical OpenSpec specifications remain the approved capability requirement and acceptance source; they do not become the runtime instruction-loading DAG. README remains Human/contributor orientation and SHALL reference the authoritative workflow topology instead of maintaining another normative workflow copy.
-
-The ownership extraction MUST preserve the current observable Scheduled-Agent lifecycle, including the default-branch post-#115 terminal contract, and MUST NOT add a machine workflow engine, generated registry, hidden workflow state, or synchronization-by-convention mechanism.
-
-#### Scenario: One runtime surface owns the end-to-end topology
-
-- GIVEN the repository contains the Scheduled-Agent governance surfaces
-- WHEN a Scheduled Agent needs the authoritative relationship among legal workflow actions
-- THEN `agents/workflow.md` is the single runtime topology owner
-- AND `agents/AGENTS.md`, role files, mapped Skills, and README do not maintain competing normative copies of the global topology
-
-#### Scenario: Shared execution invariants remain owned by AGENTS
-
-- GIVEN workflow topology has been extracted to `agents/workflow.md`
-- WHEN dispatch, cardinality, Human authority, reconstruction, work-conserving execution, Invocation Exit, or concurrency rules are evaluated
-- THEN `agents/AGENTS.md` remains authoritative for those shared runtime invariants
-- AND moving topology does not transfer those responsibilities to `agents/workflow.md`
-
-#### Scenario: Existing workflow behavior is preserved
-
-- GIVEN the authoritative default-branch lifecycle before this Change
-- WHEN topology ownership is extracted
-- THEN legal action progression, correction loops, review and merge separation, pre-Change Explore outcomes, and same-role/cross-role boundaries remain behaviorally equivalent
-- AND the formal terminal path remains Archive merge → open `Lead / finalize-archive` → durable `LIFECYCLE_COMPLETE` → coordination Issue close and closed re-observation
-
-#### Scenario: OpenSpec and README keep distinct responsibilities
-
-- GIVEN canonical OpenSpec requirements and README orientation both describe aspects of the Scheduled-Agent workflow
-- WHEN runtime topology ownership is evaluated
-- THEN canonical OpenSpec remains the approved capability requirement/acceptance source
-- AND README remains Human/contributor orientation
-- AND neither is treated as a second runtime workflow-topology owner
-
 ### Requirement: Required separate follow-up work is materialized as one routing-complete postcondition
 
 When an approved specification, scope, or lifecycle decision explicitly classifies work as a required separate/deferred follow-up, the owning Lead action MUST materialize that obligation as one logical postcondition consisting of exactly one deduplicated durable tracker with `Change: unset`, exact source coordination/change and defer-decision/reference linkage, and canonical `agent:lead + action:explore-change` routing.
@@ -3385,157 +2649,6 @@ Dispatcher admission remains unchanged: scheduled dispatch MUST consume canonica
 - THEN Lead treats the obligation as incomplete
 - AND repairs the same tracker to the required routing when current authoritative source evidence still permits that repair
 - AND does not hand off lifecycle review while the required postcondition remains incomplete
-
-### Requirement: A no-API Issue-comment canary proves the Scheduled Task transport boundary without granting workflow authority
-
-The repository SHALL provide a bounded Phase 1 transport canary that can be triggered by a newly created GitHub Issue comment on one explicitly configured Human-created check-in Issue.
-
-A valid canary request MUST contain exactly the transport marker `DISPATCH_REQUEST` and exactly one `Requested-At: <timestamp>` field. The GitHub comment ID of that exact request MUST be the sole correlation identity for the request/result round trip. A custom request identifier, latest-comment selection, comment ordering, or timestamp proximity MUST NOT substitute for the exact request comment ID.
-
-For a valid request, repository-owned executable code running from the repository default-branch checkout SHALL produce a correlated result with exactly these transport fields:
-
-```text
-DISPATCH_RESULT
-Request-Comment-ID: <exact GitHub request comment ID>
-Default-Branch-Revision: <exact handler checkout revision>
-Result: BRIDGE_OK
-```
-
-The canary MUST reject or ignore comments outside the configured check-in Issue, malformed request bodies, invalid request comment identities, and non-request comments. Reprocessing or duplicate delivery of a request that already has a valid correlated result MUST be an idempotent no-op and MUST NOT create a second effective result for the same request comment ID.
-
-`DISPATCH_REQUEST` and `DISPATCH_RESULT` SHALL be transport/audit evidence only. A Phase 1 result MUST NOT contain or establish a mapped workflow Issue, Role, Action, Skill, routing transition, `Change:` mutation, review/merge gate, consequential effect authorization, or any other canonical workflow authority. A result comment MUST NOT satisfy the valid request contract.
-
-Phase 1 acceptance SHALL include one real ChatGPT Scheduled Task invocation that writes the exact request, obtains the exact GitHub request comment ID, performs bounded fresh reads for that identity, and observes the exact matching Actions-produced result before that Scheduled Task invocation ends. The acceptance evidence MUST retain the request/result GitHub timestamps, exact handler default-branch revision, and the Scheduled Task observation sufficient to determine whether the matching result was received within the same invocation execution opportunity. Repository-only unit or structural tests MUST NOT substitute for this end-to-end transport proof.
-
-#### Scenario: Valid request produces an exactly correlated bridge result
-
-- GIVEN a Human-created check-in Issue is the explicitly configured Phase 1 canary target
-- AND a new comment on that Issue contains exactly `DISPATCH_REQUEST` and one valid `Requested-At` field
-- WHEN the default-branch canary workflow handles the `issue_comment` creation event
-- THEN repository-owned executable code processes that exact request comment
-- AND the result contains `Request-Comment-ID` equal to the triggering GitHub comment ID
-- AND the result contains the exact default-branch revision used by the handler
-- AND `Result` is `BRIDGE_OK`
-
-#### Scenario: Scheduled Task correlates by exact comment identity
-
-- GIVEN a Scheduled Task created request comment C
-- AND multiple other request or result comments may exist on the same check-in Issue
-- WHEN the Scheduled Task reads canary results
-- THEN it accepts only a `DISPATCH_RESULT` whose `Request-Comment-ID` equals the exact GitHub ID of C
-- AND it does not use the latest comment, relative ordering, timestamp proximity, or model inference as correlation
-
-#### Scenario: Unrelated or malformed comment is not a valid request
-
-- GIVEN a newly created Issue comment is outside the configured check-in Issue OR does not exactly satisfy the bounded request contract
-- WHEN the canary workflow evaluates the event
-- THEN it does not produce a valid `BRIDGE_OK` result for that comment
-- AND it performs no workflow-routing, Change, review-gate, or consequential-effect mutation
-
-#### Scenario: Duplicate request handling is idempotent
-
-- GIVEN request comment C already has a valid correlated `DISPATCH_RESULT`
-- WHEN the same event is redelivered, rerun, or otherwise reprocessed
-- THEN the handler treats C as already completed
-- AND it does not create a second effective result for C
-- AND the existing result remains transport evidence only
-
-#### Scenario: Result cannot re-enter the request protocol
-
-- GIVEN the canary writes a `DISPATCH_RESULT` comment for request C
-- WHEN that result comment is evaluated against the request parser
-- THEN it does not satisfy the `DISPATCH_REQUEST` contract
-- AND it cannot recursively authorize or invoke another canary request through its body
-
-#### Scenario: Bridge success does not authorize mapped workflow work
-
-- GIVEN a valid request receives `Result: BRIDGE_OK`
-- WHEN any later workflow action is considered
-- THEN the canary result does not identify or authorize a mapped Issue, Role, Action, or Skill
-- AND it does not authorize any routing, `Change:`, review, merge, or consequential effect mutation
-- AND later production machine-gating remains a separate governed capability boundary
-
-#### Scenario: Same-invocation round trip is required for Phase 1 acceptance
-
-- GIVEN the repository implementation and deterministic tests are green
-- WHEN the Phase 1 deployment is evaluated for acceptance
-- THEN one real ChatGPT Scheduled Task invocation writes a request and captures its exact GitHub comment ID
-- AND that same invocation performs bounded fresh reads for the matching result
-- AND acceptance is recorded only if the exact correlated result is observed before the invocation ends
-- AND the evidence records request/result timestamps and the exact handler default-branch revision
-
-### Requirement: The deployed no-API bridge carries the production dispatch decision without model-side selection
-
-After the no-API bridge and production dispatch path are deployed on the repository default branch, the no-API bridge SHALL execute the same repository-owned production dispatch orchestration consumed by runtime regression coverage and SHALL return its exact decision to the requesting Scheduled Task without model-side Issue/Role/Action selection.
-
-The machine decision MUST remain correlated solely by the exact GitHub request comment ID and MUST identify the exact default-branch revision used to execute dispatch. Its durable response SHALL have this shape:
-
-```text
-DISPATCH_DECISION
-Request-Comment-ID: <exact GitHub request comment ID>
-Default-Branch-Revision: <exact handler checkout revision>
-Disposition: AUTHORIZE | NO_WORK | FAIL_CLOSED
-Reason: <bounded machine-owned diagnostic>  # NO_WORK / FAIL_CLOSED only
-Issue: <exact Issue number>                  # AUTHORIZE only
-Role: <lead|reviewer|executor>               # AUTHORIZE only
-Action: <mapped action>                      # AUTHORIZE only
-```
-
-`AUTHORIZE` MUST contain exactly one Issue/Role/Action tuple produced by the production executable decision and MUST NOT require the Scheduled Task to reinterpret a diagnostic reason before loading that exact tuple. `NO_WORK` and `FAIL_CLOSED` MUST NOT contain an Issue/Role/Action tuple and MUST contain one bounded machine-owned `Reason` that identifies the executable classifier disposition without exposing model-generated interpretation as authority. The Scheduled Task MUST NOT replace, reinterpret, or fill in a missing tuple or reason from conversation history, Issue prose, previous invocation output, model memory, or another uncorrelated result.
-
-The diagnostic reason is observability only. It MUST NOT authorize routing, `Change:` mutation, review or merge acceptance, recovery mutation, consequential effects, or another durable GitHub mutation. The machine decision SHALL authorize only creation/loading of the mapped model invocation for the exact `AUTHORIZE` tuple; all durable effect boundaries retain their existing fresh action/effect-specific preconditions.
-
-#### Scenario: Authorize decision fixes the mapped model identity
-
-- GIVEN the deployed production dispatch orchestration returns `AUTHORIZE` for exact Issue N and routing `Reviewer / review-openspec`
-- WHEN the requesting Scheduled Task receives the exactly correlated `DISPATCH_DECISION`
-- THEN the response contains Issue N, Role `reviewer`, and Action `review-openspec`
-- AND only that mapped model invocation may be loaded from the decision
-- AND the model does not select a different Issue, Role, or Action from prose or prior context
-
-#### Scenario: Fail-closed result creates no model authority
-
-- GIVEN the deployed production dispatch orchestration returns `FAIL_CLOSED`
-- WHEN the requesting Scheduled Task consumes the exactly correlated decision
-- THEN the result contains no Issue/Role/Action tuple
-- AND it contains one bounded machine-owned diagnostic reason for the fail-closed classification
-- AND no mapped Role or Skill is loaded from model inference
-- AND no consequential workflow mutation is authorized by the decision or diagnostic
-
-#### Scenario: No-work result creates no synthetic work
-
-- GIVEN the deployed production dispatch orchestration returns `NO_WORK`
-- WHEN the requesting Scheduled Task consumes the exactly correlated decision
-- THEN the result contains no Issue/Role/Action tuple
-- AND it contains one bounded machine-owned diagnostic reason for the no-work classification
-- AND the model does not manufacture an advisory, queued Issue, or mapped action merely to avoid an idle result
-
-#### Scenario: Uncorrelated decision is rejected
-
-- GIVEN request comment C has one exact GitHub comment ID
-- AND a `DISPATCH_DECISION` exists for another request comment
-- WHEN the Scheduled Task evaluates the result for C
-- THEN it rejects the other decision as uncorrelated
-- AND it does not use the other decision's tuple, reason, or disposition as current authorization
-
-#### Scenario: Real no-API machine dispatch is required before completion
-
-- GIVEN transport-only `BRIDGE_OK` has already been proved
-- AND production dispatch and the decision-producing bridge are deployed on `main`
-- WHEN the Change is evaluated for final implementation completion
-- THEN one real ChatGPT Scheduled Task invocation obtains and consumes an exactly correlated production `DISPATCH_DECISION`
-- AND the evidence identifies the exact default-branch revision and returned disposition/tuple when authorized
-- AND mapped semantic work begins only from the machine-selected `AUTHORIZE` tuple
-- AND `NO_WORK` or `FAIL_CLOSED` does not gain a tuple through model interpretation
-- AND lifecycle completion is not claimed from transport-only evidence
-
-#### Scenario: Real no-API machine dispatch remains the deployed authority
-
-- GIVEN production dispatch is deployed on `main`
-- WHEN a real ChatGPT Scheduled Task invocation obtains and consumes an exactly correlated production `DISPATCH_DECISION`
-- THEN the evidence identifies the exact default-branch revision and returned disposition/tuple when authorized
-- AND mapped semantic work begins only from the machine-selected `AUTHORIZE` tuple
-- AND `NO_WORK` or `FAIL_CLOSED` does not gain a tuple through model interpretation
 
 ### Requirement: Explore-originated required follow-up decisions are materialized before Propose and preserved through formalization
 
@@ -3799,3 +2912,179 @@ The worker MUST NOT independently choose an arbitrary successor routing tuple fo
 - WHEN application determines the workflow effect
 - THEN it uses only the validated structured disposition
 - AND it does not parse narrative Markdown to reconstruct machine control state
+
+### Requirement: Action is the sole normal workflow routing dimension
+
+After cutover, normal current workflow state SHALL contain only Issue open/closed lifecycle, immutable Change: identity once formal work is activated, and exactly one valid action:<action> on an open routed coordination Issue. Role SHALL be derived as role_for(action) and MUST NOT be required as a separately persisted normal routing dimension. Semantic results, review findings/PASS, Human decisions, exact-revision evidence, transport/run records, and carrier records remain durable evidence and MUST NOT become current routing state. Normal agent:* labels are migration/source-retirement residue and MUST NOT select target-state work.
+
+An open routed Issue with zero, multiple, or illegal action:* labels MUST fail closed. Unrelated labels MUST be preserved. Closed workflow labels are bounded migration/debt input only and MUST NOT become normal active state after cutover.
+
+#### Scenario: Action derives the owner
+
+- GIVEN an open coordination Issue has exactly one action:review-openspec
+- WHEN executable dispatch selects it
+- THEN it derives Role reviewer
+- AND no normal agent:reviewer label is required for ownership
+- AND the Issue's semantic evidence does not alter the derived Role
+
+#### Scenario: Stale role label cannot override Action
+
+- GIVEN an Issue has action:resolve-question and a stale agent:executor
+- WHEN current dispatch reconstructs the Issue
+- THEN it derives Lead from the Action
+- AND it does not execute Executor work or repair the stale label as a semantic prerequisite
+
+### Requirement: The executable model derives transitions and successors
+
+The default-branch executable workflow model SHALL own ACTION_ROLE, the finite Action vocabulary, legal TRANSITIONS, role_for(action), next_action(current_action, typed_result), and select_work(authoritative_observations). A worker MAY return only a bounded typed result/evidence envelope. The worker MUST NOT choose an arbitrary Issue, Role, Action, successor, target, retry, or success meaning.
+
+next_action SHALL derive at most one legal successor or terminal state from the current Action and typed result. The application SHALL fresh-reauthorize the source Action, derive the successor from the current state, apply exact necessary effects, and fresh-observe postconditions before treating the successor as current. There is no second production DAG, generic orchestration framework, or recovery state machine.
+
+#### Scenario: Result derives a unique successor
+
+- GIVEN implement-change returns a valid SPEC_BLOCKER
+- WHEN application evaluates the typed result against the current Action
+- THEN it derives resolve-question
+- AND the worker cannot substitute another Lead Action or Issue
+
+#### Scenario: Stale result is rejected
+
+- GIVEN an Action result was produced from a stale Issue, Change, PR head, or default-branch revision
+- WHEN application fresh-reauthorizes the effect
+- THEN it fails closed
+- AND it does not apply a guessed successor or replay completed work
+
+### Requirement: One Scheduled Task wake executes exactly one Action
+
+Each normal Scheduled Task wake SHALL fresh-dispatch exactly one repository-authorized Action, load the Role and Skill derived from that Action, execute that Action, return structured result/evidence, apply the necessary repository effects, observe postconditions, persist the unique derived successor or terminal state, and exit. A successor Action SHALL execute only on a later wake after fresh dispatch, even when it maps to the same Role.
+
+The Action's primary execution unit SHALL be one bounded verified slice: Reconstruct -> RED exact gap/blocker -> GREEN legal correction -> VERIFY exact postcondition/revision/gate -> durable checkpoint. An intermediate file write, API call, commit, Actions run, or first nonterminal observation MUST NOT by itself complete the slice or authorize Exit. A slice that cannot reasonably reach VERIFY in one normal invocation SHALL be split before execution at a meaningful safe boundary.
+
+The wake MUST NOT require same-role continuation, cross-role barriers, invocation-role comparison, a continuation cursor, a fresh-worker chain, a public recovery mode, or a separate normal transfer journal. Bounded async observation and at-least-once reconstruction remain safety capabilities, not new routing state.
+
+#### Scenario: Same-role successor waits
+
+- GIVEN Lead completes one Action and application persists a legal next Lead Action
+- WHEN the current wake reaches its postcondition
+- THEN it exits
+- AND the next Lead Action runs only after a later fresh dispatch
+
+#### Scenario: Cross-role successor waits
+
+- GIVEN Executor returns a valid result whose derived successor is Lead-owned
+- WHEN application observes the new Action
+- THEN the current wake exits
+- AND no cross-role journal or wake barrier is required
+- AND a later wake derives Lead from the successor Action
+
+#### Scenario: Intermediate success is not completion
+
+- GIVEN the selected Action has only completed an intermediate write or first external run observation
+- WHEN the slice is evaluated
+- THEN it is not complete
+- AND the Action continues only while its source authority and safe execution opportunity remain current
+
+### Requirement: Application performs exact effects and ordinary idempotent reconciliation
+
+Repository application SHALL fresh-reauthorize the exact source Action, Change, Issue, PR/head, revision, Human/review/gate evidence, and effect-specific preconditions before every consequential mutation. It SHALL apply only necessary exact effects, preserve unrelated content, and fresh-observe each postcondition. Stale, replayed, ambiguous, contradictory, incomplete, or provenance-incomplete evidence MUST fail closed.
+
+If an earlier invocation already made a required mutation durable, recovery MAY complete only still-required non-contradictory effects. It MUST NOT replay semantic work merely to recreate a missing record, and MUST NOT rewind current routing or lifecycle state when valid descendant evidence proves the earlier transition was consumed. Recovery is ordinary idempotent application/reconciliation; it is not another Action, lifecycle state, transaction framework, retry/lock/lease system, or public protocol. Deterministic rejections identify the exact failed guard class and relevant expected/observed evidence machine-readably.
+
+#### Scenario: Durable effect is not replayed
+
+- GIVEN a result comment or routing change is already durable
+- AND a later invocation observes the remaining required effect
+- WHEN application reconciles the state
+- THEN it performs only the missing non-contradictory effect
+- AND it does not replay the semantic Action or rewind a consumed descendant
+
+#### Scenario: Contradictory evidence fails closed
+
+- GIVEN current Issue, PR, revision, or provenance evidence is contradictory
+- WHEN application evaluates a consequential effect
+- THEN it returns the exact failed guard evidence
+- AND it applies no guessed mutation
+
+### Requirement: Daily control shards are bounded transport only
+
+The retained control surface SHALL provide at most one usable current-day Asia/Taipei shard. Each request SHALL be correlated exactly to one Actions run and that run's structured result. latest, title inference, timing proximity, comment ordering, permanent response history, or an Issue-response mailbox MUST NOT authorize a result. Today SHALL be established and freshly observed before an older shard is retired, and retirement MUST NOT invalidate an in-flight request -> exact run -> result chain.
+
+A control shard MUST NOT carry canonical Change/Action/Role/WIP state, semantic workflow evidence, successor authority, or recovery state. Dispatch/application/validation results MUST NOT be restored as response comments merely to make the shard useful. Transport changes MUST NOT change workflow semantics.
+
+#### Scenario: In-flight rollover remains valid
+
+- GIVEN a request on yesterday's shard already identifies exact run R
+- WHEN today's shard is established and yesterday's shard is retired
+- THEN R remains consumable from its exact run-scoped result
+- AND no new mailbox or recovery state is created
+
+### Requirement: Exact-R validation is gate-derived and preserves checkout proof
+
+Whenever an approved gate requires strict OpenSpec validation for revision R, accepted evidence SHALL prove target revision R, validator checkout HEAD == R before validation, qualified pinned OpenSpec compatibility, and strict validation PASS. Eligibility SHALL be derived from the governed gate/artifact requirement and MUST NOT be restricted by a Propose-only or source-role/action whitelist. An already-current correct target MUST be validated without a dummy rewrite. Stale CI, run.head_sha without checkout proof, manual approval, connector bypass, or another model wake MUST NOT satisfy the gate.
+
+#### Scenario: Resolve validates its current head
+
+- GIVEN Lead / resolve-question materially revises OpenSpec artifacts on the current PR head R
+- WHEN the exact validation resource is requested
+- THEN it validates R without a dummy mutation
+- AND the evidence proves checkout HEAD == R and strict PASS
+
+### Requirement: OpenSpec work product uses content-addressed application ingress
+
+For a materially revised Lead OpenSpec Change, the semantic worker MAY create unreferenced Git blobs only. Its bounded manifest SHALL contain exact branch/base identity and, for each Change-owned path, the new blob SHA and current expected blob SHA. Full source/spec/test content MUST NOT be transported through Issue comments merely to persist files.
+
+Repository application SHALL fresh-reauthorize the exact source Action and verify current PR/head/base, Change-owned paths, current file identities, and every referenced blob during application-owned tree construction. It SHALL construct one tree and one commit revision R, advance only the exact branch without force, and fresh-observe the exact ref, PR head, commit/tree/parent, and file postconditions before exposing R to exact validation. Duplicate/escaping paths, stale identity, unavailable/mismatched blobs, worker-created tree/commit/ref, force updates, incomplete tree observations, and API success without postcondition proof MUST fail closed.
+
+#### Scenario: Lead ingress becomes one exact revision
+
+- GIVEN Lead has authored a corrected existing Change on PR #178
+- AND the worker has created only unreferenced blobs for the five Change-owned artifact files
+- WHEN application consumes the exact manifest
+- THEN it constructs one exact revision R
+- AND it does not carry complete file content through the check-in Issue
+- AND exact-R validation receives R only after application postconditions are observed
+
+### Requirement: Independent gates derive explicit merge Actions
+
+review-implementation and review-archive SHALL remain independent exact-revision/exact-head gates. A passing implementation review SHALL derive merge-implementation-pr; a passing Archive review SHALL derive merge-archive-pr. Executor SHALL not infer merge phase from a generic Action or reuse an implementation PASS for Archive. Merge recovery SHALL be idempotent and exact-head bound, and Lead lifecycle/archive authority SHALL remain separate.
+
+#### Scenario: Review PASS selects its explicit phase
+
+- GIVEN Reviewer passes the exact implementation or Archive revision
+- WHEN application derives the successor
+- THEN it selects only the matching explicit merge Action
+- AND the other merge Action is not authorized
+
+### Requirement: Already-merged carriers use exact read-only reconciliation
+
+For any explicit merge Action, a closed and merged implementation or Archive carrier MAY be reconciled only when fresh repository application evidence establishes the exact expected historical PR head, repository/base/head/ref identity, immutable merge commit and merged-at metadata, current default-branch revision, and current default-branch ancestry containing that merge commit. The independent PASS used for the Action MUST bind both the historical PR head and the current default-branch revision. All common Issue/Change linkage, required-check, Human-freshness, contradiction, and no-rewind guards remain mandatory.
+
+The legal merged-carrier path is idempotent and read-only at the carrier boundary: it MUST NOT reopen or rewrite the PR, move or force any ref, substitute an open or different PR, send a duplicate merge write, create a duplicate branch/Change/PR, or infer lifecycle meaning from historical prose. Application MUST fresh-observe the existing merged postcondition and metadata before deriving the successor.
+
+#### Scenario: Already-merged implementation carrier is reconciled
+
+- GIVEN the explicit merge-implementation-pr Action identifies a closed+merged PR with historical head R
+- AND current default-branch revision D contains its merge commit
+- AND independent implementation PASS is bound to R and D
+- WHEN application fresh-reauthorizes the exact carrier and merge plan
+- THEN it performs no merge write
+- AND it observes the exact merged head/metadata postcondition
+- AND it may derive finalize-change only from the typed merged result
+
+#### Scenario: Historical carrier identity mismatch fails closed
+
+- GIVEN a closed+merged carrier has a different head, merge metadata, base/ref, or current-main ancestry than the authorized evidence
+- WHEN the merge Action is evaluated
+- THEN application returns a machine-readable stale/contradictory guard result
+- AND it does not reopen, rewrite, substitute, or replay the merge.
+
+### Requirement: Cutover deletes superseded normal control paths
+
+The Change SHALL be delivered through Shadow, Cutover, and Delete boundaries. After Cutover is accepted, normal production correctness MUST NOT depend on separately persisted role labels, canonical cross-role journal/completion records, same-role continuation, cross-role barriers, response-mailbox history, Markdown topology/effect parsing, generic merge-phase inference, or legacy model-host compatibility paths. Historical records remain auditable evidence and migration/source-retirement input only.
+
+#### Scenario: Historical evidence is not live routing
+
+- GIVEN old role labels or transfer records remain in repository history during migration
+- WHEN current dispatch runs after Action-only cutover
+- THEN it selects only the current Action model and authoritative observations
+- AND it does not parse historical prose or labels to invent current work
