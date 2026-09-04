@@ -458,3 +458,33 @@ def test_native_closing_classifier_matches_same_repository_qualified_reference()
         repository_full_name="royhsu-work/investment-strategy",
         coordination_issue=159,
     )
+
+
+def test_run_effect_application_forwards_current_revision_to_effect_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(issue_number=159, role="executor", action="merge-implementation-pr")
+    captured: dict[str, object] = {}
+
+    class FakeAdapter:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            del args
+            captured.update(kwargs)
+
+    monkeypatch.setattr(merge_acceptance, "GitHubEffectAdapter", FakeAdapter)
+    monkeypatch.setattr(
+        merge_acceptance,
+        "apply_effect_batch",
+        lambda *args, **kwargs: merge_acceptance.ApplyResult(True, "applied"),
+    )
+
+    _batch, result = merge_acceptance.run_effect_application(
+        _merge_worker_result(),
+        source=source,
+        repository="royhsu-work/investment-strategy",
+        token="token",
+        current_revision=HEAD,
+    )
+
+    assert result.applied
+    assert captured["current_revision"] == HEAD

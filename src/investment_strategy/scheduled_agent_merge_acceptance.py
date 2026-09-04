@@ -548,6 +548,7 @@ def run_effect_application(
         token,
         source,
         authorized_change=batch.typed_result.change,
+        current_revision=current_revision,
     )
 
     def apply_with_fresh_guard(effect: StagedEffect) -> None:
