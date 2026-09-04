@@ -17,10 +17,10 @@ The target state is Issue lifecycle + immutable Change + action:<action> with Ro
 
 ### B1. Transport shard
 
-- [ ] B1.1 Establish the current-day Asia/Taipei control shard with at most one usable shard for the day.
+- [x] B1.1 Establish the current-day Asia/Taipei control shard with at most one usable shard for the day.
 - [ ] B1.2 Correlate each request to exactly one Actions run and consume only that run's structured result.
 - [ ] B1.3 Prove malformed, duplicate, missing, multiple, failed, cancelled, expired, uncorrelated, and stale transport evidence fails closed.
-- [ ] B1.4 Establish today's shard before retiring an older shard and preserve an in-flight request -> exact run -> result chain.
+- [x] B1.4 Establish today's shard before retiring an older shard and preserve an in-flight request -> exact run -> result chain.
 - [ ] B1.5 Remove response-mailbox result authorization, latest/title/timing inference, and permanent control-Issue lifecycle semantics.
 
 ### B2. Fresh typed application
