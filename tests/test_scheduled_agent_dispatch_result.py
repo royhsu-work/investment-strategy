@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from email.message import Message
+from io import BytesIO
+from urllib.error import HTTPError
+from urllib.request import Request
 
 import investment_strategy.scheduled_agent_dispatch_result as transport
 from investment_strategy.issue_comment_bridge import (
@@ -136,3 +140,51 @@ def test_fetch_dispatch_result_rejects_ambiguous_jobs(
             run_id=_RUN_ID,
             current_revision=_REVISION,
         )
+
+
+def test_github_text_reads_signed_redirect_without_forwarding_bearer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    redirect = "https://pipelines.actions.githubusercontent.com/signed-log"
+
+    class _Response:
+        def __init__(self, value: bytes) -> None:
+            self.value = value
+
+        def __enter__(self) -> "_Response":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return self.value
+
+    class _Opener:
+        def open(self, request: Request, timeout: int) -> _Response:
+            del timeout
+            assert request.full_url == (
+                "https://api.github.com/repos/owner/repo/actions/jobs/300/logs"
+            )
+            assert request.get_header("Authorization") == "Bearer token"
+            headers = Message()
+            headers["Location"] = redirect
+            raise HTTPError(request.full_url, 302, "Found", headers, BytesIO())
+
+    def fake_build_opener(handler: object) -> _Opener:
+        assert handler is transport._NoRedirect
+        return _Opener()
+
+    def fake_urlopen(request: Request, timeout: int) -> _Response:
+        del timeout
+        assert request.full_url == redirect
+        assert request.get_header("Authorization") is None
+        return _Response(b"signed log")
+
+    monkeypatch.setattr(transport, "build_opener", fake_build_opener)
+    monkeypatch.setattr(transport, "urlopen", fake_urlopen)
+
+    assert (
+        transport._github_text("owner/repo", "token", "actions/jobs/300/logs")
+        == "signed log"
+    )

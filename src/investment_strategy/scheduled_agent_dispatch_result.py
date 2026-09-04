@@ -7,7 +7,8 @@ import re
 from collections.abc import Mapping
 from typing import cast
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 from investment_strategy.issue_comment_bridge import (
     MachineDispatchDecision,
@@ -17,6 +18,16 @@ from investment_strategy.issue_comment_bridge import (
 
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_LOG_REDIRECT_SUFFIX = ".actions.githubusercontent.com"
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    """Expose the signed GitHub log redirect without forwarding the API bearer token."""
+
+    def http_error_302(self, req, fp, code, msg, headers):
+        raise HTTPError(req.full_url, code, msg, headers, fp)
+
+
 
 
 def _github_json(repository: str, token: str, api_path: str) -> object:
@@ -51,10 +62,29 @@ def _github_text(repository: str, token: str, api_path: str) -> str:
         },
     )
     try:
-        with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
+        with build_opener(_NoRedirect).open(request, timeout=30) as response:
             return response.read().decode("utf-8")
     except HTTPError as exc:
-        raise RuntimeError("exact dispatch run log read failed") from exc
+        if exc.code != 302:
+            raise RuntimeError("exact dispatch run log read failed") from exc
+        location = exc.headers.get("Location")
+        parsed = urlsplit(location) if isinstance(location, str) else None
+        if (
+            parsed is None
+            or parsed.scheme != "https"
+            or parsed.hostname is None
+            or not parsed.hostname.endswith(_LOG_REDIRECT_SUFFIX)
+        ):
+            raise RuntimeError("exact dispatch run log redirect is not trusted") from exc
+        redirected_request = Request(
+            location,
+            headers={"Accept": "application/octet-stream"},
+        )
+        try:
+            with urlopen(redirected_request, timeout=30) as response:
+                return response.read().decode("utf-8")
+        except (HTTPError, URLError, TimeoutError, UnicodeError) as redirect_exc:
+            raise RuntimeError("exact dispatch run log response is invalid") from redirect_exc
     except (URLError, TimeoutError, UnicodeError) as exc:
         raise RuntimeError("exact dispatch run log response is invalid") from exc
 
