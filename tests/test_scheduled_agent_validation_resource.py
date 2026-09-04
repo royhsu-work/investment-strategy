@@ -256,3 +256,36 @@ def test_application_workflow_runs_validation_inline_without_secondary_dispatch(
     assert "openspec_compatibility.py" in workflow
     assert "openspec validate --all --strict --json --no-interactive" in workflow
     assert "actions/workflows/openspec-validate.yml/dispatches" not in workflow
+
+def test_work_product_path_capability_is_owned_by_current_action() -> None:
+    lead = WorkerRequest(138, "lead", "resolve-question")
+    executor = WorkerRequest(138, "executor", "implement-change")
+    reviewer = WorkerRequest(138, "reviewer", "review-implementation")
+
+    assert resource.work_product_path_allowed(
+        lead, _CHANGE, f"openspec/changes/{_CHANGE}/design.md"
+    )
+    assert not resource.work_product_path_allowed(
+        lead, _CHANGE, "src/investment_strategy/scheduled_agent_runtime.py"
+    )
+    assert resource.work_product_path_allowed(
+        executor, _CHANGE, "src/investment_strategy/scheduled_agent_runtime.py"
+    )
+    assert resource.work_product_path_allowed(
+        executor, _CHANGE, "tests/test_scheduled_agent_runtime.py"
+    )
+    assert resource.work_product_path_allowed(
+        executor, _CHANGE, ".github/workflows/scheduled-agent-application.yml"
+    )
+    assert resource.work_product_path_allowed(
+        executor, _CHANGE, f"openspec/changes/{_CHANGE}/tasks.md"
+    )
+    assert not resource.work_product_path_allowed(
+        executor, _CHANGE, "openspec/changes/other-change/design.md"
+    )
+    assert not resource.work_product_path_allowed(
+        executor, _CHANGE, "../outside-repository.py"
+    )
+    assert not resource.work_product_path_allowed(
+        reviewer, _CHANGE, "src/investment_strategy/scheduled_agent_runtime.py"
+    )
