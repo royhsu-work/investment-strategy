@@ -303,7 +303,7 @@ def test_open_pr_payload_requires_explicit_historical_merged_carrier(
         "merged": True,
         "merged_at": "2026-09-04T03:31:44Z",
         "merge_commit_sha": "e" * 40,
-        "body": "Refs #138\\n",
+        "body": "Refs #138\n",
         "head": {
             "sha": _PR_HEAD,
             "ref": f"agent/{_CHANGE}",
@@ -318,7 +318,7 @@ def test_open_pr_payload_requires_explicit_historical_merged_carrier(
         if api_path == "":
             return {"default_branch": "main"}
         if api_path == "issues/138":
-            return {"state": "open", "body": f"Change: {_CHANGE}\\n"}
+            return {"state": "open", "body": f"Change: {_CHANGE}\n"}
         if api_path == "pulls/178":
             return merged_pr
         if api_path == "pulls/178/files?per_page=100":
