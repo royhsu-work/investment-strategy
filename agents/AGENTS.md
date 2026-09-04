@@ -162,8 +162,8 @@ Actions merge-implementation-pr and merge-archive-pr. Executor merge application
 target, linkage, required checks, Human freshness, contradictory evidence, and archive-specific cleanup
 immediately before mutation. For an open implementation or Archive PR, this includes current open state
 and exact unchanged head. For a closed+merged implementation carrier, the only legal reconciliation is
-read-only verification of its immutable historical head, repositories/base/ref, merge metadata, current
-default-branch revision, and ancestry against the current review/application authorization; the carrier
+read-only verification of its exact head identity and immutable historical head, repositories/base/ref,
+merge metadata, current default-branch revision, and ancestry against the current review/application authorization; the carrier
 MUST NOT be reopened, rewritten, force-moved, or sent a duplicate merge write. A changed or ambiguous
 observation fails closed.
 

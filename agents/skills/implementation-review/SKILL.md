@@ -10,7 +10,7 @@ Mapped Action: Reviewer / review-implementation.
 Fresh-read the current implementation carrier, base, files, task markers, quality runs, OpenSpec gate,
 Human freshness, and prior findings. Review implementation behavior, approved scope, tests,
 stale/replay/no-rewind guards, effect authorization, carrier separation, and unrelated-file changes.
-For an open non-Draft carrier, the exact current implementation PR head is the review identity. For a
+For an open non-Draft carrier, the exact implementation head and exact current implementation PR head are the review identity. For a
 closed+merged carrier, review the immutable historical PR head together with the current default-branch
 revision, merge metadata, ancestry, and all post-merge repair changes in scope. PASS must bind both
 `Revision: <historical PR head>` and `Default-Branch-Revision: <current main SHA>`; a PASS for another
