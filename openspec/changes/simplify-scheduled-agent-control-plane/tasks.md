@@ -44,7 +44,7 @@ The target state is Issue lifecycle + immutable Change + action:<action> with Ro
 - [x] B4.2 Keep validation eligibility gate-derived rather than tied to a source-role/action whitelist.
 - [x] B4.3 Accept only unreferenced worker-created blobs plus exact branch/base/path/blob/current-SHA manifest identity.
 - [x] B4.4 Let application construct the one exact tree/commit/ref and observe PR/head/file postconditions; reject stale, duplicate, escaping, unavailable, mismatched, force, or incomplete operations.
-- [ ] B4.5 Verify production live E2E from content ingress through exact tree, exact revision, and exact-R validation.
+- [x] B4.5 Verify production live E2E from content ingress through exact tree, exact revision, and exact-R validation.
 
 ### B5. Explicit merge and carrier boundaries
 
@@ -56,7 +56,7 @@ The target state is Issue lifecycle + immutable Change + action:<action> with Ro
 
 ## C. Delete superseded production paths and context
 
-- [ ] C.1 Retire normal agent:* routing after Action-only routing is deployed; preserve historical labels only as bounded migration/retirement evidence.
+- [x] C.1 Retire normal agent:* routing after Action-only routing is deployed; preserve historical labels only as bounded migration/retirement evidence.
 - [x] C.2 Remove normal cross-role journal/completion protocols, same-role continuation, cross-role barriers, continuation flags/cursors, and public recovery states.
 - [x] C.3 Remove response-mailbox/history coupling and permanent control-Issue lifecycle semantics.
 - [x] C.4 Remove Markdown/prose topology and effect parsing from runtime and keep one generated/mechanically verified presentation.
@@ -67,10 +67,10 @@ The target state is Issue lifecycle + immutable Change + action:<action> with Ro
 
 ## Current verification record
 
-- Fresh observations for this execution: default branch `main@e8c3dc7b256bc167217e25a397e98181bdf6f123`, open #138, and open PR #178; final source implementation checkpoint `15c6a19744f3b5feca3bb15de7adf62ba1027df4`.
-- Python Quality run `33826939242` passed at exact PR head `15c6a19744f3b5feca3bb15de7adf62ba1027df4`: 428 tests passed; exact-head checkout, Ruff lint, Ruff format, and mypy all passed.
+- Fresh observations for this execution: default branch `main@3710cda3db4d967d37d9e1b0bbd3d6969d0ad570`, open #138 (`action:implement-change`, `human:notified`), open #142 with no labels, PR #178 closed/merged with historical head `717f88e2f250e468c5c1607b70a5750e8bbef7e0` and merge commit `394afa46797e101e2cb079ed943505eca23c242c`, and carrier ref `agent/simplify-scheduled-agent-control-plane@f06c061e78e97aa567092ab42f602b3ee48c95ba`.
+- Python Quality run `33840023540` passed at exact main revision `3710cda3db4d967d37d9e1b0bbd3d6969d0ad570`: 435 tests passed; Ruff lint, Ruff format, and mypy all passed.
 - OpenSpec run `33826939202` passed at exact PR head `15c6a19744f3b5feca3bb15de7adf62ba1027df4`: the validator checked out the PR head explicitly and strict validation reported 8 passed, 0 failed against qualified OpenSpec `2826b8889e5223a9a8095d4428b60b56597e1020`.
-- B4.5 remains unchecked because a live content-ingress -> exact-tree/commit/ref -> exact-R validation run has not yet been observed on the deployed cutover. C.1 remains unchecked because #138 still visibly retains the migration-only `agent:executor` label until Action-only cutover is deployed. These are explicit deployment acceptance boundaries, not permission to restore the retired mechanisms.
+- B4.5 is complete: application run `33840190228` / job `100920738957` consumed request `5536087990`, built exact tree/commit/ref revision `f06c061e78e97aa567092ab42f602b3ee48c95ba`, and the exact-R validator checked out that revision with compatibility `PASS` and strict validation `PASS`. C.1 is complete for current live routing: fresh open-Issue inventory has no `agent:*` labels; historical labels remain only as bounded migration/retirement evidence.
 - The branch removes the obsolete runtime modules and machine-control tests, and current source tests cover the reduced Action model, transport, application, validation, merge, stale/replay/no-rewind, and archive contracts.
 
 ## Required semantic review
