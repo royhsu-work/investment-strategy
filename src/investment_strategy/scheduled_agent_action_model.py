@@ -432,3 +432,36 @@ def effect_is_current(observation: EffectObservation) -> bool:
     except UnknownAction:
         return False
     return expected_action is observed_action
+
+
+_PRESENTATION_START = "<!-- BEGIN GENERATED ACTION MODEL -->"
+_PRESENTATION_END = "<!-- END GENERATED ACTION MODEL -->"
+
+
+def render_workflow_presentation() -> str:
+    """Render the stable Human-readable projection of the executable model."""
+
+    lines = [
+        _PRESENTATION_START,
+        "## Executable Action model (generated)",
+        "",
+        "### Action to Role",
+        "| Action | Role |",
+        "| --- | --- |",
+    ]
+    for action, role in ACTION_ROLE.items():
+        lines.append(f"| `{action.value}` | `{role.value}` |")
+    lines.extend(
+        (
+            "",
+            "### Typed-result transitions",
+            "| Current Action | Result | Successor |",
+            "| --- | --- | --- |",
+        )
+    )
+    for action in Action:
+        for result, successor in TRANSITIONS[action].items():
+            target = "terminal" if successor is None else successor.value
+            lines.append(f"| `{action.value}` | `{result.value}` | `{target}` |")
+    lines.append(_PRESENTATION_END)
+    return "\n".join(lines) + "\n"

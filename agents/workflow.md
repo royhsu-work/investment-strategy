@@ -110,3 +110,77 @@ A closed formal-looking Issue without valid `LIFECYCLE_COMPLETE` is not terminal
 ## Ownership discipline
 
 Future workflow-topology changes modify this file as the runtime topology owner. Other surfaces change only when their independently owned requirement, shared invariant, role authority, action-local procedure, or Human-facing orientation genuinely changes. Do not maintain a second normative global DAG in `agents/AGENTS.md`, README, roles, or Skills, and do not introduce a generated registry, machine workflow engine, hidden lifecycle state, or synchronization-by-convention mechanism merely to mirror this document.
+
+<!-- BEGIN GENERATED ACTION MODEL -->
+## Executable Action model (generated)
+
+### Action to Role
+| Action | Role |
+| --- | --- |
+| `explore-change` | `lead` |
+| `propose-change` | `lead` |
+| `resolve-question` | `lead` |
+| `finalize-change` | `lead` |
+| `finalize-archive` | `lead` |
+| `review-openspec` | `reviewer` |
+| `review-implementation` | `reviewer` |
+| `review-archive` | `reviewer` |
+| `implement-change` | `executor` |
+| `merge-implementation-pr` | `executor` |
+| `merge-archive-pr` | `executor` |
+
+### Typed-result transitions
+| Current Action | Result | Successor |
+| --- | --- | --- |
+| `explore-change` | `proposal-ready` | `propose-change` |
+| `explore-change` | `research-required` | `explore-change` |
+| `explore-change` | `human-decision-required` | `resolve-question` |
+| `explore-change` | `no-change-required` | `terminal` |
+| `explore-change` | `no-go` | `terminal` |
+| `explore-change` | `blocked` | `explore-change` |
+| `propose-change` | `ready-for-openspec-review` | `review-openspec` |
+| `propose-change` | `research-required` | `explore-change` |
+| `propose-change` | `human-decision-required` | `resolve-question` |
+| `propose-change` | `no-go` | `terminal` |
+| `propose-change` | `blocked` | `propose-change` |
+| `resolve-question` | `ready-for-openspec-review` | `review-openspec` |
+| `resolve-question` | `ready` | `implement-change` |
+| `resolve-question` | `research-required` | `explore-change` |
+| `resolve-question` | `human-decision-required` | `resolve-question` |
+| `resolve-question` | `no-go` | `terminal` |
+| `resolve-question` | `blocked` | `resolve-question` |
+| `finalize-change` | `more-implementation-required` | `implement-change` |
+| `finalize-change` | `archive-ready` | `review-archive` |
+| `finalize-change` | `human-decision-required` | `finalize-change` |
+| `finalize-change` | `no-go` | `terminal` |
+| `finalize-change` | `blocked` | `finalize-change` |
+| `finalize-archive` | `lifecycle-complete` | `terminal` |
+| `finalize-archive` | `human-decision-required` | `finalize-archive` |
+| `finalize-archive` | `blocked` | `finalize-archive` |
+| `review-openspec` | `pass` | `implement-change` |
+| `review-openspec` | `findings` | `resolve-question` |
+| `review-openspec` | `human-decision-required` | `resolve-question` |
+| `review-openspec` | `no-go` | `terminal` |
+| `review-openspec` | `blocked` | `review-openspec` |
+| `review-implementation` | `pass` | `merge-implementation-pr` |
+| `review-implementation` | `findings` | `implement-change` |
+| `review-implementation` | `spec-blocker` | `resolve-question` |
+| `review-implementation` | `human-decision-required` | `resolve-question` |
+| `review-implementation` | `blocked` | `review-implementation` |
+| `review-archive` | `pass` | `merge-archive-pr` |
+| `review-archive` | `findings` | `finalize-change` |
+| `review-archive` | `human-decision-required` | `finalize-change` |
+| `review-archive` | `no-go` | `terminal` |
+| `review-archive` | `blocked` | `review-archive` |
+| `implement-change` | `ready` | `review-implementation` |
+| `implement-change` | `spec-blocker` | `resolve-question` |
+| `implement-change` | `more-implementation-required` | `implement-change` |
+| `implement-change` | `human-decision-required` | `resolve-question` |
+| `implement-change` | `blocked` | `implement-change` |
+| `merge-implementation-pr` | `merged` | `finalize-change` |
+| `merge-implementation-pr` | `lifecycle-violation` | `resolve-question` |
+| `merge-implementation-pr` | `blocked` | `merge-implementation-pr` |
+| `merge-archive-pr` | `merged` | `finalize-archive` |
+| `merge-archive-pr` | `lifecycle-violation` | `finalize-change` |
+| `merge-archive-pr` | `blocked` | `merge-archive-pr` |
+<!-- END GENERATED ACTION MODEL -->
