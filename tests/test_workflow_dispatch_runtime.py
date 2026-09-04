@@ -99,9 +99,7 @@ def test_wip_and_incomplete_observations_fail_closed() -> None:
 
 
 def test_closed_routing_debt_fails_closed_before_selection() -> None:
-    preflight = _preflight(
-        (_issue(138, "implement-change", state="closed", routing_debt=True),)
-    )
+    preflight = _preflight((_issue(138, "implement-change", state="closed", routing_debt=True),))
 
     decision = classify_dispatch(preflight)
 

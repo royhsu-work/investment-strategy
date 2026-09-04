@@ -152,11 +152,7 @@ def test_merge_action_requires_its_matching_review_action() -> None:
         {
             "id": 1,
             "created_at": "2026-08-27T06:00:00Z",
-            "body": (
-                "Action: Reviewer / review-archive\n"
-                "Result: PASS\n"
-                f"Revision: {HEAD}"
-            ),
+            "body": (f"Action: Reviewer / review-archive\nResult: PASS\nRevision: {HEAD}"),
         },
     )
 

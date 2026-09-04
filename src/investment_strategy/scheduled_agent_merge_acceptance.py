@@ -183,9 +183,7 @@ def _latest_matching_pass(
 
     matching = [record for record in records if record[4] == expected_head_sha]
     passes = [
-        record
-        for record in matching
-        if record[3] == "PASS" and record[2] == required_review_action
+        record for record in matching if record[3] == "PASS" and record[2] == required_review_action
     ]
     if not passes:
         return None, None, None, False, complete

@@ -1059,9 +1059,9 @@ class GitHubEffectAdapter:
             current = self._current_issue()
             observation = None if current is None else normalize_github_issue(current)
             try:
-                target_role = None if target_action is None else role_for(
-                    ModelAction(target_action)
-                ).value
+                target_role = (
+                    None if target_action is None else role_for(ModelAction(target_action)).value
+                )
             except ValueError:
                 target_role = None
             return bool(
