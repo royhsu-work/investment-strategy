@@ -788,6 +788,36 @@ class GitHubEffectAdapter:
         payload = _github_json(self.repository, self.token, query)
         return isinstance(payload, list) and not payload
 
+    def _existing_pull_request_for_create(
+        self,
+        payload: Mapping[str, object],
+    ) -> Mapping[str, object] | None:
+        branch = payload.get("head")
+        base = payload.get("base")
+        if not isinstance(branch, str) or not isinstance(base, str):
+            return None
+        owner = self.repository.split("/", 1)[0]
+        head = f"{owner}:{branch}"
+        query = "pulls?state=all"
+        query += f"&head={quote(head, safe='')}"
+        query += f"&base={quote(base, safe='')}"
+        query += "&per_page=100"
+        response = _github_json(self.repository, self.token, query)
+        if not isinstance(response, list):
+            return None
+        for item in response:
+            if not isinstance(item, Mapping):
+                continue
+            number = item.get("number")
+            if (
+                isinstance(number, int)
+                and not isinstance(number, bool)
+                and number > 0
+                and self._pull_request_matches_create(item, number, payload)
+            ):
+                return item
+        return None
+
     def _existing_workflow_dispatch(
         self,
         payload: Mapping[str, object],
@@ -938,13 +968,14 @@ class GitHubEffectAdapter:
             base_object = base_ref.get("object")
             if not isinstance(head_object, Mapping) or not isinstance(base_object, Mapping):
                 return False
-            if requested_branch == archive_branch:
-                return (
-                    head_object.get("sha") == payload.get("expected_head_sha")
-                    and _valid_sha(self.current_revision)
-                    and base_object.get("sha") == self.current_revision
-                    and self._no_existing_source_pull_request(expected_branch, default_branch)
-                )
+            if requested_branch == archive_branch and not (
+                head_object.get("sha") == payload.get("expected_head_sha")
+                and _valid_sha(self.current_revision)
+                and base_object.get("sha") == self.current_revision
+            ):
+                return False
+            if self._existing_pull_request_for_create(payload) is not None:
+                return True
             return self._no_existing_source_pull_request(expected_branch, default_branch)
         if operation == "pull-request-merge":
             number = cast(int, payload["number"])
@@ -1077,6 +1108,13 @@ class GitHubEffectAdapter:
             )
             return
         if operation == "pull-request-create":
+            existing = self._existing_pull_request_for_create(payload)
+            if existing is not None:
+                number = existing.get("number")
+                if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+                    raise RuntimeError("existing pull request number is invalid")
+                self._created_pr_numbers[effect] = number
+                return
             response = _github_json(
                 self.repository,
                 self.token,

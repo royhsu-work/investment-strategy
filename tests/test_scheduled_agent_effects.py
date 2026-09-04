@@ -973,3 +973,97 @@ def test_archive_pull_request_create_binds_exact_branch_head(
     adapter.apply(effect)
     assert adapter.observe_postcondition(effect)
     assert ("pulls", "POST") in calls
+
+
+def test_archive_pull_request_create_reuses_exact_existing_carrier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = "owner/repo"
+    source = WorkerRequest(138, "lead", "finalize-change")
+    base_revision = "c" * 40
+    archive_revision = "b" * 40
+    branch = f"agent/archive-{_CHANGE}"
+    title = "Archive exact carrier"
+    body = "Refs #138"
+    existing = {
+        "number": 200,
+        "state": "open",
+        "merged": False,
+        "title": title,
+        "body": body,
+        "draft": False,
+        "head": {
+            "ref": branch,
+            "sha": archive_revision,
+            "repo": {"full_name": repository},
+        },
+        "base": {
+            "ref": "main",
+            "sha": base_revision,
+            "repo": {"full_name": repository},
+        },
+    }
+    observation = GitHubIssueObservation(
+        issue_number=138,
+        change=_CHANGE,
+        routing=("lead", "finalize-change"),
+        state="open",
+        created_order=1,
+        authoritative=True,
+    )
+    calls: list[tuple[str, str]] = []
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        del payload
+        calls.append((path, method))
+        if path == f"git/ref/heads/{branch}":
+            return {"object": {"sha": archive_revision}}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": base_revision}}
+        if path.startswith("pulls?state=all"):
+            return [existing]
+        if path == "pulls/200":
+            return existing
+        if method == "POST":
+            raise AssertionError("exact existing archive PR must be reused")
+        raise AssertionError(f"unexpected GitHub call: {method} {path}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        repository,
+        archive_revision,
+        source,
+        authorized_change=_CHANGE,
+        current_revision=base_revision,
+    )
+    monkeypatch.setattr(adapter, "_source_still_current", lambda: True)
+    monkeypatch.setattr(adapter, "_authorized_issue_observation", lambda _current=None: observation)
+    monkeypatch.setattr(adapter, "_default_branch", lambda: "main")
+    effect = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "pull-request-create",
+                "title": title,
+                "body": body,
+                "head": branch,
+                "base": "main",
+                "draft": False,
+                "expected_head_sha": archive_revision,
+            }
+        ),
+    )
+
+    assert adapter.guard(effect)
+    adapter.apply(effect)
+    assert adapter.observe_postcondition(effect)
+    assert ("pulls", "POST") not in calls
