@@ -21,7 +21,11 @@ from investment_strategy.issue_comment_bridge import (
     parse_dispatch_request,
 )
 from investment_strategy.scheduled_agent_effect_contract import GITHUB_MUTATION_KIND
-from investment_strategy.scheduled_agent_effects import parse_effect_batch
+from investment_strategy.scheduled_agent_effects import (
+    StagedEffect,
+    parse_effect_batch,
+    topology_allows_successor,
+)
 from investment_strategy.scheduled_agent_merge_acceptance import run_guarded_effect_application
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 
@@ -428,13 +432,30 @@ def prepare_exact_openspec_validation(
     source: WorkerRequest,
     repository: str,
     token: str,
+    workflow_text: str | None = None,
 ) -> ExactValidationProbe | None:
-    """Capture the exact pre-apply branch identity for a formal Propose OpenSpec write."""
+    """Capture the exact pre-apply identity for a topology-gated OpenSpec write."""
 
-    if (source.role, source.action) != ("lead", "propose-change"):
-        return None
     mutations = _content_mutations_for_validation(raw_worker_result, source)
     if not mutations:
+        return None
+    if workflow_text is None:
+        try:
+            workflow_text = Path("agents/workflow.md").read_text(encoding="utf-8")
+        except OSError as exc:
+            raise RuntimeError("OpenSpec validation gate topology is unavailable") from exc
+    review_effect = StagedEffect(
+        kind="routing-transition",
+        payload_json=json.dumps(
+            {
+                "issue_number": source.issue_number,
+                "role": "reviewer",
+                "action": "review-openspec",
+            },
+            sort_keys=True,
+        ),
+    )
+    if not topology_allows_successor(workflow_text, source, review_effect):
         return None
     branch = mutations[0].branch
     before_sha = _branch_head_sha_if_present(repository, token, branch)
@@ -589,13 +610,14 @@ def main() -> int:
     ):
         raise RuntimeError("application plan is missing validated source/result identity")
 
+    workflow_text = Path("agents/workflow.md").read_text(encoding="utf-8")
     probe = prepare_exact_openspec_validation(
         plan.raw_worker_result,
         source=plan.source,
         repository=repository,
         token=token,
+        workflow_text=workflow_text,
     )
-    workflow_text = Path("agents/workflow.md").read_text(encoding="utf-8")
     _, result = run_guarded_effect_application(
         plan.raw_worker_result,
         source=plan.source,
