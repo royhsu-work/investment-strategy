@@ -6,14 +6,14 @@
 
 Parent advances: gate-derived exact-revision OpenSpec validation usable by the already selected Action for both newly produced and already-current target revisions. Remaining: transport de-mailbox, kernel, typed application, wake/state cutover, deletion. N-1: current comment-trigger/application bridge and qualified pinned OpenSpec. Boundary: validation resource only; no transport/topology/state/wake cutover. Next: Stage 1B.
 
-- [ ] 1A.1 RED — reproduce repository-owned OpenSpec write producing exact revision `R` while event validation is `action_required`, has no validator job, or lacks checkout proof; ownership transfer stays fail-closed.
-- [ ] 1A.2 RED — prove an already-current exact Change/PR head `R` that still needs readiness validation cannot require an artifact rewrite, dummy-touch, or unrelated content mutation merely to manufacture a validator trigger.
-- [ ] 1A.3 RED — prove a materially revising `Lead / resolve-question` cannot be excluded from a required exact-R readiness resource by a Propose-only source Role/Action whitelist.
-- [ ] 1A.4 GREEN — derive exact-revision resource eligibility from the governed readiness/effect/artifact gate rather than a hard-coded source Action whitelist.
-- [ ] 1A.5 GREEN — support both forms of target `R`: the exact revision just produced by the current authorized OpenSpec mutation and an already-current exact Change/PR head requiring validation with no artifact rewrite.
-- [ ] 1A.6 GREEN — run pinned strict validation directly against `R` or explicitly trigger a dedicated deterministic validator bound to `R`; structured evidence proves target `R`, validator checkout `HEAD == R`, qualified pinned compatibility, and strict PASS.
-- [ ] 1A.7 GREEN — make that exact-R structured result consumable by the already selected semantic Action; reject missing/failed/cancelled/ambiguous/revision-mismatched/checkout-mismatched/malformed/expired evidence.
-- [ ] 1A.8 REFACTOR — keep validation a bounded deterministic application resource, not another semantic Action/model wake, manual approval, stale-CI shortcut, direct-connector bypass, artifact dummy-touch, source-Action whitelist, or generic polling scheduler.
+- [x] 1A.1 RED — reproduce repository-owned OpenSpec write producing exact revision `R` while event validation is `action_required`, has no validator job, or lacks checkout proof; ownership transfer stays fail-closed.
+- [x] 1A.2 RED — prove an already-current exact Change/PR head `R` that still needs readiness validation cannot require an artifact rewrite, dummy-touch, or unrelated content mutation merely to manufacture a validator trigger.
+- [x] 1A.3 RED — prove a materially revising `Lead / resolve-question` cannot be excluded from a required exact-R readiness resource by a Propose-only source Role/Action whitelist.
+- [x] 1A.4 GREEN — derive exact-revision resource eligibility from the governed readiness/effect/artifact gate rather than a hard-coded source Action whitelist.
+- [x] 1A.5 GREEN — support both forms of target `R`: the exact revision just produced by the current authorized OpenSpec mutation and an already-current exact Change/PR head requiring validation with no artifact rewrite.
+- [x] 1A.6 GREEN — run pinned strict validation directly against `R` or explicitly trigger a dedicated deterministic validator bound to `R`; structured evidence proves target `R`, validator checkout `HEAD == R`, qualified pinned compatibility, and strict PASS.
+- [x] 1A.7 GREEN — make that exact-R structured result consumable by the already selected semantic Action; reject missing/failed/cancelled/ambiguous/revision-mismatched/checkout-mismatched/malformed/expired evidence.
+- [x] 1A.8 REFACTOR — keep validation a bounded deterministic application resource, not another semantic Action/model wake, manual approval, stale-CI shortcut, direct-connector bypass, artifact dummy-touch, source-Action whitelist, or generic polling scheduler.
 - [ ] 1A.9 VERIFY — live N-1 closed loop for both target forms: newly produced `R` and already-current `R` each obtain checkout proof, qualified pinned strict PASS, and structured evidence consumed by the same selected Action; retain `action_required`/no-validator-job and Resolve-whitelist exclusion as RED regressions.
 
 ## 1B. Transport de-mailbox + daily check-in lifecycle
