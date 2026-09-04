@@ -228,7 +228,7 @@ def test_preflight_excludes_daily_shards_and_unrouted_prose() -> None:
     assert classify_dispatch(preflight).selected_routing == ("lead", "finalize-change")
 
 
-def test_routed_change_prose_remains_strictly_qualified() -> None:
+def test_canonical_change_ignores_markdown_prose_examples() -> None:
     payload = {
         "number": 138,
         "title": "Active Change",
@@ -246,4 +246,5 @@ def test_routed_change_prose_remains_strictly_qualified() -> None:
     observation = runtime.normalize_github_issue(payload)
 
     assert observation is not None
-    assert observation.authoritative is False
+    assert observation.authoritative is True
+    assert observation.change == "simplify-scheduled-agent-control-plane"

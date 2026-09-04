@@ -186,10 +186,15 @@ def _github_timestamp(value: object) -> bool:
 def _change_from_body(body: object) -> tuple[str, bool]:
     if not isinstance(body, str):
         return "unset", False
-    matches = _CHANGE_LINE.findall(body)
-    if len(matches) > 1:
-        return "unset", False
-    return (matches[0] if matches else "unset"), True
+    for line in body.splitlines():
+        canonical_line = line.strip()
+        if not canonical_line:
+            continue
+        match = _CHANGE_LINE.fullmatch(canonical_line)
+        if match is None:
+            return "unset", True
+        return match.group(1), True
+    return "unset", True
 
 
 def normalize_github_issue(
