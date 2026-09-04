@@ -540,8 +540,7 @@ def test_apply_work_product_uses_current_ref_for_merged_carrier(
         "merged": True,
         "merged_at": "2026-09-04T03:31:44Z",
         "merge_commit_sha": "e" * 40,
-        "body": "Refs #138
-",
+        "body": "Refs #138\n",
         "head": {
             "sha": historical_head,
             "ref": f"agent/{_CHANGE}",
