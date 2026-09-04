@@ -16,6 +16,7 @@ from investment_strategy.scheduled_agent_action_model import (
     BoundedActionResult,
     ResultKind,
     TypedResult,
+    role_for,
 )
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 
@@ -91,11 +92,10 @@ def parse_worker_result(raw: str, request: WorkerRequest) -> WorkerActionResult:
     try:
         model_action = ModelAction(action)
         kind = ResultKind(result_kind)
-        role_for_action = request.role
     except ValueError as exc:
         raise ValueError("worker result vocabulary is invalid") from exc
-    if role_for_action != request.role:
-        raise ValueError("worker result role is invalid")
+    if role_for(model_action).value != role:
+        raise ValueError("worker result Role is not derived from Action")
     typed = BoundedActionResult(
         issue_number=issue_number,
         change=change,

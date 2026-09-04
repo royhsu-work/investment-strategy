@@ -1,0 +1,46 @@
+schema: spec-driven
+
+context: |
+  Project: investment-strategy, a public Python repository for reproducible swing-strategy analysis.
+  Decision and analytical backtest flows are intended to run through GitHub Actions and publish results as Actions Artifacts rather than committing generated results to the repository.
+  Public Decision and analytical Backtest outputs must include this exact disclaimer: 僅為個人研究與策略驗證，不構成任何形式之投資建議。
+  Formal strategy analysis uses completed daily OHLCV only. Intraday snapshots, when present, remain isolated from formal historical indicators and model inputs.
+  Strategy evaluation must be reproducible for explicit inputs and must not use future information or hidden persisted runtime state.
+  Strategy implementations and parameter sets are separate concerns. Formal Decision uses the instrument's active assignment; research Backtest may explicitly select a strategy and parameter set.
+  This is a public repository. Do not require or persist real user holdings, average cost, account cash, or other personal portfolio state.
+  Keep OpenSpec changes single-purpose. Execution/fill/position simulation is a separate capability from strategy evaluation unless a change explicitly targets execution simulation.
+
+rules:
+  proposal:
+    - Keep one clear change intent and state scope boundaries explicitly.
+    - List affected capabilities and identify deferred work instead of expanding the change opportunistically.
+    - Before retaining added complexity within the current change's relevant scope, identify the current requirement, safety property, or demonstrated failure mode that requires it.
+    - Do not include implementation details that belong in design.md.
+    - When a change adds or modifies public Decision or analytical Backtest artifacts, include the public-output disclaimer requirement in scope and impact.
+
+  specs:
+    - Specify externally verifiable behavior; keep implementation structure in design.md.
+    - Use SHALL or MUST for normative requirements.
+    - Give every requirement at least one GIVEN/WHEN/THEN scenario using the OpenSpec scenario format.
+    - Make information timing explicit whenever market data, as-of dates, or historical replay are involved.
+    - Distinguish valid neutral strategy outcomes from configuration, data, or strategy failures.
+    - "Require every public Decision and analytical Backtest artifact to contain exactly this disclaimer: 僅為個人研究與策略驗證，不構成任何形式之投資建議。"
+
+  design:
+    - Trace major design decisions to requirements and call out trade-offs and deferred decisions.
+    - Prefer the smallest sufficient design. For concepts within the current change's relevant scope, identify the current requirement, safety property, or demonstrated failure mode that needs retained complexity; when required capabilities and safety properties still hold without it, prefer removal, consolidation, or an existing ownership layer.
+    - Prefer stateless, reproducible strategy evaluation and explicit inputs over hidden persisted state.
+    - Keep strategy-specific internals out of common framework abstractions unless multiple strategies require them.
+    - Do not expand a framework change with execution, portfolio, or strategy-specific algorithms unless required by its specs.
+    - Keep the public-output disclaimer representation reusable and independent of strategy-specific payloads.
+
+  tasks:
+    - Organize tasks by vertical feature slice and observable behavior, not by architectural dependency order.
+    - Start every feature slice with RED tests and run them before production implementation.
+    - Verify RED failures are caused by the missing or incorrect target behavior, not syntax, import, fixture, setup, or unrelated failures.
+    - Implement the minimum GREEN behavior for the slice, then refactor if needed.
+    - Complete each slice only after slice tests, the full regression suite, type checks, and lint checks are green.
+    - Use Markdown checkboxes and keep RED, GREEN, and REFACTOR work grouped at feature-slice granularity.
+    - Include behavioral tests that verify public Decision and analytical Backtest artifacts contain the exact required disclaimer text.
+    - Trace Behavior/Product tasks through proposal, capability specs, and design; Engineering/Governance tasks such as lint, type checks, and OpenSpec validation may trace through this config and design without adding artificial capability requirements.
+    - Before declaring a change complete, run strict OpenSpec validation and resolve all reported issues.

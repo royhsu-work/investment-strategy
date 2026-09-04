@@ -1,0 +1,223 @@
+name: Scheduled Agent Application Bridge
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: scheduled-agent-application-${{ github.event.comment.id }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: >-
+      startsWith(github.event.comment.body, 'EFFECT_REQUEST') ||
+      startsWith(github.event.comment.body, 'VALIDATION_RESOURCE_REQUEST') ||
+      startsWith(github.event.comment.body, 'WORK_PRODUCT_REQUEST')
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out authoritative default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.10.0"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Record exact checked-out default-branch revision
+        id: revision
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Validate correlation and apply repository-owned effects
+        if: startsWith(github.event.comment.body, 'EFFECT_REQUEST')
+        id: apply
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: >-
+          uv run python -m investment_strategy.scheduled_agent_application_bridge
+          --event-path "$GITHUB_EVENT_PATH"
+          --revision "${{ steps.revision.outputs.sha }}"
+
+      - name: Resolve already-current exact-revision validation resource
+        if: startsWith(github.event.comment.body, 'VALIDATION_RESOURCE_REQUEST')
+        id: resource
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: >-
+          uv run python -m investment_strategy.scheduled_agent_validation_resource
+          --event-path "$GITHUB_EVENT_PATH"
+          --revision "${{ steps.revision.outputs.sha }}"
+          --default-branch "${{ github.event.repository.default_branch }}"
+
+      - name: Apply content-addressed work product
+        if: startsWith(github.event.comment.body, 'WORK_PRODUCT_REQUEST')
+        id: work_product
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: >-
+          uv run python -m investment_strategy.scheduled_agent_validation_resource
+          --event-path "$GITHUB_EVENT_PATH"
+          --revision "${{ steps.revision.outputs.sha }}"
+          --default-branch "${{ github.event.repository.default_branch }}"
+
+      - name: Select exact-revision validation resource
+        id: validation
+        env:
+          APPLY_REQUIRED: ${{ steps.apply.outputs.validation_required }}
+          APPLY_REPOSITORY: ${{ steps.apply.outputs.validation_target_repository }}
+          APPLY_REVISION: ${{ steps.apply.outputs.validation_target_revision }}
+          APPLY_CORRELATION: ${{ steps.apply.outputs.validation_correlation }}
+          RESOURCE_REQUIRED: ${{ steps.resource.outputs.validation_required }}
+          RESOURCE_REPOSITORY: ${{ steps.resource.outputs.validation_target_repository }}
+          RESOURCE_REVISION: ${{ steps.resource.outputs.validation_target_revision }}
+          RESOURCE_CORRELATION: ${{ steps.resource.outputs.validation_correlation }}
+          WORK_PRODUCT_REQUIRED: ${{ steps.work_product.outputs.validation_required }}
+          WORK_PRODUCT_REPOSITORY: ${{ steps.work_product.outputs.validation_target_repository }}
+          WORK_PRODUCT_REVISION: ${{ steps.work_product.outputs.validation_target_revision }}
+          WORK_PRODUCT_CORRELATION: ${{ steps.work_product.outputs.validation_correlation }}
+        shell: bash
+        run: |
+          apply_required="${APPLY_REQUIRED:-false}"
+          resource_required="${RESOURCE_REQUIRED:-false}"
+          work_product_required="${WORK_PRODUCT_REQUIRED:-false}"
+          resource_count=0
+          [[ "$apply_required" == "true" ]] && resource_count=$((resource_count + 1))
+          [[ "$resource_required" == "true" ]] && resource_count=$((resource_count + 1))
+          [[ "$work_product_required" == "true" ]] && resource_count=$((resource_count + 1))
+          if [[ "$resource_count" -gt 1 ]]; then
+            echo "::error::Exact-revision validation target is ambiguous across application resources"
+            exit 1
+          fi
+          if [[ "$apply_required" == "true" ]]; then
+            target_repository="$APPLY_REPOSITORY"
+            target_revision="$APPLY_REVISION"
+            correlation="$APPLY_CORRELATION"
+          elif [[ "$resource_required" == "true" ]]; then
+            target_repository="$RESOURCE_REPOSITORY"
+            target_revision="$RESOURCE_REVISION"
+            correlation="$RESOURCE_CORRELATION"
+          elif [[ "$work_product_required" == "true" ]]; then
+            target_repository="$WORK_PRODUCT_REPOSITORY"
+            target_revision="$WORK_PRODUCT_REVISION"
+            correlation="$WORK_PRODUCT_CORRELATION"
+          else
+            echo "validation_required=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -z "$target_repository" || -z "$target_revision" || -z "$correlation" ]]; then
+            echo "::error::Exact-revision validation resource identity is incomplete"
+            exit 1
+          fi
+          {
+            echo "validation_required=true"
+            echo "validation_target_repository=$target_repository"
+            echo "validation_target_revision=$target_revision"
+            echo "validation_correlation=$correlation"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact validation target
+        if: steps.validation.outputs.validation_required == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.validation.outputs.validation_target_repository }}
+          ref: ${{ steps.validation.outputs.validation_target_revision }}
+          path: validation-target
+          persist-credentials: false
+
+      - name: Verify exact validation checkout revision
+        if: steps.validation.outputs.validation_required == 'true'
+        working-directory: validation-target
+        env:
+          VALIDATION_TARGET_REPOSITORY: ${{ steps.validation.outputs.validation_target_repository }}
+          VALIDATION_TARGET_REVISION: ${{ steps.validation.outputs.validation_target_revision }}
+          VALIDATION_CORRELATION: ${{ steps.validation.outputs.validation_correlation }}
+        shell: bash
+        run: |
+          actual_sha="$(git rev-parse HEAD)"
+          echo "validation_target_repository=$VALIDATION_TARGET_REPOSITORY"
+          echo "validation_target_revision=$VALIDATION_TARGET_REVISION"
+          echo "validation_correlation=$VALIDATION_CORRELATION"
+          echo "validator_checkout_head=$actual_sha"
+          {
+            echo "### Application-owned OpenSpec exact-revision resource"
+            echo "- target repository: \`$VALIDATION_TARGET_REPOSITORY\`"
+            echo "- target revision: \`$VALIDATION_TARGET_REVISION\`"
+            echo "- correlation: \`$VALIDATION_CORRELATION\`"
+            echo "- validator checkout HEAD: \`$actual_sha\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$actual_sha" != "$VALIDATION_TARGET_REVISION" ]]; then
+            echo "::error::Validator checkout HEAD $actual_sha does not match target $VALIDATION_TARGET_REVISION"
+            exit 1
+          fi
+
+      - name: Set up Node for exact validation
+        if: steps.validation.outputs.validation_required == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install qualified OpenSpec baseline
+        if: steps.validation.outputs.validation_required == 'true'
+        working-directory: validation-target
+        shell: bash
+        run: |
+          openspec_version="$(tr -d '[:space:]' < .github/openspec-version)"
+          [[ "$openspec_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::Invalid .github/openspec-version: $openspec_version"
+            exit 1
+          }
+          openspec_package="@fission-ai/openspec"
+          npm install -g "${openspec_package}@${openspec_version}"
+          echo "qualified_openspec_version=$openspec_version"
+
+      - name: Qualify pinned OpenSpec compatibility
+        if: steps.validation.outputs.validation_required == 'true'
+        working-directory: validation-target
+        run: python .github/scripts/openspec_compatibility.py
+
+      - name: Validate exact OpenSpec target strictly
+        if: steps.validation.outputs.validation_required == 'true'
+        working-directory: validation-target
+        run: openspec validate --all --strict --json --no-interactive
+
+      - name: Emit structured exact-revision validation result
+        if: steps.validation.outputs.validation_required == 'true'
+        working-directory: validation-target
+        env:
+          VALIDATION_TARGET_REPOSITORY: ${{ steps.validation.outputs.validation_target_repository }}
+          VALIDATION_TARGET_REVISION: ${{ steps.validation.outputs.validation_target_revision }}
+          VALIDATION_CORRELATION: ${{ steps.validation.outputs.validation_correlation }}
+        shell: bash
+        run: |
+          actual_sha="$(git rev-parse HEAD)"
+          result="$(jq -nc \
+            --arg repository "$VALIDATION_TARGET_REPOSITORY" \
+            --arg target_revision "$VALIDATION_TARGET_REVISION" \
+            --arg checkout_head "$actual_sha" \
+            --arg correlation "$VALIDATION_CORRELATION" \
+            '{schema_version:1,resource:"openspec-exact-validation",repository:$repository,target_revision:$target_revision,checkout_head:$checkout_head,correlation:$correlation,compatibility:"PASS",strict_validation:"PASS"}')"
+          echo "validation_result=$result"
+          {
+            echo "### Structured validation result"
+            echo "\`\`\`json"
+            echo "$result"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"

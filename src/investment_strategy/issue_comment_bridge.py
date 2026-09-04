@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from investment_strategy.scheduled_agent_action_model import Action as ModelAction, role_for
 from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
 from investment_strategy.scheduled_agent_runtime import acquire_current_github_preflight
 from investment_strategy.workflow_dispatch import DispatchDecision, classify_dispatch

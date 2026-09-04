@@ -1,0 +1,71 @@
+name: Scheduled Agent Issue Comment Bridge
+
+run-name: Scheduled Agent Dispatch ${{ github.event.comment.id }}
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: issue-comment-bridge-${{ github.event.comment.id }}
+  cancel-in-progress: false
+
+jobs:
+  bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out authoritative default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.10.0"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Record exact checked-out default-branch revision
+        id: revision
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Plan exact correlated machine dispatch decision
+        id: handler
+        env:
+          DEFAULT_BRANCH_REVISION: ${{ steps.revision.outputs.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: >-
+          uv run python -m investment_strategy.issue_comment_bridge
+          --event-path "$GITHUB_EVENT_PATH"
+          --revision "$DEFAULT_BRANCH_REVISION"
+          --github-output "$GITHUB_OUTPUT"
+          --result-payload "$RUNNER_TEMP/dispatch-result.json"
+
+      - name: Emit exact run-scoped machine dispatch result
+        if: steps.handler.outputs.should_emit == 'true'
+        shell: bash
+        run: |
+          python - "$RUNNER_TEMP/dispatch-result.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          body = payload.get("body")
+          if not isinstance(body, str) or not body.startswith("DISPATCH_DECISION\n"):
+              raise SystemExit("missing strict DISPATCH_DECISION result")
+          print("BEGIN_SCHEDULED_AGENT_DISPATCH_RESULT")
+          print(body)
+          print("END_SCHEDULED_AGENT_DISPATCH_RESULT")
+          PY
