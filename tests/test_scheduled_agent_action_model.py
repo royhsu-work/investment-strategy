@@ -19,8 +19,12 @@ from investment_strategy.scheduled_agent_action_model import (
     effect_is_current,
     next_action,
     render_workflow_presentation,
+    render_workflow_presentation,
     role_for,
     select_work,
+    ShadowComparison,
+    ShadowDivergence,
+    shadow_compare_selection,
 )
 
 
@@ -194,3 +198,102 @@ def test_workflow_presentation_is_exactly_model_generated() -> None:
     end = workflow.index(end_marker, start) + len(end_marker)
     observed = workflow[start:end] + "\n"
     assert observed == render_workflow_presentation()
+
+
+@pytest.mark.parametrize(
+    ("observations", "expected_disposition", "expected_reason"),
+    [
+        (
+            AuthoritativeObservations(
+                issues=(IssueObservation(1, "open", "active", Action.IMPLEMENT_CHANGE),)
+            ),
+            SelectionDisposition.AUTHORIZE,
+            "selected-formal-action",
+        ),
+        (
+            AuthoritativeObservations(
+                issues=(
+                    IssueObservation(12, "open", None, Action.EXPLORE_CHANGE, 2),
+                    IssueObservation(11, "open", "unset", Action.PROPOSE_CHANGE, 1),
+                )
+            ),
+            SelectionDisposition.AUTHORIZE,
+            "selected-preactivation-action",
+        ),
+        (
+            AuthoritativeObservations(
+                issues=(IssueObservation(1, "closed", "closed-debt", Action.IMPLEMENT_CHANGE),)
+            ),
+            SelectionDisposition.NO_WORK,
+            "no-routed-work",
+        ),
+        (
+            AuthoritativeObservations(
+                issues=(IssueObservation(1, "open", "stale", Action.IMPLEMENT_CHANGE),),
+                complete=False,
+            ),
+            SelectionDisposition.FAIL_CLOSED,
+            "observations-unqualified",
+        ),
+        (
+            AuthoritativeObservations(
+                issues=(
+                    IssueObservation(1, "open", "replay", Action.IMPLEMENT_CHANGE),
+                    IssueObservation(1, "open", "replay", Action.IMPLEMENT_CHANGE),
+                )
+            ),
+            SelectionDisposition.FAIL_CLOSED,
+            "issue-identity-invalid",
+        ),
+        (
+            AuthoritativeObservations(
+                issues=(
+                    IssueObservation(1, "open", "first", Action.IMPLEMENT_CHANGE),
+                    IssueObservation(2, "open", "second", Action.REVIEW_OPENSPEC),
+                )
+            ),
+            SelectionDisposition.FAIL_CLOSED,
+            "wip-more-than-one",
+        ),
+    ],
+)
+def test_shadow_comparison_covers_current_selection_cases(
+    observations: AuthoritativeObservations,
+    expected_disposition: SelectionDisposition,
+    expected_reason: str,
+) -> None:
+    expected = select_work(observations)
+    comparison = shadow_compare_selection(observations, expected)
+    assert isinstance(comparison, ShadowComparison)
+    assert comparison.matches
+    assert comparison.divergences == ()
+    assert comparison.expected.disposition is expected_disposition
+    assert comparison.expected.reason == expected_reason
+
+
+def test_shadow_comparison_preserves_exact_divergence_evidence() -> None:
+    observations = AuthoritativeObservations(
+        issues=(IssueObservation(1, "open", "active", Action.IMPLEMENT_CHANGE),)
+    )
+    expected = select_work(observations)
+    observed = replace(expected, issue_number=999)
+
+    comparison = shadow_compare_selection(observations, observed)
+
+    assert not comparison.matches
+    assert comparison.divergences == (ShadowDivergence("issue_number", "1", "999"),)
+    assert comparison.expected == expected
+    assert comparison.observed == observed
+
+
+def test_selection_enforces_human_authority_and_finish_first() -> None:
+    observations = AuthoritativeObservations(
+        issues=(
+            IssueObservation(1, "open", "active", Action.IMPLEMENT_CHANGE),
+            IssueObservation(2, "open", None, Action.EXPLORE_CHANGE, 1),
+        )
+    )
+    assert select_work(observations).issue_number == 1
+    assert select_work(replace(observations, human_authorized=False)).disposition is (
+        SelectionDisposition.FAIL_CLOSED
+    )
