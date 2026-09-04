@@ -808,6 +808,7 @@ def test_application_archive_workflow_dispatch_is_exact_revision_and_idempotent(
         }
     ]
 
+
 def test_issue_comment_reuses_existing_bot_comment_on_later_page(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -826,7 +827,11 @@ def test_issue_comment_reuses_existing_bot_comment_on_later_page(
         "user": {"login": "github-actions[bot]"},
     }
     first_page = [
-        {"id": index, "body": f"unrelated-{index}", "user": {"login": "github-actions[bot]"}}
+        {
+            "id": index,
+            "body": f"unrelated-{index}",
+            "user": {"login": "github-actions[bot]"},
+        }
         for index in range(100)
     ]
     calls: list[str] = []
