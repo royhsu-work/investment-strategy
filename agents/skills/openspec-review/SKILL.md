@@ -42,3 +42,5 @@ When this Action materially creates or modifies a repository Skill, conditionall
 `agents/skills/skill-creator/SKILL.md`
 and `agents/skills/skill-creator/references/repository-governance.md`.
 This repository Skill guidance is procedural input, not runtime authority.
+
+Reviewers must preserve every still-applicable scenario/content when evaluating a MODIFIED requirement. Successful mechanical OpenSpec validation is not semantic PASS evidence; semantic review remains independent.

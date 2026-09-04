@@ -72,3 +72,5 @@ and `agents/skills/skill-creator/references/repository-governance.md`.
 This repository Skill guidance is procedural input, not runtime authority.
 
 The closed Apply context includes approved proposal, applicable delta specs, approved design, approved tasks, canonical specs needed to interpret modified behavior, and materially applicable default-branch `openspec/config.yaml` context/rules. Executor is not responsible for choosing which upstream/config semantics count; missing or contradictory context fails closed.
+
+The closed Apply context does not grant Executor specification authority. Choosing which upstream/config semantics count remains a Lead semantic decision; uncertainty is routed to `Lead / resolve-question`.
