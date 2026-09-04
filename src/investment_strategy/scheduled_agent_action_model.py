@@ -118,6 +118,7 @@ class AuthoritativeObservations:
     issues: tuple[IssueObservation, ...]
     complete: bool = True
     provenance: ObservationProvenance | str = ObservationProvenance.QUALIFIED
+    human_authorized: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +144,28 @@ class EffectObservation:
     observed_action: Action | str | None
     expected_revision: str
     observed_revision: str
+
+
+@dataclass(frozen=True, slots=True)
+class ShadowDivergence:
+    """Exact field-level evidence when shadow selection differs from observation."""
+
+    field: str
+    expected: str
+    observed: str
+
+
+@dataclass(frozen=True, slots=True)
+class ShadowComparison:
+    """No-mutation comparison between executable selection and observed selection."""
+
+    expected: SelectionDecision
+    observed: SelectionDecision | None
+    divergences: tuple[ShadowDivergence, ...]
+
+    @property
+    def matches(self) -> bool:
+        return not self.divergences
 
 
 ACTION_ROLE: Mapping[Action, Role] = MappingProxyType(
@@ -337,8 +360,14 @@ def select_work(observations: AuthoritativeObservations) -> SelectionDecision:
     candidates use a stable creation/order tie-break.
     """
 
-    if not observations.complete or observations.provenance != ObservationProvenance.QUALIFIED:
+    if (
+        not isinstance(observations.complete, bool)
+        or not observations.complete
+        or observations.provenance != ObservationProvenance.QUALIFIED
+    ):
         return _selection(SelectionDisposition.FAIL_CLOSED, "observations-unqualified")
+    if not isinstance(observations.human_authorized, bool) or not observations.human_authorized:
+        return _selection(SelectionDisposition.FAIL_CLOSED, "human-authority-missing")
 
     seen_issue_numbers: set[int] = set()
     formal: list[tuple[IssueObservation, Action]] = []
@@ -408,6 +437,43 @@ def select_work(observations: AuthoritativeObservations) -> SelectionDecision:
             action,
         )
     return _selection(SelectionDisposition.NO_WORK, "no-routed-work")
+
+
+_DECISION_FIELDS = ("disposition", "issue_number", "action", "role", "reason")
+
+
+def _decision_evidence(value: object) -> str:
+    if isinstance(value, StrEnum):
+        return value.value
+    if value is None:
+        return "null"
+    return str(value)
+
+
+def shadow_compare_selection(
+    observations: AuthoritativeObservations,
+    observed: SelectionDecision | None = None,
+) -> ShadowComparison:
+    """Compare pure selection with an observed decision without applying effects."""
+
+    expected = select_work(observations)
+    if observed is None:
+        return ShadowComparison(expected=expected, observed=None, divergences=())
+
+    divergences = tuple(
+        ShadowDivergence(
+            field=field,
+            expected=_decision_evidence(getattr(expected, field)),
+            observed=_decision_evidence(getattr(observed, field)),
+        )
+        for field in _DECISION_FIELDS
+        if getattr(expected, field) != getattr(observed, field)
+    )
+    return ShadowComparison(
+        expected=expected,
+        observed=observed,
+        divergences=divergences,
+    )
 
 
 def effect_is_current(observation: EffectObservation) -> bool:

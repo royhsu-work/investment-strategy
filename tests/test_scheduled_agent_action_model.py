@@ -19,11 +19,14 @@ from investment_strategy.scheduled_agent_action_model import (
     effect_is_current,
     next_action,
     render_workflow_presentation,
+    ShadowComparison,
+    ShadowDivergence,
+    TypedResult,
+    effect_is_current,
+    next_action,
     render_workflow_presentation,
     role_for,
     select_work,
-    ShadowComparison,
-    ShadowDivergence,
     shadow_compare_selection,
 )
 
