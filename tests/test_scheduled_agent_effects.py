@@ -849,9 +849,7 @@ def test_issue_comment_reuses_existing_bot_comment_on_later_page(
         calls.append(api_path)
         if api_path == "issues/138/comments?per_page=100&sort=created&direction=desc":
             return first_page
-        if api_path == (
-            "issues/138/comments?per_page=100&sort=created&direction=desc&page=2"
-        ):
+        if api_path == ("issues/138/comments?per_page=100&sort=created&direction=desc&page=2"):
             return [existing]
         if api_path == "issues/comments/992":
             return existing
