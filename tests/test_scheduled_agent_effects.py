@@ -720,6 +720,8 @@ def test_application_archive_workflow_dispatch_is_exact_revision_and_idempotent(
         "number": 138,
         "state": "open",
         "body": f"Change: {_CHANGE}\n",
+        "created_at": "2026-09-04T00:00:00Z",
+        "closed_at": None,
         "labels": [{"name": "agent:lead"}, {"name": "action:finalize-change"}],
     }
     runs: list[dict[str, object]] = []

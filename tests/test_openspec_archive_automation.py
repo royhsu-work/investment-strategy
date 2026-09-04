@@ -447,6 +447,8 @@ def test_readme_documents_state_driven_archive_contract() -> None:
         "unsupported automatic source",
         "cancel-in-progress: false",
         "in-flight request/run/result chain",
-        "workflow_dispatch` carries application-authorized archive requests and remains available for recovery / migration fallback",
+        "application-owned `workflow_dispatch` actuator",
+        "GITHUB_TOKEN 寫入的 issue-comment",
+        "workflow_dispatch` 也保留給 recovery / migration fallback",
     ):
         assert required in readme

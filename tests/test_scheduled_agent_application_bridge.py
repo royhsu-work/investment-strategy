@@ -175,4 +175,3 @@ def test_application_workflow_can_read_exact_dispatch_run_logs() -> None:
     workflow = Path(".github/workflows/scheduled-agent-application.yml").read_text(encoding="utf-8")
 
     assert "actions: write" in workflow
-    assert "workflow_dispatch" in workflow

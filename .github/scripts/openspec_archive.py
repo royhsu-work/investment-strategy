@@ -143,7 +143,7 @@ def _classify_workflow_dispatch(args: argparse.Namespace) -> None:
     _emit(action="evaluate", change=change, mode="manual", reason="manual-dispatch")
 
 
-def _classify(args: argparse.Namespace) -> None
+def _classify(args: argparse.Namespace) -> None:
     if args.event_name == "issue_comment":
         _classify_archive_request(args)
         return
