@@ -623,9 +623,7 @@ def _open_pr_payload(
         (pr.get("state") == "open" and pr.get("merged") is not True)
         or (allow_historical_merged_carrier and _is_historical_merged_carrier(pr))
     ):
-        raise RuntimeError(
-            "validation resource target PR is not an allowed current carrier"
-        )
+        raise RuntimeError("validation resource target PR is not an allowed current carrier")
     head = _as_mapping(pr.get("head"))
     base = _as_mapping(pr.get("base"))
     head_repo = None if head is None else _as_mapping(head.get("repo"))

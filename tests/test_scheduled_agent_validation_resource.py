@@ -339,15 +339,18 @@ def test_open_pr_payload_requires_explicit_historical_merged_carrier(
             default_branch="main",
         )
 
-    assert resource._open_pr_payload(
-        repository=_REPOSITORY,
-        token=_FIXTURE_VALUE,
-        pr_number=178,
-        source=source,
-        expected_change=_CHANGE,
-        default_branch="main",
-        allow_historical_merged_carrier=True,
-    ) == merged_pr
+    assert (
+        resource._open_pr_payload(
+            repository=_REPOSITORY,
+            token=_FIXTURE_VALUE,
+            pr_number=178,
+            source=source,
+            expected_change=_CHANGE,
+            default_branch="main",
+            allow_historical_merged_carrier=True,
+        )
+        == merged_pr
+    )
 
 
 def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r(
