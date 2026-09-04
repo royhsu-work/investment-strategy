@@ -68,3 +68,6 @@ Lead checks systemic coherence, bounded blast-radius analysis, sibling Actions, 
 narrowest correct ownership layer. Progress polling is not runtime state. The recommendation remains
 advisory. repeated action mistakes, missing or obsolete Skill guidance, unnecessary Skill complexity,
 and duplicated Skill guidance may support that recommendation.
+## Exact reserved-capability boundary
+
+Do not add, remove, restore, or manufacture `human:approved` or `intake:approved`.

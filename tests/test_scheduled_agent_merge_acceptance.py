@@ -290,6 +290,7 @@ def test_merge_effect_rechecks_acceptance_on_real_application_path(
         source=source,
         repository="royhsu-work/investment-strategy",
         token=HEAD,
+        current_revision=HEAD,
     )
 
     assert not result.applied

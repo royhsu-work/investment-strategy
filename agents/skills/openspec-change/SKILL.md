@@ -46,3 +46,11 @@ applicable delta specs, design, tasks, canonical specs, and materially applicabl
 do not choose which upstream/config semantics count. Missing or contradictory context fails closed.
 
 The worker MUST NOT create a Git tree or commit, move a ref, mutate an Issue, or choose routing.
+## Conditional repository Skill composition
+
+When this Action materially creates or modifies a repository Skill, conditionally compose:
+`agents/skills/skill-creator/SKILL.md`
+and `agents/skills/skill-creator/references/repository-governance.md`.
+This repository Skill guidance is procedural input, not runtime authority.
+
+For the semantic gate, strict validation alone does not create semantic acceptance; missing or contradictory context fails closed. The Lead must record the source decision, and an independent Reviewer / review-openspec must review the resulting exact revision.

@@ -64,3 +64,11 @@ When there is no material semantic OpenSpec change, implementation completion ro
 Reviewer / review-implementation. A material semantic OpenSpec change routes to Lead / resolve-question
 and then Reviewer / review-openspec. The exact-current-head gate and semantic OpenSpec bookkeeping
 exception do not weaken exact-head review.
+## Conditional repository Skill composition
+
+When this Action materially creates or modifies a repository Skill, conditionally compose:
+`agents/skills/skill-creator/SKILL.md`
+and `agents/skills/skill-creator/references/repository-governance.md`.
+This repository Skill guidance is procedural input, not runtime authority.
+
+The closed Apply context includes approved proposal, applicable delta specs, approved design, approved tasks, canonical specs needed to interpret modified behavior, and materially applicable default-branch `openspec/config.yaml` context/rules. Executor is not responsible for choosing which upstream/config semantics count; missing or contradictory context fails closed.

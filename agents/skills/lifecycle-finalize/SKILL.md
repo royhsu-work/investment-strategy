@@ -28,3 +28,4 @@ deferred prose is not a lifecycle obligation.
 The exact archive preparation uses Refs #<coordination-issue> and the same persistent coordination
 Issue. It does not perform normal PR merge mutation. There is no duplicate Change, PR, lifecycle state,
 recovery state, or control mailbox.
+Archive preparation is a Lead Action. It uses Refs #<coordination-issue> and the same persistent coordination Issue, and does not perform normal PR merge mutation. There is no duplicate Change, PR, lifecycle state, recovery state, or control mailbox.

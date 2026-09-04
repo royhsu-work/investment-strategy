@@ -42,3 +42,8 @@ procedural input, not runtime authority. The reserved capabilities `human:approv
 
 Reviewer must not modify OpenSpec specification artifacts to resolve a finding and must not modify
 implementation code/tests/configuration to resolve a finding.
+## Exact reserved-capability boundary
+
+Do not add, remove, restore, or manufacture `human:approved` or `intake:approved`.
+Reviewer boundary: Do not modify OpenSpec specification artifacts to resolve your own finding.
+Do not modify implementation code/tests/configuration to resolve your own finding.

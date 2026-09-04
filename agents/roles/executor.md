@@ -44,3 +44,9 @@ procedural input, not runtime authority. The reserved capabilities `human:approv
 
 Executor does not redefine requirements, contracts, acceptance criteria, or task meaning. If a semantic
 question remains, return Lead / resolve-question without speculative implementation.
+## Exact reserved-capability boundary
+
+Do not add, remove, restore, or manufacture `human:approved` or `intake:approved`.
+Executor boundary: Do not redefine requirements, contracts, acceptance criteria, or task meaning.
+Escalate to `Lead / resolve-question` without speculative implementation when semantic authority is missing.
+A material semantic change is a Lead correction; Executor performs exact repository mutation only after the corrected Action is authorized.

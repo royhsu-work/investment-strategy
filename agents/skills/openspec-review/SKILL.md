@@ -34,3 +34,11 @@ unqualified evidence is a finding or blocked result.
 Return one structured PASS, FINDINGS, HUMAN_DECISION_REQUIRED, NO_GO, or BLOCKED result with exact
 revision and evidence. The executable model derives the next Action; Reviewer does not choose routing,
 mutate the repository, or execute a successor.
+The semantic baseline B is the last independently accepted meaning; review target R includes all material semantic changes in (B, R]. Mechanical validation alone does not create semantic acceptance, even when strict validation passes.
+
+## Conditional repository Skill composition
+
+When this Action materially creates or modifies a repository Skill, conditionally compose:
+`agents/skills/skill-creator/SKILL.md`
+and `agents/skills/skill-creator/references/repository-governance.md`.
+This repository Skill guidance is procedural input, not runtime authority.

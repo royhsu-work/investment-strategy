@@ -110,6 +110,7 @@ reference and Human-only event.
 The comment queue, unread flag, or acknowledgement is not workflow state. A comment is evidence only
 after its meaning and disposition are established by the responsible Role. Shared governance MUST NOT
 invent a message-processing state to replace current repository observations.
+This consequential-boundary freshness check covers correctness, traceability, gate validity, and mutation assumptions.
 
 ## Reserved Human capability and activation boundaries
 
@@ -265,3 +266,11 @@ self-authorize additional work. A proposal-ready authority envelope can select t
 same Issue without a second generic Human proceed step. New product/project direction, material scope,
 risk acceptance, or security/privacy/cost/operational decisions require HUMAN_DECISION_REQUIRED.
 
+## Exact retained authority wording
+
+The provenance rule is explicit: durable GitHub actor identity alone MUST NOT satisfy Human authority.
+Canonical activation wording: canonical message behavior activates prospectively on default-branch merge.
+Workflows already
+terminal before activation MUST NOT be retroactively reopened or invalidated.
+A still-pending Human-reserved decision first consumed after activation MUST satisfy the current applicable
+Human-authority path.
