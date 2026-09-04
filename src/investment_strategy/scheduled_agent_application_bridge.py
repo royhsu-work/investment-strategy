@@ -8,7 +8,7 @@ import binascii
 import hashlib
 import json
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -16,10 +16,9 @@ from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from investment_strategy.issue_comment_bridge import (
-    parse_dispatch_decision,
-    parse_dispatch_request,
-)
+from investment_strategy.issue_comment_bridge import MachineDispatchDecision
+from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
+from investment_strategy.scheduled_agent_dispatch_result import fetch_dispatch_result
 from investment_strategy.scheduled_agent_effect_contract import GITHUB_MUTATION_KIND
 from investment_strategy.scheduled_agent_effects import (
     StagedEffect,
@@ -31,20 +30,18 @@ from investment_strategy.scheduled_agent_runtime import WorkerRequest
 
 APPLICATION_REQUEST_MARKER = "EFFECT_REQUEST"
 DISPATCH_REQUEST_COMMENT_ID_PREFIX = "Dispatch-Request-Comment-ID: "
-DISPATCH_DECISION_COMMENT_ID_PREFIX = "Dispatch-Decision-Comment-ID: "
+DISPATCH_RUN_ID_PREFIX = "Dispatch-Run-ID: "
 WORKER_RESULT_B64_PREFIX = "Worker-Result-B64: "
 _CHATGPT_CONNECTOR_APP_SLUG = "chatgpt-codex-connector"
-_GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]"
-_GITHUB_ACTIONS_APP_SLUG = "github-actions"
 _CONTENT_OPERATIONS = frozenset({"contents-upsert", "contents-delete"})
 
 
 @dataclass(frozen=True)
 class ApplicationRequest:
-    """One transport request bound to one prior machine dispatch decision."""
+    """One transport request bound to one exact prior machine dispatch run."""
 
     dispatch_request_comment_id: int
-    dispatch_decision_comment_id: int
+    dispatch_run_id: int
     raw_worker_result: str
 
 
@@ -107,15 +104,15 @@ def parse_application_request(body: str) -> ApplicationRequest | None:
         raise ValueError("EFFECT_REQUEST must contain exactly four lines")
     if not lines[1].startswith(DISPATCH_REQUEST_COMMENT_ID_PREFIX):
         raise ValueError("EFFECT_REQUEST dispatch request id is missing")
-    if not lines[2].startswith(DISPATCH_DECISION_COMMENT_ID_PREFIX):
-        raise ValueError("EFFECT_REQUEST dispatch decision id is missing")
+    if not lines[2].startswith(DISPATCH_RUN_ID_PREFIX):
+        raise ValueError("EFFECT_REQUEST dispatch run id is missing")
     if not lines[3].startswith(WORKER_RESULT_B64_PREFIX):
         raise ValueError("EFFECT_REQUEST worker result is missing")
 
     request_comment_id = _positive_decimal(lines[1][len(DISPATCH_REQUEST_COMMENT_ID_PREFIX) :])
-    decision_comment_id = _positive_decimal(lines[2][len(DISPATCH_DECISION_COMMENT_ID_PREFIX) :])
+    dispatch_run_id = _positive_decimal(lines[2][len(DISPATCH_RUN_ID_PREFIX) :])
     encoded_result = lines[3][len(WORKER_RESULT_B64_PREFIX) :]
-    if request_comment_id is None or decision_comment_id is None or not encoded_result:
+    if request_comment_id is None or dispatch_run_id is None or not encoded_result:
         raise ValueError("EFFECT_REQUEST identity is invalid")
     if encoded_result != encoded_result.strip():
         raise ValueError("EFFECT_REQUEST worker result must be trimmed")
@@ -132,7 +129,7 @@ def parse_application_request(body: str) -> ApplicationRequest | None:
 
     return ApplicationRequest(
         dispatch_request_comment_id=request_comment_id,
-        dispatch_decision_comment_id=decision_comment_id,
+        dispatch_run_id=dispatch_run_id,
         raw_worker_result=raw_worker_result,
     )
 
@@ -145,24 +142,6 @@ def _positive_int(value: object) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         return None
     return value
-
-
-def _flatten_comments(value: object) -> tuple[Mapping[str, object], ...]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-        raise ValueError("comments payload must be an array")
-
-    items: list[Mapping[str, object]] = []
-    for page_or_comment in value:
-        if isinstance(page_or_comment, Mapping):
-            items.append(cast(Mapping[str, object], page_or_comment))
-            continue
-        if not isinstance(page_or_comment, Sequence) or isinstance(page_or_comment, (str, bytes)):
-            raise ValueError("comments payload contains a malformed page")
-        for comment in page_or_comment:
-            if not isinstance(comment, Mapping):
-                raise ValueError("comments payload contains a malformed comment")
-            items.append(cast(Mapping[str, object], comment))
-    return tuple(items)
 
 
 def _app_slug(payload: Mapping[str, object]) -> str | None:
@@ -184,107 +163,53 @@ def _trusted_connector_comment(comment: Mapping[str, object], repository_owner: 
     )
 
 
-def _trusted_actions_comment(comment: Mapping[str, object]) -> bool:
-    return (
-        _actor_login(comment) == _GITHUB_ACTIONS_BOT_LOGIN
-        and _app_slug(comment) == _GITHUB_ACTIONS_APP_SLUG
-    )
-
-
-def _comment_by_id(
-    comments: tuple[Mapping[str, object], ...], comment_id: int
-) -> Mapping[str, object] | None:
-    matches = [comment for comment in comments if comment.get("id") == comment_id]
-    if len(matches) != 1:
-        return None
-    return matches[0]
-
-
 def plan_application(
     *,
     event: Mapping[str, object],
-    comments_payload: object,
-    configured_issue_number: int,
+    request: ApplicationRequest,
+    dispatch_result: MachineDispatchDecision,
     repository: str,
     current_revision: str,
 ) -> ApplicationPlan:
-    """Validate transport provenance/correlation before invoking the effect boundary."""
+    """Validate event identity and one run-scoped dispatch result."""
 
-    if configured_issue_number <= 0:
-        raise ValueError("configured check-in Issue must be positive")
     if "/" not in repository or not current_revision:
         raise ValueError("repository and current revision are required")
-
     issue = _as_mapping(event.get("issue"))
     event_comment = _as_mapping(event.get("comment"))
     if event.get("action") != "created" or issue is None or event_comment is None:
         return ApplicationPlan(False)
-    if "pull_request" in issue or _positive_int(issue.get("number")) != configured_issue_number:
+    if "pull_request" in issue or not is_runtime_checkin_issue(issue):
         return ApplicationPlan(False)
 
     body = event_comment.get("body")
-    if not isinstance(body, str):
-        return ApplicationPlan(False)
-    request = parse_application_request(body)
-    if request is None:
-        return ApplicationPlan(False)
-
+    if not isinstance(body, str) or parse_application_request(body) != request:
+        raise ValueError("EFFECT_REQUEST event body does not match parsed request")
     repository_owner = repository.split("/", 1)[0]
     if not _trusted_connector_comment(event_comment, repository_owner):
         raise ValueError("EFFECT_REQUEST must originate from the configured ChatGPT connector")
     event_comment_id = _positive_int(event_comment.get("id"))
     if event_comment_id is None:
         raise ValueError("EFFECT_REQUEST event comment id is invalid")
-
-    comments = _flatten_comments(comments_payload)
-    observed_event_comment = _comment_by_id(comments, event_comment_id)
-    if (
-        observed_event_comment is None
-        or observed_event_comment.get("body") != body
-        or not _trusted_connector_comment(observed_event_comment, repository_owner)
-    ):
-        raise ValueError("EFFECT_REQUEST current comment observation is incomplete")
-
-    dispatch_request_comment = _comment_by_id(comments, request.dispatch_request_comment_id)
-    if dispatch_request_comment is None or not _trusted_connector_comment(
-        dispatch_request_comment, repository_owner
-    ):
-        raise ValueError("correlated DISPATCH_REQUEST is missing or untrusted")
-    dispatch_request_body = dispatch_request_comment.get("body")
-    if (
-        not isinstance(dispatch_request_body, str)
-        or parse_dispatch_request(dispatch_request_body) is None
-    ):
-        raise ValueError("correlated DISPATCH_REQUEST is malformed")
-
-    dispatch_decision_comment = _comment_by_id(comments, request.dispatch_decision_comment_id)
-    if dispatch_decision_comment is None or not _trusted_actions_comment(dispatch_decision_comment):
-        raise ValueError("correlated DISPATCH_DECISION is missing or untrusted")
-    decision_body = dispatch_decision_comment.get("body")
-    if not isinstance(decision_body, str):
-        raise ValueError("correlated DISPATCH_DECISION body is missing")
-    decision = parse_dispatch_decision(decision_body)
-    if decision is None:
-        raise ValueError("correlated DISPATCH_DECISION is malformed")
-    if decision.request_comment_id != request.dispatch_request_comment_id:
-        raise ValueError("DISPATCH_DECISION does not correlate to the requested dispatch")
-    if decision.default_branch_revision != current_revision:
+    if request.dispatch_request_comment_id != dispatch_result.request_comment_id:
+        raise ValueError("EFFECT_REQUEST request does not match dispatch result")
+    if dispatch_result.default_branch_revision != current_revision:
         raise ValueError("DISPATCH_DECISION revision is stale")
     if (
-        decision.disposition != "AUTHORIZE"
-        or decision.issue_number is None
-        or decision.role is None
-        or decision.action is None
+        dispatch_result.disposition != "AUTHORIZE"
+        or dispatch_result.issue_number is None
+        or dispatch_result.role is None
+        or dispatch_result.action is None
     ):
-        raise ValueError("EFFECT_REQUEST requires an AUTHORIZE dispatch decision")
+        raise ValueError("EFFECT_REQUEST requires an AUTHORIZE dispatch result")
 
     return ApplicationPlan(
         should_apply=True,
         source=WorkerRequest(
-            issue_number=decision.issue_number,
-            role=decision.role,
-            action=decision.action,
-            debt_disposition=decision.debt_disposition,
+            issue_number=dispatch_result.issue_number,
+            role=dispatch_result.role,
+            action=dispatch_result.action,
+            debt_disposition=dispatch_result.debt_disposition,
         ),
         raw_worker_result=request.raw_worker_result,
         effect_request_comment_id=event_comment_id,
@@ -576,12 +501,10 @@ def _load_json(path: str) -> object:
 
 
 def main() -> int:
-    """Apply one correlated worker result through the existing repository effect boundary."""
+    """Apply one run-scoped worker result through the write-authorized boundary."""
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--event-path", required=True)
-    parser.add_argument("--comments-path", required=True)
-    parser.add_argument("--check-in-issue", required=True, type=int)
     parser.add_argument("--revision", required=True)
     args = parser.parse_args()
 
@@ -593,11 +516,55 @@ def main() -> int:
     event = _load_json(args.event_path)
     if not isinstance(event, Mapping):
         raise RuntimeError("GitHub event payload must be an object")
-    comments_payload = _load_json(args.comments_path)
+    event_mapping = cast(Mapping[str, object], event)
+    event_comment = _as_mapping(event_mapping.get("comment"))
+    body = None if event_comment is None else event_comment.get("body")
+    if not isinstance(body, str):
+        return 0
+    request = parse_application_request(body)
+    if request is None:
+        return 0
+    issue = _as_mapping(event_mapping.get("issue"))
+    if issue is None or "pull_request" in issue or not is_runtime_checkin_issue(issue):
+        return 0
+
+    event_comment_id = _positive_int(event_comment.get("id"))
+    issue_number = _positive_int(issue.get("number"))
+    if event_comment_id is None or issue_number is None:
+        raise RuntimeError("EFFECT_REQUEST event identity is incomplete")
+    repository_owner = repository.split("/", 1)[0]
+    if not _trusted_connector_comment(event_comment, repository_owner):
+        raise RuntimeError("EFFECT_REQUEST must originate from the configured ChatGPT connector")
+
+    observed_comment = _as_mapping(
+        _github_json(repository, token, f"issues/comments/{event_comment_id}")
+    )
+    if (
+        observed_comment is None
+        or observed_comment.get("id") != event_comment_id
+        or observed_comment.get("body") != body
+        or not _trusted_connector_comment(observed_comment, repository_owner)
+    ):
+        raise RuntimeError("EFFECT_REQUEST current comment observation is incomplete")
+    observed_issue = _as_mapping(_github_json(repository, token, f"issues/{issue_number}"))
+    if (
+        observed_issue is None
+        or observed_issue.get("number") != issue_number
+        or not is_runtime_checkin_issue(observed_issue)
+    ):
+        raise RuntimeError("EFFECT_REQUEST current shard observation is invalid")
+
+    dispatch_result = fetch_dispatch_result(
+        repository,
+        token,
+        request_comment_id=request.dispatch_request_comment_id,
+        run_id=request.dispatch_run_id,
+        current_revision=args.revision,
+    )
     plan = plan_application(
-        event=cast(Mapping[str, object], event),
-        comments_payload=comments_payload,
-        configured_issue_number=args.check_in_issue,
+        event=event_mapping,
+        request=request,
+        dispatch_result=dispatch_result,
         repository=repository,
         current_revision=args.revision,
     )

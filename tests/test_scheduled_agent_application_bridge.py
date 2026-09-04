@@ -133,7 +133,7 @@ def _resolve_worker_result() -> dict[str, object]:
 def _effect_request(
     *,
     dispatch_request_comment_id: int = 100,
-    dispatch_decision_comment_id: int = 101,
+    dispatch_run_id: int = 200,
     worker_result: dict[str, object] | None = None,
 ) -> str:
     raw = json.dumps(worker_result or _worker_result(), sort_keys=True, separators=(",", ":"))
@@ -142,7 +142,7 @@ def _effect_request(
         (
             APPLICATION_REQUEST_MARKER,
             f"Dispatch-Request-Comment-ID: {dispatch_request_comment_id}",
-            f"Dispatch-Decision-Comment-ID: {dispatch_decision_comment_id}",
+            f"Dispatch-Run-ID: {dispatch_run_id}",
             f"Worker-Result-B64: {encoded}",
         )
     )
@@ -172,7 +172,12 @@ def _event(body: str, *, trusted: bool = True) -> dict[str, object]:
         comment["performed_via_github_app"] = None
     return {
         "action": "created",
-        "issue": {"number": _CHECKIN_ISSUE},
+        "issue": {
+            "number": _CHECKIN_ISSUE,
+            "title": "[Agent Runtime] 2026-09-03",
+            "state": "open",
+            "labels": [],
+        },
         "comment": comment,
     }
 
@@ -196,7 +201,7 @@ def test_parse_application_request_decodes_exact_worker_result() -> None:
 
     assert request is not None
     assert request.dispatch_request_comment_id == 100
-    assert request.dispatch_decision_comment_id == 101
+    assert request.dispatch_run_id == 200
     assert json.loads(request.raw_worker_result) == _worker_result()
 
 
@@ -206,16 +211,17 @@ def test_parse_application_request_ignores_unrelated_comment() -> None:
 
 def test_parse_application_request_rejects_malformed_effect_request() -> None:
     with pytest.raises(ValueError, match="exactly four lines"):
-        parse_application_request("EFFECT_REQUEST\nDispatch-Request-Comment-ID: 100")
-
-
-def test_plan_application_accepts_exact_trusted_dispatch_correlation() -> None:
+        pardef test_plan_application_accepts_exact_run_result() -> None:
     body = _effect_request()
+    request = parse_application_request(body)
+    assert request is not None
+    decision = bridge.parse_dispatch_decision(_dispatch_decision())
+    assert decision is not None
 
     plan = plan_application(
         event=_event(body),
-        comments_payload=_comments(body),
-        configured_issue_number=_CHECKIN_ISSUE,
+        request=request,
+        dispatch_result=decision,
         repository=_REPOSITORY,
         current_revision=_REVISION,
     )
@@ -232,25 +238,32 @@ def test_plan_application_accepts_exact_trusted_dispatch_correlation() -> None:
 
 
 def test_plan_application_ignores_non_effect_comment() -> None:
+    body = "DISPATCH_REQUEST\nRequested-At: now"
+    request = bridge.ApplicationRequest(_REQUEST_ID, _RUN_ID, "{}")
+    decision = bridge.parse_dispatch_decision(_dispatch_decision())
+    assert decision is not None
     plan = plan_application(
-        event=_event(_dispatch_request()),
-        comments_payload=[[]],
-        configured_issue_number=_CHECKIN_ISSUE,
+        event=_event(body),
+        request=request,
+        dispatch_result=decision,
         repository=_REPOSITORY,
         current_revision=_REVISION,
     )
-
     assert not plan.should_apply
 
 
 def test_plan_application_rejects_connector_provenance_bypass() -> None:
     body = _effect_request()
+    request = parse_application_request(body)
+    assert request is not None
+    decision = bridge.parse_dispatch_decision(_dispatch_decision())
+    assert decision is not None
 
     with pytest.raises(ValueError, match="configured ChatGPT connector"):
         plan_application(
             event=_event(body, trusted=False),
-            comments_payload=_comments(body),
-            configured_issue_number=_CHECKIN_ISSUE,
+            request=request,
+            dispatch_result=decision,
             repository=_REPOSITORY,
             current_revision=_REVISION,
         )
@@ -258,15 +271,16 @@ def test_plan_application_rejects_connector_provenance_bypass() -> None:
 
 def test_plan_application_rejects_stale_dispatch_revision() -> None:
     body = _effect_request()
+    request = parse_application_request(body)
+    assert request is not None
+    decision = bridge.parse_dispatch_decision(_dispatch_decision(revision="0" * 40))
+    assert decision is not None
 
     with pytest.raises(ValueError, match="revision is stale"):
         plan_application(
             event=_event(body),
-            comments_payload=_comments(
-                body,
-                decision_body=_dispatch_decision(revision="0" * 40),
-            ),
-            configured_issue_number=_CHECKIN_ISSUE,
+            request=request,
+            dispatch_result=decision,
             repository=_REPOSITORY,
             current_revision=_REVISION,
         )
@@ -274,31 +288,22 @@ def test_plan_application_rejects_stale_dispatch_revision() -> None:
 
 def test_plan_application_rejects_non_authorizing_dispatch() -> None:
     body = _effect_request()
+    request = parse_application_request(body)
+    assert request is not None
+    decision = bridge.parse_dispatch_decision(_dispatch_decision(disposition="NO_WORK"))
+    assert decision is not None
 
     with pytest.raises(ValueError, match="requires an AUTHORIZE"):
         plan_application(
             event=_event(body),
-            comments_payload=_comments(
-                body,
-                decision_body=_dispatch_decision(disposition="NO_WORK"),
-            ),
-            configured_issue_number=_CHECKIN_ISSUE,
+            request=request,
+            dispatch_result=decision,
             repository=_REPOSITORY,
             current_revision=_REVISION,
         )
 
 
-def test_plan_application_rejects_untrusted_dispatch_decision_comment() -> None:
-    body = _effect_request()
-    comments = _comments(body)
-    comments[0][1]["performed_via_github_app"] = None
-
-    with pytest.raises(ValueError, match="missing or untrusted"):
-        plan_application(
-            event=_event(body),
-            comments_payload=comments,
-            configured_issue_number=_CHECKIN_ISSUE,
-            repository=_REPOSITORY,
+ repository=_REPOSITORY,
             current_revision=_REVISION,
         )
 
