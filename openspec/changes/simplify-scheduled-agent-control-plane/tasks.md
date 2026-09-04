@@ -57,12 +57,15 @@ Parent advances: exactly one mapped Action/wake with work-conserving action inte
 
 ## 5. Canonical-state cutover
 
-Parent advances: Action-only routing, Role derivation, explicit merge Actions, live-state migration. Remaining: legacy cleanup. N-1: Stages 1A–4. Boundary: complete authoritative dry-run required; this is semantic cutover. Post-cutover rollback translates from new state only. Next: Stage 6.
+Parent advances: Action-only routing, Role derivation, explicit merge Actions, typed retirement of explicitly absorbed pre-activation sources, and live-state migration. Remaining: legacy cleanup. N-1: Stages 1A–4. Boundary: complete authoritative dry-run and reviewed machine-readable retirement plan required; this is semantic cutover. Post-cutover rollback translates from new state only. Next: Stage 6.
 
 - [ ] 5.1 RED — cover terminal/current/debt/legacy/ambiguous live Issue shapes; preserve unrelated labels and immutable Change.
-- [ ] 5.2 GREEN — dry-run canonicalization; Human only for genuine ambiguity; never write to discover.
-- [ ] 5.3 GREEN — migrate to one Action, switch production dispatch/application/bootstrap to kernel, replace generic merge Action with explicit implementation/archive merge Actions.
-- [ ] 5.4 VERIFY — fresh-observe every mutation and run WIP/FIFO/debt/review/merge/lifecycle production regressions.
+- [ ] 5.2 RED — for the generic absorbed-source retirement entry and live #168 fixture, reject missing/duplicate/malformed plan entries, prose/history/model-discovered candidates, source/absorber identity or state mismatch, incomplete provenance, contradictory observations, and unresolved newer direct-Human input before mutation.
+- [ ] 5.3 GREEN — produce and consume one finite reviewed machine-readable cutover plan whose absorbed-source entries bind exact source Issue, expected open/closed + `Change:` + workflow routing state, exact absorbing Issue/Change, and exact durable source/assignment references; do not retain it as a normal dispatch selector or permanent exception registry.
+- [ ] 5.4 GREEN — dry-run canonicalization; Human only for genuine ambiguity; never write to discover. For each authorized absorbed-source entry, fresh-verify source/absorber state, close the source if open, remove only currently observed workflow `agent:*`/`action:*` labels, preserve body/comments/results and unrelated labels, and treat interruption as visible closed-routing debt resumable only through missing narrow effects.
+- [ ] 5.5 GREEN — migrate remaining live state to one Action, switch production dispatch/application/bootstrap to kernel, and replace generic merge Action with explicit implementation/archive merge Actions.
+- [ ] 5.6 VERIFY — execute the reviewed live #168 entry from expected `open + Change: unset + agent:lead + action:explore-change` to fresh-observed `closed + no workflow routing`; prove its `ACTION_RESULT(PROPOSAL_READY)`, body/comments and unrelated labels remain provenance, replay is idempotent, and later normal FIFO cannot select or suppress it through plan/prose/history.
+- [ ] 5.7 VERIFY — fresh-observe every mutation and run WIP/FIFO/debt/review/merge/lifecycle production regressions, including close-before-routing-cleanup interruption and fail-closed plan/state drift.
 
 ## 6. Deletion/context reduction
 
