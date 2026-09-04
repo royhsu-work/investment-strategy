@@ -14,7 +14,7 @@ Normal selection SHALL be neutral `workflow-dynamic`: active non-`unset` workflo
 
 ### Requirement: Persistent Issue permits bounded pre-acceptance Explore correction
 
-The same coordination Issue SHALL persist through Explore and formal lifecycle. Ordinary pre-Propose Explore keeps `Change: unset`, and Propose still verifies exact same-Issue durable `PROPOSAL_READY`. Before first independent semantic `review-openspec` acceptance, if formalization materially invalidates that Explore source/evidence/feasibility premise and the same bounded problem remains researchable without new Human-reserved requirement/scope/risk/architecture commitment, the same Issue MAY return to `explore-change` after provisional non-`unset` Change activation. It SHALL preserve Change identity, Proposal/PR/results/history, Issue identity, and active WIP; it MUST NOT unset/replace Change, erase history, create a replacement Issue, or release work to queued intake. New Human-reserved commitment still requires Human authority. After independent semantic acceptance, material correction uses `Lead / resolve-question` plus renewed independent review. Terminal `NO_CHANGE_REQUIRED`/`NO_GO` Explore is pre-activation only.
+The same coordination Issue SHALL persist through Explore and formal lifecycle. Ordinary pre-Propose Explore keeps `Change: unset`, and Propose still verifies exact same-Issue durable `PROPOSAL_READY`. Before first independent semantic `review-openspec` acceptance, if formalization materially invalidates that Explore source/evidence/feasibility premise and the same bounded problem remains researchable without new Human-reserved requirement/scope/risk/architecture commitment, the same Issue MAY return to `explore-change` after provisional non-`unset` Change activation. It SHALL preserve Change identity, Proposal/PR/results/history, Issue identity, and active WIP; it MUST NOT unset/replace Change, erase history, create a replacement Issue, or release work to queued intake. New Human-reserved commitment still requires Human authority. After independent semantic acceptance, material morrection uses `Lead / resolve-question` plus renewed independent review. Terminal `NO_CHANGE_REQUIRED`/`NO_GO` Explore is pre-activation only.
 
 #### Scenario: Provisional Change returns without reset
 
@@ -24,13 +24,35 @@ The same coordination Issue SHALL persist through Explore and formal lifecycle. 
 
 ### Requirement: Runtime transport uses exact run-scoped results without response mailbox
 
-ChatGPT Scheduled Task SHALL be the only normal model wake. GitHub Actions MAY run deterministic control-plane code but MUST NOT host/invoke OpenAI API, Responses API, another model API, or repository-owned model worker. Runtime check-in comments MAY be request/trigger/audit only; normal dispatch/application results SHALL belong to the exact Actions run caused by the request and be consumed from its run-scoped surface. GitHub Actions MUST NOT return normal `DISPATCH_RESULT`, `DISPATCH_DECISION`, or application-result data as machine response comments. Exact request→run→structured-result correlation is mandatory; latest/time/title/model/history inference is forbidden. Dispatch exposes `AUTHORIZE | NO_WORK | FAIL_CLOSED`; application exposes exact applied/already-satisfied/failed outcome plus postcondition evidence. Missing/multiple/failed/cancelled/malformed/expired evidence fails closed with NO Issue-response fallback. Runtime check-in is daily-bounded; coordination-Issue semantic comments remain governed evidence. Future transport replacement MUST NOT change workflow semantics.
+ChatGPT Scheduled Task SHALL be the only normal model wake. GitHub Actions MAY run deterministic control-plane code but MUST NOT host/invoke OpenAI API, Responses API, another model API, or repository-owned model worker. Runtime check-in comments MAY be request/trigger/audit only; normal dispatch/application/validation results SHALL belong to the exact Actions run caused by the request and be consumed from its run-scoped surface. GitHub Actions MUST NOT return normal `DISPATCH_RESULT`, `DISPATCH_DECISION`, or application-result data as machine response comments. Exact request→run→structured-result correlation is mandatory; latest/time/title/model/history inference is forbidden. Dispatch exposes `AUTHORIZE | NO_WORK | FAIL_CLOSED`; application exposes exact applied/already-satisfied/failed outcome plus postcondition evidence. Missing/multiple/failed/cancelled/malformed/expired evidence fails closed with NO Issue-response fallback. Runtime check-in is daily-bounded; coordination-Issue semantic comments remain governed evidence. Future transport replacement MUST NOT change workflow semantics.
 
 #### Scenario: Exact run is the normal result carrier
 
 - GIVEN request R causes exact run A
 - WHEN Scheduled Task consumes dispatch/application
 - THEN only A's valid run-scoped result is accepted, and missing/ambiguous/failed A cannot fall back to a plausible response comment
+
+### Requirement: Repository-owned artifact mutation self-hosts exact-revision strict validation
+
+When an authorized selected Action changes OpenSpec artifacts and exact-revision validation is a readiness gate, the repository-owned deterministic application boundary SHALL obtain validation evidence for the exact resulting revision `R` before ownership transfer. It MAY run pinned strict validation directly after mutation/postcondition or explicitly invoke a dedicated deterministic validator bound to `R`; the mechanism is implementation-owned and MUST NOT create another semantic Action or model wake.
+
+Accepted evidence SHALL prove target revision `R`, validator checkout `HEAD == R`, qualified pinned OpenSpec compatibility, and strict OpenSpec validation PASS. That structured validation result SHALL belong to the exact deterministic application/validation execution and be consumable by the already selected semantic Action as exact-resource evidence. Missing, failed, cancelled, ambiguous, revision-mismatched, checkout-mismatched, malformed, or expired evidence SHALL fail closed. Stale validation, `run.head_sha == R` without checkout proof, manual approval/operator workarounds, direct connector bypass, or another semantic Action/model wake SHALL NOT satisfy the gate.
+
+#### Scenario: Event validation cannot execute
+
+- GIVEN repository application produced revision `R`
+- AND an event-triggered validation reports `action_required` with no validator job
+- WHEN Lead evaluates exact-revision readiness
+- THEN `R` is not validated
+- AND ownership does not transfer
+- AND repository application must self-host or explicitly trigger exact-`R` deterministic validation, otherwise fail closed
+
+#### Scenario: Exact-R validation completes inside the selected Action
+
+- GIVEN repository application produced revision `R`
+- WHEN the exact deterministic validation execution proves target `R`, checkout `R`, qualified pinned compatibility, and strict PASS
+- THEN the same selected semantic Action may consume that structured result for readiness
+- AND no second semantic Action or model wake is created
 
 ### Requirement: One wake executes one typed semantic Action with fresh application
 
@@ -87,7 +109,7 @@ Correctness MUST NOT depend on same-role successor continuation, cross-role wake
 
 ### Requirement: Architecture reset is mandatory N-1 delivery with deletion
 
-#138 SHALL remain one parent outcome. Every stage MUST be independently executable/testable/mergeable/deployable on then-current N-1 or be split without weakening the parent, and SHALL record outcomes advanced/still incomplete, N-1 prerequisites, rollback/cutover boundary, and required continuation. No intermediate stage completes #138. Order is mandatory: (1) transport de-mailbox + daily run-scoped dispatch/application results; (2) executable-kernel shadow without mutation cutover; (3) typed result→kernel effect + fresh application; (4) one-action-per-wake; (5) Action-only/Role-derived/explicit-merge cutover; (6) deletion/context reduction. Dual paths MAY coexist only for bounded N-1 proof/cutover. After cutover, production MUST delete/disable superseded Role routing, response-mailbox/history coupling, Markdown topology/effect parsing, same-wake continuation/wake barriers, obsolete compatibility hot paths, legacy Responses/model-worker host code, and redundant machine-control tests/prose. Historical evidence remains audit only.
+#138 SHALL remain one parent outcome. Every stage MUST be independently executable/testable/mergeable/deployable on then-current N-1 or be split without weakening the parent, and SHALL record outcomes advanced/still incomplete, N-1 prerequisites, rollback/cutover boundary, and required continuation. No intermediate stage completes #138. Order is mandatory: (1) transport de-mailbox + daily run-scoped dispatch/application/validation results + exact-revision validation bootstrap; (2) executable-kernel shadow without mutation cutover; (3) typed result→kernel effect + fresh application; (4) one-action-per-wake; (5) Action-only/Role-derived/explicit-merge cutover; (6) deletion/context reduction. Stage 1 MAY split into independently executable transport and validation-bootstrap sub-slices, but both SHALL be deployed before later stages depend on repository-owned OpenSpec artifact mutation. Dual paths MAY coexist only for bounded N-1 proof/cutover. After cutover, production MUST delete/disable superseded Role routing, response-mailbox/history coupling, Markdown topology/effect parsing, same-wake continuation/wake barriers, obsolete compatibility hot paths, legacy Responses/model-worker host code, and redundant machine-control tests/prose. Historical evidence remains audit only.
 
 #### Scenario: Stage cannot self-host or complete early
 
