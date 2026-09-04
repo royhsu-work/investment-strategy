@@ -1,6 +1,6 @@
 ## Context
 
-`main@2eb17faa57248ed8218d6ccd47441837268e51e9` already has deterministic dispatch/effect pieces. #138 `issuecomment-5474475020` identifies the defect as duplicated control ownership across Role+Action labels, prose topology, runtime parsers, transport comments and wake orchestration. Human clarification `issuecomment-5475109024` adds #168 de-mailbox, bounded pre-acceptance Explore correction and mandatory N-1 order. Human clarification `issuecomment-5477274582` additionally establishes that exact-revision validation must self-host inside the repository-owned deterministic boundary: earlier formalization head `611157a43b9eb0c42345fa56ca93ebb0d524e2b8` produced OpenSpec Validate run `33380560988` with `conclusion=action_required` and no validator job, proving an execution-boundary deadlock rather than authority to relax the gate.
+Current formalization is governed by #138 formal-correction Explore `issuecomment-5482546619` on `main@f8f2c49d255997889dcdd406cabd504f03367f07`. That result preserves the earlier root-cause evidence from `issuecomment-5474475020` and resolves the bounded Stage -1B feasibility gap without changing the approved architecture outcome: repository application can explicitly dispatch an exact-`R` validator using the existing deterministic GitHub Actions substrate. Human clarification `issuecomment-5475109024` adds #168 de-mailbox, bounded pre-acceptance Explore correction and mandatory N-1 order. Human clarification `issuecomment-5477274582` establishes that exact-revision validation must self-host inside the repository-owned deterministic boundary: earlier formalization head `611157a43b9eb0c42345fa56ca93ebb0d524e2b8` produced OpenSpec Validate run `33380560988` with `conclusion=action_required` and no validator job, proving an execution-boundary deadlock rather than authority to relax the gate.
 
 ## Decisions
 
@@ -42,7 +42,7 @@ Every consequence fresh-reads exact source state and effect-specific evidence. A
 
 ## Mandatory N-1 delivery
 
-Each stage must be independently executable/testable/mergeable/deployable on N-1; otherwise split it. #138 completes only after stage 6 and full parent verification.
+Each stage must be independently executable/testable/mergeable/deployable on N-1; otherwise split it. #138 completes only after stage 6 and full parent verification. The Stage 1 exact-revision validation-bootstrap sub-slice is also a prerequisite for this Propose action's eventual ownership transfer: it must be merged and deployed on then-current N-1 before #178 can claim `READY_FOR_OPENSPEC_REVIEW`. A green but unmerged bootstrap implementation proves buildability only; it is not deployed substrate and cannot substitute for exact-`R` validation evidence for the actual #178 handoff revision.
 
 | Stage | Advances | Still incomplete | N-1 / boundary | Next |
 | --- | --- | --- | --- | --- |
