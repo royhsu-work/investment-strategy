@@ -67,9 +67,9 @@ The target state is Issue lifecycle + immutable Change + action:<action> with Ro
 
 ## Current verification record
 
-- Fresh observations for this execution: default branch `main@e8c3dc7b256bc167217e25a397e98181bdf6f123`, open #138, and open PR #178 at implementation checkpoint `e0fb3f0079cf664a60d43e37ecced5d5f6e5d531`.
-- Python Quality run `33819765763` passed at `e0fb3f0079cf664a60d43e37ecced5d5f6e5d531`: 419 tests passed; Ruff lint, Ruff format, and mypy all passed.
-- OpenSpec run `33807567484` passed the prior unchanged artifact checkpoint `31eaffb0a37b5f676c0099f40277b3808b37c344`; the result of this checklist/evidence mutation must be validated at its own exact revision.
+- Fresh observations for this execution: default branch `main@e8c3dc7b256bc167217e25a397e98181bdf6f123`, open #138, and open PR #178; source implementation checkpoint `9efc1df5ca09cae1a0e553e606a7e20a6d452654`.
+- Python Quality run `33823252717` passed at `9efc1df5ca09cae1a0e553e606a7e20a6d452654`: 420 tests passed; Ruff lint, Ruff format, and mypy all passed.
+- OpenSpec run `33820407315` passed the prior corrected artifact checkpoint `31eaffb0a37b5f676c0099f40277b3808b37c344`; this verification-record refresh must itself be validated at its exact revision.
 - B4.5 remains unchecked because a live content-ingress -> exact-tree/commit/ref -> exact-R validation run has not yet been observed on the deployed cutover. C.1 remains unchecked because #138 still visibly retains the migration-only `agent:executor` label until Action-only cutover is deployed. These are explicit deployment acceptance boundaries, not permission to restore the retired mechanisms.
 - The branch removes the obsolete runtime modules and machine-control tests, and current source tests cover the reduced Action model, transport, application, validation, merge, stale/replay/no-rewind, and archive contracts.
 

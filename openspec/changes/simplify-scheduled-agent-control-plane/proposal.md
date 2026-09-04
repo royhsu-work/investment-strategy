@@ -81,7 +81,7 @@ This correction is based on:
 - the independent safety evidence retained by the existing Change history;
 - prior Lead readiness result issuecomment-5529602299 and prior exact validation run 33785030285, job 100747605621, correlation validation-resource-request-5529577659, all retained as historical pre-correction evidence;
 - prior Reviewer finding issuecomment-5529497150 and prior-cycle Reviewer finding issuecomment-5529644414, retained as historical correction-chain evidence; and
-- F3 finding issuecomment-5529815334 and Lead dispatch decision issuecomment-5529842334 are retained as historical semantic-correction evidence; independent OpenSpec PASS issuecomment-5530202353 accepted the corrected artifact checkpoint before implementation began. The current implementation checkpoint is e0fb3f0079cf664a60d43e37ecced5d5f6e5d531; any later exact revision requires fresh validation and review evidence.
+- F3 finding issuecomment-5529815334 and Lead dispatch decision issuecomment-5529842334 are retained as historical semantic-correction evidence; independent OpenSpec PASS issuecomment-5530202353 accepted the corrected artifact checkpoint before implementation began. The earlier implementation checkpoint e0fb3f0079cf664a60d43e37ecced5d5f6e5d531 and the later target-binding correction checkpoint 9efc1df5ca09cae1a0e553e606a7e20a6d452654 are implementation evidence; each exact revision is validated independently.
 
 This is a material semantic correction. 
 
@@ -90,8 +90,9 @@ The causal same-Issue Explore result remains `issuecomment-5482546619` (`PROPOSA
 ## Implementation checkpoint evidence
 
 - Fresh default branch observed: `main@e8c3dc7b256bc167217e25a397e98181bdf6f123`.
-- Implementation checkpoint observed on PR #178: `e0fb3f0079cf664a60d43e37ecced5d5f6e5d531`.
-- Python Quality run `33819765763` passed at that checkpoint: 419 tests passed, Ruff lint passed, Ruff format passed, and mypy reported no issues in 110 source files.
+- Earlier implementation checkpoint observed on PR #178: `e0fb3f0079cf664a60d43e37ecced5d5f6e5d531`; its Quality run `33819765763` passed 419 tests with Ruff lint/format and mypy clean.
+- Latest source implementation checkpoint on PR #178: `9efc1df5ca09cae1a0e553e606a7e20a6d452654`; it binds every GitHub effect to the fresh authorized Change target, removes arbitrary worker Issue/ref mutation capabilities, and adds target-binding regression coverage.
+- Python Quality run `33823252717` passed at that checkpoint: 420 tests passed; Ruff lint, Ruff format, and mypy all passed with no issues in 110 source files.
 - The unchanged OpenSpec artifact checkpoint `31eaffb0a37b5f676c0099f40277b3808b37c344` passed strict OpenSpec validation in run `33807567484`; the checklist/evidence refresh in this commit requires a new exact-revision validation run.
 - Current #138 still carries the historical `agent:executor` label and the PR is not merged; those deployment-bound facts are retained as migration evidence. They do not reintroduce role labels into the target model.
 
