@@ -65,7 +65,7 @@ Parent advances: Action-only routing, Role derivation, explicit merge Actions, l
 
 Parent advances: removes superseded production paths and completes #138 after full gates. Remaining: none after verification. N-1: Stage 5 canonical state. Boundary: rollback never restores permanent dual authority. Next: ordinary lifecycle.
 
-- [ ] 6.1 RED — Deleted representations cannot re-enter normal control; history remains readable but non-authoritative.
+- [ ] 6.1 RED — deleted representations cannot re-enter normal control; history remains readable but non-authoritative.
 - [ ] 6.2 GREEN — delete normal `agent:*` routing, generic merge-phase inference, response-mailbox/history coupling, Markdown topology/effect parsing, same-wake continuation/barriers, obsolete history compatibility, legacy Responses/model-worker host code and redundant machine-control prose/tests.
 - [ ] 6.3 REFACTOR — remove compatibility helpers that only preserve deleted paths; retain bounded migration/audit fixtures.
 - [ ] 6.4 VERIFY — full Python/Ruff/mypy/governance/Skill/live-E2E/migration/production tests plus exact-revision strict OpenSpec.
