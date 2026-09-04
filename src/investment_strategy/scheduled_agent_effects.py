@@ -21,6 +21,17 @@ from investment_strategy.scheduled_agent_causal_position import (
     requested_proposal_ready_comment_payload,
     trusted_proposal_ready_comment,
 )
+from investment_strategy.scheduled_agent_action_model import (
+    Action as ModelAction,
+    ActionApplicationDecision,
+    ActionObservation,
+    ActionSource,
+    ApplicationRejection,
+    BoundedActionResult,
+    ObservationProvenance as ModelObservationProvenance,
+    SelectionDisposition as ModelSelectionDisposition,
+    plan_action_application,
+)
 from investment_strategy.scheduled_agent_effect_contract import (
     GITHUB_MUTATION_KIND,
     allowed_github_mutation_operations,
@@ -31,7 +42,11 @@ from investment_strategy.scheduled_agent_runtime import (
     normalize_github_issue,
 )
 from investment_strategy.scheduled_agent_worker import parse_worker_result
-from investment_strategy.workflow_dispatch import DispatchPreflight, classify_dispatch
+from investment_strategy.workflow_dispatch import (
+    DispatchPreflight,
+    action_model_shadow,
+    classify_dispatch,
+)
 
 
 @dataclass(frozen=True)
@@ -52,6 +67,7 @@ class EffectBatch:
     effects: tuple[StagedEffect, ...]
     explore_disposition: str | None = None
     propose_disposition: str | None = None
+    typed_result: BoundedActionResult | None = None
 
 
 @dataclass(frozen=True)
@@ -61,6 +77,7 @@ class ApplyResult:
     applied: bool
     reason: str
     continuation: WorkerRequest | None = None
+    rejection: ApplicationRejection | None = None
 
 
 FreshPreflight = Callable[[], DispatchPreflight]
@@ -68,6 +85,112 @@ EffectGuard = Callable[[StagedEffect], bool]
 EffectApplier = Callable[[StagedEffect], None]
 PostconditionObserver = Callable[[StagedEffect], bool]
 TopologyValidator = Callable[[WorkerRequest, StagedEffect], bool]
+
+
+def _typed_successor_effect_matches(
+    effect: StagedEffect,
+    decision: ActionApplicationDecision,
+) -> bool:
+    if (
+        not effect.derived
+        or decision.successor is None
+        or decision.successor_role is None
+    ):
+        return False
+    payload = _effect_payload(effect)
+    return payload == {
+        "issue_number": decision.source.issue_number,
+        "role": decision.successor_role.value,
+        "action": decision.successor.value,
+    }
+
+
+def _typed_application_plan(
+    batch: EffectBatch,
+    preflight: DispatchPreflight,
+    current_revision: str | None,
+) -> tuple[ActionApplicationDecision | None, StagedEffect | None, ApplyResult | None]:
+    typed_result = batch.typed_result
+    if typed_result is None:
+        return None, None, None
+    if any(effect.kind == "routing-transition" for effect in batch.effects):
+        return None, None, ApplyResult(False, "typed application rejected:worker-routing-effect")
+    if current_revision is None:
+        return None, None, ApplyResult(False, "typed application rejected:revision-unavailable")
+    try:
+        action = ModelAction(batch.source.action)
+        source = ActionSource(
+            issue_number=batch.source.issue_number,
+            change=typed_result.change,
+            action=action,
+            authorization_revision=current_revision,
+        )
+    except ValueError:
+        return None, None, ApplyResult(False, "typed application rejected:source-action-invalid")
+
+    expected = action_model_shadow(preflight).expected
+    if (
+        expected.disposition is not ModelSelectionDisposition.AUTHORIZE
+        or expected.issue_number != source.issue_number
+        or expected.action != source.action
+    ):
+        return None, None, ApplyResult(False, "typed application rejected:model-selection")
+
+    matching_issues = tuple(
+        issue for issue in preflight.issues if issue.issue_number == source.issue_number
+    )
+    if len(matching_issues) != 1:
+        return None, None, ApplyResult(False, "typed application rejected:current-issue")
+    issue = matching_issues[0]
+    current_action = None if issue.routing is None else issue.routing[1]
+    current = ActionObservation(
+        issue_number=issue.issue_number,
+        change=issue.change,
+        action=current_action,
+        revision=current_revision,
+        provenance=(
+            ModelObservationProvenance.QUALIFIED
+            if issue.current_state_provenance is ObservationProvenance.QUALIFIED
+            else ModelObservationProvenance.INDETERMINATE
+        ),
+        human_authorized=True,
+        state=issue.state,
+    )
+    decision = plan_action_application(source, typed_result, current)
+    if not decision.accepted:
+        rejection = decision.rejection
+        classification = "unknown"
+        if rejection is not None:
+            classification = rejection.classification.value
+        return (
+            decision,
+            None,
+            ApplyResult(
+                False,
+                f"typed application rejected:{classification}",
+                rejection=rejection,
+            ),
+        )
+
+    successor_effect = None
+    if decision.successor is not None:
+        successor_effect = StagedEffect(
+            kind="routing-transition",
+            payload_json=json.dumps(
+                {
+                    "issue_number": source.issue_number,
+                    "role": (
+                        decision.successor_role.value
+                        if decision.successor_role is not None
+                        else None
+                    ),
+                    "action": decision.successor.value,
+                },
+                sort_keys=True,
+            ),
+            derived=True,
+        )
+    return decision, successor_effect, None
 
 _ROUTING_TOKEN = re.compile(r"`(Lead|Reviewer|Executor) / ([a-z-]+)`")
 _ALLOWED_ISSUE_FIELDS = frozenset({"title", "body", "state"})
@@ -108,24 +231,46 @@ def apply_effect_batch(
     topology_validator: TopologyValidator,
     apply_effect: EffectApplier,
     observe_postcondition: PostconditionObserver,
+    current_revision: str | None = None,
 ) -> ApplyResult:
     """Apply one staged batch only after fresh same-source reauthorization."""
 
-    current = _authorized_request(fresh_preflight())
-    if current != batch.source:
+    current_preflight = fresh_preflight()
+    typed_decision, typed_successor_effect, typed_rejection = _typed_application_plan(
+        batch,
+        current_preflight,
+        current_revision,
+    )
+    if typed_rejection is not None:
+        return typed_rejection
+    if batch.typed_result is None and _authorized_request(current_preflight) != batch.source:
         return ApplyResult(False, "source dispatch is stale")
 
+    effects = list(batch.effects)
+    if typed_successor_effect is not None:
+        effects.append(typed_successor_effect)
+
     # Validate the complete normal batch before its first durable mutation.
-    for effect in batch.effects:
+    for effect in effects:
         if not effect_guard(effect):
             return ApplyResult(False, "effect precondition rejected")
-        if effect.kind == "routing-transition" and not topology_validator(batch.source, effect):
-            return ApplyResult(False, "routing successor rejected")
+        if effect.kind == "routing-transition":
+            if batch.typed_result is not None:
+                if typed_decision is None or not _typed_successor_effect_matches(
+                    effect,
+                    typed_decision,
+                ):
+                    return ApplyResult(False, "typed application rejected:successor-effect")
+            elif not topology_validator(batch.source, effect):
+                return ApplyResult(False, "routing successor rejected")
 
-    for effect in batch.effects:
+    for effect in effects:
         apply_effect(effect)
         if not observe_postcondition(effect):
             return ApplyResult(False, "durable postcondition not observed")
+
+    if batch.typed_result is not None:
+        return ApplyResult(True, "applied")
 
     continuation = _authorized_request(fresh_preflight())
     return ApplyResult(True, "applied", continuation)
@@ -250,6 +395,7 @@ def parse_effect_batch(raw: str, source: WorkerRequest) -> EffectBatch:
         effects=effects,
         explore_disposition=result.explore_disposition,
         propose_disposition=result.propose_disposition,
+        typed_result=result.typed_result,
     )
 
 
@@ -1525,6 +1671,7 @@ def run_effect_application(
     repository: str,
     token: str,
     workflow_text: str,
+    current_revision: str | None = None,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Freshly reauthorize and apply one invocation-local staged effect batch."""
 
@@ -1541,6 +1688,7 @@ def run_effect_application(
         ),
         apply_effect=adapter.apply,
         observe_postcondition=adapter.observe_postcondition,
+        current_revision=current_revision,
     )
     return batch, result
 
