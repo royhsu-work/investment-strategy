@@ -44,6 +44,7 @@ from investment_strategy.scheduled_agent_runtime import (
 from investment_strategy.scheduled_agent_worker import parse_worker_result
 from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
+    ObservationProvenance,
     action_model_shadow,
     classify_dispatch,
 )
