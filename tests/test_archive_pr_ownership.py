@@ -7,62 +7,36 @@ def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-def _normalized(path: str) -> str:
-    return " ".join(_read(path).split())
-
-
 def test_archive_automation_stops_at_validated_branch_readiness() -> None:
     workflow = _read(".github/workflows/openspec-archive.yml")
     assert "pull-requests: read" in workflow
     assert "pull-requests: write" not in workflow
     assert 'git push -u origin HEAD:"$target_branch"' in workflow
     assert "gh pr create" not in workflow
-    assert "Create final Archive PR with closing linkage" not in workflow
 
 
-def test_finalize_change_owns_normal_archive_pr_presentation() -> None:
+def test_finalize_change_prepares_archive_review_without_merging() -> None:
     skill = _read("agents/skills/lifecycle-finalize/SKILL.md")
     governance = _read("agents/AGENTS.md")
-    topology = _read("agents/workflow.md")
     for required in (
-        "validated `agent/archive-<change>` branch is durably ready",
-        "create or reuse the final Archive PR as ordinary lifecycle continuation",
-        "Refs #<coordination-issue>",
-        "normal success, not `RECOVERY_DECISION_REQUIRED`",
-        "`ARCHIVE_PR_READY`",
-        "`Reviewer / review-archive`",
-    ):
-        assert required in skill
-    for required in (
-        "validated archive-branch push",
-        "`Lead / finalize-change` owns normal final Archive PR presentation",
-        "normal repository-automation success",
-        "MUST NOT be classified as archive failure or `RECOVERY_DECISION_REQUIRED`",
-    ):
-        assert required in governance
-    assert (
-        "| `Lead / finalize-change` | validated final Archive PR ready | "
-        "`Reviewer / review-archive` |"
-    ) in topology
-
-
-def test_normal_archive_pr_path_preserves_independent_final_gates() -> None:
-    skill = _normalized("agents/skills/lifecycle-finalize/SKILL.md")
-    archive_review = _normalized("agents/skills/archive-review/SKILL.md")
-    merge_skill = _normalized("agents/skills/merge-pr/SKILL.md")
-    for required in (
-        "preparation evidence",
-        "independent Reviewer PASS",
-        "Executor merge preconditions",
+        "archive preparation",
+        "exact Change/Issue linkage",
         "non-closing linkage",
-        "terminal `finalize-archive` reconstruction",
+        "Reviewer / review-archive",
+        "does not perform normal PR merge mutation",
     ):
         assert required in skill
-    assert "`PASS` → `Executor / merge-pr`" in archive_review
+    assert "independent Reviewer" in governance
+
+
+def test_archive_review_and_merge_keep_independent_gates() -> None:
+    archive = " ".join(_read("agents/skills/archive-review/SKILL.md").split())
+    merge = " ".join(_read("agents/skills/merge-pr/SKILL.md").split())
+    assert "derives merge-archive-pr" in archive
     for required in (
-        "Reviewer `PASS` exists for the exact revision R",
-        "Lead preparation evidence",
-        "repository-approved non-closing linkage",
-        "predeclared safely deletable",
+        "independent Reviewer PASS",
+        "non-closing linkage",
+        "archive preparation",
+        "fails closed",
     ):
-        assert required in merge_skill
+        assert required in merge

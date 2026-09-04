@@ -127,7 +127,7 @@ def test_material_human_input_blocks_reviewer_gate_and_post_pass_merge() -> None
     )
     merge = BoundaryFixture(
         role="Executor",
-        action="merge-pr",
+        action="merge-implementation-pr",
         relied_upon_at=_ts(8),
         comments=(
             _comment(
@@ -189,7 +189,7 @@ def test_missing_raw_provenance_for_human_attributed_comment_fails_closed() -> N
 def test_connector_authored_comment_is_not_reclassified_as_direct_human_input() -> None:
     fixture = BoundaryFixture(
         role="Executor",
-        action="merge-pr",
+        action="merge-implementation-pr",
         relied_upon_at=_ts(14),
         comments=(
             _comment(

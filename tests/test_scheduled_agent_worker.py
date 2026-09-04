@@ -41,7 +41,7 @@ def test_parser_accepts_one_exact_typed_result() -> None:
     [
         {"issue_number": 139},
         {"role": "lead"},
-        {"action": "merge-pr"},
+        {"action": "unknown-action"},
         {"result_kind": "not-a-result"},
         {"requested_effects": "not-a-list"},
     ],
