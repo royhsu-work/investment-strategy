@@ -885,9 +885,10 @@ def test_archive_pull_request_create_binds_exact_branch_head(
     branch = f"agent/archive-{_CHANGE}"
     body = (
         "Archive OpenSpec change `simplify-scheduled-agent-control-plane`.\n\n"
-        "This pull request is the repository-owned final archive snapshot. Its non-closing linkage "
-        "preserves traceability while the coordination Issue remains open; independent Reviewer PASS, "
-        "unchanged-head verification, current gates, and Lead terminal finalization remain required.\n\n"
+        "This pull request is the repository-owned final archive snapshot. "
+        "Its non-closing linkage preserves traceability while the coordination Issue "
+        "remains open; independent Reviewer PASS, unchanged-head verification, "
+        "current gates, and Lead terminal finalization remain required.\n\n"
         "Refs #138"
     )
     issue = {
