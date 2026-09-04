@@ -28,3 +28,9 @@ def test_workflow_document_is_a_human_projection_of_the_action_model() -> None:
         "Markdown topology parsing",
     ):
         assert forbidden not in workflow
+
+
+def test_quality_workflow_checks_the_exact_pull_request_head() -> None:
+    workflow = Path(".github/workflows/quality.yml").read_text(encoding="utf-8")
+
+    assert "ref: ${{ github.event.pull_request.head.sha || github.sha }}" in workflow
