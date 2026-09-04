@@ -287,6 +287,8 @@ def test_github_adapter_binds_pr_and_ref_targets_to_authorized_change(
             return pull_request(178, "agent/simplify-scheduled-agent-control-plane")
         if api_path == "pulls/167":
             return pull_request(167, "agent/other-change")
+        if api_path == "git/ref/heads/agent/simplify-scheduled-agent-control-plane":
+            return {"object": {"sha": head_sha}}
         raise AssertionError(f"unexpected GitHub read: {api_path}")
 
     monkeypatch.setattr(
@@ -323,19 +325,42 @@ def test_github_adapter_binds_pr_and_ref_targets_to_authorized_change(
             }
         ),
     )
+    assert adapter.guard(correct_pr)
+    assert not adapter.guard(foreign_pr)
+
+    issue["labels"] = [
+        {"name": "agent:executor"},
+        {"name": "action:merge-implementation-pr"},
+    ]
+    merge_source = WorkerRequest(138, "executor", "merge-implementation-pr")
+    ref_adapter = GitHubEffectAdapter(
+        repository,
+        "token",
+        merge_source,
+        authorized_change=_CHANGE,
+    )
+    correct_ref = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "ref-delete",
+                "ref": "refs/heads/agent/simplify-scheduled-agent-control-plane",
+                "expected_sha": head_sha,
+            }
+        ),
+    )
     foreign_ref = StagedEffect(
         kind="github-mutation",
         payload_json=json.dumps(
             {
                 "issue_number": 138,
-                "operation": "ref-update",
+                "operation": "ref-delete",
                 "ref": "refs/heads/agent/other-change",
                 "expected_sha": head_sha,
-                "sha": "c" * 40,
             }
         ),
     )
 
-    assert adapter.guard(correct_pr)
-    assert not adapter.guard(foreign_pr)
-    assert not adapter.guard(foreign_ref)
+    assert ref_adapter.guard(correct_ref)
+    assert not ref_adapter.guard(foreign_ref)
