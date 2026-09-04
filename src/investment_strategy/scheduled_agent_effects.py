@@ -74,6 +74,20 @@ EffectApplier = Callable[[StagedEffect], None]
 PostconditionObserver = Callable[[StagedEffect], bool]
 
 
+def parse_effect_batch(raw: str, source: WorkerRequest) -> EffectBatch:
+    """Parse one structured worker result and bind its requested effects."""
+
+    result = parse_worker_result(raw, source)
+    return EffectBatch(
+        source=source,
+        effects=tuple(
+            StagedEffect(kind=effect.kind, payload_json=effect.payload_json)
+            for effect in result.requested_effects
+        ),
+        typed_result=result.typed_result,
+    )
+
+
 def _effect_payload(effect: StagedEffect) -> dict[str, object] | None:
     try:
         decoded = json.loads(effect.payload_json)

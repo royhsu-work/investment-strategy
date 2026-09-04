@@ -135,6 +135,39 @@ def render_dispatch_decision(
     return "\n".join(lines)
 
 
+def render_run_scoped_dispatch_result(
+    *,
+    request_comment_id: int,
+    default_branch_revision: str,
+    decision: DispatchDecision,
+) -> str:
+    body = render_dispatch_decision(
+        request_comment_id=request_comment_id,
+        default_branch_revision=default_branch_revision,
+        decision=decision,
+    )
+    return f"{RUN_RESULT_START_MARKER}\n{body}\n{RUN_RESULT_END_MARKER}"
+
+
+def parse_run_scoped_dispatch_result(
+    log: str,
+    *,
+    request_comment_id: int,
+) -> MachineDispatchDecision | None:
+    if request_comment_id <= 0:
+        return None
+    lines = log.splitlines()
+    starts = [index for index, line in enumerate(lines) if line == RUN_RESULT_START_MARKER]
+    ends = [index for index, line in enumerate(lines) if line == RUN_RESULT_END_MARKER]
+    if len(starts) != 1 or len(ends) != 1 or starts[0] >= ends[0]:
+        return None
+    body = "\n".join(lines[starts[0] + 1 : ends[0]])
+    decision = parse_dispatch_decision(body)
+    if decision is None or decision.request_comment_id != request_comment_id:
+        return None
+    return decision
+
+
 def parse_dispatch_decision(body: str) -> MachineDispatchDecision | None:
     lines = body.split("\n")
     if len(lines) not in {4, 5, 7} or lines[0] != DECISION_MARKER:
