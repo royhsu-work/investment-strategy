@@ -487,6 +487,7 @@ def _merge_effect_allows(
     repository: str,
     token: str,
     current_revision: str | None = None,
+    expected_change: str | None = None,
 ) -> bool:
     """Freshly re-evaluate one merge effect at the mutation-adjacent boundary."""
 
@@ -509,6 +510,8 @@ def _merge_effect_allows(
         merge_strategy = MergeStrategy(merge_method)
     except ValueError:
         return False
+    if not isinstance(expected_change, str) or not expected_change.strip():
+        return False
     snapshot = acquire_merge_acceptance_snapshot(
         repository=repository,
         token=token,
@@ -518,7 +521,7 @@ def _merge_effect_allows(
         merge_strategy=merge_strategy,
         required_review_action=required_review_action,
         current_revision=current_revision,
-        expected_branch=f"agent/{source.change}",
+        expected_branch=f"agent/{expected_change}",
     )
     return merge_acceptance_allows(snapshot)
 
@@ -574,6 +577,7 @@ def run_guarded_effect_application(
     """Reject stale merge acceptance before and immediately adjacent to merge application."""
 
     batch = parse_effect_batch(raw_worker_result, source)
+    expected_change = None if batch.typed_result is None else batch.typed_result.change
     for effect in batch.effects:
         if _merge_payload(effect) is None:
             continue
@@ -583,6 +587,7 @@ def run_guarded_effect_application(
             repository=repository,
             token=token,
             current_revision=current_revision,
+            expected_change=expected_change,
         ):
             return batch, ApplyResult(False, "fresh merge acceptance rejected")
 
@@ -598,6 +603,7 @@ def run_guarded_effect_application(
             repository=repository,
             token=token,
             current_revision=current_revision,
+            expected_change=expected_change,
         ),
     )
 
