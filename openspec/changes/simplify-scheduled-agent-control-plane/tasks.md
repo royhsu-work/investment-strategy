@@ -48,7 +48,7 @@ Parent advances: exactly one mapped Action/wake with work-conserving action inte
 Parent advances: Action-only routing, Role derivation, explicit merge Actions, live-state migration. Remaining: legacy cleanup. N-1: Stages 1–4. Boundary: complete authoritative dry-run required; this is semantic cutover. Post-cutover rollback translates from new state only. Next: Stage 6.
 
 - [ ] 5.1 RED — cover terminal/current/debt/legacy/ambiguous live Issue shapes; preserve unrelated labels and immutable Change.
-- [ ] 5.2 GREEEN — dry-run canonicalization; Human only for genuine ambiguity; never write to discover.
+- [ ] 5.2 GREEN — dry-run canonicalization; Human only for genuine ambiguity; never write to discover.
 - [ ] 5.3 GREEN — migrate to one Action, switch production dispatch/application/bootstrap to kernel, replace generic merge Action with explicit implementation/archive merge Actions.
 - [ ] 5.4 VERIFY — fresh-observe every mutation and run WIP/FIFO/debt/review/merge/lifecycle production regressions.
 
