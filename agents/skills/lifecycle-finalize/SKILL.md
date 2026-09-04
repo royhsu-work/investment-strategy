@@ -13,6 +13,7 @@ required or whether the Change is ready for independent archive review. For fina
 the Change is complete and archive terminal evidence is ready.
 
 Archive preparation owns semantic completeness, exact Change/Issue linkage, non-closing linkage,
+Archive preparation does not perform normal PR merge mutation.
 archive preparation is a Lead-only semantic step with no duplicate Change, PR, lifecycle state, recovery state, or control mailbox.
 deterministic cleanup obligations, and the evidence needed by Reviewer / review-archive. It does not
 perform normal PR merge mutation. A premature close or ambiguous cleanup condition is blocked.
