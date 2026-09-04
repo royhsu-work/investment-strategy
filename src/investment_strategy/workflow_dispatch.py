@@ -1,9 +1,8 @@
-"""Executable workflow-dynamic dispatch preconditions.
+"""Executable Action-only dispatch for the Scheduled-Agent control plane.
 
-This module is the stateless production owner for deterministic work selection.
-Normal selection consumes current open-Issue facts plus the complete current set
-of closed Issues that still carry workflow routing debt. Retired closed history
-is outside normal selection; detailed recovery is candidate-bound.
+This module owns the small deterministic selection boundary. Role is derived
+from Action; GitHub transport, semantic workers, and durable mutation live in
+separate modules.
 """
 
 from __future__ import annotations
@@ -11,6 +10,23 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
+
+from investment_strategy.scheduled_agent_action_model import Action as ModelAction
+from investment_strategy.scheduled_agent_action_model import (
+    AuthoritativeObservations,
+    IssueObservation,
+    SelectionDecision,
+    ShadowComparison,
+    role_for,
+    select_work,
+    shadow_compare_selection,
+)
+from investment_strategy.scheduled_agent_action_model import (
+    ObservationProvenance as ModelObservationProvenance,
+)
+from investment_strategy.scheduled_agent_action_model import (
+    SelectionDisposition as ModelSelectionDisposition,
+)
 
 Role = Literal["lead", "reviewer", "executor"]
 Action = Literal[
@@ -23,47 +39,35 @@ Action = Literal[
     "review-implementation",
     "review-archive",
     "implement-change",
-    "merge-pr",
+    "merge-implementation-pr",
+    "merge-archive-pr",
 ]
 Routing = tuple[Role, Action]
-RecoveryEvidence = Literal["not-candidate", "qualifying", "indeterminate"]
-TerminalEvidence = Literal["not-terminal", "terminal-history", "indeterminate"]
-DebtDisposition = Literal["terminal-cleanup", "unfinished-recovery"]
 
 
 class ObservationProvenance(StrEnum):
-    """Whether authorization-bearing current fields are invocation-local GitHub facts."""
+    """Whether authorization-bearing observations are complete and qualified."""
 
     QUALIFIED = "QUALIFIED"
     INDETERMINATE = "INDETERMINATE"
 
 
-class StructuralConflictDisposition(StrEnum):
-    """Compatibility enum for the retired broad closed-history screen."""
-
-    CLEAR = "CLEAR"
-    POSSIBLE_CONFLICT = "POSSIBLE_CONFLICT"
-    INDETERMINATE = "INDETERMINATE"
-
-
 @dataclass(frozen=True)
 class RepositoryIssueSnapshot:
-    """Normalized Issue facts consumed by production dispatch classifiers."""
+    """Fresh Issue facts; routing is a derived compatibility view of Action."""
 
     issue_number: int
     change: str
     routing: Routing | None
     state: Literal["open", "closed"] = "open"
     created_order: int = 0
-    premature_close_recovery: RecoveryEvidence = "not-candidate"
-    terminal_evidence: TerminalEvidence = "not-terminal"
     current_state_provenance: ObservationProvenance = ObservationProvenance.QUALIFIED
     routing_debt: bool = False
 
 
 @dataclass(frozen=True)
 class EnumerationEvidence:
-    """Completeness/provenance evidence for one bounded Issue acquisition."""
+    """Completeness and provenance for one Issue enumeration."""
 
     observed_count: int
     source_total_count: int | None
@@ -84,26 +88,25 @@ class EnumerationEvidence:
 
 @dataclass(frozen=True)
 class DispatchPreflight:
-    """Complete normalized input for one dispatch/precondition decision."""
+    """Complete current-state input for one Action selection."""
 
     issues: tuple[RepositoryIssueSnapshot, ...]
     enumeration: EnumerationEvidence
+    human_authorized: bool = True
 
 
 @dataclass(frozen=True)
 class DispatchDecision:
-    """Structured authorization result shared by runtime and regressions."""
+    """Machine decision; no worker, successor, or retry authority."""
 
     completeness: Literal["COMPLETE", "INDETERMINATE"]
     observation_provenance: ObservationProvenance
     formal_issue_ids: tuple[int, ...]
-    recovery_candidate_ids: tuple[int, ...]
     preactivation_candidate_ids: tuple[int, ...]
     selected_issue_id: int | None
     selected_routing: Routing | None
     disposition: Literal["AUTHORIZE", "FAIL_CLOSED", "NO_WORK"]
     reason: str
-    selected_debt_disposition: DebtDisposition | None = None
 
 
 def _fail_closed(
@@ -111,7 +114,6 @@ def _fail_closed(
     completeness: Literal["COMPLETE", "INDETERMINATE"],
     provenance: ObservationProvenance,
     formal: tuple[int, ...] = (),
-    recovery: tuple[int, ...] = (),
     preactivation: tuple[int, ...] = (),
     reason: str,
 ) -> DispatchDecision:
@@ -119,7 +121,6 @@ def _fail_closed(
         completeness=completeness,
         observation_provenance=provenance,
         formal_issue_ids=formal,
-        recovery_candidate_ids=recovery,
         preactivation_candidate_ids=preactivation,
         selected_issue_id=None,
         selected_routing=None,
@@ -128,290 +129,153 @@ def _fail_closed(
     )
 
 
-def _validate_preflight(preflight: DispatchPreflight) -> DispatchDecision | None:
-    if not preflight.enumeration.complete:
-        return _fail_closed(
-            completeness="INDETERMINATE",
-            provenance=preflight.enumeration.observation_provenance,
-            reason="repository enumeration is incomplete or unqualified",
-        )
-    if any(
+def _model_observations(preflight: DispatchPreflight) -> AuthoritativeObservations:
+    provenance = ModelObservationProvenance.QUALIFIED
+    if preflight.enumeration.observation_provenance is not ObservationProvenance.QUALIFIED or any(
         issue.current_state_provenance is not ObservationProvenance.QUALIFIED
         for issue in preflight.issues
     ):
-        return _fail_closed(
-            completeness="COMPLETE",
-            provenance=ObservationProvenance.INDETERMINATE,
-            reason="authorization-bearing current Issue state is unqualified",
-        )
-    return None
+        provenance = ModelObservationProvenance.INDETERMINATE
 
-
-def _eligible_preactivation(issue: RepositoryIssueSnapshot) -> bool:
-    return (
-        issue.change == "unset"
-        and issue.state == "open"
-        and issue.routing in {("lead", "explore-change"), ("lead", "propose-change")}
-    )
-
-
-def _is_routing_debt(issue: RepositoryIssueSnapshot) -> bool:
-    """Treat full legacy tuples as debt while supporting explicit partial residue."""
-
-    return issue.state == "closed" and (issue.routing_debt or issue.routing is not None)
-
-
-def classify_open_dispatch(preflight: DispatchPreflight) -> DispatchDecision:
-    """Select normal work from a complete provenance-qualified OPEN Issue snapshot.
-
-    Current coherent routing is the operational pre-activation state. Semantic
-    evidence required by a selected action is validated downstream by that
-    action and is not reconstructed as a global queue-eligibility predicate.
-    """
-
-    invalid = _validate_preflight(preflight)
-    if invalid is not None:
-        return invalid
-
-    if any(issue.state != "open" for issue in preflight.issues):
-        return _fail_closed(
-            completeness="COMPLETE",
-            provenance=ObservationProvenance.QUALIFIED,
-            reason="normal open-Issue classifier received closed Issue state",
-        )
-
-    formal_issues = tuple(
-        issue for issue in preflight.issues if issue.change != "unset" and issue.routing is not None
-    )
-    formal_ids = tuple(sorted(issue.issue_number for issue in formal_issues))
-
-    if len(formal_issues) > 1:
-        return _fail_closed(
-            completeness="COMPLETE",
-            provenance=ObservationProvenance.QUALIFIED,
-            formal=formal_ids,
-            reason="multiple open formal workflows",
-        )
-    if len(formal_issues) == 1:
-        selected = formal_issues[0]
-        return DispatchDecision(
-            completeness="COMPLETE",
-            observation_provenance=ObservationProvenance.QUALIFIED,
-            formal_issue_ids=formal_ids,
-            recovery_candidate_ids=(),
-            preactivation_candidate_ids=(),
-            selected_issue_id=selected.issue_number,
-            selected_routing=selected.routing,
-            disposition="AUTHORIZE",
-            reason="sole open formal workflow with no current routing debt",
-        )
-
-    queued = tuple(
-        sorted(
-            (issue for issue in preflight.issues if _eligible_preactivation(issue)),
-            key=lambda issue: (issue.created_order, issue.issue_number),
-        )
-    )
-    queued_ids = tuple(issue.issue_number for issue in queued)
-    if not queued:
-        return DispatchDecision(
-            completeness="COMPLETE",
-            observation_provenance=ObservationProvenance.QUALIFIED,
-            formal_issue_ids=(),
-            recovery_candidate_ids=(),
-            preactivation_candidate_ids=(),
-            selected_issue_id=None,
-            selected_routing=None,
-            disposition="NO_WORK",
-            reason="no open formal, pre-activation work, or current routing debt",
-        )
-
-    selected = queued[0]
-    return DispatchDecision(
-        completeness="COMPLETE",
-        observation_provenance=ObservationProvenance.QUALIFIED,
-        formal_issue_ids=(),
-        recovery_candidate_ids=(),
-        preactivation_candidate_ids=queued_ids,
-        selected_issue_id=selected.issue_number,
-        selected_routing=selected.routing,
-        disposition="AUTHORIZE",
-        reason="deterministic pre-activation winner",
-    )
-
-
-def classify_structural_conflicts(preflight: DispatchPreflight) -> StructuralConflictDisposition:
-    """Compatibility classifier for callers that still project closed state.
-
-    Any current closed workflow-routing residue is a possible conflict. Retired
-    closed history with no routing residue is clear. Production normal dispatch
-    no longer invokes this repository-history screen.
-    """
-
-    if not preflight.enumeration.complete:
-        return StructuralConflictDisposition.INDETERMINATE
-    if any(
-        issue.current_state_provenance is not ObservationProvenance.QUALIFIED
-        for issue in preflight.issues
-    ):
-        return StructuralConflictDisposition.INDETERMINATE
-
-    for issue in preflight.issues:
-        if issue.state != "closed":
-            return StructuralConflictDisposition.INDETERMINATE
-        if _is_routing_debt(issue):
-            return StructuralConflictDisposition.POSSIBLE_CONFLICT
-    return StructuralConflictDisposition.CLEAR
-
-
-def _open_formal_issues(preflight: DispatchPreflight) -> tuple[RepositoryIssueSnapshot, ...]:
-    return tuple(
-        issue
-        for issue in preflight.issues
-        if issue.change != "unset" and issue.routing is not None and issue.state == "open"
-    )
-
-
-def _classify_exceptional_dispatch(preflight: DispatchPreflight) -> DispatchDecision:
-    """Classify current closed-routing debt with candidate-bound recovery evidence."""
-
-    invalid = _validate_preflight(preflight)
-    if invalid is not None:
-        return invalid
-
-    formal_issues = _open_formal_issues(preflight)
-    formal_ids = tuple(sorted(issue.issue_number for issue in formal_issues))
-    if len(formal_issues) > 1:
-        return _fail_closed(
-            completeness="COMPLETE",
-            provenance=ObservationProvenance.QUALIFIED,
-            formal=formal_ids,
-            reason="multiple open formal workflows",
-        )
-
-    debt = tuple(issue for issue in preflight.issues if _is_routing_debt(issue))
-    debt_ids = tuple(sorted(issue.issue_number for issue in debt))
-
-    ambiguous = tuple(
-        issue
-        for issue in debt
-        if issue.terminal_evidence == "indeterminate"
-        or (
-            issue.terminal_evidence != "terminal-history"
-            and issue.premature_close_recovery == "indeterminate"
-        )
-    )
-    if ambiguous:
-        return _fail_closed(
-            completeness="COMPLETE",
-            provenance=ObservationProvenance.QUALIFIED,
-            formal=formal_ids,
-            recovery=debt_ids,
-            reason="closed routing debt evidence is ambiguous or contradictory",
-        )
-
-    terminal = tuple(issue for issue in debt if issue.terminal_evidence == "terminal-history")
-    unfinished = tuple(
-        issue
-        for issue in debt
-        if issue.terminal_evidence == "not-terminal"
-        and issue.premature_close_recovery == "qualifying"
-    )
-    unresolved = tuple(issue for issue in debt if issue not in terminal and issue not in unfinished)
-    if unresolved:
-        return _fail_closed(
-            completeness="COMPLETE",
-            provenance=ObservationProvenance.QUALIFIED,
-            formal=formal_ids,
-            recovery=debt_ids,
-            reason="closed routing debt is not classified as terminal or unfinished",
-        )
-
-    if terminal:
-        selected = min(terminal, key=lambda issue: issue.issue_number)
-        return DispatchDecision(
-            completeness="COMPLETE",
-            observation_provenance=ObservationProvenance.QUALIFIED,
-            formal_issue_ids=formal_ids,
-            recovery_candidate_ids=debt_ids,
-            preactivation_candidate_ids=(),
-            selected_issue_id=selected.issue_number,
-            selected_routing=("lead", "resolve-question"),
-            disposition="AUTHORIZE",
-            reason="deterministic terminal closed-routing-debt cleanup candidate",
-            selected_debt_disposition="terminal-cleanup",
-        )
-
-    if unfinished and formal_issues:
-        return _fail_closed(
-            completeness="COMPLETE",
-            provenance=ObservationProvenance.QUALIFIED,
-            formal=formal_ids,
-            recovery=debt_ids,
-            reason="unfinished closed routing debt conflicts with open formal workflow",
-        )
-    if len(unfinished) > 1:
-        return _fail_closed(
-            completeness="COMPLETE",
-            provenance=ObservationProvenance.QUALIFIED,
-            recovery=debt_ids,
-            reason="multiple unfinished closed-routing recovery candidates",
-        )
-    if len(unfinished) == 1:
-        selected = unfinished[0]
-        return DispatchDecision(
-            completeness="COMPLETE",
-            observation_provenance=ObservationProvenance.QUALIFIED,
-            formal_issue_ids=(),
-            recovery_candidate_ids=debt_ids,
-            preactivation_candidate_ids=(),
-            selected_issue_id=selected.issue_number,
-            selected_routing=("lead", "resolve-question"),
-            disposition="AUTHORIZE",
-            reason="sole unfinished closed-routing recovery candidate",
-            selected_debt_disposition="unfinished-recovery",
-        )
-
-    open_preflight = DispatchPreflight(
-        issues=tuple(issue for issue in preflight.issues if issue.state == "open"),
-        enumeration=EnumerationEvidence(
-            observed_count=sum(issue.state == "open" for issue in preflight.issues),
-            source_total_count=sum(issue.state == "open" for issue in preflight.issues),
-            incomplete_results=False,
-            exhausted=True,
-            observation_provenance=ObservationProvenance.QUALIFIED,
+    return AuthoritativeObservations(
+        issues=tuple(
+            IssueObservation(
+                issue_number=issue.issue_number,
+                state=issue.state,
+                change=issue.change,
+                action=None if issue.routing is None else issue.routing[1],
+                created_order=issue.created_order,
+                routing_debt=issue.routing_debt,
+            )
+            for issue in preflight.issues
         ),
+        complete=preflight.enumeration.complete,
+        provenance=provenance,
+        human_authorized=preflight.human_authorized,
     )
-    return classify_open_dispatch(open_preflight)
+
+
+def _decision_metadata(
+    observations: AuthoritativeObservations,
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    formal = tuple(
+        sorted(
+            issue.issue_number
+            for issue in observations.issues
+            if issue.state == "open" and issue.change not in {None, "unset"}
+        )
+    )
+    preactivation = tuple(
+        sorted(
+            issue.issue_number
+            for issue in observations.issues
+            if issue.state == "open"
+            and issue.change in {None, "unset"}
+            and issue.action in {ModelAction.EXPLORE_CHANGE, ModelAction.PROPOSE_CHANGE}
+        )
+    )
+    return formal, preactivation
+
+
+def _public_provenance(
+    preflight: DispatchPreflight,
+    observations: AuthoritativeObservations,
+) -> ObservationProvenance:
+    if observations.provenance is ModelObservationProvenance.INDETERMINATE:
+        return ObservationProvenance.INDETERMINATE
+    return preflight.enumeration.observation_provenance
 
 
 def classify_dispatch(preflight: DispatchPreflight) -> DispatchDecision:
-    """Classify a final runtime preflight.
+    """Select exactly one current Action from the executable model."""
 
-    Open-only preflights use normal selection. A preflight containing closed
-    Issues represents the already-entered current routing-debt boundary.
-    """
+    observations = _model_observations(preflight)
+    selected = select_work(observations)
+    formal, preactivation = _decision_metadata(observations)
+    completeness: Literal["COMPLETE", "INDETERMINATE"] = (
+        "COMPLETE" if preflight.enumeration.complete else "INDETERMINATE"
+    )
+    provenance = _public_provenance(preflight, observations)
 
-    if any(issue.state == "closed" for issue in preflight.issues):
-        return _classify_exceptional_dispatch(preflight)
-    return classify_open_dispatch(preflight)
+    if selected.disposition is ModelSelectionDisposition.AUTHORIZE:
+        if selected.issue_number is None or selected.action is None or selected.role is None:
+            return _fail_closed(
+                completeness=completeness,
+                provenance=provenance,
+                formal=formal,
+                preactivation=preactivation,
+                reason="action-model-authorize-identity-incomplete",
+            )
+        return DispatchDecision(
+            completeness=completeness,
+            observation_provenance=provenance,
+            formal_issue_ids=formal,
+            preactivation_candidate_ids=preactivation,
+            selected_issue_id=selected.issue_number,
+            selected_routing=(selected.role.value, selected.action.value),
+            disposition="AUTHORIZE",
+            reason=selected.reason,
+        )
 
+    if selected.disposition is ModelSelectionDisposition.NO_WORK:
+        return DispatchDecision(
+            completeness=completeness,
+            observation_provenance=provenance,
+            formal_issue_ids=formal,
+            preactivation_candidate_ids=preactivation,
+            selected_issue_id=None,
+            selected_routing=None,
+            disposition="NO_WORK",
+            reason=selected.reason,
+        )
 
-def action_entry_authorized(
-    preflight: DispatchPreflight, issue_number: int, routing: Routing
-) -> bool:
-    """Return whether the executable decision authorizes this exact mapped action."""
-
-    decision = classify_dispatch(preflight)
-    return (
-        decision.disposition == "AUTHORIZE"
-        and decision.selected_issue_id == issue_number
-        and decision.selected_routing == routing
+    return _fail_closed(
+        completeness=completeness,
+        provenance=provenance,
+        formal=formal,
+        preactivation=preactivation,
+        reason=selected.reason,
     )
 
 
-def activation_prewrite_authorized(preflight: DispatchPreflight, issue_number: int) -> bool:
-    """Authorize the exact Issue for the immediate Propose activation write."""
+def action_model_shadow(preflight: DispatchPreflight) -> ShadowComparison:
+    """Compare the production decision with the same pure executable model."""
+
+    observations = _model_observations(preflight)
+    expected = select_work(observations)
+    observed = SelectionDecision(
+        disposition=expected.disposition,
+        issue_number=expected.issue_number,
+        action=expected.action,
+        role=expected.role,
+        reason=expected.reason,
+    )
+    return shadow_compare_selection(observations, observed)
+
+
+def action_entry_authorized(
+    preflight: DispatchPreflight,
+    issue_number: int,
+    routing: Routing,
+) -> bool:
+    """Return whether the exact Action entry is currently authorized."""
+
+    decision = classify_dispatch(preflight)
+    if decision.disposition != "AUTHORIZE" or decision.selected_issue_id != issue_number:
+        return False
+    if decision.selected_routing != routing:
+        return False
+    try:
+        return role_for(routing[1]).value == routing[0]
+    except ValueError:
+        return False
+
+
+def activation_prewrite_authorized(
+    preflight: DispatchPreflight,
+    issue_number: int,
+) -> bool:
+    """Authorize the exact pre-activation Propose action."""
 
     return action_entry_authorized(preflight, issue_number, ("lead", "propose-change"))
 
@@ -422,7 +286,7 @@ def activation_postwrite_accepted(
     issue_number: int,
     expected_change: str,
 ) -> bool:
-    """Accept a Propose activation only from a fresh qualified post-write state."""
+    """Accept a fresh immutable Change activation postcondition."""
 
     decision = classify_dispatch(preflight)
     if (
@@ -432,7 +296,6 @@ def activation_postwrite_accepted(
         or decision.selected_routing != ("lead", "propose-change")
     ):
         return False
-
     matches = tuple(issue for issue in preflight.issues if issue.issue_number == issue_number)
     if len(matches) != 1:
         return False
@@ -451,7 +314,7 @@ def activation_accepted(
     issue_number: int,
     expected_change: str,
 ) -> bool:
-    """Compatibility name for the post-write activation acceptance predicate."""
+    """Compatibility name for the activation postcondition."""
 
     return activation_postwrite_accepted(
         preflight,

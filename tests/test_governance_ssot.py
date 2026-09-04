@@ -14,64 +14,91 @@ def _normalized(path: Path) -> str:
     return " ".join(_read(path).split())
 
 
-def test_readme_is_orientation_not_competing_runtime_protocol() -> None:
+def test_readme_is_orientation_and_names_authority_surfaces() -> None:
     readme = _normalized(ROOT / "README.md")
-    assert "Authoritative Scheduled-Agent shared runtime governance" in readme
-    assert "authoritative runtime workflow topology" in readme
-    assert "agents/AGENTS.md" in readme
-    assert "agents/workflow.md" in readme
-    assert "README 只提供 Human/contributor 導覽" in readme
-    assert "不複製 Scheduled-Agent runtime protocol 或 lifecycle topology" in readme
-    assert "下列名稱僅作 Human 搜尋與流程導覽" in readme
+    for required in (
+        "Authoritative Scheduled-Agent shared runtime governance",
+        "agents/AGENTS.md",
+        "agents/workflow.md",
+        "README is Human/",
+        "does not duplicate the runtime protocol",
+        "Role = role_for(Action)",
+        "merge-implementation-pr",
+        "merge-archive-pr",
+    ):
+        assert required in readme
 
 
-def test_shared_governance_declares_rule_category_ownership() -> None:
+def test_shared_governance_separates_role_action_and_capability() -> None:
     shared = _normalized(AGENTS / "AGENTS.md")
     for required in (
-        "README.md` is the Human/contributor entry point",
-        "agents/workflow.md` owns end-to-end Scheduled-Agent runtime workflow topology",
-        "agents/AGENTS.md` owns shared Scheduled-Agent runtime execution protocol",
-        "agents/roles/*.md` own role mission, authority, ownership",
-        "agents/skills/*` own action-specific executable procedure",
-        "openspec/config.yaml` owns OpenSpec authoring/validation conventions",
-        "openspec/specs/*` contain approved capability requirements",
-        "archived changes are historical provenance/traceability only",
-        "external product configuration",
-        "synchronization-by-convention",
+        "Role is semantic responsibility",
+        "Action is the one unit of workflow work",
+        "Capability is repository application or mutation power",
+        "Role = role_for(Action)",
+        "Issue lifecycle state",
+        "one immutable Change identity",
+        "exactly one action:<action>",
     ):
         assert required in shared
 
 
-def test_same_invocation_exact_resource_settle_is_not_immediate_external_wait() -> None:
+def test_shared_governance_defines_one_wake_and_fresh_application() -> None:
     shared = _normalized(AGENTS / "AGENTS.md")
-    assert "first nonterminal observation" in shared
-    assert "subsequent fresh observation" in shared
-    assert "same exact target/resource" in shared
-    assert "created or triggered by the current selected action" in shared
-    assert "caused by or required for the current selected action" not in shared
-    assert "does not by itself prove a cross-invocation external asynchronous wait" in shared
-    assert "no other immediately actionable same-authority work remains" in shared
-    assert "MUST NOT introduce a durable timer" in shared
+    for required in (
+        "one bounded semantic Action",
+        "next_action(current_action, result)",
+        "later fresh wake",
+        "fresh-reads the Issue",
+        "postcondition observation",
+        "stale, concurrent, duplicated, incomplete, ambiguous, contradictory",
+        "fail closed",
+    ):
+        assert required in shared
+    assert (
+        "worker cannot select an Issue, Role, Action, target, successor, retry, or success"
+        in shared
+    )
 
 
-def test_scheduler_topology_is_external_not_a_three_slot_requirement() -> None:
+def test_shared_governance_keeps_independent_safety_boundaries() -> None:
+    shared = _normalized(AGENTS / "AGENTS.md")
+    for required in (
+        "Human authority",
+        "WIP=1",
+        "finish-first",
+        "Exact-R validation",
+        "content-addressed",
+        "independent Reviewer",
+        "exact head",
+        "Mutation carriers are replaceable actuators",
+    ):
+        assert required in shared
+    assert "No write is used as a read" in shared
+
+
+def test_daily_transport_is_bounded_and_external_configuration_stays_external() -> None:
     migration = _normalized(AGENTS / "scheduled-task-migration.md")
-    assert "Current deployment note" in migration
-    assert "three wake slots" not in migration
-    assert "Exact slot count/topology/cadence" in migration
-    assert "external product configuration" in migration
-    assert "permanent minimum-slot requirement" in migration
+    for required in (
+        "Asia/Taipei daily shard",
+        "one exact Actions run",
+        "one structured result",
+        "bounded transport only",
+        "external product configuration",
+        "Project/Kanban fields are presentation only",
+    ):
+        assert required in migration
 
 
-def test_final_archive_merge_requires_known_temporary_cleanup_first() -> None:
-    finalize = _normalized(AGENTS / "skills/lifecycle-finalize/SKILL.md")
+def test_archive_and_merge_have_separate_explicit_actions() -> None:
+    lifecycle = _normalized(AGENTS / "skills/lifecycle-finalize/SKILL.md")
+    archive = _normalized(AGENTS / "skills/archive-review/SKILL.md")
     merge = _normalized(AGENTS / "skills/merge-pr/SKILL.md")
-
-    assert "known terminal cleanup obligations" in finalize
-    assert "complete before `Reviewer / review-archive`" in finalize
-    assert "before the final Archive PR merge mutation" in merge
-    assert "temporary correction/recovery branches" in merge
-    assert "do not merge" in merge
+    assert "archive preparation" in lifecycle
+    assert "merge-archive-pr" in archive
+    assert "merge-implementation-pr" in merge
+    assert "merge-archive-pr" in merge
+    assert "generic merge label" in merge
 
 
 def test_repository_governance_canonical_spec_preserves_archiveable_purpose() -> None:

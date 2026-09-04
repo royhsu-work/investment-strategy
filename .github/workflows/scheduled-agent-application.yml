@@ -13,8 +13,7 @@ jobs:
     if: >-
       startsWith(github.event.comment.body, 'EFFECT_REQUEST') ||
       startsWith(github.event.comment.body, 'VALIDATION_RESOURCE_REQUEST') ||
-      startsWith(github.event.comment.body, 'WORK_PRODUCT_REQUEST') ||
-      startsWith(github.event.comment.body, 'HANDOFF_COMPLETION_REQUEST')
+      startsWith(github.event.comment.body, 'WORK_PRODUCT_REQUEST')
     permissions:
       contents: write
       issues: write
@@ -41,48 +40,28 @@ jobs:
         id: revision
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Freshly read configured check-in Issue comments
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          CHECKIN_ISSUE: ${{ vars.AGENT_RUNTIME_CHECKIN_ISSUE }}
-        run: |
-          if [[ ! "$CHECKIN_ISSUE" =~ ^[1-9][0-9]*$ ]]; then
-            echo "AGENT_RUNTIME_CHECKIN_ISSUE must be a positive Issue number" >&2
-            exit 1
-          fi
-          gh api --paginate --slurp \
-            "/repos/${GITHUB_REPOSITORY}/issues/${CHECKIN_ISSUE}/comments?per_page=100" \
-            > "$RUNNER_TEMP/issue-comment-pages.json"
-
       - name: Validate correlation and apply repository-owned effects
         if: startsWith(github.event.comment.body, 'EFFECT_REQUEST')
         id: apply
         env:
-          AGENT_RUNTIME_CHECKIN_ISSUE: ${{ vars.AGENT_RUNTIME_CHECKIN_ISSUE }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PYTHONPATH: ${{ github.workspace }}/src
         run: >-
           uv run python -m investment_strategy.scheduled_agent_application_bridge
           --event-path "$GITHUB_EVENT_PATH"
-          --comments-path "$RUNNER_TEMP/issue-comment-pages.json"
-          --check-in-issue "$AGENT_RUNTIME_CHECKIN_ISSUE"
           --revision "${{ steps.revision.outputs.sha }}"
 
       - name: Resolve already-current exact-revision validation resource
         if: startsWith(github.event.comment.body, 'VALIDATION_RESOURCE_REQUEST')
         id: resource
         env:
-          AGENT_RUNTIME_CHECKIN_ISSUE: ${{ vars.AGENT_RUNTIME_CHECKIN_ISSUE }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PYTHONPATH: ${{ github.workspace }}/src
         run: >-
           uv run python -m investment_strategy.scheduled_agent_validation_resource
           --event-path "$GITHUB_EVENT_PATH"
-          --comments-path "$RUNNER_TEMP/issue-comment-pages.json"
-          --check-in-issue "$AGENT_RUNTIME_CHECKIN_ISSUE"
           --revision "${{ steps.revision.outputs.sha }}"
           --default-branch "${{ github.event.repository.default_branch }}"
 
@@ -90,41 +69,18 @@ jobs:
         if: startsWith(github.event.comment.body, 'WORK_PRODUCT_REQUEST')
         id: work_product
         env:
-          AGENT_RUNTIME_CHECKIN_ISSUE: ${{ vars.AGENT_RUNTIME_CHECKIN_ISSUE }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PYTHONPATH: ${{ github.workspace }}/src
         run: >-
           uv run python -m investment_strategy.scheduled_agent_validation_resource
           --event-path "$GITHUB_EVENT_PATH"
-          --comments-path "$RUNNER_TEMP/issue-comment-pages.json"
-          --check-in-issue "$AGENT_RUNTIME_CHECKIN_ISSUE"
-          --revision "${{ steps.revision.outputs.sha }}"
-          --default-branch "${{ github.event.repository.default_branch }}"
-
-      - name: Complete application-owned cross-role handoff
-        if: startsWith(github.event.comment.body, 'HANDOFF_COMPLETION_REQUEST')
-        id: handoff
-        env:
-          AGENT_RUNTIME_CHECKIN_ISSUE: ${{ vars.AGENT_RUNTIME_CHECKIN_ISSUE }}
-          GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          PYTHONPATH: ${{ github.workspace }}/src
-        run: >-
-          uv run python -m investment_strategy.scheduled_agent_validation_resource
-          --event-path "$GITHUB_EVENT_PATH"
-          --comments-path "$RUNNER_TEMP/issue-comment-pages.json"
-          --check-in-issue "$AGENT_RUNTIME_CHECKIN_ISSUE"
           --revision "${{ steps.revision.outputs.sha }}"
           --default-branch "${{ github.event.repository.default_branch }}"
 
       - name: Select exact-revision validation resource
         id: validation
         env:
-          APPLY_REQUIRED: ${{ steps.apply.outputs.validation_required }}
-          APPLY_REPOSITORY: ${{ steps.apply.outputs.validation_target_repository }}
-          APPLY_REVISION: ${{ steps.apply.outputs.validation_target_revision }}
-          APPLY_CORRELATION: ${{ steps.apply.outputs.validation_correlation }}
           RESOURCE_REQUIRED: ${{ steps.resource.outputs.validation_required }}
           RESOURCE_REPOSITORY: ${{ steps.resource.outputs.validation_target_repository }}
           RESOURCE_REVISION: ${{ steps.resource.outputs.validation_target_revision }}
@@ -135,22 +91,16 @@ jobs:
           WORK_PRODUCT_CORRELATION: ${{ steps.work_product.outputs.validation_correlation }}
         shell: bash
         run: |
-          apply_required="${APPLY_REQUIRED:-false}"
           resource_required="${RESOURCE_REQUIRED:-false}"
           work_product_required="${WORK_PRODUCT_REQUIRED:-false}"
           resource_count=0
-          [[ "$apply_required" == "true" ]] && resource_count=$((resource_count + 1))
           [[ "$resource_required" == "true" ]] && resource_count=$((resource_count + 1))
           [[ "$work_product_required" == "true" ]] && resource_count=$((resource_count + 1))
           if [[ "$resource_count" -gt 1 ]]; then
             echo "::error::Exact-revision validation target is ambiguous across application resources"
             exit 1
           fi
-          if [[ "$apply_required" == "true" ]]; then
-            target_repository="$APPLY_REPOSITORY"
-            target_revision="$APPLY_REVISION"
-            correlation="$APPLY_CORRELATION"
-          elif [[ "$resource_required" == "true" ]]; then
+          if [[ "$resource_required" == "true" ]]; then
             target_repository="$RESOURCE_REPOSITORY"
             target_revision="$RESOURCE_REVISION"
             correlation="$RESOURCE_CORRELATION"

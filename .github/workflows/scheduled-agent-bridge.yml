@@ -1,12 +1,14 @@
 name: Scheduled Agent Issue Comment Bridge
 
+run-name: Scheduled Agent Dispatch ${{ github.event.comment.id }}
+
 on:
   issue_comment:
     types: [created]
 
 permissions:
   contents: read
-  issues: write
+  issues: read
 
 concurrency:
   group: issue-comment-bridge-${{ github.event.comment.id }}
@@ -36,24 +38,9 @@ jobs:
         id: revision
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Freshly read configured check-in Issue comments
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          CHECKIN_ISSUE: ${{ vars.AGENT_RUNTIME_CHECKIN_ISSUE }}
-        run: |
-          if [[ ! "$CHECKIN_ISSUE" =~ ^[1-9][0-9]*$ ]]; then
-            echo "AGENT_RUNTIME_CHECKIN_ISSUE must be a positive Issue number" >&2
-            exit 1
-          fi
-          gh api --paginate --slurp \
-            "/repos/${GITHUB_REPOSITORY}/issues/${CHECKIN_ISSUE}/comments?per_page=100" \
-            > "$RUNNER_TEMP/issue-comment-pages.json"
-
       - name: Plan exact correlated machine dispatch decision
         id: handler
         env:
-          AGENT_RUNTIME_CHECKIN_ISSUE: ${{ vars.AGENT_RUNTIME_CHECKIN_ISSUE }}
           DEFAULT_BRANCH_REVISION: ${{ steps.revision.outputs.sha }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -61,19 +48,24 @@ jobs:
         run: >-
           uv run python -m investment_strategy.issue_comment_bridge
           --event-path "$GITHUB_EVENT_PATH"
-          --comments-path "$RUNNER_TEMP/issue-comment-pages.json"
-          --check-in-issue "$AGENT_RUNTIME_CHECKIN_ISSUE"
           --revision "$DEFAULT_BRANCH_REVISION"
           --github-output "$GITHUB_OUTPUT"
           --result-payload "$RUNNER_TEMP/dispatch-result.json"
 
-      - name: Post correlated machine dispatch decision
-        if: steps.handler.outputs.should_post == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          ISSUE_NUMBER: ${{ steps.handler.outputs.issue_number }}
-        run: >-
-          gh api --method POST
-          "/repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments"
-          --input "$RUNNER_TEMP/dispatch-result.json"
+      - name: Emit exact run-scoped machine dispatch result
+        if: steps.handler.outputs.should_emit == 'true'
+        shell: bash
+        run: |
+          python - "$RUNNER_TEMP/dispatch-result.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          body = payload.get("body")
+          if not isinstance(body, str) or not body.startswith("DISPATCH_DECISION\n"):
+              raise SystemExit("missing strict DISPATCH_DECISION result")
+          print("BEGIN_SCHEDULED_AGENT_DISPATCH_RESULT")
+          print(body)
+          print("END_SCHEDULED_AGENT_DISPATCH_RESULT")
+          PY

@@ -120,7 +120,7 @@ def test_render_archive_pr_body_contains_only_expected_non_closing_linkage(
     assert "Lead terminal finalization" in rendered
 
 
-def test_archive_workflow_and_lead_skill_split_archive_pr_linkage_ownership() -> None:
+def test_archive_workflow_and_action_skills_split_linkage_ownership() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     lifecycle_skill = LIFECYCLE_SKILL.read_text(encoding="utf-8")
     merge_skill = MERGE_SKILL.read_text(encoding="utf-8")
@@ -138,35 +138,29 @@ def test_archive_workflow_and_lead_skill_split_archive_pr_linkage_ownership() ->
     ):
         assert removed not in workflow
     for required in (
-        "create or reuse the final Archive PR as ordinary lifecycle continuation",
+        "archive preparation",
         "Refs #<coordination-issue>",
-        "`Reviewer / review-archive`",
-        "coordination Issue open",
+        "Reviewer / review-archive",
+        "coordination Issue",
     ):
         assert required in lifecycle_skill
     for required in (
-        "final Archive PR",
-        "repository-approved non-closing linkage",
+        "merge-archive-pr",
+        "non-closing linkage",
         "same persistent coordination Issue",
-        "MUST NOT establish",
-        "do not merge",
+        "fails closed",
     ):
         assert required in merge_skill
 
 
-def test_finalize_archive_persists_completion_before_close_and_reobserves() -> None:
+def test_finalize_archive_keeps_terminal_result_before_later_wake() -> None:
     skill = " ".join(LIFECYCLE_SKILL.read_text(encoding="utf-8").split())
-    result_at = skill.index("persists one bounded `LIFECYCLE_COMPLETE` result")
-    close_at = skill.index("coordination Issue close mutation", result_at)
-    observe_at = skill.index("requires observed `closed`", close_at)
-    assert result_at < close_at < observe_at
-    assert "Archive merge alone therefore cannot make the workflow terminal" in skill
-    assert "valid `LIFECYCLE_COMPLETE` already durable but Issue still open" in skill
+    assert "lifecycle-complete" in skill
+    assert "finalize-archive" in skill
+    assert "successor executes only on a later wake" in skill
 
 
-def test_premature_coordination_issue_closure_fails_closed() -> None:
+def test_premature_coordination_issue_closure_stays_blocked() -> None:
     skill = " ".join(LIFECYCLE_SKILL.read_text(encoding="utf-8").split())
-    governance = " ".join(AGENTS.read_text(encoding="utf-8").split())
-    for text in (skill, governance):
-        assert "premature" in text
-        assert "fail closed" in text
+    assert "premature close" in skill
+    assert "blocked" in skill

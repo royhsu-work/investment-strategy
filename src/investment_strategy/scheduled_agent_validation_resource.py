@@ -1,4 +1,4 @@
-"""Run-scoped exact-revision OpenSpec validation and M0 self-hosting application."""
+"""Run-scoped validation and content-addressed work-product application."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import binascii
 import json
 import os
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import cast
@@ -16,39 +16,30 @@ from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
-from investment_strategy.issue_comment_bridge import (
-    parse_dispatch_decision,
-    parse_dispatch_request,
+from investment_strategy.issue_comment_bridge import MachineDispatchDecision
+from investment_strategy.scheduled_agent_action_model import TRANSITIONS
+from investment_strategy.scheduled_agent_action_model import (
+    Action as ModelAction,
 )
-from investment_strategy.scheduled_agent_application_bridge import parse_application_request
-from investment_strategy.scheduled_agent_effects import (
-    StagedEffect,
-    parse_effect_batch,
-    topology_allows_successor,
-)
+from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
+from investment_strategy.scheduled_agent_dispatch_result import fetch_dispatch_result
 from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
     acquire_current_github_preflight,
-    normalize_github_issue,
 )
 from investment_strategy.workflow_dispatch import classify_dispatch
 
 RESOURCE_REQUEST_MARKER = "VALIDATION_RESOURCE_REQUEST"
 WORK_PRODUCT_REQUEST_MARKER = "WORK_PRODUCT_REQUEST"
-HANDOFF_COMPLETION_REQUEST_MARKER = "HANDOFF_COMPLETION_REQUEST"
 DISPATCH_REQUEST_COMMENT_ID_PREFIX = "Dispatch-Request-Comment-ID: "
-DISPATCH_DECISION_COMMENT_ID_PREFIX = "Dispatch-Decision-Comment-ID: "
-EFFECT_REQUEST_COMMENT_ID_PREFIX = "Effect-Request-Comment-ID: "
-RESULT_COMMENT_ID_PREFIX = "Result-Comment-ID: "
+DISPATCH_RUN_ID_PREFIX = "Dispatch-Run-ID: "
 PR_PREFIX = "PR: "
 EXPECTED_CHANGE_PREFIX = "Expected-Change: "
 MANIFEST_B64_PREFIX = "Manifest-B64: "
 _CHATGPT_CONNECTOR_APP_SLUG = "chatgpt-codex-connector"
-_GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]"
-_GITHUB_ACTIONS_APP_SLUG = "github-actions"
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
-_M0_WORK_PRODUCT_SOURCES = frozenset(
+_OPEN_SPEC_AUTHORING_SOURCES = frozenset(
     {
         ("lead", "propose-change"),
         ("lead", "resolve-question"),
@@ -61,7 +52,7 @@ class ValidationResourceRequest:
     """One transport request for a deterministic exact-revision validation resource."""
 
     dispatch_request_comment_id: int
-    dispatch_decision_comment_id: int
+    dispatch_run_id: int
     pr_number: int
     expected_change: str
 
@@ -112,7 +103,7 @@ class WorkProductRequest:
     """One M0 content-addressed work-product request."""
 
     dispatch_request_comment_id: int
-    dispatch_decision_comment_id: int
+    dispatch_run_id: int
     pr_number: int
     expected_change: str
     manifest: WorkProductManifest
@@ -130,30 +121,6 @@ class WorkProductPlan:
     manifest: WorkProductManifest | None = None
 
 
-@dataclass(frozen=True)
-class HandoffCompletionRequest:
-    """One deterministic request to finish an already-applied cross-role handoff."""
-
-    dispatch_request_comment_id: int
-    dispatch_decision_comment_id: int
-    effect_request_comment_id: int
-    result_comment_id: int
-    expected_change: str
-
-
-@dataclass(frozen=True)
-class HandoffCompletionPlan:
-    """Bound source/effect/result evidence for application-owned HANDOFF completion."""
-
-    should_complete: bool
-    source: WorkerRequest | None = None
-    request_comment_id: int | None = None
-    effect_request_comment_id: int | None = None
-    result_comment_id: int | None = None
-    expected_change: str | None = None
-    raw_worker_result: str | None = None
-
-
 def _positive_decimal(value: str) -> int | None:
     try:
         parsed = int(value)
@@ -162,6 +129,12 @@ def _positive_decimal(value: str) -> int | None:
     if parsed <= 0 or str(parsed) != value:
         return None
     return parsed
+
+
+def _positive_int(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
 
 
 def _valid_change(value: str) -> bool:
@@ -187,6 +160,13 @@ def _valid_branch(value: object) -> bool:
     )
 
 
+def _source_branch(change: object) -> str | None:
+    if not isinstance(change, str) or change in {"", "unset"}:
+        return None
+    branch = f"agent/{change}"
+    return branch if _valid_branch(branch) else None
+
+
 def _valid_repo_path(value: object) -> bool:
     if not isinstance(value, str) or not value or value != value.strip():
         return False
@@ -194,8 +174,33 @@ def _valid_repo_path(value: object) -> bool:
     return not path.is_absolute() and ".." not in path.parts and "." not in path.parts
 
 
+def work_product_path_allowed(
+    source: WorkerRequest,
+    expected_change: str,
+    path: str,
+) -> bool:
+    """Authorize a manifest path from the current Action's mutation capability."""
+
+    if (
+        not _valid_change(expected_change)
+        or expected_change == "unset"
+        or not _valid_repo_path(path)
+    ):
+        return False
+
+    change_prefix = f"openspec/changes/{expected_change}/"
+    source_identity = (source.role, source.action)
+    if source_identity in _OPEN_SPEC_AUTHORING_SOURCES:
+        return path.startswith(change_prefix)
+    if source_identity == ("executor", "implement-change"):
+        if path.startswith("openspec/changes/"):
+            return path.startswith(change_prefix)
+        return True
+    return False
+
+
 def parse_validation_resource_request(body: str) -> ValidationResourceRequest | None:
-    """Parse the exact trigger/audit transport shape; no revision is accepted from the caller."""
+    """Parse the exact trigger shape; no revision is accepted from the caller."""
 
     lines = body.split("\n")
     if not lines or lines[0] != RESOURCE_REQUEST_MARKER:
@@ -204,7 +209,7 @@ def parse_validation_resource_request(body: str) -> ValidationResourceRequest | 
         raise ValueError("VALIDATION_RESOURCE_REQUEST must contain exactly five lines")
     prefixes = (
         DISPATCH_REQUEST_COMMENT_ID_PREFIX,
-        DISPATCH_DECISION_COMMENT_ID_PREFIX,
+        DISPATCH_RUN_ID_PREFIX,
         PR_PREFIX,
         EXPECTED_CHANGE_PREFIX,
     )
@@ -213,19 +218,19 @@ def parse_validation_resource_request(body: str) -> ValidationResourceRequest | 
             raise ValueError("VALIDATION_RESOURCE_REQUEST field order is invalid")
 
     dispatch_request_comment_id = _positive_decimal(lines[1][len(prefixes[0]) :])
-    dispatch_decision_comment_id = _positive_decimal(lines[2][len(prefixes[1]) :])
+    dispatch_run_id = _positive_decimal(lines[2][len(prefixes[1]) :])
     pr_number = _positive_decimal(lines[3][len(prefixes[2]) :])
     expected_change = lines[4][len(prefixes[3]) :]
     if (
         dispatch_request_comment_id is None
-        or dispatch_decision_comment_id is None
+        or dispatch_run_id is None
         or pr_number is None
         or not _valid_change(expected_change)
     ):
         raise ValueError("VALIDATION_RESOURCE_REQUEST identity is invalid")
     return ValidationResourceRequest(
         dispatch_request_comment_id=dispatch_request_comment_id,
-        dispatch_decision_comment_id=dispatch_decision_comment_id,
+        dispatch_run_id=dispatch_run_id,
         pr_number=pr_number,
         expected_change=expected_change,
     )
@@ -307,7 +312,7 @@ def parse_work_product_request(body: str) -> WorkProductRequest | None:
         raise ValueError("WORK_PRODUCT_REQUEST must contain exactly six lines")
     prefixes = (
         DISPATCH_REQUEST_COMMENT_ID_PREFIX,
-        DISPATCH_DECISION_COMMENT_ID_PREFIX,
+        DISPATCH_RUN_ID_PREFIX,
         PR_PREFIX,
         EXPECTED_CHANGE_PREFIX,
         MANIFEST_B64_PREFIX,
@@ -316,87 +321,27 @@ def parse_work_product_request(body: str) -> WorkProductRequest | None:
         if not line.startswith(prefix):
             raise ValueError("WORK_PRODUCT_REQUEST field order is invalid")
     dispatch_request_comment_id = _positive_decimal(lines[1][len(prefixes[0]) :])
-    dispatch_decision_comment_id = _positive_decimal(lines[2][len(prefixes[1]) :])
+    dispatch_run_id = _positive_decimal(lines[2][len(prefixes[1]) :])
     pr_number = _positive_decimal(lines[3][len(prefixes[2]) :])
     expected_change = lines[4][len(prefixes[3]) :]
     if (
         dispatch_request_comment_id is None
-        or dispatch_decision_comment_id is None
+        or dispatch_run_id is None
         or pr_number is None
         or not _valid_change(expected_change)
     ):
         raise ValueError("WORK_PRODUCT_REQUEST identity is invalid")
     return WorkProductRequest(
         dispatch_request_comment_id=dispatch_request_comment_id,
-        dispatch_decision_comment_id=dispatch_decision_comment_id,
+        dispatch_run_id=dispatch_run_id,
         pr_number=pr_number,
         expected_change=expected_change,
         manifest=_parse_manifest(lines[5][len(prefixes[4]) :]),
     )
 
 
-def parse_handoff_completion_request(body: str) -> HandoffCompletionRequest | None:
-    """Parse the exact IDs needed to complete an already-applied cross-role transfer."""
-
-    lines = body.split("\n")
-    if not lines or lines[0] != HANDOFF_COMPLETION_REQUEST_MARKER:
-        return None
-    if len(lines) != 6:
-        raise ValueError("HANDOFF_COMPLETION_REQUEST must contain exactly six lines")
-    prefixes = (
-        DISPATCH_REQUEST_COMMENT_ID_PREFIX,
-        DISPATCH_DECISION_COMMENT_ID_PREFIX,
-        EFFECT_REQUEST_COMMENT_ID_PREFIX,
-        RESULT_COMMENT_ID_PREFIX,
-        EXPECTED_CHANGE_PREFIX,
-    )
-    for line, prefix in zip(lines[1:], prefixes, strict=True):
-        if not line.startswith(prefix):
-            raise ValueError("HANDOFF_COMPLETION_REQUEST field order is invalid")
-    values = [_positive_decimal(lines[index][len(prefixes[index - 1]) :]) for index in range(1, 5)]
-    expected_change = lines[5][len(prefixes[4]) :]
-    if any(value is None for value in values) or not _valid_change(expected_change):
-        raise ValueError("HANDOFF_COMPLETION_REQUEST identity is invalid")
-    return HandoffCompletionRequest(
-        dispatch_request_comment_id=cast(int, values[0]),
-        dispatch_decision_comment_id=cast(int, values[1]),
-        effect_request_comment_id=cast(int, values[2]),
-        result_comment_id=cast(int, values[3]),
-        expected_change=expected_change,
-    )
-
-
 def _as_mapping(value: object) -> Mapping[str, object] | None:
-    return cast(Mapping[str, object], value) if isinstance(value, dict) else None
-
-
-def _flatten_comments(value: object) -> list[Mapping[str, object]]:
-    if not isinstance(value, list):
-        raise ValueError("comments payload must be a JSON array")
-    comments: list[Mapping[str, object]] = []
-    for item in value:
-        nested_items = item if isinstance(item, list) else [item]
-        for nested in nested_items:
-            mapping = _as_mapping(nested)
-            if mapping is None:
-                raise ValueError("comments payload contains a non-object item")
-            comments.append(mapping)
-    return comments
-
-
-def _comment_by_id(
-    comments: Sequence[Mapping[str, object]], comment_id: int
-) -> Mapping[str, object] | None:
-    matches = [comment for comment in comments if comment.get("id") == comment_id]
-    if len(matches) > 1:
-        raise ValueError("comment identity is duplicated")
-    return matches[0] if matches else None
-
-
-def _app_slug(comment: Mapping[str, object]) -> str | None:
-    app = _as_mapping(comment.get("performed_via_github_app"))
-    slug = None if app is None else app.get("slug")
-    return slug if isinstance(slug, str) else None
+    return cast(Mapping[str, object], value) if isinstance(value, Mapping) else None
 
 
 def _user_login(comment: Mapping[str, object]) -> str | None:
@@ -405,102 +350,106 @@ def _user_login(comment: Mapping[str, object]) -> str | None:
     return login if isinstance(login, str) else None
 
 
-def _trusted_connector_comment(comment: Mapping[str, object]) -> bool:
-    return _app_slug(comment) == _CHATGPT_CONNECTOR_APP_SLUG
+def _app_slug(comment: Mapping[str, object]) -> str | None:
+    app = _as_mapping(comment.get("performed_via_github_app"))
+    slug = None if app is None else app.get("slug")
+    return slug if isinstance(slug, str) else None
 
 
-def _trusted_actions_comment(comment: Mapping[str, object]) -> bool:
+def _trusted_connector_comment(
+    comment: Mapping[str, object],
+    repository_owner: str,
+) -> bool:
     return (
-        _user_login(comment) == _GITHUB_ACTIONS_BOT_LOGIN
-        and _app_slug(comment) == _GITHUB_ACTIONS_APP_SLUG
+        _user_login(comment) == repository_owner
+        and _app_slug(comment) == _CHATGPT_CONNECTOR_APP_SLUG
     )
 
 
-def _correlated_source(
-    *,
-    event: Mapping[str, object],
-    comments_payload: object,
-    configured_issue_number: int,
-    repository: str,
+def _source_from_dispatch(
+    request_comment_id: int,
+    dispatch_result: MachineDispatchDecision,
     current_revision: str,
+) -> WorkerRequest:
+    if dispatch_result.request_comment_id != request_comment_id:
+        raise ValueError("dispatch result correlation is invalid")
+    if dispatch_result.default_branch_revision != current_revision:
+        raise ValueError("dispatch revision is stale")
+    if (
+        dispatch_result.disposition != "AUTHORIZE"
+        or dispatch_result.issue_number is None
+        or dispatch_result.role is None
+        or dispatch_result.action is None
+    ):
+        raise ValueError("application request requires an AUTHORIZE dispatch result")
+    return WorkerRequest(
+        dispatch_result.issue_number,
+        dispatch_result.role,
+        dispatch_result.action,
+    )
+
+
+def _event_comment_identity(
+    event: Mapping[str, object],
     body: str,
-    dispatch_request_comment_id: int,
-    dispatch_decision_comment_id: int,
-) -> tuple[WorkerRequest, int, list[Mapping[str, object]]]:
-    if configured_issue_number <= 0 or "/" not in repository or not current_revision:
-        raise ValueError("repository/check-in identity is invalid")
+    repository: str,
+) -> tuple[int, int] | None:
     issue = _as_mapping(event.get("issue"))
     comment = _as_mapping(event.get("comment"))
     if event.get("action") != "created" or issue is None or comment is None:
-        raise ValueError("application request event is invalid")
-    if "pull_request" in issue or issue.get("number") != configured_issue_number:
-        raise ValueError("application request is not on the configured check-in Issue")
-    event_comment_id = comment.get("id")
+        return None
+    if "pull_request" in issue or not is_runtime_checkin_issue(issue):
+        return None
+    comment_id = _positive_int(comment.get("id"))
+    issue_number = _positive_int(issue.get("number"))
+    owner = repository.split("/", 1)[0] if "/" in repository else ""
     if (
-        not isinstance(event_comment_id, int)
-        or event_comment_id <= 0
+        comment_id is None
+        or issue_number is None
         or comment.get("body") != body
-        or not _trusted_connector_comment(comment)
+        or not _trusted_connector_comment(comment, owner)
     ):
-        raise ValueError("application request requires the configured ChatGPT connector")
+        raise ValueError("application request event identity is invalid")
+    return comment_id, issue_number
 
-    comments = _flatten_comments(comments_payload)
-    durable_request = _comment_by_id(comments, event_comment_id)
-    if (
-        durable_request is None
-        or durable_request.get("body") != body
-        or not _trusted_connector_comment(durable_request)
-    ):
-        raise ValueError("application request is missing from durable transport history")
 
-    dispatch_request_comment = _comment_by_id(comments, dispatch_request_comment_id)
-    dispatch_decision_comment = _comment_by_id(comments, dispatch_decision_comment_id)
-    if dispatch_request_comment is None or not _trusted_connector_comment(dispatch_request_comment):
-        raise ValueError("dispatch request is missing or untrusted")
-    dispatch_request_body = dispatch_request_comment.get("body")
+def _fresh_event_observation(
+    event: Mapping[str, object],
+    body: str,
+    repository: str,
+    token: str,
+) -> tuple[int, int]:
+    identity = _event_comment_identity(event, body, repository)
+    if identity is None:
+        raise ValueError("application request event is invalid")
+    comment_id, issue_number = identity
+    owner = repository.split("/", 1)[0]
+    observed_comment = _as_mapping(_github_json(repository, token, f"issues/comments/{comment_id}"))
     if (
-        not isinstance(dispatch_request_body, str)
-        or parse_dispatch_request(dispatch_request_body) is None
+        observed_comment is None
+        or observed_comment.get("id") != comment_id
+        or observed_comment.get("body") != body
+        or not _trusted_connector_comment(observed_comment, owner)
     ):
-        raise ValueError("dispatch request is malformed")
-    if dispatch_decision_comment is None or not _trusted_actions_comment(dispatch_decision_comment):
-        raise ValueError("dispatch decision is missing or untrusted")
-    decision_body = dispatch_decision_comment.get("body")
-    if not isinstance(decision_body, str):
-        raise ValueError("dispatch decision is malformed")
-    decision = parse_dispatch_decision(decision_body)
-    if decision is None or decision.request_comment_id != dispatch_request_comment_id:
-        raise ValueError("dispatch decision correlation is invalid")
-    if decision.default_branch_revision != current_revision:
-        raise ValueError("dispatch revision is stale")
+        raise ValueError("application request current comment observation is incomplete")
+    observed_issue = _as_mapping(_github_json(repository, token, f"issues/{issue_number}"))
     if (
-        decision.disposition != "AUTHORIZE"
-        or decision.issue_number is None
-        or decision.role is None
-        or decision.action is None
+        observed_issue is None
+        or observed_issue.get("number") != issue_number
+        or not is_runtime_checkin_issue(observed_issue)
     ):
-        raise ValueError("application request requires an AUTHORIZE dispatch decision")
-    return (
-        WorkerRequest(
-            decision.issue_number,
-            decision.role,
-            decision.action,
-            debt_disposition=decision.debt_disposition,
-        ),
-        event_comment_id,
-        comments,
-    )
+        raise ValueError("application request current shard observation is invalid")
+    return comment_id, issue_number
 
 
 def plan_validation_resource(
     *,
     event: Mapping[str, object],
-    comments_payload: object,
-    configured_issue_number: int,
+    dispatch_result: MachineDispatchDecision,
     repository: str,
     current_revision: str,
 ) -> ValidationResourcePlan:
-    """Bind one resource request to its exact trusted machine dispatch decision."""
+    """Bind one validation request to its exact run-scoped dispatch result."""
 
     comment = _as_mapping(event.get("comment"))
     body = None if comment is None else comment.get("body")
@@ -509,20 +458,18 @@ def plan_validation_resource(
     request = parse_validation_resource_request(body)
     if request is None:
         return ValidationResourcePlan(False)
-    source, event_comment_id, _ = _correlated_source(
-        event=event,
-        comments_payload=comments_payload,
-        configured_issue_number=configured_issue_number,
-        repository=repository,
-        current_revision=current_revision,
-        body=body,
-        dispatch_request_comment_id=request.dispatch_request_comment_id,
-        dispatch_decision_comment_id=request.dispatch_decision_comment_id,
+    identity = _event_comment_identity(event, body, repository)
+    if identity is None:
+        return ValidationResourcePlan(False)
+    source = _source_from_dispatch(
+        request.dispatch_request_comment_id,
+        dispatch_result,
+        current_revision,
     )
     return ValidationResourcePlan(
         True,
         source=source,
-        request_comment_id=event_comment_id,
+        request_comment_id=identity[0],
         pr_number=request.pr_number,
         expected_change=request.expected_change,
     )
@@ -531,12 +478,11 @@ def plan_validation_resource(
 def plan_work_product_application(
     *,
     event: Mapping[str, object],
-    comments_payload: object,
-    configured_issue_number: int,
+    dispatch_result: MachineDispatchDecision,
     repository: str,
     current_revision: str,
 ) -> WorkProductPlan:
-    """Bind one blob-reference work product to the exact source dispatch."""
+    """Bind one blob-reference work product to its exact run-scoped dispatch."""
 
     comment = _as_mapping(event.get("comment"))
     body = None if comment is None else comment.get("body")
@@ -545,74 +491,21 @@ def plan_work_product_application(
     request = parse_work_product_request(body)
     if request is None:
         return WorkProductPlan(False)
-    source, event_comment_id, _ = _correlated_source(
-        event=event,
-        comments_payload=comments_payload,
-        configured_issue_number=configured_issue_number,
-        repository=repository,
-        current_revision=current_revision,
-        body=body,
-        dispatch_request_comment_id=request.dispatch_request_comment_id,
-        dispatch_decision_comment_id=request.dispatch_decision_comment_id,
+    identity = _event_comment_identity(event, body, repository)
+    if identity is None:
+        return WorkProductPlan(False)
+    source = _source_from_dispatch(
+        request.dispatch_request_comment_id,
+        dispatch_result,
+        current_revision,
     )
     return WorkProductPlan(
         True,
         source=source,
-        request_comment_id=event_comment_id,
+        request_comment_id=identity[0],
         pr_number=request.pr_number,
         expected_change=request.expected_change,
         manifest=request.manifest,
-    )
-
-
-def plan_handoff_completion(
-    *,
-    event: Mapping[str, object],
-    comments_payload: object,
-    configured_issue_number: int,
-    repository: str,
-    current_revision: str,
-) -> HandoffCompletionPlan:
-    """Bind a HANDOFF completion request to the exact prior source application."""
-
-    comment = _as_mapping(event.get("comment"))
-    body = None if comment is None else comment.get("body")
-    if not isinstance(body, str):
-        return HandoffCompletionPlan(False)
-    request = parse_handoff_completion_request(body)
-    if request is None:
-        return HandoffCompletionPlan(False)
-    source, event_comment_id, comments = _correlated_source(
-        event=event,
-        comments_payload=comments_payload,
-        configured_issue_number=configured_issue_number,
-        repository=repository,
-        current_revision=current_revision,
-        body=body,
-        dispatch_request_comment_id=request.dispatch_request_comment_id,
-        dispatch_decision_comment_id=request.dispatch_decision_comment_id,
-    )
-    effect_comment = _comment_by_id(comments, request.effect_request_comment_id)
-    if effect_comment is None or not _trusted_connector_comment(effect_comment):
-        raise ValueError("HANDOFF completion effect request is missing or untrusted")
-    effect_body = effect_comment.get("body")
-    if not isinstance(effect_body, str):
-        raise ValueError("HANDOFF completion effect request body is missing")
-    effect_request = parse_application_request(effect_body)
-    if (
-        effect_request is None
-        or effect_request.dispatch_request_comment_id != request.dispatch_request_comment_id
-        or effect_request.dispatch_decision_comment_id != request.dispatch_decision_comment_id
-    ):
-        raise ValueError("HANDOFF completion effect request correlation is invalid")
-    return HandoffCompletionPlan(
-        True,
-        source=source,
-        request_comment_id=event_comment_id,
-        effect_request_comment_id=request.effect_request_comment_id,
-        result_comment_id=request.result_comment_id,
-        expected_change=request.expected_change,
-        raw_worker_result=effect_request.raw_worker_result,
     )
 
 
@@ -662,7 +555,6 @@ def _current_authorized_request(repository: str, token: str) -> WorkerRequest | 
         decision.selected_issue_id,
         role,
         action,
-        debt_disposition=decision.selected_debt_disposition,
     )
 
 
@@ -681,6 +573,14 @@ def _pr_has_nonclosing_issue_link(body: object, issue_number: int) -> bool:
     return pattern.search(body) is not None
 
 
+def _current_default_branch(repository: str, token: str) -> str:
+    payload = _as_mapping(cast(object, _github_json(repository, token, "")))
+    branch = None if payload is None else payload.get("default_branch")
+    if not _valid_branch(branch):
+        raise RuntimeError("validation resource repository default branch is incomplete")
+    return cast(str, branch)
+
+
 def _open_pr_payload(
     *,
     repository: str,
@@ -690,6 +590,12 @@ def _open_pr_payload(
     expected_change: str,
     default_branch: str,
 ) -> Mapping[str, object]:
+    if _current_default_branch(repository, token) != default_branch:
+        raise RuntimeError("validation resource repository default branch changed")
+    expected_branch = _source_branch(expected_change)
+    if expected_branch is None:
+        raise RuntimeError("validation resource Change branch is invalid")
+
     issue = _as_mapping(
         cast(object, _github_json(repository, token, f"issues/{source.issue_number}"))
     )
@@ -708,12 +614,14 @@ def _open_pr_payload(
     head_repo = None if head is None else _as_mapping(head.get("repo"))
     base_repo = None if base is None else _as_mapping(base.get("repo"))
     if (
-        head is None
+        pr.get("number") != pr_number
+        or head is None
         or base is None
         or head_repo is None
         or base_repo is None
         or head_repo.get("full_name") != repository
         or base_repo.get("full_name") != repository
+        or head.get("ref") != expected_branch
         or base.get("ref") != default_branch
         or not _pr_has_nonclosing_issue_link(pr.get("body"), source.issue_number)
     ):
@@ -768,23 +676,15 @@ def _open_pr_target(
     return cast(str, revision)
 
 
-def _review_openspec_required(
-    source: WorkerRequest,
-    *,
-    workflow_text: str,
-) -> bool:
-    review_effect = StagedEffect(
-        kind="routing-transition",
-        payload_json=json.dumps(
-            {
-                "issue_number": source.issue_number,
-                "role": "reviewer",
-                "action": "review-openspec",
-            },
-            sort_keys=True,
-        ),
-    )
-    return topology_allows_successor(workflow_text, source, review_effect)
+def _review_openspec_required(source: WorkerRequest) -> bool:
+    """Derive the OpenSpec review gate from the executable Action model."""
+
+    try:
+        action = ModelAction(source.action)
+    except ValueError:
+        return False
+    successors = TRANSITIONS[action].values()
+    return any(successor is ModelAction.REVIEW_OPENSPEC for successor in successors)
 
 
 def resolve_validation_resource_target(
@@ -793,9 +693,8 @@ def resolve_validation_resource_target(
     repository: str,
     token: str,
     default_branch: str,
-    workflow_text: str,
 ) -> ValidationResourceTarget:
-    """Fresh-reauthorize the source and derive exact R from the current PR, never caller SHA."""
+    """Fresh-reauthorize the source and derive exact R from the current PR."""
 
     if (
         not plan.should_validate
@@ -807,8 +706,8 @@ def resolve_validation_resource_target(
         raise RuntimeError("validation resource plan is incomplete")
     if _current_authorized_request(repository, token) != plan.source:
         raise RuntimeError("validation resource source dispatch is stale")
-    if not _review_openspec_required(plan.source, workflow_text=workflow_text):
-        raise RuntimeError("validation resource is not required by this source topology")
+    if not _review_openspec_required(plan.source):
+        raise RuntimeError("validation resource is not required by the current Action gate")
 
     revision = _open_pr_target(
         repository=repository,
@@ -874,7 +773,6 @@ def apply_work_product(
     repository: str,
     token: str,
     default_branch: str,
-    workflow_text: str,
 ) -> ValidationResourceTarget:
     """Apply one content-addressed OpenSpec work product as one exact Git commit R."""
 
@@ -887,12 +785,20 @@ def apply_work_product(
         or plan.manifest is None
     ):
         raise RuntimeError("work-product plan is incomplete")
-    if (plan.source.role, plan.source.action) not in _M0_WORK_PRODUCT_SOURCES:
-        raise RuntimeError("work-product source action is not authorized")
     if _current_authorized_request(repository, token) != plan.source:
         raise RuntimeError("work-product source dispatch is stale")
-    if not _review_openspec_required(plan.source, workflow_text=workflow_text):
-        raise RuntimeError("work-product source has no OpenSpec review gate")
+    expected_branch = _source_branch(plan.expected_change)
+    if expected_branch is None or plan.manifest.branch != expected_branch:
+        raise RuntimeError("work-product branch is not bound to source Change")
+    if not plan.manifest.files or not all(
+        work_product_path_allowed(plan.source, plan.expected_change, file.path)
+        for file in plan.manifest.files
+    ):
+        raise RuntimeError("work-product path is outside source Action capability")
+    if any(
+        file.path.startswith("openspec/") for file in plan.manifest.files
+    ) and not _review_openspec_required(plan.source):
+        raise RuntimeError("work-product source has no required OpenSpec review gate")
 
     pr = _open_pr_payload(
         repository=repository,
@@ -908,10 +814,7 @@ def apply_work_product(
     if current_head != plan.manifest.base_sha or current_branch != plan.manifest.branch:
         raise RuntimeError("work-product PR head/base identity is stale")
 
-    change_prefix = f"openspec/changes/{plan.expected_change}/"
     for file in plan.manifest.files:
-        if not file.path.startswith(change_prefix):
-            raise RuntimeError("work-product path escapes the source Change")
         current_sha = _content_sha_at(
             repository,
             token,
@@ -1024,15 +927,18 @@ def apply_work_product(
 
     if _ref_head_sha(repository, token, plan.manifest.branch) != revision:
         raise RuntimeError("work-product ref postcondition was not observed")
-    observed_pr = _as_mapping(
-        cast(object, _github_json(repository, token, f"pulls/{plan.pr_number}"))
+    observed_pr = _open_pr_payload(
+        repository=repository,
+        token=token,
+        pr_number=plan.pr_number,
+        source=plan.source,
+        expected_change=plan.expected_change,
+        default_branch=default_branch,
     )
-    observed_head = None if observed_pr is None else _as_mapping(observed_pr.get("head"))
+    observed_head = _as_mapping(observed_pr.get("head"))
     if (
-        observed_pr is None
-        or observed_pr.get("state") != "open"
-        or observed_head is None
-        or observed_head.get("ref") != plan.manifest.branch
+        observed_head is None
+        or observed_head.get("ref") != expected_branch
         or observed_head.get("sha") != revision
     ):
         raise RuntimeError("work-product PR-head postcondition was not observed")
@@ -1073,198 +979,6 @@ def apply_work_product(
     )
 
 
-def _routing_target_from_effect(effect: StagedEffect) -> tuple[str, str] | None:
-    if effect.kind != "routing-transition":
-        return None
-    try:
-        payload = json.loads(effect.payload_json)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(payload, Mapping):
-        return None
-    role = payload.get("role")
-    action = payload.get("action")
-    if not isinstance(role, str) or not isinstance(action, str):
-        return None
-    return role, action
-
-
-def _requested_result_body(raw_worker_result: str, source: WorkerRequest) -> str:
-    batch = parse_effect_batch(raw_worker_result, source)
-    bodies: list[str] = []
-    for effect in batch.effects:
-        if effect.kind != "issue-comment":
-            continue
-        try:
-            payload = json.loads(effect.payload_json)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(payload, Mapping):
-            continue
-        body = payload.get("body")
-        if isinstance(body, str) and body.startswith("## ACTION_RESULT"):
-            bodies.append(body)
-    if len(bodies) != 1:
-        raise RuntimeError("HANDOFF completion requires exactly one source ACTION_RESULT")
-    return bodies[0]
-
-
-def _cross_role_target(raw_worker_result: str, source: WorkerRequest) -> tuple[str, str]:
-    batch = parse_effect_batch(raw_worker_result, source)
-    targets = [
-        target
-        for effect in batch.effects
-        if (target := _routing_target_from_effect(effect)) is not None and target[0] != source.role
-    ]
-    if len(targets) != 1:
-        raise RuntimeError("HANDOFF completion requires exactly one cross-role routing target")
-    return targets[0]
-
-
-def _handoff_body(
-    *,
-    source: WorkerRequest,
-    target: tuple[str, str],
-    change: str,
-    result_comment_id: int,
-) -> str:
-    source_role = source.role.capitalize()
-    target_role = target[0].capitalize()
-    return "\n".join(
-        (
-            "## HANDOFF",
-            f"Workflow: #{source.issue_number}",
-            f"Change: `{change}`",
-            f"From: `{source_role} / {source.action}`",
-            f"To: `{target_role} / {target[1]}`",
-            f"Trigger-Result-Comment-ID: {result_comment_id}",
-            f"Revision-Evidence: issuecomment-{result_comment_id}",
-            "Source-Routing-Reauthorization: `PASS`",
-            "Routing-Mutation: `APPLIED`",
-            f"Observed-Target: `{target_role} / {target[1]}`",
-            f"Next-Owner: `{target_role}`",
-            f"Next-Action: `{target[1]}`",
-        )
-    )
-
-
-def complete_cross_role_handoff(
-    plan: HandoffCompletionPlan,
-    *,
-    repository: str,
-    token: str,
-) -> int:
-    """Persist canonical HANDOFF only after fresh observation of the applied target routing."""
-
-    if (
-        not plan.should_complete
-        or plan.source is None
-        or plan.effect_request_comment_id is None
-        or plan.result_comment_id is None
-        or plan.expected_change is None
-        or plan.raw_worker_result is None
-    ):
-        raise RuntimeError("HANDOFF completion plan is incomplete")
-    if (plan.source.role, plan.source.action) not in _M0_WORK_PRODUCT_SOURCES:
-        raise RuntimeError("HANDOFF completion source is not an M0 OpenSpec owner")
-
-    target = _cross_role_target(plan.raw_worker_result, plan.source)
-    if target != ("reviewer", "review-openspec"):
-        raise RuntimeError("HANDOFF completion target is outside the M0 OpenSpec boundary")
-    expected_result_body = _requested_result_body(plan.raw_worker_result, plan.source)
-
-    issue = _as_mapping(
-        cast(object, _github_json(repository, token, f"issues/{plan.source.issue_number}"))
-    )
-    observation = None if issue is None else normalize_github_issue(issue)
-    if (
-        issue is None
-        or issue.get("state") != "open"
-        or _change_from_issue(issue) != plan.expected_change
-        or observation is None
-        or not observation.authoritative
-        or observation.routing != target
-    ):
-        raise RuntimeError("HANDOFF target routing postcondition is not current")
-
-    result_comment = _as_mapping(
-        cast(object, _github_json(repository, token, f"issues/comments/{plan.result_comment_id}"))
-    )
-    if (
-        result_comment is None
-        or result_comment.get("body") != expected_result_body
-        or not _trusted_actions_comment(result_comment)
-    ):
-        raise RuntimeError("HANDOFF source result comment is missing or untrusted")
-
-    body = _handoff_body(
-        source=plan.source,
-        target=target,
-        change=plan.expected_change,
-        result_comment_id=plan.result_comment_id,
-    )
-    page = 1
-    matching: list[int] = []
-    while True:
-        comments = _github_json(
-            repository,
-            token,
-            f"issues/{plan.source.issue_number}/comments?per_page=100&page={page}",
-        )
-        if not isinstance(comments, list):
-            raise RuntimeError("HANDOFF comment observation is incomplete")
-        for raw_comment in comments:
-            comment = _as_mapping(raw_comment)
-            if (
-                comment is not None
-                and comment.get("body") == body
-                and isinstance(comment.get("id"), int)
-                and _trusted_actions_comment(comment)
-            ):
-                matching.append(cast(int, comment["id"]))
-        if len(comments) < 100:
-            break
-        page += 1
-    if len(matching) > 1:
-        raise RuntimeError("HANDOFF completion is duplicated")
-    if len(matching) == 1:
-        return matching[0]
-
-    response = _as_mapping(
-        cast(
-            object,
-            _github_json(
-                repository,
-                token,
-                f"issues/{plan.source.issue_number}/comments",
-                method="POST",
-                payload={"body": body},
-            ),
-        )
-    )
-    comment_id = None if response is None else response.get("id")
-    if not isinstance(comment_id, int):
-        raise RuntimeError("HANDOFF persistence returned no comment id")
-
-    observed_comment = _as_mapping(
-        cast(object, _github_json(repository, token, f"issues/comments/{comment_id}"))
-    )
-    observed_issue = _as_mapping(
-        cast(object, _github_json(repository, token, f"issues/{plan.source.issue_number}"))
-    )
-    observed_state = None if observed_issue is None else normalize_github_issue(observed_issue)
-    if (
-        observed_comment is None
-        or observed_comment.get("body") != body
-        or observed_comment.get("id") != comment_id
-        or observed_state is None
-        or not observed_state.authoritative
-        or observed_state.routing != target
-    ):
-        raise RuntimeError("HANDOFF durable postcondition was not observed")
-    return comment_id
-
-
 def _write_outputs(target: ValidationResourceTarget | None) -> None:
     output_path = os.environ.get("GITHUB_OUTPUT")
     if not output_path:
@@ -1291,31 +1005,47 @@ def _load_json(path: str) -> object:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--event-path", required=True)
-    parser.add_argument("--comments-path", required=True)
-    parser.add_argument("--check-in-issue", required=True, type=int)
     parser.add_argument("--revision", required=True)
     parser.add_argument("--default-branch", required=True)
     args = parser.parse_args()
 
-    repository = os.environ["GITHUB_REPOSITORY"]
-    token = os.environ["GITHUB_TOKEN"]
+    repository = os.environ.get("GITHUB_REPOSITORY")
+    token = os.environ.get("GITHUB_TOKEN")
+    if not repository or not token:
+        raise RuntimeError("GITHUB_REPOSITORY and GITHUB_TOKEN are required")
     event = _as_mapping(_load_json(args.event_path))
     if event is None:
         raise ValueError("GitHub event payload must be an object")
-    comments_payload = _load_json(args.comments_path)
     event_comment = _as_mapping(event.get("comment"))
     body = None if event_comment is None else event_comment.get("body")
     if not isinstance(body, str):
         _write_outputs(None)
         return 0
 
-    workflow_text = Path("agents/workflow.md").read_text(encoding="utf-8")
-    target: ValidationResourceTarget | None = None
+    request: ValidationResourceRequest | WorkProductRequest | None
     if body.startswith(RESOURCE_REQUEST_MARKER):
+        request = parse_validation_resource_request(body)
+    elif body.startswith(WORK_PRODUCT_REQUEST_MARKER):
+        request = parse_work_product_request(body)
+    else:
+        _write_outputs(None)
+        return 0
+    if request is None:
+        _write_outputs(None)
+        return 0
+
+    _fresh_event_observation(event, body, repository, token)
+    if isinstance(request, ValidationResourceRequest):
+        dispatch_result = fetch_dispatch_result(
+            repository,
+            token,
+            request_comment_id=request.dispatch_request_comment_id,
+            run_id=request.dispatch_run_id,
+            current_revision=args.revision,
+        )
         validation_plan = plan_validation_resource(
             event=event,
-            comments_payload=comments_payload,
-            configured_issue_number=args.check_in_issue,
+            dispatch_result=dispatch_result,
             repository=repository,
             current_revision=args.revision,
         )
@@ -1325,13 +1055,20 @@ def main() -> int:
                 repository=repository,
                 token=token,
                 default_branch=args.default_branch,
-                workflow_text=workflow_text,
             )
-    elif body.startswith(WORK_PRODUCT_REQUEST_MARKER):
+        else:
+            target = None
+    else:
+        dispatch_result = fetch_dispatch_result(
+            repository,
+            token,
+            request_comment_id=request.dispatch_request_comment_id,
+            run_id=request.dispatch_run_id,
+            current_revision=args.revision,
+        )
         work_product_plan = plan_work_product_application(
             event=event,
-            comments_payload=comments_payload,
-            configured_issue_number=args.check_in_issue,
+            dispatch_result=dispatch_result,
             repository=repository,
             current_revision=args.revision,
         )
@@ -1341,36 +1078,9 @@ def main() -> int:
                 repository=repository,
                 token=token,
                 default_branch=args.default_branch,
-                workflow_text=workflow_text,
             )
-    elif body.startswith(HANDOFF_COMPLETION_REQUEST_MARKER):
-        handoff_plan = plan_handoff_completion(
-            event=event,
-            comments_payload=comments_payload,
-            configured_issue_number=args.check_in_issue,
-            repository=repository,
-            current_revision=args.revision,
-        )
-        if handoff_plan.should_complete:
-            comment_id = complete_cross_role_handoff(
-                handoff_plan,
-                repository=repository,
-                token=token,
-            )
-            _write_outputs(None)
-            print(
-                json.dumps(
-                    {
-                        "resource": "cross-role-handoff",
-                        "comment_id": comment_id,
-                    },
-                    sort_keys=True,
-                )
-            )
-            return 0
-    else:
-        _write_outputs(None)
-        return 0
+        else:
+            target = None
 
     _write_outputs(target)
     if target is not None:

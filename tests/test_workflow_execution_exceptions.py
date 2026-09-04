@@ -1,4 +1,4 @@
-"""Contract coverage for shared exception capture and invocation finalization."""
+"""Contract coverage for shared exception evidence and finalization."""
 
 from __future__ import annotations
 
@@ -21,108 +21,57 @@ def _normalized(path: Path) -> str:
     return " ".join(path.read_text(encoding="utf-8").split())
 
 
-def test_shared_exception_capture_contract_applies_to_all_roles_and_actions() -> None:
+def test_shared_exception_contract_preserves_raw_evidence() -> None:
     shared = _normalized(AGENTS)
     for required in (
         "Shared exception capture and invocation finalization",
-        "all three Scheduled Agent roles and all ten normal actions",
-        "catchable tool, runtime, and execution failures",
-        "persist one canonical `EXECUTION_EXCEPTION`",
-        "before relying on a summarized interpretation",
-        "raw error message exactly as it was observable",
-        "existing safety redaction",
-        "selected role/action",
+        "catchable tool, runtime, or execution failure",
+        "raw error exactly as observable",
+        "selected Issue/Action",
         "attempted operation/tool",
-        "relevant revision/base",
-        "durable mutation",
-        "unfinished work boundary",
-        "UNCLASSIFIED_EXECUTION_EXCEPTION",
-        "paraphrase or classification-only summary",
+        "whether durable mutation completed",
+        "unfinished boundary",
+        "EXECUTION_EXCEPTION",
+        "uncatchable termination",
     ):
         assert required in shared
 
 
-def test_canonical_exception_template_keeps_raw_observation_separate() -> None:
+def test_exception_message_surface_keeps_raw_and_classification_separate() -> None:
     messages = _normalized(MESSAGES)
     for required in (
-        "raw observable error exactly as returned",
-        "existing platform safety redaction",
-        "separate classification",
-        "separate disposition",
-        "UNCLASSIFIED_EXECUTION_EXCEPTION",
+        "raw observable error after platform safety redaction",
+        "exact Action",
         "attempted operation/tool",
-        "relevant revision/base",
-        "durable mutation",
-        "unfinished work boundary",
-        "must not be replaced by a paraphrase or classification-only summary",
+        "whether any mutation completed",
+        "separate classification and disposition",
     ):
         assert required in messages
 
 
-def test_locally_recoverable_exception_continues_same_invocation() -> None:
+def test_local_recovery_remains_inside_current_authority() -> None:
     shared = _normalized(AGENTS)
-    for required in (
-        "legally recovered within the same authority",
-        "local recovery is legal and immediately actionable",
-        "perform that recovery",
-        "continue the selected action",
-        "same invocation",
-        "MUST NOT become a voluntary yield point",
-    ):
-        assert required in shared
+    assert "locally recoverable failure is repaired within the current semantic authority" in shared
+    assert "immediately actionable" in shared
+    assert "An uncatchable termination is reconstructed later" in shared
 
 
-def test_nonlocal_catchable_failure_converges_to_lead_handoff() -> None:
-    shared = _normalized(AGENTS)
-    for required in (
-        "preserve completed durable work",
-        "action-defined legal blocked/disposition result",
-        "`Lead / resolve-question`",
-        "captured raw evidence",
-        "complete any required routing handoff",
-        "canonical `HANDOFF`",
-        "MUST NOT invent one universal blocked-result enum",
-    ):
-        assert required in shared
-
-
-def test_uncatchable_termination_relies_on_later_reconstruction_without_fabrication() -> None:
-    shared = _normalized(AGENTS)
-    for required in (
-        "truly uncatchable hard termination",
-        "later reconstruction",
-        "MUST NOT fabricate `EXECUTION_EXCEPTION`",
-        "normal at-least-once",
-    ):
-        assert required in shared
-
-
-def test_exception_protocol_is_shared_not_copied_into_roles_or_skills() -> None:
+def test_exception_protocol_is_shared_not_duplicated_into_roles_or_skills() -> None:
     shared = _normalized(AGENTS)
     assert shared.count("Shared exception capture and invocation finalization") == 1
-
     for path in (*ROLE_FILES, *SKILL_FILES):
-        text = _normalized(path)
-        assert "## Shared exception capture and invocation finalization" not in text, path
-
+        assert "## Shared exception capture and invocation finalization" not in _normalized(path)
     migration = _normalized(MIGRATION)
-    for required in (
-        "bootstrap",
-        "must not duplicate",
-        "exception",
-        "finalization",
-    ):
-        assert required in migration
+    assert "bootstrap prompt" in migration
+    assert "exception" in migration
 
 
-def test_shared_contract_rejects_generic_fault_retry_machinery() -> None:
+def test_shared_contract_rejects_generic_control_machinery() -> None:
     shared = _normalized(AGENTS)
     for prohibited in (
-        "universal blocked-result enum",
-        "generic retry engine",
-        "failure-state machine",
-        "retry counter",
-        "automatic fault classifier",
-        "hidden execution status",
+        "second workflow graph",
+        "generic orchestration kernel",
+        "lock/lease/retry counter",
+        "mailbox authority",
     ):
         assert prohibited in shared

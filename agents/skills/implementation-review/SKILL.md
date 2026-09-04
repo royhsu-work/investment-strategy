@@ -1,89 +1,31 @@
 ---
 name: implementation-review
-description: Independently review the exact current implementation PR against approved OpenSpec behavior for Reviewer / review-implementation and classify revision-bound findings or PASS.
+description: Reviewer procedure for exact-head independent review of completed implementation.
 ---
 
-# Implementation Review Skill
+# Implementation Review
 
-Mapped action: `Reviewer / review-implementation`.
+Mapped Action: Reviewer / review-implementation.
 
-## Repository Skill composition
+Fresh-read the current exact implementation PR head, base, files, task markers, quality runs, OpenSpec
+gate, Human freshness, and prior findings. Review implementation behavior, approved scope, tests,
+stale/replay/no-rewind guards, effect authorization, carrier separation, and unrelated-file changes.
+The exact implementation head is the review identity; historical PASS for another head is invalid.
 
-When the reviewed implementation materially creates or modifies repository Skills, load the default-branch `agents/skills/skill-creator/SKILL.md` and `agents/skills/skill-creator/references/repository-governance.md` before judging those Skill artifacts. Treat them as reusable procedural/integration input only: this mapped action and current default-branch governance/Reviewer role retain review authority, exact-head gate semantics, findings ownership, and routing. Do not load this composition for unrelated implementation review.
+Check Skill maintenance traceability: every materially affected Skill has a declaration, and a
+differently classified or undeclared Skill change is a finding.
 
-### Skill maintenance traceability implementation check
+Return one structured PASS, FINDINGS, HUMAN_DECISION_REQUIRED, NO_GO, or BLOCKED result. PASS on the
+exact unchanged head derives merge-implementation-pr in the executable Action model. Reviewer does
+not merge, mutate routing, select a PR, or execute the successor.
 
-When the exact implementation head materially changes repository Skills, compare those concrete Skill changes with the approved Change-local `Skill maintenance traceability` declaration. Every material Skill present in the exact implementation head must have an approved Added, Modified, or Removed entry with matching classification and responsibility treatment. An undeclared material Skill change or a differently classified material Skill change is `IMPLEMENTATION_FINDINGS`; if correcting it would require changing approved Skill scope, responsibility, or classification meaning, return `SPEC_FINDINGS` to Lead rather than letting Executor self-authorize the difference.
+## Skill maintenance and reserved capabilities
 
-Formatting, wording, or reference-only edits that do not alter responsibility, executable semantics, composition/loading behavior, trigger behavior, authority, or maintenance meaning do not create false maintenance findings. The declaration is Change provenance, not a replacement for `UPSTREAM.md` when upstream/current-local divergence is independently applicable.
+When a mapped Action materially creates or modifies a repository Skill, load
+agents/skills/skill-creator/SKILL.md and
+agents/skills/skill-creator/references/repository-governance.md. This repository Skill guidance is
+procedural input, not runtime authority. The reserved capabilities `human:approved` and
+`intake:approved` are never added, removed, restored, or manufactured by a Scheduled Role.
 
-## Reconstruct before acting
-
-Read default-branch governance and Reviewer role, the coordination Issue and immutable `Change:`, the
-approved semantic OpenSpec gate that remains applicable, the current implementation PR and exact head
-revision, current task completion markers, relevant diff/tests, project quality checks, and strict
-OpenSpec validation evidence.
-
-Reconstruct the action-specific accepted baseline B from the last valid independent `review-implementation`
-gate that remains applicable to this implementation stream, and the current target R as the exact current
-implementation PR head. Inspect all material unreviewed changes in `(B, R]` and evaluate the complete current
-state at R; an older accepted result is only the coverage baseline and never substitutes for a current
-exact-head gate.
-
-This action is an exact-current-head gate. The semantic OpenSpec bookkeeping exception does not weaken this
-gate: task-marker-only OpenSpec revisions may leave the approved semantic contract applicable, but Reviewer
-still evaluates the exact current implementation PR head R.
-
-## Minimum gate
-
-For the exact current implementation PR head R:
-
-1. Compare implemented behavior and completed-task claims with the approved OpenSpec contract.
-2. Inspect the relevant diff and tests for required behavior and meaningful regression coverage.
-3. Verify required project gates and OpenSpec validation evidence are current. When strict OpenSpec
-   validation is claimed for R, durable validator evidence must prove checkout `HEAD == R` before the
-   strict command; `run.head_sha == R` alone or a different synthetic merge checkout is insufficient.
-4. Verify implementation remains inside approved scope and did not redefine requirements/contracts.
-5. When repository Skills are materially changed, compare the exact implementation head with the approved Skill maintenance traceability declaration before deciding PASS.
-6. Classify each material problem as either:
-   - `IMPLEMENTATION_FINDINGS`: implementation defect, missing approved work, insufficient tests, quality-gate failure, undeclared material Skill change, or differently classified material Skill change within otherwise approved meaning;
-   - `SPEC_FINDINGS`: material ambiguity/defect requiring Lead specification authority, including a required Skill-set/responsibility/classification change that is not already approved.
-7. Immediately before finalizing the gate result, consume the shared `agents/AGENTS.md` substantive
-   Human-input freshness/disposition invariant against current coordination-Issue activity. A newer
-   material direct-Human comment that can affect correctness, approved scope, traceability, or gate
-   validity must have a reconstructable exact-comment disposition or be converted/routed through the
-   existing legal finding path; this Skill does not redefine the shared classifier or Human authority.
-8. If all required checks pass and the consequential-boundary freshness check is clear, record `PASS`
-   bound to the exact PR head revision.
-
-## Legal results and handoff
-
-- `PASS` → `Executor / merge-pr`.
-- `IMPLEMENTATION_FINDINGS` → `Executor / implement-change`.
-- `SPEC_FINDINGS` → `Lead / resolve-question`.
-
-For implementation PRs, exact-head `PASS` is the normal acceptance evidence consumed by `Executor / merge-pr`.
-It does not waive mutation-time safety: Executor must fresh-read the unchanged head, current required checks,
-non-closing coordination linkage, contradictory evidence, and the shared substantive Human-input freshness
-precondition immediately before merge. A later PR head does not inherit the prior result; contradictory
-current evidence fails closed.
-
-Before returning after a review result, consume the shared Invocation Exit Proof invariant rather than
-creating an action-local termination rule. A review result alone is not sufficient Exit Proof. When the
-result requires another role, persist the result, fresh-read and mutate routing, observe the target routing,
-and persist the canonical `HANDOFF`; only that completed cross-role ownership transfer satisfies this
-action's normal exit boundary. If routing becomes stale or contradictory before transfer completes, use
-the shared fail-closed semantics instead of treating the intended handoff as completed evidence.
-
-## Durable messages
-
-Use `agents/templates/messages.md` for recurring durable presentation only when that presentation contract
-is authoritative on the default branch. Once active, the revision-bound gate result uses `REVIEW_RESULT`;
-a completed ownership transfer uses canonical `HANDOFF` only after the routing mutation succeeds. Do not
-duplicate shared template bodies in this skill.
-
-## Independence and handoff safety
-
-Reviewer does not modify implementation or specification artifacts to make the gate pass. Persist the
-revision-bound review result before routing, fresh-read current routing, and do not overwrite a newer
-routing tuple. A label update is not a mutex/CAS guarantee.
+The exact-current-head gate is mandatory. A semantic OpenSpec bookkeeping exception does not weaken
+this gate.

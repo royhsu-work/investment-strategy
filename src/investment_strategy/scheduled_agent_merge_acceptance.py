@@ -30,16 +30,17 @@ from investment_strategy.scheduled_agent_effects import (
     StagedEffect,
     apply_effect_batch,
     parse_effect_batch,
-    topology_allows_successor,
 )
 from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
     acquire_current_github_preflight,
 )
 
-_REVIEW_ACTIONS = ("review-implementation", "review-archive")
+_MERGE_REVIEW_ACTION = {
+    "merge-implementation-pr": "review-implementation",
+    "merge-archive-pr": "review-archive",
+}
 _ACCEPTED_CHECK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
-_DEBT_DISPOSITIONS = frozenset({"terminal-cleanup", "unfinished-recovery"})
 
 PreApplyGuard = Callable[[StagedEffect], bool]
 
@@ -163,6 +164,8 @@ def _review_record(body: object) -> tuple[str, str, str] | None:
 def _latest_matching_pass(
     comments: tuple[Mapping[str, object], ...],
     expected_head_sha: str,
+    *,
+    required_review_action: str,
 ) -> tuple[str | None, str | None, datetime | None, bool, bool]:
     records: list[tuple[datetime, int, str, str, str]] = []
     complete = True
@@ -179,7 +182,9 @@ def _latest_matching_pass(
         records.append((created_at, comment_id, action, result, revision))
 
     matching = [record for record in records if record[4] == expected_head_sha]
-    passes = [record for record in matching if record[3] == "PASS" and record[2] in _REVIEW_ACTIONS]
+    passes = [
+        record for record in matching if record[3] == "PASS" and record[2] == required_review_action
+    ]
     if not passes:
         return None, None, None, False, complete
 
@@ -266,6 +271,7 @@ def acquire_merge_acceptance_snapshot(
     pr_number: int,
     expected_head_sha: str,
     merge_strategy: MergeStrategy,
+    required_review_action: str,
 ) -> MergeAcceptanceSnapshot:
     """Acquire current GitHub evidence for one staged merge immediately before application."""
 
@@ -282,7 +288,11 @@ def acquire_merge_acceptance_snapshot(
         )
 
     reviewer_pass_head, review_action, pass_time, contradiction, review_complete = (
-        _latest_matching_pass(comments, expected_head_sha)
+        _latest_matching_pass(
+            comments,
+            expected_head_sha,
+            required_review_action=required_review_action,
+        )
     )
     try:
         checks_pass, checks_complete = _required_checks_pass(repository, token, expected_head_sha)
@@ -330,6 +340,9 @@ def _merge_effect_allows(
     number = payload.get("number")
     expected_head_sha = payload.get("expected_head_sha")
     merge_method = payload.get("merge_method", "merge")
+    required_review_action = _MERGE_REVIEW_ACTION.get(source.action)
+    if required_review_action is None:
+        return False
     if (
         not isinstance(number, int)
         or not isinstance(expected_head_sha, str)
@@ -347,6 +360,7 @@ def _merge_effect_allows(
         pr_number=number,
         expected_head_sha=expected_head_sha,
         merge_strategy=merge_strategy,
+        required_review_action=required_review_action,
     )
     return merge_acceptance_allows(snapshot)
 
@@ -357,13 +371,20 @@ def run_effect_application(
     source: WorkerRequest,
     repository: str,
     token: str,
-    workflow_text: str,
     pre_apply_guard: PreApplyGuard | None = None,
+    current_revision: str | None = None,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Apply through shared effect guards plus an optional mutation-adjacent guard."""
 
     batch = parse_effect_batch(raw_worker_result, source)
-    adapter = GitHubEffectAdapter(repository, token, source)
+    if batch.typed_result is None:
+        return batch, ApplyResult(False, "typed application rejected:result-missing")
+    adapter = GitHubEffectAdapter(
+        repository,
+        token,
+        source,
+        authorized_change=batch.typed_result.change,
+    )
 
     def apply_with_fresh_guard(effect: StagedEffect) -> None:
         if pre_apply_guard is not None and not pre_apply_guard(effect):
@@ -375,13 +396,9 @@ def run_effect_application(
             batch,
             fresh_preflight=lambda: acquire_current_github_preflight(repository, token),
             effect_guard=adapter.guard,
-            topology_validator=lambda request, effect: topology_allows_successor(
-                workflow_text,
-                request,
-                effect,
-            ),
             apply_effect=apply_with_fresh_guard,
             observe_postcondition=adapter.observe_postcondition,
+            current_revision=current_revision,
         )
     except _EffectPreconditionStale:
         result = ApplyResult(False, "effect precondition became stale")
@@ -394,7 +411,7 @@ def run_guarded_effect_application(
     source: WorkerRequest,
     repository: str,
     token: str,
-    workflow_text: str,
+    current_revision: str | None = None,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Reject stale merge acceptance before and immediately adjacent to merge application."""
 
@@ -415,7 +432,7 @@ def run_guarded_effect_application(
         source=source,
         repository=repository,
         token=token,
-        workflow_text=workflow_text,
+        current_revision=current_revision,
         pre_apply_guard=lambda effect: _merge_effect_allows(
             effect,
             source=source,
@@ -429,12 +446,8 @@ def _source_from_environment() -> WorkerRequest:
     issue = os.environ.get("AUTHORIZED_ISSUE")
     role = os.environ.get("AUTHORIZED_ROLE")
     action = os.environ.get("AUTHORIZED_ACTION")
-    raw_disposition = os.environ.get("AUTHORIZED_DEBT_DISPOSITION", "")
-    disposition = raw_disposition or None
     if not issue or not role or not action:
         raise RuntimeError("machine-authorized Issue/role/action environment is required")
-    if disposition is not None and disposition not in _DEBT_DISPOSITIONS:
-        raise RuntimeError("AUTHORIZED_DEBT_DISPOSITION is invalid")
     try:
         issue_number = int(issue)
     except ValueError as exc:
@@ -443,34 +456,19 @@ def _source_from_environment() -> WorkerRequest:
         issue_number=issue_number,
         role=role,
         action=action,
-        debt_disposition=disposition,
     )
 
 
-def _write_github_outputs(batch: EffectBatch, result: ApplyResult) -> None:
+def _write_github_outputs(result: ApplyResult) -> None:
     output_path = os.environ.get("GITHUB_OUTPUT")
     if not output_path:
         return
-    lines = [
-        f"applied={'true' if result.applied else 'false'}",
-        f"continuation_required={'true' if result.continuation is not None else 'false'}",
-    ]
-    if result.continuation is not None:
-        lines.extend(
-            (
-                f"continuation_issue={result.continuation.issue_number}",
-                f"continuation_role={result.continuation.role}",
-                f"continuation_action={result.continuation.action}",
-            )
-        )
-        if result.continuation.debt_disposition is not None:
-            lines.append(f"continuation_debt_disposition={result.continuation.debt_disposition}")
     with Path(output_path).open("a", encoding="utf-8") as output:
-        output.write("\n".join(lines) + "\n")
+        output.write(f"applied={'true' if result.applied else 'false'}\n")
 
 
 def main() -> int:
-    """Apply one same-run result through merge acceptance plus effect reauthorization."""
+    """Apply one result through merge acceptance plus effect reauthorization."""
 
     if len(sys.argv) != 2:
         raise RuntimeError("worker result path argument is required")
@@ -481,30 +479,19 @@ def main() -> int:
 
     source = _source_from_environment()
     raw_worker_result = Path(sys.argv[1]).read_text(encoding="utf-8")
-    workflow_text = Path("agents/workflow.md").read_text(encoding="utf-8")
     batch, result = run_guarded_effect_application(
         raw_worker_result,
         source=source,
         repository=repository,
         token=token,
-        workflow_text=workflow_text,
     )
-    _write_github_outputs(batch, result)
+    _write_github_outputs(result)
     print(
         json.dumps(
             {
                 "applied": result.applied,
                 "reason": result.reason,
-                "continuation": (
-                    None
-                    if result.continuation is None
-                    else {
-                        "issue_number": result.continuation.issue_number,
-                        "role": result.continuation.role,
-                        "action": result.continuation.action,
-                        "debt_disposition": result.continuation.debt_disposition,
-                    }
-                ),
+                "effects": len(batch.effects),
             },
             sort_keys=True,
         )

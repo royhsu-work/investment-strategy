@@ -18,14 +18,16 @@ MAPPED_REPOSITORY_SKILLS = (
 )
 
 EXPECTED_ACTION_DECLARATIONS = {
-    "archive-review": "Mapped action: `Reviewer / review-archive`.",
-    "implementation-review": "Mapped action: `Reviewer / review-implementation`.",
-    "implementation": "Mapped action: `Executor / implement-change`.",
-    "lifecycle-finalize": "Mapped actions: `Lead / finalize-change`, `Lead / finalize-archive`.",
-    "merge-pr": "Mapped action: `Executor / merge-pr`.",
-    "openspec-change": "Mapped actions: `Lead / propose-change`, `Lead / resolve-question`.",
-    "openspec-explore": "Mapped action: `Lead / explore-change`.",
-    "openspec-review": "Mapped action: `Reviewer / review-openspec`.",
+    "archive-review": "Mapped Action: Reviewer / review-archive.",
+    "implementation-review": "Mapped Action: Reviewer / review-implementation.",
+    "implementation": "Mapped Action: Executor / implement-change.",
+    "lifecycle-finalize": "Mapped Actions: Lead / finalize-change and Lead / finalize-archive.",
+    "merge-pr": (
+        "Mapped Actions: Executor / merge-implementation-pr and Executor / merge-archive-pr."
+    ),
+    "openspec-change": "Mapped Actions: Lead / propose-change and Lead / resolve-question.",
+    "openspec-explore": "Mapped Action: Lead / explore-change.",
+    "openspec-review": "Mapped Action: Reviewer / review-openspec.",
 }
 
 UPSTREAM_REVISION = "2826b8889e5223a9a8095d4428b60b56597e1020"

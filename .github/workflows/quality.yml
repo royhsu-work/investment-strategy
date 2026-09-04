@@ -10,6 +10,8 @@ on:
       - ".github/scripts/openspec_archive.py"
       - ".github/workflows/openspec-archive.yml"
       - ".github/workflows/quality.yml"
+      - "README.md"
+      - "agents/**"
   pull_request:
     paths:
       - "src/**"
@@ -19,12 +21,16 @@ on:
       - ".github/scripts/openspec_archive.py"
       - ".github/workflows/openspec-archive.yml"
       - ".github/workflows/quality.yml"
+      - "README.md"
+      - "agents/**"
 
 jobs:
   quality:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.10.0"
