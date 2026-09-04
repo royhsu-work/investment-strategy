@@ -355,6 +355,71 @@ def test_merged_carrier_merge_is_idempotent_without_put(
     assert not any(path.endswith("/merge") and method == "PUT" for path, method in calls)
 
 
+def test_issue_comment_reuses_existing_bot_comment_without_post(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = "royhsu-work/investment-strategy"
+    source = WorkerRequest(138, "lead", "finalize-change")
+    body = (
+        "ARCHIVE_REQUEST\n"
+        "Workflow: #138\n"
+        f"Change: {_CHANGE}\n"
+        "Action: finalize-change\n"
+        f"Revision: {_REVISION}"
+    )
+    issue = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "labels": [{"name": "action:finalize-change"}],
+    }
+    existing = {
+        "id": 991,
+        "body": body,
+        "user": {"login": "github-actions[bot]"},
+    }
+    calls: list[tuple[str, str]] = []
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        calls.append((api_path, method))
+        if api_path == "issues/138":
+            return issue
+        if api_path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            return [existing]
+        if api_path == "issues/comments/991":
+            return existing
+        if method == "POST":
+            raise AssertionError("replayed issue comment must not be created")
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        repository,
+        "token",
+        source,
+        authorized_change=_CHANGE,
+    )
+    effect = StagedEffect(
+        kind="issue-comment",
+        payload_json=json.dumps({"issue_number": 138, "body": body}),
+    )
+
+    adapter.apply(effect)
+
+    assert calls == [
+        ("issues/138/comments?per_page=100&sort=created&direction=desc", "GET"),
+    ]
+    assert adapter.observe_postcondition(effect)
+
+
 def test_empty_github_api_path_uses_repository_endpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

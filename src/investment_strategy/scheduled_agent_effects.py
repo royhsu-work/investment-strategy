@@ -954,18 +954,42 @@ class GitHubEffectAdapter:
             return
         raise RuntimeError(f"unsupported GitHub mutation operation: {operation}")
 
+    def _existing_issue_comment(self, body: str) -> int | None:
+        payload = _github_json(
+            self.repository,
+            self.token,
+            f"issues/{self.source.issue_number}/comments?per_page=100&sort=created&direction=desc",
+        )
+        if not isinstance(payload, list):
+            return None
+        for item in payload:
+            if not isinstance(item, Mapping) or item.get("body") != body:
+                continue
+            comment_id = item.get("id")
+            user = item.get("user")
+            if not isinstance(comment_id, int) or not isinstance(user, Mapping):
+                continue
+            if user.get("login") == "github-actions[bot]":
+                return comment_id
+        return None
+
     def apply(self, effect: StagedEffect) -> None:
         payload = _effect_payload(effect)
         if payload is None:
             raise RuntimeError("validated effect payload became unavailable")
 
         if effect.kind == "issue-comment":
+            body = cast(str, payload["body"])
+            existing = self._existing_issue_comment(body)
+            if existing is not None:
+                self._comment_ids[effect] = existing
+                return
             response = _github_json(
                 self.repository,
                 self.token,
                 f"issues/{self.source.issue_number}/comments",
                 method="POST",
-                payload={"body": cast(str, payload["body"])},
+                payload={"body": body},
             )
             if not isinstance(response, Mapping) or not isinstance(response.get("id"), int):
                 raise RuntimeError("GitHub comment mutation returned no comment id")

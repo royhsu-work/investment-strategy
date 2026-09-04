@@ -13,6 +13,9 @@ GENERATED_PURPOSE = re.compile(
     r"^TBD - created by archiving change [a-z0-9][a-z0-9-]*\. Update Purpose after archive\.$"
 )
 
+ARCHIVE_REQUEST_ACTION = "finalize-change"
+_ARCHIVE_REVISION = re.compile(r"^[0-9a-f]{40}$")
+
 
 def _fail(message: str) -> NoReturn:
     print(message, file=sys.stderr)
@@ -69,7 +72,45 @@ def _recovery_change(head_ref: str, changes_root: Path) -> str:
     return change
 
 
+def _classify_archive_request(args: argparse.Namespace) -> None:
+    lines = args.comment_body.splitlines()
+    if len(lines) != 5 or lines[0] != "ARCHIVE_REQUEST":
+        _fail("ARCHIVE_REQUEST must contain exactly five lines")
+
+    workflow = re.fullmatch(r"Workflow: #([1-9][0-9]*)", lines[1])
+    change_match = re.fullmatch(r"Change: ([a-z0-9][a-z0-9-]*)", lines[2])
+    revision_match = re.fullmatch(r"Revision: ([0-9a-f]{40})", lines[4])
+    if workflow is None or change_match is None or revision_match is None:
+        _fail("ARCHIVE_REQUEST identity is invalid")
+    if lines[3] != f"Action: {ARCHIVE_REQUEST_ACTION}":
+        _fail("ARCHIVE_REQUEST action is invalid")
+    if args.comment_actor != "github-actions[bot]":
+        _fail("ARCHIVE_REQUEST must originate from github-actions[bot]")
+    if args.comment_repository != args.expected_repository:
+        _fail("ARCHIVE_REQUEST repository is not the configured repository")
+
+    issue_number = workflow.group(1)
+    if args.comment_issue != issue_number:
+        _fail("ARCHIVE_REQUEST Issue does not match the event Issue")
+    change = _validate_change_name(change_match.group(1))
+    revision = revision_match.group(1)
+    if _ARCHIVE_REVISION.fullmatch(revision) is None:
+        _fail("ARCHIVE_REQUEST revision is invalid")
+    _emit(
+        action="evaluate",
+        change=change,
+        mode="request",
+        reason="application-archive-request",
+        request_issue=issue_number,
+        request_revision=revision,
+    )
+
+
 def _classify(args: argparse.Namespace) -> None:
+    if args.event_name == "issue_comment":
+        _classify_archive_request(args)
+        return
+
     if args.event_name == "workflow_dispatch":
         if not args.manual_change:
             _fail("workflow_dispatch requires --manual-change")
@@ -373,10 +414,17 @@ def _parser() -> argparse.ArgumentParser:
     classify.add_argument("--changed-files", default="")
     classify.add_argument("--changes-root", default="openspec/changes")
     classify.add_argument("--manual-change")
+    classify.add_argument("--comment-body", default="")
+    classify.add_argument("--comment-actor", default="")
+    classify.add_argument("--comment-issue", default="")
+    classify.add_argument("--comment-repository", default="")
+    classify.add_argument("--expected-repository", default="")
     classify.set_defaults(handler=_classify)
 
     completion = subparsers.add_parser("completion")
-    completion.add_argument("--mode", choices=("normal", "recovery", "manual"), required=True)
+    completion.add_argument(
+        "--mode", choices=("normal", "recovery", "manual", "request"), required=True
+    )
     completion.add_argument("--change", required=True)
     completion.add_argument("--list-file", required=True)
     completion.set_defaults(handler=_completion)
