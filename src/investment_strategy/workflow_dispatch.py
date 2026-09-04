@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Literal
+from typing import Literal, cast
 
 from investment_strategy.scheduled_agent_action_model import (
     Action as ModelAction,
