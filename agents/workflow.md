@@ -16,6 +16,8 @@ revisions, transport runs, and carrier output is durable evidence, not a competi
 
 The normal contract is one Action per Scheduled Task wake.
 
+The normal contract is one Action per Scheduled Task wake.
+
 Each wake performs one fresh dispatch, one semantic Action, one structured result, fresh repository
 reauthorization, exact necessary effects, required validation, postcondition observation,
 next_action(current_action, result), and persistence of one successor or terminal state before exit.

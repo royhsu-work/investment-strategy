@@ -36,3 +36,13 @@ agents/skills/openspec-semantic-adapter.md. The adapter is a closed Apply contex
 authority. Strict validation alone does not establish semantic acceptance, even when strict validation
 passes. Preserve the approved proposal, applicable delta specs, design, tasks, canonical specs, and
 materially applicable config context; do not choose which upstream/config semantics count.
+
+## Spec-driven semantic adapter
+
+When openspec/config.yaml declares schema: spec-driven, load agents/skills/openspec-semantic-adapter.md.
+The adapter is a closed Apply context, not runtime authority. Strict validation alone does not
+establish semantic acceptance, even when strict validation passes. Preserve approved proposal,
+applicable delta specs, design, tasks, canonical specs, and materially applicable config context;
+do not choose which upstream/config semantics count. Missing or contradictory context fails closed.
+
+The worker MUST NOT create a Git tree or commit, move a ref, mutate an Issue, or choose routing.

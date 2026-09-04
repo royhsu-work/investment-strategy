@@ -25,3 +25,6 @@ freshness.
 Return one structured MERGED, LIFECYCLE_VIOLATION, or BLOCKED result. The executable model derives
 finalize-change, finalize-archive, resolve-question, or the bounded same-Action successor; it is
 persisted and executed only by a later fresh wake.
+
+The explicit merge Actions use the same persistent coordination Issue and repository-approved
+non-closing linkage. A generic merge label never supplies lifecycle meaning.

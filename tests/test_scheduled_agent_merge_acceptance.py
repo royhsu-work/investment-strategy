@@ -55,6 +55,7 @@ def _merge_worker_result() -> str:
             "role": "executor",
             "action": "merge-implementation-pr",
             "change": "prevent-native-closing-bypass",
+            "result_kind": "merged",
             "result_content": "MERGE_RESULT",
             "requested_effects": [
                 {

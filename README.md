@@ -353,3 +353,10 @@ The default-branch merge is the activation boundary. An unmerged governance PR i
 and must not govern its own current invocation. A run head_sha is association metadata; validator
 checkout `HEAD` and exact target identity are the checkout proof, and synthetic merge validation
 is not exact-head validation for another PR head.
+
+The current runtime contract is Role = role_for(Action): review-implementation PASS and review-archive
+PASS select merge-implementation-pr and merge-archive-pr. A run head_sha is association metadata;
+validator checkout `HEAD` and exact target identity are checkout proof, and synthetic merge
+validation is not exact-head validation for another PR head. The default-branch merge is the
+activation boundary, so an unmerged governance PR is review target/input and must not govern its own
+current invocation.

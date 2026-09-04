@@ -24,3 +24,7 @@ implement-change, finalize-archive, or terminal state; the successor executes on
 The lifecycle result is evidence, not runtime state; successor execution happens only on a later wake.
 Do not create a duplicate Change, PR, lifecycle state, recovery state, or control mailbox. Optional or
 deferred prose is not a lifecycle obligation.
+
+The exact archive preparation uses Refs #<coordination-issue> and the same persistent coordination
+Issue. It does not perform normal PR merge mutation. There is no duplicate Change, PR, lifecycle state,
+recovery state, or control mailbox.
