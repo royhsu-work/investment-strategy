@@ -694,7 +694,10 @@ class GitHubEffectAdapter:
                 _ref_api_path(expected_ref),
                 allow_not_found=True,
             )
-            return ref_state is None
+            if not isinstance(ref_state, Mapping):
+                return False
+            obj = ref_state.get("object")
+            return isinstance(obj, Mapping) and obj.get("sha") == payload.get("expected_sha")
         if operation == "pull-request-create":
             default_branch = self._default_branch()
             expected_branch = _source_branch(observation.change)
