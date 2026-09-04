@@ -333,14 +333,8 @@ def _github_mutation_structurally_valid(
         )
     if operation == "issue-label-add":
         return _is_nonempty_string(payload.get("label")) and _routing_label(payload.get("label"))
-    if operation == "ref-create":
-        return _valid_ref(payload.get("ref")) and _valid_sha(payload.get("sha"))
-    if operation in {"ref-update", "ref-delete"}:
-        return (
-            _valid_ref(payload.get("ref"))
-            and _valid_sha(payload.get("expected_sha"))
-            and (operation == "ref-delete" or _valid_sha(payload.get("sha")))
-        )
+    if operation == "ref-delete":
+        return _valid_ref(payload.get("ref")) and _valid_sha(payload.get("expected_sha"))
     if operation == "pull-request-create":
         return (
             _is_nonempty_string(payload.get("title"))
@@ -663,12 +657,7 @@ class GitHubEffectAdapter:
     def _no_open_source_pull_request(self, branch: str, base: str) -> bool:
         owner = self.repository.split("/", 1)[0]
         head = f"{owner}:{branch}"
-        query = (
-            "pulls?state=open"
-            f"&head={quote(head, safe='')}"
-            f"&base={quote(base, safe='')}"
-            "&per_page=100"
-        )
+        query = f"pulls?state=open&head={quote(head, safe='')}&base={quote(base, safe='')}&per_page=100"
         payload = _github_json(self.repository, self.token, query)
         return isinstance(payload, list) and not payload
 
@@ -693,7 +682,7 @@ class GitHubEffectAdapter:
                 and ("body" not in fields or _body_change(fields["body"]) == self.authorized_change)
             )
         expected_ref = _source_ref(observation.change)
-        if operation in {"ref-update", "ref-delete"}:
+        if operation == "ref-delete":
             if expected_ref is None or payload.get("ref") != expected_ref:
                 return False
             ref_state = _github_json(
@@ -702,22 +691,7 @@ class GitHubEffectAdapter:
                 _ref_api_path(expected_ref),
                 allow_not_found=True,
             )
-            if not isinstance(ref_state, Mapping):
-                return False
-            obj = ref_state.get("object")
-            return isinstance(obj, Mapping) and obj.get("sha") == payload.get("expected_sha")
-        if operation == "ref-create":
-            if expected_ref is None or payload.get("ref") != expected_ref:
-                return False
-            return (
-                _github_json(
-                    self.repository,
-                    self.token,
-                    _ref_api_path(expected_ref),
-                    allow_not_found=True,
-                )
-                is None
-            )
+            return ref_state is None
         if operation == "pull-request-create":
             default_branch = self._default_branch()
             expected_branch = _source_branch(observation.change)
@@ -836,24 +810,6 @@ class GitHubEffectAdapter:
                 f"issues/{self.source.issue_number}/labels",
                 method="POST",
                 payload={"labels": [cast(str, payload["label"])]},
-            )
-            return
-        if operation == "ref-create":
-            _github_json(
-                self.repository,
-                self.token,
-                "git/refs",
-                method="POST",
-                payload={"ref": cast(str, payload["ref"]), "sha": cast(str, payload["sha"])},
-            )
-            return
-        if operation == "ref-update":
-            _github_json(
-                self.repository,
-                self.token,
-                _ref_mutation_path(cast(str, payload["ref"])),
-                method="PATCH",
-                payload={"sha": cast(str, payload["sha"]), "force": False},
             )
             return
         if operation == "ref-delete":
@@ -996,14 +952,6 @@ class GitHubEffectAdapter:
                 if isinstance(item, Mapping) and isinstance(item.get("name"), str)
             }
             return payload.get("label") in names
-        if operation in {"ref-create", "ref-update"}:
-            current = _github_json(
-                self.repository,
-                self.token,
-                _ref_api_path(cast(str, payload["ref"])),
-            )
-            obj = current.get("object") if isinstance(current, Mapping) else None
-            return isinstance(obj, Mapping) and obj.get("sha") == payload.get("sha")
         if operation == "ref-delete":
             return (
                 _github_json(

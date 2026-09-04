@@ -32,8 +32,6 @@ _ACTION_OPERATIONS: Final[dict[RoleAction, frozenset[str]]] = {
     ("reviewer", "review-archive"): frozenset(),
     ("executor", "implement-change"): frozenset(
         {
-            "ref-create",
-            "ref-update",
             "pull-request-create",
             "pull-request-update",
             "pull-request-ready",
