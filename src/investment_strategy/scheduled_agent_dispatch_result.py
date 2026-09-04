@@ -76,12 +76,12 @@ def _github_text(repository: str, token: str, api_path: str) -> str:
             or not parsed.hostname.endswith(_LOG_REDIRECT_SUFFIX)
         ):
             raise RuntimeError("exact dispatch run log redirect is not trusted") from exc
-        redirected_request = Request(
+        redirected_request = Request(  # noqa: S310 - location is validated as a GitHub Actions host
             location,
             headers={"Accept": "application/octet-stream"},
         )
         try:
-            with urlopen(redirected_request, timeout=30) as response:
+            with urlopen(redirected_request, timeout=30) as response:  # noqa: S310 - location is validated as a GitHub Actions host
                 return response.read().decode("utf-8")
         except (HTTPError, URLError, TimeoutError, UnicodeError) as redirect_exc:
             raise RuntimeError("exact dispatch run log response is invalid") from redirect_exc

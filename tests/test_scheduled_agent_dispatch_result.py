@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import pytest
 from email.message import Message
 from io import BytesIO
 from urllib.error import HTTPError
 from urllib.request import Request
+
+import pytest
 
 import investment_strategy.scheduled_agent_dispatch_result as transport
 from investment_strategy.issue_comment_bridge import (
@@ -151,7 +152,7 @@ def test_github_text_reads_signed_redirect_without_forwarding_bearer(
         def __init__(self, value: bytes) -> None:
             self.value = value
 
-        def __enter__(self) -> "_Response":
+        def __enter__(self) -> _Response:
             return self
 
         def __exit__(self, *args: object) -> None:
