@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from enum import StrEnum
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 from typing import cast
+from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 _TAIPEI = ZoneInfo("Asia/Taipei")
@@ -393,11 +393,6 @@ def _retire_exact_targets(
             raise RuntimeError("daily shard rollover became stale before retirement")
         target = min(remaining)
         observed = _github_issue(repository, token, target)
-        if (
-            parse_checkin_day(observed) != today.replace(day=today.day)  # not a current-day target
-            and parse_checkin_day(observed) is not None
-        ):
-            pass
         if (
             _issue_number(observed.get("number")) != target
             or parse_checkin_day(observed) is None
