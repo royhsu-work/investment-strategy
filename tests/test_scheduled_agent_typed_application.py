@@ -25,7 +25,6 @@ from investment_strategy.scheduled_agent_action_model import (
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 from investment_strategy.scheduled_agent_worker import parse_worker_result
 
-
 _REVISION = "a" * 40
 _CHANGE = "simplify-scheduled-agent-control-plane"
 
