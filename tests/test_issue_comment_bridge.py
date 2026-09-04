@@ -141,12 +141,16 @@ def test_run_scoped_result_is_one_strict_decision_block() -> None:
 
 
 def test_dispatch_decision_parser_preserves_exact_machine_vocabulary() -> None:
-    for disposition, issue_number, routing in (
-        ("NO_WORK", None, None),
-        ("FAIL_CLOSED", None, None),
-        ("AUTHORIZE", 138, ("executor", "implement-change")),
-    ):
-        decision = _decision(disposition, issue_number=issue_number, routing=routing)
+    decisions = (
+        _decision("NO_WORK"),
+        _decision("FAIL_CLOSED"),
+        _decision(
+            "AUTHORIZE",
+            issue_number=138,
+            routing=("executor", "implement-change"),
+        ),
+    )
+    for decision in decisions:
         rendered = bridge.render_dispatch_decision(
             request_comment_id=987,
             default_branch_revision=REVISION,
@@ -155,7 +159,7 @@ def test_dispatch_decision_parser_preserves_exact_machine_vocabulary() -> None:
         parsed = bridge.parse_dispatch_decision(rendered)
         assert parsed is not None
         assert parsed.request_comment_id == 987
-        assert parsed.disposition == disposition
+        assert parsed.disposition == decision.disposition
 
 
 def test_dispatch_plan_uses_event_identity_without_comment_history() -> None:
