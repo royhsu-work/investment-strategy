@@ -14,14 +14,24 @@ from typing import Literal
 
 from investment_strategy.scheduled_agent_action_model import (
     Action as ModelAction,
+)
+from investment_strategy.scheduled_agent_action_model import (
     AuthoritativeObservations,
     IssueObservation,
-    ObservationProvenance as ModelObservationProvenance,
-    Role as ModelRole,
-    SelectionDecision as ModelSelectionDecision,
-    SelectionDisposition as ModelSelectionDisposition,
     ShadowComparison,
     shadow_compare_selection,
+)
+from investment_strategy.scheduled_agent_action_model import (
+    ObservationProvenance as ModelObservationProvenance,
+)
+from investment_strategy.scheduled_agent_action_model import (
+    Role as ModelRole,
+)
+from investment_strategy.scheduled_agent_action_model import (
+    SelectionDecision as ModelSelectionDecision,
+)
+from investment_strategy.scheduled_agent_action_model import (
+    SelectionDisposition as ModelSelectionDisposition,
 )
 
 Role = Literal["lead", "reviewer", "executor"]
