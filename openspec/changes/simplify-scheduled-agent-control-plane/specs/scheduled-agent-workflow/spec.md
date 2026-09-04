@@ -78,7 +78,7 @@ Interruption MUST NOT transfer ownership/rewind consumed descendants. Before con
 - THEN only the matching explicit merge Action for unchanged R is legal
 
 ### Requirement: Architecture reset is mandatory N-1 delivery with deletion
-#138 SHALL remain one parent outcome and every stage MUST be N-1 executable/testable/mergeable/deployable or split without weakening it; intermediate completion MUST NOT complete #138. Order is **1A exact-R resource → 1B run-scoped transport/daily check-in → 1 C PR authority/carrier split → 2 kernel shadow → 3 typed application → 4 one-action-per-wake → 5 Action-only/Role-derived/explicit merges + absorbed-source retirement → 6 deletion/context reduction**. 1A SHALL precede materially revised Propose/Resolve handoff and validate final R. 1B+1C SHALL precede Stage 2 but MUST NOT add semantic review prerequisites once valid 1A exists. 1C SHALL include existing-PR reuse. Stage 3 SHALL deliver machine-readable deterministic rejection classification/evidence. Stage 4 SHALL enforce bounded verified vertical-slice completion inside the one authorized Action before durable completion checkpoint. After cutover production MUST delete superseded Role routing, response/history mailbox, Markdown topology/effect parsing, continuation/wake barriers, compatibility/model-worker paths, Actions-owned identity-sensitive PR mutation, and redundant machine-control prose/tests.
+#138 SHALL remain one parent outcome and every stage MUST be N-1 executable/testable/mergeable/deployable or split without weakening it; intermediate completion MUST NOT complete #138. Order is **1A exact-R resource → 1B run-scoped transport/daily check-in → 1C PR authority/carrier split → 2 kernel shadow → 3 typed application → 4 one-action-per-wake → 5 Action-only/Role-derived/explicit merges + absorbed-source retirement → 6 deletion/context reduction**. 1A SHALL precede materially revised Propose/Resolve handoff and validate final R. 1B+1C SHALL precede Stage 2 but MUST NOT add semantic review prerequisites once valid 1A exists. 1C SHALL include existing-PR reuse. Stage 3 SHALL deliver machine-readable deterministic rejection classification/evidence. Stage 4 SHALL enforce bounded verified vertical-slice completion inside the one authorized Action before durable completion checkpoint. After cutover production MUST delete superseded Role routing, response/history mailbox, Markdown topology/effect parsing, continuation/wake barriers, compatibility/model-worker paths, Actions-owned identity-sensitive PR mutation, and redundant machine-control prose/tests.
 #### Scenario: Stage cannot finish early
 - GIVEN a stage cannot self-host on N-1 or later stages remain
 - WHEN completion is evaluated
@@ -86,7 +86,7 @@ Interruption MUST NOT transfer ownership/rewind consumed descendants. Before con
 
 ## REMOVED Requirements
 ### Requirement: Actionable workflow routing is one logical role/action tuple
-#*Reason/Migration**: Action becomes canonical; Role routing retires.
+**Reason/Migration**: Action becomes canonical; Role routing retires.
 ### Requirement: One persistent coordination Issue represents the normal OpenSpec workflow lifecycle
 **Reason/Migration**: Replacement permits bounded pre-acceptance formal Explore while preserving Issue/Change/history/WIP.
 ### Requirement: Review and finalize actions have Lead-owned minimum gate contracts
@@ -104,9 +104,9 @@ Interruption MUST NOT transfer ownership/rewind consumed descendants. Before con
 ### Requirement: Each scheduled run processes at most one actionable work item using a fixed stable order
 **Reason/Migration**: Neutral dynamic Action dispatch replaces fixed-role selection.
 ### Requirement: Repository agent artifacts expose the governance contract
-#*Reason/Migration**: Kernel owns machine semantics; prose becomes generated/verified.
+**Reason/Migration**: Kernel owns machine semantics; prose becomes generated/verified.
 ### Requirement: Default-branch governance declares the scheduled dispatch mode
-#*Reason/Migration**: Dynamic is normal; fixed-role is bounded N-1 only.
+**Reason/Migration**: Dynamic is normal; fixed-role is bounded N-1 only.
 ### Requirement: Workflow-dynamic dispatch derives one fixed invocation role from durable workflow state
 **Reason/Migration**: Role derives per Action; successor waits.
 ### Requirement: Selected Scheduled Agent actions are work-conserving within an invocation
