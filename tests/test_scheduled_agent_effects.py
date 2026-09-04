@@ -291,8 +291,10 @@ def test_routing_transition_replaces_all_routing_labels_atomically(
             return json.loads(json.dumps(issue))
         if api_path == "issues/138" and method == "PATCH":
             assert payload is not None
+            labels = payload.get("labels")
+            assert isinstance(labels, list)
             patches.append(payload)
-            issue["labels"] = [{"name": name} for name in payload["labels"]]
+            issue["labels"] = [{"name": name} for name in labels]
             return json.loads(json.dumps(issue))
         raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
 
@@ -354,9 +356,13 @@ def test_terminal_transition_closes_and_clears_routing_atomically(
             return json.loads(json.dumps(issue))
         if api_path == "issues/138" and method == "PATCH":
             assert payload is not None
+            state = payload.get("state")
+            labels = payload.get("labels")
+            assert state == "closed"
+            assert isinstance(labels, list)
             patches.append(payload)
-            issue["state"] = payload["state"]
-            issue["labels"] = [{"name": name} for name in payload["labels"]]
+            issue["state"] = state
+            issue["labels"] = [{"name": name} for name in labels]
             return json.loads(json.dumps(issue))
         raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
 
