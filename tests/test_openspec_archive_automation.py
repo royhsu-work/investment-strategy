@@ -397,10 +397,13 @@ def test_archive_workflow_keeps_reviewed_lifecycle_guards() -> None:
 
     for required in (
         "workflow_dispatch:",
+        "issue_comment:",
+        "- created",
         "pull_request:",
         "- closed",
         "pull-requests: read",
-        "queue: max",
+        "cancel-in-progress: false",
+        "ARCHIVE_REQUEST",
         "github.event.pull_request.merged && github.event.pull_request.merge_commit_sha",
         "github.event.pull_request.head.repo.full_name",
         "github.event.pull_request.base.repo.full_name",
@@ -414,10 +417,10 @@ def test_archive_workflow_keeps_reviewed_lifecycle_guards() -> None:
         'git push -u origin HEAD:"$target_branch"',
     ):
         assert required in workflow
+    assert "queue: max" not in workflow
     assert "pull-requests: write" not in workflow
     assert "Create final Archive PR with closing linkage" not in workflow
     assert "gh pr create" not in workflow
-    assert "cancel-in-progress:" not in workflow
     assert "ref: main" not in workflow
     assert "git push --force" not in workflow
     assert "git push -f" not in workflow
