@@ -244,7 +244,6 @@ def test_runtime_checkin_identity_uses_local_date_and_non_workflow_shape() -> No
     assert parse_checkin_day(pull_request) is None
 
 
-
 def test_closed_shard_keeps_inflight_dispatch_identity_after_rollover() -> None:
     decision = _decision("NO_WORK")
     plan = bridge.plan_dispatch_decision(
