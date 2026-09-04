@@ -319,27 +319,24 @@ def _github_mutation_structurally_valid(
             and isinstance(payload.get("draft", False), bool)
         )
     if operation == "pull-request-update":
-        return (
-            isinstance(payload.get("number"), int)
-            and not isinstance(payload.get("number"), bool)
-            and payload.get("number") > 0
-            and _valid_sha(payload.get("expected_head_sha"))
-            and _valid_fields(payload.get("fields"), _ALLOWED_PR_FIELDS)
+        number = payload.get("number")
+        if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+            return False
+        return _valid_sha(payload.get("expected_head_sha")) and _valid_fields(
+            payload.get("fields"), _ALLOWED_PR_FIELDS
         )
     if operation == "pull-request-ready":
-        return (
-            isinstance(payload.get("number"), int)
-            and not isinstance(payload.get("number"), bool)
-            and payload.get("number") > 0
-            and _valid_sha(payload.get("expected_head_sha"))
-        )
+        number = payload.get("number")
+        if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+            return False
+        return _valid_sha(payload.get("expected_head_sha"))
     if operation == "pull-request-merge":
+        number = payload.get("number")
         method = payload.get("merge_method", "merge")
+        if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+            return False
         return (
-            isinstance(payload.get("number"), int)
-            and not isinstance(payload.get("number"), bool)
-            and payload.get("number") > 0
-            and _valid_sha(payload.get("expected_head_sha"))
+            _valid_sha(payload.get("expected_head_sha"))
             and isinstance(method, str)
             and method in _ALLOWED_MERGE_METHODS
         )

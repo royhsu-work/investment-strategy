@@ -10,7 +10,9 @@ from investment_strategy.scheduled_agent_runtime import (
     acquire_dispatch_preflight,
 )
 from investment_strategy.workflow_dispatch import (
+    Action as WorkflowAction,
     DispatchPreflight,
+    Role,
     action_entry_authorized,
     action_model_shadow,
     activation_postwrite_accepted,
@@ -39,22 +41,25 @@ def _preflight(
 
 def _issue(
     number: int,
-    action: str | None,
+    action: WorkflowAction | None,
     *,
     change: str = "simplify-scheduled-agent-control-plane",
     order: int = 1,
 ) -> GitHubIssueObservation:
-    role = None
-    if action is not None:
-        role = (
+    routing: tuple[Role, WorkflowAction] | None
+    if action is None:
+        routing = None
+    else:
+        role: Role = (
             "reviewer"
             if action.startswith("review-")
             else ("executor" if action.startswith(("implement", "merge")) else "lead")
         )
+        routing = (role, action)
     return GitHubIssueObservation(
         issue_number=number,
         change=change,
-        routing=None if action is None else (role, action),
+        routing=routing,
         state="open",
         created_order=order,
         authoritative=True,

@@ -16,6 +16,7 @@ from investment_strategy.scheduled_agent_action_model import (
     AuthoritativeObservations,
     IssueObservation,
     SelectionDecision,
+    ShadowComparison,
     role_for,
     select_work,
     shadow_compare_selection,
@@ -235,7 +236,7 @@ def classify_dispatch(preflight: DispatchPreflight) -> DispatchDecision:
     )
 
 
-def action_model_shadow(preflight: DispatchPreflight):
+def action_model_shadow(preflight: DispatchPreflight) -> ShadowComparison:
     """Compare the production decision with the same pure executable model."""
 
     observations = _model_observations(preflight)

@@ -22,6 +22,11 @@ from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
     acquire_dispatch_preflight,
 )
+from investment_strategy.workflow_dispatch import (
+    Action as WorkflowAction,
+    DispatchPreflight,
+    Role,
+)
 
 _REVISION = "a" * 40
 _CHANGE = "simplify-scheduled-agent-control-plane"
@@ -30,11 +35,11 @@ _CHANGE = "simplify-scheduled-agent-control-plane"
 def _preflight(
     *,
     issue_number: int = 138,
-    action: str = "implement-change",
+    action: WorkflowAction = "implement-change",
     change: str = _CHANGE,
     human_authorized: bool = True,
-):
-    role = "executor" if action.startswith(("implement", "merge")) else "lead"
+) -> DispatchPreflight:
+    role: Role = "executor" if action.startswith(("implement", "merge")) else "lead"
     if action.startswith("review-"):
         role = "reviewer"
     return acquire_dispatch_preflight(
