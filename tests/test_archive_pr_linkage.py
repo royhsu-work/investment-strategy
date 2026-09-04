@@ -120,23 +120,27 @@ def test_render_archive_pr_body_contains_only_expected_non_closing_linkage(
     assert "Lead terminal finalization" in rendered
 
 
-def test_archive_workflow_and_action_skills_split_linkage_ownership() -> None:
+def test_archive_workflow_owns_linkage_observation_and_carrier_delegation() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     lifecycle_skill = LIFECYCLE_SKILL.read_text(encoding="utf-8")
     merge_skill = MERGE_SKILL.read_text(encoding="utf-8")
     for required in (
         "issues: read",
         "pull-requests: read",
+        "issue_comment:",
+        "ARCHIVE_REQUEST",
+        "archive_pr_linkage.py resolve",
+        "archive_pr_linkage.py render",
+        "gh pr list",
+        "ready-for-legal-carrier",
         'git push -u origin HEAD:"$target_branch"',
     ):
         assert required in workflow
-    for removed in (
+    for forbidden in (
         "pull-requests: write",
-        "archive_pr_linkage.py resolve",
-        "archive_pr_linkage.py render",
         "gh pr create",
     ):
-        assert removed not in workflow
+        assert forbidden not in workflow
     for required in (
         "archive preparation",
         "Refs #<coordination-issue>",
