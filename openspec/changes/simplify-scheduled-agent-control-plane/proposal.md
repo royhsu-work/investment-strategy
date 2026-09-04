@@ -74,13 +74,14 @@ This correction is based on:
 
 - Human architecture reset issuecomment-5528834334;
 - prior architecture-reset blocker issuecomment-5529009343 and prior Lead dispatch decision issuecomment-5529083195, both retained as historical pre-correction evidence;
-- current Lead correction dispatch decision issuecomment-5529654634;
+- prior-cycle Lead correction dispatch decision issuecomment-5529654634, retained as historical pre-correction evidence;
 - current default-branch governance at main@e8c3dc7b256bc167217e25a397e98181bdf6f123;
-- previous semantic target 9a9f131a03e5b22df3a43258fa6cc14cb3bd22cd and current exact correction target 872c7e988beb4bd684eeee6916bcc950509e7bb4;
+- prior semantic targets 9a9f131a03e5b22df3a43258fa6cc14cb3bd22cd and 872c7e988beb4bd684eeee6916bcc950509e7bb4, both historical pre-correction targets; the resulting exact target for this correction is the revision R emitted by the current Lead ACTION_RESULT and fresh PR/ref observation;
 - openspec/config.yaml with schema: spec-driven;
 - the independent safety evidence retained by the existing Change history;
-- current Lead readiness result issuecomment-5529602299 and exact validation run 33785030285, job 100747605621, correlation validation-resource-request-5529577659; and
-- resolved Reviewer finding issuecomment-5529497150 plus current Reviewer finding issuecomment-5529644414.
+- prior Lead readiness result issuecomment-5529602299 and prior exact validation run 33785030285, job 100747605621, correlation validation-resource-request-5529577659, all retained as historical pre-correction evidence;
+- prior Reviewer finding issuecomment-5529497150 and prior-cycle Reviewer finding issuecomment-5529644414, retained as historical correction-chain evidence; and
+- current F3 finding issuecomment-5529815334 and current Lead dispatch decision issuecomment-5529842334 bind this correction. The exact-R validation resource for resulting revision R is bound by the current Lead ACTION_RESULT and is not replaced by any prior-cycle validation record.
 
 This is a material semantic correction. 
 
