@@ -1270,9 +1270,8 @@ class GitHubEffectAdapter:
             if number is None:
                 return False
             current = _github_json(self.repository, self.token, f"pulls/{number}")
-            return (
-                isinstance(current, Mapping)
-                and self._pull_request_matches_create(current, number, payload)
+            return isinstance(current, Mapping) and self._pull_request_matches_create(
+                current, number, payload
             )
         if operation == "pull-request-update":
             current = self._source_pull_request(cast(int, payload["number"]), require_open=True)
