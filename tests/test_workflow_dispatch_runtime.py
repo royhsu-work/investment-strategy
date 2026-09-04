@@ -179,3 +179,71 @@ def test_generated_governance_projection_has_no_second_runtime_dag() -> None:
         .lower()
     )
     assert "HANDOFF" not in workflow
+
+
+def test_preflight_excludes_daily_shards_and_unrouted_prose() -> None:
+    """Only current routed workflow Issues can make Change prose authoritative."""
+
+    checkin = {
+        "number": 142,
+        "title": "[Agent Runtime] 2026-08-24",
+        "state": "open",
+        "body": None,
+        "labels": [],
+        "created_at": "2026-08-24T04:51:39Z",
+        "closed_at": None,
+    }
+    historical_unrouted = {
+        "number": 93,
+        "title": "Historical Issue",
+        "state": "closed",
+        "body": (
+            "Change: historical-change\n\n"
+            "Examples:\n"
+            "Change: unset\n"
+            "Change: another-prose-example\n"
+        ),
+        "labels": [{"name": "human:approved"}],
+        "created_at": "2026-08-18T17:28:23Z",
+        "closed_at": "2026-08-19T12:51:55Z",
+    }
+    active = {
+        "number": 138,
+        "title": "Active Change",
+        "state": "open",
+        "body": "Change: simplify-scheduled-agent-control-plane\n",
+        "labels": [{"name": "action:finalize-change"}],
+        "created_at": "2026-08-30T18:16:07Z",
+        "closed_at": None,
+    }
+
+    preflight = runtime.acquire_from_issue_pages(
+        ((checkin, historical_unrouted, active),),
+        exhausted=True,
+    )
+
+    assert len(preflight.issues) == 2
+    assert all(issue.issue_number != 142 for issue in preflight.issues)
+    assert classify_dispatch(preflight).selected_issue_id == 138
+    assert classify_dispatch(preflight).selected_routing == ("lead", "finalize-change")
+
+
+def test_routed_change_prose_remains_strictly_qualified() -> None:
+    payload = {
+        "number": 138,
+        "title": "Active Change",
+        "state": "open",
+        "body": (
+            "Change: simplify-scheduled-agent-control-plane\n\n"
+            "Example:\n"
+            "Change: another-prose-example\n"
+        ),
+        "labels": [{"name": "action:finalize-change"}],
+        "created_at": "2026-08-30T18:16:07Z",
+        "closed_at": None,
+    }
+
+    observation = runtime.normalize_github_issue(payload)
+
+    assert observation is not None
+    assert observation.authoritative is False

@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 
 from investment_strategy.scheduled_agent_action_model import Action as ModelAction
 from investment_strategy.scheduled_agent_action_model import role_for
+from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
 from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
     EnumerationEvidence,
@@ -208,10 +209,16 @@ def normalize_github_issue(
     ):
         return None
 
+    if is_runtime_checkin_issue(payload):
+        return None
+
     labels, labels_valid = _label_names(payload)
     routing, routing_valid = _routing_from_labels(labels)
     created_order, created_valid = _created_order(payload.get("created_at"), number)
-    change, change_valid = _change_from_body(payload.get("body"))
+    if routing is None:
+        change, change_valid = "unset", True
+    else:
+        change, change_valid = _change_from_body(payload.get("body"))
     closed_valid = _github_timestamp(payload.get("closed_at"))
     return GitHubIssueObservation(
         issue_number=number,
@@ -237,7 +244,7 @@ def acquire_from_issue_pages(
         for payload in page:
             observation = normalize_github_issue(payload)
             if observation is None:
-                if "pull_request" not in payload:
+                if "pull_request" not in payload and not is_runtime_checkin_issue(payload):
                     raise RuntimeError("GitHub Issues API returned an invalid Issue observation")
                 continue
             observations.append(observation)
@@ -296,7 +303,7 @@ def _normalized_observations(
         for payload in page:
             observation = normalize_github_issue(payload)
             if observation is None:
-                if "pull_request" not in payload:
+                if "pull_request" not in payload and not is_runtime_checkin_issue(payload):
                     raise RuntimeError("GitHub Issues API returned an invalid Issue observation")
                 continue
             observations.append(observation)
