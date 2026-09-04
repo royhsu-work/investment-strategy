@@ -98,11 +98,7 @@ def _typed_successor_effect_matches(
     effect: StagedEffect,
     decision: ActionApplicationDecision,
 ) -> bool:
-    if (
-        not effect.derived
-        or decision.successor is None
-        or decision.successor_role is None
-    ):
+    if not effect.derived or decision.successor is None or decision.successor_role is None:
         return False
     payload = _effect_payload(effect)
     return payload == {
