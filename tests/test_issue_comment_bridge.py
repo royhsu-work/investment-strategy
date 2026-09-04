@@ -111,6 +111,15 @@ def test_run_scoped_result_round_trips_one_machine_decision() -> None:
     assert parsed.role == "executor"
     assert parsed.action == "implement-change"
 
+    timestamped_log = "\n".join(
+        f"2026-09-04T04:36:22.6244996Z {line}" for line in block.splitlines()
+    )
+    timestamped = bridge.parse_run_scoped_dispatch_result(
+        timestamped_log,
+        request_comment_id=987,
+    )
+    assert timestamped == parsed
+
     assert (
         bridge.parse_run_scoped_dispatch_result(f"{block}\n{block}", request_comment_id=987) is None
     )

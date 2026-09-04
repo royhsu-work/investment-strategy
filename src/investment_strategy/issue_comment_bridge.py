@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -33,6 +34,9 @@ BRIDGE_OK = "BRIDGE_OK"
 _DECISION_DISPOSITIONS = {"AUTHORIZE", "NO_WORK", "FAIL_CLOSED"}
 _ROLES = {"lead", "reviewer", "executor"}
 _MAX_REASON_LENGTH = 240
+_ACTIONS_LOG_TIMESTAMP = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z "
+)
 
 
 @dataclass(frozen=True)
@@ -57,6 +61,11 @@ class BridgePlan:
     issue_number: int | None = None
     request_comment_id: int | None = None
     result_body: str | None = None
+
+
+def _normalize_actions_log_line(line: str) -> str:
+    match = _ACTIONS_LOG_TIMESTAMP.match(line)
+    return line[match.end() :] if match is not None else line
 
 
 def parse_dispatch_request(body: str) -> DispatchRequest | None:
@@ -157,7 +166,9 @@ def parse_run_scoped_dispatch_result(
 ) -> MachineDispatchDecision | None:
     if request_comment_id <= 0:
         return None
-    lines = log.splitlines()
+    lines = [
+        _normalize_actions_log_line(line) for line in log.splitlines()
+    ]
     starts = [index for index, line in enumerate(lines) if line == RUN_RESULT_START_MARKER]
     ends = [index for index, line in enumerate(lines) if line == RUN_RESULT_END_MARKER]
     if len(starts) != 1 or len(ends) != 1 or starts[0] >= ends[0]:
