@@ -216,9 +216,7 @@ def normalize_github_issue(
         routing=routing,
         state=cast(str, state),
         created_order=created_order,
-        authoritative=all(
-            (labels_valid, routing_valid, created_valid, change_valid, closed_valid)
-        ),
+        authoritative=all((labels_valid, routing_valid, created_valid, change_valid, closed_valid)),
     )
 
 
