@@ -12,6 +12,7 @@ from investment_strategy.scheduled_agent_effect_contract import (
     allowed_github_mutation_operations,
 )
 from investment_strategy.scheduled_agent_effects import (
+    GitHubEffectAdapter,
     StagedEffect,
     apply_effect_batch,
     parse_effect_batch,
@@ -238,3 +239,103 @@ def test_transition_validator_is_not_a_runtime_dependency() -> None:
     source = inspect.getsource(apply_effect_batch)
     assert "topology" not in source
     assert "workflow_text" not in source
+
+
+def test_github_adapter_binds_pr_and_ref_targets_to_authorized_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = "royhsu-work/investment-strategy"
+    source = WorkerRequest(138, "executor", "implement-change")
+    head_sha = "b" * 40
+    issue = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "created_at": "2026-09-03T00:00:00Z",
+        "closed_at": None,
+        "labels": [{"name": "agent:executor"}, {"name": "action:implement-change"}],
+    }
+
+    def pull_request(number: int, branch: str) -> dict[str, object]:
+        return {
+            "number": number,
+            "state": "open",
+            "merged": False,
+            "body": "Implementation\n\nRefs #138\n",
+            "head": {
+                "ref": branch,
+                "sha": head_sha,
+                "repo": {"full_name": repository},
+            },
+            "base": {
+                "ref": "main",
+                "repo": {"full_name": repository},
+            },
+        }
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        **_kwargs: object,
+    ) -> object:
+        if api_path == "issues/138":
+            return issue
+        if api_path == "":
+            return {"default_branch": "main"}
+        if api_path == "pulls/178":
+            return pull_request(178, "agent/simplify-scheduled-agent-control-plane")
+        if api_path == "pulls/167":
+            return pull_request(167, "agent/other-change")
+        raise AssertionError(f"unexpected GitHub read: {api_path}")
+
+    monkeypatch.setattr(
+        "investment_strategy.scheduled_agent_effects._github_json",
+        fake_github_json,
+    )
+    adapter = GitHubEffectAdapter(
+        repository,
+        "token",
+        source,
+        authorized_change=_CHANGE,
+    )
+    correct_pr = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "pull-request-update",
+                "number": 178,
+                "expected_head_sha": head_sha,
+                "fields": {"title": "updated"},
+            }
+        ),
+    )
+    foreign_pr = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "pull-request-update",
+                "number": 167,
+                "expected_head_sha": head_sha,
+                "fields": {"title": "updated"},
+            }
+        ),
+    )
+    foreign_ref = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "ref-update",
+                "ref": "refs/heads/agent/other-change",
+                "expected_sha": head_sha,
+                "sha": "c" * 40,
+            }
+        ),
+    )
+
+    assert adapter.guard(correct_pr)
+    assert not adapter.guard(foreign_pr)
+    assert not adapter.guard(foreign_ref)

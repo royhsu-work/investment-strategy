@@ -31,6 +31,7 @@ from investment_strategy.scheduled_agent_effect_contract import (
     allowed_github_mutation_operations,
 )
 from investment_strategy.scheduled_agent_runtime import (
+    GitHubIssueObservation,
     WorkerRequest,
     acquire_current_github_preflight,
     normalize_github_issue,
@@ -226,6 +227,7 @@ _ALLOWED_ISSUE_FIELDS = frozenset({"title", "body"})
 _ALLOWED_PR_FIELDS = frozenset({"title", "body", "base"})
 _ALLOWED_MERGE_METHODS = frozenset({"merge", "squash", "rebase"})
 _SHA = re.compile(r"^[0-9a-f]{40}$")
+_CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
 
 
 def _is_nonempty_string(value: object) -> bool:
@@ -250,6 +252,41 @@ def _valid_branch(value: object) -> bool:
         and ".." not in cast(str, value)
         and "//" not in cast(str, value)
     )
+
+
+def _body_change(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    matches = _CHANGE_LINE.findall(value)
+    if len(matches) > 1:
+        return None
+    return matches[0] if matches else "unset"
+
+
+def _source_branch(change: object) -> str | None:
+    if not isinstance(change, str) or change in {"", "unset"}:
+        return None
+    branch = f"agent/{change}"
+    return branch if _valid_branch(branch) else None
+
+
+def _source_ref(change: object) -> str | None:
+    branch = _source_branch(change)
+    return None if branch is None else f"refs/heads/{branch}"
+
+
+def _references_issue(body: object, issue_number: int) -> bool:
+    return (
+        isinstance(body, str)
+        and re.search(rf"(?mi)^\s*Refs\s+#{issue_number}\s*$", body) is not None
+    )
+
+
+def _repository_full_name(value: object) -> str | None:
+    if not isinstance(value, Mapping):
+        return None
+    full_name = value.get("full_name")
+    return full_name if isinstance(full_name, str) else None
 
 
 def _valid_ref(value: object) -> bool:
@@ -286,19 +323,13 @@ def _github_mutation_structurally_valid(
     if operation not in allowed_github_mutation_operations(source.role, source.action):
         return False
 
-    if operation == "issue-create":
-        labels = payload.get("labels", [])
-        return (
-            _is_nonempty_string(payload.get("title"))
-            and isinstance(payload.get("body", ""), str)
-            and isinstance(labels, list)
-            and all(_routing_label(label) for label in labels)
-        )
     if operation == "issue-update":
         fields = payload.get("fields")
         expected = payload.get("expected")
-        return _valid_fields(fields, _ALLOWED_ISSUE_FIELDS) and (
-            expected is None or _valid_fields(expected, _ALLOWED_ISSUE_FIELDS)
+        return (
+            _valid_fields(fields, _ALLOWED_ISSUE_FIELDS)
+            and isinstance(expected, Mapping)
+            and _valid_fields(expected, _ALLOWED_ISSUE_FIELDS)
         )
     if operation == "issue-label-add":
         return _is_nonempty_string(payload.get("label")) and _routing_label(payload.get("label"))
@@ -449,6 +480,8 @@ def apply_effect_batch(
             return ApplyResult(False, "typed application rejected:terminal-effect")
 
     for effect in effects:
+        if not effect_guard(effect):
+            return ApplyResult(False, "effect precondition rejected")
         apply_effect(effect)
         if not observe_postcondition(effect):
             return ApplyResult(False, "durable postcondition not observed")
@@ -532,13 +565,20 @@ def _ref_mutation_path(ref: str) -> str:
 class GitHubEffectAdapter:
     """Production adapter for bounded durable effects requested by mapped workers."""
 
-    def __init__(self, repository: str, token: str, source: WorkerRequest) -> None:
+    def __init__(
+        self,
+        repository: str,
+        token: str,
+        source: WorkerRequest,
+        *,
+        authorized_change: str,
+    ) -> None:
         self.repository = repository
         self.token = token
         self.source = source
+        self.authorized_change = authorized_change
         self._comment_ids: dict[StagedEffect, int] = {}
         self._routing_targets: dict[StagedEffect, str] = {}
-        self._created_issue_numbers: dict[StagedEffect, int] = {}
         self._created_pr_numbers: dict[StagedEffect, int] = {}
         self._terminal_transitions: set[StagedEffect] = set()
 
@@ -550,36 +590,118 @@ class GitHubEffectAdapter:
         )
         return payload if isinstance(payload, Mapping) else None
 
+    def _authorized_issue_observation(
+        self,
+        current: Mapping[str, object] | None = None,
+    ) -> GitHubIssueObservation | None:
+        payload = self._current_issue() if current is None else current
+        if payload is None:
+            return None
+        observation = normalize_github_issue(payload)
+        if (
+            observation is None
+            or not observation.authoritative
+            or observation.issue_number != self.source.issue_number
+            or observation.state != "open"
+            or observation.routing != _routing_identity(self.source)
+            or observation.change != self.authorized_change
+        ):
+            return None
+        return observation
+
     def _source_still_current(self) -> bool:
-        current = self._current_issue()
-        if current is None:
+        return self._authorized_issue_observation() is not None
+
+    def _default_branch(self) -> str | None:
+        payload = _github_json(self.repository, self.token, "")
+        if not isinstance(payload, Mapping):
+            return None
+        branch = payload.get("default_branch")
+        return branch if _valid_branch(branch) else None
+
+    def _pull_request_matches_source(
+        self,
+        payload: Mapping[str, object],
+        number: int,
+        observation: GitHubIssueObservation,
+        default_branch: str,
+    ) -> bool:
+        head = payload.get("head")
+        base = payload.get("base")
+        if not isinstance(head, Mapping) or not isinstance(base, Mapping):
             return False
-        observation = normalize_github_issue(current)
-        return bool(
-            observation is not None
-            and observation.authoritative
-            and observation.issue_number == self.source.issue_number
-            and observation.state == "open"
-            and observation.routing == _routing_identity(self.source)
+        expected_branch = _source_branch(observation.change)
+        return (
+            payload.get("number") == number
+            and _references_issue(payload.get("body"), self.source.issue_number)
+            and expected_branch is not None
+            and head.get("ref") == expected_branch
+            and base.get("ref") == default_branch
+            and _repository_full_name(head.get("repo")) == self.repository
+            and _repository_full_name(base.get("repo")) == self.repository
         )
 
+    def _source_pull_request(
+        self,
+        number: int,
+        *,
+        require_open: bool,
+    ) -> Mapping[str, object] | None:
+        observation = self._authorized_issue_observation()
+        default_branch = self._default_branch()
+        if observation is None or default_branch is None:
+            return None
+        payload = _github_json(self.repository, self.token, f"pulls/{number}")
+        if not isinstance(payload, Mapping) or not self._pull_request_matches_source(
+            payload, number, observation, default_branch
+        ):
+            return None
+        if require_open and (payload.get("state") != "open" or payload.get("merged") is True):
+            return None
+        return payload
+
+    def _no_open_source_pull_request(self, branch: str, base: str) -> bool:
+        owner = self.repository.split("/", 1)[0]
+        query = (
+            "pulls?state=open"
+            f"&head={quote(f'{owner}:{branch}', safe='')}"
+            f"&base={quote(base, safe='')}"
+            "&per_page=100"
+        )
+        payload = _github_json(self.repository, self.token, query)
+        return isinstance(payload, list) and not payload
+
     def _guard_github_mutation(self, payload: Mapping[str, object]) -> bool:
+        observation = self._authorized_issue_observation()
+        if observation is None:
+            return False
         operation = cast(str, payload["operation"])
-        if operation in {"issue-create", "issue-label-add"}:
+        if operation == "issue-label-add":
             return True
         if operation == "issue-update":
             current_issue = self._current_issue()
-            if current_issue is None:
-                return False
+            current_observation = self._authorized_issue_observation(current_issue)
             expected = payload.get("expected")
-            return expected is None or (
-                isinstance(expected, Mapping) and _shallow_matches(current_issue, expected)
+            fields = payload.get("fields")
+            return (
+                current_issue is not None
+                and current_observation is not None
+                and isinstance(expected, Mapping)
+                and isinstance(fields, Mapping)
+                and _shallow_matches(current_issue, expected)
+                and (
+                    "body" not in fields
+                    or _body_change(fields["body"]) == self.authorized_change
+                )
             )
+        expected_ref = _source_ref(observation.change)
         if operation in {"ref-update", "ref-delete"}:
+            if expected_ref is None or payload.get("ref") != expected_ref:
+                return False
             ref_state = _github_json(
                 self.repository,
                 self.token,
-                _ref_api_path(cast(str, payload["ref"])),
+                _ref_api_path(expected_ref),
                 allow_not_found=True,
             )
             if not isinstance(ref_state, Mapping):
@@ -587,38 +709,64 @@ class GitHubEffectAdapter:
             obj = ref_state.get("object")
             return isinstance(obj, Mapping) and obj.get("sha") == payload.get("expected_sha")
         if operation == "ref-create":
+            if expected_ref is None or payload.get("ref") != expected_ref:
+                return False
             return (
                 _github_json(
                     self.repository,
                     self.token,
-                    _ref_api_path(cast(str, payload["ref"])),
+                    _ref_api_path(expected_ref),
                     allow_not_found=True,
                 )
                 is None
             )
         if operation == "pull-request-create":
+            default_branch = self._default_branch()
+            expected_branch = _source_branch(observation.change)
+            if (
+                default_branch is None
+                or expected_branch is None
+                or payload.get("head") != expected_branch
+                or payload.get("base") != default_branch
+                or not _references_issue(payload.get("body"), self.source.issue_number)
+            ):
+                return False
             head_ref = _github_json(
                 self.repository,
                 self.token,
-                _ref_api_path(f"refs/heads/{payload['head']}"),
+                _ref_api_path(f"refs/heads/{expected_branch}"),
                 allow_not_found=True,
             )
             base_ref = _github_json(
                 self.repository,
                 self.token,
-                _ref_api_path(f"refs/heads/{payload['base']}"),
+                _ref_api_path(f"refs/heads/{default_branch}"),
                 allow_not_found=True,
             )
-            return isinstance(head_ref, Mapping) and isinstance(base_ref, Mapping)
+            return (
+                isinstance(head_ref, Mapping)
+                and isinstance(base_ref, Mapping)
+                and self._no_open_source_pull_request(expected_branch, default_branch)
+            )
         if operation in {"pull-request-update", "pull-request-ready", "pull-request-merge"}:
             number = cast(int, payload["number"])
-            pr_state = _github_json(self.repository, self.token, f"pulls/{number}")
-            return (
-                isinstance(pr_state, Mapping)
-                and _pull_request_head_sha(pr_state) == payload.get("expected_head_sha")
-                and pr_state.get("state") == "open"
-                and pr_state.get("merged") is not True
-            )
+            pr_state = self._source_pull_request(number, require_open=True)
+            if pr_state is None or _pull_request_head_sha(pr_state) != payload.get(
+                "expected_head_sha"
+            ):
+                return False
+            if operation == "pull-request-update":
+                fields = payload.get("fields")
+                default_branch = self._default_branch()
+                if not isinstance(fields, Mapping) or default_branch is None:
+                    return False
+                if "base" in fields and fields["base"] != default_branch:
+                    return False
+                if "body" in fields and not _references_issue(
+                    fields["body"], self.source.issue_number
+                ):
+                    return False
+            return True
         return False
 
     def guard(self, effect: StagedEffect) -> bool:
@@ -640,13 +788,9 @@ class GitHubEffectAdapter:
             derived=effect.derived,
         ):
             raise RuntimeError("terminal transition identity is invalid")
-        current = self._current_issue()
-        observation = None if current is None else normalize_github_issue(current)
+        observation = self._authorized_issue_observation()
         if (
             observation is None
-            or not observation.authoritative
-            or observation.state != "open"
-            or observation.routing != _routing_identity(self.source)
             or observation.change != payload.get("expected_change")
         ):
             raise RuntimeError("terminal transition source is stale")
@@ -681,22 +825,6 @@ class GitHubEffectAdapter:
 
     def _apply_github_mutation(self, effect: StagedEffect, payload: Mapping[str, object]) -> None:
         operation = cast(str, payload["operation"])
-        if operation == "issue-create":
-            response = _github_json(
-                self.repository,
-                self.token,
-                "issues",
-                method="POST",
-                payload={
-                    "title": cast(str, payload["title"]),
-                    "body": cast(str, payload.get("body", "")),
-                    "labels": cast(list[object], payload.get("labels", [])),
-                },
-            )
-            if not isinstance(response, Mapping) or not isinstance(response.get("number"), int):
-                raise RuntimeError("GitHub issue creation returned no issue number")
-            self._created_issue_numbers[effect] = cast(int, response["number"])
-            return
         if operation == "issue-update":
             _github_json(
                 self.repository,
@@ -816,14 +944,8 @@ class GitHubEffectAdapter:
             target_action = cast(str, payload["action"])
             source_label = f"action:{self.source.action}"
             target_label = f"action:{target_action}"
-            current = self._current_issue()
-            observation = None if current is None else normalize_github_issue(current)
-            if (
-                observation is None
-                or not observation.authoritative
-                or observation.state != "open"
-                or observation.routing != _routing_identity(self.source)
-            ):
+            observation = self._authorized_issue_observation()
+            if observation is None:
                 raise RuntimeError("routing transition source is stale")
             if source_label != target_label:
                 _github_json(
@@ -858,28 +980,6 @@ class GitHubEffectAdapter:
         payload: Mapping[str, object],
     ) -> bool:
         operation = cast(str, payload["operation"])
-        if operation == "issue-create":
-            number = self._created_issue_numbers.get(effect)
-            if number is None:
-                return False
-            current = _github_json(self.repository, self.token, f"issues/{number}")
-            if not isinstance(current, Mapping):
-                return False
-            labels = current.get("labels")
-            names = (
-                {
-                    item.get("name")
-                    for item in labels
-                    if isinstance(item, Mapping) and isinstance(item.get("name"), str)
-                }
-                if isinstance(labels, list)
-                else set()
-            )
-            return (
-                current.get("title") == payload.get("title")
-                and current.get("body", "") == payload.get("body", "")
-                and all(label in names for label in cast(list[object], payload.get("labels", [])))
-            )
         if operation == "issue-update":
             current = self._current_issue()
             fields = payload.get("fields")
@@ -923,13 +1023,12 @@ class GitHubEffectAdapter:
             number = self._created_pr_numbers.get(effect)
             if number is None:
                 return False
-            current = _github_json(self.repository, self.token, f"pulls/{number}")
-            if not isinstance(current, Mapping):
-                return False
-            head = current.get("head")
-            base = current.get("base")
+            current = self._source_pull_request(number, require_open=True)
+            head = None if current is None else current.get("head")
+            base = None if current is None else current.get("base")
             return (
-                current.get("title") == payload.get("title")
+                current is not None
+                and current.get("title") == payload.get("title")
                 and current.get("body", "") == payload.get("body", "")
                 and current.get("draft") == payload.get("draft", False)
                 and isinstance(head, Mapping)
@@ -938,13 +1037,9 @@ class GitHubEffectAdapter:
                 and base.get("ref") == payload.get("base")
             )
         if operation == "pull-request-update":
-            current = _github_json(
-                self.repository,
-                self.token,
-                f"pulls/{cast(int, payload['number'])}",
-            )
+            current = self._source_pull_request(cast(int, payload["number"]), require_open=True)
             fields = payload.get("fields")
-            if not isinstance(current, Mapping) or not isinstance(fields, Mapping):
+            if current is None or not isinstance(fields, Mapping):
                 return False
             for key, value in fields.items():
                 if key == "base":
@@ -955,23 +1050,19 @@ class GitHubEffectAdapter:
                     return False
             return _pull_request_head_sha(current) == payload.get("expected_head_sha")
         if operation == "pull-request-ready":
-            current = _github_json(
-                self.repository,
-                self.token,
-                f"pulls/{cast(int, payload['number'])}",
-            )
+            current = self._source_pull_request(cast(int, payload["number"]), require_open=True)
             return (
-                isinstance(current, Mapping)
+                current is not None
                 and current.get("draft") is False
                 and _pull_request_head_sha(current) == payload.get("expected_head_sha")
             )
         if operation == "pull-request-merge":
-            current = _github_json(
-                self.repository,
-                self.token,
-                f"pulls/{cast(int, payload['number'])}",
+            current = self._source_pull_request(cast(int, payload["number"]), require_open=False)
+            return (
+                current is not None
+                and current.get("merged") is True
+                and _pull_request_head_sha(current) == payload.get("expected_head_sha")
             )
-            return isinstance(current, Mapping) and current.get("merged") is True
         return False
 
     def observe_postcondition(self, effect: StagedEffect) -> bool:

@@ -12,7 +12,6 @@ _ACTION_OPERATIONS: Final[dict[RoleAction, frozenset[str]]] = {
     ("lead", "propose-change"): frozenset({"issue-update", "issue-label-add"}),
     ("lead", "resolve-question"): frozenset(
         {
-            "issue-create",
             "issue-update",
             "issue-label-add",
             "pull-request-create",
@@ -21,7 +20,6 @@ _ACTION_OPERATIONS: Final[dict[RoleAction, frozenset[str]]] = {
     ),
     ("lead", "finalize-change"): frozenset(
         {
-            "issue-create",
             "issue-update",
             "issue-label-add",
             "pull-request-create",

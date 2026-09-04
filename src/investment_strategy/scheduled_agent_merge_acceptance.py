@@ -361,7 +361,14 @@ def run_effect_application(
     """Apply through shared effect guards plus an optional mutation-adjacent guard."""
 
     batch = parse_effect_batch(raw_worker_result, source)
-    adapter = GitHubEffectAdapter(repository, token, source)
+    if batch.typed_result is None:
+        return batch, ApplyResult(False, "typed application rejected:result-missing")
+    adapter = GitHubEffectAdapter(
+        repository,
+        token,
+        source,
+        authorized_change=batch.typed_result.change,
+    )
 
     def apply_with_fresh_guard(effect: StagedEffect) -> None:
         if pre_apply_guard is not None and not pre_apply_guard(effect):
