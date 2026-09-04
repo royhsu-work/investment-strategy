@@ -195,12 +195,9 @@ def test_review_pass_carries_current_default_branch_revision() -> None:
             "id": 1,
             "created_at": "2026-08-27T06:00:00Z",
             "body": (
-                "Action: Reviewer / review-implementation
-"
-                "Result: PASS
-"
-                f"Revision: {HEAD}
-"
+                "Action: Reviewer / review-implementation\n"
+                "Result: PASS\n"
+                f"Revision: {HEAD}\n"
                 f"Default-Branch-Revision: {default_revision}"
             ),
         },
