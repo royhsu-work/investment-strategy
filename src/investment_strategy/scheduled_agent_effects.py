@@ -1062,23 +1062,30 @@ class GitHubEffectAdapter:
         raise RuntimeError(f"unsupported GitHub mutation operation: {operation}")
 
     def _existing_issue_comment(self, body: str) -> int | None:
-        payload = _github_json(
-            self.repository,
-            self.token,
-            f"issues/{self.source.issue_number}/comments?per_page=100&sort=created&direction=desc",
-        )
-        if not isinstance(payload, list):
-            return None
-        for item in payload:
-            if not isinstance(item, Mapping) or item.get("body") != body:
-                continue
-            comment_id = item.get("id")
-            user = item.get("user")
-            if not isinstance(comment_id, int) or not isinstance(user, Mapping):
-                continue
-            if user.get("login") == "github-actions[bot]":
-                return comment_id
-        return None
+        page = 1
+        while True:
+            page_suffix = "" if page == 1 else f"&page={page}"
+            payload = _github_json(
+                self.repository,
+                self.token,
+                "issues/"
+                f"{self.source.issue_number}/comments?per_page=100&sort=created"
+                f"&direction=desc{page_suffix}",
+            )
+            if not isinstance(payload, list):
+                return None
+            for item in payload:
+                if not isinstance(item, Mapping) or item.get("body") != body:
+                    continue
+                comment_id = item.get("id")
+                user = item.get("user")
+                if not isinstance(comment_id, int) or not isinstance(user, Mapping):
+                    continue
+                if user.get("login") == "github-actions[bot]":
+                    return comment_id
+            if len(payload) < 100:
+                return None
+            page += 1
 
     def apply(self, effect: StagedEffect) -> None:
         payload = _effect_payload(effect)

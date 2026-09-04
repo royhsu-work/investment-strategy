@@ -807,3 +807,70 @@ def test_application_archive_workflow_dispatch_is_exact_revision_and_idempotent(
             },
         }
     ]
+
+def test_issue_comment_reuses_existing_bot_comment_on_later_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = "royhsu-work/investment-strategy"
+    source = WorkerRequest(138, "lead", "finalize-change")
+    body = (
+        "ARCHIVE_REQUEST
+"
+        "Workflow: #138
+"
+        f"Change: {_CHANGE}
+"
+        "Action: finalize-change
+"
+        f"Revision: {_REVISION}"
+    )
+    existing = {
+        "id": 992,
+        "body": body,
+        "user": {"login": "github-actions[bot]"},
+    }
+    first_page = [
+        {"id": index, "body": f"unrelated-{index}", "user": {"login": "github-actions[bot]"}}
+        for index in range(100)
+    ]
+    calls: list[str] = []
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        del method, payload
+        calls.append(api_path)
+        if api_path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            return first_page
+        if api_path == (
+            "issues/138/comments?per_page=100&sort=created&direction=desc&page=2"
+        ):
+            return [existing]
+        if api_path == "issues/comments/992":
+            return existing
+        raise AssertionError(f"unexpected GitHub call: {api_path}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        repository,
+        "token",
+        source,
+        authorized_change=_CHANGE,
+    )
+    effect = StagedEffect(
+        kind="issue-comment",
+        payload_json=json.dumps({"issue_number": 138, "body": body}),
+    )
+
+    adapter.apply(effect)
+    assert calls == [
+        "issues/138/comments?per_page=100&sort=created&direction=desc",
+        "issues/138/comments?per_page=100&sort=created&direction=desc&page=2",
+    ]
+    assert adapter.observe_postcondition(effect)
