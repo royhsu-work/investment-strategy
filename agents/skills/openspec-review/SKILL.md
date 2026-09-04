@@ -46,3 +46,5 @@ This repository Skill guidance is procedural input, not runtime authority.
 Reviewers must preserve every still-applicable scenario/content when evaluating a MODIFIED requirement. Successful mechanical OpenSpec validation is not semantic PASS evidence; semantic review remains independent.
 
 Reviewer semantic uncertainty fails closed; a missing or contradictory review context cannot be treated as acceptance.
+
+Reviewer must fail closed when semantic context is incomplete.
