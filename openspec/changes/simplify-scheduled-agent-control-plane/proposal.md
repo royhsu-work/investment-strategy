@@ -81,11 +81,19 @@ This correction is based on:
 - the independent safety evidence retained by the existing Change history;
 - prior Lead readiness result issuecomment-5529602299 and prior exact validation run 33785030285, job 100747605621, correlation validation-resource-request-5529577659, all retained as historical pre-correction evidence;
 - prior Reviewer finding issuecomment-5529497150 and prior-cycle Reviewer finding issuecomment-5529644414, retained as historical correction-chain evidence; and
-- current F3 finding issuecomment-5529815334 and current Lead dispatch decision issuecomment-5529842334 bind this correction. The exact-R validation resource for resulting revision R is bound by the current Lead ACTION_RESULT and is not replaced by any prior-cycle validation record.
+- F3 finding issuecomment-5529815334 and Lead dispatch decision issuecomment-5529842334 are retained as historical semantic-correction evidence; independent OpenSpec PASS issuecomment-5530202353 accepted the corrected artifact checkpoint before implementation began. The current implementation checkpoint is e0fb3f0079cf664a60d43e37ecced5d5f6e5d531; any later exact revision requires fresh validation and review evidence.
 
 This is a material semantic correction. 
 
-The causal same-Issue Explore result remains `issuecomment-5482546619` (`PROPOSAL_READY`) with supporting architecture evidence `issuecomment-5474475020` and transport evidence `issuecomment-5442745071`. Earlier Human clarifications `issuecomment-5475109024`, `issuecomment-5477274582`, and `issuecomment-5507379401` remain provenance for the bounded history; the newer Human reset `issuecomment-5528834334` is the controlling current semantic direction and supersedes conflicting mechanism choices. Lead is authoring the existing Change artifacts; independent Reviewer / review-openspec must review the resulting exact revision before implementation resumes. No duplicate Change or PR is created.
+The causal same-Issue Explore result remains `issuecomment-5482546619` (`PROPOSAL_READY`) with supporting architecture evidence `issuecomment-5474475020` and transport evidence `issuecomment-5442745071`. Earlier Human clarifications `issuecomment-5475109024`, `issuecomment-5477274582`, and `issuecomment-5507379401` remain provenance for the bounded history; the newer Human reset `issuecomment-5528834334` is the controlling current semantic direction and supersedes conflicting mechanism choices. Lead authored the existing Change artifacts and the independent Reviewer / review-openspec PASS preceded implementation. The current implementation now proceeds through the independent review-implementation gate; no duplicate Change or PR is created.
+
+## Implementation checkpoint evidence
+
+- Fresh default branch observed: `main@e8c3dc7b256bc167217e25a397e98181bdf6f123`.
+- Implementation checkpoint observed on PR #178: `e0fb3f0079cf664a60d43e37ecced5d5f6e5d531`.
+- Python Quality run `33819765763` passed at that checkpoint: 419 tests passed, Ruff lint passed, Ruff format passed, and mypy reported no issues in 110 source files.
+- The unchanged OpenSpec artifact checkpoint `31eaffb0a37b5f676c0099f40277b3808b37c344` passed strict OpenSpec validation in run `33807567484`; the checklist/evidence refresh in this commit requires a new exact-revision validation run.
+- Current #138 still carries the historical `agent:executor` label and the PR is not merged; those deployment-bound facts are retained as migration evidence. They do not reintroduce role labels into the target model.
 
 ## Impact
 
