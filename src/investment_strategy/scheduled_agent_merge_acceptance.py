@@ -36,7 +36,10 @@ from investment_strategy.scheduled_agent_runtime import (
     acquire_current_github_preflight,
 )
 
-_REVIEW_ACTIONS = ("review-implementation", "review-archive")
+_MERGE_REVIEW_ACTION = {
+    "merge-implementation-pr": "review-implementation",
+    "merge-archive-pr": "review-archive",
+}
 _ACCEPTED_CHECK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
 
 PreApplyGuard = Callable[[StagedEffect], bool]
@@ -161,6 +164,8 @@ def _review_record(body: object) -> tuple[str, str, str] | None:
 def _latest_matching_pass(
     comments: tuple[Mapping[str, object], ...],
     expected_head_sha: str,
+    *,
+    required_review_action: str,
 ) -> tuple[str | None, str | None, datetime | None, bool, bool]:
     records: list[tuple[datetime, int, str, str, str]] = []
     complete = True
@@ -177,7 +182,11 @@ def _latest_matching_pass(
         records.append((created_at, comment_id, action, result, revision))
 
     matching = [record for record in records if record[4] == expected_head_sha]
-    passes = [record for record in matching if record[3] == "PASS" and record[2] in _REVIEW_ACTIONS]
+    passes = [
+        record
+        for record in matching
+        if record[3] == "PASS" and record[2] == required_review_action
+    ]
     if not passes:
         return None, None, None, False, complete
 
@@ -264,6 +273,7 @@ def acquire_merge_acceptance_snapshot(
     pr_number: int,
     expected_head_sha: str,
     merge_strategy: MergeStrategy,
+    required_review_action: str,
 ) -> MergeAcceptanceSnapshot:
     """Acquire current GitHub evidence for one staged merge immediately before application."""
 
@@ -280,7 +290,11 @@ def acquire_merge_acceptance_snapshot(
         )
 
     reviewer_pass_head, review_action, pass_time, contradiction, review_complete = (
-        _latest_matching_pass(comments, expected_head_sha)
+        _latest_matching_pass(
+            comments,
+            expected_head_sha,
+            required_review_action=required_review_action,
+        )
     )
     try:
         checks_pass, checks_complete = _required_checks_pass(repository, token, expected_head_sha)
@@ -328,6 +342,9 @@ def _merge_effect_allows(
     number = payload.get("number")
     expected_head_sha = payload.get("expected_head_sha")
     merge_method = payload.get("merge_method", "merge")
+    required_review_action = _MERGE_REVIEW_ACTION.get(source.action)
+    if required_review_action is None:
+        return False
     if (
         not isinstance(number, int)
         or not isinstance(expected_head_sha, str)
@@ -345,6 +362,7 @@ def _merge_effect_allows(
         pr_number=number,
         expected_head_sha=expected_head_sha,
         merge_strategy=merge_strategy,
+        required_review_action=required_review_action,
     )
     return merge_acceptance_allows(snapshot)
 

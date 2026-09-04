@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
+import investment_strategy.scheduled_agent_runtime as runtime
+
 from pathlib import Path
 
 from investment_strategy.scheduled_agent_action_model import Action
@@ -47,6 +51,8 @@ def _issue(
     *,
     change: str = "simplify-scheduled-agent-control-plane",
     order: int = 1,
+    state: str = "open",
+    routing_debt: bool = False,
 ) -> GitHubIssueObservation:
     routing: tuple[Role, WorkflowAction] | None
     if action is None:
@@ -62,9 +68,10 @@ def _issue(
         issue_number=number,
         change=change,
         routing=routing,
-        state="open",
+        state=state,
         created_order=order,
         authoritative=True,
+        routing_debt=routing_debt,
     )
 
 
@@ -90,6 +97,45 @@ def test_wip_and_incomplete_observations_fail_closed() -> None:
     )
     assert classify_dispatch(incomplete).disposition == "FAIL_CLOSED"
     assert classify_dispatch(incomplete).completeness == "INDETERMINATE"
+
+
+def test_closed_routing_debt_fails_closed_before_selection() -> None:
+    preflight = _preflight(
+        (_issue(138, "implement-change", state="closed", routing_debt=True),)
+    )
+
+    decision = classify_dispatch(preflight)
+
+    assert decision.disposition == "FAIL_CLOSED"
+    assert decision.reason == "closed-routing-debt"
+
+
+def test_production_preflight_enumerates_closed_routing_debt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested_urls: list[str] = []
+
+    def fake_page(url: str, token: str) -> tuple[dict[str, object], ...]:
+        del token
+        requested_urls.append(url)
+        return (
+            {
+                "number": 138,
+                "state": "closed",
+                "body": "Change: simplify-scheduled-agent-control-plane\n",
+                "created_at": "2026-09-03T00:00:00Z",
+                "closed_at": "2026-09-03T01:00:00Z",
+                "labels": [{"name": "action:implement-change"}],
+            },
+        )
+
+    monkeypatch.setattr(runtime, "_github_get_list_page", fake_page)
+    preflight = runtime.acquire_current_github_preflight("owner/repo", "token")
+
+    assert requested_urls == [
+        "https://api.github.com/repos/owner/repo/issues?state=all&per_page=100&page=1"
+    ]
+    assert classify_dispatch(preflight).reason == "closed-routing-debt"
 
 
 def test_shadow_is_a_pure_comparison_of_the_same_executable_model() -> None:

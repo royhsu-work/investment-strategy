@@ -178,6 +178,7 @@ class IssueObservation:
     change: str | None
     action: Action | str | None
     created_order: int = 0
+    routing_debt: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -503,6 +504,8 @@ def select_work(observations: AuthoritativeObservations) -> SelectionDecision:
             return _selection(SelectionDisposition.FAIL_CLOSED, "change-identity-invalid")
         if not isinstance(issue.created_order, int) or isinstance(issue.created_order, bool):
             return _selection(SelectionDisposition.FAIL_CLOSED, "ordering-invalid")
+        if not isinstance(issue.routing_debt, bool):
+            return _selection(SelectionDisposition.FAIL_CLOSED, "routing-debt-invalid")
 
         normalized_action: Action | None = None
         if issue.action is not None:
@@ -512,6 +515,8 @@ def select_work(observations: AuthoritativeObservations) -> SelectionDecision:
                 return _selection(SelectionDisposition.FAIL_CLOSED, "action-invalid")
 
         if issue.state != IssueState.OPEN:
+            if issue.routing_debt:
+                return _selection(SelectionDisposition.FAIL_CLOSED, "closed-routing-debt")
             continue
 
         has_change = not _is_unset_change(issue.change)

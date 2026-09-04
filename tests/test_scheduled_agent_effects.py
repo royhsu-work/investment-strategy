@@ -235,10 +235,151 @@ def test_supported_effect_guard_rejects_content_and_routing_label_mutation() -> 
     assert not supported_effect_guard(source, label)
 
 
+@pytest.mark.parametrize("label", ("human:approved", "intake:approved"))
+def test_worker_cannot_mutate_reserved_authority_labels(label: str) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    effect = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "issue-label-add",
+                "label": label,
+            }
+        ),
+    )
+
+    assert not supported_effect_guard(source, effect)
+
+
 def test_transition_validator_is_not_a_runtime_dependency() -> None:
     source = inspect.getsource(apply_effect_batch)
     assert "topology" not in source
     assert "workflow_text" not in source
+
+
+def test_routing_transition_replaces_all_routing_labels_atomically(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = "royhsu-work/investment-strategy"
+    source = WorkerRequest(138, "executor", "implement-change")
+    issue: dict[str, object] = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "created_at": "2026-09-03T00:00:00Z",
+        "closed_at": None,
+        "labels": [
+            {"name": "agent:executor"},
+            {"name": "action:implement-change"},
+            {"name": "human:notified"},
+            {"name": "priority"},
+        ],
+    }
+    patches: list[dict[str, object]] = []
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        **_kwargs: object,
+    ) -> object:
+        if api_path == "issues/138" and method == "GET":
+            return json.loads(json.dumps(issue))
+        if api_path == "issues/138" and method == "PATCH":
+            assert payload is not None
+            patches.append(payload)
+            issue["labels"] = [{"name": name} for name in payload["labels"]]
+            return json.loads(json.dumps(issue))
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
+
+    monkeypatch.setattr(
+        "investment_strategy.scheduled_agent_effects._github_json",
+        fake_github_json,
+    )
+    adapter = GitHubEffectAdapter(
+        repository,
+        "token",
+        source,
+        authorized_change=_CHANGE,
+    )
+    effect = StagedEffect(
+        kind="routing-transition",
+        payload_json=json.dumps({"issue_number": 138, "action": "resolve-question"}),
+        derived=True,
+    )
+
+    adapter.apply(effect)
+
+    assert patches == [
+        {
+            "labels": ["human:notified", "priority", "action:resolve-question"],
+        }
+    ]
+    assert adapter.observe_postcondition(effect)
+
+
+def test_terminal_transition_closes_and_clears_routing_atomically(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = "royhsu-work/investment-strategy"
+    source = WorkerRequest(138, "lead", "finalize-archive")
+    issue: dict[str, object] = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "created_at": "2026-09-03T00:00:00Z",
+        "closed_at": None,
+        "labels": [
+            {"name": "agent:lead"},
+            {"name": "action:finalize-archive"},
+            {"name": "human:notified"},
+        ],
+    }
+    patches: list[dict[str, object]] = []
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        **_kwargs: object,
+    ) -> object:
+        if api_path == "issues/138" and method == "GET":
+            return json.loads(json.dumps(issue))
+        if api_path == "issues/138" and method == "PATCH":
+            assert payload is not None
+            patches.append(payload)
+            issue["state"] = payload["state"]
+            issue["labels"] = [{"name": name} for name in payload["labels"]]
+            return json.loads(json.dumps(issue))
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
+
+    monkeypatch.setattr(
+        "investment_strategy.scheduled_agent_effects._github_json",
+        fake_github_json,
+    )
+    adapter = GitHubEffectAdapter(
+        repository,
+        "token",
+        source,
+        authorized_change=_CHANGE,
+    )
+    effect = StagedEffect(
+        kind="terminal-transition",
+        payload_json=json.dumps({"issue_number": 138, "expected_change": _CHANGE}),
+        derived=True,
+    )
+
+    adapter.apply(effect)
+
+    assert patches == [{"state": "closed", "labels": ["human:notified"]}]
+    assert adapter.observe_postcondition(effect)
 
 
 def test_github_adapter_binds_pr_and_ref_targets_to_authorized_change(

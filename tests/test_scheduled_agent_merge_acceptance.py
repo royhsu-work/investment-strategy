@@ -147,6 +147,34 @@ def test_corrected_successor_requires_new_exact_head_review_checks_and_preflight
     assert merge_acceptance_allows(fully_regated)
 
 
+def test_merge_action_requires_its_matching_review_action() -> None:
+    comments = (
+        {
+            "id": 1,
+            "created_at": "2026-08-27T06:00:00Z",
+            "body": (
+                "Action: Reviewer / review-archive\n"
+                "Result: PASS\n"
+                f"Revision: {HEAD}"
+            ),
+        },
+    )
+
+    implementation = merge_acceptance._latest_matching_pass(
+        comments,
+        HEAD,
+        required_review_action="review-implementation",
+    )
+    archive = merge_acceptance._latest_matching_pass(
+        comments,
+        HEAD,
+        required_review_action="review-archive",
+    )
+
+    assert implementation[0] is None
+    assert archive[0] == HEAD
+
+
 def test_native_close_recurrence_is_rejected_before_durable_merge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -160,6 +160,13 @@ def _valid_branch(value: object) -> bool:
     )
 
 
+def _source_branch(change: object) -> str | None:
+    if not isinstance(change, str) or change in {"", "unset"}:
+        return None
+    branch = f"agent/{change}"
+    return branch if _valid_branch(branch) else None
+
+
 def _valid_repo_path(value: object) -> bool:
     if not isinstance(value, str) or not value or value != value.strip():
         return False
@@ -566,6 +573,14 @@ def _pr_has_nonclosing_issue_link(body: object, issue_number: int) -> bool:
     return pattern.search(body) is not None
 
 
+def _current_default_branch(repository: str, token: str) -> str:
+    payload = _as_mapping(cast(object, _github_json(repository, token, "")))
+    branch = None if payload is None else payload.get("default_branch")
+    if not _valid_branch(branch):
+        raise RuntimeError("validation resource repository default branch is incomplete")
+    return cast(str, branch)
+
+
 def _open_pr_payload(
     *,
     repository: str,
@@ -575,6 +590,12 @@ def _open_pr_payload(
     expected_change: str,
     default_branch: str,
 ) -> Mapping[str, object]:
+    if _current_default_branch(repository, token) != default_branch:
+        raise RuntimeError("validation resource repository default branch changed")
+    expected_branch = _source_branch(expected_change)
+    if expected_branch is None:
+        raise RuntimeError("validation resource Change branch is invalid")
+
     issue = _as_mapping(
         cast(object, _github_json(repository, token, f"issues/{source.issue_number}"))
     )
@@ -593,12 +614,14 @@ def _open_pr_payload(
     head_repo = None if head is None else _as_mapping(head.get("repo"))
     base_repo = None if base is None else _as_mapping(base.get("repo"))
     if (
-        head is None
+        pr.get("number") != pr_number
+        or head is None
         or base is None
         or head_repo is None
         or base_repo is None
         or head_repo.get("full_name") != repository
         or base_repo.get("full_name") != repository
+        or head.get("ref") != expected_branch
         or base.get("ref") != default_branch
         or not _pr_has_nonclosing_issue_link(pr.get("body"), source.issue_number)
     ):
@@ -764,6 +787,9 @@ def apply_work_product(
         raise RuntimeError("work-product plan is incomplete")
     if _current_authorized_request(repository, token) != plan.source:
         raise RuntimeError("work-product source dispatch is stale")
+    expected_branch = _source_branch(plan.expected_change)
+    if expected_branch is None or plan.manifest.branch != expected_branch:
+        raise RuntimeError("work-product branch is not bound to source Change")
     if not plan.manifest.files or not all(
         work_product_path_allowed(plan.source, plan.expected_change, file.path)
         for file in plan.manifest.files
@@ -901,15 +927,18 @@ def apply_work_product(
 
     if _ref_head_sha(repository, token, plan.manifest.branch) != revision:
         raise RuntimeError("work-product ref postcondition was not observed")
-    observed_pr = _as_mapping(
-        cast(object, _github_json(repository, token, f"pulls/{plan.pr_number}"))
+    observed_pr = _open_pr_payload(
+        repository=repository,
+        token=token,
+        pr_number=plan.pr_number,
+        source=plan.source,
+        expected_change=plan.expected_change,
+        default_branch=default_branch,
     )
-    observed_head = None if observed_pr is None else _as_mapping(observed_pr.get("head"))
+    observed_head = _as_mapping(observed_pr.get("head"))
     if (
-        observed_pr is None
-        or observed_pr.get("state") != "open"
-        or observed_head is None
-        or observed_head.get("ref") != plan.manifest.branch
+        observed_head is None
+        or observed_head.get("ref") != expected_branch
         or observed_head.get("sha") != revision
     ):
         raise RuntimeError("work-product PR-head postcondition was not observed")

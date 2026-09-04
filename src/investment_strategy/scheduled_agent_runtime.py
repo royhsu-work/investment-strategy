@@ -25,6 +25,7 @@ from investment_strategy.workflow_dispatch import (
 
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
 _ACTION_LABELS = {f"action:{action.value}": action.value for action in ModelAction}
+_ROUTING_LABEL_PREFIXES = ("agent:", "action:")
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,7 @@ class GitHubIssueObservation:
     state: str
     created_order: int
     authoritative: bool
+    routing_debt: bool = False
 
 
 @dataclass(frozen=True)
@@ -94,6 +96,7 @@ def acquire_dispatch_preflight(
                     if observation.authoritative
                     else ObservationProvenance.INDETERMINATE
                 ),
+                routing_debt=observation.routing_debt,
             )
             for observation in observations
         ),
@@ -217,6 +220,7 @@ def normalize_github_issue(
         state=cast(str, state),
         created_order=created_order,
         authoritative=all((labels_valid, routing_valid, created_valid, change_valid, closed_valid)),
+        routing_debt=any(name.startswith(_ROUTING_LABEL_PREFIXES) for name in labels),
     )
 
 
@@ -266,7 +270,7 @@ def _github_get_list_page(url: str, token: str) -> tuple[Mapping[str, object], .
     return tuple(items)
 
 
-def _github_open_issue_pages(
+def _github_issue_pages(
     repository: str,
     token: str,
 ) -> tuple[tuple[Mapping[str, object], ...], ...]:
@@ -274,7 +278,7 @@ def _github_open_issue_pages(
     page = 1
     while True:
         items = _github_get_list_page(
-            f"https://api.github.com/repos/{repository}/issues?state=open&per_page=100&page={page}",
+            f"https://api.github.com/repos/{repository}/issues?state=all&per_page=100&page={page}",
             token,
         )
         pages.append(items)
@@ -304,10 +308,10 @@ def acquire_current_github_preflight(
     *,
     repository_root: object | None = None,
 ) -> DispatchPreflight:
-    """Fresh-read only the current open coordination-Issue surface."""
+    """Fresh-read the complete current coordination-Issue surface, including closed debt."""
 
     del repository_root
-    observations = _normalized_observations(_github_open_issue_pages(repository, token))
+    observations = _normalized_observations(_github_issue_pages(repository, token))
     return acquire_dispatch_preflight(
         observations=observations,
         source_total_count=len(observations),

@@ -221,10 +221,18 @@ def test_workflow_presentation_is_exactly_model_generated() -> None:
         ),
         (
             AuthoritativeObservations(
-                issues=(IssueObservation(1, "closed", "closed-debt", Action.IMPLEMENT_CHANGE),)
+                issues=(
+                    IssueObservation(
+                        1,
+                        "closed",
+                        "closed-debt",
+                        Action.IMPLEMENT_CHANGE,
+                        routing_debt=True,
+                    ),
+                ),
             ),
-            SelectionDisposition.NO_WORK,
-            "no-routed-work",
+            SelectionDisposition.FAIL_CLOSED,
+            "closed-routing-debt",
         ),
         (
             AuthoritativeObservations(

@@ -22,6 +22,7 @@ from investment_strategy.scheduled_agent_action_model import (
     ApplicationRejection,
     BoundedActionResult,
     plan_action_application,
+    role_for,
 )
 from investment_strategy.scheduled_agent_action_model import (
     ObservationProvenance as ModelObservationProvenance,
@@ -305,10 +306,11 @@ def _valid_fields(value: object, allowed: frozenset[str]) -> bool:
 
 
 _ROUTING_LABEL_PREFIXES = tuple(f"{name}:" for name in ("agent", "action"))
+_RESERVED_ISSUE_LABEL_PREFIXES = _ROUTING_LABEL_PREFIXES + ("human:", "intake:")
 
 
 def _routing_label(value: object) -> bool:
-    return isinstance(value, str) and not value.startswith(_ROUTING_LABEL_PREFIXES)
+    return isinstance(value, str) and not value.startswith(_RESERVED_ISSUE_LABEL_PREFIXES)
 
 
 def _github_mutation_structurally_valid(
@@ -434,6 +436,31 @@ def supported_effect_guard(source: WorkerRequest, effect: StagedEffect) -> bool:
 
 def _routing_identity(request: WorkerRequest) -> tuple[str, str]:
     return request.role, request.action
+
+
+def _issue_label_names(payload: Mapping[str, object]) -> tuple[str, ...] | None:
+    raw = payload.get("labels")
+    if not isinstance(raw, list):
+        return None
+    names: list[str] = []
+    for item in raw:
+        if not isinstance(item, Mapping) or not isinstance(item.get("name"), str):
+            return None
+        names.append(cast(str, item["name"]))
+    return tuple(names)
+
+
+def _transition_labels(
+    payload: Mapping[str, object],
+    target_action: str | None,
+) -> list[str] | None:
+    names = _issue_label_names(payload)
+    if names is None:
+        return None
+    labels = [name for name in names if not name.startswith(_ROUTING_LABEL_PREFIXES)]
+    if target_action is not None:
+        labels.append(f"action:{target_action}")
+    return labels
 
 
 def apply_effect_batch(
@@ -766,25 +793,21 @@ class GitHubEffectAdapter:
             derived=effect.derived,
         ):
             raise RuntimeError("terminal transition identity is invalid")
-        observation = self._authorized_issue_observation()
-        if observation is None or observation.change != payload.get("expected_change"):
+        current = self._current_issue()
+        observation = self._authorized_issue_observation(current)
+        labels = None if current is None else _transition_labels(current, None)
+        if (
+            observation is None
+            or labels is None
+            or observation.change != payload.get("expected_change")
+        ):
             raise RuntimeError("terminal transition source is stale")
         _github_json(
             self.repository,
             self.token,
             f"issues/{self.source.issue_number}",
             method="PATCH",
-            payload={"state": "closed"},
-        )
-        closed = self._current_issue()
-        if closed is None or closed.get("state") != "closed":
-            raise RuntimeError("terminal transition close postcondition not observed")
-        label = f"action:{self.source.action}"
-        _github_json(
-            self.repository,
-            self.token,
-            f"issues/{self.source.issue_number}/labels/{quote(label, safe='')}",
-            method="DELETE",
+            payload={"state": "closed", "labels": labels},
         )
         final = self._current_issue()
         final_observation = None if final is None else normalize_github_issue(final)
@@ -794,6 +817,7 @@ class GitHubEffectAdapter:
             or final_observation.state != "closed"
             or final_observation.change != payload.get("expected_change")
             or final_observation.routing is not None
+            or final_observation.routing_debt
         ):
             raise RuntimeError("terminal transition postcondition not observed")
         self._terminal_transitions.add(effect)
@@ -898,26 +922,25 @@ class GitHubEffectAdapter:
             return
 
         if effect.kind == "routing-transition":
+            if not _routing_transition_structurally_valid(
+                self.source,
+                payload,
+                derived=effect.derived,
+            ):
+                raise RuntimeError("routing transition identity is invalid")
             target_action = cast(str, payload["action"])
-            source_label = f"action:{self.source.action}"
-            target_label = f"action:{target_action}"
-            observation = self._authorized_issue_observation()
-            if observation is None:
+            current = self._current_issue()
+            observation = self._authorized_issue_observation(current)
+            labels = None if current is None else _transition_labels(current, target_action)
+            if observation is None or labels is None:
                 raise RuntimeError("routing transition source is stale")
-            if source_label != target_label:
-                _github_json(
-                    self.repository,
-                    self.token,
-                    f"issues/{self.source.issue_number}/labels/{quote(source_label, safe='')}",
-                    method="DELETE",
-                )
-                _github_json(
-                    self.repository,
-                    self.token,
-                    f"issues/{self.source.issue_number}/labels",
-                    method="POST",
-                    payload={"labels": [target_label]},
-                )
+            _github_json(
+                self.repository,
+                self.token,
+                f"issues/{self.source.issue_number}",
+                method="PATCH",
+                payload={"labels": labels},
+            )
             self._routing_targets[effect] = target_action
             return
 
@@ -1035,16 +1058,20 @@ class GitHubEffectAdapter:
             target_action = self._routing_targets.get(effect)
             current = self._current_issue()
             observation = None if current is None else normalize_github_issue(current)
+            try:
+                target_role = None if target_action is None else role_for(
+                    ModelAction(target_action)
+                ).value
+            except ValueError:
+                target_role = None
             return bool(
                 target_action is not None
+                and target_role is not None
                 and observation is not None
                 and observation.authoritative
                 and observation.state == "open"
-                and observation.routing
-                == (
-                    self.source.role,
-                    target_action,
-                )
+                and not observation.routing_debt
+                and observation.routing == (target_role, target_action)
             )
 
         if effect.kind == "terminal-transition":
@@ -1059,6 +1086,7 @@ class GitHubEffectAdapter:
                 and observation.state == "closed"
                 and observation.change == payload.get("expected_change")
                 and observation.routing is None
+                and not observation.routing_debt
             )
 
         if effect.kind == GITHUB_MUTATION_KIND:

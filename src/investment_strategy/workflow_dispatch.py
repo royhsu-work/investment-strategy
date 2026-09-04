@@ -62,6 +62,7 @@ class RepositoryIssueSnapshot:
     state: Literal["open", "closed"] = "open"
     created_order: int = 0
     current_state_provenance: ObservationProvenance = ObservationProvenance.QUALIFIED
+    routing_debt: bool = False
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,7 @@ def _model_observations(preflight: DispatchPreflight) -> AuthoritativeObservatio
                 change=issue.change,
                 action=None if issue.routing is None else issue.routing[1],
                 created_order=issue.created_order,
+                routing_debt=issue.routing_debt,
             )
             for issue in preflight.issues
         ),
