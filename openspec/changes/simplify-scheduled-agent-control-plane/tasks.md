@@ -1,8 +1,8 @@
 ## Delivery invariant
 
-#138 is one parent outcome. Every stage MUST be independently executable/testable/mergeable/deployable on then-current N-1 or be split. Order: **1A exact-R validation → 1B run-scoped transport/daily check-in → 1C PR carrier boundary → 2 kernel shadow → 3 typed application → 4 one-Action wake → 5 canonical cutover/source retirement → 6 deletion/context reduction**.
+#138 is one parent outcome. Every stage MUST be independently executable/testable/mergeable/deployable on then-current N-1 or be split. Order: **1A exact-R validation → 1B content-addressed work-product ingress/self-hosting → 1C run-scoped transport/daily check-in → 1D identity-sensitive PR carrier → 2 kernel shadow → 3 typed application → 4 one-Action wake → 5 canonical cutover/source retirement → 6 deletion/context reduction**.
 
-Stage 1A is the materially revised Resolve action's exact-handoff semantic-review prerequisite. Stages 1B/1C remain mandatory before Stage 2 but add no separate semantic OpenSpec review gate after valid Stage-1A evidence.
+Stage 1A is the materially revised Resolve action's exact-handoff semantic-review prerequisite. Stage 1B preserves the distinct work-product ingress/application-completion boundary and production live-E2E obligation established by the M0 bootstrap. Stages 1C/1D remain mandatory before Stage 2 but add no separate semantic OpenSpec review gate after valid Stage-1A evidence.
 
 Within each machine-authorized Action, plan the primary execution objective as one bounded verified vertical slice: `Reconstruct → RED exact gap/blocker → GREEN legal correction → VERIFY exact postcondition/revision/gate → durable checkpoint`. A file write, API call, Actions run, or first nonterminal resource is not a completed slice. If the slice cannot reasonably reach VERIFY in one normal invocation, split it before execution at a meaningful outcome boundary rather than fragmenting it opportunistically.
 
@@ -20,28 +20,39 @@ Advances exact-R readiness for newly produced and already-current heads. Boundar
 - [x] 1A.8 REFACTOR — no model wake, manual approval, stale CI, connector bypass, dummy-touch, source whitelist, or polling scheduler.
 - [ ] 1A.9 VERIFY — live N-1 closed loop covers both target forms and retains both RED regressions.
 
-## 1B. Run-scoped transport + daily check-in
+## 1B. Content-addressed work-product ingress / self-hosting
 
-Advances #168 exact run-scoped transport and daily check-in lifecycle. N-1: 1A deployed. Boundary: transport/discovery only. Next: 1C.
+Advances repository-owned OpenSpec work-product ingress/application completion without turning Issue comments, semantic workers, or mutation carriers into workflow authority. N-1: 1A deployed plus the bounded M0 bootstrap on current default branch. Boundary: work-product ingress, exact revision construction, and application-owned completion only; control/request transport, run-scoped result transport, and identity-sensitive PR carrier remain separate. Next: 1C.
 
-- [ ] 1B.1 RED — require exact request→run→structured-result correlation; reject `latest`, timing/title inference, response fallback, and incomplete/failed evidence.
-- [ ] 1B.2 RED — require exactly one open `Asia/Taipei` current-day check-in from current GitHub state; reject zero/duplicate/ambiguous identity and permanent-pointer dependence.
-- [ ] 1B.3 GREEN/REFACTOR — establish+observe today before closing prior check-ins; preserve in-flight prior-day correlation; runtime comments become request/trigger/audit only; remove response-mailbox and permanent pointer coupling.
-- [ ] 1B.4 VERIFY — live Scheduled Task E2E proves current-day discovery, exact run-scoped dispatch/application/validation result, rollover, no response mailbox, and no model API in Actions.
+- [ ] 1B.1 RED — reject full source/spec/test content as Issue-comment persistence transport; require a bounded manifest carrying only exact branch/base identity plus path, referenced blob SHA, and current expected blob SHA for each changed file.
+- [ ] 1B.2 RED — reject stale PR head/base, stale current-file SHA, missing/mismatched referenced blob, duplicate/escaping path, force update, or any worker-created tree/commit/ref as authoritative application.
+- [ ] 1B.3 GREEN — semantic worker may create only unreferenced Git blobs as untrusted work-product ingress; repository application fresh-reauthorizes the exact source Action, verifies current Issue/Change/PR/branch/base/path/current-blob identities, uses application-owned tree construction as the first cross-credential resolution boundary for referenced blob SHAs, fresh-observes exact path/blob mappings before commit, builds one single commit revision `R`, advances only the exact current branch without force, and fresh-observes ref/PR/commit/file postconditions.
+- [ ] 1B.4 GREEN — application exposes the resulting exact `R` to the same exact-revision validation boundary and owns canonical cross-role `HANDOFF` persistence only after source `ACTION_RESULT`, routing mutation, and target routing are durably observed.
+- [ ] 1B.5 REFACTOR — keep control/request transport, work-product ingress, effect/revision authorization, mutation-carrier execution, run-scoped result transport, and postcondition observation as distinct replaceable boundaries; direct application-side blob GET is not required for cross-credential existence, transient ingress is not durable workflow state, and the ingress/carrier gains no Issue/Action/successor/retry/success authority.
+- [ ] 1B.6 VERIFY — live N-1 E2E proves connector-created content-addressed ingress → application-owned tree resolution → single revision `R` → exact-R strict validation and, for a cross-role transfer, application-owned canonical HANDOFF; stale/unavailable/mismatched inputs fail closed. M0 PRs #189/#190 are prerequisite/buildability evidence and do not by themselves complete this formal stage or #138.
 
-## 1C. PR mutation carrier boundary
+## 1C. Run-scoped transport + daily check-in
 
-Separates repository effect authority from GitHub mutation identity for identity-sensitive PR lifecycle effects. N-1: 1A+1B deployed. Boundary: carrier execution only; no routing/topology/wake cutover or durable wait/retry state. Next: 2.
+Advances #168 exact run-scoped transport and daily check-in lifecycle. N-1: 1A+1B deployed. Boundary: transport/discovery only. Next: 1D.
 
-- [ ] 1C.1 RED — reproduce a repository-authorized PR effect that `GITHUB_TOKEN` cannot legally execute or whose bot identity breaks required event propagation; permission widening is not the fix.
-- [ ] 1C.2 RED — carrier cannot select Issue/Action/successor/effect, weaken exact target/head/base/linkage/preconditions, infer retry, or make API success authoritative; failures cannot authorize duplicate PR creation.
-- [ ] 1C.3 GREEN — kernel/application derives carrier eligibility and exact target/precondition/revision-bound plan; event-capable Scheduled-Agent connector/GitHub App executes only that plan.
-- [ ] 1C.4 GREEN/REFACTOR — reuse an existing legal PR when exact head/base/linkage can be preserved; replacement requires fresh exact authority. Repository fresh-observes postconditions. Preserve #58 validated-archive-branch success boundary; no carrier wait state, generic retry, lock/lease, or second DAG.
-- [ ] 1C.5 VERIFY — E2E covers event propagation, exact binding, reuse-first recovery, stale/failure reconstruction, no Actions PR-create permission dependency, and unchanged independent review/merge/archive gates.
+- [ ] 1C.1 RED — require exact request→run→structured-result correlation; reject `latest`, timing/title inference, response fallback, and incomplete/failed evidence.
+- [ ] 1C.2 RED — require exactly one open `Asia/Taipei` current-day check-in from current GitHub state; reject zero/duplicate/ambiguous identity and permanent-pointer dependence.
+- [ ] 1C.3 GREEN/REFACTOR — establish+observe today before closing prior check-ins; preserve in-flight prior-day correlation; runtime comments become request/trigger/audit only; remove response-mailbox and permanent pointer coupling.
+- [ ] 1C.4 VERIFY — live Scheduled Task E2E proves current-day discovery, exact run-scoped dispatch/application/validation result, rollover, no response mailbox, and no model API in Actions.
+
+## 1D. Identity-sensitive PR carrier boundary
+
+Separates repository effect authority from GitHub mutation identity for identity-sensitive PR lifecycle effects. N-1: 1A+1B+1C deployed. Boundary: carrier execution only; no work-product ingress ownership, routing/topology/wake cutover, or durable wait/retry state. Next: 2.
+
+- [ ] 1D.1 RED — reproduce a repository-authorized PR effect that `GITHUB_TOKEN` cannot legally execute or whose bot identity breaks required event propagation; permission widening is not the fix.
+- [ ] 1D.2 RED — carrier cannot select Issue/Action/successor/effect, weaken exact target/head/base/linkage/preconditions, infer retry, or make API success authoritative; failures cannot authorize duplicate PR creation.
+- [ ] 1D.3 GREEN — kernel/application derives carrier eligibility and exact target/precondition/revision-bound plan; event-capable Scheduled-Agent connector/GitHub App executes only that plan.
+- [ ] 1D.4 GREEN/REFACTOR — reuse an existing legal PR when exact head/base/linkage can be preserved; replacement requires fresh exact authority. Repository fresh-observes postconditions. Preserve #58 validated-archive-branch success boundary; no carrier wait state, generic retry, lock/lease, or second DAG.
+- [ ] 1D.5 VERIFY — E2E covers event propagation, exact binding, reuse-first recovery, stale/failure reconstruction, no Actions PR-create permission dependency, and unchanged independent review/merge/archive gates.
 
 ## 2. Executable kernel shadow
 
-Advances one executable machine topology in shadow. N-1: 1A–1C deployed. Boundary: no mutation cutover. Next: 3.
+Advances one executable machine topology in shadow. N-1: 1A–1D deployed. Boundary: no mutation cutover. Next: 3.
 
 - [ ] 2.1 RED — exhaust Action vocabulary, Action→Role, explicit merge Actions, finite transitions/effects, WIP/FIFO/debt, carrier eligibility, illegal states, stale/replay, postconditions.
 - [ ] 2.2 GREEN — smallest kernel consumes the same authoritative observations as production without owning mutation.

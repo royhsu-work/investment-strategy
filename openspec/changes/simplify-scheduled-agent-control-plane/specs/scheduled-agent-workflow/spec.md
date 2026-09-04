@@ -35,6 +35,38 @@ When readiness requires OpenSpec validation for R, repository deterministic appl
 - WHEN validation runs
 - THEN no dummy mutation occurs and evidence proves R, checkout R, compatibility and strict PASS
 
+### Requirement: Repository work-product ingress is content-addressed and application-owned
+Lead-owned OpenSpec work product SHALL enter repository application through a bounded content-addressed boundary distinct from control/request transport, run-scoped result transport, repository effect/revision authorization, identity-sensitive mutation-carrier execution, and repository-owned postcondition observation. A semantic worker MAY create only unreferenced Git blobs as untrusted work-product ingress and MUST NOT make a tree, commit, ref, Contents-API persistence, PR mutation, or blob existence authoritative. The transport MUST NOT carry complete source/spec/test file content merely to persist repository files; it SHALL carry the exact current PR/branch/base identity and, for each changed Change-owned path, the referenced blob SHA and current expected blob SHA.
+
+Repository application SHALL fresh-reauthorize the exact source Action, fresh-verify current Issue/Change/PR/branch/base/path/current-blob identities, use application-owned Git tree construction as the first cross-credential resolution boundary for every referenced blob SHA, and fresh-observe that created tree before commit creation. Every requested Change-owned path MUST resolve exactly once to the requested blob SHA in the observed non-truncated tree. Application SHALL then construct exactly one commit revision R, advance only the exact current branch without force, and accept application only after fresh observation proves the exact ref, PR-head, commit/tree/parent, and file-SHA postconditions. Stale base/current SHA, an unavailable or mismatched blob at tree construction, duplicate or escaping path, incomplete/truncated/mismatched tree observation, worker-created tree/commit/ref, force update, or API success without the required observations MUST fail closed.
+
+A direct application-side `GET git/blobs/{sha}` MUST NOT be required as the cross-credential existence precondition for connector-created unreferenced ingress. Blob availability becomes authoritative only when application-owned tree construction resolves the SHA and the resulting exact tree is freshly observed. Unreferenced blobs remain transient, untrusted ingress and MUST NOT become durable workflow state or a long-lived mailbox.
+
+The resulting R SHALL be consumed by the same exact-revision validation boundary. For a cross-role transfer, canonical HANDOFF persistence SHALL remain repository-application-owned and SHALL occur only after the exact source ACTION_RESULT, routing mutation, and target routing are durably observed. The bounded M0 bootstrap MAY provide N-1 self-hosting capability for this formal correction, but bootstrap/buildability/unit-test evidence MUST NOT by itself satisfy the formal Stage 1B live-E2E acceptance or complete #138.
+#### Scenario: Content-addressed work product becomes one exact revision
+- GIVEN a machine-authorized materially revised Lead action has an open Change PR at exact branch head B
+- AND the worker has created transient unreferenced blobs for the changed Change-owned files
+- WHEN repository application consumes the bounded manifest
+- THEN application verifies B and every current file identity
+- AND application-owned tree construction resolves every referenced blob SHA to the exact requested path
+- AND the created tree is freshly observed before commit creation
+- AND application alone constructs one commit R and advances the exact branch without force
+- AND success is accepted only after ref, PR, commit, file, and exact-R validation postconditions are observed
+- AND neither the semantic worker nor the carrier gains workflow authority from the blob ingress
+
+#### Scenario: Unresolvable cross-credential blob fails before commit
+- GIVEN a manifest references one syntactically valid blob SHA
+- AND application-owned tree construction cannot resolve that SHA under the current repository identity boundary
+- WHEN repository application attempts the work product
+- THEN the operation fails closed before creating the commit or updating the ref
+- AND it does not fall back to full-content Issue comments, Contents API persistence, worker-created tree/commit/ref, or weaker identity semantics
+
+#### Scenario: Cross-role handoff is application-owned completion
+- GIVEN the source ACTION_RESULT is durable and repository application has applied and observed routing to the legal cross-role target
+- WHEN the transfer is completed
+- THEN repository application persists canonical HANDOFF from the exact source/result/routing evidence
+- AND the semantic worker does not author or substitute a successful HANDOFF before target routing is observed
+
 ### Requirement: Repository effect authority is independent from mutation carrier
 Kernel/application SHALL own legal-effect derivation, exact target/preconditions/revision, carrier eligibility, fresh authorization and accepted postconditions. A carrier SHALL execute only the exact authorized plan and MUST NOT select Issue/Action/effect, weaken preconditions, infer retry/successor, change meaning or declare authoritative success; repository code SHALL fresh-observe the result before routing/gate/lifecycle consequence. Actions MAY carry effects only where its identity/event semantics satisfy lifecycle; identity-sensitive PR create/presentation/head/ready/merge effects requiring normal event propagation or forbidden to Actions SHALL use an event-capable Scheduled-Agent connector/GitHub-App carrier. The target MUST NOT enable `Allow GitHub Actions to create and approve pull requests`. Preserve Archive automation ending at validated branch; final Archive PR is a normal Lead carrier effect, then independent review and Executor merge. Bootstrap/recovery SHALL reuse a legal exact-head PR where possible and MUST NOT replace it merely because Actions PR-create returns 403.
 
@@ -78,7 +110,7 @@ Interruption MUST NOT transfer ownership/rewind consumed descendants. Before con
 - THEN only the matching explicit merge Action for unchanged R is legal
 
 ### Requirement: Architecture reset is mandatory N-1 delivery with deletion
-#138 SHALL remain one parent outcome and every stage MUST be N-1 executable/testable/mergeable/deployable or split without weakening it; intermediate completion MUST NOT complete #138. Order is **1A exact-R resource → 1B run-scoped transport/daily check-in → 1C PR authority/carrier split → 2 kernel shadow → 3 typed application → 4 one-action-per-wake → 5 Action-only/Role-derived/explicit merges + absorbed-source retirement → 6 deletion/context reduction**. 1A SHALL precede materially revised Propose/Resolve handoff and validate final R. 1B+1C SHALL precede Stage 2 but MUST NOT add semantic review prerequisites once valid 1A exists. 1C SHALL include existing-PR reuse. Stage 3 SHALL deliver machine-readable deterministic rejection classification/evidence. Stage 4 SHALL enforce bounded verified vertical-slice completion inside the one authorized Action before durable completion checkpoint. After cutover production MUST delete superseded Role routing, response/history mailbox, Markdown topology/effect parsing, continuation/wake barriers, compatibility/model-worker paths, Actions-owned identity-sensitive PR mutation, and redundant machine-control prose/tests.
+#138 SHALL remain one parent outcome and every stage MUST be N-1 executable/testable/mergeable/deployable or split without weakening it; intermediate completion MUST NOT complete #138. Order is **1A exact-R resource → 1B content-addressed work-product ingress/self-hosting → 1C run-scoped result transport/daily check-in → 1D identity-sensitive PR authority/carrier split → 2 kernel shadow → 3 typed application → 4 one-action-per-wake → 5 Action-only/Role-derived/explicit merges + absorbed-source retirement → 6 deletion/context reduction**. 1A SHALL precede materially revised Propose/Resolve handoff and validate final R. 1B SHALL preserve the distinct work-product ingress/application-completion boundary and complete production live E2E; an external M0 bootstrap is prerequisite/buildability evidence, not formal Stage 1B or #138 completion. 1B+1C+1D SHALL precede Stage 2 but MUST NOT add semantic review prerequisites once valid 1A exists. 1D SHALL include existing-PR reuse. Stage 3 SHALL deliver machine-readable deterministic rejection classification/evidence. Stage 4 SHALL enforce bounded verified vertical-slice completion inside the one authorized Action before durable completion checkpoint. After cutover production MUST delete superseded Role routing, response/history mailbox, Markdown topology/effect parsing, continuation/wake barriers, compatibility/model-worker paths, Actions-owned identity-sensitive PR mutation, and redundant machine-control prose/tests.
 #### Scenario: Stage cannot finish early
 - GIVEN a stage cannot self-host on N-1 or later stages remain
 - WHEN completion is evaluated
