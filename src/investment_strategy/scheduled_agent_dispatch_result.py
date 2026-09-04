@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from typing import cast
+from typing import Any, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
@@ -24,7 +24,14 @@ _LOG_REDIRECT_SUFFIX = ".actions.githubusercontent.com"
 class _NoRedirect(HTTPRedirectHandler):
     """Expose the signed GitHub log redirect without forwarding the API bearer token."""
 
-    def http_error_302(self, req, fp, code, msg, headers):
+    def http_error_302(
+        self,
+        req: Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+    ) -> None:
         raise HTTPError(req.full_url, code, msg, headers, fp)
 
 
@@ -66,10 +73,11 @@ def _github_text(repository: str, token: str, api_path: str) -> str:
         if exc.code != 302:
             raise RuntimeError("exact dispatch run log read failed") from exc
         location = exc.headers.get("Location")
-        parsed = urlsplit(location) if isinstance(location, str) else None
+        if not isinstance(location, str):
+            raise RuntimeError("exact dispatch run log redirect is not trusted") from exc
+        parsed = urlsplit(location)
         if (
-            parsed is None
-            or parsed.scheme != "https"
+            parsed.scheme != "https"
             or parsed.hostname is None
             or not parsed.hostname.endswith(_LOG_REDIRECT_SUFFIX)
         ):
