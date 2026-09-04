@@ -18,19 +18,28 @@ The same coordination Issue SHALL persist through Explore and formal lifecycle. 
 
 #### Scenario: Provisional Change returns without reset
 
-- GIVEN Change `C` is provisional, OpenSpec acceptance has not occurred, and formalization invalidates a bounded research premise without new Human authority
+- GIVEN Change `C` is provisional, OpenSpec acceptance has not occurred, and formalization a bounded research premise without new Human authority
 - WHEN Lead dispositions it
 - THEN the same Issue may return to Explore while `Change: C`, existing Proposal/PR/history, and WIP stay intact
 
 ### Requirement: Runtime transport uses exact run-scoped results without response mailbox
 
-ChatGPT Scheduled Task SHALL be the only normal model wake. GitHub Actions MAY run deterministic control-plane code but MUST NOT host/invoke OpenAI API, Responses API, another model API, or repository-owned model worker. Runtime check-in comments MAY be request/trigger/audit only; normal dispatch/application/validation results SHALL belong to the exact Actions run caused by the request and be consumed from its run-scoped surface. GitHub Actions MUST NOT return normal `DISPATCH_RESULT`, `DISPATCH_DECISION`, or application-result data as machine response comments. Exact request→run→structured-result correlation is mandatory; latest/time/title/model/history inference is forbidden. Dispatch exposes `AUTHORIZE | NO_WORK | FAIL_CLOSED`; application exposes exact applied/already-satisfied/failed outcome plus postcondition evidence. Missing/multiple/failed/cancelled/malformed/expired evidence fails closed with NO Issue-response fallback. Runtime check-in is daily-bounded; coordination-Issue semantic comments remain governed evidence. Future transport replacement MUST NOT change workflow semantics.
+ChatGPT Scheduled Task SHALL be the only normal model wake; GitHub Actions MAY run deterministic control-plane code but MUST NOT host or invoke OpenAI/Responses/other model APIs or a repository-owned model worker. Runtime check-in comments MAY carry request/trigger/audit only. Normal dispatch/application/validation results SHALL belong to the exact Actions run caused by the request and be consumed only from that run-scoped surface; normal `DISPATCH_RESULT`, `DISPATCH_DECISION`, application-result response comments, or response-comment fallback are forbidden. Exact request→run→structured-result correlation is mandatory; latest/time/title/model/history inference is forbidden. Dispatch exposes `AUTHORIZE | NO_WORK | FAIL_CLOSED`; application exposes exact applied/already-satisfied/failed outcome plus postcondition evidence. Missing, multiple, failed, cancelled, malformed, or expired evidence fails closed. Coordination-Issue semantic comments remain governed evidence, and transport replacement MUST NOT change workflow semantics.
+
+Each wake SHALL fresh-discover exactly one open `Asia/Taipei` current-day runtime check-in from authoritative GitHub state using dedicated non-workflow identity plus canonical local-date identity; zero, duplicate, or ambiguous identity fails closed. Permanent check-in pointers (including `AGENT_RUNTIME_CHECKIN_ISSUE`), conversation memory, and prior-wake identity MUST NOT select it. Daily rollover SHALL be repository-owned and idempotent: establish and fresh-observe today's usable check-in before closing prior-day check-ins. Closing a prior-day check-in MUST NOT invalidate an already-triggered immutable `request C → exact run R → structured result` chain; new wakes use today while that chain remains consumable.
 
 #### Scenario: Exact run is the normal result carrier
 
 - GIVEN request R causes exact run A
 - WHEN Scheduled Task consumes dispatch/application
 - THEN only A's valid run-scoped result is accepted, and missing/ambiguous/failed A cannot fall back to a plausible response comment
+
+#### Scenario: Daily lifecycle is unique, pointerless, and correlation-safe
+
+- GIVEN a wake needs today's check-in and prior-day request C has exact run R still in flight
+- WHEN repository-owned rollover runs
+- THEN exactly one open current-day identity is fresh-discovered without a permanent pointer; zero/duplicate/ambiguous identity fails closed; today is established and fresh-observed before yesterday closes
+- AND closing yesterday does not invalidate C→R→structured-result correlation
 
 ### Requirement: Repository-owned readiness gate self-hosts exact-revision strict validation
 
