@@ -195,6 +195,7 @@ def _typed_application_plan(
         )
     return decision, successor_effect, None
 
+
 _ROUTING_TOKEN = re.compile(r"`(Lead|Reviewer|Executor) / ([a-z-]+)`")
 _ALLOWED_ISSUE_FIELDS = frozenset({"title", "body", "state"})
 _ALLOWED_PR_FIELDS = frozenset({"title", "body", "state", "base"})
