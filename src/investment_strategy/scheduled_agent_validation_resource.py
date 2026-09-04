@@ -914,17 +914,13 @@ def apply_work_product(
         raise RuntimeError("work-product plan is incomplete")
     if _current_authorized_request(repository, token) != plan.source:
         raise RuntimeError("work-product source dispatch is stale")
-    if (
-        not plan.manifest.files
-        or not all(
-            work_product_path_allowed(plan.source, plan.expected_change, file.path)
-            for file in plan.manifest.files
-        )
+    if not plan.manifest.files or not all(
+        work_product_path_allowed(plan.source, plan.expected_change, file.path)
+        for file in plan.manifest.files
     ):
         raise RuntimeError("work-product path is outside source Action capability")
-    if (
-        plan.source.role == "lead"
-        and not _review_openspec_required(plan.source, workflow_text=workflow_text)
+    if plan.source.role == "lead" and not _review_openspec_required(
+        plan.source, workflow_text=workflow_text
     ):
         raise RuntimeError("work-product source has no OpenSpec review gate")
 

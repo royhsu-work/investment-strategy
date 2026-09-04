@@ -729,6 +729,7 @@ def test_application_workflow_runs_validation_inline_without_secondary_dispatch(
     assert "unreferenced Git blobs only" in skill
     assert "MUST NOT create a Git tree or commit" in skill
 
+
 def test_work_product_path_capability_is_owned_by_current_action() -> None:
     lead = WorkerRequest(138, "lead", "resolve-question")
     executor = WorkerRequest(138, "executor", "implement-change")
