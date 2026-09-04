@@ -750,3 +750,108 @@ def test_work_product_path_capability_is_owned_by_current_action() -> None:
     assert not resource.work_product_path_allowed(
         reviewer, _CHANGE, "src/investment_strategy/scheduled_agent_runtime.py"
     )
+
+def test_apply_work_product_accepts_executor_implementation_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    expected_sha = "a" * 40
+    blob_sha = "b" * 40
+    tree_sha = "c" * 40
+    revision = "d" * 40
+    path = "src/investment_strategy/scheduled_agent_runtime.py"
+    branch = f"agent/{_CHANGE}"
+    plan = resource.WorkProductPlan(
+        True,
+        source=source,
+        request_comment_id=102,
+        pr_number=178,
+        expected_change=_CHANGE,
+        manifest=resource.WorkProductManifest(
+            branch=branch,
+            base_sha=_PR_HEAD,
+            message="Apply Executor implementation slice",
+            files=(
+                resource.WorkProductFile(
+                    path=path,
+                    blob_sha=blob_sha,
+                    expected_sha=expected_sha,
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda repository, token: source)
+    monkeypatch.setattr(
+        resource,
+        "_open_pr_payload",
+        lambda **kwargs: {
+            "state": "open",
+            "head": {"sha": _PR_HEAD, "ref": branch},
+        },
+    )
+    monkeypatch.setattr(
+        resource,
+        "_content_sha_at",
+        lambda repository, token, *, path, revision: (
+            expected_sha if revision == _PR_HEAD else blob_sha
+        ),
+    )
+    head_sha = _PR_HEAD
+    tree_payloads: list[object] = []
+
+    def fake_github_json(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        nonlocal head_sha
+        del repository, token, allow_not_found
+        if api_path == f"git/commits/{_PR_HEAD}" and method == "GET":
+            return {"sha": _PR_HEAD, "tree": {"sha": "e" * 40}, "parents": []}
+        if api_path == "git/trees" and method == "POST":
+            tree_payloads.append(payload)
+            return {"sha": tree_sha}
+        if api_path == f"git/trees/{tree_sha}?recursive=1" and method == "GET":
+            return {
+                "sha": tree_sha,
+                "truncated": False,
+                "tree": [{"path": path, "type": "blob", "sha": blob_sha}],
+            }
+        if api_path == "git/commits" and method == "POST":
+            return {"sha": revision}
+        if api_path == f"git/refs/heads/{branch}" and method == "PATCH":
+            assert payload == {"sha": revision, "force": False}
+            head_sha = revision
+            return {"object": {"sha": revision}}
+        if api_path == f"git/ref/heads/{branch}" and method == "GET":
+            return {"object": {"sha": head_sha}}
+        if api_path == "pulls/178" and method == "GET":
+            return {
+                "state": "open",
+                "head": {"sha": head_sha, "ref": branch},
+            }
+        if api_path == f"git/commits/{revision}" and method == "GET":
+            return {
+                "sha": revision,
+                "tree": {"sha": tree_sha},
+                "parents": [{"sha": _PR_HEAD}],
+            }
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
+
+    target = resource.apply_work_product(
+        plan,
+        repository=_REPOSITORY,
+        token=_FIXTURE_VALUE,
+        default_branch="main",
+        workflow_text="",
+    )
+
+    assert target.revision == revision
+    assert target.correlation == "work-product-request-102"
+    assert len(tree_payloads) == 1
