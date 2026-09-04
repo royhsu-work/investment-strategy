@@ -76,6 +76,8 @@ Each stage must be executable/testable/mergeable/deployable on N-1 or be split. 
 
 ## Validation and deletion
 
-Ctage 1C tests carrier eligibility, no carrier-side selection/retry inference, exact target/head/precondition binding, reuse-first PR recovery, no Actions PR-create permission dependency, ordinary event propagation, fresh repository postconditions, carrier failure/stale-plan behavior, and preservation of the validated-archive-branch boundary.
+Stage 1C tests carrier eligibility, no carrier-side selection/retry inference, exact target/head/precondition binding, reuse-first PR recovery, no Actions PR-create permission dependency, ordinary event propagation, fresh repository postconditions, carrier failure/stale-plan behavior, and preservation of the validated-archive-branch boundary.
+
+Stage 1C tests carrier eligibility, no carrier-side selection/retry inference, exact target/head/precondition binding, reuse-first PR recovery, no Actions PR-create permission dependency, ordinary event propagation, fresh repository postconditions, carrier failure/stale-plan behavior, and preservation of the validated-archive-branch boundary.
 
 Final production removes normal `agent:*` routing, generic merge-phase inference, response mailbox/history correlation, Markdown topology/effect parsing, same-wake continuation/barriers, obsolete compatibility, legacy model-host code, Actions-owned identity-sensitive PR lifecycle paths, and redundant tests/prose.
