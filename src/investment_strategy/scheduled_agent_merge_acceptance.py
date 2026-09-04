@@ -43,6 +43,7 @@ _MERGE_REVIEW_ACTION = {
 _ACCEPTED_CHECK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 
+
 def _valid_sha(value: object) -> bool:
     return isinstance(value, str) and _SHA.fullmatch(value) is not None
 
@@ -178,9 +179,7 @@ def _review_record(body: object) -> tuple[str, str, str, str | None] | None:
     )
     if action_match is None or result_match is None or revision_match is None:
         return None
-    default_revision = (
-        None if default_revision_match is None else default_revision_match.group(1)
-    )
+    default_revision = None if default_revision_match is None else default_revision_match.group(1)
     return (
         action_match.group(1),
         result_match.group(1),
@@ -344,10 +343,7 @@ def _default_branch_contains_commit(
         return False
     if not isinstance(comparison, Mapping):
         return False
-    return (
-        comparison.get("status") in {"ahead", "identical"}
-        and comparison.get("behind_by") == 0
-    )
+    return comparison.get("status") in {"ahead", "identical"} and comparison.get("behind_by") == 0
 
 
 def _historical_merged_carrier_allowed(
