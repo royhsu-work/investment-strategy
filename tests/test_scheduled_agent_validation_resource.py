@@ -505,6 +505,120 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
     }
 
 
+def test_apply_work_product_uses_current_ref_for_merged_carrier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    historical_head = _PR_HEAD
+    current_branch_head = "f" * 40
+    blob_sha = "b" * 40
+    tree_sha = "c" * 40
+    revision = "d" * 40
+    path = "tests/scheduled_agent_b45_followup.txt"
+    plan = resource.WorkProductPlan(
+        True,
+        source=source,
+        request_comment_id=103,
+        pr_number=178,
+        expected_change=_CHANGE,
+        manifest=resource.WorkProductManifest(
+            branch=f"agent/{_CHANGE}",
+            base_sha=current_branch_head,
+            message="Verify merged carrier continuation",
+            files=(
+                resource.WorkProductFile(
+                    path=path,
+                    blob_sha=blob_sha,
+                    expected_sha=None,
+                ),
+            ),
+        ),
+    )
+    merged_pr = {
+        "number": 178,
+        "state": "closed",
+        "merged": True,
+        "merged_at": "2026-09-04T03:31:44Z",
+        "merge_commit_sha": "e" * 40,
+        "body": "Refs #138
+",
+        "head": {
+            "sha": historical_head,
+            "ref": f"agent/{_CHANGE}",
+            "repo": {"full_name": _REPOSITORY},
+        },
+        "base": {"ref": "main", "repo": {"full_name": _REPOSITORY}},
+    }
+    branch_head = current_branch_head
+    ref_reads: list[str] = []
+    monkeypatch.setattr(
+        resource, "_current_authorized_request", lambda repository, token: source
+    )
+
+    def fake_github_json(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        nonlocal branch_head
+        assert repository == _REPOSITORY
+        assert token == _FIXTURE_VALUE
+        del allow_not_found
+        if api_path == "" and method == "GET":
+            return {"default_branch": "main"}
+        if api_path == "issues/138" and method == "GET":
+            return {"state": "open", "body": f"Change: {_CHANGE}
+"}
+        if api_path == "pulls/178" and method == "GET":
+            return merged_pr
+        if api_path == "pulls/178/files?per_page=100" and method == "GET":
+            return [{"filename": f"openspec/changes/{_CHANGE}/proposal.md"}]
+        if api_path.startswith(f"contents/{path}?") and method == "GET":
+            return None if f"ref={current_branch_head}" in api_path else {"sha": blob_sha}
+        if api_path == f"git/commits/{current_branch_head}" and method == "GET":
+            return {"sha": current_branch_head, "tree": {"sha": "a" * 40}, "parents": []}
+        if api_path == "git/trees" and method == "POST":
+            return {"sha": tree_sha}
+        if api_path == f"git/trees/{tree_sha}?recursive=1" and method == "GET":
+            return {
+                "sha": tree_sha,
+                "truncated": False,
+                "tree": [{"path": path, "type": "blob", "sha": blob_sha}],
+            }
+        if api_path == "git/commits" and method == "POST":
+            return {"sha": revision}
+        if api_path == f"git/ref/heads/agent/{_CHANGE}" and method == "GET":
+            ref_reads.append(branch_head)
+            return {"object": {"sha": branch_head}}
+        if api_path == f"git/refs/heads/agent/{_CHANGE}" and method == "PATCH":
+            assert payload == {"sha": revision, "force": False}
+            branch_head = revision
+            return {"object": {"sha": revision}}
+        if api_path == f"git/commits/{revision}" and method == "GET":
+            return {
+                "sha": revision,
+                "tree": {"sha": tree_sha},
+                "parents": [{"sha": current_branch_head}],
+            }
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
+    target = resource.apply_work_product(
+        plan,
+        repository=_REPOSITORY,
+        token=_FIXTURE_VALUE,
+        default_branch="main",
+    )
+
+    assert target.revision == revision
+    assert target.correlation == "work-product-request-103"
+    assert ref_reads == [current_branch_head, current_branch_head, revision]
+
+
 def test_apply_work_product_rejects_unresolvable_blob_before_commit_or_ref(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -829,8 +829,16 @@ def apply_work_product(
         allow_historical_merged_carrier=True,
     )
     head = _as_mapping(pr.get("head"))
-    current_head = None if head is None else head.get("sha")
+    pr_head_sha = None if head is None else head.get("sha")
     current_branch = None if head is None else head.get("ref")
+    if not _valid_sha(pr_head_sha):
+        raise RuntimeError("work-product PR head identity is incomplete")
+    historical_merged_carrier = _is_historical_merged_carrier(pr)
+    current_head = (
+        _ref_head_sha(repository, token, expected_branch)
+        if historical_merged_carrier
+        else pr_head_sha
+    )
     if current_head != plan.manifest.base_sha or current_branch != plan.manifest.branch:
         raise RuntimeError("work-product PR head/base identity is stale")
 
@@ -937,6 +945,9 @@ def apply_work_product(
     if not _valid_sha(revision):
         raise RuntimeError("work-product commit creation returned no SHA")
 
+    if _ref_head_sha(repository, token, plan.manifest.branch) != plan.manifest.base_sha:
+        raise RuntimeError("work-product branch base changed before ref update")
+
     _github_json(
         repository,
         token,
@@ -957,11 +968,17 @@ def apply_work_product(
         allow_historical_merged_carrier=True,
     )
     observed_head = _as_mapping(observed_pr.get("head"))
-    if (
-        observed_head is None
-        or observed_head.get("ref") != expected_branch
-        or observed_head.get("sha") != revision
-    ):
+    if observed_head is None or observed_head.get("ref") != expected_branch:
+        raise RuntimeError("work-product PR-head postcondition was not observed")
+    if historical_merged_carrier:
+        if (
+            not _is_historical_merged_carrier(observed_pr)
+            or observed_pr.get("merge_commit_sha") != pr.get("merge_commit_sha")
+            or observed_pr.get("merged_at") != pr.get("merged_at")
+            or observed_head.get("sha") != pr_head_sha
+        ):
+            raise RuntimeError("work-product merged-carrier postcondition was not preserved")
+    elif observed_head.get("sha") != revision:
         raise RuntimeError("work-product PR-head postcondition was not observed")
 
     observed_commit = _as_mapping(
