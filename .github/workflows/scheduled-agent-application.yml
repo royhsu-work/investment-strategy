@@ -15,6 +15,7 @@ jobs:
       startsWith(github.event.comment.body, 'VALIDATION_RESOURCE_REQUEST') ||
       startsWith(github.event.comment.body, 'WORK_PRODUCT_REQUEST')
     permissions:
+      actions: read
       contents: write
       issues: write
       pull-requests: write
