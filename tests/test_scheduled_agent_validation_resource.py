@@ -756,12 +756,11 @@ def test_work_product_path_capability_is_owned_by_current_action() -> None:
     assert not resource.work_product_path_allowed(
         executor, _CHANGE, "openspec/changes/other-change/design.md"
     )
-    assert not resource.work_product_path_allowed(
-        executor, _CHANGE, "../outside-repository.py"
-    )
+    assert not resource.work_product_path_allowed(executor, _CHANGE, "../outside-repository.py")
     assert not resource.work_product_path_allowed(
         reviewer, _CHANGE, "src/investment_strategy/scheduled_agent_runtime.py"
     )
+
 
 def test_apply_work_product_accepts_executor_implementation_path(
     monkeypatch: pytest.MonkeyPatch,
