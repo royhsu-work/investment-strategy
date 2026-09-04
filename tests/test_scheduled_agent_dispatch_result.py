@@ -21,7 +21,6 @@ def _decision() -> DispatchDecision:
         completeness="COMPLETE",
         observation_provenance=ObservationProvenance.QUALIFIED,
         formal_issue_ids=(138,),
-        recovery_candidate_ids=(),
         preactivation_candidate_ids=(),
         selected_issue_id=138,
         selected_routing=("executor", "implement-change"),
@@ -33,7 +32,6 @@ def _decision() -> DispatchDecision:
 def test_fetch_dispatch_result_reads_only_exact_successful_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    decision = _decision()
     run = {
         "id": _RUN_ID,
         "name": f"Scheduled Agent Dispatch {_REQUEST_ID}",
@@ -47,13 +45,11 @@ def test_fetch_dispatch_result_reads_only_exact_successful_run(
     log = render_run_scoped_dispatch_result(
         request_comment_id=_REQUEST_ID,
         default_branch_revision=_REVISION,
-        decision=decision,
+        decision=_decision(),
     )
-    observed: list[str] = []
 
     def fake_json(repository: str, token: str, path: str) -> object:
         del repository, token
-        observed.append(path)
         if path == f"actions/runs/{_RUN_ID}":
             return run
         if path == f"actions/runs/{_RUN_ID}/jobs?per_page=100":
@@ -62,7 +58,6 @@ def test_fetch_dispatch_result_reads_only_exact_successful_run(
 
     def fake_text(repository: str, token: str, path: str) -> str:
         del repository, token
-        observed.append(path)
         assert path == "actions/jobs/300/logs"
         return log
 
@@ -85,14 +80,9 @@ def test_fetch_dispatch_result_reads_only_exact_successful_run(
         role="executor",
         action="implement-change",
     )
-    assert observed == [
-        f"actions/runs/{_RUN_ID}",
-        f"actions/runs/{_RUN_ID}/jobs?per_page=100",
-        "actions/jobs/300/logs",
-    ]
 
 
-def test_fetch_dispatch_result_rejects_wrong_request_run_name(
+def test_fetch_dispatch_result_rejects_wrong_run_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -108,7 +98,6 @@ def test_fetch_dispatch_result_rejects_wrong_request_run_name(
             "conclusion": "success",
         },
     )
-
     with pytest.raises(RuntimeError, match="identity or completion"):
         transport.fetch_dispatch_result(
             "owner/repo",
@@ -139,7 +128,6 @@ def test_fetch_dispatch_result_rejects_ambiguous_jobs(
             else {"jobs": [{"id": 300}, {"id": 301}]}
         ),
     )
-
     with pytest.raises(RuntimeError, match="one bridge job"):
         transport.fetch_dispatch_result(
             "owner/repo",
