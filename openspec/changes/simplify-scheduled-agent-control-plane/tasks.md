@@ -1,6 +1,6 @@
 ## Delivery invariant
 
-#138 is one parent outcome delivered through mandatory N-1 stages. Every stage MUST be independently executable/testable/mergeable/deployable on then-current N-1; otherwise split it further. A stage never completes #138 while later stages remain.
+#138 is one parent outcome delivered through mandatory N-1 stages. Every stage MUST be independently executable/testable/mergeable/deployable on then-current N-1; otherwise split it further. A stage never completes #138 while later stages remain. The Stage 1 exact-revision validation-bootstrap sub-slice must be merged and deployed to then-current N-1 before this Propose action may hand #138 to independent OpenSpec review; an unmerged implementation or green checks alone are insufficient.
 
 ## 1. Transport de-mailbox + exact-revision validation bootstrap
 
