@@ -10,8 +10,8 @@ The target state is Issue lifecycle + immutable Change + action:<action> with Ro
 - [x] A.2 Define one finite Action vocabulary, ACTION_ROLE, TRANSITIONS, role_for(action), next_action(current_action, result), and select_work(authoritative_observations) on the default-branch-owned executable surface.
 - [x] A.3 Define bounded typed result classes and exact deterministic effect/postcondition guards without adding a generic orchestration, retry, lock/lease, or second-DAG framework.
 - [x] A.4 Generate or mechanically verify the Human-readable workflow presentation against the executable model; fail validation on drift instead of parsing Markdown at runtime.
-- [ ] A.5 Run a no-mutation shadow comparison across active, pre-activation, closed-debt, stale, replay, and competing-wake observations. Preserve exact evidence for any divergence.
-- [ ] A.6 Verify WIP=1, finish-first, Human authority, complete/provenance-qualified observation, and stale/concurrency fail-closed behavior in the shadow boundary.
+- [x] A.5 Run a no-mutation shadow comparison across active, pre-activation, closed-debt, stale, replay, and competing-wake observations. Preserve exact evidence for any divergence.
+- [x] A.6 Verify WIP=1, finish-first, Human authority, complete/provenance-qualified observation, and stale/concurrency fail-closed behavior in the shadow boundary.
 
 ## B. Cut over bounded transport and Action-only execution
 
