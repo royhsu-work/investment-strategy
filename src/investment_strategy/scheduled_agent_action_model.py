@@ -101,6 +101,74 @@ class TypedResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ActionSource:
+    """Exact Issue/Change/Action authorization identity for one application."""
+
+    issue_number: int
+    change: str
+    action: Action
+    authorization_revision: str
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.issue_number, int)
+            or isinstance(self.issue_number, bool)
+            or self.issue_number <= 0
+        ):
+            raise ValueError("source Issue identity is invalid")
+        if (
+            not isinstance(self.change, str)
+            or not self.change.strip()
+            or any(character.isspace() for character in self.change)
+        ):
+            raise ValueError("source Change identity is invalid")
+        if not isinstance(self.action, Action):
+            raise UnknownAction("source Action identity is invalid")
+        if not _valid_revision(self.authorization_revision):
+            raise ValueError("source authorization revision is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class ActionObservation:
+    """Fresh current-state facts used to reauthorize one Action result."""
+
+    issue_number: int
+    change: str
+    action: Action | str | None
+    revision: str
+    provenance: ObservationProvenance | str = ObservationProvenance.QUALIFIED
+    human_authorized: bool = True
+    state: IssueState | str = IssueState.OPEN
+
+
+@dataclass(frozen=True, slots=True)
+class BoundedActionResult:
+    """Typed result bound to one source identity without target authority."""
+
+    issue_number: int
+    change: str
+    action: Action
+    result: TypedResult
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.issue_number, int)
+            or isinstance(self.issue_number, bool)
+            or self.issue_number <= 0
+        ):
+            raise InvalidTypedResult("result Issue identity is invalid")
+        if (
+            not isinstance(self.change, str)
+            or not self.change.strip()
+            or any(character.isspace() for character in self.change)
+        ):
+            raise InvalidTypedResult("result Change identity is invalid")
+        if not isinstance(self.action, Action):
+            raise InvalidTypedResult("result Action identity is invalid")
+        if not isinstance(self.result, TypedResult):
+            raise InvalidTypedResult("result payload is not typed")
+
+@dataclass(frozen=True, slots=True)
 class IssueObservation:
     """One fresh coordination-Issue observation supplied to deterministic selection."""
 
@@ -145,6 +213,50 @@ class EffectObservation:
     expected_revision: str
     observed_revision: str
 
+
+class ApplicationDisposition(StrEnum):
+    ACCEPT = "accept"
+    REJECT = "reject"
+
+
+class ApplicationRejectionKind(StrEnum):
+    OBSERVATION_UNQUALIFIED = "observation-unqualified"
+    HUMAN_AUTHORITY_MISSING = "human-authority-missing"
+    RESULT_ISSUE_MISMATCH = "result-issue-mismatch"
+    RESULT_CHANGE_MISMATCH = "result-change-mismatch"
+    RESULT_ACTION_MISMATCH = "result-action-mismatch"
+    CURRENT_ISSUE_MISMATCH = "current-issue-mismatch"
+    CURRENT_CHANGE_MISMATCH = "current-change-mismatch"
+    CURRENT_ACTION_INVALID = "current-action-invalid"
+    CURRENT_ACTION_MISMATCH = "current-action-mismatch"
+    CURRENT_STATE_INVALID = "current-state-invalid"
+    DEFAULT_BRANCH_REVISION_MISMATCH = "default-branch-revision-mismatch"
+    ILLEGAL_TRANSITION = "illegal-transition"
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicationRejection:
+    """Machine-readable failed guard with exact expected/observed evidence."""
+
+    classification: ApplicationRejectionKind
+    expected: str
+    observed: str
+
+
+@dataclass(frozen=True, slots=True)
+class ActionApplicationDecision:
+    """One typed application decision; successor execution is never included."""
+
+    disposition: ApplicationDisposition
+    source: ActionSource
+    result: BoundedActionResult
+    successor: Action | None
+    successor_role: Role | None
+    rejection: ApplicationRejection | None = None
+
+    @property
+    def accepted(self) -> bool:
+        return self.disposition is ApplicationDisposition.ACCEPT
 
 @dataclass(frozen=True, slots=True)
 class ShadowDivergence:
@@ -475,6 +587,178 @@ def shadow_compare_selection(
         divergences=divergences,
     )
 
+
+@dataclass(frozen=True, slots=True)
+class WakeAuthorization:
+    """One fresh wake's selected Action and its derived semantic Role."""
+
+    issue_number: int
+    action: Action
+    role: Role
+
+
+def authorize_one_wake(
+    observations: AuthoritativeObservations,
+) -> WakeAuthorization | None:
+    """Return one model-authorized Action or no work; never execute a successor."""
+
+    decision = select_work(observations)
+    if (
+        decision.disposition is not SelectionDisposition.AUTHORIZE
+        or decision.issue_number is None
+        or decision.action is None
+    ):
+        return None
+    return WakeAuthorization(
+        issue_number=decision.issue_number,
+        action=decision.action,
+        role=role_for(decision.action),
+    )
+
+
+def _application_rejection(
+    source: ActionSource,
+    result: BoundedActionResult,
+    classification: ApplicationRejectionKind,
+    expected: object,
+    observed: object,
+) -> ActionApplicationDecision:
+    return ActionApplicationDecision(
+        disposition=ApplicationDisposition.REJECT,
+        source=source,
+        result=result,
+        successor=None,
+        successor_role=None,
+        rejection=ApplicationRejection(
+            classification=classification,
+            expected=_decision_evidence(expected),
+            observed=_decision_evidence(observed),
+        ),
+    )
+
+
+def plan_action_application(
+    source: ActionSource,
+    result: BoundedActionResult,
+    current: ActionObservation,
+) -> ActionApplicationDecision:
+    """Freshly reauthorize one typed result and derive at most one successor."""
+
+    if current.provenance != ObservationProvenance.QUALIFIED:
+        return _application_rejection(
+            source,
+            result,
+            ApplicationRejectionKind.OBSERVATION_UNQUALIFIED,
+            ObservationProvenance.QUALIFIED,
+            current.provenance,
+        )
+    if current.human_authorized is not True:
+        return _application_rejection(
+            source,
+            result,
+            ApplicationRejectionKind.HUMAN_AUTHORITY_MISSING,
+            True,
+            current.human_authorized,
+        )
+    if result.issue_number != source.issue_number:
+        return _application_rejection(
+            source,
+            result,
+            ApplicationRejectionKind.RESULT_ISSUE_MISMATCH,
+            source.issue_number,
+            result.issue_number,
+        )
+    if result.change != source.change:
+        return _application_rejection(
+            source,
+            result,
+            ApplicationRejectionKind.RESULT_CHANGE_MISMATCH,
+            source.change,
+            result.change,
+        )
+    if result.action != source.action:
+        return _application_rejection(
+            source,
+            result,
+            ApplicationRejectionKind.RESULT_ACTION_MISMATCH,
+            source.action,
+            result.action,
+        )
+    if current.issue_number != source.issue_number:
+        return _application_rejection(
+            source,
+            result,
+            ApplicationRejectionKind.CURRENT_ISSUE_MISMATCH,
+            source.issue_number,
+            current.issue_number,
+        )
+    if current.change != source.change:
+        return _application_rejection(
+            source,
+            result,
+            ApplicationRejectionKind.CURRENT_CHANGE_MISMATCH,
+            source.change,
+            current.change,
+        )
+    if current.state != IssueState.OPEN:
+        return _application_rejection(
+            source,
+            result,
+            ApplicationRejectionKind.CURRENT_STATE_INVALID,
+            IssueState.OPEN,
+            current.state,
+        )
+    if current.action is None:
+        return _application_rejection(
+            source,
+            result,
+            ApplicationRejectionKind.CURRENT_ACTION_INVALID,
+            source.action,
+            None,
+        )
+    try:
+        current_action = _coerce_action(current.action)
+    except UnknownAction:
+        return _application_rejection(
+            source,
+            result,
+            ApplicationRejectionKind.CURRENT_ACTION_INVALID,
+            source.action,
+            current.action,
+        )
+    if current_action != source.action:
+        return _application_rejection(
+            source,
+            result,
+            ApplicationRejectionKind.CURRENT_ACTION_MISMATCH,
+            source.action,
+            current_action,
+        )
+    if current.revision != source.authorization_revision:
+        return _application_rejection(
+            source,
+            result,
+            ApplicationRejectionKind.DEFAULT_BRANCH_REVISION_MISMATCH,
+            source.authorization_revision,
+            current.revision,
+        )
+    try:
+        successor = next_action(source.action, result.result)
+    except InvalidTransition:
+        return _application_rejection(
+            source,
+            result,
+            ApplicationRejectionKind.ILLEGAL_TRANSITION,
+            "legal-transition",
+            result.result.kind,
+        )
+    return ActionApplicationDecision(
+        disposition=ApplicationDisposition.ACCEPT,
+        source=source,
+        result=result,
+        successor=successor,
+        successor_role=None if successor is None else role_for(successor),
+    )
 
 def effect_is_current(observation: EffectObservation) -> bool:
     """Return true only when all exact reauthorization identities still match."""

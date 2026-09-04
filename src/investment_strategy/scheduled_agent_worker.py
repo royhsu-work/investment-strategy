@@ -12,6 +12,14 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.request import Request, urlopen
 
+from investment_strategy.scheduled_agent_action_model import (
+    Action as ModelAction,
+)
+from investment_strategy.scheduled_agent_action_model import (
+    BoundedActionResult,
+    ResultKind,
+    TypedResult,
+)
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 
 _SKILL_MAPPING = re.compile(r"- `([^`]+)` uses `([^`]+)`\.")
@@ -73,6 +81,7 @@ class WorkerActionResult:
     propose_disposition: str | None
     result_content: str
     requested_effects: tuple[WorkerRequestedEffect, ...]
+    typed_result: BoundedActionResult | None = None
 
 
 WorkerTransport = Callable[[str], str]
@@ -321,6 +330,35 @@ def _propose_disposition(decoded: Mapping[str, object], request: WorkerRequest) 
     return None
 
 
+def _typed_result(
+    decoded: Mapping[str, object],
+    *,
+    issue_number: int,
+    action: str,
+) -> BoundedActionResult | None:
+    """Bind optional typed output to the authorized invocation identity."""
+
+    raw_kind = decoded.get("result_kind")
+    raw_change = decoded.get("change")
+    raw_evidence = decoded.get("evidence_ref")
+    if raw_kind is None and raw_change is None and raw_evidence is None:
+        return None
+    if not isinstance(raw_kind, str) or not isinstance(raw_change, str):
+        raise ValueError("typed worker result requires result_kind and change")
+    if raw_evidence is not None and not isinstance(raw_evidence, str):
+        raise ValueError("typed worker result evidence_ref is invalid")
+    try:
+        model_action = ModelAction(action)
+        result_kind = ResultKind(raw_kind)
+    except ValueError as exc:
+        raise ValueError("typed worker result vocabulary is invalid") from exc
+    return BoundedActionResult(
+        issue_number=issue_number,
+        change=raw_change,
+        action=model_action,
+        result=TypedResult(result_kind, evidence_ref=raw_evidence),
+    )
+
 def parse_worker_result(raw: str, request: WorkerRequest) -> WorkerActionResult:
     """Validate structured output and reject any model attempt to change identity."""
 
@@ -345,6 +383,11 @@ def parse_worker_result(raw: str, request: WorkerRequest) -> WorkerActionResult:
     if (issue_number, role, action) != (request.issue_number, request.role, request.action):
         raise ValueError("worker result does not match authorized Issue/role/action")
 
+    typed_result = _typed_result(
+        decoded,
+        issue_number=issue_number,
+        action=action,
+    )
     return WorkerActionResult(
         issue_number=issue_number,
         role=role,
@@ -353,6 +396,7 @@ def parse_worker_result(raw: str, request: WorkerRequest) -> WorkerActionResult:
         propose_disposition=_propose_disposition(decoded, request),
         result_content=result_content,
         requested_effects=tuple(_effect_from_payload(effect) for effect in requested_effects),
+        typed_result=typed_result,
     )
 
 
@@ -376,6 +420,12 @@ def _response_schema() -> dict[str, Any]:
             "issue_number": {"type": "integer"},
             "role": {"type": "string"},
             "action": {"type": "string"},
+            "change": {"type": "string"},
+            "result_kind": {
+                "type": "string",
+                "enum": [kind.value for kind in ResultKind],
+            },
+            "evidence_ref": {"type": ["string", "null"]},
             "explore_disposition": {
                 "type": ["string", "null"],
                 "enum": [
@@ -566,23 +616,27 @@ def main() -> int:
     )
     if result is None:
         raise RuntimeError("authorized worker unexpectedly produced no result")
-    print(
-        json.dumps(
+    payload: dict[str, object] = {
+        "issue_number": result.issue_number,
+        "role": result.role,
+        "action": result.action,
+        "explore_disposition": result.explore_disposition,
+        "propose_disposition": result.propose_disposition,
+        "result_content": result.result_content,
+        "requested_effects": [
+            {"kind": effect.kind, "payload_json": effect.payload_json}
+            for effect in result.requested_effects
+        ],
+    }
+    if result.typed_result is not None:
+        payload.update(
             {
-                "issue_number": result.issue_number,
-                "role": result.role,
-                "action": result.action,
-                "explore_disposition": result.explore_disposition,
-                "propose_disposition": result.propose_disposition,
-                "result_content": result.result_content,
-                "requested_effects": [
-                    {"kind": effect.kind, "payload_json": effect.payload_json}
-                    for effect in result.requested_effects
-                ],
-            },
-            sort_keys=True,
+                "change": result.typed_result.change,
+                "result_kind": result.typed_result.result.kind.value,
+                "evidence_ref": result.typed_result.result.evidence_ref,
+            }
         )
-    )
+    print(json.dumps(payload, sort_keys=True))
     return 0
 
 
