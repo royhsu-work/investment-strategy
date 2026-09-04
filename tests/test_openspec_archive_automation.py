@@ -441,8 +441,8 @@ def test_readme_documents_state_driven_archive_contract() -> None:
         "openspec-archive-recovery",
         "same-repository",
         "unsupported automatic source",
-        "queue: max",
-        "100",
+        "cancel-in-progress: false",
+        "in-flight request/run/result chain",
         "workflow_dispatch` 保留為 recovery / migration fallback",
     ):
         assert required in readme
