@@ -127,31 +127,19 @@ def test_select_work_uses_deterministic_preactivation_order() -> None:
                 IssueObservation(2, "open", "second", Action.IMPLEMENT_CHANGE),
             )
         ),
+        AuthoritativeObservations(issues=(IssueObservation(1, "open", "active", None),)),
         AuthoritativeObservations(
-            issues=(
-                IssueObservation(1, "open", "active", None),
-            )
+            issues=(IssueObservation(1, "open", None, Action.REVIEW_OPENSPEC),)
         ),
         AuthoritativeObservations(
-            issues=(
-                IssueObservation(1, "open", None, Action.REVIEW_OPENSPEC),
-            )
+            issues=(IssueObservation(1, "open", "active", "action:not-real"),)
         ),
         AuthoritativeObservations(
-            issues=(
-                IssueObservation(1, "open", "active", "action:not-real"),
-            )
-        ),
-        AuthoritativeObservations(
-            issues=(
-                IssueObservation(1, "open", "active", Action.IMPLEMENT_CHANGE),
-            ),
+            issues=(IssueObservation(1, "open", "active", Action.IMPLEMENT_CHANGE),),
             complete=False,
         ),
         AuthoritativeObservations(
-            issues=(
-                IssueObservation(1, "open", "active", Action.IMPLEMENT_CHANGE),
-            ),
+            issues=(IssueObservation(1, "open", "active", Action.IMPLEMENT_CHANGE),),
             provenance=ObservationProvenance.INDETERMINATE,
         ),
     ],
@@ -192,9 +180,5 @@ def test_effect_identity_guard_rejects_stale_revision_or_action() -> None:
         observed_revision=revision,
     )
     assert effect_is_current(current)
-    assert not effect_is_current(
-        replace(current, observed_revision="b" * 40)
-    )
-    assert not effect_is_current(
-        replace(current, observed_action=Action.RESOLVE_QUESTION)
-    )
+    assert not effect_is_current(replace(current, observed_revision="b" * 40))
+    assert not effect_is_current(replace(current, observed_action=Action.RESOLVE_QUESTION))

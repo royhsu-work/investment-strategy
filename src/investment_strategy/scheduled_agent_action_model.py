@@ -337,10 +337,7 @@ def select_work(observations: AuthoritativeObservations) -> SelectionDecision:
     candidates use a stable creation/order tie-break.
     """
 
-    if (
-        not observations.complete
-        or observations.provenance != ObservationProvenance.QUALIFIED
-    ):
+    if not observations.complete or observations.provenance != ObservationProvenance.QUALIFIED:
         return _selection(SelectionDisposition.FAIL_CLOSED, "observations-unqualified")
 
     seen_issue_numbers: set[int] = set()
