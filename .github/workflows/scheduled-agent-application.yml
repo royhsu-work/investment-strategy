@@ -12,7 +12,9 @@ jobs:
   apply:
     if: >-
       startsWith(github.event.comment.body, 'EFFECT_REQUEST') ||
-      startsWith(github.event.comment.body, 'VALIDATION_RESOURCE_REQUEST')
+      startsWith(github.event.comment.body, 'VALIDATION_RESOURCE_REQUEST') ||
+      startsWith(github.event.comment.body, 'WORK_PRODUCT_REQUEST') ||
+      startsWith(github.event.comment.body, 'HANDOFF_COMPLETION_REQUEST')
     permissions:
       contents: write
       issues: write
@@ -84,6 +86,38 @@ jobs:
           --revision "${{ steps.revision.outputs.sha }}"
           --default-branch "${{ github.event.repository.default_branch }}"
 
+      - name: Apply content-addressed work product
+        if: startsWith(github.event.comment.body, 'WORK_PRODUCT_REQUEST')
+        id: work_product
+        env:
+          AGENT_RUNTIME_CHECKIN_ISSUE: ${{ vars.AGENT_RUNTIME_CHECKIN_ISSUE }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: >-
+          uv run python -m investment_strategy.scheduled_agent_validation_resource
+          --event-path "$GITHUB_EVENT_PATH"
+          --comments-path "$RUNNER_TEMP/issue-comment-pages.json"
+          --check-in-issue "$AGENT_RUNTIME_CHECKIN_ISSUE"
+          --revision "${{ steps.revision.outputs.sha }}"
+          --default-branch "${{ github.event.repository.default_branch }}"
+
+      - name: Complete application-owned cross-role handoff
+        if: startsWith(github.event.comment.body, 'HANDOFF_COMPLETION_REQUEST')
+        id: handoff
+        env:
+          AGENT_RUNTIME_CHECKIN_ISSUE: ${{ vars.AGENT_RUNTIME_CHECKIN_ISSUE }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: >-
+          uv run python -m investment_strategy.scheduled_agent_validation_resource
+          --event-path "$GITHUB_EVENT_PATH"
+          --comments-path "$RUNNER_TEMP/issue-comment-pages.json"
+          --check-in-issue "$AGENT_RUNTIME_CHECKIN_ISSUE"
+          --revision "${{ steps.revision.outputs.sha }}"
+          --default-branch "${{ github.event.repository.default_branch }}"
+
       - name: Select exact-revision validation resource
         id: validation
         env:
@@ -95,11 +129,20 @@ jobs:
           RESOURCE_REPOSITORY: ${{ steps.resource.outputs.validation_target_repository }}
           RESOURCE_REVISION: ${{ steps.resource.outputs.validation_target_revision }}
           RESOURCE_CORRELATION: ${{ steps.resource.outputs.validation_correlation }}
+          WORK_PRODUCT_REQUIRED: ${{ steps.work_product.outputs.validation_required }}
+          WORK_PRODUCT_REPOSITORY: ${{ steps.work_product.outputs.validation_target_repository }}
+          WORK_PRODUCT_REVISION: ${{ steps.work_product.outputs.validation_target_revision }}
+          WORK_PRODUCT_CORRELATION: ${{ steps.work_product.outputs.validation_correlation }}
         shell: bash
         run: |
           apply_required="${APPLY_REQUIRED:-false}"
           resource_required="${RESOURCE_REQUIRED:-false}"
-          if [[ "$apply_required" == "true" && "$resource_required" == "true" ]]; then
+          work_product_required="${WORK_PRODUCT_REQUIRED:-false}"
+          resource_count=0
+          [[ "$apply_required" == "true" ]] && resource_count=$((resource_count + 1))
+          [[ "$resource_required" == "true" ]] && resource_count=$((resource_count + 1))
+          [[ "$work_product_required" == "true" ]] && resource_count=$((resource_count + 1))
+          if [[ "$resource_count" -gt 1 ]]; then
             echo "::error::Exact-revision validation target is ambiguous across application resources"
             exit 1
           fi
@@ -111,6 +154,10 @@ jobs:
             target_repository="$RESOURCE_REPOSITORY"
             target_revision="$RESOURCE_REVISION"
             correlation="$RESOURCE_CORRELATION"
+          elif [[ "$work_product_required" == "true" ]]; then
+            target_repository="$WORK_PRODUCT_REPOSITORY"
+            target_revision="$WORK_PRODUCT_REVISION"
+            correlation="$WORK_PRODUCT_CORRELATION"
           else
             echo "validation_required=false" >> "$GITHUB_OUTPUT"
             exit 0
