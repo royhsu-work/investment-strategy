@@ -149,7 +149,9 @@ review of the resulting exact revision.
 Content ingress is content-addressed: the semantic worker may create unreferenced blobs and submit an
 exact path/blob/current-SHA manifest. Repository application constructs the tree, commit, and ref
 without force and verifies parent, tree, ref, PR head, and file postconditions. Complete content is
-not passed through Issue comments.
+not passed through Issue comments. The normal worker effect capability does not include Issue creation
+or direct ref creation/update. Any PR/ref effect is application-bound to the authorized Change,
+repository, default branch, and exact current target before mutation.
 
 Exact-R validation checks the target repository/revision, validator checkout HEAD == R, the qualified
 pinned OpenSpec baseline, and strict validation PASS. Eligibility is derived from the governed
