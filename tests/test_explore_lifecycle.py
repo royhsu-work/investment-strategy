@@ -80,13 +80,13 @@ def test_explore_is_tenth_lead_action_with_one_owned_skill() -> None:
     assert EXPLORE.is_file()
 
 
-def test_explore_is_optional_and_cannot_create_formal_change_or_code() -> None:
+def test_explore_is_optional_and_cannot_create_new_formal_change_or_code() -> None:
     explore = _normalized(EXPLORE)
     for required in (
         "optional pre-Propose",
         "problem before solution",
         "Change: unset",
-        "MUST NOT create `openspec/changes/`",
+        "MUST NOT create a new `openspec/changes/` identity",
         "MUST NOT modify implementation code",
         "normal successful continuation",
         "durable evidence-backed structured `PROPOSAL_READY`",
@@ -104,7 +104,7 @@ def test_explore_uses_decision_complete_outcomes_and_human_boundary() -> None:
         "NO_GO",
         "HUMAN_DECISION_REQUIRED",
         "SPECIFICATION_BLOCKED",
-        "does not persist a Change id",
+        "does not persist the formal Change identity",
         "Human intent",
     ):
         assert required in explore
@@ -228,14 +228,16 @@ def test_propose_and_reviewer_independently_verify_source_evidence_before_formal
         assert required in review
 
 
-def test_workflow_topology_contains_pre_activation_propose_research_correction() -> None:
+def test_workflow_topology_contains_bounded_propose_research_correction() -> None:
     workflow_text = _read(WORKFLOW)
     workflow = " ".join(workflow_text.split())
-    assert "pre-activation" in workflow
+    assert "Before formal activation" in workflow
+    assert "After formal activation but before the first independent" in workflow
     assert "`Lead / propose-change`" in workflow
     assert "`Lead / explore-change`" in workflow
     assert "researchable" in workflow
     assert "Change: unset" in workflow
+    assert "preserving the immutable non-`unset` Change identity" in workflow
 
     source = WorkerRequest(175, "lead", "propose-change")
     batch = parse_effect_batch(_propose_result(disposition="RESEARCH_REQUIRED"), source)

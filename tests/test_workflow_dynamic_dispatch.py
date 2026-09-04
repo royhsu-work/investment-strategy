@@ -127,7 +127,7 @@ def test_combined_intake_is_executable_and_propose_keeps_activation_guards() -> 
         "MUST NOT reconstruct origin/admission history",
         "Require the consumed pre-write machine decision to authorize this exact Issue",
         "Repository application MUST fresh-reconstruct before applying the write",
-        "dereference exactly one same-Issue durable Explore `ACTION_RESULT(PROPOSAL_READY)`",
+        "reconstruct exactly one durable same-Issue Explore `ACTION_RESULT`",
         "action-local semantic preconditions still pass",
     ):
         assert required in change

@@ -1,4 +1,5 @@
 name: OpenSpec Validate
+run-name: OpenSpec Validate ${{ inputs.correlation || github.event.pull_request.number || github.run_id }} @ ${{ inputs.target_revision || github.event.pull_request.head.sha || github.sha }}
 
 on:
   push:
@@ -14,13 +15,30 @@ on:
       - ".github/scripts/openspec_compatibility.py"
       - ".github/workflows/openspec-validate.yml"
   workflow_dispatch:
+    inputs:
+      target_repository:
+        description: Exact repository containing the validation target
+        required: false
+        type: string
+      target_revision:
+        description: Exact commit SHA to validate
+        required: false
+        type: string
+      correlation:
+        description: Repository-owned application correlation identifier
+        required: false
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
   validate:
     runs-on: ubuntu-latest
     env:
-      VALIDATION_TARGET_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-      VALIDATION_TARGET_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+      VALIDATION_TARGET_SHA: ${{ inputs.target_revision || github.event.pull_request.head.sha || github.sha }}
+      VALIDATION_TARGET_REPOSITORY: ${{ inputs.target_repository || github.event.pull_request.head.repo.full_name || github.repository }}
+      VALIDATION_CORRELATION: ${{ inputs.correlation || github.run_id }}
     steps:
       - name: Checkout validation target
         uses: actions/checkout@v4
@@ -34,11 +52,13 @@ jobs:
           actual_sha="$(git rev-parse HEAD)"
           echo "validation_target_repository=$VALIDATION_TARGET_REPOSITORY"
           echo "validation_target_sha=$VALIDATION_TARGET_SHA"
+          echo "validation_correlation=$VALIDATION_CORRELATION"
           echo "validator_checkout_head=$actual_sha"
           {
             echo "### OpenSpec validation checkout"
             echo "- target repository: \`$VALIDATION_TARGET_REPOSITORY\`"
             echo "- target revision: \`$VALIDATION_TARGET_SHA\`"
+            echo "- Correlation: \`$VALIDATION_CORRELATION\`"
             echo "- validator checkout HEAD: \`$actual_sha\`"
           } >> "$GITHUB_STEP_SUMMARY"
           if [[ "$actual_sha" != "$VALIDATION_TARGET_SHA" ]]; then

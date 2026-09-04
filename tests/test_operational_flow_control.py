@@ -154,17 +154,21 @@ def test_selected_propose_research_gap_returns_same_issue_without_dispatcher_fal
     for required in (
         (
             "Missing, ambiguous, stale, contradictory, unsupported, or materially invalidated "
-            "baseline/source evidence does not cause dispatcher fallback to another queued Issue"
+            "baseline/source evidence does not cause dispatcher fallback to another Issue"
         ),
         "`RESEARCH_REQUIRED`",
-        "same Issue `Lead / propose-change → Lead / explore-change` correction",
+        (
+            "repository-owned application derives the same Issue "
+            "`Lead / propose-change → Lead / explore-change` correction"
+        ),
         "preserving `Change: unset` and the Issue's original queue identity",
     ):
         assert required in change
     for required in (
         "`RESEARCH_REQUIRED`",
         "repository application derives the same-Issue correction back to `Lead / explore-change`",
-        "This retains the selected Issue rather than falling through to later work",
+        "Before activation this preserves `Change: unset`",
+        "before the first independent `review-openspec` PASS after activation",
     ):
         assert required in explore
 
@@ -173,10 +177,13 @@ def test_propose_research_correction_is_bounded_by_human_and_formal_boundaries()
     change = _normalized(OPEN_SPEC_CHANGE)
     for required in (
         "the worker MUST NOT request the correction routing itself",
-        "still researchable within the same bounded problem",
+        "gap remains researchable within the same bounded problem",
         "new Human-reserved requirement, scope/risk acceptance, or architecture decision",
-        "Once a non-`unset` Change identity exists",
-        "formal semantic correction uses `Lead / resolve-question`",
+        "After activation, the same correction is legal only before the first independent",
+        (
+            "After the first independent OpenSpec acceptance, material formal correction uses "
+            "`Lead / resolve-question`"
+        ),
     ):
         assert required in change
 

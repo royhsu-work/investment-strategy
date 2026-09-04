@@ -12,6 +12,7 @@ The persistent coordination Issue remains open throughout the formal lifecycle. 
 
 | Current action | Governing result/condition | Next action |
 | --- | --- | --- |
+| `Lead / propose-change` | before the first independent `review-openspec` PASS, formalization proves a material causal Explore source/evidence/feasibility premise invalid but still researchable within the same bounded problem and no new Human-reserved decision is required | `Lead / explore-change` |
 | `Lead / propose-change` | OpenSpec artifacts ready for independent semantic review | `Reviewer / review-openspec` |
 | `Reviewer / review-openspec` | PASS | `Executor / implement-change` |
 | `Reviewer / review-openspec` | specification finding/question | `Lead / resolve-question` |
@@ -31,27 +32,38 @@ The persistent coordination Issue remains open throughout the formal lifecycle. 
 
 The two `Executor / merge-pr` positions are distinguished by current durable PR/lifecycle evidence, not by a separate action name or hidden phase state.
 
-## Optional pre-Change Explore
+## Explore boundaries
 
-`Lead / explore-change` is optional pre-Propose investigation and keeps `Change: unset` for the whole action.
+`Lead / explore-change` has two bounded entry modes:
+
+1. optional pre-Propose investigation with `Change: unset`; and
+2. formal pre-review correction for the same active coordination Issue when a non-`unset` immutable Change already exists, no independent `Reviewer / review-openspec` PASS has yet accepted that Change, and Propose has established that its causal Explore source/evidence/feasibility premise is materially invalid but still researchable within the same bounded problem without a new Human-reserved decision.
+
+Formal pre-review correction preserves the existing Change identity, coordination Issue, PR/artifact history, durable evidence, and WIP. It does not deactivate/requeue the Change, create a second workflow, or restore a pre-Change queue position.
 
 | Explore disposition | Topology result |
 | --- | --- |
-| `PROPOSAL_READY` within the bounded researched/authorized context | route the same Issue to `Lead / propose-change` with `Change: unset`; same-role continuation may proceed immediately when its own preconditions hold |
+| `PROPOSAL_READY` within pre-Change Explore | route the same Issue to `Lead / propose-change` with `Change: unset`; same-role continuation may proceed immediately when its own preconditions hold |
+| `PROPOSAL_READY` within formal pre-review correction | route the same Issue to `Lead / propose-change` while preserving the same non-`unset` Change identity and existing PR/artifact history |
 | `HUMAN_DECISION_REQUIRED` | retain `Lead / explore-change` until the exact provenance-bound Human decision is legally consumable |
-| `NO_CHANGE_REQUIRED` | persist the bounded result, close the research Issue, and re-observe closed; no formal Change/archive lifecycle is created |
-| `NO_GO` | persist the bounded result, close the research Issue, and re-observe closed; no formal Change/archive lifecycle is created |
+| `NO_CHANGE_REQUIRED` | legal only for pre-Change Explore: persist the bounded result, close the research Issue, and re-observe closed; no formal Change/archive lifecycle is created |
+| `NO_GO` | legal only for pre-Change Explore: persist the bounded result, close the research Issue, and re-observe closed; no formal Change/archive lifecycle is created |
 
-### Pre-activation Propose research correction
+A formal pre-review correction MUST NOT use the pre-Change `NO_CHANGE_REQUIRED`/`NO_GO` terminal-close path to retire an already active non-`unset` Change. If its research exposes a Human-reserved decision or an inability to preserve the approved Change outcome, it uses the governed Human boundary and keeps the formal workflow active.
+
+### Propose research correction
 
 Before formal activation, a selected `Lead / propose-change` with `Change: unset` may discover that its exact durable Explore baseline has a material source/evidence or feasibility gap. When that gap is still researchable within the same bounded problem and no new Human-reserved decision is required, the action emits bounded `RESEARCH_REQUIRED`; repository-owned application derives only the same-Issue `Lead / propose-change` → `Lead / explore-change` correction while preserving `Change: unset` and the Issue's original queue identity. This correction retains the selected Issue; it is not dispatcher fallback to a later candidate and does not authorize the worker to choose an arbitrary successor.
 
-If the missing basis instead requires a new Human-reserved requirement, scope/risk acceptance, or architecture decision, use the governed Human boundary. If the Issue already has a non-`unset` Change identity, this pre-activation correction is illegal and formal correction uses `Lead / resolve-question`.
+After formal activation but before the first independent `Reviewer / review-openspec` PASS for the Change, the same bounded `RESEARCH_REQUIRED` disposition is legal when formalization proves its causal Explore source/evidence/feasibility premise materially invalid but still researchable within the same bounded problem and no new Human-reserved decision is required. Repository-owned application derives the same-Issue `Lead / propose-change` → `Lead / explore-change` correction while preserving the immutable non-`unset` Change identity, existing PR/artifacts/history, and formal WIP.
+
+If the missing basis instead requires a new Human-reserved requirement, scope/risk acceptance, or architecture decision, use the governed Human boundary. After the first independent `Reviewer / review-openspec` PASS has accepted the Change, backward Explore correction is no longer legal; material formal semantic correction uses `Lead / resolve-question` and returns through independent review.
 
 ## Correction loops
 
 Correction loops preserve the same persistent coordination Issue and immutable Change identity once formal activation has occurred.
 
+- Pre-first-review formalization feasibility correction: `Lead / propose-change → Lead / explore-change → Lead / propose-change` while preserving the same non-`unset` Change, only before the first independent `Reviewer / review-openspec` PASS.
 - OpenSpec semantic finding: `Reviewer / review-openspec → Lead / resolve-question → Reviewer / review-openspec` when semantic artifacts materially change.
 - Implementation specification blocker: `Executor / implement-change → Lead / resolve-question → Reviewer / review-openspec → Executor / implement-change` when a material semantic correction is required.
 - Implementation finding: `Reviewer / review-implementation → Executor / implement-change → Reviewer / review-implementation` on a new exact implementation head.

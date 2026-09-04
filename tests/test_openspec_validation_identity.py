@@ -25,6 +25,20 @@ def test_openspec_validation_proves_exact_checkout_identity() -> None:
     assert "GITHUB_STEP_SUMMARY" in workflow
 
 
+def test_machine_dispatch_carries_exact_target_and_correlation() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "run-name:" in workflow
+    assert "target_repository:" in workflow
+    assert "target_revision:" in workflow
+    assert "correlation:" in workflow
+    assert "inputs.target_repository" in workflow
+    assert "inputs.target_revision" in workflow
+    assert "inputs.correlation" in workflow
+    assert "VALIDATION_CORRELATION:" in workflow
+    assert "Correlation:" in workflow
+
+
 def test_governance_does_not_treat_run_head_sha_as_checkout_proof() -> None:
     shared = _normalized(AGENTS)
     readme = _normalized(README)
