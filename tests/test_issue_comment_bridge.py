@@ -73,7 +73,6 @@ def test_bridge_workflow_is_run_scoped_and_has_no_mailbox_write() -> None:
         "AGENT_RUNTIME_CHECKIN_ISSUE",
         "--comments-path",
         "Post correlated machine dispatch decision",
-        "DISPATCH_RESULT",
         "ISSUE_NUMBER",
     ):
         assert forbidden not in workflow

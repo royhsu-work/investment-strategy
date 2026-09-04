@@ -798,7 +798,7 @@ def test_repository_deployment_has_no_scheduled_worker_apply_boundary() -> None:
 
     assert "issue_comment:" in bridge_workflow
     assert "investment_strategy.issue_comment_bridge" in bridge_workflow
-    assert "issues: write" in bridge_workflow
+    assert "issues: read" in bridge_workflow
 
 
 def test_continuation_is_owned_by_next_chatgpt_scheduled_wake_not_actions_retrigger() -> None:
