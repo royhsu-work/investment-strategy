@@ -361,7 +361,7 @@ def test_empty_github_api_path_uses_repository_endpoint(
     urls: list[str] = []
 
     class FakeResponse:
-        def __enter__(self) -> "FakeResponse":
+        def __enter__(self) -> FakeResponse:
             return self
 
         def __exit__(self, *_args: object) -> None:

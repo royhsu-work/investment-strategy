@@ -522,7 +522,7 @@ def _github_json(
     repository_url = f"https://api.github.com/repos/{repository}"
     url = repository_url if not api_path else f"{repository_url}/{api_path.lstrip('/')}"
     data = None if payload is None else json.dumps(payload).encode("utf-8")
-    request = Request(
+    request = Request(  # noqa: S310 - fixed trusted GitHub API host
         url,
         data=data,
         method=method,
