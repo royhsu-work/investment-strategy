@@ -144,19 +144,23 @@ def test_cross_role_successor_is_derived_without_role_input() -> None:
 
 
 @pytest.mark.parametrize(
-    ("field", "value", "classification"),
+    ("field", "classification"),
     [
-        ("issue_number", 999, ApplicationRejectionKind.RESULT_ISSUE_MISMATCH),
-        ("change", "other-change", ApplicationRejectionKind.RESULT_CHANGE_MISMATCH),
-        ("action", Action.REVIEW_OPENSPEC, ApplicationRejectionKind.RESULT_ACTION_MISMATCH),
+        ("issue_number", ApplicationRejectionKind.RESULT_ISSUE_MISMATCH),
+        ("change", ApplicationRejectionKind.RESULT_CHANGE_MISMATCH),
+        ("action", ApplicationRejectionKind.RESULT_ACTION_MISMATCH),
     ],
 )
 def test_result_identity_mismatch_fails_closed(
     field: str,
-    value: object,
     classification: ApplicationRejectionKind,
 ) -> None:
-    result = replace(_result(), **{field: value})
+    if field == "issue_number":
+        result = replace(_result(), issue_number=999)
+    elif field == "change":
+        result = replace(_result(), change="other-change")
+    else:
+        result = replace(_result(), action=Action.REVIEW_OPENSPEC)
     decision = plan_action_application(_source(), result, _observation())
 
     assert not decision.accepted
