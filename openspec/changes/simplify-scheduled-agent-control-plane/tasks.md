@@ -18,16 +18,16 @@ Parent advances: #168 exact run-scoped dispatch/application/validation plus `rep
 
 ## 2. Executable kernel shadow
 
-Parent advances: one executable machine topology computes shadow decisions. Remaining: N-1 production still owns effects/state/wakes. N-1: Stage 1 transports shado evidence. Boundary: no mutation cutover. Next: Stage 3.
+Parent advances: one executable machine topology computes shadow decisions. Remaining: N-1 production still owns effects/state/wakes. N-1: complete Stage 1 run-scoped transport plus exact-revision validation closed loop. Boundary: no mutation cutover. Next: Stage 3.
 
 - [ ] 2.1 RED — exhaustively cover Action vocabulary, Action→Role, explicit merge Actions, finite transitions/effects, WIP/FIFO/debt, illegal states, stale/replay and postconditions.
-- [ ] 2.2 GREEEN — consolidate smallest kernel and feed it the same authoritative observations as production without owning mutations.
+- [ ] 2.2 GREEN — consolidate smallest kernel and feed it the same authoritative observations as production without owning mutations.
 - [ ] 2.3 REFACTOR — generate/mechanically verify `agents/workflow.md`; remove any second executable registry.
 - [ ] 2.4 VERIFY — shadow production decisions and explain every divergence from source evidence.
 
 ## 3. Typed result/application
 
-Parent advances: typed semantic result→kernel effect→fresh application/postcondition. Remaining: old routing/wake representation. N-1: Stage 2 equivalence. Boundary: routing/wake unchanged; rollback to N-1 effect path. Next: Stage 4.
+Parent advances: typed semantic result→kernel effect→fresh application/postcondition. Remaining: old routing/wake representation. N-1: Stage 2 equivalence on the Stage-1 closed loop. Boundary: routing/wake unchanged; rollback to N-1 effect path. Next: Stage 4.
 
 - [ ] 3.1 RED — bind result to exact Issue/source Action; reject arbitrary successors, Markdown control extraction, stale/contradictory state and replay rewind.
 - [ ] 3.2 GREEN — generalize action-owned typed results plus narrative/source evidence; derive effects, fresh-reauthorize, mutate narrowly and observe postconditions.
@@ -48,7 +48,7 @@ Parent advances: exactly one mapped Action/wake with work-conserving action inte
 Parent advances: Action-only routing, Role derivation, explicit merge Actions, live-state migration. Remaining: legacy cleanup. N-1: Stages 1–4. Boundary: complete authoritative dry-run required; this is semantic cutover. Post-cutover rollback translates from new state only. Next: Stage 6.
 
 - [ ] 5.1 RED — cover terminal/current/debt/legacy/ambiguous live Issue shapes; preserve unrelated labels and immutable Change.
-- [ ] 5.2 GREEN — dry-run canonicalization; Human only for genuine ambiguity; never write to discover.
+- [ ] 5.2 GREEEN — dry-run canonicalization; Human only for genuine ambiguity; never write to discover.
 - [ ] 5.3 GREEN — migrate to one Action, switch production dispatch/application/bootstrap to kernel, replace generic merge Action with explicit implementation/archive merge Actions.
 - [ ] 5.4 VERIFY — fresh-observe every mutation and run WIP/FIFO/debt/review/merge/lifecycle production regressions.
 
