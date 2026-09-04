@@ -8,77 +8,65 @@ The minimum ownership model SHALL be:
 
 | Rule category | Authoritative surface | Other surfaces |
 | --- | --- | --- |
-| Repository overview / Human entry point | `README.md` | MAY link to authoritative governance; MUST NOT redefine runtime protocol |
-| Shared Scheduled-Agent execution protocol / cross-role invariants | `agents/AGENTS.md` | roles/skills MAY reference; MUST NOT duplicate shared normative contract |
-| Machine-decidable Scheduled-Agent Action vocabulary, Action→Role mapping, finite result/transition topology, deterministic dispatch/cardinality, effect capabilities, mutation-carrier eligibility, fresh application authorization, deterministic rejection classification/evidence, stale/replay classification, and structural postconditions | repository executable workflow topology/kernel selected by current default-branch governance | `agents/workflow.md` SHALL be generated or mechanically verified Human-readable presentation; AGENTS/roles/skills/runtime/transport/carriers MUST NOT maintain a competing executable transition DAG or parse Human prose as the normal topology authority |
-| GitHub mutation execution identity / carrier mechanics | replaceable carrier selected only from repository-authorized carrier eligibility | Actions `GITHUB_TOKEN`, Scheduled-Agent connector, or GitHub App MAY execute an exact already-authorized mutation plan; a carrier MUST NOT select Issue/Action/effect, weaken preconditions, infer retry, or make API success authoritative |
-| Role mission / semantic authority / ownership / role-specific invariant | `agents/roles/*.md` | AGENTS/skills MAY orient/reference; MUST NOT create a competing authority definition or redefine executable Action→Role/transition tables |
-| Action-specific semantic procedure / action-local evidence and result meaning | `agents/skills/*` | role/AGENTS MAY map/reference; MUST NOT duplicate machine-decidable topology/effect bodies owned by the executable kernel |
-| OpenSpec authoring/validation conventions | `openspec/config.yaml` | change artifacts follow them; MUST NOT restate them as independent runtime rules |
-| Approved capability requirements / acceptance scenarios | `openspec/specs/*` | runtime governance/executable code implement/reference them; they are not an alternative instruction-loading surface for Scheduled Agents |
-| Proposed change intent/design/tasks before merge | active `openspec/changes/*` | review target only; MUST NOT govern its own current runtime execution |
-| Historical change provenance | archived OpenSpec changes | history/traceability only; MUST NOT override current default-branch runtime governance or become current routing state |
-| External Scheduled Task cadence/configuration and transport wiring | external product configuration / replaceable transport adapter as applicable | repository docs MAY describe migration/current setup informationally; transport MUST NOT define workflow topology or durable routing state |
-| Project-wide proportionality / simplicity contract | `openspec/specs/repository-governance/spec.md` | runtime/documentation surfaces MAY implement or reference it; MUST NOT maintain a competing workflow-only normative definition |
+| Repository overview / Human entry point | README.md | MAY link to authoritative governance; MUST NOT redefine runtime protocol |
+| Shared Scheduled-Agent runtime protocol and safety invariants | agents/AGENTS.md | roles/skills MAY reference; MUST NOT duplicate the shared contract |
+| Machine-decidable Action vocabulary, Action→Role mapping, finite transition/result rules, deterministic selection, effect authorization, carrier eligibility, stale/replay/no-rewind guards, and postconditions | one default-branch executable workflow model | agents/workflow.md MAY be generated or mechanically verified Human-readable presentation; AGENTS/roles/skills/runtime/transport/carriers MUST NOT maintain a competing production DAG or parse prose as topology |
+| Semantic role authority | agents/roles/*.md | AGENTS/Skills MAY orient/reference; MUST NOT redefine machine Action→Role or successor selection |
+| Action-specific semantic procedure and evidence meaning | agents/skills/* | roles/AGENTS MAY map/reference; MUST NOT duplicate machine topology/effect bodies |
+| OpenSpec authoring and validation conventions | openspec/config.yaml | Change artifacts follow them; MUST NOT restate them as runtime rules |
+| Approved capability requirements and acceptance scenarios | openspec/specs/* | runtime code implements/references them; they are not an alternative runtime instruction surface |
+| Proposed intent/design/tasks before merge | active openspec/changes/* | review input only; MUST NOT govern its own current invocation |
+| Historical change provenance | archived OpenSpec changes | evidence only; MUST NOT override current default-branch governance or become routing state |
+| Scheduled Task cadence and transport wiring | external product configuration and a replaceable transport adapter | repository docs MAY describe deployment context; transport MUST NOT define Action/Role/WIP/successor state |
+| Project-wide proportionality and simplicity | openspec/specs/repository-governance/spec.md | runtime/documentation surfaces MAY implement or reference it; MUST NOT maintain a competing workflow-only definition |
 
-The executable workflow topology/kernel becomes authoritative for machine-decidable workflow semantics and effect/carrier eligibility only after the approved implementation and governance that delegate that ownership are merged to the current default branch. An active Change or feature branch containing a future kernel remains review input and MUST NOT govern its own invocation.
+The executable workflow model becomes authoritative for machine-decidable workflow semantics only after the approved implementation and delegating governance are merged to the current default branch. An active Change or feature branch containing a future model remains review input and MUST NOT govern its own invocation.
 
-A Human-readable workflow surface MAY include explanatory lifecycle rationale and semantic guidance that cannot be generated from a finite topology. Any machine-decidable Action/Role/transition/effect/carrier rule represented there MUST be produced from or mechanically checked against the executable owner so a divergence fails repository validation instead of depending on manual synchronization.
+The Human-readable workflow surface MAY include rationale and semantic guidance that cannot be represented in the finite model. Any machine-decidable Action/Role/transition/effect/carrier rule represented there MUST be produced from or mechanically checked against the executable owner so divergence fails validation rather than being resolved by runtime prose parsing.
 
-Effect authority and mutation identity SHALL remain separate. Repository application/kernel authorization binds an exact effect to its exact target, preconditions, revision, and legal carrier class. A selected carrier is an actuator only; replacing the carrier MUST NOT change workflow semantics, effect eligibility, or success criteria. Repository-owned fresh observation of the resulting object/head/state is required before any routing, review, lifecycle, merge, or successor consequence can consume the mutation as successful.
+Repository application/kernel authorization and mutation-carrier identity SHALL remain separate. Application binds each effect to its exact target, preconditions, revision, and legal carrier class. A carrier is an actuator only and MUST NOT choose workflow meaning, target, effect, successor, retry, weaker preconditions, or success. Repository-owned fresh observation is required before a mutation can support a routing, gate, lifecycle, merge, or successor consequence.
 
-When deterministic repository authorization/application rejects an effect plan, the executable owner SHALL emit machine-readable rejection classification/evidence identifying the exact failed guard class and the relevant expected/observed identity or predicate evidence available at that boundary. An aggregate human-readable reason MAY accompany it but MUST NOT be the sole rejection evidence when the executable boundary already knows which deterministic predicate failed. This rejection evidence MUST NOT grant a carrier or semantic worker authority to retry, weaken preconditions, choose a successor, or reinterpret workflow state.
+Deterministic application rejection SHALL include a machine-readable guard classification and relevant expected/observed identity or predicate evidence whenever that boundary knows the failed predicate. Aggregate diagnostic text MAY accompany it but MUST NOT be the only rejection evidence. Rejection evidence never authorizes retry, weaker preconditions, alternate targets, or a worker-selected successor.
 
 #### Scenario: Shared rule appears in a role or skill
 
-- GIVEN a rule is owned by shared Scheduled-Agent governance or the executable workflow topology/kernel
+- GIVEN a rule is owned by shared governance or the executable workflow model
 - WHEN a role or skill needs that rule
-- THEN it references the owning contract or states only its role/action-specific semantic specialization
-- AND it does not redefine a second normative machine-control copy that must be manually synchronized
+- THEN it references the owner or states only its semantic specialization
+- AND it does not define a second machine-control copy
 
 #### Scenario: Active change contains future governance
 
-- GIVEN an unmerged OpenSpec change or feature branch defines new governance behavior or an executable topology/kernel
-- WHEN a Scheduled Agent wakes before that change is merged to the default branch
-- THEN the feature-branch/change content is review input only
-- AND the Scheduled Agent still loads current runtime governance and executable authority from the current default branch
+- GIVEN an unmerged Change or feature branch defines a future executable model
+- WHEN a Scheduled Agent wakes before that change is merged
+- THEN the feature content is review input only
+- AND current execution loads authority from the default branch
 
-#### Scenario: Project-wide design principle is needed by workflow and production design
+#### Scenario: Action derives role without a second owner
 
-- GIVEN proportionality applies to both Scheduled-Agent governance and ordinary project design
-- WHEN the repository assigns normative ownership
-- THEN the capability-level requirement is owned by `repository-governance`
-- AND runtime/documentation surfaces may implement or reference it without maintaining a competing workflow-only normative definition
+- GIVEN the current routed state contains one valid action:review-openspec
+- WHEN machine dispatch selects work
+- THEN it derives reviewer through role_for(action)
+- AND no separately persisted normal role label is required for ownership
 
-#### Scenario: Human-readable topology drifts from executable topology
+#### Scenario: Human-readable presentation drifts
 
-- GIVEN current default-branch governance delegates machine-decidable workflow topology to the repository executable kernel
-- AND `agents/workflow.md` presents an Action/Role/transition/effect/carrier rule that differs from that executable topology
-- WHEN repository governance validation runs
+- GIVEN agents/workflow.md differs from the default-branch executable Action model
+- WHEN governance validation runs
 - THEN validation fails
-- AND production dispatch/application continue to consume the executable topology rather than resolving the conflict by parsing or preferring Markdown prose
+- AND runtime does not resolve the conflict by parsing or preferring Markdown
 
 #### Scenario: Transport changes without changing workflow semantics
 
-- GIVEN the current Scheduled Task transport uses Issue comments to trigger deterministic GitHub Actions
-- AND a future supported transport can invoke the same deterministic dispatch/application entry points directly
-- WHEN the adapter changes
-- THEN Action vocabulary, Action→Role derivation, typed result/transition semantics, WIP/cardinality, effect authorization, and carrier eligibility remain unchanged
-- AND transport messages do not become a second workflow-semantics authority
+- GIVEN a supported transport invokes the same default-branch dispatch/application entry points
+- WHEN the transport adapter changes
+- THEN Action vocabulary, Role derivation, transitions, WIP/cardinality, effects, and success criteria remain unchanged
+- AND transport is not a second workflow authority
 
-#### Scenario: Mutation carrier changes without gaining workflow authority
+#### Scenario: Mutation carrier cannot gain authority
 
-- GIVEN repository application has fresh-authorized one exact GitHub effect with exact target, preconditions, revision, and legal carrier class
-- AND the current Actions `GITHUB_TOKEN` identity cannot legally execute that effect or preserve required event semantics
-- WHEN an eligible Scheduled-Agent connector or GitHub App carrier executes the exact authorized plan
-- THEN the carrier does not select or reinterpret workflow state, Action, successor, effect, retry, or success
-- AND repository application accepts completion only after fresh observation proves the exact governed postcondition
-- AND replacing the carrier does not change the workflow contract
-
-#### Scenario: Deterministic rejection remains repository-owned evidence
-
-- GIVEN repository application rejects one authorized effect plan because a deterministic guard fails
-- WHEN the result is returned to the semantic worker
-- THEN the result identifies the exact failed guard class and relevant expected/observed evidence machine-readably
-- AND the semantic worker is not required to reverse-engineer the failed deterministic predicate from routing, SHA, branch payload, or application source code
-- AND the rejection does not itself authorize retry, weaker preconditions, a different target, or a successor
+- GIVEN application has authorized one exact mutation plan
+- AND the Actions identity cannot legally execute it
+- WHEN a legal connector/App carrier executes the plan
+- THEN the carrier changes no Issue/Action/Role/effect/successor/retry meaning
+- AND application accepts only the exact freshly observed postcondition

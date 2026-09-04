@@ -1,71 +1,88 @@
 ## Context
 
-#138 preserves formal Explore `issuecomment-5482546619`, Human architecture decisions `issuecomment-5475109024` / `issuecomment-5477274582`, #168 transport source `issuecomment-5442745071`, Human environment constraint `issuecomment-5303723685`, Executor blocker `issuecomment-5504609193`, Human execution clarification `issuecomment-5507379401`, and Human-approved M0/N-1 correction `issuecomment-5521336171`. Verified proposal-recovery checkpoint `issuecomment-5507709525` proves the current proposal revision already preserves the carrier, bounded-slice, and rejection-observability intent. M0 PR #189 established the bounded content-addressed ingress/Resolve-validation/HANDOFF substrate; production run `33730731896` exposed its cross-credential blob-GET defect, and follow-up PR #190 is merged/deployed at `main@e8c3dc7b256bc167217e25a397e98181bdf6f123` with application-owned tree resolution. That M0 pair is prerequisite/buildability evidence, not #138 completion; production connector-blob → Actions-tree → exact-R live E2E remains the acceptance obligation.
+Fresh current governance remains Scheduled-Dispatch-Mode: workflow-dynamic and currently selects #138 from agent:lead + action:resolve-question. Current main@e8c3dc7b256bc167217e25a397e98181bdf6f123 still carries the older role-label and continuation model, while PR #178 at head 5592ee855406c065c54c137832a85f532f617898 contains the prior incremental plan. Human intent issuecomment-5528834334 explicitly supersedes that plan and requires a first-principles reset.
 
-The correction keeps Human outcome fixed while separating four execution boundaries that prior formalization conflated or ordered incorrectly: exact revision `R` validation, content-addressed work-product ingress/application completion, run-scoped result transport, and identity-sensitive PR mutation carrier execution. Repository effect/revision authorization and repository-owned postcondition observation remain distinct from all three transport/carrier surfaces. The repeated fragmented recovery also demonstrates an execution-granularity defect: one mapped Action per wake is necessary, but the Action still needs a bounded independently verifiable work slice rather than file/API/run-sized stopping points.
+The design therefore separates semantic responsibility, workflow action, and mutation capability. Lead/Reviewer/Executor retain semantic judgment in their mapped Skills. A small repository-owned executable model makes mechanical decisions. Repository application authorizes and observes mutations. External transport and identity-sensitive carriers remain adapters. No layer infers authority from prose, historical ordering, a worker's arbitrary successor, or a successful API call alone.
 
 ## Decisions
 
-### 1. One executable authority
+### 1. Action is the canonical workflow position
 
-After cutover, current workflow position is `Issue lifecycle + immutable Change + one Action + exact causal input`; Role derives from Action. A default-branch kernel solely owns Action vocabulary, Action→Role, finite result/transition/effect rules, WIP/FIFO/debt classification, effect capabilities, carrier eligibility, fresh authorization, stale/replay handling, deterministic rejection classification/evidence, and structural postconditions. `agents/workflow.md` is generated or mechanically verified presentation, not a parsed competing DAG. Semantic judgment remains with Lead/Reviewer/Executor. Generic `merge-pr` becomes `merge-implementation-pr` and `merge-archive-pr`.
+Normal current state is:
 
-### 2. Effect authority and mutation carrier are separate
+Issue lifecycle + immutable Change + one Action.
 
-Repository application derives and fresh-authorizes an exact target/precondition/revision-bound effect. A legal carrier then executes only that plan, after which repository application fresh-reads the resulting object/head/state before accepting success. The carrier MUST NOT choose Issue, Action, successor, effect, retry, weaker preconditions, or success semantics. Carrier replacement does not change workflow semantics.
+Role = role_for(Action) is a pure derived property. Evidence is durable and reconstructable, but result, review, Human, exact revision, transport, and carrier records do not become additional current routing dimensions. agent:* labels are accepted only as migration/source-retirement input during the transition and are absent from the target normal state.
 
-Identity-sensitive PR create/presentation/head/ready/merge effects that Actions cannot legally execute, or whose bot identity breaks required event propagation, use an event-capable Scheduled-Agent connector/GitHub-App carrier. The target MUST NOT enable `Allow GitHub Actions to create and approve pull requests`.
+The executable model contains the finite Action vocabulary, ACTION_ROLE, legal TRANSITIONS, typed result classes, role_for, next_action, and deterministic work selection. It is one machine-decidable source of truth. Human-readable workflow text is generated or mechanically checked from it and is never parsed as a second production topology.
 
-Preserve #58: archive automation succeeds at validated archive-branch push; `Lead / finalize-change` presents or reuses the final Archive PR through the legal carrier; independent archive review, exact-head gates, Executor merge, native close, and terminal reconstruction remain. Recovery is reuse-first; create replacement only when fresh exact authority requires it. No carrier wait state, retry counter, lock/lease, or second DAG is added.
+### 2. A wake has one Action boundary
 
-### 3. Work-product ingress is content-addressed and application-owned
+At every Scheduled Task wake:
 
-OpenSpec work-product ingress is neither control/request transport nor run-scoped result transport, and it is not the identity-sensitive mutation carrier. A semantic worker may create only unreferenced Git blobs as untrusted content-addressed ingress. Its request carries no complete source/spec/test content; it carries the exact current PR/branch/base identity plus each Change-owned path, referenced blob SHA, and current expected blob SHA.
+1. repository-owned transport yields an exact run-scoped dispatch decision from fresh current state;
+2. the mapped Role and default-branch Skill are loaded;
+3. exactly one Action reconstructs its own evidence and performs its bounded semantic work;
+4. the worker returns a typed result/evidence envelope;
+5. repository application fresh-reauthorizes the exact source and effects;
+6. application performs only necessary narrow mutations, exact validation, and postcondition observations;
+7. next_action(current_action, result) derives one successor or terminal state;
+8. the successor is persisted; the current invocation exits.
 
-Repository application fresh-reauthorizes the exact source Action, verifies current Issue/Change/PR/branch/base/path/current-blob identities, uses application-owned `create tree` as the first cross-credential resolution of the manifest blob SHAs, then fresh-observes the exact created tree and requires every requested Change-owned path to resolve to the exact requested blob SHA before commit creation. It constructs one commit revision `R`, advances only the exact current branch without force, and accepts success only after fresh observation of ref, PR head, commit/tree/parent, and file-SHA postconditions. A stale base or expected SHA, unavailable/mismatched blob during tree construction, escaping/duplicate path, incomplete/truncated tree observation, force update, worker-created tree/commit/ref, or API success without observed postcondition fails closed before acceptance.
+The successor never executes in the same wake, including a same-Role successor. This removes the need for invocation-role comparison, same-role continuation, cross-role barriers, and a separate normal ownership-transfer journal. A transition from implement-change with SPEC_BLOCKER can therefore persist resolve-question and exit; the next wake derives Lead from that Action.
 
-Direct `GET git/blobs/{sha}` by the application identity is not a required precondition for connector-created unreferenced ingress: production run `33730731896` demonstrated that such a pre-read may return 404 across credentials even when the connector-side object was freshly observable. Blob availability becomes authoritative only when application-owned tree construction resolves the SHA and the created tree is freshly verified. This does not make an unreferenced blob durable workflow state; transient ingress must be created and consumed within the bounded work-product operation.
+Within one Action, work is bounded by a meaningful verified outcome. The execution shape is Reconstruct -> RED exact gap/blocker -> GREEN legal correction -> VERIFY exact postcondition/revision/gate -> checkpoint. An intermediate file/API/commit/run is not completion. If a slice cannot reach VERIFY in one normal invocation, it is split before execution at a safe outcome boundary.
 
-The resulting exact `R` is handed to the same application-owned exact-revision validation boundary. After a cross-role source result/routing application, canonical `HANDOFF` is likewise application-owned: it is persisted only after the exact source `ACTION_RESULT`, routing mutation, and target routing are observed. The M0 bootstrap proves the mechanism can self-host this correction only when the live E2E succeeds; formal Stage 1B still owns production live-E2E acceptance and does not let bootstrap/unit-test evidence complete #138.
+### 3. Results and application effects are distinct
 
-### 4. Exact-revision validation remains application-owned
+A semantic worker can state a typed result and evidence, but it cannot choose a successor or directly persist durable workflow state. The result is correlated to the exact dispatch decision and is consumed by repository application.
 
-When readiness requires exact OpenSpec validation for `R`, application obtains deterministic evidence independent of a source-Action whitelist. `R` may be newly produced or already current; no dummy-touch is allowed. Accepted evidence proves target `R`, validator checkout `HEAD == R`, qualified pinned compatibility, and strict PASS. Stale CI, `run.head_sha` without checkout proof, manual approval, ungoverned connector mutation, or another model wake cannot satisfy the gate. `Lead / resolve-question` receives the same gate-derived resource availability as Propose.
+Application fresh-reads the Issue, Change, PR/head, branch, expected current identities, and relevant Human/review/gate evidence. It derives the legal effect plan and successor from the executable model, applies only the exact necessary effects, and fresh-observes every required postcondition. A stale, replayed, ambiguous, contradictory, or provenance-incomplete request fails closed. Already durable effects are not replayed merely to recreate evidence, and later consumed descendants are never rewound.
 
-### 5. Run-scoped transport and one Action per wake
+Recovery is ordinary idempotent reconciliation of still-required non-contradictory state. It is not another Action, public lifecycle state, transaction framework, retry counter, lock/lease, mailbox protocol, or second DAG.
 
-Runtime check-in comments are request/trigger/audit only. Dispatch/application/validation results belong to the exact Actions run; exact request→run→result correlation is mandatory with no response-comment fallback. Each wake fresh-discovers exactly one open `Asia/Taipei` current-day check-in; rollover establishes today before closing yesterday and preserves in-flight prior-day correlations.
+### 4. Exact revision and work-product boundaries stay independent
 
-A normal wake is `fresh dispatch → one mapped Action → bounded verified slice → application → legal carrier if required → fresh postcondition/exact-resource consumption → durable checkpoint → exit`. No successor Action executes in that wake; the selected Action remains work-conserving internally.
+When a Lead correction changes OpenSpec artifacts, the semantic worker may create unreferenced Git blobs only. It submits a manifest containing exact branch/base identity, Change-owned paths, each new blob SHA, and each current expected SHA. Application creates the one tree and commit, advances the exact branch without force, and fresh-observes ref, PR head, commit/tree/parent, and file postconditions. Complete file content is not carried through Issue comments.
 
-### 6. Correction, replay, and migration
+The resulting revision R is validated by an application-owned exact-R resource. Accepted evidence proves target R, validator checkout HEAD == R, the qualified pinned OpenSpec baseline, and strict validation PASS. Validation eligibility comes from the governed artifact/gate requirement, not a Propose-only or role whitelist; an already-current correct target is validated without a dummy rewrite.
 
-Before first independent `review-openspec` acceptance, a material formalization defect may return the same Issue to Explore without a new Human-reserved commitment while preserving Change, artifact/PR history, evidence, and WIP. After acceptance, material correction uses Resolve and renewed independent review.
+### 5. Bounded daily transport
 
-Satisfied postconditions are idempotent. Carrier failure preserves exact plan/error/observed mutation and recovery continues only while source/effect remain current. Stage 5 uses a finite reviewed typed retirement plan plus complete current observations; prose/history/model inference never selects migration candidates. The first plan retires #168 to provenance-only after absorption into #138.
+The daily control surface derived from #168 is a transport shard for the governed Asia/Taipei day. There is at most one usable current-day shard. A request identifies exactly one Actions run, and only that exact run's structured result can be consumed. The shard does not carry Change/Action/Role/WIP, semantic result authority, successor authority, or recovery state.
 
-### 7. Bounded verified slices and deterministic rejection evidence
+Rollover establishes and freshly observes today's shard before retiring an older one. Retirement does not invalidate an in-flight request -> exact run -> result chain. Permanent response history, latest, timing proximity, title inference, and mailbox-style result comments are not authorization mechanisms.
 
-Inside one machine-authorized Action, the primary execution unit is one bounded vertical slice with an independently verifiable outcome:
+### 6. Explicit merge Actions and retained safety
 
-`Reconstruct → RED exact gap/blocker → GREEN legal correction → VERIFY exact postcondition/revision/gate → durable checkpoint`.
+Independent review-implementation and review-archive gates remain separate and exact-revision/exact-head bound. Their PASS results derive merge-implementation-pr and merge-archive-pr respectively. Executor retains exact target, head, linkage, Human-freshness, and unchanged-revision checks; Archive retains lifecycle preparation and cleanup obligations. Merge recovery reuses an exact current PR/head when legal and never infers a phase from a generic merge Action.
 
-The slice is not one file mutation, one API call, one GitHub Actions run, or another intermediate mechanical event. If the intended slice cannot reasonably reach VERIFY in one normal invocation, it is split before execution at a meaningful outcome boundary rather than being allowed to fragment opportunistically. Valid stop boundaries include verified slice completion, a cross-role handoff, a genuine Human decision boundary, an N-1 prerequisite deployment boundary, or an external resource wait only after no other legal same-authority continuation remains.
+Human authority, WIP=1/finish-first, complete and provenance-qualified observations, stale/concurrency fail-closed behavior, exact-head merge safety, content-addressed ingress, and deterministic archive completion remain. Carrier identity is replaceable and executes only a repository-authorized plan; it cannot select work, effects, successors, retries, or success.
 
-When repository application rejects a deterministic effect guard, it emits machine-readable rejection classification identifying the exact failed predicate/guard class and relevant expected/observed evidence. An aggregate message such as `effect precondition rejected` may remain diagnostic text but cannot be the only durable result. This evidence is observability of repository-owned authorization; it does not create semantic authority, choose a successor, authorize retry, weaken the rejected precondition, or create a second retry/state machine.
+### 7. Safe delivery and deletion
 
-## Mandatory N-1 delivery
+The delivery has three semantic boundaries:
 
-Order is **1A exact-revision application resource → 1B content-addressed work-product ingress/self-hosting → 1C run-scoped result transport/daily check-in → 1D identity-sensitive PR carrier → 2 kernel shadow → 3 typed application → 4 one-Action wake → 5 canonical cutover/source retirement → 6 deletion/context reduction**.
+- Shadow: introduce the smallest executable Action model and compare its decisions with current production without mutation cutover;
+- Cutover: deploy bounded run-scoped transport, structured results, Action-only routing, derived Role, fresh application, exact validation/ingress, carrier separation, one Action per wake, and explicit merge Actions;
+- Delete: remove superseded normal role routing, cross-role journal/continuation/recovery machinery, response-mailbox/history coupling, Markdown topology/effect parsing, generic merge inference, and obsolete model-runtime/compatibility paths.
 
-Every stage must be independently executable/testable/mergeable/deployable on N-1 or be split. Stage 1A is this materially revised Resolve action's semantic-review prerequisite. Stage 1B formalizes the distinct content-addressed ingress/application-completion boundary bootstrapped by M0 and retains production live-E2E acceptance. Stage 1C is the mandatory #168 run-scoped transport deployment. Stage 1D is the mandatory identity-sensitive PR carrier boundary proven necessary by Actions PR-create failure. Stages 1B–1D must be deployed before Stage 2; after valid Stage-1A evidence they do not add another semantic OpenSpec review prerequisite. Stage 3 owns machine-readable deterministic rejection evidence at the typed application boundary; Stage 4 consumes that boundary while enforcing one bounded verified slice inside the one authorized Action.
+Each boundary must be independently testable, reviewable, and deployable on the then-current N-1. A boundary is split only when required for a verified safe transition. No intermediate boundary is mistaken for #138 completion.
 
-## Validation and deletion
+## Acceptance criteria
 
-Stage 1B verifies no full-content Issue-comment work-product persistence, exact manifest/base/path/current identity checks, application-owned tree resolution of referenced blob SHAs, exact recursive tree path/blob observation before commit, application-owned single commit `R`, non-force exact ref/PR/file postconditions, exact-R validation handoff, canonical application-owned cross-role HANDOFF, stale/unavailable/mismatched ingress behavior, and production live E2E. PRs #189/#190 are prerequisite/buildability evidence rather than formal completion evidence.
+- Current state can be reconstructed as Issue lifecycle, immutable Change, and one Action, with Role derived.
+- One executable model is the only production selector/transition authority.
+- A single wake executes one Action, persists only its derived successor/terminal state, and exits before successor execution.
+- Worker result/evidence is bounded and cannot choose arbitrary targets or successors.
+- Application fresh reauthorization, exact effects, stale/replay/no-rewind guards, and postcondition observation are preserved.
+- Exact-R validation and content-addressed ingress pass their independent production tests.
+- Daily transport is bounded and exact-run correlated; it is not a lifecycle mailbox.
+- Independent review, exact-head merge, Human authority, WIP=1, and archive safety remain intact.
+- The cutover measurably reduces canonical state dimensions and executable paths, and deletion removes rather than hides superseded mechanisms.
 
-Stage 1D verifies carrier eligibility, no carrier-side selection/retry inference, exact target/head/base/linkage/precondition binding, reuse-first PR recovery, no Actions PR-create permission dependency, ordinary event propagation, fresh repository postconditions, stale/failure behavior, and preservation of the validated-archive-branch boundary.
+## Non-goals
 
-Stage 3 validation verifies that every deterministic rejection exposes an exact machine-readable guard classification/evidence rather than forcing the semantic worker to reconstruct guard logic from routing/SHA/source code. Stage 4 validation verifies that one Action does not claim slice completion from an intermediate write/API/run and that a durable checkpoint follows VERIFY.
+This Change does not create a duplicate Change or PR, move semantic authority from Lead/Reviewer/Executor, weaken Human-required decisions, use a model API inside Actions, add a generic workflow framework, or turn transport/audit history into current workflow state.
 
-Final production removes normal `agent:*` routing, generic merge-phase inference, response-mailbox/history coupling, Markdown topology/effect parsing, same-wake continuation/barriers, obsolete compatibility, legacy model-host code, Actions-owned identity-sensitive PR lifecycle paths, and redundant tests/prose.
+Refs #138

@@ -1,100 +1,75 @@
 ## Delivery invariant
 
-#138 is one parent outcome. Every stage MUST be independently executable/testable/mergeable/deployable on then-current N-1 or be split. Order: **1A exact-R validation → 1B content-addressed work-product ingress/self-hosting → 1C run-scoped transport/daily check-in → 1D identity-sensitive PR carrier → 2 kernel shadow → 3 typed application → 4 one-Action wake → 5 canonical cutover/source retirement → 6 deletion/context reduction**.
+#138 is one parent outcome and PR #178 remains its implementation vehicle. Every boundary below MUST be independently executable, testable, reviewable, and deployable on then-current N-1 or be split only at the minimum safe verified boundary. No boundary completion alone closes #138.
 
-Stage 1A is the materially revised Resolve action's exact-handoff semantic-review prerequisite. Stage 1B preserves the distinct work-product ingress/application-completion boundary and production live-E2E obligation established by the M0 bootstrap. Stages 1C/1D remain mandatory before Stage 2 but add no separate semantic OpenSpec review gate after valid Stage-1A evidence.
+The target state is Issue lifecycle + immutable Change + action:<action> with Role = role_for(Action). Results, reviews, Human decisions, exact revisions, and transport records remain evidence. WIP=1, finish-first, stale/replay/no-rewind/fail-closed behavior, Human authority, independent gates, exact-head merge safety, content-addressed ingress, and carrier separation remain required.
 
-Within each machine-authorized Action, plan the primary execution objective as one bounded verified vertical slice: `Reconstruct → RED exact gap/blocker → GREEN legal correction → VERIFY exact postcondition/revision/gate → durable checkpoint`. A file write, API call, Actions run, or first nonterminal resource is not a completed slice. If the slice cannot reasonably reach VERIFY in one normal invocation, split it before execution at a meaningful outcome boundary rather than fragmenting it opportunistically.
+## A. Shadow the smallest executable model
 
-## 1A. Exact-revision application resource
+- [ ] A.1 Reconstruct current production selection and the material failure evidence from main, #138, PR #178, and issuecomment-5528834334.
+- [ ] A.2 Define one finite Action vocabulary, ACTION_ROLE, TRANSITIONS, role_for(action), next_action(current_action, result), and select_work(authoritative_observations) on the default-branch-owned executable surface.
+- [ ] A.3 Define bounded typed result classes and exact deterministic effect/postcondition guards without adding a generic orchestration, retry, lock/lease, or second-DAG framework.
+- [ ] A.4 Generate or mechanically verify the Human-readable workflow presentation against the executable model; fail validation on drift instead of parsing Markdown at runtime.
+- [ ] A.5 Run a no-mutation shadow comparison across active, pre-activation, closed-debt, stale, replay, and competing-wake observations. Preserve exact evidence for any divergence.
+- [ ] A.6 Verify WIP=1, finish-first, Human authority, complete/provenance-qualified observation, and stale/concurrency fail-closed behavior in the shadow boundary.
 
-Advances exact-R readiness for newly produced and already-current heads. Boundary: validation resource only. Next: 1B.
+## B. Cut over bounded transport and Action-only execution
 
-- [x] 1A.1 RED — reproduce `action_required`/no-validator-job or missing-checkout-proof failure for repository-produced `R`.
-- [x] 1A.2 RED — prove already-current `R` cannot require rewrite/dummy-touch merely to trigger validation.
-- [x] 1A.3 RED — prove `Lead / resolve-question` cannot be excluded by a Propose-only resource whitelist.
-- [x] 1A.4 GREEN — derive eligibility from the governed readiness/effect/artifact gate.
-- [x] 1A.5 GREEN — support newly produced and already-current exact `R`.
-- [x] 1A.6 GREEN — evidence proves target `R`, checkout `HEAD == R`, qualified pinned compatibility, strict PASS.
-- [x] 1A.7 GREEN — selected Action consumes structured result; invalid/missing/stale/mismatched evidence fails closed.
-- [x] 1A.8 REFACTOR — no model wake, manual approval, stale CI, connector bypass, dummy-touch, source whitelist, or polling scheduler.
-- [ ] 1A.9 VERIFY — live N-1 closed loop covers both target forms and retains both RED regressions.
+### B1. Transport shard
 
-## 1B. Content-addressed work-product ingress / self-hosting
+- [ ] B1.1 Establish the current-day Asia/Taipei control shard with at most one usable shard for the day.
+- [ ] B1.2 Correlate each request to exactly one Actions run and consume only that run's structured result.
+- [ ] B1.3 Prove malformed, duplicate, missing, multiple, failed, cancelled, expired, uncorrelated, and stale transport evidence fails closed.
+- [ ] B1.4 Establish today's shard before retiring an older shard and preserve an in-flight request -> exact run -> result chain.
+- [ ] B1.5 Remove response-mailbox result authorization, latest/title/timing inference, and permanent control-Issue lifecycle semantics.
 
-Advances repository-owned OpenSpec work-product ingress/application completion without turning Issue comments, semantic workers, or mutation carriers into workflow authority. N-1: 1A deployed plus the bounded M0 bootstrap on current default branch. Boundary: work-product ingress, exact revision construction, and application-owned completion only; control/request transport, run-scoped result transport, and identity-sensitive PR carrier remain separate. Next: 1C.
+### B2. Fresh typed application
 
-- [ ] 1B.1 RED — reject full source/spec/test content as Issue-comment persistence transport; require a bounded manifest carrying only exact branch/base identity plus path, referenced blob SHA, and current expected blob SHA for each changed file.
-- [ ] 1B.2 RED — reject stale PR head/base, stale current-file SHA, missing/mismatched referenced blob, duplicate/escaping path, force update, or any worker-created tree/commit/ref as authoritative application.
-- [ ] 1B.3 GREEN — semantic worker may create only unreferenced Git blobs as untrusted work-product ingress; repository application fresh-reauthorizes the exact source Action, verifies current Issue/Change/PR/branch/base/path/current-blob identities, uses application-owned tree construction as the first cross-credential resolution boundary for referenced blob SHAs, fresh-observes exact path/blob mappings before commit, builds one single commit revision `R`, advances only the exact current branch without force, and fresh-observes ref/PR/commit/file postconditions.
-- [ ] 1B.4 GREEN — application exposes the resulting exact `R` to the same exact-revision validation boundary and owns canonical cross-role `HANDOFF` persistence only after source `ACTION_RESULT`, routing mutation, and target routing are durably observed.
-- [ ] 1B.5 REFACTOR — keep control/request transport, work-product ingress, effect/revision authorization, mutation-carrier execution, run-scoped result transport, and postcondition observation as distinct replaceable boundaries; direct application-side blob GET is not required for cross-credential existence, transient ingress is not durable workflow state, and the ingress/carrier gains no Issue/Action/successor/retry/success authority.
-- [ ] 1B.6 VERIFY — live N-1 E2E proves connector-created content-addressed ingress → application-owned tree resolution → single revision `R` → exact-R strict validation and, for a cross-role transfer, application-owned canonical HANDOFF; stale/unavailable/mismatched inputs fail closed. M0 PRs #189/#190 are prerequisite/buildability evidence and do not by themselves complete this formal stage or #138.
+- [ ] B2.1 Fresh-reauthorize the exact source Issue/Change/Action and derive next_action from the current Action plus bounded typed result.
+- [ ] B2.2 Apply only the exact necessary issue, routing, tree/commit/ref, validation, PR, or carrier effects and freshly observe every postcondition.
+- [ ] B2.3 Preserve stale/concurrency fail-closed behavior, idempotent still-required reconciliation, no replay of durable work, and no rewind of consumed descendants.
+- [ ] B2.4 Emit machine-readable deterministic rejection classification with relevant expected/observed evidence; rejection never authorizes retry or a weaker plan.
 
-## 1C. Run-scoped transport + daily check-in
+### B3. One Action per wake
 
-Advances #168 exact run-scoped transport and daily check-in lifecycle. N-1: 1A+1B deployed. Boundary: transport/discovery only. Next: 1D.
+- [ ] B3.1 Load one fresh machine-selected Action and its derived Role/Skill per Scheduled Task wake.
+- [ ] B3.2 Execute one bounded verified semantic slice and record its typed result/evidence.
+- [ ] B3.3 Persist the unique derived successor or terminal state, then exit before executing the successor.
+- [ ] B3.4 Verify same-Role and cross-Role successors both require a later fresh dispatch and no continuation/barrier protocol.
+- [ ] B3.5 Keep semantic judgment in the mapped Role/Skill; workers cannot self-select Issues, Roles, Actions, successors, targets, retries, or success.
 
-- [ ] 1C.1 RED — require exact request→run→structured-result correlation; reject `latest`, timing/title inference, response fallback, and incomplete/failed evidence.
-- [ ] 1C.2 RED — require exactly one open `Asia/Taipei` current-day check-in from current GitHub state; reject zero/duplicate/ambiguous identity and permanent-pointer dependence.
-- [ ] 1C.3 GREEN/REFACTOR — establish+observe today before closing prior check-ins; preserve in-flight prior-day correlation; runtime comments become request/trigger/audit only; remove response-mailbox and permanent pointer coupling.
-- [ ] 1C.4 VERIFY — live Scheduled Task E2E proves current-day discovery, exact run-scoped dispatch/application/validation result, rollover, no response mailbox, and no model API in Actions.
+### B4. Exact revision and work-product ingress
 
-## 1D. Identity-sensitive PR carrier boundary
+- [ ] B4.1 Preserve exact-R validation for both newly produced and already-current revisions with checkout HEAD == R, qualified pinned compatibility, and strict PASS.
+- [ ] B4.2 Keep validation eligibility gate-derived rather than tied to a source-role/action whitelist.
+- [ ] B4.3 Accept only unreferenced worker-created blobs plus exact branch/base/path/blob/current-SHA manifest identity.
+- [ ] B4.4 Let application construct the one exact tree/commit/ref and observe PR/head/file postconditions; reject stale, duplicate, escaping, unavailable, mismatched, force, or incomplete operations.
+- [ ] B4.5 Verify production live E2E from content ingress through exact tree, exact revision, and exact-R validation.
 
-Separates repository effect authority from GitHub mutation identity for identity-sensitive PR lifecycle effects. N-1: 1A+1B+1C deployed. Boundary: carrier execution only; no work-product ingress ownership, routing/topology/wake cutover, or durable wait/retry state. Next: 2.
+### B5. Explicit merge and carrier boundaries
 
-- [ ] 1D.1 RED — reproduce a repository-authorized PR effect that `GITHUB_TOKEN` cannot legally execute or whose bot identity breaks required event propagation; permission widening is not the fix.
-- [ ] 1D.2 RED — carrier cannot select Issue/Action/successor/effect, weaken exact target/head/base/linkage/preconditions, infer retry, or make API success authoritative; failures cannot authorize duplicate PR creation.
-- [ ] 1D.3 GREEN — kernel/application derives carrier eligibility and exact target/precondition/revision-bound plan; event-capable Scheduled-Agent connector/GitHub App executes only that plan.
-- [ ] 1D.4 GREEN/REFACTOR — reuse an existing legal PR when exact head/base/linkage can be preserved; replacement requires fresh exact authority. Repository fresh-observes postconditions. Preserve #58 validated-archive-branch success boundary; no carrier wait state, generic retry, lock/lease, or second DAG.
-- [ ] 1D.5 VERIFY — E2E covers event propagation, exact binding, reuse-first recovery, stale/failure reconstruction, no Actions PR-create permission dependency, and unchanged independent review/merge/archive gates.
+- [ ] B5.1 Replace generic merge-pr phase inference with explicit merge-implementation-pr and merge-archive-pr Actions.
+- [ ] B5.2 Preserve independent review gates, exact PR-head/linkage/revision checks, Human freshness, native archive close, and deterministic terminal cleanup.
+- [ ] B5.3 Separate repository effect authority from mutation-carrier identity; the carrier executes only the bound plan and cannot select workflow meaning.
+- [ ] B5.4 Preserve the observed Actions PR-create limitation without enabling Actions PR-create/approve permission; use a legal event-capable carrier where required.
+- [ ] B5.5 Verify reuse-first recovery and exact-head postconditions for implementation and Archive PRs.
 
-## 2. Executable kernel shadow
+## C. Delete superseded production paths and context
 
-Advances one executable machine topology in shadow. N-1: 1A–1D deployed. Boundary: no mutation cutover. Next: 3.
+- [ ] C.1 Retire normal agent:* routing after Action-only routing is deployed; preserve historical labels only as bounded migration/retirement evidence.
+- [ ] C.2 Remove normal cross-role journal/completion protocols, same-role continuation, cross-role barriers, continuation flags/cursors, and public recovery states.
+- [ ] C.3 Remove response-mailbox/history coupling and permanent control-Issue lifecycle semantics.
+- [ ] C.4 Remove Markdown/prose topology and effect parsing from runtime and keep one generated/mechanically verified presentation.
+- [ ] C.5 Remove generic merge-phase inference and redundant lifecycle-phase compatibility.
+- [ ] C.6 Remove obsolete legacy model-host/Responses paths, unused transport shims, and redundant machine-control tests/prose after coverage is moved to the executable model.
+- [ ] C.7 Re-run complete current-state, concurrency, stale/replay/no-rewind, review, merge, archive, and transport validation on the reduced production surface.
+- [ ] C.8 Record a final size/authority comparison proving fewer canonical state dimensions and fewer independent executable decision paths than current main.
 
-- [ ] 2.1 RED — exhaust Action vocabulary, Action→Role, explicit merge Actions, finite transitions/effects, WIP/FIFO/debt, carrier eligibility, illegal states, stale/replay, postconditions.
-- [ ] 2.2 GREEN — smallest kernel consumes the same authoritative observations as production without owning mutation.
-- [ ] 2.3 REFACTOR — generate/mechanically verify `agents/workflow.md`; no competing executable registry.
-- [ ] 2.4 VERIFY — shadow production decisions and explain every divergence from source evidence.
+## Required semantic review
 
-## 3. Typed result/application
+- [ ] R.1 Lead verifies all required artifacts, trace references, canonicalization readiness, and exact-R strict validation for the corrected revision.
+- [ ] R.2 Independent Reviewer / review-openspec performs fresh source-chain, reverse/forward semantic, safety, and exact-revision review.
+- [ ] R.3 Implementation does not begin under the corrected meaning until the new independent review gate passes.
+- [ ] R.4 Existing PR #178, Change identity, Issue history, and unrelated content remain preserved throughout.
 
-Advances typed semantic result→exact kernel effect/carrier plan→fresh application/postcondition, including deterministic rejection observability. N-1: Stage 2 equivalence. Routing/wake unchanged. Next: 4.
-
-- [ ] 3.1 RED — bind result to exact Issue/source Action; reject arbitrary successor, Markdown control extraction, stale/contradictory state, replay rewind, and aggregate-only deterministic guard failure reporting that hides which predicate failed.
-- [ ] 3.2 GREEN — action-owned typed results + narrative/source evidence; derive exact effect/carrier plan, fresh-reauthorize, execute narrowly, accept only repository-observed postcondition, and emit machine-readable exact failed guard class plus relevant expected/observed evidence on deterministic rejection.
-- [ ] 3.3 REFACTOR — retain action-specific result vocabularies and structured rejection evidence at the executable owner; do not create a generic outcome/retry state machine or move workflow authority into the carrier.
-- [ ] 3.4 VERIFY — cover Explore/correction/review/implementation/merge/lifecycle, Human freshness, partial mutation/causal descendants, exact-resource observation, carrier failure, `EXECUTION_EXCEPTION`, and representative rejection classes such as stale source, expected-SHA mismatch, unsupported operation, and failed effect-specific structural guard without semantic reverse engineering.
-
-## 4. One-Action wake
-
-Advances exactly one mapped Action per wake with one bounded verified vertical slice as the primary execution objective and work-conserving internals. N-1: Stage 3 persists successor for later dispatch. Next: 5.
-
-- [ ] 4.1 RED — completed Action ends wake even for same Role; the authorized Action's bounded `Reconstruct→RED→GREEN→VERIFY→checkpoint` slice stays inside the Action; file/API/Actions intermediate success or first nonterminal exact resource is not alone Exit Proof; no successor Action executes.
-- [ ] 4.2 GREEN — execute the bounded same-Action slice through exact VERIFY and durable checkpoint when legal; split before execution when the objective cannot reasonably reach VERIFY in one normal invocation; remove same-role chaining, cross-role barriers, fresh-worker same-wake identity, fixed-role successor comparison, continuation flags.
-- [ ] 4.3 REFACTOR — shorten governance/Skills/messages without weakening semantic/evidence/carrier/exception obligations or the verified-slice stop boundaries.
-- [ ] 4.4 VERIFY — prove intermediate mechanical success cannot be reported as slice completion, verify governed stop boundaries, and prove no OpenAI/Responses/other model API or Actions-hosted model worker.
-
-## 5. Canonical cutover + typed source retirement
-
-Advances Action-only routing, Role derivation, explicit merge Actions, typed retirement of explicitly absorbed sources. N-1: 1A–4. Requires authoritative dry-run + finite reviewed retirement plan. Rollback translates from new state only. Next: 6.
-
-- [ ] 5.1 RED — cover terminal/current/debt/legacy/ambiguous Issue shapes; preserve immutable Change and unrelated labels.
-- [ ] 5.2 RED — reject missing/duplicate/malformed retirement entries, prose/history/model-discovered candidates, state/provenance contradiction, newer unresolved Human input.
-- [ ] 5.3 GREEN — finite reviewed plan binds exact source Issue, expected lifecycle/Change/routing, absorbing Issue/Change, exact durable source/assignment refs; never becomes normal selector/exception registry.
-- [ ] 5.4 GREEN — fresh-verify; close source if open; remove only observed workflow `agent:*`/`action:*`; preserve body/comments/results/unrelated labels; interruption remains visible closed-routing debt.
-- [ ] 5.5 GREEN — migrate remaining live state to one Action; production uses kernel; generic merge becomes explicit implementation/archive merge Actions.
-- [ ] 5.6 VERIFY — retire #168 to fresh-observed `closed + no workflow routing` while preserving `ACTION_RESULT(PROPOSAL_READY)` provenance; replay idempotent; no FIFO selection/suppression through plan/prose/history.
-- [ ] 5.7 VERIFY — fresh-observe every mutation and run WIP/FIFO/debt/review/merge/lifecycle regressions including interruption and plan drift.
-
-## 6. Deletion/context reduction
-
-Completes #138 only after full gates. N-1: Stage 5 canonical state. Rollback never restores permanent dual authority.
-
-- [ ] 6.1 RED — deleted representations cannot re-enter control; history remains readable but non-authoritative.
-- [ ] 6.2 GREEN — delete normal `agent:*` routing, generic merge-phase inference, response mailbox/history coupling, Markdown topology/effect parsing, same-wake continuation/barriers, obsolete compatibility, legacy model-host code, Actions-owned identity-sensitive PR lifecycle paths, redundant machine-control prose/tests.
-- [ ] 6.3 REFACTOR — remove helpers only preserving deleted paths; retain bounded migration/audit fixtures.
-- [ ] 6.4 VERIFY — full Python/Ruff/mypy/governance/Skill/live-E2E/migration/production tests plus exact-revision strict OpenSpec.
-- [ ] 6.5 VERIFY — record architectural subtraction versus current `main`.
+Refs #138

@@ -1,149 +1,204 @@
 ## ADDED Requirements
 
-### Requirement: Executable kernel owns Action-only workflow control
-After cutover one default-branch kernel SHALL own Action→Role, typed transitions/effects, WIP/FIFO/debt dispatch, capability, fresh authorization, deterministic rejection classification/evidence, stale/replay and postconditions. Open routed Issues SHALL have exactly one valid `action:*`; Role is derived, `Change:` immutable after activation, WIP one. Evidence/history/legacy `agent:*` MUST NOT route. Normal dynamic order SHALL be active non-`unset` → closed-routing debt → unset Explore/Propose FIFO (`created_at`, Issue number) from complete current GitHub state. Fixed-role is N-1 compatibility only; production SHALL consume the kernel and workflow prose SHALL be generated/mechanically verified.
-#### Scenario: Action selects work
-- GIVEN one active Issue has one valid Action plus stale alternate routing
-- WHEN neutral dispatch observes complete state
-- THEN it selects that Issue and derives Role only from Action
+### Requirement: Action is the sole normal workflow routing dimension
 
-### Requirement: Cutover retires explicitly absorbed pre-activation sources
-Stage 5 SHALL use a finite reviewed machine-readable plan binding exact source Issue/state/`Change:`/workflow labels, absorber Issue/Change, and durable source/assignment refs. Entry plus current authoritative observations, never prose/history/model inference, selects the source; invalid/stale/ambiguous/contradictory/incomplete or newer-undispositioned-Human evidence fails closed. Application SHALL fresh-reauthorize, close if needed, remove only workflow routing, preserve evidence/unrelated labels, and accept only fresh `closed + no workflow routing`; interruption is debt and replay idempotent. The plan MUST NOT become a runtime selector/exception registry.
-#### Scenario: Absorbed #168 retires
-- GIVEN the reviewed entry binds #168 to #138 / `simplify-scheduled-agent-control-plane` and fresh state matches
-- WHEN Stage 5 applies it
-- THEN #168 is `closed + no workflow routing` with evidence/unrelated labels preserved
+After cutover, normal current workflow state SHALL contain only Issue open/closed lifecycle, immutable Change: identity once formal work is activated, and exactly one valid action:<action> on an open routed coordination Issue. Role SHALL be derived as role_for(action) and MUST NOT be required as a separately persisted normal routing dimension. Semantic results, review findings/PASS, Human decisions, exact-revision evidence, transport/run records, and carrier records remain durable evidence and MUST NOT become current routing state. Normal agent:* labels are migration/source-retirement residue and MUST NOT select target-state work.
 
-### Requirement: Persistent Issue permits bounded pre-acceptance Explore correction
-Before first independent `review-openspec` acceptance, a material defect in the causal Explore source/evidence/feasibility MAY return the same Issue to `explore-change` when the same bounded problem is researchable without new Human-reserved commitment. Non-`unset` Change, Issue, PR/artifacts/history/evidence and WIP SHALL remain; Change MUST NOT be unset/replaced or work requeued. After acceptance use `resolve-question` plus independent review; `NO_CHANGE_REQUIRED`/`NO_GO` remain pre-activation only.
-#### Scenario: Provisional Change returns
-- GIVEN unaccepted Change C has a researchable causal-Explore defect
-- WHEN Lead returns it to Explore
-- THEN C, Issue, history and WIP remain intact
+An open routed Issue with zero, multiple, or illegal action:* labels MUST fail closed. Unrelated labels MUST be preserved. Closed workflow labels are bounded migration/debt input only and MUST NOT become normal active state after cutover.
 
-### Requirement: Runtime transport uses exact run-scoped results
-Scheduled Task SHALL be the only normal model wake; Actions MUST NOT host/invoke model APIs/workers. Check-in comments MAY be request/trigger/audit only. Dispatch/application/validation results SHALL be consumed only from the exact caused Actions run; response-mailbox fallback and latest/time/title/model/history inference are forbidden. Exact correlation is mandatory; missing/multiple/failed/cancelled/malformed/expired evidence fails closed. Each wake SHALL fresh-discover exactly one current-day Asia/Taipei check-in by non-workflow identity+date; permanent pointers are forbidden. Rollover SHALL establish/observe today before closing prior days without invalidating an in-flight request→run chain.
-#### Scenario: Exact run carries result
-- GIVEN request C caused exact run R
-- WHEN its result is consumed
-- THEN only R qualifies and no response comment may substitute
+#### Scenario: Action derives the owner
 
-### Requirement: Repository readiness self-hosts exact-revision validation
-When readiness requires OpenSpec validation for R, repository deterministic application SHALL provide the resource from the gate/artifact requirement, not a Role/Action whitelist. R MAY be new or already current and correct artifacts MUST NOT be dummy-rewritten. Evidence SHALL prove target R, validator `HEAD == R`, qualified pinned compatibility and strict PASS; stale CI, `run.head_sha` alone, manual approval workaround, ungoverned connector mutation or another semantic wake MUST NOT qualify. Material `resolve-question` SHALL have the same required resource as Propose.
-#### Scenario: Resolve validates current R
-- GIVEN materially revised Resolve requires readiness for already-current R
-- WHEN validation runs
-- THEN no dummy mutation occurs and evidence proves R, checkout R, compatibility and strict PASS
+- GIVEN an open coordination Issue has exactly one action:review-openspec
+- WHEN executable dispatch selects it
+- THEN it derives Role reviewer
+- AND no normal agent:reviewer label is required for ownership
+- AND the Issue's semantic evidence does not alter the derived Role
 
-### Requirement: Repository work-product ingress is content-addressed and application-owned
-Lead-owned OpenSpec work product SHALL enter repository application through a bounded content-addressed boundary distinct from control/request transport, run-scoped result transport, repository effect/revision authorization, identity-sensitive mutation-carrier execution, and repository-owned postcondition observation. A semantic worker MAY create only unreferenced Git blobs as untrusted work-product ingress and MUST NOT make a tree, commit, ref, Contents-API persistence, PR mutation, or blob existence authoritative. The transport MUST NOT carry complete source/spec/test file content merely to persist repository files; it SHALL carry the exact current PR/branch/base identity and, for each changed Change-owned path, the referenced blob SHA and current expected blob SHA.
+#### Scenario: Stale role label cannot override Action
 
-Repository application SHALL fresh-reauthorize the exact source Action, fresh-verify current Issue/Change/PR/branch/base/path/current-blob identities, use application-owned Git tree construction as the first cross-credential resolution boundary for every referenced blob SHA, and fresh-observe that created tree before commit creation. Every requested Change-owned path MUST resolve exactly once to the requested blob SHA in the observed non-truncated tree. Application SHALL then construct exactly one commit revision R, advance only the exact current branch without force, and accept application only after fresh observation proves the exact ref, PR-head, commit/tree/parent, and file-SHA postconditions. Stale base/current SHA, an unavailable or mismatched blob at tree construction, duplicate or escaping path, incomplete/truncated/mismatched tree observation, worker-created tree/commit/ref, force update, or API success without the required observations MUST fail closed.
+- GIVEN an Issue has action:resolve-question and a stale agent:executor
+- WHEN current dispatch reconstructs the Issue
+- THEN it derives Lead from the Action
+- AND it does not execute Executor work or repair the stale label as a semantic prerequisite
 
-A direct application-side `GET git/blobs/{sha}` MUST NOT be required as the cross-credential existence precondition for connector-created unreferenced ingress. Blob availability becomes authoritative only when application-owned tree construction resolves the SHA and the resulting exact tree is freshly observed. Unreferenced blobs remain transient, untrusted ingress and MUST NOT become durable workflow state or a long-lived mailbox.
+### Requirement: The executable model derives transitions and successors
 
-The resulting R SHALL be consumed by the same exact-revision validation boundary. For a cross-role transfer, canonical HANDOFF persistence SHALL remain repository-application-owned and SHALL occur only after the exact source ACTION_RESULT, routing mutation, and target routing are durably observed. The bounded M0 bootstrap MAY provide N-1 self-hosting capability for this formal correction, but bootstrap/buildability/unit-test evidence MUST NOT by itself satisfy the formal Stage 1B live-E2E acceptance or complete #138.
-#### Scenario: Content-addressed work product becomes one exact revision
-- GIVEN a machine-authorized materially revised Lead action has an open Change PR at exact branch head B
-- AND the worker has created transient unreferenced blobs for the changed Change-owned files
-- WHEN repository application consumes the bounded manifest
-- THEN application verifies B and every current file identity
-- AND application-owned tree construction resolves every referenced blob SHA to the exact requested path
-- AND the created tree is freshly observed before commit creation
-- AND application alone constructs one commit R and advances the exact branch without force
-- AND success is accepted only after ref, PR, commit, file, and exact-R validation postconditions are observed
-- AND neither the semantic worker nor the carrier gains workflow authority from the blob ingress
+The default-branch executable workflow model SHALL own ACTION_ROLE, the finite Action vocabulary, legal TRANSITIONS, role_for(action), next_action(current_action, typed_result), and select_work(authoritative_observations). A worker MAY return only a bounded typed result/evidence envelope. The worker MUST NOT choose an arbitrary Issue, Role, Action, successor, target, retry, or success meaning.
 
-#### Scenario: Unresolvable cross-credential blob fails before commit
-- GIVEN a manifest references one syntactically valid blob SHA
-- AND application-owned tree construction cannot resolve that SHA under the current repository identity boundary
-- WHEN repository application attempts the work product
-- THEN the operation fails closed before creating the commit or updating the ref
-- AND it does not fall back to full-content Issue comments, Contents API persistence, worker-created tree/commit/ref, or weaker identity semantics
+next_action SHALL derive at most one legal successor or terminal state from the current Action and typed result. The application SHALL fresh-reauthorize the source Action, derive the successor from the current state, apply exact necessary effects, and fresh-observe postconditions before treating the successor as current. There is no second production DAG, generic orchestration framework, or recovery state machine.
 
-#### Scenario: Cross-role handoff is application-owned completion
-- GIVEN the source ACTION_RESULT is durable and repository application has applied and observed routing to the legal cross-role target
-- WHEN the transfer is completed
-- THEN repository application persists canonical HANDOFF from the exact source/result/routing evidence
-- AND the semantic worker does not author or substitute a successful HANDOFF before target routing is observed
+#### Scenario: Result derives a unique successor
 
-### Requirement: Repository effect authority is independent from mutation carrier
-Kernel/application SHALL own legal-effect derivation, exact target/preconditions/revision, carrier eligibility, fresh authorization and accepted postconditions. A carrier SHALL execute only the exact authorized plan and MUST NOT select Issue/Action/effect, weaken preconditions, infer retry/successor, change meaning or declare authoritative success; repository code SHALL fresh-observe the result before routing/gate/lifecycle consequence. Actions MAY carry effects only where its identity/event semantics satisfy lifecycle; identity-sensitive PR create/presentation/head/ready/merge effects requiring normal event propagation or forbidden to Actions SHALL use an event-capable Scheduled-Agent connector/GitHub-App carrier. The target MUST NOT enable `Allow GitHub Actions to create and approve pull requests`. Preserve Archive automation ending at validated branch; final Archive PR is a normal Lead carrier effect, then independent review and Executor merge. Bootstrap/recovery SHALL reuse a legal exact-head PR where possible and MUST NOT replace it merely because Actions PR-create returns 403.
+- GIVEN implement-change returns a valid SPEC_BLOCKER
+- WHEN application evaluates the typed result against the current Action
+- THEN it derives resolve-question
+- AND the worker cannot substitute another Lead Action or Issue
 
-When deterministic authorization/application rejects a plan before or during guarded application, the result SHALL identify the exact failed guard class and relevant expected/observed identity or predicate evidence machine-readably whenever that boundary has the information. Aggregate-only `effect precondition rejected` is insufficient. Rejection evidence MUST NOT authorize retry, weaker preconditions, a different target, successor execution, or carrier-side workflow inference.
-#### Scenario: Actions identity cannot create PR
-- GIVEN application authorizes exact PR presentation but Actions identity cannot legally create it
-- WHEN that effect executes
-- THEN repository authority remains and a legal carrier executes it without widening Actions permission
+#### Scenario: Stale result is rejected
 
-#### Scenario: Deterministic guard rejection is explicit
-- GIVEN repository application rejects an effect because one deterministic guard fails
-- WHEN the semantic worker consumes the result
-- THEN the exact failed guard class and relevant expected/observed evidence are machine-readable
-- AND the worker does not need to infer the deterministic failure from routing, SHA, branch payload, or application source
-- AND the rejection itself does not authorize retry or a weaker effect
+- GIVEN an Action result was produced from a stale Issue, Change, PR head, or default-branch revision
+- WHEN application fresh-reauthorizes the effect
+- THEN it fails closed
+- AND it does not apply a guessed successor or replay completed work
 
-### Requirement: One wake executes one typed semantic Action with fresh application
-A wake SHALL fresh-dispatch, execute exactly one mapped Action, return typed result/evidence, then let application fresh-reauthorize exact Issue/Action/Change/revision/effects, apply legal narrow effects, observe postconditions and end; every successor waits for later dispatch. Each Action SHALL reconstruct required durable state.
+### Requirement: One Scheduled Task wake executes exactly one Action
 
-Within that one authorized Action, the primary execution unit SHALL be one bounded vertical slice with an independently verifiable outcome: `Reconstruct → RED exact gap/blocker → GREEN legal correction → VERIFY exact postcondition/revision/gate → durable checkpoint`. A slice that cannot reasonably reach VERIFY within one normal invocation SHALL be split before execution at a meaningful outcome boundary. One file mutation, API call, GitHub Actions run, first nonterminal resource observation, or other intermediate mechanical success MUST NOT by itself satisfy slice completion or Invocation Exit.
+Each normal Scheduled Task wake SHALL fresh-dispatch exactly one repository-authorized Action, load the Role and Skill derived from that Action, execute that Action, return structured result/evidence, apply the necessary repository effects, observe postconditions, persist the unique derived successor or terminal state, and exit. A successor Action SHALL execute only on a later wake after fresh dispatch, even when it maps to the same Role.
 
-Interruption MUST NOT transfer ownership/rewind consumed descendants. Before consequential result/effect/transfer, newer workflow-relevant direct-Human input with qualifying provenance SHALL be durably dispositioned or fail closed. Bounded same-Action observation of one exact resource is allowed but MUST NOT become generic polling/successor execution. Catchable exception evidence MUST NOT itself authorize retry/transition. Correctness MUST NOT depend on cursors/locks/leases/heartbeats/retry state/same-wake chaining/fixed wake Role.
-#### Scenario: Successor waits
-- GIVEN Action A reaches an observed postcondition and successor B becomes current
-- WHEN this wake completes
-- THEN B executes only after later fresh dispatch
+The Action's primary execution unit SHALL be one bounded verified slice: Reconstruct -> RED exact gap/blocker -> GREEN legal correction -> VERIFY exact postcondition/revision/gate -> durable checkpoint. An intermediate file write, API call, commit, Actions run, or first nonterminal observation MUST NOT by itself complete the slice or authorize Exit. A slice that cannot reasonably reach VERIFY in one normal invocation SHALL be split before execution at a meaningful safe boundary.
 
-#### Scenario: Intermediate mechanical success does not complete a slice
-- GIVEN the current authorized Action's bounded slice requires a durable artifact correction plus exact postcondition verification
-- AND the artifact write or first Actions observation succeeds
-- BUT VERIFY proof of the slice outcome is not yet complete
-- WHEN Invocation Exit is evaluated
-- THEN the intermediate success is not completion evidence
-- AND the same authorized Action continues through the remaining legal same-slice work unless a governed stop boundary is reached
+The wake MUST NOT require same-role continuation, cross-role barriers, invocation-role comparison, a continuation cursor, a fresh-worker chain, a public recovery mode, or a separate normal transfer journal. Bounded async observation and at-least-once reconstruction remain safety capabilities, not new routing state.
 
-### Requirement: Independent semantic gates use explicit merge Actions
-`review-openspec` remains independent. `review-implementation` PASS SHALL derive `merge-implementation-pr`; `review-archive` PASS SHALL derive `merge-archive-pr`. Executor SHALL retain exact phase PASS/current-head/check/linkage/Human-freshness predicates; Archive also retains lifecycle preparation/cleanup-retention. Recovery SHALL use explicit merge Action+exact PR/head state, be idempotent, and MUST NOT infer phase or reuse implementation PASS for Archive. Lead finalize authority remains.
-#### Scenario: PASS selects merge phase
-- GIVEN Reviewer passes exact implementation or Archive R
-- WHEN merge authorization is derived
-- THEN only the matching explicit merge Action for unchanged R is legal
+#### Scenario: Same-role successor waits
 
-### Requirement: Architecture reset is mandatory N-1 delivery with deletion
-#138 SHALL remain one parent outcome and every stage MUST be N-1 executable/testable/mergeable/deployable or split without weakening it; intermediate completion MUST NOT complete #138. Order is **1A exact-R resource → 1B content-addressed work-product ingress/self-hosting → 1C run-scoped result transport/daily check-in → 1D identity-sensitive PR authority/carrier split → 2 kernel shadow → 3 typed application → 4 one-action-per-wake → 5 Action-only/Role-derived/explicit merges + absorbed-source retirement → 6 deletion/context reduction**. 1A SHALL precede materially revised Propose/Resolve handoff and validate final R. 1B SHALL preserve the distinct work-product ingress/application-completion boundary and complete production live E2E; an external M0 bootstrap is prerequisite/buildability evidence, not formal Stage 1B or #138 completion. 1B+1C+1D SHALL precede Stage 2 but MUST NOT add semantic review prerequisites once valid 1A exists. 1D SHALL include existing-PR reuse. Stage 3 SHALL deliver machine-readable deterministic rejection classification/evidence. Stage 4 SHALL enforce bounded verified vertical-slice completion inside the one authorized Action before durable completion checkpoint. After cutover production MUST delete superseded Role routing, response/history mailbox, Markdown topology/effect parsing, continuation/wake barriers, compatibility/model-worker paths, Actions-owned identity-sensitive PR mutation, and redundant machine-control prose/tests.
-#### Scenario: Stage cannot finish early
-- GIVEN a stage cannot self-host on N-1 or later stages remain
-- WHEN completion is evaluated
-- THEN it is split or continuation remains mandatory through Stage 6
+- GIVEN Lead completes one Action and application persists a legal next Lead Action
+- WHEN the current wake reaches its postcondition
+- THEN it exits
+- AND the next Lead Action runs only after a later fresh dispatch
+
+#### Scenario: Cross-role successor waits
+
+- GIVEN Executor returns a valid result whose derived successor is Lead-owned
+- WHEN application observes the new Action
+- THEN the current wake exits
+- AND no cross-role journal or wake barrier is required
+- AND a later wake derives Lead from the successor Action
+
+#### Scenario: Intermediate success is not completion
+
+- GIVEN the selected Action has only completed an intermediate write or first external run observation
+- WHEN the slice is evaluated
+- THEN it is not complete
+- AND the Action continues only while its source authority and safe execution opportunity remain current
+
+### Requirement: Application performs exact effects and ordinary idempotent reconciliation
+
+Repository application SHALL fresh-reauthorize the exact source Action, Change, Issue, PR/head, revision, Human/review/gate evidence, and effect-specific preconditions before every consequential mutation. It SHALL apply only necessary exact effects, preserve unrelated content, and fresh-observe each postcondition. Stale, replayed, ambiguous, contradictory, incomplete, or provenance-incomplete evidence MUST fail closed.
+
+If an earlier invocation already made a required mutation durable, recovery MAY complete only still-required non-contradictory effects. It MUST NOT replay semantic work merely to recreate a missing record, and MUST NOT rewind current routing or lifecycle state when valid descendant evidence proves the earlier transition was consumed. Recovery is ordinary idempotent application/reconciliation; it is not another Action, lifecycle state, transaction framework, retry/lock/lease system, or public protocol. Deterministic rejections identify the exact failed guard class and relevant expected/observed evidence machine-readably.
+
+#### Scenario: Durable effect is not replayed
+
+- GIVEN a result comment or routing change is already durable
+- AND a later invocation observes the remaining required effect
+- WHEN application reconciles the state
+- THEN it performs only the missing non-contradictory effect
+- AND it does not replay the semantic Action or rewind a consumed descendant
+
+#### Scenario: Contradictory evidence fails closed
+
+- GIVEN current Issue, PR, revision, or provenance evidence is contradictory
+- WHEN application evaluates a consequential effect
+- THEN it returns the exact failed guard evidence
+- AND it applies no guessed mutation
+
+### Requirement: Daily control shards are bounded transport only
+
+The retained control surface SHALL provide at most one usable current-day Asia/Taipei shard. Each request SHALL be correlated exactly to one Actions run and that run's structured result. latest, title inference, timing proximity, comment ordering, permanent response history, or an Issue-response mailbox MUST NOT authorize a result. Today SHALL be established and freshly observed before an older shard is retired, and retirement MUST NOT invalidate an in-flight request -> exact run -> result chain.
+
+A control shard MUST NOT carry canonical Change/Action/Role/WIP state, semantic workflow evidence, successor authority, or recovery state. Dispatch/application/validation results MUST NOT be restored as response comments merely to make the shard useful. Transport changes MUST NOT change workflow semantics.
+
+#### Scenario: In-flight rollover remains valid
+
+- GIVEN a request on yesterday's shard already identifies exact run R
+- WHEN today's shard is established and yesterday's shard is retired
+- THEN R remains consumable from its exact run-scoped result
+- AND no new mailbox or recovery state is created
+
+### Requirement: Exact-R validation is gate-derived and preserves checkout proof
+
+Whenever an approved gate requires strict OpenSpec validation for revision R, accepted evidence SHALL prove target revision R, validator checkout HEAD == R before validation, qualified pinned OpenSpec compatibility, and strict validation PASS. Eligibility SHALL be derived from the governed gate/artifact requirement and MUST NOT be restricted by a Propose-only or source-role/action whitelist. An already-current correct target MUST be validated without a dummy rewrite. Stale CI, run.head_sha without checkout proof, manual approval, connector bypass, or another model wake MUST NOT satisfy the gate.
+
+#### Scenario: Resolve validates its current head
+
+- GIVEN Lead / resolve-question materially revises OpenSpec artifacts on the current PR head R
+- WHEN the exact validation resource is requested
+- THEN it validates R without a dummy mutation
+- AND the evidence proves checkout HEAD == R and strict PASS
+
+### Requirement: OpenSpec work product uses content-addressed application ingress
+
+For a materially revised Lead OpenSpec Change, the semantic worker MAY create unreferenced Git blobs only. Its bounded manifest SHALL contain exact branch/base identity and, for each Change-owned path, the new blob SHA and current expected blob SHA. Full source/spec/test content MUST NOT be transported through Issue comments merely to persist files.
+
+Repository application SHALL fresh-reauthorize the exact source Action and verify current PR/head/base, Change-owned paths, current file identities, and every referenced blob during application-owned tree construction. It SHALL construct one tree and one commit revision R, advance only the exact branch without force, and fresh-observe the exact ref, PR head, commit/tree/parent, and file postconditions before exposing R to exact validation. Duplicate/escaping paths, stale identity, unavailable/mismatched blobs, worker-created tree/commit/ref, force updates, incomplete tree observations, and API success without postcondition proof MUST fail closed.
+
+#### Scenario: Lead ingress becomes one exact revision
+
+- GIVEN Lead has authored a corrected existing Change on PR #178
+- AND the worker has created only unreferenced blobs for the five Change-owned artifact files
+- WHEN application consumes the exact manifest
+- THEN it constructs one exact revision R
+- AND it does not carry complete file content through the check-in Issue
+- AND exact-R validation receives R only after application postconditions are observed
+
+### Requirement: Independent gates derive explicit merge Actions
+
+review-implementation and review-archive SHALL remain independent exact-revision/exact-head gates. A passing implementation review SHALL derive merge-implementation-pr; a passing Archive review SHALL derive merge-archive-pr. Executor SHALL not infer merge phase from a generic Action or reuse an implementation PASS for Archive. Merge recovery SHALL be idempotent and exact-head bound, and Lead lifecycle/archive authority SHALL remain separate.
+
+#### Scenario: Review PASS selects its explicit phase
+
+- GIVEN Reviewer passes the exact implementation or Archive revision
+- WHEN application derives the successor
+- THEN it selects only the matching explicit merge Action
+- AND the other merge Action is not authorized
+
+### Requirement: Cutover deletes superseded normal control paths
+
+The Change SHALL be delivered through Shadow, Cutover, and Delete boundaries. After Cutover is accepted, normal production correctness MUST NOT depend on separately persisted role labels, canonical cross-role journal/completion records, same-role continuation, cross-role barriers, response-mailbox history, Markdown topology/effect parsing, generic merge-phase inference, or legacy model-host compatibility paths. Historical records remain auditable evidence and migration/source-retirement input only.
+
+#### Scenario: Historical evidence is not live routing
+
+- GIVEN old role labels or transfer records remain in repository history during migration
+- WHEN current dispatch runs after Action-only cutover
+- THEN it selects only the current Action model and authoritative observations
+- AND it does not parse historical prose or labels to invent current work
 
 ## REMOVED Requirements
+
 ### Requirement: Actionable workflow routing is one logical role/action tuple
-**Reason/Migration**: Action becomes canonical; Role routing retires.
-### Requirement: One persistent coordination Issue represents the normal OpenSpec workflow lifecycle
-**Reason/Migration**: Replacement permits bounded pre-acceptance formal Explore while preserving Issue/Change/history/WIP.
-### Requirement: Review and finalize actions have Lead-owned minimum gate contracts
-**Reason/Migration**: Preserve gates with explicit merge Actions.
-### Requirement: Scheduled execution is at-least-once and state reconstructable
-**Reason/Migration**: Durable Action reconstruction remains; successors use later dispatch.
+
+**Reason/Migration**: Action is the sole normal routing dimension and Role is derived; preserve the Issue/Change lifecycle and migrate old role labels as bounded source-retirement input.
+
 ### Requirement: Routing handoff persists evidence before ownership transfer
-**Reason/Migration**: HANDOFF becomes audit; source result/effects precede successor.
-### Requirement: Fresh-read plus label update is not treated as mutual exclusion
-**Reason/Migration**: Fresh typed application retains stale/idempotent safety.
-### Requirement: Executor merges only an explicitly authorized unchanged revision
-**Reason/Migration**: Explicit phase merge Actions preserve exact-head authorization.
-### Requirement: Merge recovery is idempotent and reconstructable
-**Reason/Migration**: Explicit merge Action+PR state replaces phase inference.
+
+**Reason/Migration**: A successor Action plus application postconditions is the current control fact; separate normal cross-role journal/completion semantics are removed while durable results and audit evidence remain.
+
 ### Requirement: Each scheduled run processes at most one actionable work item using a fixed stable order
-**Reason/Migration**: Neutral dynamic Action dispatch replaces fixed-role selection.
-### Requirement: Repository agent artifacts expose the governance contract
-**Reason/Migration**: Kernel owns machine semantics; prose becomes generated/verified.
-### Requirement: Default-branch governance declares the scheduled dispatch mode
-**Reason/Migration**: Dynamic is normal; fixed-role is bounded N-1 only.
+
+**Reason/Migration**: The new neutral dispatcher selects one Action per wake; fixed-role continuation and old role-local action ordering are superseded by the executable model.
+
 ### Requirement: Workflow-dynamic dispatch derives one fixed invocation role from durable workflow state
-**Reason/Migration**: Role derives per Action; successor waits.
+
+**Reason/Migration**: Role derives from each selected Action and successors always wait for a later fresh wake; fixed invocation-role and same-wake continuation semantics are removed.
+
 ### Requirement: Selected Scheduled Agent actions are work-conserving within an invocation
-**Reason/Migration**: Work conservation stays inside one Action only.
-### Requirement: Persisted Change identity defines the single active workflow boundary
-**Reason/Migration**: Current position includes Issue+Change+Action+causal binding.
-### Requirement: Dynamic dispatch tolerates overlapping wakes without hidden ownership state
-**Reason/Migration**: Fresh typed application preserves overlap safety without hidden owner.
+
+**Reason/Migration**: Work conservation is bounded inside one selected Action; it does not authorize same-wake successor execution.
+
+### Requirement: Scheduled execution is at-least-once and state reconstructable
+
+**Reason/Migration**: At-least-once reconstruction and stale/replay/no-rewind safety are retained by the new application/reconciliation requirement without the old continuation and transfer-journal semantics.
+
+### Requirement: Material workflow lifecycle transitions are journaled on the coordination Issue
+
+**Reason/Migration**: Typed results and repository postconditions remain durable evidence; a separate required lifecycle-journal/HANDOFF control fact is removed.
+
+### Requirement: Runtime workflow topology has one authoritative repository owner
+
+**Reason/Migration**: The executable Action model becomes the machine authority; Human-readable workflow text becomes a generated/mechanically verified presentation.
+
+### Requirement: The MVP exposes exactly ten normal scheduled actions
+
+**Reason/Migration**: The target uses the smallest approved Action set, including explicit implementation/archive merge Actions rather than a generic merge phase.
+
+### Requirement: A no-API Issue-comment canary proves the Scheduled Task transport boundary without granting workflow authority
+
+**Reason/Migration**: The permanent comment canary/response result is replaced by bounded daily shard transport with exact run-scoped structured results.
+
+### Requirement: The deployed no-API bridge carries the production dispatch decision without model-side selection
+
+**Reason/Migration**: Dispatch remains machine-owned, but normal results are consumed from the exact run-scoped surface rather than response-mailbox comments.
+
+### Requirement: External wake topology is deployment configuration, not repository workflow state
+
+**Reason/Migration**: Preserve the non-state principle while replacing the unbounded control surface with a bounded daily shard requirement.
