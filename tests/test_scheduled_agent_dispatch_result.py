@@ -5,7 +5,10 @@ from __future__ import annotations
 import pytest
 
 import investment_strategy.scheduled_agent_dispatch_result as transport
-from investment_strategy.issue_comment_bridge import render_run_scoped_dispatch_result
+from investment_strategy.issue_comment_bridge import (
+    MachineDispatchDecision,
+    render_run_scoped_dispatch_result,
+)
 from investment_strategy.workflow_dispatch import DispatchDecision, ObservationProvenance
 
 _REVISION = "cb8f9ec12d826e0d71897a4c73ece961d00df59e"
@@ -78,7 +81,14 @@ def test_fetch_dispatch_result_reads_only_exact_successful_run(
         current_revision=_REVISION,
     )
 
-    assert result == decision
+    assert result == MachineDispatchDecision(
+        request_comment_id=_REQUEST_ID,
+        default_branch_revision=_REVISION,
+        disposition="AUTHORIZE",
+        issue_number=138,
+        role="executor",
+        action="implement-change",
+    )
     assert observed == [
         f"actions/runs/{_RUN_ID}",
         f"actions/runs/{_RUN_ID}/jobs?per_page=100",

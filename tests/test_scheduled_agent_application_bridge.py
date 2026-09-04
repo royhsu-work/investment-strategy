@@ -11,6 +11,7 @@ from urllib.error import HTTPError
 import pytest
 
 import investment_strategy.scheduled_agent_application_bridge as bridge
+from investment_strategy.issue_comment_bridge import parse_dispatch_decision
 from investment_strategy.scheduled_agent_application_bridge import (
     APPLICATION_REQUEST_MARKER,
     parse_application_request,
@@ -218,7 +219,7 @@ def test_plan_application_accepts_exact_run_result() -> None:
     body = _effect_request()
     request = parse_application_request(body)
     assert request is not None
-    decision = bridge.parse_dispatch_decision(_dispatch_decision())
+    decision = parse_dispatch_decision(_dispatch_decision())
     assert decision is not None
 
     plan = plan_application(
@@ -244,7 +245,7 @@ def test_plan_application_rejects_connector_provenance_bypass() -> None:
     body = _effect_request()
     request = parse_application_request(body)
     assert request is not None
-    decision = bridge.parse_dispatch_decision(_dispatch_decision())
+    decision = parse_dispatch_decision(_dispatch_decision())
     assert decision is not None
 
     with pytest.raises(ValueError, match="configured ChatGPT connector"):
@@ -261,7 +262,7 @@ def test_plan_application_rejects_stale_dispatch_revision() -> None:
     body = _effect_request()
     request = parse_application_request(body)
     assert request is not None
-    decision = bridge.parse_dispatch_decision(_dispatch_decision(revision="0" * 40))
+    decision = parse_dispatch_decision(_dispatch_decision(revision="0" * 40))
     assert decision is not None
 
     with pytest.raises(ValueError, match="revision is stale"):
@@ -278,7 +279,7 @@ def test_plan_application_rejects_non_authorizing_dispatch() -> None:
     body = _effect_request()
     request = parse_application_request(body)
     assert request is not None
-    decision = bridge.parse_dispatch_decision(_dispatch_decision(disposition="NO_WORK"))
+    decision = parse_dispatch_decision(_dispatch_decision(disposition="NO_WORK"))
     assert decision is not None
 
     with pytest.raises(ValueError, match="requires an AUTHORIZE"):
