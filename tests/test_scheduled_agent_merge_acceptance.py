@@ -471,6 +471,15 @@ def test_run_effect_application_forwards_current_revision_to_effect_adapter(
             del args
             captured.update(kwargs)
 
+        def guard(self, _effect: object) -> bool:
+            return True
+
+        def apply(self, _effect: object) -> None:
+            return None
+
+        def observe_postcondition(self, _effect: object) -> bool:
+            return True
+
     monkeypatch.setattr(merge_acceptance, "GitHubEffectAdapter", FakeAdapter)
     monkeypatch.setattr(
         merge_acceptance,
