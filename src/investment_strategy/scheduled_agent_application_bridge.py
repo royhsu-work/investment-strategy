@@ -617,6 +617,7 @@ def main() -> int:
         repository=repository,
         token=token,
         workflow_text=workflow_text,
+        current_revision=args.revision,
     )
     _, result = run_guarded_effect_application(
         plan.raw_worker_result,

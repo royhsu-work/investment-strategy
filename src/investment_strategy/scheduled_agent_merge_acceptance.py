@@ -359,6 +359,7 @@ def run_effect_application(
     token: str,
     workflow_text: str,
     pre_apply_guard: PreApplyGuard | None = None,
+    current_revision: str | None = None,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Apply through shared effect guards plus an optional mutation-adjacent guard."""
 
@@ -382,6 +383,7 @@ def run_effect_application(
             ),
             apply_effect=apply_with_fresh_guard,
             observe_postcondition=adapter.observe_postcondition,
+            current_revision=current_revision,
         )
     except _EffectPreconditionStale:
         result = ApplyResult(False, "effect precondition became stale")
@@ -395,6 +397,7 @@ def run_guarded_effect_application(
     repository: str,
     token: str,
     workflow_text: str,
+    current_revision: str | None = None,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Reject stale merge acceptance before and immediately adjacent to merge application."""
 
@@ -416,6 +419,7 @@ def run_guarded_effect_application(
         repository=repository,
         token=token,
         workflow_text=workflow_text,
+        current_revision=current_revision,
         pre_apply_guard=lambda effect: _merge_effect_allows(
             effect,
             source=source,
