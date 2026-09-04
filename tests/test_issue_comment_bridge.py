@@ -124,14 +124,20 @@ def test_run_scoped_result_is_one_strict_decision_block() -> None:
     assert parsed.role == "executor"
     assert parsed.action == "implement-change"
 
-    assert bridge.parse_run_scoped_dispatch_result(
-        f"{block}\n{block}",
-        request_comment_id=987,
-    ) is None
-    assert bridge.parse_run_scoped_dispatch_result(
-        block,
-        request_comment_id=988,
-    ) is None
+    assert (
+        bridge.parse_run_scoped_dispatch_result(
+            f"{block}\n{block}",
+            request_comment_id=987,
+        )
+        is None
+    )
+    assert (
+        bridge.parse_run_scoped_dispatch_result(
+            block,
+            request_comment_id=988,
+        )
+        is None
+    )
 
 
 def test_dispatch_decision_parser_preserves_exact_machine_vocabulary() -> None:
