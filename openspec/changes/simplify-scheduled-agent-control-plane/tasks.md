@@ -27,13 +27,13 @@ Parent advances: typed semantic result→kernel effect→fresh application/postc
 - [ ] 3.1 RED — bind result to exact Issue/source Action; reject arbitrary successors, Markdown control extraction, stale/contradictory state and replay rewind.
 - [ ] 3.2 GREEN — generalize action-owned typed results plus narrative/source evidence; derive effects, fresh-reauthorize, mutate narrowly and observe postconditions.
 - [ ] 3.3 REFACTOR — retain action-specific result vocabularies, not a generic outcome state machine.
-- [ ] 3.4 VERIFY — cover Explore, pre-acceptance Propose correction, review/implementation/merge/lifecycle/Human finite boundaries.
+- [ ] 3.4 VERIFY — cover Explore, pre-acceptance Propose correction, review/implementation/merge/lifecycle finite boundaries plus direct-Human freshness/disposition, partial-mutation/causal-descendant replay, bounded exact-resource observation, and `EXECUTION_EXCEPTION` evidence.
 
 ## 4. Wake simplification
 
 Parent advances: exactly one mapped Action/wake with work-conserving action internals. Remaining: N-1 routing representation. N-1: Stage 3 safely persists successor for later fresh wake. Boundary: no state migration. Next: Stage 5.
 
-- [ ] 4.1 RED — completed Action ends wake even for same Role; RED→GREEN→REFACTOR→VERIFY/local correction/bounded exact-resource consumption stays inside selected Action.
+- [ ] 4.1 RED — completed Action ends wake even for same Role; RED→GREEN→REFACTOR→VERIFY/local correction stays inside selected Action; first absent/queued/in-progress exact resource is not alone Exit Proof while bounded same-action consumption remains, and no successor Action executes in that wake.
 - [ ] 4.2 GREEN — remove same-role chaining, cross-role wake barriers, fresh-worker same-wake identity, fixed-role successor comparison and continuation flags.
 - [ ] 4.3 REFACTOR — shorten governance/Skills/messages without weakening semantic/evidence/exception obligations.
 - [ ] 4.4 VERIFY — wake correctness requires no OpenAI/Responses/other model API or Actions-hosted model worker.
