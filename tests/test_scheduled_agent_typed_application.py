@@ -1,7 +1,7 @@
 """Tests for the Action-only typed application and one-wake boundary."""
 
-from dataclasses import replace
 import json
+from dataclasses import replace
 
 import pytest
 
