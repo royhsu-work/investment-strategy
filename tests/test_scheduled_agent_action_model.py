@@ -17,6 +17,7 @@ from investment_strategy.scheduled_agent_action_model import (
     TypedResult,
     effect_is_current,
     next_action,
+    render_workflow_presentation,
     role_for,
     select_work,
 )
@@ -182,3 +183,13 @@ def test_effect_identity_guard_rejects_stale_revision_or_action() -> None:
     assert effect_is_current(current)
     assert not effect_is_current(replace(current, observed_revision="b" * 40))
     assert not effect_is_current(replace(current, observed_action=Action.RESOLVE_QUESTION))
+
+
+def test_workflow_presentation_is_exactly_model_generated() -> None:
+    workflow = Path("agents/workflow.md").read_text(encoding="utf-8")
+    start_marker = "<!-- BEGIN GENERATED ACTION MODEL -->"
+    end_marker = "<!-- END GENERATED ACTION MODEL -->"
+    start = workflow.index(start_marker)
+    end = workflow.index(end_marker, start) + len(end_marker)
+    observed = workflow[start:end] + "\n"
+    assert observed == render_workflow_presentation()
