@@ -335,9 +335,7 @@ def test_merged_carrier_merge_is_idempotent_without_put(
             "change": change,
             "result_kind": "merged",
             "result_content": "MERGE_RESULT",
-            "requested_effects": [
-                {"kind": effect.kind, "payload_json": effect.payload_json}
-            ],
+            "requested_effects": [{"kind": effect.kind, "payload_json": effect.payload_json}],
         }
     )
     batch = parse_effect_batch(raw, source)
