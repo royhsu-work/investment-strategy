@@ -79,7 +79,7 @@ def test_github_json_uses_repository_endpoint_for_empty_api_path(
     requested_urls: list[str] = []
 
     class FakeResponse:
-        def __enter__(self) -> "FakeResponse":
+        def __enter__(self) -> FakeResponse:
             return self
 
         def __exit__(self, *args: object) -> None:
