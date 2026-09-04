@@ -550,9 +550,7 @@ def test_apply_work_product_uses_current_ref_for_merged_carrier(
     }
     branch_head = current_branch_head
     ref_reads: list[str] = []
-    monkeypatch.setattr(
-        resource, "_current_authorized_request", lambda repository, token: source
-    )
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda repository, token: source)
 
     def fake_github_json(
         repository: str,
