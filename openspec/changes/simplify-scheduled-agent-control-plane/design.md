@@ -28,9 +28,9 @@ Normal wake: fresh bootstrap → exact dispatch → one mapped Action → applic
 
 Before first independent semantic `review-openspec` acceptance, if Propose proves its Explore source/evidence/feasibility premise materially invalid, the executable contract may return the same Issue to `explore-change` even after provisional non-`unset` Change activation. Preserve Change identity, Proposal/PR history and audit evidence; this is not a scope reset or generic backward transition. After independent semantic acceptance, material correction uses `resolve-question` → independent review.
 
-### 7. Stale/replay safety
+### 7. Stale/replay and execution-boundary safety
 
-Every consequence fresh-reads exact source state and effect-specific evidence. Already-satisfied legal postconditions are idempotent and never rewound. Incompatible state, incomplete provenance or ambiguous transport fails closed. Fresh read is not a mutex/CAS.
+Every consequence fresh-reads exact source state and effect-specific evidence. Already-satisfied legal postconditions are idempotent and never rewound. Recovery reconstructs actual completed mutations and causal descendants rather than replaying historical routing. Before consequential results/effects/ownership changes, direct-Human freshness/disposition remains the shared bounded provenance check and never grants separately Human-reserved authority. A just-triggered exact external resource may be boundedly re-observed inside the selected Action without permitting successor Action execution in that wake. Catchable failures retain canonical `EXECUTION_EXCEPTION` evidence and legal same-authority recovery while source routing/revision/preconditions remain current; no generic blocked/retry/fault state machine is added. Incompatible state, incomplete provenance or ambiguous transport fails closed. Fresh read is not a mutex/CAS.
 
 ## Mandatory N-1 delivery
 
