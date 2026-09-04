@@ -20,14 +20,10 @@ def _archive_script() -> dict[str, Any]:
 
 def _request_body() -> str:
     return (
-        "ARCHIVE_REQUEST
-"
-        "Workflow: #138
-"
-        f"Change: {_CHANGE}
-"
-        "Action: finalize-change
-"
+        "ARCHIVE_REQUEST\n"
+        "Workflow: #138\n"
+        f"Change: {_CHANGE}\n"
+        "Action: finalize-change\n"
         f"Revision: {_REVISION}"
     )
 
@@ -82,5 +78,4 @@ def test_archive_request_rejects_extra_lines() -> None:
     module = _archive_script()
 
     with pytest.raises(SystemExit):
-        module["_classify"](_args(body=_request_body() + "
-extra"))
+        module["_classify"](_args(body=_request_body() + "\nextra"))
