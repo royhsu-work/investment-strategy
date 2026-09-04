@@ -654,10 +654,10 @@ class GitHubEffectAdapter:
             return None
         return payload
 
-    def _no_open_source_pull_request(self, branch: str, base: str) -> bool:
+    def _no_existing_source_pull_request(self, branch: str, base: str) -> bool:
         owner = self.repository.split("/", 1)[0]
         head = f"{owner}:{branch}"
-        query = "pulls?state=open"
+        query = "pulls?state=all"
         query += f"&head={quote(head, safe='')}"
         query += f"&base={quote(base, safe='')}"
         query += "&per_page=100"
@@ -724,7 +724,7 @@ class GitHubEffectAdapter:
             return (
                 isinstance(head_ref, Mapping)
                 and isinstance(base_ref, Mapping)
-                and self._no_open_source_pull_request(expected_branch, default_branch)
+                and self._no_existing_source_pull_request(expected_branch, default_branch)
             )
         if operation in {"pull-request-update", "pull-request-ready", "pull-request-merge"}:
             number = cast(int, payload["number"])
