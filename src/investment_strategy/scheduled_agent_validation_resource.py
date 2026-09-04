@@ -418,9 +418,7 @@ def _fresh_event_observation(
         raise ValueError("application request event is invalid")
     comment_id, issue_number = identity
     owner = repository.split("/", 1)[0]
-    observed_comment = _as_mapping(
-        _github_json(repository, token, f"issues/comments/{comment_id}")
-    )
+    observed_comment = _as_mapping(_github_json(repository, token, f"issues/comments/{comment_id}"))
     if (
         observed_comment is None
         or observed_comment.get("id") != comment_id
@@ -664,10 +662,7 @@ def _review_openspec_required(source: WorkerRequest) -> bool:
         action = ModelAction(source.action)
     except ValueError:
         return False
-    return any(
-        successor is ModelAction.REVIEW_OPENSPEC
-        for successor in TRANSITIONS[action].values()
-    )
+    return any(successor is ModelAction.REVIEW_OPENSPEC for successor in TRANSITIONS[action].values())
 
 
 def resolve_validation_resource_target(
@@ -775,10 +770,9 @@ def apply_work_product(
         for file in plan.manifest.files
     ):
         raise RuntimeError("work-product path is outside source Action capability")
-    if (
-        any(file.path.startswith("openspec/") for file in plan.manifest.files)
-        and not _review_openspec_required(plan.source)
-    ):
+    if any(
+        file.path.startswith("openspec/") for file in plan.manifest.files
+    ) and not _review_openspec_required(plan.source):
         raise RuntimeError("work-product source has no required OpenSpec review gate")
 
     pr = _open_pr_payload(

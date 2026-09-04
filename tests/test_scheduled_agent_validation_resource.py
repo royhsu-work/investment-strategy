@@ -381,7 +381,6 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
         repository=_REPOSITORY,
         token=_FIXTURE_VALUE,
         default_branch="main",
-        
     )
 
     assert target.revision == revision
