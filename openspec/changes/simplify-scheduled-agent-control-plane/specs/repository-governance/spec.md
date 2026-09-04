@@ -10,7 +10,7 @@ The minimum ownership model SHALL be:
 | --- | --- | --- |
 | Repository overview / Human entry point | `README.md` | MAY link to authoritative governance; MUST NOT redefine runtime protocol |
 | Shared Scheduled-Agent execution protocol / cross-role invariants | `agents/AGENTS.md` | roles/skills MAY reference; MUST NOT duplicate shared normative contract |
-| Machine-decidable Scheduled-Agent Action vocabulary, Action→Role mapping, finite result/transition topology, deterministic dispatch/cardinality, effect capabilities, mutation-carrier eligibility, fresh application authorization, stale/replay classification, and structural postconditions | repository executable workflow topology/kernel selected by current default-branch governance | `agents/workflow.md` SHALL be generated or mechanically verified Human-readable presentation; AGENTS/roles/skills/runtime/transport/carriers MUST NOT maintain a competing executable transition DAG or parse Human prose as the normal topology authority |
+| Machine-decidable Scheduled-Agent Action vocabulary, Action→Role mapping, finite result/transition topology, deterministic dispatch/cardinality, effect capabilities, mutation-carrier eligibility, fresh application authorization, deterministic rejection classification/evidence, stale/replay classification, and structural postconditions | repository executable workflow topology/kernel selected by current default-branch governance | `agents/workflow.md` SHALL be generated or mechanically verified Human-readable presentation; AGENTS/roles/skills/runtime/transport/carriers MUST NOT maintain a competing executable transition DAG or parse Human prose as the normal topology authority |
 | GitHub mutation execution identity / carrier mechanics | replaceable carrier selected only from repository-authorized carrier eligibility | Actions `GITHUB_TOKEN`, Scheduled-Agent connector, or GitHub App MAY execute an exact already-authorized mutation plan; a carrier MUST NOT select Issue/Action/effect, weaken preconditions, infer retry, or make API success authoritative |
 | Role mission / semantic authority / ownership / role-specific invariant | `agents/roles/*.md` | AGENTS/skills MAY orient/reference; MUST NOT create a competing authority definition or redefine executable Action→Role/transition tables |
 | Action-specific semantic procedure / action-local evidence and result meaning | `agents/skills/*` | role/AGENTS MAY map/reference; MUST NOT duplicate machine-decidable topology/effect bodies owned by the executable kernel |
@@ -26,6 +26,8 @@ The executable workflow topology/kernel becomes authoritative for machine-decida
 A Human-readable workflow surface MAY include explanatory lifecycle rationale and semantic guidance that cannot be generated from a finite topology. Any machine-decidable Action/Role/transition/effect/carrier rule represented there MUST be produced from or mechanically checked against the executable owner so a divergence fails repository validation instead of depending on manual synchronization.
 
 Effect authority and mutation identity SHALL remain separate. Repository application/kernel authorization binds an exact effect to its exact target, preconditions, revision, and legal carrier class. A selected carrier is an actuator only; replacing the carrier MUST NOT change workflow semantics, effect eligibility, or success criteria. Repository-owned fresh observation of the resulting object/head/state is required before any routing, review, lifecycle, merge, or successor consequence can consume the mutation as successful.
+
+When deterministic repository authorization/application rejects an effect plan, the executable owner SHALL emit machine-readable rejection classification/evidence identifying the exact failed guard class and the relevant expected/observed identity or predicate evidence available at that boundary. An aggregate human-readable reason MAY accompany it but MUST NOT be the sole rejection evidence when the executable boundary already knows which deterministic predicate failed. This rejection evidence MUST NOT grant a carrier or semantic worker authority to retry, weaken preconditions, choose a successor, or reinterpret workflow state.
 
 #### Scenario: Shared rule appears in a role or skill
 
@@ -72,3 +74,11 @@ Effect authority and mutation identity SHALL remain separate. Repository applica
 - THEN the carrier does not select or reinterpret workflow state, Action, successor, effect, retry, or success
 - AND repository application accepts completion only after fresh observation proves the exact governed postcondition
 - AND replacing the carrier does not change the workflow contract
+
+#### Scenario: Deterministic rejection remains repository-owned evidence
+
+- GIVEN repository application rejects one authorized effect plan because a deterministic guard fails
+- WHEN the result is returned to the semantic worker
+- THEN the result identifies the exact failed guard class and relevant expected/observed evidence machine-readably
+- AND the semantic worker is not required to reverse-engineer the failed deterministic predicate from routing, SHA, branch payload, or application source code
+- AND the rejection does not itself authorize retry, weaker preconditions, a different target, or a successor
