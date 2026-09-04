@@ -2,28 +2,19 @@
 
 External scheduler configuration and repository workflow governance have separate ownership.
 
-Each external Scheduled Task uses a common bootstrap prompt: read `README.md` and default-branch `agents/AGENTS.md`, derive dispatch mode only from default-branch governance, use the legacy assigned role only in `fixed-role`, and under `workflow-dynamic` reconstruct the repository-selected role/action before loading the mapped role and skill.
+Each external Scheduled Task uses a bootstrap prompt that reads README.md and current default-branch
+agents/AGENTS.md, then obtains the repository-owned executable dispatch. Under
+Scheduled-Dispatch-Mode: workflow-dynamic, the machine-selected Action is authoritative and its Role
+is derived from role_for(Action). The prompt does not select a Role or Action.
 
-Current deployment note: the external product may retain multiple wake slots during migration, but that is informational deployment history rather than repository governance. Exact slot count/topology/cadence is external product configuration, outside repository capability/runtime state, and is not modeled as durable workflow state or a permanent minimum-slot requirement.
+The Asia/Taipei daily shard is bounded transport only. It records one request, one exact Actions run,
+and one structured result, and carries no lifecycle, routing, successor, retry, or mailbox authority.
+Rollover establishes and observes today's shard before retiring an older one; an in-flight request/run/
+result chain remains valid. Slot count, cadence, notification, and associated-conversation behavior
+are external product configuration.
 
-When Human/maintainer administrative repair parks or resets work while a controlling dependency is completed, a later wake treats that parked/reset work as ordinary fresh input to the authoritative bootstrap above. It compares the work against then-current `main` and performs a fresh repository-wide reconstruction before deriving any legal role/action. Former PASS/readiness evidence remains historical evidence only; it does not become current authority merely because the same Issue, Change name, branch, or Scheduled Task slot is reused. This is an application note for the shared default-branch reconstruction contract, not a second recovery or dispatch rule.
+GitHub Project/Kanban fields are presentation only. They do not participate in dispatch, routing,
+authority, or gate decisions; repository Issue/Change/Action state remains authoritative.
 
-## Flow visualization orientation
-
-GitHub Project/Kanban status, blocker views, and aging fields are presentation only. They may project durable repository workflow evidence for Human visibility, but they do not participate in Scheduled-Agent dispatch, routing, authority, or gate decisions. Repository durable workflow state remains authoritative when a Project/Kanban projection disagrees with Issue routing/identity, PR/OpenSpec state, or exact gate evidence.
-
-This orientation does not add Project-backed dispatch state, a blocker state machine, priority scoring, KPI supervision, or another synchronization surface.
-
-## Canonical message activation
-
-Repository execution authority comes only from the default branch. The default-branch merge is the activation boundary for canonical workflow-message presentation. An unmerged governance PR that introduces `agents/templates/messages.md` or role/skill references is review target/input and must not govern its own current invocation; bootstrap continues to load the then-authoritative default-branch governance.
-
-After the template/governance change is merged, later covered events use the canonical shared template source loaded from the default branch. Pre-activation free-form/legacy messages that complied with then-authoritative default-branch governance remain valid historical evidence and are not a retroactive template finding.
-
-This migration does not add template-version state, a template migration service, parser-dependent runtime, semantic-revision classifier service, review-applicability label, or branch-authority override.
-
-Ordinary wakes are Human-silent. Reviewer/Executor workflow results, checkpoints, handoffs, merge results, and `EXECUTION_EXCEPTION` evidence remain repository-durable only; ordinary Lead results and exception evidence do likewise. Only a Lead-owned unresolved `HUMAN_DECISION_REQUIRED` condition is eligible for Human-facing scheduled delivery.
-
-Actual notification, associated-conversation, and result surfacing remain external product configuration and are not repository routing, waiting, authorization, or completion state. Scheduled Task prompts must not emit `No Human action is required` or equivalent status noise as a substitute for silence.
-
-Scheduled Task prompts remain bootstrap-only and must not duplicate the shared exception-capture or invocation-finalization protocol; they only load default-branch governance and do not become a second execution contract.
+Scheduled prompts remain bootstrap-only. They do not duplicate application, exception, result, or
+finalization semantics and do not emit status noise for ordinary silent wakes.

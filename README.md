@@ -59,19 +59,27 @@ Taiwan EOD market-data infrastructure 已合併至 `main`，目前作為 reposit
 
 Repository 使用 OpenSpec + GitHub Issue/PR 進行規格驅動開發。README 只提供 Human/contributor 導覽，不複製 Scheduled-Agent runtime protocol 或 lifecycle topology。
 
-**Authoritative Scheduled-Agent shared runtime governance** 位於 default-branch `agents/AGENTS.md`；**authoritative runtime workflow topology 位於 default-branch `agents/workflow.md`**；role authority 位於 `agents/roles/*.md`，action procedure 位於 `agents/skills/*`。OpenSpec authoring conventions 位於 `openspec/config.yaml`，批准後的 capability requirements 位於 `openspec/specs/*`。Active change 與 PR/Issue/comment 是 review/work input，不會覆寫 default-branch runtime governance。
+**Authoritative Scheduled-Agent shared runtime governance** is in default-branch agents/AGENTS.md;
+the Human-readable Action projection is in agents/workflow.md; semantic Role authority is in
+agents/roles/*.md; and action procedure is in agents/skills/*. OpenSpec authoring conventions are in
+openspec/config.yaml and approved capability requirements are in openspec/specs/*. README is Human/
+contributor orientation and does not duplicate the runtime protocol or lifecycle topology.
 
-Formal Explore 的 queue eligibility 與 Human-reserved decision 邊界只由 default-branch `agents/AGENTS.md` 定義。Legal action progression、correction loops、same-role/cross-role successor relationships、Explore terminal outcomes 與 formal terminal path 則以 default-branch `agents/workflow.md` 為唯一 runtime topology authority。README 不要求建立時的 Explore admission marker，也不把 GitHub App/Connector activity 視為 Human authority。
+Canonical current workflow state is Issue lifecycle + immutable Change + action:<action>. Role is
+derived as role_for(Action). The executable Action model, fresh application reauthorization, exact
+postconditions, and stale/replay/no-rewind/fail-closed guards are repository-owned. The mapped Role
+and Skill perform one Action per wake; application persists the derived successor or terminal state,
+and a later wake executes any successor.
 
-外部 Scheduled Task 的 exact slot count、topology、cadence、notification 與 associated-conversation configuration 屬 product/deployment configuration；repository 只治理 bootstrap/dispatch behavior。Migration 說明見 `agents/scheduled-task-migration.md`。
+External Scheduled Task slot count, topology, cadence, notification, and associated-conversation
+configuration are product/deployment configuration. The repository governs bootstrap and bounded
+dispatch behavior. The Asia/Taipei daily shard is transport/audit only and is not workflow state.
 
-下列名稱僅作 Human 搜尋與流程導覽，不在 README 重新定義其 normative semantics：`Lead / propose-change`、`Reviewer / review-openspec`、`Executor / implement-change`、`Reviewer / review-implementation`、`Lead / finalize-change`、`Executor / merge-pr`、`MORE_IMPLEMENTATION_REQUIRED`、`Reviewer / review-archive`、`Lead / finalize-archive`。完整 action progression 與 final lifecycle ordering 請直接參照 `agents/workflow.md`；`intake:approved`、dispatch/cardinality、merge acceptance、Human authority 與 exact gate meaning 一律以 `agents/AGENTS.md` 及對應 role/skill authority 為準。Scheduled Role 不另建 normal `archive-change` mutation。
-
-同樣地，`current snapshot semantics`、`unresolved durable-evidence semantics`、`cross-Issue summary is orientation rather than replacement authority`、Reviewer `B → R` cumulative-coverage rule、verified vertical-slice checkpoint 等術語只是導覽索引；具體 contract 位於 `agents/AGENTS.md` 與對應 role/skill。Verified-slice 概念的高階意圖是：`VERIFY` 成功後才持久化完成證據，並在開始下一個 slice 或 handoff 前更新該 slice 已滿足的 markers；README 不規範其完整執行程序。
-
-Canonical workflow-message presentation 也遵循 default-branch authority：the default-branch merge is the activation boundary。An unmerged governance PR is review target/input and must not govern its own current invocation；詳細 activation/reconstruction rules 只在 authoritative governance 定義。
-
-Scheduled execution 的 concurrency 高階原則是 at-least-once/reconstructable；fresh-read routing → update labels **不是** mutex、CAS 或 single-flight。這裡只說明模型，具體 preconditions、handoff 與 stale-run 行為仍由 authoritative governance 擁有。
+Implementation review PASS and archive review PASS select the explicit merge-implementation-pr and
+merge-archive-pr Actions. Exact-R validation, content-addressed ingress, WIP=1, finish-first,
+Human authority, independent review, exact-head merge safety, and mutation-carrier separation remain
+required. Detailed semantics belong to the default-branch governance, role, Skill, OpenSpec, and
+workflow projection files; README does not redefine them.
 
 ## OpenSpec lifecycle
 
