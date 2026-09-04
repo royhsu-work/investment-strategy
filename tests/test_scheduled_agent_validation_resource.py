@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+import json
+from email.message import Message
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 
@@ -60,20 +64,29 @@ def _dispatch_decision(*, revision: str = _REVISION) -> str:
     )
 
 
-def _event() -> dict[str, object]:
+def _event(body: str | None = None, *, comment_id: int = 102) -> dict[str, object]:
+    request_body = body or _resource_body()
     return {
         "action": "created",
         "issue": {"number": 142},
-        "comment": _comment(102, _resource_body()),
+        "comment": _comment(comment_id, request_body),
     }
 
 
-def _comments(*, revision: str = _REVISION) -> list[list[dict[str, object]]]:
+def _comments(
+    *,
+    body: str | None = None,
+    comment_id: int = 102,
+    revision: str = _REVISION,
+    extras: list[dict[str, object]] | None = None,
+) -> list[list[dict[str, object]]]:
+    request_body = body or _resource_body()
     return [
         [
             _comment(100, _dispatch_request()),
             _comment(101, _dispatch_decision(revision=revision), actions=True),
-            _comment(102, _resource_body()),
+            *(extras or []),
+            _comment(comment_id, request_body),
         ]
     ]
 
@@ -246,16 +259,464 @@ def test_resource_rejects_pr_that_mixes_another_active_change(
         )
 
 
+def _work_product_body(
+    *,
+    base_sha: str = _PR_HEAD,
+    expected_sha: str = "a" * 40,
+    blob_sha: str = "b" * 40,
+) -> str:
+    manifest = {
+        "branch": f"agent/{_CHANGE}",
+        "base_sha": base_sha,
+        "message": "Correct #138 N-1 ordering",
+        "files": [
+            {
+                "path": f"openspec/changes/{_CHANGE}/design.md",
+                "blob_sha": blob_sha,
+                "expected_sha": expected_sha,
+            }
+        ],
+    }
+    encoded = base64.b64encode(
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+    ).decode()
+    return "\n".join(
+        (
+            "WORK_PRODUCT_REQUEST",
+            "Dispatch-Request-Comment-ID: 100",
+            "Dispatch-Decision-Comment-ID: 101",
+            "PR: 178",
+            f"Expected-Change: {_CHANGE}",
+            f"Manifest-B64: {encoded}",
+        )
+    )
+
+
+def test_work_product_request_carries_only_blob_references() -> None:
+    parsed = resource.parse_work_product_request(_work_product_body())
+
+    assert parsed is not None
+    assert parsed.manifest.base_sha == _PR_HEAD
+    assert parsed.manifest.files[0].path.endswith("/design.md")
+    assert parsed.manifest.files[0].blob_sha == "b" * 40
+    assert not hasattr(parsed.manifest.files[0], "content")
+
+
+def test_plan_work_product_binds_same_exact_dispatch_without_file_content() -> None:
+    body = _work_product_body()
+    plan = resource.plan_work_product_application(
+        event=_event(body),
+        comments_payload=_comments(body=body),
+        configured_issue_number=142,
+        repository=_REPOSITORY,
+        current_revision=_REVISION,
+    )
+
+    assert plan.should_apply
+    assert plan.source == WorkerRequest(138, "lead", "resolve-question")
+    assert plan.pr_number == 178
+    assert plan.manifest is not None
+    assert plan.manifest.files[0].blob_sha == "b" * 40
+
+
+def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "lead", "resolve-question")
+    expected_sha = "a" * 40
+    blob_sha = "b" * 40
+    tree_sha = "c" * 40
+    revision = "d" * 40
+    path = f"openspec/changes/{_CHANGE}/design.md"
+    plan = resource.WorkProductPlan(
+        True,
+        source=source,
+        request_comment_id=102,
+        pr_number=178,
+        expected_change=_CHANGE,
+        manifest=resource.WorkProductManifest(
+            branch=f"agent/{_CHANGE}",
+            base_sha=_PR_HEAD,
+            message="Correct #138 N-1 ordering",
+            files=(
+                resource.WorkProductFile(
+                    path=path,
+                    blob_sha=blob_sha,
+                    expected_sha=expected_sha,
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda repository, token: source)
+    head_sha = _PR_HEAD
+    tree_payloads: list[object] = []
+    commit_payloads: list[object] = []
+
+    def fake_github_json(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        nonlocal head_sha
+        assert repository == _REPOSITORY
+        assert token == _FIXTURE_VALUE
+        del allow_not_found
+        if api_path == "issues/138" and method == "GET":
+            return {"state": "open", "body": f"Change: {_CHANGE}\n"}
+        if api_path == "pulls/178" and method == "GET":
+            return {
+                "state": "open",
+                "merged": False,
+                "body": "Refs #138\n",
+                "head": {
+                    "sha": head_sha,
+                    "ref": f"agent/{_CHANGE}",
+                    "repo": {"full_name": _REPOSITORY},
+                },
+                "base": {"ref": "main", "repo": {"full_name": _REPOSITORY}},
+            }
+        if api_path == "pulls/178/files?per_page=100" and method == "GET":
+            return [{"filename": path}]
+        if api_path.startswith(f"contents/{path}?") and method == "GET":
+            return {"sha": expected_sha if f"ref={_PR_HEAD}" in api_path else blob_sha}
+        if api_path == f"git/commits/{_PR_HEAD}" and method == "GET":
+            return {"sha": _PR_HEAD, "tree": {"sha": "e" * 40}, "parents": []}
+        if api_path == "git/trees" and method == "POST":
+            tree_payloads.append(payload)
+            return {"sha": tree_sha}
+        if api_path == f"git/trees/{tree_sha}?recursive=1" and method == "GET":
+            return {
+                "sha": tree_sha,
+                "truncated": False,
+                "tree": [{"path": path, "type": "blob", "sha": blob_sha}],
+            }
+        if api_path == "git/commits" and method == "POST":
+            commit_payloads.append(payload)
+            return {"sha": revision}
+        if api_path == f"git/refs/heads/agent/{_CHANGE}" and method == "PATCH":
+            assert payload == {"sha": revision, "force": False}
+            head_sha = revision
+            return {"object": {"sha": revision}}
+        if api_path == f"git/ref/heads/agent/{_CHANGE}" and method == "GET":
+            return {"object": {"sha": head_sha}}
+        if api_path == f"git/commits/{revision}" and method == "GET":
+            return {
+                "sha": revision,
+                "tree": {"sha": tree_sha},
+                "parents": [{"sha": _PR_HEAD}],
+            }
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
+    workflow = (
+        "| `Lead / resolve-question` | material semantic correction ready | "
+        "`Reviewer / review-openspec` |\n"
+    )
+
+    target = resource.apply_work_product(
+        plan,
+        repository=_REPOSITORY,
+        token=_FIXTURE_VALUE,
+        default_branch="main",
+        workflow_text=workflow,
+    )
+
+    assert target.revision == revision
+    assert target.correlation == "work-product-request-102"
+    assert len(tree_payloads) == 1
+    assert len(commit_payloads) == 1
+    assert commit_payloads[0] == {
+        "message": "Correct #138 N-1 ordering",
+        "tree": tree_sha,
+        "parents": [_PR_HEAD],
+    }
+
+
+def test_apply_work_product_rejects_unresolvable_blob_before_commit_or_ref(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "lead", "resolve-question")
+    expected_sha = "a" * 40
+    blob_sha = "b" * 40
+    path = f"openspec/changes/{_CHANGE}/design.md"
+    plan = resource.WorkProductPlan(
+        True,
+        source=source,
+        request_comment_id=102,
+        pr_number=178,
+        expected_change=_CHANGE,
+        manifest=resource.WorkProductManifest(
+            branch=f"agent/{_CHANGE}",
+            base_sha=_PR_HEAD,
+            message="Correct #138 N-1 ordering",
+            files=(
+                resource.WorkProductFile(
+                    path=path,
+                    blob_sha=blob_sha,
+                    expected_sha=expected_sha,
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda repository, token: source)
+
+    def fake_github_json(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        del repository, token, payload, allow_not_found
+        if api_path == "issues/138" and method == "GET":
+            return {"state": "open", "body": f"Change: {_CHANGE}\n"}
+        if api_path == "pulls/178" and method == "GET":
+            return {
+                "state": "open",
+                "merged": False,
+                "body": "Refs #138\n",
+                "head": {
+                    "sha": _PR_HEAD,
+                    "ref": f"agent/{_CHANGE}",
+                    "repo": {"full_name": _REPOSITORY},
+                },
+                "base": {"ref": "main", "repo": {"full_name": _REPOSITORY}},
+            }
+        if api_path == "pulls/178/files?per_page=100" and method == "GET":
+            return [{"filename": path}]
+        if api_path.startswith(f"contents/{path}?") and method == "GET":
+            return {"sha": expected_sha}
+        if api_path == f"git/commits/{_PR_HEAD}" and method == "GET":
+            return {"sha": _PR_HEAD, "tree": {"sha": "e" * 40}, "parents": []}
+        if api_path == "git/trees" and method == "POST":
+            raise HTTPError(
+                "https://api.github.com/repos/example/repo/git/trees",
+                422,
+                "Validation Failed",
+                Message(),
+                None,
+            )
+        if api_path == "git/commits" and method == "POST":
+            raise AssertionError("commit must not be created after tree resolution failure")
+        if method == "PATCH":
+            raise AssertionError("ref must not be updated after tree resolution failure")
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path}")
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
+
+    with pytest.raises(RuntimeError, match="referenced blob is unavailable"):
+        resource.apply_work_product(
+            plan,
+            repository=_REPOSITORY,
+            token=_FIXTURE_VALUE,
+            default_branch="main",
+            workflow_text=(
+                "| `Lead / resolve-question` | material semantic correction ready | "
+                "`Reviewer / review-openspec` |\n"
+            ),
+        )
+
+
+def test_apply_work_product_rejects_stale_current_file_before_git_construction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "lead", "resolve-question")
+    plan = resource.WorkProductPlan(
+        True,
+        source=source,
+        request_comment_id=102,
+        pr_number=178,
+        expected_change=_CHANGE,
+        manifest=resource.WorkProductManifest(
+            branch=f"agent/{_CHANGE}",
+            base_sha=_PR_HEAD,
+            message="Correct #138 N-1 ordering",
+            files=(
+                resource.WorkProductFile(
+                    path=f"openspec/changes/{_CHANGE}/design.md",
+                    blob_sha="b" * 40,
+                    expected_sha="a" * 40,
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda repository, token: source)
+
+    def fake_github_json(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        del repository, token, payload, allow_not_found
+        if api_path == "issues/138":
+            return {"state": "open", "body": f"Change: {_CHANGE}\n"}
+        if api_path == "pulls/178":
+            return {
+                "state": "open",
+                "merged": False,
+                "body": "Refs #138\n",
+                "head": {
+                    "sha": _PR_HEAD,
+                    "ref": f"agent/{_CHANGE}",
+                    "repo": {"full_name": _REPOSITORY},
+                },
+                "base": {"ref": "main", "repo": {"full_name": _REPOSITORY}},
+            }
+        if api_path == "pulls/178/files?per_page=100":
+            return [{"filename": f"openspec/changes/{_CHANGE}/design.md"}]
+        if api_path.startswith(f"contents/openspec/changes/{_CHANGE}/design.md?"):
+            return {"sha": "f" * 40}
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path}")
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
+
+    with pytest.raises(RuntimeError, match="expected content SHA is stale"):
+        resource.apply_work_product(
+            plan,
+            repository=_REPOSITORY,
+            token=_FIXTURE_VALUE,
+            default_branch="main",
+            workflow_text=(
+                "| `Lead / resolve-question` | material semantic correction ready | "
+                "`Reviewer / review-openspec` |\n"
+            ),
+        )
+
+
+def test_complete_cross_role_handoff_derives_body_from_applied_result_and_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "lead", "resolve-question")
+    result_body = (
+        "## ACTION_RESULT\n"
+        "Workflow: #138\n"
+        f"Change: {_CHANGE}\n"
+        "Action: Lead / resolve-question\n"
+        "Result: READY_FOR_OPENSPEC_REVIEW\n"
+        f"Revision: {'d' * 40}\n"
+    )
+    raw_worker_result = json.dumps(
+        {
+            "issue_number": 138,
+            "role": "lead",
+            "action": "resolve-question",
+            "result_content": "ready",
+            "requested_effects": [
+                {
+                    "kind": "issue-comment",
+                    "payload_json": json.dumps(
+                        {"issue_number": 138, "body": result_body},
+                        sort_keys=True,
+                    ),
+                },
+                {
+                    "kind": "routing-transition",
+                    "payload_json": json.dumps(
+                        {
+                            "issue_number": 138,
+                            "role": "reviewer",
+                            "action": "review-openspec",
+                        },
+                        sort_keys=True,
+                    ),
+                },
+            ],
+        },
+        sort_keys=True,
+    )
+    plan = resource.HandoffCompletionPlan(
+        True,
+        source=source,
+        request_comment_id=104,
+        effect_request_comment_id=103,
+        result_comment_id=555,
+        expected_change=_CHANGE,
+        raw_worker_result=raw_worker_result,
+    )
+    posted_body: str | None = None
+
+    def current_issue() -> dict[str, object]:
+        return {
+            "number": 138,
+            "state": "open",
+            "body": f"Change: {_CHANGE}\nCause-Ref: issuecomment-1\n",
+            "created_at": "2026-08-22T17:18:32Z",
+            "closed_at": None,
+            "labels": [
+                {"name": "agent:reviewer"},
+                {"name": "action:review-openspec"},
+            ],
+        }
+
+    def fake_github_json(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        nonlocal posted_body
+        del repository, token, allow_not_found
+        if api_path == "issues/138" and method == "GET":
+            return current_issue()
+        if api_path == "issues/comments/555" and method == "GET":
+            return _comment(555, result_body, actions=True)
+        if api_path == "issues/138/comments?per_page=100&page=1" and method == "GET":
+            return []
+        if api_path == "issues/138/comments" and method == "POST":
+            assert payload is not None
+            body = payload.get("body")
+            assert isinstance(body, str)
+            posted_body = body
+            return {"id": 777}
+        if api_path == "issues/comments/777" and method == "GET":
+            assert posted_body is not None
+            return {"id": 777, "body": posted_body}
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
+
+    comment_id = resource.complete_cross_role_handoff(
+        plan,
+        repository=_REPOSITORY,
+        token=_FIXTURE_VALUE,
+    )
+
+    assert comment_id == 777
+    assert posted_body is not None
+    assert "## HANDOFF" in posted_body
+    assert "From: `Lead / resolve-question`" in posted_body
+    assert "To: `Reviewer / review-openspec`" in posted_body
+    assert "Trigger-Result-Comment-ID: 555" in posted_body
+
+
 def test_application_workflow_runs_validation_inline_without_secondary_dispatch() -> None:
     workflow = Path(".github/workflows/scheduled-agent-application.yml").read_text(encoding="utf-8")
+    skill = Path("agents/skills/openspec-change/SKILL.md").read_text(encoding="utf-8")
 
     assert "VALIDATION_RESOURCE_REQUEST" in workflow
+    assert "WORK_PRODUCT_REQUEST" in workflow
+    assert "HANDOFF_COMPLETION_REQUEST" in workflow
     assert "scheduled_agent_validation_resource" in workflow
     assert "Checkout exact validation target" in workflow
     assert "validator_checkout_head" in workflow
     assert "openspec_compatibility.py" in workflow
     assert "openspec validate --all --strict --json --no-interactive" in workflow
     assert "actions/workflows/openspec-validate.yml/dispatches" not in workflow
+    assert "unreferenced Git blobs only" in skill
+    assert "MUST NOT create a Git tree or commit" in skill
 
 def test_work_product_path_capability_is_owned_by_current_action() -> None:
     lead = WorkerRequest(138, "lead", "resolve-question")
