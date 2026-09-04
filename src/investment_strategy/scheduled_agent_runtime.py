@@ -220,10 +220,7 @@ def normalize_github_issue(
     labels, labels_valid = _label_names(payload)
     routing, routing_valid = _routing_from_labels(labels)
     created_order, created_valid = _created_order(payload.get("created_at"), number)
-    if routing is None:
-        change, change_valid = "unset", True
-    else:
-        change, change_valid = _change_from_body(payload.get("body"))
+    change, change_valid = _change_from_body(payload.get("body"))
     closed_valid = _github_timestamp(payload.get("closed_at"))
     return GitHubIssueObservation(
         issue_number=number,
