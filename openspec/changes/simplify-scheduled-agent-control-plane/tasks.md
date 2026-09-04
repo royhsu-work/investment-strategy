@@ -2,21 +2,26 @@
 
 #138 is one parent outcome delivered through mandatory N-1 stages. Every stage MUST be independently executable/testable/mergeable/deployable on then-current N-1; otherwise split it further. A stage never completes #138 while later stages remain.
 
-## 1. Transport de-mailbox + daily check-in
+## 1. Transport de-mailbox + exact-revision validation bootstrap
 
-Parent advances: #168 exact run-scoped dispatch/application results. Remaining: kernel, typed application, wake/state cutover, deletion. N-1: current comment-trigger bridge. Boundary: transport only; rollback may restore old transport. Next: Stage 2.
+Parent advances: #168 exact run-scoped dispatch/application/validation plus `repository-owned write -> exact revision R -> exact-R deterministic validation -> structured consumable result`. Remaining: kernel, typed application, wake/state cutover, deletion. N-1: current comment-trigger/application bridge and qualified pinned OpenSpec. Boundary: transport/validation substrate only; transport and validation-bootstrap MAY be separate deployable sub-slices, but both must land before later stages depend on repository-owned OpenSpec mutation. Next: Stage 2.
 
-- [ ] 1.1 RED — prove exact request→exact Actions run→structured result; reject latest/time-proximity/response fallback and missing/multiple/failed/cancelled/malformed/expired evidence.
-- [ ] 1.2 GREEN — make runtime Issue request/trigger/audit only; consume dispatch/application results from exact run-scoped surfaces; retain bounded daily check-in and coordination-Issue semantic evidence.
+- [ ] 1.1 RED — prove exact request->run->structured dispatch/application result; reject latest/time/response fallback and missing/multiple/failed/cancelled/malformed/expired evidence.
+- [ ] 1.2 GREEN — make runtime Issue request/trigger/audit only and consume dispatch/application results from exact run-scoped surfaces; retain coordination-Issue semantic evidence.
 - [ ] 1.3 REFACTOR — remove normal response-mailbox correlation/dedup without moving workflow semantics into transport.
-- [ ] 1.4 VERIFY — live Scheduled Task dispatch+application E2E; no model API in Actions.
+- [ ] 1.4 VERIFY — live Scheduled Task dispatch+application E2E; no model API in Actions and no normal machine-response mailbox.
+- [ ] 1.5 RED — reproduce repository-owned OpenSpec write producing `R` while event validation is `action_required`/has no validator job or lacks checkout proof; ownership transfer stays fail-closed.
+- [ ] 1.6 GREEN — after mutation/postcondition, run pinned strict validation in application or a dedicated deterministic validator bound to `R`; structured evidence proves target `R`, checkout `HEAD == R`, qualified pinned compatibility, and strict PASS.
+- [ ] 1.7 GREEN — publish that exact-R result on the exact application/validation run-scoped surface for the already selected Action; reject missing/failed/cancelled/ambiguous/revision-mismatched/checkout-mismatched/malformed/expired evidence.
+- [ ] 1.8 REFACTOR — validation remains a bounded deterministic resource, not another semantic Action/model wake, manual approval, stale-CI shortcut, direct-connector bypass, or generic polling scheduler.
+- [ ] 1.9 VERIFY — live N-1 closed loop: repository-owned write -> `R` -> exact-R checkout proof -> qualified pinned strict PASS -> structured result consumed by the same selected Action; retain `action_required`/no-validator-job as RED regression.
 
 ## 2. Executable kernel shadow
 
-Parent advances: one executable machine topology computes shadow decisions. Remaining: N-1 production still owns effects/state/wakes. N-1: Stage 1 transports shadow evidence. Boundary: no mutation cutover. Next: Stage 3.
+Parent advances: one executable machine topology computes shadow decisions. Remaining: N-1 production still owns effects/state/wakes. N-1: Stage 1 transports shado evidence. Boundary: no mutation cutover. Next: Stage 3.
 
 - [ ] 2.1 RED — exhaustively cover Action vocabulary, Action→Role, explicit merge Actions, finite transitions/effects, WIP/FIFO/debt, illegal states, stale/replay and postconditions.
-- [ ] 2.2 GREEN — consolidate smallest kernel and feed it the same authoritative observations as production without owning mutations.
+- [ ] 2.2 GREEEN — consolidate smallest kernel and feed it the same authoritative observations as production without owning mutations.
 - [ ] 2.3 REFACTOR — generate/mechanically verify `agents/workflow.md`; remove any second executable registry.
 - [ ] 2.4 VERIFY — shadow production decisions and explain every divergence from source evidence.
 
