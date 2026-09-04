@@ -325,32 +325,6 @@ def _is_github_actions_comment(comment: Mapping[str, object]) -> bool:
     )
 
 
-def plan_bridge(
-    *,
-    event: Mapping[str, object],
-    existing_comments: Sequence[Mapping[str, object]],
-    configured_issue_number: int,
-    default_branch_revision: str,
-) -> BridgePlan:
-    existing_plan, identity = _plan_identity(
-        event=event,
-        existing_comments=existing_comments,
-        configured_issue_number=configured_issue_number,
-    )
-    if existing_plan is not None:
-        return existing_plan
-    issue_number, request_comment_id = _require_pending_identity(identity)
-    return BridgePlan(
-        should_post=True,
-        issue_number=issue_number,
-        request_comment_id=request_comment_id,
-        result_body=render_dispatch_result(
-            request_comment_id=request_comment_id,
-            default_branch_revision=default_branch_revision,
-        ),
-    )
-
-
 def plan_dispatch_decision(
     *,
     event: Mapping[str, object],
