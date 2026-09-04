@@ -223,7 +223,14 @@ def _latest_matching_pass(
         and record[3] != "PASS"
         for record in records
     )
-    return latest_pass[4], latest_pass[2], latest_pass[0], later_contradiction, complete, latest_pass[5]
+    return (
+        latest_pass[4],
+        latest_pass[2],
+        latest_pass[0],
+        later_contradiction,
+        complete,
+        latest_pass[5],
+    )
 
 
 def _non_closing_linkage(body: object, issue_number: int) -> bool:
