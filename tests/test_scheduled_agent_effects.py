@@ -8,7 +8,6 @@ import json
 import pytest
 
 import investment_strategy.scheduled_agent_effects as effects
-
 from investment_strategy.scheduled_agent_action_model import ResultKind
 from investment_strategy.scheduled_agent_effect_contract import (
     allowed_github_mutation_operations,
