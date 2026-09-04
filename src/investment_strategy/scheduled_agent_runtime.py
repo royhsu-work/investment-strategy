@@ -24,9 +24,7 @@ from investment_strategy.workflow_dispatch import (
 )
 
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
-_ACTION_LABELS = {
-    f"action:{action.value}": action.value for action in ModelAction
-}
+_ACTION_LABELS = {f"action:{action.value}": action.value for action in ModelAction}
 
 
 @dataclass(frozen=True)
@@ -218,13 +216,7 @@ def normalize_github_issue(
         routing=routing,
         state=cast(str, state),
         created_order=created_order,
-        authoritative=(
-            labels_valid
-            and routing_valid
-            and created_valid
-            and change_valid
-            and closed_valid
-        ),
+        authoritative=labels_valid and routing_valid and created_valid and change_valid and closed_valid,
     )
 
 

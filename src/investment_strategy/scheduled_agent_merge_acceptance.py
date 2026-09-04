@@ -442,6 +442,8 @@ def _write_github_outputs(result: ApplyResult) -> None:
         return
     with Path(output_path).open("a", encoding="utf-8") as output:
         output.write(f"applied={'true' if result.applied else 'false'}\n")
+
+
 def main() -> int:
     """Apply one result through merge acceptance plus effect reauthorization."""
 

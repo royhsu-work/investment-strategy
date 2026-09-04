@@ -46,8 +46,10 @@ def _issue(
 ) -> GitHubIssueObservation:
     role = None
     if action is not None:
-        role = "reviewer" if action.startswith("review-") else (
-            "executor" if action.startswith(("implement", "merge")) else "lead"
+        role = (
+            "reviewer"
+            if action.startswith("review-")
+            else ("executor" if action.startswith(("implement", "merge")) else "lead")
         )
     return GitHubIssueObservation(
         issue_number=number,
@@ -120,7 +122,10 @@ def test_generated_governance_projection_has_no_second_runtime_dag() -> None:
     start = workflow.index(start_marker)
     end = workflow.index(end_marker, start) + len(end_marker)
     assert workflow[start : end + 1].endswith("\n")
-    assert "parse" not in Path("src/investment_strategy/workflow_dispatch.py").read_text(
-        encoding="utf-8"
-    ).lower()
+    assert (
+        "parse"
+        not in Path("src/investment_strategy/workflow_dispatch.py")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
     assert "HANDOFF" not in workflow

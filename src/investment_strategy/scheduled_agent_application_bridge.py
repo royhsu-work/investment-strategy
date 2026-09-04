@@ -215,9 +215,7 @@ def _fresh_event_observation(
     ):
         raise ValueError("application request event identity is invalid")
 
-    observed_comment = _as_mapping(
-        _github_json(repository, token, f"issues/comments/{comment_id}")
-    )
+    observed_comment = _as_mapping(_github_json(repository, token, f"issues/comments/{comment_id}"))
     if (
         observed_comment is None
         or observed_comment.get("id") != comment_id

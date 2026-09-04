@@ -144,9 +144,7 @@ def test_worker_cannot_submit_transition_authority() -> None:
     source = WorkerRequest(138, "executor", "implement-change")
     worker_route = {
         "kind": "routing-transition",
-        "payload_json": json.dumps(
-            {"issue_number": 138, "action": "finalize-archive"}
-        ),
+        "payload_json": json.dumps({"issue_number": 138, "action": "finalize-archive"}),
     }
     batch = parse_effect_batch(
         _raw(requested_effects=[worker_route]),

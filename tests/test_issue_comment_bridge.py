@@ -112,8 +112,7 @@ def test_run_scoped_result_round_trips_one_machine_decision() -> None:
     assert parsed.action == "implement-change"
 
     assert (
-        bridge.parse_run_scoped_dispatch_result(f"{block}\n{block}", request_comment_id=987)
-        is None
+        bridge.parse_run_scoped_dispatch_result(f"{block}\n{block}", request_comment_id=987) is None
     )
     assert bridge.parse_run_scoped_dispatch_result(block, request_comment_id=988) is None
 
@@ -200,11 +199,14 @@ def test_dispatch_plan_uses_only_current_day_shard_identity() -> None:
     assert "Action: implement-change" in plan.result_body
 
     formal_shard = _event(labels=[{"name": "action:implement-change"}])
-    assert bridge.plan_dispatch_decision(
-        event=formal_shard,
-        default_branch_revision=REVISION,
-        decision=_decision("NO_WORK"),
-    ).should_emit is False
+    assert (
+        bridge.plan_dispatch_decision(
+            event=formal_shard,
+            default_branch_revision=REVISION,
+            decision=_decision("NO_WORK"),
+        ).should_emit
+        is False
+    )
 
 
 def test_production_dispatch_delegates_to_fresh_runtime_acquisition(

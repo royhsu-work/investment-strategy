@@ -132,10 +132,7 @@ def _typed_application_plan(
     typed_result = batch.typed_result
     if typed_result is None:
         return None, None, ApplyResult(False, "typed application rejected:result-missing")
-    if any(
-        effect.kind in {"routing-transition", "terminal-transition"}
-        for effect in batch.effects
-    ):
+    if any(effect.kind in {"routing-transition", "terminal-transition"} for effect in batch.effects):
         return None, None, ApplyResult(False, "typed application rejected:worker-transition-effect")
     if current_revision is None or not re.fullmatch(r"[0-9a-f]{40}", current_revision):
         return None, None, ApplyResult(False, "typed application rejected:revision-unavailable")
@@ -871,11 +868,15 @@ class GitHubEffectAdapter:
             if not isinstance(current, Mapping):
                 return False
             labels = current.get("labels")
-            names = {
-                item.get("name")
-                for item in labels
-                if isinstance(item, Mapping) and isinstance(item.get("name"), str)
-            } if isinstance(labels, list) else set()
+            names = (
+                {
+                    item.get("name")
+                    for item in labels
+                    if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+                }
+                if isinstance(labels, list)
+                else set()
+            )
             return (
                 current.get("title") == payload.get("title")
                 and current.get("body", "") == payload.get("body", "")
@@ -1001,7 +1002,8 @@ class GitHubEffectAdapter:
                 and observation is not None
                 and observation.authoritative
                 and observation.state == "open"
-                and observation.routing == (
+                and observation.routing
+                == (
                     self.source.role,
                     target_action,
                 )
