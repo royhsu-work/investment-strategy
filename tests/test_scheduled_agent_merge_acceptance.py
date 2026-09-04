@@ -53,7 +53,7 @@ def _merge_worker_result() -> str:
         {
             "issue_number": 159,
             "role": "executor",
-            "action": "merge-pr",
+            "action": "merge-implementation-pr",
             "result_content": "MERGE_RESULT",
             "requested_effects": [
                 {
@@ -79,7 +79,7 @@ def _merge_dispatch_preflight() -> DispatchPreflight:
             RepositoryIssueSnapshot(
                 issue_number=159,
                 change="prevent-native-closing-bypass",
-                routing=("executor", "merge-pr"),  # type: ignore[arg-type]
+                routing=("executor", "merge-implementation-pr"),  # type: ignore[arg-type]
                 created_order=1,
             ),
         ),
@@ -148,7 +148,7 @@ def test_corrected_successor_requires_new_exact_head_review_checks_and_preflight
 def test_native_close_recurrence_is_rejected_before_durable_merge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = WorkerRequest(issue_number=159, role="executor", action="merge-pr")
+    source = WorkerRequest(issue_number=159, role="executor", action="merge-implementation-pr")
     rejected = _accepted(native_closing_preflight_allowed=False)
     monkeypatch.setattr(
         merge_acceptance,
@@ -166,7 +166,6 @@ def test_native_close_recurrence_is_rejected_before_durable_merge(
         source=source,
         repository="royhsu-work/investment-strategy",
         token=HEAD,
-        workflow_text="unused before rejection",
     )
 
     assert not result.applied
@@ -176,7 +175,7 @@ def test_native_close_recurrence_is_rejected_before_durable_merge(
 def test_merge_effect_rechecks_acceptance_on_real_application_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = WorkerRequest(issue_number=159, role="executor", action="merge-pr")
+    source = WorkerRequest(issue_number=159, role="executor", action="merge-implementation-pr")
     generated_messages = iter(
         (
             "Merge pull request #167\n\nRefs #159",
@@ -289,7 +288,6 @@ def test_merge_effect_rechecks_acceptance_on_real_application_path(
         source=source,
         repository="royhsu-work/investment-strategy",
         token=HEAD,
-        workflow_text="current workflow",
     )
 
     assert not result.applied

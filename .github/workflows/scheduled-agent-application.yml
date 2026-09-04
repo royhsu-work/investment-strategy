@@ -81,10 +81,6 @@ jobs:
       - name: Select exact-revision validation resource
         id: validation
         env:
-          APPLY_REQUIRED: ${{ steps.apply.outputs.validation_required }}
-          APPLY_REPOSITORY: ${{ steps.apply.outputs.validation_target_repository }}
-          APPLY_REVISION: ${{ steps.apply.outputs.validation_target_revision }}
-          APPLY_CORRELATION: ${{ steps.apply.outputs.validation_correlation }}
           RESOURCE_REQUIRED: ${{ steps.resource.outputs.validation_required }}
           RESOURCE_REPOSITORY: ${{ steps.resource.outputs.validation_target_repository }}
           RESOURCE_REVISION: ${{ steps.resource.outputs.validation_target_revision }}
@@ -95,22 +91,16 @@ jobs:
           WORK_PRODUCT_CORRELATION: ${{ steps.work_product.outputs.validation_correlation }}
         shell: bash
         run: |
-          apply_required="${APPLY_REQUIRED:-false}"
           resource_required="${RESOURCE_REQUIRED:-false}"
           work_product_required="${WORK_PRODUCT_REQUIRED:-false}"
           resource_count=0
-          [[ "$apply_required" == "true" ]] && resource_count=$((resource_count + 1))
           [[ "$resource_required" == "true" ]] && resource_count=$((resource_count + 1))
           [[ "$work_product_required" == "true" ]] && resource_count=$((resource_count + 1))
           if [[ "$resource_count" -gt 1 ]]; then
             echo "::error::Exact-revision validation target is ambiguous across application resources"
             exit 1
           fi
-          if [[ "$apply_required" == "true" ]]; then
-            target_repository="$APPLY_REPOSITORY"
-            target_revision="$APPLY_REVISION"
-            correlation="$APPLY_CORRELATION"
-          elif [[ "$resource_required" == "true" ]]; then
+          if [[ "$resource_required" == "true" ]]; then
             target_repository="$RESOURCE_REPOSITORY"
             target_revision="$RESOURCE_REVISION"
             correlation="$RESOURCE_CORRELATION"
