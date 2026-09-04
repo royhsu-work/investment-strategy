@@ -18,7 +18,9 @@ from investment_strategy.issue_comment_bridge import (
 
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-_LOG_REDIRECT_SUFFIX = ".actions.githubusercontent.com"
+_LOG_REDIRECT_HOST = re.compile(
+    r"^(?:[a-z0-9-]+\\.actions\\.githubusercontent\\.com|productionresultssa[0-9]+\\.blob\\.core\\.windows\\.net)$"
+)
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -76,10 +78,11 @@ def _github_text(repository: str, token: str, api_path: str) -> str:
         if not isinstance(location, str):
             raise RuntimeError("exact dispatch run log redirect is not trusted") from exc
         parsed = urlsplit(location)
+        host = parsed.hostname.lower() if parsed.hostname is not None else None
         if (
             parsed.scheme != "https"
-            or parsed.hostname is None
-            or not parsed.hostname.endswith(_LOG_REDIRECT_SUFFIX)
+            or host is None
+            or _LOG_REDIRECT_HOST.fullmatch(host) is None
         ):
             raise RuntimeError("exact dispatch run log redirect is not trusted") from exc
         redirected_request = Request(  # noqa: S310 - location is validated as a GitHub Actions host
