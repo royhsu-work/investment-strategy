@@ -4,11 +4,11 @@ This module contains mechanical workflow facts only. It does not perform GitHub
 I/O, select a carrier, execute a worker, or persist a successor.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from re import fullmatch
 from types import MappingProxyType
-from typing import Mapping
 
 
 class ActionModelError(ValueError):
@@ -55,7 +55,7 @@ class ResultKind(StrEnum):
     NO_GO = "no-go"
     READY_FOR_OPENSPEC_REVIEW = "ready-for-openspec-review"
     FINDINGS = "findings"
-    PASS = "pass"
+    PASS = "pass"  # noqa: S105
     READY = "ready"
     SPEC_BLOCKER = "spec-blocker"
     MORE_IMPLEMENTATION_REQUIRED = "more-implementation-required"
