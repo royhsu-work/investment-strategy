@@ -168,6 +168,7 @@ class BoundedActionResult:
         if not isinstance(self.result, TypedResult):
             raise InvalidTypedResult("result payload is not typed")
 
+
 @dataclass(frozen=True, slots=True)
 class IssueObservation:
     """One fresh coordination-Issue observation supplied to deterministic selection."""
@@ -257,6 +258,7 @@ class ActionApplicationDecision:
     @property
     def accepted(self) -> bool:
         return self.disposition is ApplicationDisposition.ACCEPT
+
 
 @dataclass(frozen=True, slots=True)
 class ShadowDivergence:
@@ -759,6 +761,7 @@ def plan_action_application(
         successor=successor,
         successor_role=None if successor is None else role_for(successor),
     )
+
 
 def effect_is_current(observation: EffectObservation) -> bool:
     """Return true only when all exact reauthorization identities still match."""

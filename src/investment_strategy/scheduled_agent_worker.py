@@ -359,6 +359,7 @@ def _typed_result(
         result=TypedResult(result_kind, evidence_ref=raw_evidence),
     )
 
+
 def parse_worker_result(raw: str, request: WorkerRequest) -> WorkerActionResult:
     """Validate structured output and reject any model attempt to change identity."""
 
