@@ -109,6 +109,18 @@ class WorkProductRequest:
     manifest: WorkProductManifest
 
 
+@dataclass(frozen=True)
+class WorkProductPlan:
+    """Validated transport identity plus untrusted work-product manifest."""
+
+    should_apply: bool
+    source: WorkerRequest | None = None
+    request_comment_id: int | None = None
+    pr_number: int | None = None
+    expected_change: str | None = None
+    manifest: WorkProductManifest | None = None
+
+
 def _positive_decimal(value: str) -> int | None:
     try:
         parsed = int(value)
@@ -424,6 +436,73 @@ def _fresh_event_observation(
     ):
         raise ValueError("application request current shard observation is invalid")
     return comment_id, issue_number
+
+
+def plan_validation_resource(
+    *,
+    event: Mapping[str, object],
+    dispatch_result: MachineDispatchDecision,
+    repository: str,
+    current_revision: str,
+) -> ValidationResourcePlan:
+    """Bind one validation request to its exact run-scoped dispatch result."""
+
+    comment = _as_mapping(event.get("comment"))
+    body = None if comment is None else comment.get("body")
+    if not isinstance(body, str):
+        return ValidationResourcePlan(False)
+    request = parse_validation_resource_request(body)
+    if request is None:
+        return ValidationResourcePlan(False)
+    identity = _event_comment_identity(event, body, repository)
+    if identity is None:
+        return ValidationResourcePlan(False)
+    source = _source_from_dispatch(
+        request.dispatch_request_comment_id,
+        dispatch_result,
+        current_revision,
+    )
+    return ValidationResourcePlan(
+        True,
+        source=source,
+        request_comment_id=identity[0],
+        pr_number=request.pr_number,
+        expected_change=request.expected_change,
+    )
+
+
+def plan_work_product_application(
+    *,
+    event: Mapping[str, object],
+    dispatch_result: MachineDispatchDecision,
+    repository: str,
+    current_revision: str,
+) -> WorkProductPlan:
+    """Bind one blob-reference work product to its exact run-scoped dispatch."""
+
+    comment = _as_mapping(event.get("comment"))
+    body = None if comment is None else comment.get("body")
+    if not isinstance(body, str):
+        return WorkProductPlan(False)
+    request = parse_work_product_request(body)
+    if request is None:
+        return WorkProductPlan(False)
+    identity = _event_comment_identity(event, body, repository)
+    if identity is None:
+        return WorkProductPlan(False)
+    source = _source_from_dispatch(
+        request.dispatch_request_comment_id,
+        dispatch_result,
+        current_revision,
+    )
+    return WorkProductPlan(
+        True,
+        source=source,
+        request_comment_id=identity[0],
+        pr_number=request.pr_number,
+        expected_change=request.expected_change,
+        manifest=request.manifest,
+    )
 
 
 def _github_json(
