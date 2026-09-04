@@ -519,8 +519,12 @@ def _github_json(
     allow_not_found: bool = False,
 ) -> object | None:
     data = None if payload is None else json.dumps(payload).encode("utf-8")
+    normalized_path = api_path.lstrip("/")
+    api_url = f"https://api.github.com/repos/{repository}"
+    if normalized_path:
+        api_url = f"{api_url}/{normalized_path}"
     request = Request(  # noqa: S310 - fixed trusted GitHub API host
-        f"https://api.github.com/repos/{repository}/{api_path.lstrip('/')}",
+        api_url,
         data=data,
         method=method,
         headers={

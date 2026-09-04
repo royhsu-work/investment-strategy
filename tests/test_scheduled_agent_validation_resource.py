@@ -7,6 +7,7 @@ import json
 from email.message import Message
 from pathlib import Path
 from urllib.error import HTTPError
+from urllib.request import Request
 
 import pytest
 
@@ -70,6 +71,34 @@ def _event(body: str | None = None, *, comment_id: int = 102) -> dict[str, objec
         },
         "comment": _comment(comment_id, request_body),
     }
+
+
+def test_github_json_uses_repository_endpoint_for_empty_api_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested_urls: list[str] = []
+
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            del args
+
+        def read(self) -> bytes:
+            return b'{"default_branch":"main"}'
+
+    def fake_urlopen(request: Request, timeout: int) -> FakeResponse:
+        del timeout
+        requested_urls.append(request.full_url)
+        return FakeResponse()
+
+    monkeypatch.setattr(resource, "urlopen", fake_urlopen)
+
+    assert resource._github_json(_REPOSITORY, _FIXTURE_VALUE, "") == {
+        "default_branch": "main"
+    }
+    assert requested_urls == [f"https://api.github.com/repos/{_REPOSITORY}"]
 
 
 def test_resource_request_contains_no_caller_revision() -> None:
