@@ -28,6 +28,13 @@ Repository application/kernel authorization and mutation-carrier identity SHALL 
 
 Deterministic application rejection SHALL include a machine-readable guard classification and relevant expected/observed identity or predicate evidence whenever that boundary knows the failed predicate. Aggregate diagnostic text MAY accompany it but MUST NOT be the only rejection evidence. Rejection evidence never authorizes retry, weaker preconditions, alternate targets, or a worker-selected successor.
 
+#### Scenario: Project-wide design principle is needed by workflow and production design
+
+- GIVEN proportionality applies to both Scheduled-Agent governance and ordinary project design
+- WHEN the repository assigns normative ownership
+- THEN the capability-level requirement is owned by repository-governance
+- AND runtime/documentation surfaces may implement or reference it without maintaining a competing workflow-only normative definition
+
 #### Scenario: Shared rule appears in a role or skill
 
 - GIVEN a rule is owned by shared governance or the executable workflow model
