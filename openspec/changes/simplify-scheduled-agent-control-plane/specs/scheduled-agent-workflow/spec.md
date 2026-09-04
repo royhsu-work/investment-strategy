@@ -34,15 +34,46 @@ ChatGPT Scheduled Task SHALL be the only normal model wake. GitHub Actions MAY r
 
 ### Requirement: One wake executes one typed semantic Action with fresh application
 
-A normal wake SHALL fresh neutral-dispatch, execute exactly one authorized mapped semantic Action, submit its bounded typed result plus narrative/source evidence, let repository application fresh-reauthorize exact Issue/Action/immutable Change/revision/effect predicates, derive only kernel-legal narrow effects, observe postconditions, and end. Workers MUST NOT choose arbitrary successors or make Markdown authoritative control. Historical dispatch proves entry only, not current mutation authority. Stale/contradictory state fails closed; already-satisfied legal postcondition is idempotent and MUST NOT rewind or execute successor work. A successor, same Role or not, always waits for later fresh neutral dispatch.
+A normal wake SHALL fresh neutral-dispatch, execute exactly one authorized mapped semantic Action, submit its bounded typed result plus narrative/source evidence, let repository application fresh-reauthorize exact Issue/Action/immutable Change/revision/effect predicates, derive only kernel-legal narrow effects, observe postconditions, and end. Workers MUST NOT choose arbitrary successors or make Markdown authoritative control. Historical dispatch proves entry only, not current mutation authority. The source Action's required durable result/evidence and legal effects SHALL be persisted and observed before any successor becomes current. Stale/contradictory state fails closed; already-satisfied legal postconditions are idempotent and MUST NOT rewind or execute successor work. A successor, same Role or not, always waits for later fresh neutral dispatch.
 
-The selected Action remains work-conserving internally through immediately actionable RED→GREEN→REFACTOR→VERIFY, local correction, and bounded exact-resource consumption until its result or genuine Human/external/stale/contradictory/hard boundary. Correctness MUST NOT depend on same-role successor continuation, cross-role wake barriers, same-wake worker/model chaining, fixed wake Role, continuation tokens/cursors, locks/leases/heartbeats/retry-state, or hidden wake ownership.
+Each selected Action SHALL reconstruct the durable repository, Issue, PR, OpenSpec, Actions, and specifically awaited external-resource state required by that Action before deciding what remains. Correctness MUST NOT depend on prior conversation memory or a previous wake exiting cleanly. Partial execution, interruption, tool failure, or a missing final response MUST NOT transfer ownership. Recovery SHALL distinguish observed durable mutations from intended-but-uncompleted work and SHALL NOT rewind an already-consumed transition when valid causal-descendant evidence proves later lifecycle work has consumed it; contradictory consumption evidence fails closed.
+
+Immediately before a consequential action result, effect request, or ownership transition, the acting role SHALL fresh-read workflow-relevant coordination-Issue activity newer than the durable evidence boundary on which that consequence relies. A candidate direct-Human comment counts for this freshness contract only when raw creation provenance identifies the designated Human and `performed_via_github_app == null`; missing or ambiguous provenance fails closed. Material newer direct-Human input SHALL have a durable exact-comment disposition before the consequence proceeds: address it within current authority, classify it non-blocking with concrete rationale, convert it to an existing finding/blocker/correction result, or route/escalate it to the legal owner/Human boundary. This freshness classification MUST NOT itself satisfy a separately Human-reserved decision predicate. Later wakes SHALL reconstruct prior exact-comment dispositions without adding a comment queue, unread counter, acknowledgement label/state, cursor, hidden registry, lock, lease, heartbeat, or second workflow DAG.
+
+The selected Action remains work-conserving internally through immediately actionable RED→GREEN→REFACTOR→VERIFY, local correction, and bounded exact-resource consumption until its result or genuine Human/external/stale/contradictory/hard boundary. The first observation of the exact resource just triggered by that Action as absent, queued, or in progress MUST NOT by itself end the Action while bounded same-action observation remains possible. The Action MAY re-observe only that exact resource and consume its terminal result if the source remains authorized; a later wake resuming a real wait SHALL fresh-read that exact resource again. This bounded observation MUST NOT become a generic polling/retry scheduler or permit successor Action execution in the same wake.
+
+When a catchable tool/runtime/execution failure is observable and repository evidence remains writable, the current role SHALL persist canonical `EXECUTION_EXCEPTION` evidence containing the raw observable error after platform redaction, selected role/action, attempted operation/tool, relevant revision/base when applicable, known completed durable mutations, and unfinished work boundary. Classification and interpretation remain separate and `UNCLASSIFIED_EXECUTION_EXCEPTION` is legal. Exception evidence MUST NOT itself authorize retry, result, transition, or ownership transfer. Legal same-authority recovery MAY continue only while routing, revision, preconditions, and execution context remain current; otherwise use the governed disposition path. A truly uncatchable termination is reconstructed from actual durable state and MUST NOT be retroactively fabricated. This contract MUST NOT introduce a universal blocked result, generic retry engine, fault state machine, retry counter, or hidden execution status.
+
+Correctness MUST NOT depend on same-role successor continuation, cross-role wake barriers, same-wake worker/model chaining, fixed wake Role, continuation tokens/cursors, locks/leases/heartbeats/retry-state, or hidden wake ownership.
 
 #### Scenario: Completion or replay cannot chain/rewind
 
 - GIVEN Action A completes to successor B, or a duplicate result for A arrives after B is current
 - WHEN application observes current state
 - THEN the wake ends at A's applied postcondition, replay is idempotent, and B executes only after later fresh dispatch
+
+#### Scenario: Newer direct-Human input blocks a stale consequence
+
+- GIVEN Action A relies on durable evidence E
+- AND a newer workflow-relevant direct-Human comment has qualifying raw provenance but no legal durable disposition
+- WHEN A reaches a consequential result, effect, or ownership boundary
+- THEN A fails closed at that boundary
+- AND neither actor identity nor the freshness classifier grants any Human-reserved authority
+
+#### Scenario: Exact resource may finish inside the selected Action
+
+- GIVEN Action A has just triggered exact external resource R
+- AND the first observation of R is absent, queued, or in progress
+- WHEN bounded same-action observation remains possible and A is still authorized
+- THEN A may re-observe only R and consume its terminal result
+- AND no successor Action executes in that wake
+
+#### Scenario: Catchable failure is evidence, not a transition
+
+- GIVEN Action A encounters an observable catchable failure and repository evidence remains writable
+- WHEN A cannot complete the attempted operation
+- THEN canonical `EXECUTION_EXCEPTION` preserves the raw observable failure and unfinished boundary
+- AND the exception alone does not authorize retry, routing, result, or ownership transfer
 
 ### Requirement: Independent semantic gates use explicit merge Actions
 
@@ -73,9 +104,9 @@ The selected Action remains work-conserving internally through immediately actio
 ### Requirement: Review and finalize actions have Lead-owned minimum gate contracts
 **Reason**: It embeds generic `merge-pr`. **Migration**: Replacement preserves gates/finalize and uses explicit merge Actions.
 ### Requirement: Scheduled execution is at-least-once and state reconstructable
-**Reason**: It couples reconstruction to same-wake successors. **Migration**: Fresh application remains; one Action is wake boundary.
+**Reason**: Its same-wake successor mechanics conflict with the one-Action wake boundary. **Migration**: The replacement preserves action-specific durable reconstruction, direct-Human freshness/disposition, partial-mutation and causal-descendant replay safety, bounded exact-resource observation, and execution-exception evidence while moving every successor Action to a later fresh wake.
 ### Requirement: Routing handoff persists evidence before ownership transfer
-**Reason**: It uses Role/same-wake transition mechanics. **Migration**: Action is ownership; evidence remains audit; successor waits.
+**Reason**: Synthetic Role-oriented HANDOFF is no longer a control primitive. **Migration**: The source Action's result/evidence and legal effects remain durable before its successor becomes current; HANDOFF may remain audit/provenance only, and every successor waits for later fresh dispatch.
 ### Requirement: Fresh-read plus label update is not treated as mutual exclusion
 **Reason**: Tuple wording is obsolete. **Migration**: Fresh typed application preserves no-mutex/stale/idempotent safety.
 ### Requirement: Executor merges only an explicitly authorized unchanged revision
@@ -91,7 +122,7 @@ The selected Action remains work-conserving internally through immediately actio
 ### Requirement: Workflow-dynamic dispatch derives one fixed invocation role from durable workflow state
 **Reason**: It freezes wake Role/same-wake successors. **Migration**: Role derives for one Action; successor waits.
 ### Requirement: Selected Scheduled Agent actions are work-conserving within an invocation
-**Reason**: It extends same-Action progress to same-Role successor. **Migration**: Same-Action stays work-conserving; application ends wake.
+**Reason**: It extends same-Action progress into same-Role successor execution. **Migration**: Same-Action RED→GREEN→REFACTOR→VERIFY, local correction, and bounded exact-resource observation remain work-conserving; application ends the wake before any successor Action.
 ### Requirement: Persisted Change identity defines the single active workflow boundary
 **Reason**: It binds WIP to Role tuples/pre-activation-only correction. **Migration**: WIP is Issue+Change+Action and bounded correction preserves it.
 ### Requirement: Dynamic dispatch tolerates overlapping wakes without hidden ownership state
