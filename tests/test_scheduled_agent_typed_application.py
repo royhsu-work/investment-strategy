@@ -22,8 +22,8 @@ from investment_strategy.scheduled_agent_action_model import (
     authorize_one_wake,
     plan_action_application,
 )
-from investment_strategy.scheduled_agent_worker import parse_worker_result
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
+from investment_strategy.scheduled_agent_worker import parse_worker_result
 
 
 _REVISION = "a" * 40
