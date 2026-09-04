@@ -106,7 +106,7 @@ Pinned OpenSpec CLI 在本 repository 已觀察到：建立新的 canonical capa
 
 ### Archive automation orientation
 
-Merged-PR archive classifier 是 repository automation 的 project-level 行為摘要，不是 Scheduled-Agent routing authority。Implementation branch 使用 `agent/<change>` branch convention，但 normal archive routing 不依賴 branch name。Classifier 在 triggering merge snapshot 上依 merged PR changed files 與 active OpenSpec state 判斷 candidate：0 個 active candidate 或 incomplete change 為 successful no-op，`>1 active touched` fail ambiguous；`Complete` 是 repository-level implementation completion signal。Normal automatic path 只接受 same-repository PR；fork candidate fail `unsupported automatic source`。Explicit recovery 使用 `openspec-archive-recovery`，`workflow_dispatch` 保留為 recovery / migration fallback。Archive queue 使用 `queue: max`，目前平台容量契約為 100 個 pending evaluations；詳細 deterministic archive mechanics 以 `.github/workflows/openspec-archive.yml` 與其 tests 為準。
+Merged-PR archive classifier 是 repository automation 的 project-level 行為摘要，不是 Scheduled-Agent routing authority。Implementation branch 使用 `agent/<change>` branch convention，但 normal archive routing 不依賴 branch name。Classifier 在 triggering merge snapshot 上依 merged PR changed files 與 active OpenSpec state 判斷 candidate：0 個 active candidate 或 incomplete change 為 successful no-op，`>1 active touched` fail ambiguous；`Complete` 是 repository-level implementation completion signal。Normal automatic path 只接受 same-repository PR；fork candidate fail `unsupported automatic source`。Explicit recovery 使用 `openspec-archive-recovery`，`workflow_dispatch` 保留為 recovery / migration fallback。Archive request path 使用 bounded daily control transport 與 non-cancelling concurrency group (`cancel-in-progress: false`)，保留 in-flight request/run/result chain，不把 concurrency 或 archive Issue 當作 lifecycle state / response mailbox；詳細 deterministic archive mechanics 以 `.github/workflows/openspec-archive.yml` 與其 tests 為準。
 
 ## Architecture
 
@@ -319,7 +319,7 @@ Request-boundary rejection 不屬於這個 envelope，因為 application 尚未�
 - `.github/workflows/backtest.yml`：analytical Backtest orchestration scaffold；不含 fill simulation。
 - `.github/workflows/quality.yml`：`uv run pytest`、`ruff check`、`ruff format --check`、`mypy src tests`。
 - `.github/workflows/openspec-validate.yml`：執行 `openspec list` 與 project-level `openspec validate --all --strict --json --no-interactive`，不綁定已 archived change；對 exact-revision mechanical gate，workflow 先決定 target revision/repository、checkout 該 target、以 `git rev-parse HEAD` 驗證實際 validator `HEAD` 等於 target，並把 target/checkout identity 寫入 job log/summary 後才執行 strict validation。`run.head_sha` 只是 association metadata，單獨使用是 insufficient checkout proof；PR synthetic merge revision validation 不等於不同 PR head 的 exact-head validation。此 mechanical PASS 不自行建立或刷新 semantic acceptance。
-- `.github/workflows/openspec-archive.yml`：state-driven archive automation；詳細 classifier/recovery/queue behavior 見上方 orientation 與 workflow/tests。
+- `.github/workflows/openspec-archive.yml`：state-driven archive automation；詳細 classifier/request/linkage/carrier behavior 見上方 orientation 與 workflow/tests。
 
 Generated analytical results 應上傳 Actions Artifacts，不 commit 回 repository。Production strategy/workflow activation 保持 deferred。
 
