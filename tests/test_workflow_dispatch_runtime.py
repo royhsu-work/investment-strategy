@@ -198,10 +198,7 @@ def test_preflight_excludes_daily_shards_and_unrouted_prose() -> None:
         "title": "Historical Issue",
         "state": "closed",
         "body": (
-            "Change: historical-change\n\n"
-            "Examples:\n"
-            "Change: unset\n"
-            "Change: another-prose-example\n"
+            "Change: historical-change\n\nExamples:\nChange: unset\nChange: another-prose-example\n"
         ),
         "labels": [{"name": "human:approved"}],
         "created_at": "2026-08-18T17:28:23Z",
