@@ -18,6 +18,10 @@ from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.request import Request, urlopen
 
+from investment_strategy.scheduled_agent_action_model import (
+    Action as ModelAction,
+    role_for,
+)
 from investment_strategy.workflow_dispatch import (
     Action,
     DispatchPreflight,
@@ -29,7 +33,6 @@ from investment_strategy.workflow_dispatch import (
     Routing,
     TerminalEvidence,
     classify_dispatch,
-    classify_open_dispatch,
 )
 
 _AGENT_LABELS: dict[str, Role] = {
@@ -255,27 +258,20 @@ def _label_names(payload: Mapping[str, object]) -> tuple[set[str], bool]:
 def _routing_state_from_labels(
     labels: set[str], *, state: str
 ) -> tuple[Routing | None, bool, bool]:
-    agent_labels = [name for name in labels if name.startswith("agent:")]
-    action_labels = [name for name in labels if name.startswith("action:")]
-    routing_debt = state == "closed" and bool(agent_labels or action_labels)
+    """Read Action only; legacy agent labels are never workflow authority."""
 
-    if any(name not in _AGENT_LABELS for name in agent_labels) or any(
-        name not in _ACTION_LABELS for name in action_labels
-    ):
+    action_labels = [name for name in labels if name.startswith("action:")]
+    routing_debt = state == "closed" and bool(action_labels)
+    if any(name not in _ACTION_LABELS for name in action_labels):
         return None, False, routing_debt
-    if len(agent_labels) > 1 or len(action_labels) > 1:
+    if len(action_labels) > 1:
         return None, False, routing_debt
-    if not agent_labels and not action_labels:
+    if not action_labels:
         return None, True, False
-    if len(agent_labels) == 1 and len(action_labels) == 1:
-        return (
-            (_AGENT_LABELS[agent_labels[0]], _ACTION_LABELS[action_labels[0]]),
-            True,
-            routing_debt,
-        )
-    if state == "closed":
-        return None, True, True
-    return None, False, False
+
+    action_text = _ACTION_LABELS[action_labels[0]]
+    model_action = ModelAction(action_text)
+    return (role_for(model_action).value, action_text), True, routing_debt
 
 
 def _routing_from_labels(labels: set[str]) -> tuple[Routing | None, bool]:
@@ -1149,33 +1145,16 @@ def acquire_current_github_preflight(
     *,
     repository_root: Path | None = None,
 ) -> DispatchPreflight:
-    """Acquire dispatch from complete current open state plus current routing debt."""
+    """Acquire only the complete current open-Issue Action state."""
 
-    root = Path.cwd() if repository_root is None else repository_root
+    del repository_root
     open_pages = _github_open_issue_pages(repository, token)
     open_observations = _normalized_observations(open_pages)
-    open_preflight = acquire_dispatch_preflight(
+    return acquire_dispatch_preflight(
         observations=open_observations,
         source_total_count=len(open_observations),
         incomplete_results=False,
         exhausted=True,
-    )
-    open_decision = classify_open_dispatch(open_preflight)
-
-    # Multiple/invalid/incomplete OPEN state fails before any closed debt is loaded.
-    if open_decision.disposition == "FAIL_CLOSED":
-        return open_preflight
-
-    closed_pages = _github_closed_routing_issue_pages(repository, token)
-    if not _normalized_closed_observations(closed_pages):
-        return open_preflight
-
-    return _acquire_detailed_exceptional_preflight(
-        repository,
-        token,
-        repository_root=root,
-        open_observations=open_observations,
-        closed_pages=closed_pages,
     )
 
 

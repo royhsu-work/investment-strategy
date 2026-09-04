@@ -14,11 +14,11 @@ from typing import Literal
 
 from investment_strategy.scheduled_agent_action_model import (
     Action as ModelAction,
-)
-from investment_strategy.scheduled_agent_action_model import (
     AuthoritativeObservations,
     IssueObservation,
     ShadowComparison,
+    role_for,
+    select_work,
     shadow_compare_selection,
 )
 from investment_strategy.scheduled_agent_action_model import (
@@ -408,15 +408,9 @@ def _classify_exceptional_dispatch(preflight: DispatchPreflight) -> DispatchDeci
 
 
 def classify_dispatch(preflight: DispatchPreflight) -> DispatchDecision:
-    """Classify a final runtime preflight.
+    """Classify current work through the one executable Action model."""
 
-    Open-only preflights use normal selection. A preflight containing closed
-    Issues represents the already-entered current routing-debt boundary.
-    """
-
-    if any(issue.state == "closed" for issue in preflight.issues):
-        return _classify_exceptional_dispatch(preflight)
-    return classify_open_dispatch(preflight)
+    return classify_action_dispatch(preflight)
 
 
 def _action_model_observations(
@@ -493,6 +487,73 @@ def _legacy_selection_observation(
         action=action,
         role=role,
         reason=decision.reason,
+    )
+
+
+def classify_action_dispatch(preflight: DispatchPreflight) -> DispatchDecision:
+    """Classify one current preflight through the executable Action model."""
+
+    observations = _action_model_observations(preflight)
+    selected = select_work(observations)
+    formal_ids = tuple(
+        sorted(
+            issue.issue_number
+            for issue in observations.issues
+            if issue.state == "open" and issue.change not in {None, "unset"}
+        )
+    )
+    preactivation_ids = tuple(
+        sorted(
+            issue.issue_number
+            for issue in observations.issues
+            if issue.state == "open"
+            and issue.change in {None, "unset"}
+            and issue.action in {
+                ModelAction.EXPLORE_CHANGE,
+                ModelAction.PROPOSE_CHANGE,
+            }
+        )
+    )
+    completeness = "COMPLETE" if preflight.enumeration.complete else "INDETERMINATE"
+    provenance = preflight.enumeration.observation_provenance
+    if selected.disposition is ModelSelectionDisposition.AUTHORIZE:
+        if selected.issue_number is None or selected.action is None or selected.role is None:
+            return _fail_closed(
+                completeness=completeness,
+                provenance=provenance,
+                formal=formal_ids,
+                preactivation=preactivation_ids,
+                reason="action-model-authorize-identity-incomplete",
+            )
+        return DispatchDecision(
+            completeness=cast(Literal["COMPLETE", "INDETERMINATE"], completeness),
+            observation_provenance=provenance,
+            formal_issue_ids=formal_ids,
+            recovery_candidate_ids=(),
+            preactivation_candidate_ids=preactivation_ids,
+            selected_issue_id=selected.issue_number,
+            selected_routing=(selected.role.value, selected.action.value),
+            disposition="AUTHORIZE",
+            reason=selected.reason,
+        )
+    if selected.disposition is ModelSelectionDisposition.NO_WORK:
+        return DispatchDecision(
+            completeness=cast(Literal["COMPLETE", "INDETERMINATE"], completeness),
+            observation_provenance=provenance,
+            formal_issue_ids=formal_ids,
+            recovery_candidate_ids=(),
+            preactivation_candidate_ids=preactivation_ids,
+            selected_issue_id=None,
+            selected_routing=None,
+            disposition="NO_WORK",
+            reason=selected.reason,
+        )
+    return _fail_closed(
+        completeness=cast(Literal["COMPLETE", "INDETERMINATE"], completeness),
+        provenance=provenance,
+        formal=formal_ids,
+        preactivation=preactivation_ids,
+        reason=selected.reason,
     )
 
 
