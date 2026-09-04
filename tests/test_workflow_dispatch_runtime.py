@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 import investment_strategy.scheduled_agent_runtime as runtime
-
-from pathlib import Path
-
 from investment_strategy.scheduled_agent_action_model import Action
 from investment_strategy.scheduled_agent_runtime import (
     GitHubIssueObservation,
