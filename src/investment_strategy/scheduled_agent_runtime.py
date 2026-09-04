@@ -246,10 +246,7 @@ def acquire_from_issue_pages(
         for payload in page:
             observation = normalize_github_issue(payload)
             if observation is None:
-                if (
-                    "pull_request" not in payload
-                    and not is_runtime_checkin_issue(payload)
-                ):
+                if "pull_request" not in payload and not is_runtime_checkin_issue(payload):
                     raise RuntimeError("GitHub Issues API returned an invalid Issue observation")
                 continue
             observations.append(observation)
@@ -308,10 +305,7 @@ def _normalized_observations(
         for payload in page:
             observation = normalize_github_issue(payload)
             if observation is None:
-                if (
-                    "pull_request" not in payload
-                    and not is_runtime_checkin_issue(payload)
-                ):
+                if "pull_request" not in payload and not is_runtime_checkin_issue(payload):
                     raise RuntimeError("GitHub Issues API returned an invalid Issue observation")
                 continue
             observations.append(observation)
