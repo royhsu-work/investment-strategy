@@ -1,3 +1,5 @@
+"""Run-scoped machine dispatch transport."""
+
 from __future__ import annotations
 
 import argparse
@@ -24,14 +26,10 @@ DISPOSITION_PREFIX = "Disposition: "
 ISSUE_PREFIX = "Issue: "
 ROLE_PREFIX = "Role: "
 ACTION_PREFIX = "Action: "
-DEBT_DISPOSITION_PREFIX = "Debt-Disposition: "
 REASON_PREFIX = "Reason: "
 BRIDGE_OK = "BRIDGE_OK"
 _DECISION_DISPOSITIONS = {"AUTHORIZE", "NO_WORK", "FAIL_CLOSED"}
-_DEBT_DISPOSITIONS = {"terminal-cleanup", "unfinished-recovery"}
 _ROLES = {"lead", "reviewer", "executor"}
-_GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]"
-_GITHUB_ACTIONS_APP_SLUG = "github-actions"
 _MAX_REASON_LENGTH = 240
 
 
@@ -48,7 +46,6 @@ class MachineDispatchDecision:
     issue_number: int | None = None
     role: str | None = None
     action: str | None = None
-    debt_disposition: str | None = None
     reason: str | None = None
 
 
@@ -66,7 +63,6 @@ def parse_dispatch_request(body: str) -> DispatchRequest | None:
         return None
     if not lines[1].startswith(REQUESTED_AT_PREFIX):
         return None
-
     requested_at = lines[1][len(REQUESTED_AT_PREFIX) :]
     if not requested_at or requested_at != requested_at.strip():
         return None
@@ -84,158 +80,12 @@ def render_dispatch_run_name(request_comment_id: int) -> str:
 def parse_dispatch_run_name(run_name: str) -> int | None:
     if not run_name.startswith(RUN_NAME_PREFIX):
         return None
-    raw_request_comment_id = run_name[len(RUN_NAME_PREFIX) :]
-    return _parse_positive_decimal(raw_request_comment_id)
-
-
-def render_run_scoped_dispatch_result(
-    *,
-    request_comment_id: int,
-    default_branch_revision: str,
-    decision: DispatchDecision,
-) -> str:
-    body = render_dispatch_decision(
-        request_comment_id=request_comment_id,
-        default_branch_revision=default_branch_revision,
-        decision=decision,
-    )
-    return f"{RUN_RESULT_START_MARKER}\n{body}\n{RUN_RESULT_END_MARKER}"
-
-
-def parse_run_scoped_dispatch_result(
-    log: str,
-    *,
-    request_comment_id: int,
-) -> MachineDispatchDecision | None:
-    if request_comment_id <= 0:
-        return None
-    lines = log.splitlines()
-    starts = [index for index, line in enumerate(lines) if line == RUN_RESULT_START_MARKER]
-    ends = [index for index, line in enumerate(lines) if line == RUN_RESULT_END_MARKER]
-    if len(starts) != 1 or len(ends) != 1 or starts[0] >= ends[0]:
-        return None
-    body = "\n".join(lines[starts[0] + 1 : ends[0]])
-    decision = parse_dispatch_decision(body)
-    if decision is None or decision.request_comment_id != request_comment_id:
-        return None
-    return decision
-
-
-def _parse_positive_decimal(value: str) -> int | None:
+    raw = run_name[len(RUN_NAME_PREFIX) :]
     try:
-        parsed = int(value)
+        parsed = int(raw)
     except ValueError:
         return None
-    if parsed <= 0 or str(parsed) != value:
-        return None
-    return parsed
-
-
-def _parse_revision(line: str) -> str | None:
-    if not line.startswith(DEFAULT_BRANCH_REVISION_PREFIX):
-        return None
-    revision = line[len(DEFAULT_BRANCH_REVISION_PREFIX) :]
-    if not revision or revision != revision.strip():
-        return None
-    return revision
-
-
-def _parse_reason(line: str) -> str | None:
-    if not line.startswith(REASON_PREFIX):
-        return None
-    reason = line[len(REASON_PREFIX) :]
-    if (
-        not reason
-        or reason != reason.strip()
-        or "\r" in reason
-        or "\n" in reason
-        or len(reason) > _MAX_REASON_LENGTH
-    ):
-        return None
-    return reason
-
-
-def parse_dispatch_decision(body: str) -> MachineDispatchDecision | None:
-    lines = body.split("\n")
-    if len(lines) not in {4, 5, 7, 8} or lines[0] != DECISION_MARKER:
-        return None
-    if not lines[1].startswith(REQUEST_COMMENT_ID_PREFIX):
-        return None
-    request_comment_id = _parse_positive_decimal(lines[1][len(REQUEST_COMMENT_ID_PREFIX) :])
-    revision = _parse_revision(lines[2])
-    if request_comment_id is None or revision is None:
-        return None
-    if not lines[3].startswith(DISPOSITION_PREFIX):
-        return None
-
-    disposition = lines[3][len(DISPOSITION_PREFIX) :]
-    if disposition not in _DECISION_DISPOSITIONS:
-        return None
-    if disposition != "AUTHORIZE":
-        if len(lines) not in {4, 5}:
-            return None
-        reason = None if len(lines) == 4 else _parse_reason(lines[4])
-        if len(lines) == 5 and reason is None:
-            return None
-        return MachineDispatchDecision(
-            request_comment_id=request_comment_id,
-            default_branch_revision=revision,
-            disposition=disposition,
-            reason=reason,
-        )
-
-    if len(lines) not in {7, 8}:
-        return None
-    if not lines[4].startswith(ISSUE_PREFIX):
-        return None
-    issue_number = _parse_positive_decimal(lines[4][len(ISSUE_PREFIX) :])
-    if issue_number is None or not lines[5].startswith(ROLE_PREFIX):
-        return None
-    role = lines[5][len(ROLE_PREFIX) :]
-    if role not in _ROLES or not lines[6].startswith(ACTION_PREFIX):
-        return None
-    action = lines[6][len(ACTION_PREFIX) :]
-    if not action or action != action.strip():
-        return None
-
-    debt_disposition = None
-    if len(lines) == 8:
-        if not lines[7].startswith(DEBT_DISPOSITION_PREFIX):
-            return None
-        debt_disposition = lines[7][len(DEBT_DISPOSITION_PREFIX) :]
-        if debt_disposition not in _DEBT_DISPOSITIONS:
-            return None
-        if role != "lead" or action != "resolve-question":
-            return None
-
-    return MachineDispatchDecision(
-        request_comment_id=request_comment_id,
-        default_branch_revision=revision,
-        disposition=disposition,
-        issue_number=issue_number,
-        role=role,
-        action=action,
-        debt_disposition=debt_disposition,
-    )
-
-
-def _validate_result_identity(request_comment_id: int, default_branch_revision: str) -> None:
-    if request_comment_id <= 0:
-        raise ValueError("request_comment_id must be positive")
-    if not default_branch_revision or default_branch_revision != default_branch_revision.strip():
-        raise ValueError("default_branch_revision must be non-empty and trimmed")
-
-
-def _validated_reason(reason: str) -> str:
-    if (
-        not reason
-        or reason != reason.strip()
-        or "\r" in reason
-        or "\n" in reason
-        or len(reason) > _MAX_REASON_LENGTH
-    ):
-        raise ValueError("dispatch reason must be one non-empty bounded line")
-    return reason
+    return parsed if parsed > 0 and str(parsed) == raw else None
 
 
 def render_dispatch_decision(
@@ -244,10 +94,10 @@ def render_dispatch_decision(
     default_branch_revision: str,
     decision: DispatchDecision,
 ) -> str:
-    _validate_result_identity(request_comment_id, default_branch_revision)
+    if request_comment_id <= 0 or not default_branch_revision.strip():
+        raise ValueError("dispatch result identity is invalid")
     if decision.disposition not in _DECISION_DISPOSITIONS:
         raise ValueError("unsupported dispatch disposition")
-
     lines = [
         DECISION_MARKER,
         f"{REQUEST_COMMENT_ID_PREFIX}{request_comment_id}",
@@ -256,7 +106,7 @@ def render_dispatch_decision(
     ]
     if decision.disposition == "AUTHORIZE":
         if decision.selected_issue_id is None or decision.selected_routing is None:
-            raise ValueError("AUTHORIZE requires one machine-selected Issue/Role/Action tuple")
+            raise ValueError("AUTHORIZE requires one Action")
         role, action = decision.selected_routing
         lines.extend(
             (
@@ -265,64 +115,117 @@ def render_dispatch_decision(
                 f"{ACTION_PREFIX}{action}",
             )
         )
-        if decision.selected_debt_disposition is not None:
-            if (
-                decision.selected_debt_disposition not in _DEBT_DISPOSITIONS
-                or role != "lead"
-                or action != "resolve-question"
-            ):
-                raise ValueError("debt disposition requires Lead / resolve-question authorization")
-            lines.append(f"{DEBT_DISPOSITION_PREFIX}{decision.selected_debt_disposition}")
+        try:
+            if role_for(ModelAction(action)).value != role:
+                raise ValueError("dispatch role is not derived from Action")
+        except ValueError as exc:
+            raise ValueError("dispatch Action is invalid") from exc
     else:
         if decision.selected_issue_id is not None or decision.selected_routing is not None:
-            raise ValueError("NO_WORK/FAIL_CLOSED must not carry an Issue/Role/Action tuple")
-        if decision.selected_debt_disposition is not None:
-            raise ValueError("NO_WORK/FAIL_CLOSED must not carry a debt disposition")
-        lines.append(f"{REASON_PREFIX}{_validated_reason(decision.reason)}")
+            raise ValueError("non-authorizing result carries selected work")
+        if (
+            len(decision.reason) == 0
+            or decision.reason != decision.reason.strip()
+            or "\n" in decision.reason
+            or len(decision.reason) > _MAX_REASON_LENGTH
+        ):
+            raise ValueError("dispatch reason is invalid")
+        lines.append(f"{REASON_PREFIX}{decision.reason}")
     return "\n".join(lines)
 
 
-def _as_mapping(value: object) -> Mapping[str, object] | None:
-    if not isinstance(value, dict):
+def parse_dispatch_decision(body: str) -> MachineDispatchDecision | None:
+    lines = body.split("\n")
+    if len(lines) not in {4, 5, 7} or lines[0] != DECISION_MARKER:
         return None
-    return cast(Mapping[str, object], value)
-
-
-def _positive_int(value: object) -> int | None:
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+    if not lines[1].startswith(REQUEST_COMMENT_ID_PREFIX):
         return None
-    return value
+    raw_id = lines[1][len(REQUEST_COMMENT_ID_PREFIX) :]
+    try:
+        request_id = int(raw_id)
+    except ValueError:
+        return None
+    if request_id <= 0 or str(request_id) != raw_id:
+        return None
+    if not lines[2].startswith(DEFAULT_BRANCH_REVISION_PREFIX):
+        return None
+    revision = lines[2][len(DEFAULT_BRANCH_REVISION_PREFIX) :]
+    if not revision or revision != revision.strip():
+        return None
+    if not lines[3].startswith(DISPOSITION_PREFIX):
+        return None
+    disposition = lines[3][len(DISPOSITION_PREFIX) :]
+    if disposition not in _DECISION_DISPOSITIONS:
+        return None
+    if disposition != "AUTHORIZE":
+        if len(lines) not in {4, 5}:
+            return None
+        if len(lines) == 5 and (
+            not lines[4].startswith(REASON_PREFIX)
+            or not lines[4][len(REASON_PREFIX) :].strip()
+            or len(lines[4][len(REASON_PREFIX) :]) > _MAX_REASON_LENGTH
+        ):
+            return None
+        reason = None if len(lines) == 4 else lines[4][len(REASON_PREFIX) :]
+        return MachineDispatchDecision(request_id, revision, disposition, reason=reason)
+
+    if len(lines) != 7:
+        return None
+    if not lines[4].startswith(ISSUE_PREFIX):
+        return None
+    raw_issue = lines[4][len(ISSUE_PREFIX) :]
+    try:
+        issue_number = int(raw_issue)
+    except ValueError:
+        return None
+    if issue_number <= 0 or str(issue_number) != raw_issue:
+        return None
+    if not lines[5].startswith(ROLE_PREFIX) or not lines[6].startswith(ACTION_PREFIX):
+        return None
+    role = lines[5][len(ROLE_PREFIX) :]
+    action = lines[6][len(ACTION_PREFIX) :]
+    if role not in _ROLES or not action or action != action.strip():
+        return None
+    try:
+        parsed_action = ModelAction(action)
+    except ValueError:
+        return None
+    if role_for(parsed_action).value != role:
+        return None
+    return MachineDispatchDecision(
+        request_id,
+        revision,
+        disposition,
+        issue_number=issue_number,
+        role=role,
+        action=action,
+    )
 
 
-def _request_identity(*, event: Mapping[str, object]) -> tuple[int, int] | None:
+def _request_identity(event: Mapping[str, object]) -> tuple[int, int] | None:
     if event.get("action") != "created":
         return None
-
-    issue = _as_mapping(event.get("issue"))
-    comment = _as_mapping(event.get("comment"))
-    if issue is None or comment is None or not is_runtime_checkin_issue(issue):
+    issue = event.get("issue")
+    comment = event.get("comment")
+    if not isinstance(issue, Mapping) or not isinstance(comment, Mapping):
         return None
-
-    issue_number = _positive_int(issue.get("number"))
-    comment_id = _positive_int(comment.get("id"))
+    if "pull_request" in issue or not is_runtime_checkin_issue(cast(Mapping[str, object], issue)):
+        return None
+    issue_number = issue.get("number")
+    comment_id = comment.get("id")
     body = comment.get("body")
-    if issue_number is None or comment_id is None or not isinstance(body, str):
-        return None
-    if parse_dispatch_request(body) is None:
+    if (
+        not isinstance(issue_number, int)
+        or isinstance(issue_number, bool)
+        or issue_number <= 0
+        or not isinstance(comment_id, int)
+        or isinstance(comment_id, bool)
+        or comment_id <= 0
+        or not isinstance(body, str)
+        or parse_dispatch_request(body) is None
+    ):
         return None
     return issue_number, comment_id
-
-
-def _is_github_actions_comment(comment: Mapping[str, object]) -> bool:
-    user = _as_mapping(comment.get("user"))
-    app = _as_mapping(comment.get("performed_via_github_app"))
-    return (
-        user is not None
-        and user.get("login") == _GITHUB_ACTIONS_BOT_LOGIN
-        and user.get("type") == "Bot"
-        and app is not None
-        and app.get("slug") == _GITHUB_ACTIONS_APP_SLUG
-    )
 
 
 def plan_dispatch_decision(
@@ -331,10 +234,9 @@ def plan_dispatch_decision(
     default_branch_revision: str,
     decision: DispatchDecision,
 ) -> BridgePlan:
-    identity = _request_identity(event=event)
+    identity = _request_identity(event)
     if identity is None:
-        return BridgePlan(should_emit=False)
-
+        return BridgePlan(False)
     issue_number, request_comment_id = identity
     return BridgePlan(
         should_emit=True,
@@ -349,19 +251,17 @@ def plan_dispatch_decision(
 
 
 def acquire_production_dispatch_decision(repository: str, token: str) -> DispatchDecision:
-    preflight = acquire_current_github_preflight(repository, token)
-    return classify_dispatch(preflight)
+    return classify_dispatch(acquire_current_github_preflight(repository, token))
 
 
 def _load_json(path: Path) -> object:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _require_mapping(value: object, *, name: str) -> Mapping[str, object]:
-    mapping = _as_mapping(value)
-    if mapping is None:
+def _require_mapping(value: object, name: str) -> Mapping[str, object]:
+    if not isinstance(value, Mapping):
         raise ValueError(f"{name} must be a JSON object")
-    return mapping
+    return cast(Mapping[str, object], value)
 
 
 def _write_outputs(path: Path, plan: BridgePlan) -> None:
@@ -374,35 +274,32 @@ def _write_outputs(path: Path, plan: BridgePlan) -> None:
 
 
 def _write_result_payload(path: Path, plan: BridgePlan) -> None:
-    if not plan.should_emit or plan.result_body is None:
-        return
-    path.write_text(json.dumps({"body": plan.result_body}) + "\n", encoding="utf-8")
+    if plan.should_emit and plan.result_body is not None:
+        path.write_text(json.dumps({"body": plan.result_body}) + "\n", encoding="utf-8")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Plan one run-scoped machine dispatch result")
+    parser = argparse.ArgumentParser(description="Plan one run-scoped dispatch result")
     parser.add_argument("--event-path", type=Path, required=True)
     parser.add_argument("--revision", required=True)
     parser.add_argument("--github-output", type=Path, required=True)
     parser.add_argument("--result-payload", type=Path, required=True)
     args = parser.parse_args()
 
-    event = _require_mapping(_load_json(args.event_path), name="event")
-    identity = _request_identity(event=event)
+    event = _require_mapping(json.loads(args.event_path.read_text(encoding="utf-8")), "event")
+    identity = _request_identity(event)
     if identity is None:
-        plan = BridgePlan(should_emit=False)
+        plan = BridgePlan(False)
     else:
         repository = os.environ.get("GITHUB_REPOSITORY")
         token = os.environ.get("GITHUB_TOKEN")
         if not repository or not token:
             raise RuntimeError("GITHUB_REPOSITORY and GITHUB_TOKEN are required")
-        decision = acquire_production_dispatch_decision(repository, token)
         plan = plan_dispatch_decision(
             event=event,
             default_branch_revision=args.revision,
-            decision=decision,
+            decision=acquire_production_dispatch_decision(repository, token),
         )
-
     _write_outputs(args.github_output, plan)
     _write_result_payload(args.result_payload, plan)
     return 0
