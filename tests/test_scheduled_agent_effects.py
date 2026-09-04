@@ -24,6 +24,8 @@ from investment_strategy.scheduled_agent_runtime import (
 )
 from investment_strategy.workflow_dispatch import (
     Action as WorkflowAction,
+)
+from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
     Role,
 )
