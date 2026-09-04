@@ -18,6 +18,7 @@ from investment_strategy.workflow_dispatch import (
     RepositoryIssueSnapshot,
     Routing,
     action_entry_authorized,
+    action_model_shadow,
     activation_accepted,
     classify_dispatch,
 )
@@ -712,3 +713,63 @@ def test_app_authored_retirement_does_not_release_closed_routing_debt(
         repository_root=tmp_path,
     )
     assert classify_dispatch(preflight).disposition == "FAIL_CLOSED"
+
+
+def test_action_model_shadow_matches_active_without_mutation() -> None:
+    preflight = complete(
+        issue(138, "simplify-scheduled-agent-control-plane", ("executor", "implement-change"))
+    )
+    before = preflight
+
+    comparison = action_model_shadow(preflight)
+
+    assert comparison.matches
+    assert comparison.expected.issue_number == 138
+    assert comparison.expected.action == "implement-change"
+    assert comparison.observed == comparison.expected
+    assert preflight == before
+
+
+def test_action_model_shadow_preserves_closed_debt_divergence() -> None:
+    preflight = DispatchPreflight(
+        issues=(
+            RepositoryIssueSnapshot(
+                issue_number=138,
+                change="simplify-scheduled-agent-control-plane",
+                routing=("lead", "resolve-question"),
+                state="closed",
+                terminal_evidence="terminal-history",
+                routing_debt=True,
+            ),
+        ),
+        enumeration=EnumerationEvidence(
+            observed_count=1,
+            source_total_count=1,
+            incomplete_results=False,
+            exhausted=True,
+            observation_provenance=ObservationProvenance.QUALIFIED,
+        ),
+    )
+
+    comparison = action_model_shadow(preflight)
+
+    assert not comparison.matches
+    assert comparison.divergences[0].field == "disposition"
+    assert comparison.divergences[0].expected == "no-work"
+    assert comparison.divergences[0].observed == "authorize"
+
+
+def test_action_model_shadow_exposes_stale_role_label_as_divergence() -> None:
+    preflight = complete(
+        issue(138, "simplify-scheduled-agent-control-plane", ("executor", "review-openspec"))
+    )
+
+    comparison = action_model_shadow(preflight)
+
+    assert not comparison.matches
+    assert any(
+        divergence.field == "role"
+        and divergence.expected == "reviewer"
+        and divergence.observed == "executor"
+        for divergence in comparison.divergences
+    )
