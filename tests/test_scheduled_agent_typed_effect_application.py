@@ -25,7 +25,6 @@ from investment_strategy.workflow_dispatch import (
     ObservationProvenance,
 )
 
-
 _REVISION = "a" * 40
 _CHANGE = "simplify-scheduled-agent-control-plane"
 

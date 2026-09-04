@@ -15,22 +15,28 @@ from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
-from investment_strategy.scheduled_agent_causal_position import (
-    bind_issue_cause_ref,
-    cause_ref_from_issue_body,
-    requested_proposal_ready_comment_payload,
-    trusted_proposal_ready_comment,
-)
 from investment_strategy.scheduled_agent_action_model import (
     Action as ModelAction,
+)
+from investment_strategy.scheduled_agent_action_model import (
     ActionApplicationDecision,
     ActionObservation,
     ActionSource,
     ApplicationRejection,
     BoundedActionResult,
-    ObservationProvenance as ModelObservationProvenance,
-    SelectionDisposition as ModelSelectionDisposition,
     plan_action_application,
+)
+from investment_strategy.scheduled_agent_action_model import (
+    ObservationProvenance as ModelObservationProvenance,
+)
+from investment_strategy.scheduled_agent_action_model import (
+    SelectionDisposition as ModelSelectionDisposition,
+)
+from investment_strategy.scheduled_agent_causal_position import (
+    bind_issue_cause_ref,
+    cause_ref_from_issue_body,
+    requested_proposal_ready_comment_payload,
+    trusted_proposal_ready_comment,
 )
 from investment_strategy.scheduled_agent_effect_contract import (
     GITHUB_MUTATION_KIND,
