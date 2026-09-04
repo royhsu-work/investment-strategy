@@ -249,7 +249,7 @@ def test_historical_merged_carrier_requires_current_main_ancestry(
     assert merge_acceptance._historical_merged_carrier_allowed(
         payload,
         repository=repository,
-        token=str(),
+        token="",
         expected_head_sha=HEAD,
         current_revision=current_revision,
         expected_branch="agent/prevent-native-closing-bypass",
