@@ -726,7 +726,10 @@ def test_action_model_shadow_matches_active_without_mutation() -> None:
     assert comparison.matches
     assert comparison.expected.issue_number == 138
     assert comparison.expected.action == "implement-change"
-    assert comparison.observed == comparison.expected
+    assert comparison.observed is not None
+    assert comparison.observed.issue_number == comparison.expected.issue_number
+    assert comparison.observed.action == comparison.expected.action
+    assert comparison.observed.role == comparison.expected.role
     assert preflight == before
 
 

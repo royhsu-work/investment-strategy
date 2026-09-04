@@ -12,6 +12,18 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
+from investment_strategy.scheduled_agent_action_model import (
+    Action as ModelAction,
+    AuthoritativeObservations,
+    IssueObservation,
+    ObservationProvenance as ModelObservationProvenance,
+    Role as ModelRole,
+    SelectionDecision as ModelSelectionDecision,
+    SelectionDisposition as ModelSelectionDisposition,
+    ShadowComparison,
+    shadow_compare_selection,
+)
+
 Role = Literal["lead", "reviewer", "executor"]
 Action = Literal[
     "explore-change",
@@ -395,6 +407,96 @@ def classify_dispatch(preflight: DispatchPreflight) -> DispatchDecision:
     if any(issue.state == "closed" for issue in preflight.issues):
         return _classify_exceptional_dispatch(preflight)
     return classify_open_dispatch(preflight)
+
+
+
+def _action_model_observations(
+    preflight: DispatchPreflight,
+) -> AuthoritativeObservations:
+    provenance = ModelObservationProvenance.QUALIFIED
+    if (
+        preflight.enumeration.observation_provenance
+        is not ObservationProvenance.QUALIFIED
+        or any(
+            issue.current_state_provenance is not ObservationProvenance.QUALIFIED
+            for issue in preflight.issues
+        )
+    ):
+        provenance = ModelObservationProvenance.INDETERMINATE
+    return AuthoritativeObservations(
+        issues=tuple(
+            IssueObservation(
+                issue_number=issue.issue_number,
+                state=issue.state,
+                change=issue.change,
+                action=None if issue.routing is None else issue.routing[1],
+                created_order=issue.created_order,
+            )
+            for issue in preflight.issues
+        ),
+        complete=preflight.enumeration.complete,
+        provenance=provenance,
+    )
+
+
+def _legacy_selection_observation(
+    decision: DispatchDecision,
+) -> ModelSelectionDecision:
+    if decision.disposition == "NO_WORK":
+        return ModelSelectionDecision(
+            disposition=ModelSelectionDisposition.NO_WORK,
+            issue_number=None,
+            action=None,
+            role=None,
+            reason=decision.reason,
+        )
+    if decision.disposition != "AUTHORIZE" or decision.selected_issue_id is None:
+        return ModelSelectionDecision(
+            disposition=ModelSelectionDisposition.FAIL_CLOSED,
+            issue_number=None,
+            action=None,
+            role=None,
+            reason=decision.reason,
+        )
+    routing = decision.selected_routing
+    if routing is None:
+        return ModelSelectionDecision(
+            disposition=ModelSelectionDisposition.FAIL_CLOSED,
+            issue_number=None,
+            action=None,
+            role=None,
+            reason="legacy-authorize-without-routing",
+        )
+    role_text, action_text = routing
+    try:
+        action = ModelAction(action_text)
+    except ValueError:
+        return ModelSelectionDecision(
+            disposition=ModelSelectionDisposition.FAIL_CLOSED,
+            issue_number=None,
+            action=None,
+            role=None,
+            reason="legacy-action-invalid",
+        )
+    try:
+        role = ModelRole(role_text)
+    except ValueError:
+        role = None
+    return ModelSelectionDecision(
+        disposition=ModelSelectionDisposition.AUTHORIZE,
+        issue_number=decision.selected_issue_id,
+        action=action,
+        role=role,
+        reason=decision.reason,
+    )
+
+
+def action_model_shadow(preflight: DispatchPreflight) -> ShadowComparison:
+    """Compare legacy selection with the Action model without applying effects."""
+
+    expected = _action_model_observations(preflight)
+    observed = _legacy_selection_observation(classify_dispatch(preflight))
+    return shadow_compare_selection(expected, observed)
 
 
 def action_entry_authorized(

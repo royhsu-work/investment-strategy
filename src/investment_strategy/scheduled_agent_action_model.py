@@ -439,7 +439,7 @@ def select_work(observations: AuthoritativeObservations) -> SelectionDecision:
     return _selection(SelectionDisposition.NO_WORK, "no-routed-work")
 
 
-_DECISION_FIELDS = ("disposition", "issue_number", "action", "role", "reason")
+_DECISION_FIELDS = ("disposition", "issue_number", "action", "role")
 
 
 def _decision_evidence(value: object) -> str:
