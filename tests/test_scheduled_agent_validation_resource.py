@@ -428,6 +428,17 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
     assert target.revision == revision
     assert target.correlation == "work-product-request-102"
     assert len(tree_payloads) == 1
+    assert tree_payloads[0] == {
+        "base_tree": "e" * 40,
+        "tree": [
+            {
+                "mode": "100644",
+                "path": path,
+                "sha": blob_sha,
+                "type": "blob",
+            }
+        ],
+    }
     assert len(commit_payloads) == 1
     assert commit_payloads[0] == {
         "message": "Correct #138 N-1 ordering",
@@ -855,3 +866,14 @@ def test_apply_work_product_accepts_executor_implementation_path(
     assert target.revision == revision
     assert target.correlation == "work-product-request-102"
     assert len(tree_payloads) == 1
+    assert tree_payloads[0] == {
+        "base_tree": "e" * 40,
+        "tree": [
+            {
+                "mode": "100644",
+                "path": path,
+                "sha": blob_sha,
+                "type": "blob",
+            }
+        ],
+    }
