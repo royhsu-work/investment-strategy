@@ -1016,15 +1016,15 @@ def main() -> int:
             run_id=request.dispatch_run_id,
             current_revision=args.revision,
         )
-        plan = plan_validation_resource(
+        validation_plan = plan_validation_resource(
             event=event,
             dispatch_result=dispatch_result,
             repository=repository,
             current_revision=args.revision,
         )
-        if plan.should_validate:
+        if validation_plan.should_validate:
             target = resolve_validation_resource_target(
-                plan,
+                validation_plan,
                 repository=repository,
                 token=token,
                 default_branch=args.default_branch,
@@ -1039,15 +1039,15 @@ def main() -> int:
             run_id=request.dispatch_run_id,
             current_revision=args.revision,
         )
-        plan = plan_work_product_application(
+        work_product_plan = plan_work_product_application(
             event=event,
             dispatch_result=dispatch_result,
             repository=repository,
             current_revision=args.revision,
         )
-        if plan.should_apply:
+        if work_product_plan.should_apply:
             target = apply_work_product(
-                plan,
+                work_product_plan,
                 repository=repository,
                 token=token,
                 default_branch=args.default_branch,

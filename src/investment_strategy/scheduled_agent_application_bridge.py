@@ -518,7 +518,9 @@ def main() -> int:
         raise RuntimeError("GitHub event payload must be an object")
     event_mapping = cast(Mapping[str, object], event)
     event_comment = _as_mapping(event_mapping.get("comment"))
-    body = None if event_comment is None else event_comment.get("body")
+    if event_comment is None:
+        return 0
+    body = event_comment.get("body")
     if not isinstance(body, str):
         return 0
     request = parse_application_request(body)
