@@ -87,9 +87,7 @@ def test_rollover_preserves_closed_in_flight_shard_and_rejects_bad_identity() ->
 
 
 def test_daily_rollover_workflow_is_repository_owned_and_not_a_mailbox() -> None:
-    workflow = Path(".github/workflows/scheduled-agent-checkin.yml").read_text(
-        encoding="utf-8"
-    )
+    workflow = Path(".github/workflows/scheduled-agent-checkin.yml").read_text(encoding="utf-8")
     assert "schedule:" in workflow
     assert 'cron: "0 16 * * *"' in workflow
     assert "workflow_dispatch:" in workflow

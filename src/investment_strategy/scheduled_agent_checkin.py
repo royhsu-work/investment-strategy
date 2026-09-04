@@ -73,14 +73,17 @@ def checkin_body(day: date) -> str:
 
     if isinstance(day, datetime):
         raise TypeError("checkin_body requires a date, not datetime")
-    return "\n".join(
-        (
-            _CHECKIN_MARKER,
-            "Timezone: Asia/Taipei",
-            f"Local date: {day.isoformat()}",
-            "Purpose: repository-owned scheduled-agent wake transport.",
+    return (
+        "\n".join(
+            (
+                _CHECKIN_MARKER,
+                "Timezone: Asia/Taipei",
+                f"Local date: {day.isoformat()}",
+                "Purpose: repository-owned scheduled-agent wake transport.",
+            )
         )
-    ) + "\n"
+        + "\n"
+    )
 
 
 def _positive_issue_number(value: object) -> bool:
