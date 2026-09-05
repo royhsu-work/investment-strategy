@@ -322,8 +322,7 @@ def _ensure_pr(
                     payload={
                         "title": f"OpenSpec: {change}",
                         "body": (
-                            f"Formalize OpenSpec change `{change}`.\n\n"
-                            f"Refs #{source.issue_number}"
+                            f"Formalize OpenSpec change `{change}`.\n\nRefs #{source.issue_number}"
                         ),
                         "head": branch,
                         "base": default_branch,
@@ -417,9 +416,7 @@ def apply_change_formalization(
         raise RuntimeError("formalization source Issue has a conflicting Change identity")
 
     revision = _ensure_revision(repository, token, branch, manifest)
-    pr_number = _ensure_pr(
-        repository, token, branch, default_branch, revision, source, change
-    )
+    pr_number = _ensure_pr(repository, token, branch, default_branch, revision, source, change)
     _persist_change(repository, token, source, change)
     pr = _open_pr_payload(
         repository=repository,
