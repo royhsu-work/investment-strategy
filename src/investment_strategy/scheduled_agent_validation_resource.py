@@ -536,11 +536,7 @@ def apply_work_product(
     if current_branch != expected_branch:
         raise RuntimeError("work-product PR branch identity is stale")
     base = _as_mapping(pr.get("base"))
-    if (
-        base is None
-        or base.get("ref") != default_branch
-        or base.get("sha") != authorization_revision
-    ):
+    if base is None or base.get("ref") != default_branch:
         raise RuntimeError("work-product PR base identity is stale")
     historical_merged_carrier = _is_historical_merged_carrier(pr)
     current_ref_head = _ref_head_sha(repository, token, expected_branch)
