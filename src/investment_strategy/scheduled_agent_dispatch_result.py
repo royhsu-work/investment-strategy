@@ -12,10 +12,9 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 from investment_strategy.issue_comment_bridge import (
     MachineDispatchDecision,
+    parse_dispatch_result_document,
     parse_dispatch_run_name,
 )
-from investment_strategy.scheduled_agent_action_model import Action as ModelAction
-from investment_strategy.scheduled_agent_action_model import role_for
 
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -23,10 +22,6 @@ _ARTIFACT_REDIRECT_HOST = re.compile(
     r"^(?:[a-z0-9-]+\.actions\.githubusercontent\.com|productionresultssa[0-9]+\.blob\.core\.windows\.net)$"
 )
 _ARTIFACT_NAME = "dispatch-result.json"
-_SCHEMA = "scheduled-agent-dispatch-result/v1"
-_MAX_RESULT_BYTES = 16_384
-_MAX_REASON_LENGTH = 240
-_DECISION_DISPOSITIONS = {"AUTHORIZE", "NO_WORK", "FAIL_CLOSED"}
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -117,78 +112,6 @@ def _positive_int(value: object) -> int | None:
     return value
 
 
-def _parse_dispatch_result_document(raw: bytes) -> MachineDispatchDecision:
-    if not raw or len(raw) > _MAX_RESULT_BYTES:
-        raise RuntimeError("exact dispatch result artifact size is invalid")
-    try:
-        decoded = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("exact dispatch result artifact is not UTF-8 JSON") from exc
-    payload = _as_mapping(decoded)
-    if payload is None:
-        raise RuntimeError("exact dispatch result artifact must be a JSON object")
-
-    disposition = payload.get("disposition")
-    if disposition not in _DECISION_DISPOSITIONS:
-        raise RuntimeError("exact dispatch result disposition is invalid")
-    common_keys = {
-        "schema",
-        "request_comment_id",
-        "default_branch_revision",
-        "disposition",
-    }
-    expected_keys = (
-        common_keys | {"issue_number", "action"}
-        if disposition == "AUTHORIZE"
-        else common_keys | {"reason"}
-    )
-    if set(payload) != expected_keys or payload.get("schema") != _SCHEMA:
-        raise RuntimeError("exact dispatch result schema is invalid")
-
-    request_comment_id = _positive_int(payload.get("request_comment_id"))
-    revision = payload.get("default_branch_revision")
-    if (
-        request_comment_id is None
-        or not isinstance(revision, str)
-        or _SHA.fullmatch(revision) is None
-    ):
-        raise RuntimeError("exact dispatch result identity is invalid")
-
-    if disposition == "AUTHORIZE":
-        issue_number = _positive_int(payload.get("issue_number"))
-        action = payload.get("action")
-        if issue_number is None or not isinstance(action, str):
-            raise RuntimeError("AUTHORIZE dispatch result is incomplete")
-        try:
-            parsed_action = ModelAction(action)
-        except ValueError as exc:
-            raise RuntimeError("AUTHORIZE dispatch Action is invalid") from exc
-        return MachineDispatchDecision(
-            request_comment_id=request_comment_id,
-            default_branch_revision=revision,
-            disposition=disposition,
-            issue_number=issue_number,
-            role=role_for(parsed_action).value,
-            action=action,
-        )
-
-    reason = payload.get("reason")
-    if (
-        not isinstance(reason, str)
-        or not reason
-        or reason != reason.strip()
-        or "\n" in reason
-        or len(reason) > _MAX_REASON_LENGTH
-    ):
-        raise RuntimeError("non-authorizing dispatch reason is invalid")
-    return MachineDispatchDecision(
-        request_comment_id=request_comment_id,
-        default_branch_revision=revision,
-        disposition=disposition,
-        reason=reason,
-    )
-
-
 def fetch_dispatch_result(
     repository: str,
     token: str,
@@ -245,7 +168,7 @@ def fetch_dispatch_result(
     if artifact_id is None or artifact.get("expired") is not False:
         raise RuntimeError("exact dispatch result Artifact is expired or invalid")
 
-    result = _parse_dispatch_result_document(
+    result = parse_dispatch_result_document(
         _github_bytes(repository, token, f"actions/artifacts/{artifact_id}/zip")
     )
     if (

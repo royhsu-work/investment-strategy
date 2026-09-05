@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Literal
@@ -67,13 +68,12 @@ def test_bridge_is_run_scoped_transport_without_mailbox_semantics() -> None:
     assert "ref: ${{ github.event.repository.default_branch }}" in workflow
     assert "persist-credentials: false" in workflow
     assert "uv run python -m investment_strategy.issue_comment_bridge" in workflow
-    assert 'uv run python - "$RUNNER_TEMP/dispatch-result.json"' in workflow
+    assert '--result-payload "$RUNNER_TEMP/dispatch-result.json"' in workflow
     assert "actions/upload-artifact@v7" in workflow
     assert "name: dispatch-result.json" in workflow
     assert "archive: false" in workflow
-    assert '"schema": "scheduled-agent-dispatch-result/v1"' in workflow
-    assert 'payload["action"] = decision.action' in workflow
-    assert 'payload["role"]' not in workflow
+    assert "Build plaintext JSON dispatch result" not in workflow
+    assert "DISPATCH_DECISION" not in workflow
     assert "BEGIN_SCHEDULED_AGENT_DISPATCH_RESULT" not in workflow
     assert "END_SCHEDULED_AGENT_DISPATCH_RESULT" not in workflow
     for forbidden in ("AGENT_RUNTIME_CHECKIN_ISSUE", "--comments-path", "ISSUE_NUMBER"):
@@ -97,103 +97,71 @@ def test_request_and_run_name_parsers_require_exact_identity() -> None:
         assert bridge.parse_dispatch_request(body) is None
 
 
-def test_run_scoped_result_round_trips_one_machine_decision() -> None:
+def test_dispatch_result_document_round_trips_one_machine_decision() -> None:
     decision = _decision(
         "AUTHORIZE",
         issue_number=138,
         routing=("executor", "implement-change"),
     )
-    block = bridge.render_run_scoped_dispatch_result(
+    rendered = bridge.render_dispatch_result_document(
         request_comment_id=987,
         default_branch_revision=REVISION,
         decision=decision,
     )
+    payload = json.loads(rendered)
 
-    parsed = bridge.parse_run_scoped_dispatch_result(
-        f"runner noise\n{block}\npost-step noise",
-        request_comment_id=987,
-    )
-    assert parsed is not None
+    assert payload == {
+        "schema": "scheduled-agent-dispatch-result/v1",
+        "request_comment_id": 987,
+        "default_branch_revision": REVISION,
+        "disposition": "AUTHORIZE",
+        "issue_number": 138,
+        "action": "implement-change",
+    }
+    assert "role" not in payload
+
+    parsed = bridge.parse_dispatch_result_document(rendered)
     assert parsed.issue_number == 138
     assert parsed.role == "executor"
     assert parsed.action == "implement-change"
 
-    timestamped_log = "\n".join(
-        f"2026-09-04T04:36:22.6244996Z {line}" for line in block.splitlines()
-    )
-    timestamped = bridge.parse_run_scoped_dispatch_result(
-        timestamped_log,
-        request_comment_id=987,
-    )
-    assert timestamped == parsed
 
-    assert (
-        bridge.parse_run_scoped_dispatch_result(f"{block}\n{block}", request_comment_id=987) is None
+def test_dispatch_result_document_rejects_invalid_action_and_extra_role() -> None:
+    rendered = bridge.render_dispatch_result_document(
+        request_comment_id=987,
+        default_branch_revision=REVISION,
+        decision=_decision(
+            "AUTHORIZE",
+            issue_number=138,
+            routing=("executor", "merge-implementation-pr"),
+        ),
     )
-    assert bridge.parse_run_scoped_dispatch_result(block, request_comment_id=988) is None
+    payload = json.loads(rendered)
+
+    payload["action"] = "merge-pr"
+    with pytest.raises(RuntimeError, match="Action is invalid"):
+        bridge.parse_dispatch_result_document(json.dumps(payload))
+
+    payload["action"] = "merge-implementation-pr"
+    payload["role"] = "executor"
+    with pytest.raises(RuntimeError, match="schema is invalid"):
+        bridge.parse_dispatch_result_document(json.dumps(payload))
 
 
 @pytest.mark.parametrize("disposition", ["NO_WORK", "FAIL_CLOSED"])
 def test_non_authorizing_decisions_have_no_selected_work(
     disposition: Literal["NO_WORK", "FAIL_CLOSED"],
 ) -> None:
-    rendered = bridge.render_dispatch_decision(
+    rendered = bridge.render_dispatch_result_document(
         request_comment_id=987,
         default_branch_revision=REVISION,
         decision=_decision(disposition),
     )
-    parsed = bridge.parse_dispatch_decision(rendered)
-    assert parsed is not None
+    parsed = bridge.parse_dispatch_result_document(rendered)
     assert parsed.disposition == disposition
     assert parsed.issue_number is None
     assert parsed.action is None
-
-
-def test_dispatch_parser_derives_role_from_action_and_rejects_generic_merge() -> None:
-    valid = bridge.parse_dispatch_decision(
-        "\n".join(
-            (
-                "DISPATCH_DECISION",
-                "Request-Comment-ID: 987",
-                f"Default-Branch-Revision: {REVISION}",
-                "Disposition: AUTHORIZE",
-                "Issue: 138",
-                "Role: executor",
-                "Action: merge-implementation-pr",
-            )
-        )
-    )
-    assert valid is not None
-
-    wrong_role = bridge.parse_dispatch_decision(
-        "\n".join(
-            (
-                "DISPATCH_DECISION",
-                "Request-Comment-ID: 987",
-                f"Default-Branch-Revision: {REVISION}",
-                "Disposition: AUTHORIZE",
-                "Issue: 138",
-                "Role: lead",
-                "Action: implement-change",
-            )
-        )
-    )
-    assert wrong_role is None
-
-    generic_merge = bridge.parse_dispatch_decision(
-        "\n".join(
-            (
-                "DISPATCH_DECISION",
-                "Request-Comment-ID: 987",
-                f"Default-Branch-Revision: {REVISION}",
-                "Disposition: AUTHORIZE",
-                "Issue: 138",
-                "Role: executor",
-                "Action: merge-pr",
-            )
-        )
-    )
-    assert generic_merge is None
+    assert parsed.reason == "test decision"
 
 
 def test_dispatch_plan_uses_only_current_day_shard_identity() -> None:
@@ -211,8 +179,10 @@ def test_dispatch_plan_uses_only_current_day_shard_identity() -> None:
     assert plan.issue_number == 142
     assert plan.request_comment_id == 987
     assert plan.result_body is not None
-    assert "Issue: 138" in plan.result_body
-    assert "Action: implement-change" in plan.result_body
+    payload = json.loads(plan.result_body)
+    assert payload["issue_number"] == 138
+    assert payload["action"] == "implement-change"
+    assert "role" not in payload
 
     formal_shard = _event(labels=[{"name": "action:implement-change"}])
     assert (

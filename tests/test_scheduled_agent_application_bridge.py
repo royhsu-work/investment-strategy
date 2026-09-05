@@ -10,7 +10,7 @@ from typing import Literal
 
 import pytest
 
-from investment_strategy.issue_comment_bridge import parse_dispatch_decision
+from investment_strategy.issue_comment_bridge import MachineDispatchDecision
 from investment_strategy.scheduled_agent_application_bridge import (
     APPLICATION_REQUEST_MARKER,
     parse_application_request,
@@ -69,18 +69,22 @@ def _dispatch_decision(
     role: str = "lead",
     action: str = "explore-change",
     disposition: Literal["AUTHORIZE", "NO_WORK"] = "AUTHORIZE",
-) -> str:
-    lines = [
-        "DISPATCH_DECISION",
-        "Request-Comment-ID: 100",
-        f"Default-Branch-Revision: {revision}",
-        f"Disposition: {disposition}",
-    ]
+) -> MachineDispatchDecision:
     if disposition == "AUTHORIZE":
-        lines.extend(("Issue: 138", f"Role: {role}", f"Action: {action}"))
-    else:
-        lines.append("Reason: no work")
-    return "\n".join(lines)
+        return MachineDispatchDecision(
+            request_comment_id=100,
+            default_branch_revision=revision,
+            disposition=disposition,
+            issue_number=138,
+            role=role,
+            action=action,
+        )
+    return MachineDispatchDecision(
+        request_comment_id=100,
+        default_branch_revision=revision,
+        disposition=disposition,
+        reason="no work",
+    )
 
 
 def _event(body: str, *, trusted: bool = True) -> dict[str, object]:
@@ -116,9 +120,8 @@ def test_parse_application_request_rejects_unknown_shape() -> None:
 def test_plan_application_binds_connector_event_and_machine_result() -> None:
     body = _effect_request()
     request = parse_application_request(body)
-    decision = parse_dispatch_decision(_dispatch_decision())
+    decision = _dispatch_decision()
     assert request is not None
-    assert decision is not None
 
     plan = plan_application(
         event=_event(body),
@@ -137,9 +140,8 @@ def test_plan_application_binds_connector_event_and_machine_result() -> None:
 def test_plan_application_rejects_untrusted_connector_or_stale_revision() -> None:
     body = _effect_request()
     request = parse_application_request(body)
-    decision = parse_dispatch_decision(_dispatch_decision())
+    decision = _dispatch_decision()
     assert request is not None
-    assert decision is not None
 
     with pytest.raises(ValueError, match="configured ChatGPT connector"):
         plan_application(
@@ -150,8 +152,7 @@ def test_plan_application_rejects_untrusted_connector_or_stale_revision() -> Non
             current_revision=_REVISION,
         )
 
-    stale = parse_dispatch_decision(_dispatch_decision(revision="0" * 40))
-    assert stale is not None
+    stale = _dispatch_decision(revision="0" * 40)
     with pytest.raises(ValueError, match="revision is stale"):
         plan_application(
             event=_event(body),
@@ -171,7 +172,12 @@ def test_application_boundary_does_not_parse_governance_or_host_a_worker() -> No
     assert "Responses" not in source
 
 
-def test_application_workflow_can_read_exact_dispatch_run_logs() -> None:
+def test_application_reuses_exact_dispatch_artifact_reader() -> None:
+    source = Path("src/investment_strategy/scheduled_agent_application_bridge.py").read_text(
+        encoding="utf-8"
+    )
     workflow = Path(".github/workflows/scheduled-agent-application.yml").read_text(encoding="utf-8")
 
+    assert "fetch_dispatch_result" in source
+    assert "parse_run_scoped_dispatch_result" not in source
     assert "actions: write" in workflow
