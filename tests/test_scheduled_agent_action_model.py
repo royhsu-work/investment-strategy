@@ -93,6 +93,7 @@ def test_invalid_transition_fails_closed() -> None:
     with pytest.raises(InvalidTransition):
         next_action(Action.IMPLEMENT_CHANGE, TypedResult(ResultKind.PASS))
 
+
 @pytest.mark.parametrize(
     ("current", "result"),
     [
