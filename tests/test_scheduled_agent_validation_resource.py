@@ -137,6 +137,19 @@ def test_resource_rejects_source_without_review_openspec_gate(
         )
 
 
+def test_executor_task_marker_is_the_only_nonreview_openspec_work_product() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    task_path = f"openspec/changes/{_CHANGE}/tasks.md"
+    task_file = resource.WorkProductFile(task_path, "b" * 40, "a" * 40)
+    design_file = resource.WorkProductFile(
+        f"openspec/changes/{_CHANGE}/design.md", "b" * 40, "a" * 40
+    )
+
+    assert resource._is_executor_task_bookkeeping(source, _CHANGE, (task_file,))
+    assert not resource._is_executor_task_bookkeeping(source, _CHANGE, (design_file,))
+    assert not resource._is_executor_task_bookkeeping(source, _CHANGE, (task_file, design_file))
+
+
 def _work_product_plan(
     *,
     source: WorkerRequest,

@@ -348,6 +348,21 @@ def _review_openspec_required(source: WorkerRequest) -> bool:
     return any(successor is ModelAction.REVIEW_OPENSPEC for successor in successors)
 
 
+def _is_executor_task_bookkeeping(
+    source: WorkerRequest,
+    expected_change: str,
+    files: tuple[WorkProductFile, ...],
+) -> bool:
+    """Allow only the approved non-semantic task-marker update from implementation."""
+
+    return (
+        source.role == "executor"
+        and source.action == "implement-change"
+        and len(files) == 1
+        and files[0].path == f"openspec/changes/{expected_change}/tasks.md"
+    )
+
+
 def resolve_validation_resource_target(
     plan: ValidationResourcePlan,
     *,
@@ -505,9 +520,14 @@ def apply_work_product(
         for file in plan.manifest.files
     ):
         raise RuntimeError("work-product path is outside source Action capability")
-    if any(
-        file.path.startswith("openspec/") for file in plan.manifest.files
-    ) and not _review_openspec_required(plan.source):
+    if any(file.path.startswith("openspec/") for file in plan.manifest.files) and not (
+        _review_openspec_required(plan.source)
+        or _is_executor_task_bookkeeping(
+            plan.source,
+            plan.expected_change,
+            plan.manifest.files,
+        )
+    ):
         raise RuntimeError("work-product source has no required OpenSpec review gate")
 
     pr = _open_pr_payload(
