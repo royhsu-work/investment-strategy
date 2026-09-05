@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from email.message import Message
 from io import BytesIO
 from urllib.error import HTTPError
@@ -10,64 +11,70 @@ from urllib.request import Request
 import pytest
 
 import investment_strategy.scheduled_agent_dispatch_result as transport
-from investment_strategy.issue_comment_bridge import (
-    MachineDispatchDecision,
-    render_run_scoped_dispatch_result,
-)
-from investment_strategy.workflow_dispatch import DispatchDecision, ObservationProvenance
+from investment_strategy.issue_comment_bridge import MachineDispatchDecision
 
 _REVISION = "cb8f9ec12d826e0d71897a4c73ece961d00df59e"
 _REQUEST_ID = 100
 _RUN_ID = 200
+_ARTIFACT_ID = 300
 
 
-def _decision() -> DispatchDecision:
-    return DispatchDecision(
-        completeness="COMPLETE",
-        observation_provenance=ObservationProvenance.QUALIFIED,
-        formal_issue_ids=(138,),
-        preactivation_candidate_ids=(),
-        selected_issue_id=138,
-        selected_routing=("executor", "implement-change"),
-        disposition="AUTHORIZE",
-        reason="unused",
-    )
-
-
-def test_fetch_dispatch_result_reads_only_exact_successful_run(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    run = {
+def _run(*, name: str | None = None) -> dict[str, object]:
+    return {
         "id": _RUN_ID,
-        "name": f"Scheduled Agent Dispatch {_REQUEST_ID}",
+        "name": name or f"Scheduled Agent Dispatch {_REQUEST_ID}",
         "path": ".github/workflows/scheduled-agent-bridge.yml",
         "event": "issue_comment",
         "head_sha": _REVISION,
         "status": "completed",
         "conclusion": "success",
     }
-    jobs = {"jobs": [{"id": 300, "name": "bridge", "status": "completed", "conclusion": "success"}]}
-    log = render_run_scoped_dispatch_result(
-        request_comment_id=_REQUEST_ID,
-        default_branch_revision=_REVISION,
-        decision=_decision(),
-    )
 
+
+def _artifact_listing(*, expired: bool = False) -> dict[str, object]:
+    return {
+        "total_count": 1,
+        "artifacts": [
+            {
+                "id": _ARTIFACT_ID,
+                "name": "dispatch-result.json",
+                "expired": expired,
+            }
+        ],
+    }
+
+
+def _authorize_document(**overrides: object) -> bytes:
+    payload: dict[str, object] = {
+        "schema": "scheduled-agent-dispatch-result/v1",
+        "request_comment_id": _REQUEST_ID,
+        "default_branch_revision": _REVISION,
+        "disposition": "AUTHORIZE",
+        "issue_number": 138,
+        "action": "implement-change",
+    }
+    payload.update(overrides)
+    return (json.dumps(payload, sort_keys=True) + "\n").encode()
+
+
+def test_fetch_dispatch_result_reads_only_exact_successful_run_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def fake_json(repository: str, token: str, path: str) -> object:
         del repository, token
         if path == f"actions/runs/{_RUN_ID}":
-            return run
-        if path == f"actions/runs/{_RUN_ID}/jobs?per_page=100":
-            return jobs
+            return _run()
+        if path == f"actions/runs/{_RUN_ID}/artifacts?per_page=100":
+            return _artifact_listing()
         raise AssertionError(f"unexpected JSON read: {path}")
 
-    def fake_text(repository: str, token: str, path: str) -> str:
+    def fake_bytes(repository: str, token: str, path: str) -> bytes:
         del repository, token
-        assert path == "actions/jobs/300/logs"
-        return log
+        assert path == f"actions/artifacts/{_ARTIFACT_ID}/zip"
+        return _authorize_document()
 
     monkeypatch.setattr(transport, "_github_json", fake_json)
-    monkeypatch.setattr(transport, "_github_text", fake_text)
+    monkeypatch.setattr(transport, "_github_bytes", fake_bytes)
 
     result = transport.fetch_dispatch_result(
         "owner/repo",
@@ -93,15 +100,7 @@ def test_fetch_dispatch_result_rejects_wrong_run_identity(
     monkeypatch.setattr(
         transport,
         "_github_json",
-        lambda repository, token, path: {
-            "id": _RUN_ID,
-            "name": "Scheduled Agent Dispatch 999",
-            "path": ".github/workflows/scheduled-agent-bridge.yml",
-            "event": "issue_comment",
-            "head_sha": _REVISION,
-            "status": "completed",
-            "conclusion": "success",
-        },
+        lambda repository, token, path: _run(name="Scheduled Agent Dispatch 999"),
     )
     with pytest.raises(RuntimeError, match="identity or completion"):
         transport.fetch_dispatch_result(
@@ -113,27 +112,45 @@ def test_fetch_dispatch_result_rejects_wrong_run_identity(
         )
 
 
-def test_fetch_dispatch_result_rejects_ambiguous_jobs(
+def test_fetch_dispatch_result_rejects_zero_or_multiple_matching_artifacts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        transport,
-        "_github_json",
-        lambda repository, token, path: (
-            {
-                "id": _RUN_ID,
-                "name": f"Scheduled Agent Dispatch {_REQUEST_ID}",
-                "path": ".github/workflows/scheduled-agent-bridge.yml",
-                "event": "issue_comment",
-                "head_sha": _REVISION,
-                "status": "completed",
-                "conclusion": "success",
-            }
-            if path == f"actions/runs/{_RUN_ID}"
-            else {"jobs": [{"id": 300}, {"id": 301}]}
-        ),
+    listings = (
+        {"total_count": 0, "artifacts": []},
+        {
+            "total_count": 2,
+            "artifacts": [
+                {"id": 300, "name": "dispatch-result.json", "expired": False},
+                {"id": 301, "name": "dispatch-result.json", "expired": False},
+            ],
+        },
     )
-    with pytest.raises(RuntimeError, match="one bridge job"):
+    for listing in listings:
+
+        def fake_json(repository: str, token: str, path: str, *, value: object = listing) -> object:
+            del repository, token
+            return _run() if path == f"actions/runs/{_RUN_ID}" else value
+
+        monkeypatch.setattr(transport, "_github_json", fake_json)
+        with pytest.raises(RuntimeError, match="one dispatch-result.json Artifact"):
+            transport.fetch_dispatch_result(
+                "owner/repo",
+                "token",
+                request_comment_id=_REQUEST_ID,
+                run_id=_RUN_ID,
+                current_revision=_REVISION,
+            )
+
+
+def test_fetch_dispatch_result_rejects_expired_or_stale_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_json(repository: str, token: str, path: str) -> object:
+        del repository, token
+        return _run() if path == f"actions/runs/{_RUN_ID}" else _artifact_listing(expired=True)
+
+    monkeypatch.setattr(transport, "_github_json", fake_json)
+    with pytest.raises(RuntimeError, match="expired or invalid"):
         transport.fetch_dispatch_result(
             "owner/repo",
             "token",
@@ -143,10 +160,29 @@ def test_fetch_dispatch_result_rejects_ambiguous_jobs(
         )
 
 
-def test_github_text_reads_signed_redirect_without_forwarding_bearer(
+def test_artifact_document_omits_role_and_derives_it_from_action() -> None:
+    result = transport._parse_dispatch_result_document(_authorize_document())
+    assert result.role == "executor"
+    assert result.action == "implement-change"
+
+    with pytest.raises(RuntimeError, match="schema is invalid"):
+        transport._parse_dispatch_result_document(_authorize_document(role="executor"))
+
+
+def test_artifact_document_rejects_malformed_and_revision_mismatch() -> None:
+    with pytest.raises(RuntimeError, match="UTF-8 JSON"):
+        transport._parse_dispatch_result_document(b"not-json")
+
+    with pytest.raises(RuntimeError, match="identity is invalid"):
+        transport._parse_dispatch_result_document(
+            _authorize_document(default_branch_revision="wrong")
+        )
+
+
+def test_github_bytes_reads_signed_redirect_without_forwarding_bearer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    redirect = "https://pipelines.actions.githubusercontent.com/signed-log"
+    redirect = "https://pipelines.actions.githubusercontent.com/signed-artifact"
 
     class _Response:
         def __init__(self, value: bytes) -> None:
@@ -165,7 +201,7 @@ def test_github_text_reads_signed_redirect_without_forwarding_bearer(
         def open(self, request: Request, timeout: int) -> _Response:
             del timeout
             assert request.full_url == (
-                "https://api.github.com/repos/owner/repo/actions/jobs/300/logs"
+                "https://api.github.com/repos/owner/repo/actions/artifacts/300/zip"
             )
             assert request.get_header("Authorization") == "Bearer token"
             headers = Message()
@@ -180,9 +216,12 @@ def test_github_text_reads_signed_redirect_without_forwarding_bearer(
         del timeout
         assert request.full_url == redirect
         assert request.get_header("Authorization") is None
-        return _Response(b"signed log")
+        return _Response(b"raw artifact")
 
     monkeypatch.setattr(transport, "build_opener", fake_build_opener)
     monkeypatch.setattr(transport, "urlopen", fake_urlopen)
 
-    assert transport._github_text("owner/repo", "token", "actions/jobs/300/logs") == "signed log"
+    assert (
+        transport._github_bytes("owner/repo", "token", "actions/artifacts/300/zip")
+        == b"raw artifact"
+    )

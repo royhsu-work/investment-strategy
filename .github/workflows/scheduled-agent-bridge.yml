@@ -52,8 +52,10 @@ jobs:
           --github-output "$GITHUB_OUTPUT"
           --result-payload "$RUNNER_TEMP/dispatch-result.json"
 
-      - name: Emit exact run-scoped machine dispatch result
+      - name: Build plaintext JSON dispatch result
         if: steps.handler.outputs.should_emit == 'true'
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
         shell: bash
         run: |
           python - "$RUNNER_TEMP/dispatch-result.json" <<'PY'
@@ -61,11 +63,45 @@ jobs:
           import sys
           from pathlib import Path
 
-          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-          body = payload.get("body")
-          if not isinstance(body, str) or not body.startswith("DISPATCH_DECISION\n"):
-              raise SystemExit("missing strict DISPATCH_DECISION result")
-          print("BEGIN_SCHEDULED_AGENT_DISPATCH_RESULT")
-          print(body)
-          print("END_SCHEDULED_AGENT_DISPATCH_RESULT")
+          from investment_strategy.issue_comment_bridge import parse_dispatch_decision
+
+          path = Path(sys.argv[1])
+          envelope = json.loads(path.read_text(encoding="utf-8"))
+          body = envelope.get("body")
+          if not isinstance(body, str):
+              raise SystemExit("missing dispatch decision body")
+          decision = parse_dispatch_decision(body)
+          if decision is None:
+              raise SystemExit("invalid dispatch decision body")
+
+          payload = {
+              "schema": "scheduled-agent-dispatch-result/v1",
+              "request_comment_id": decision.request_comment_id,
+              "default_branch_revision": decision.default_branch_revision,
+              "disposition": decision.disposition,
+          }
+          if decision.disposition == "AUTHORIZE":
+              if decision.issue_number is None or decision.action is None:
+                  raise SystemExit("incomplete AUTHORIZE dispatch result")
+              payload["issue_number"] = decision.issue_number
+              payload["action"] = decision.action
+          else:
+              if not isinstance(decision.reason, str) or not decision.reason:
+                  raise SystemExit("missing non-authorizing dispatch reason")
+              payload["reason"] = decision.reason
+
+          path.write_text(
+              json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+              encoding="utf-8",
+          )
           PY
+
+      - name: Upload exact run-scoped machine dispatch result
+        if: steps.handler.outputs.should_emit == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: dispatch-result.json
+          path: ${{ runner.temp }}/dispatch-result.json
+          archive: false
+          if-no-files-found: error
+          retention-days: 7

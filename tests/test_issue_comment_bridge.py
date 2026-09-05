@@ -67,8 +67,14 @@ def test_bridge_is_run_scoped_transport_without_mailbox_semantics() -> None:
     assert "ref: ${{ github.event.repository.default_branch }}" in workflow
     assert "persist-credentials: false" in workflow
     assert "uv run python -m investment_strategy.issue_comment_bridge" in workflow
-    assert "BEGIN_SCHEDULED_AGENT_DISPATCH_RESULT" in workflow
-    assert "END_SCHEDULED_AGENT_DISPATCH_RESULT" in workflow
+    assert "actions/upload-artifact@v7" in workflow
+    assert "name: dispatch-result.json" in workflow
+    assert "archive: false" in workflow
+    assert '"schema": "scheduled-agent-dispatch-result/v1"' in workflow
+    assert 'payload["action"] = decision.action' in workflow
+    assert 'payload["role"]' not in workflow
+    assert "BEGIN_SCHEDULED_AGENT_DISPATCH_RESULT" not in workflow
+    assert "END_SCHEDULED_AGENT_DISPATCH_RESULT" not in workflow
     for forbidden in ("AGENT_RUNTIME_CHECKIN_ISSUE", "--comments-path", "ISSUE_NUMBER"):
         assert forbidden not in workflow
 
