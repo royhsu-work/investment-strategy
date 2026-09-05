@@ -58,7 +58,7 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/src
         shell: bash
         run: |
-          python - "$RUNNER_TEMP/dispatch-result.json" <<'PY'
+          uv run python - "$RUNNER_TEMP/dispatch-result.json" <<'PY'
           import json
           import sys
           from pathlib import Path
