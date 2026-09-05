@@ -194,7 +194,7 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
     )
     monkeypatch.setattr(resource, "_current_authorized_request", lambda *_: source)
     head_sha = _PR_HEAD
-    stale_pr_read = False
+    stale_pr_reads = 0
     tree_payloads: list[object] = []
     commit_payloads: list[object] = []
 
@@ -207,7 +207,7 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
         payload: dict[str, object] | None = None,
         allow_not_found: bool = False,
     ) -> object | None:
-        nonlocal head_sha, stale_pr_read
+        nonlocal head_sha, stale_pr_reads
         assert repository == _REPOSITORY
         assert token == _FIXTURE_VALUE
         del allow_not_found
@@ -217,8 +217,8 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
             return {"state": "open", "body": f"Change: {_CHANGE}\n"}
         if api_path == "pulls/178" and method == "GET":
             observed_head_sha = head_sha
-            if head_sha == revision and not stale_pr_read:
-                stale_pr_read = True
+            if head_sha == revision and stale_pr_reads < 4:
+                stale_pr_reads += 1
                 observed_head_sha = _PR_HEAD
             return {
                 "number": 178,
@@ -277,7 +277,7 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
     assert target.correlation == "effect-request-138"
     assert len(tree_payloads) == 1
     assert len(commit_payloads) == 1
-    assert stale_pr_read
+    assert stale_pr_reads == 4
     assert commit_payloads[0] == {
         "message": "Correct #138 N-1 ordering",
         "tree": tree_sha,

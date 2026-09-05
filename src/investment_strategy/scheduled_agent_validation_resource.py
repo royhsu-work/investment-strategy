@@ -689,7 +689,7 @@ def apply_work_product(
         raise RuntimeError("work-product ref postcondition was not observed")
     observed_pr: Mapping[str, object] | None = None
     observed_head: Mapping[str, object] | None = None
-    for attempt in range(3):
+    for attempt in range(10):
         observed_pr = _open_pr_payload(
             repository=repository,
             token=token,
@@ -706,7 +706,7 @@ def apply_work_product(
             and (historical_merged_carrier or observed_head.get("sha") == revision)
         ):
             break
-        if attempt < 2:
+        if attempt < 9:
             time.sleep(1)
     if observed_pr is None or observed_head is None or observed_head.get("ref") != expected_branch:
         raise RuntimeError("work-product PR-head postcondition was not observed")
