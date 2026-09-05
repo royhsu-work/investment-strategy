@@ -326,3 +326,5 @@ def test_selection_enforces_human_authority_and_finish_first() -> None:
     assert select_work(replace(observations, human_authorized=False)).disposition is (
         SelectionDisposition.FAIL_CLOSED
     )
+
+# Connector-carried exact-head replay remains application-authorized.
