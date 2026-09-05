@@ -67,6 +67,7 @@ def test_bridge_is_run_scoped_transport_without_mailbox_semantics() -> None:
     assert "ref: ${{ github.event.repository.default_branch }}" in workflow
     assert "persist-credentials: false" in workflow
     assert "uv run python -m investment_strategy.issue_comment_bridge" in workflow
+    assert 'uv run python - "$RUNNER_TEMP/dispatch-result.json"' in workflow
     assert "actions/upload-artifact@v7" in workflow
     assert "name: dispatch-result.json" in workflow
     assert "archive: false" in workflow
