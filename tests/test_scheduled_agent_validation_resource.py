@@ -219,6 +219,15 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
             return {"default_branch": "main"}
         if api_path == "git/ref/heads/main" and method == "GET":
             return {"object": {"sha": _REVISION}}
+        if api_path == f"compare/{_REVISION}...{_PR_HEAD}" and method == "GET":
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "behind_by": 0,
+                "merge_base_commit": {"sha": _REVISION},
+                "files": [{"filename": path}],
+                "commits": [{"sha": _PR_HEAD}],
+            }
         if api_path == "issues/138" and method == "GET":
             return {"state": "open", "body": f"Change: {_CHANGE}\n"}
         if api_path == "pulls/178" and method == "GET":
@@ -265,6 +274,7 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
         if api_path == f"git/commits/{revision}" and method == "GET":
             return {
                 "sha": revision,
+                "message": "Correct #138 N-1 ordering",
                 "tree": {"sha": tree_sha},
                 "parents": [{"sha": _PR_HEAD}],
             }
@@ -291,6 +301,227 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
         "tree": tree_sha,
         "parents": [_PR_HEAD],
     }
+
+
+def test_apply_work_product_reconciles_diverged_default_branch_with_two_parents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "lead", "resolve-question")
+    expected_sha = "a" * 40
+    blob_sha = "b" * 40
+    tree_sha = "c" * 40
+    revision = "d" * 40
+    merge_base = "e" * 40
+    path = f"openspec/changes/{_CHANGE}/design.md"
+    default_only_path = "README.md"
+    plan = _work_product_plan(
+        source=source,
+        path=path,
+        blob_sha=blob_sha,
+        expected_sha=expected_sha,
+    )
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_: source)
+    commit_payloads: list[object] = []
+
+    def fake_github_json(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        assert repository == _REPOSITORY
+        assert token == _FIXTURE_VALUE
+        del allow_not_found
+        if api_path == "" and method == "GET":
+            return {"default_branch": "main"}
+        if api_path == "git/ref/heads/main" and method == "GET":
+            return {"object": {"sha": _REVISION}}
+        if api_path == f"compare/{_REVISION}...{_PR_HEAD}" and method == "GET":
+            return {
+                "status": "diverged",
+                "ahead_by": 1,
+                "behind_by": 1,
+                "merge_base_commit": {"sha": merge_base},
+            }
+        if api_path == f"compare/{merge_base}...{_REVISION}" and method == "GET":
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "behind_by": 0,
+                "files": [{"filename": default_only_path}],
+            }
+        if api_path == f"compare/{merge_base}...{_PR_HEAD}" and method == "GET":
+            return {"status": "identical", "ahead_by": 0, "behind_by": 0, "files": []}
+        if api_path == "issues/138" and method == "GET":
+            return {"state": "open", "body": f"Change: {_CHANGE}\n"}
+        if api_path == "pulls/178" and method == "GET":
+            return {
+                "number": 178,
+                "state": "open",
+                "merged": False,
+                "body": "Refs #138\n",
+                "head": {
+                    "sha": _PR_HEAD,
+                    "ref": f"agent/{_CHANGE}",
+                    "repo": {"full_name": _REPOSITORY},
+                },
+                "base": {
+                    "ref": "main",
+                    "sha": "f" * 40,
+                    "repo": {"full_name": _REPOSITORY},
+                },
+            }
+        if api_path == "pulls/178/files?per_page=100" and method == "GET":
+            return [{"filename": path}]
+        if api_path.startswith(f"contents/{path}?") and method == "GET":
+            ref = api_path.rsplit("ref=", 1)[-1]
+            if ref == _PR_HEAD:
+                return {"sha": expected_sha}
+            if ref == revision:
+                return {"sha": blob_sha}
+            raise AssertionError(f"unexpected manifest ref: {ref}")
+        if api_path.startswith(f"contents/{default_only_path}?") and method == "GET":
+            return {"sha": "f" * 40}
+        if api_path == f"git/commits/{_PR_HEAD}" and method == "GET":
+            return {"sha": _PR_HEAD, "tree": {"sha": "e" * 40}, "parents": []}
+        if api_path == "git/trees" and method == "POST":
+            return {"sha": tree_sha}
+        if api_path == f"git/trees/{tree_sha}?recursive=1" and method == "GET":
+            return {
+                "sha": tree_sha,
+                "truncated": False,
+                "tree": [{"path": path, "type": "blob", "sha": blob_sha}],
+            }
+        if api_path == f"git/ref/heads/agent/{_CHANGE}" and method == "GET":
+            return {"object": {"sha": _PR_HEAD}}
+        if api_path == "git/commits" and method == "POST":
+            commit_payloads.append(payload)
+            return {"sha": revision}
+        if api_path == f"git/commits/{revision}" and method == "GET":
+            return {
+                "sha": revision,
+                "message": "Correct #138 N-1 ordering",
+                "tree": {"sha": tree_sha},
+                "parents": [{"sha": _PR_HEAD}, {"sha": _REVISION}],
+            }
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
+    with pytest.raises(CarrierRequired) as raised:
+        resource.apply_work_product(
+            plan,
+            repository=_REPOSITORY,
+            token=_FIXTURE_VALUE,
+            default_branch="main",
+            authorization_revision=_REVISION,
+        )
+
+    carrier_plan = raised.value.plan
+    assert carrier_plan.expected["ref_sha"] == _PR_HEAD
+    assert carrier_plan.requested["expected_head_sha"] == _PR_HEAD
+    assert carrier_plan.requested["force"] is False
+    assert carrier_plan.requested["commit_parents"] == [_PR_HEAD, _REVISION]
+    assert len(commit_payloads) == 1
+    assert commit_payloads[0] == {
+        "message": "Correct #138 N-1 ordering",
+        "tree": tree_sha,
+        "parents": [_PR_HEAD, _REVISION],
+    }
+
+
+def test_replayed_reconciled_work_product_returns_current_target_without_new_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "lead", "resolve-question")
+    blob_sha = "b" * 40
+    reconciled_revision = "f" * 40
+    path = f"openspec/changes/{_CHANGE}/design.md"
+    plan = _work_product_plan(
+        source=source,
+        path=path,
+        blob_sha=blob_sha,
+        expected_sha="a" * 40,
+    )
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_: source)
+    commit_payloads: list[object] = []
+
+    def fake_github_json(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        assert repository == _REPOSITORY
+        assert token == _FIXTURE_VALUE
+        del method, payload, allow_not_found
+        if api_path == "":
+            return {"default_branch": "main"}
+        if api_path == "git/ref/heads/main":
+            return {"object": {"sha": _REVISION}}
+        if api_path == f"git/ref/heads/agent/{_CHANGE}":
+            return {"object": {"sha": reconciled_revision}}
+        if api_path == f"compare/{_REVISION}...{reconciled_revision}":
+            return {"status": "ahead", "ahead_by": 2, "behind_by": 0}
+        if api_path == f"compare/{_PR_HEAD}...{reconciled_revision}":
+            return {
+                "status": "ahead",
+                "ahead_by": 2,
+                "behind_by": 0,
+                "files": [{"filename": path}],
+                "commits": [{"sha": reconciled_revision}],
+            }
+        if api_path == f"compare/{_REVISION}...{_REVISION}":
+            return {"status": "identical", "ahead_by": 0, "behind_by": 0}
+        if api_path == "issues/138":
+            return {"state": "open", "body": f"Change: {_CHANGE}\n"}
+        if api_path == "pulls/178":
+            return {
+                "number": 178,
+                "state": "open",
+                "merged": False,
+                "body": "Refs #138\n",
+                "head": {
+                    "sha": reconciled_revision,
+                    "ref": f"agent/{_CHANGE}",
+                    "repo": {"full_name": _REPOSITORY},
+                },
+                "base": {
+                    "ref": "main",
+                    "sha": _REVISION,
+                    "repo": {"full_name": _REPOSITORY},
+                },
+            }
+        if api_path == "pulls/178/files?per_page=100":
+            return [{"filename": path}]
+        if api_path.startswith(f"contents/{path}?"):
+            return {"sha": blob_sha}
+        if api_path == f"git/commits/{reconciled_revision}":
+            return {
+                "sha": reconciled_revision,
+                "message": "Correct #138 N-1 ordering",
+                "tree": {"sha": "c" * 40},
+                "parents": [{"sha": _PR_HEAD}, {"sha": _REVISION}],
+            }
+        raise AssertionError(f"unexpected GitHub call: {api_path}")
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
+    target = resource.apply_work_product(
+        plan,
+        repository=_REPOSITORY,
+        token=_FIXTURE_VALUE,
+        default_branch="main",
+        authorization_revision=_REVISION,
+    )
+
+    assert target.revision == reconciled_revision
+    assert target.pr_number == 178
+    assert commit_payloads == []
 
 
 def test_work_product_rejects_stale_current_file_before_git_construction(
@@ -320,6 +551,8 @@ def test_work_product_rejects_stale_current_file_before_git_construction(
             return {"object": {"sha": _REVISION}}
         if api_path == f"git/ref/heads/agent/{_CHANGE}":
             return {"object": {"sha": _PR_HEAD}}
+        if api_path == f"compare/{_REVISION}...{_PR_HEAD}":
+            return {"status": "ahead", "ahead_by": 1, "behind_by": 0}
         if api_path == "issues/138":
             return {"state": "open", "body": f"Change: {_CHANGE}\n"}
         if api_path == "pulls/178":

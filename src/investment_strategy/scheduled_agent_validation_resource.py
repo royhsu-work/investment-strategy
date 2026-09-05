@@ -498,6 +498,181 @@ def _revision_matches_manifest(
     )
 
 
+def _comparison_file_paths(
+    repository: str,
+    token: str,
+    *,
+    base_sha: str,
+    revision: str,
+) -> set[str]:
+    comparison = _as_mapping(
+        cast(object, _github_json(repository, token, f"compare/{base_sha}...{revision}"))
+    )
+    files = None if comparison is None else comparison.get("files")
+    if (
+        comparison is None
+        or comparison.get("too_large") is True
+        or not isinstance(files, list)
+        or len(files) >= 300
+    ):
+        raise RuntimeError("work-product reconciliation file comparison is incomplete")
+    paths: set[str] = set()
+    for raw_file in files:
+        file = _as_mapping(raw_file)
+        filename = None if file is None else file.get("filename")
+        if not isinstance(filename, str) or not filename:
+            raise RuntimeError("work-product reconciliation file comparison is malformed")
+        paths.add(filename)
+    return paths
+
+
+def _default_branch_is_ancestor(
+    repository: str,
+    token: str,
+    *,
+    default_revision: str,
+    revision: str,
+) -> bool:
+    comparison = _as_mapping(
+        cast(
+            object,
+            _github_json(repository, token, f"compare/{default_revision}...{revision}"),
+        )
+    )
+    status = None if comparison is None else comparison.get("status")
+    behind_by = None if comparison is None else comparison.get("behind_by")
+    if (
+        comparison is None
+        or status not in {"ahead", "behind", "diverged", "identical"}
+        or not isinstance(behind_by, int)
+        or isinstance(behind_by, bool)
+        or behind_by < 0
+    ):
+        raise RuntimeError("work-product default-branch ancestry observation is incomplete")
+    return behind_by == 0
+
+
+def _manifest_content_matches(
+    repository: str,
+    token: str,
+    *,
+    revision: str,
+    manifest: WorkProductManifest,
+) -> bool:
+    return bool(manifest.files) and all(
+        _content_sha_at(repository, token, path=file.path, revision=revision) == file.blob_sha
+        for file in manifest.files
+    )
+
+
+def _reconciliation_message(change: str) -> str:
+    return f"Reconcile default-branch ancestry for {change}"
+
+
+def _is_reconciled_work_product_revision(
+    repository: str,
+    token: str,
+    *,
+    base_sha: str,
+    revision: str,
+    manifest: WorkProductManifest,
+    authorization_revision: str,
+    seen: frozenset[str] = frozenset(),
+) -> bool:
+    """Recognize an application-built two-parent reconciliation commit."""
+
+    if revision in seen:
+        return False
+    commit = _as_mapping(cast(object, _github_json(repository, token, f"git/commits/{revision}")))
+    parents = None if commit is None else commit.get("parents")
+    if (
+        commit is None
+        or not isinstance(parents, list)
+        or len(parents) != 2
+        or not _manifest_content_matches(
+            repository,
+            token,
+            revision=revision,
+            manifest=manifest,
+        )
+    ):
+        return False
+    parent_shas: list[str] = []
+    for raw_parent in parents:
+        parent = _as_mapping(raw_parent)
+        parent_sha = None if parent is None else parent.get("sha")
+        if not _valid_sha(parent_sha):
+            return False
+        parent_shas.append(cast(str, parent_sha))
+    if not _default_branch_is_ancestor(
+        repository,
+        token,
+        default_revision=parent_shas[1],
+        revision=authorization_revision,
+    ):
+        return False
+    if parent_shas[0] == base_sha:
+        return commit.get("message") == manifest.message
+    if commit.get("message") != _reconciliation_message(manifest.branch.removeprefix("agent/")):
+        return False
+    if _revision_matches_manifest(
+        repository,
+        token,
+        base_sha=base_sha,
+        revision=parent_shas[0],
+        manifest=manifest,
+    ):
+        return True
+    return _is_reconciled_work_product_revision(
+        repository,
+        token,
+        base_sha=base_sha,
+        revision=parent_shas[0],
+        manifest=manifest,
+        authorization_revision=authorization_revision,
+        seen=seen | {revision},
+    )
+
+
+def _verify_default_only_content(
+    repository: str,
+    token: str,
+    *,
+    default_revision: str,
+    branch_revision: str,
+) -> None:
+    """Ensure reconciliation does not discard default-only changes."""
+
+    comparison = _as_mapping(
+        cast(
+            object,
+            _github_json(repository, token, f"compare/{default_revision}...{branch_revision}"),
+        )
+    )
+    merge_base = None if comparison is None else _as_mapping(comparison.get("merge_base_commit"))
+    merge_base_sha = None if merge_base is None else merge_base.get("sha")
+    if not _valid_sha(merge_base_sha):
+        raise RuntimeError("work-product reconciliation merge-base identity is incomplete")
+
+    default_paths = _comparison_file_paths(
+        repository,
+        token,
+        base_sha=cast(str, merge_base_sha),
+        revision=default_revision,
+    )
+    branch_paths = _comparison_file_paths(
+        repository,
+        token,
+        base_sha=cast(str, merge_base_sha),
+        revision=branch_revision,
+    )
+    for path in default_paths - branch_paths:
+        if _content_sha_at(repository, token, path=path, revision=default_revision) != (
+            _content_sha_at(repository, token, path=path, revision=branch_revision)
+        ):
+            raise RuntimeError("work-product reconciliation would discard default-branch content")
+
+
 def apply_work_product(
     plan: WorkProductPlan,
     *,
@@ -564,80 +739,109 @@ def apply_work_product(
     if current_ref_head != pr_head_sha:
         raise RuntimeError("work-product PR/ref head identity is stale")
     current_head = current_ref_head
+    default_branch_is_ancestor = _default_branch_is_ancestor(
+        repository,
+        token,
+        default_revision=authorization_revision,
+        revision=current_head,
+    )
+    replay_manifest = False
     if current_head != plan.manifest.base_sha:
-        if (
-            not historical_merged_carrier
-            and _valid_sha(current_head)
-            and _revision_matches_manifest(
-                repository,
-                token,
-                base_sha=plan.manifest.base_sha,
-                revision=cast(str, current_head),
-                manifest=plan.manifest,
-            )
-        ):
+        if historical_merged_carrier:
+            raise RuntimeError("work-product cannot update a historical merged carrier")
+        manifest_applied = _revision_matches_manifest(
+            repository,
+            token,
+            base_sha=plan.manifest.base_sha,
+            revision=current_head,
+            manifest=plan.manifest,
+        )
+        reconciled = _is_reconciled_work_product_revision(
+            repository,
+            token,
+            base_sha=plan.manifest.base_sha,
+            revision=current_head,
+            manifest=plan.manifest,
+            authorization_revision=authorization_revision,
+        )
+        if default_branch_is_ancestor and (manifest_applied or reconciled):
             return ValidationResourceTarget(
                 repository=repository,
-                revision=cast(str, current_head),
+                revision=current_head,
                 correlation=f"effect-request-{plan.source.issue_number}",
                 pr_number=plan.pr_number,
                 change=plan.expected_change,
             )
-        raise RuntimeError("work-product PR head/base identity is stale")
+        if not manifest_applied and not reconciled:
+            raise RuntimeError("work-product PR head/base identity is stale")
+        replay_manifest = True
     if historical_merged_carrier:
-        raise RuntimeError("work-product cannot update a historical merged carrier")
+        raise RuntimeError("work-product PR head/base identity is stale")
 
-    for file in plan.manifest.files:
-        current_sha = _content_sha_at(
+    needs_default_reconciliation = not default_branch_is_ancestor
+    if needs_default_reconciliation:
+        _verify_default_only_content(
             repository,
             token,
-            path=file.path,
-            revision=plan.manifest.base_sha,
+            default_revision=authorization_revision,
+            branch_revision=current_head,
         )
-        if current_sha != file.expected_sha:
-            raise RuntimeError("work-product expected content SHA is stale")
+
+    if not replay_manifest:
+        for file in plan.manifest.files:
+            current_sha = _content_sha_at(
+                repository,
+                token,
+                path=file.path,
+                revision=plan.manifest.base_sha,
+            )
+            if current_sha != file.expected_sha:
+                raise RuntimeError("work-product expected content SHA is stale")
 
     base_commit = _as_mapping(
-        cast(object, _github_json(repository, token, f"git/commits/{plan.manifest.base_sha}"))
+        cast(object, _github_json(repository, token, f"git/commits/{current_head}"))
     )
     base_tree = None if base_commit is None else _as_mapping(base_commit.get("tree"))
     base_tree_sha = None if base_tree is None else base_tree.get("sha")
     if not _valid_sha(base_tree_sha):
         raise RuntimeError("work-product base tree identity is incomplete")
 
-    try:
-        tree_response = _as_mapping(
-            cast(
-                object,
-                _github_json(
-                    repository,
-                    token,
-                    "git/trees",
-                    method="POST",
-                    payload={
-                        "base_tree": cast(str, base_tree_sha),
-                        "tree": [
-                            {
-                                "path": file.path,
-                                "mode": "100644",
-                                "type": "blob",
-                                "sha": file.blob_sha,
-                            }
-                            for file in plan.manifest.files
-                        ],
-                    },
-                ),
+    tree_sha = cast(str, base_tree_sha)
+    if not replay_manifest:
+        try:
+            tree_response = _as_mapping(
+                cast(
+                    object,
+                    _github_json(
+                        repository,
+                        token,
+                        "git/trees",
+                        method="POST",
+                        payload={
+                            "base_tree": cast(str, base_tree_sha),
+                            "tree": [
+                                {
+                                    "path": file.path,
+                                    "mode": "100644",
+                                    "type": "blob",
+                                    "sha": file.blob_sha,
+                                }
+                                for file in plan.manifest.files
+                            ],
+                        },
+                    ),
+                )
             )
-        )
-    except HTTPError as exc:
-        if exc.code in {404, 422}:
-            raise RuntimeError(
-                "work-product referenced blob is unavailable to application tree construction"
-            ) from exc
-        raise
-    tree_sha = None if tree_response is None else tree_response.get("sha")
-    if not _valid_sha(tree_sha):
-        raise RuntimeError("work-product tree creation returned no SHA")
+        except HTTPError as exc:
+            if exc.code in {404, 422}:
+                raise RuntimeError(
+                    "work-product referenced blob is unavailable to application tree construction"
+                ) from exc
+            raise
+        observed_tree_sha = None if tree_response is None else tree_response.get("sha")
+        if not _valid_sha(observed_tree_sha):
+            raise RuntimeError("work-product tree creation returned no SHA")
+        tree_sha = cast(str, observed_tree_sha)
 
     observed_tree = _as_mapping(
         cast(
@@ -657,18 +861,35 @@ def apply_work_product(
         or not isinstance(tree_entries, list)
     ):
         raise RuntimeError("work-product tree postcondition is incomplete")
-    for file in plan.manifest.files:
-        matches = [
-            entry
-            for raw_entry in tree_entries
-            if (entry := _as_mapping(raw_entry)) is not None and entry.get("path") == file.path
-        ]
-        if (
-            len(matches) != 1
-            or matches[0].get("type") != "blob"
-            or matches[0].get("sha") != file.blob_sha
-        ):
-            raise RuntimeError("work-product referenced blob was not resolved into exact tree path")
+    if not replay_manifest:
+        for file in plan.manifest.files:
+            matches = [
+                entry
+                for raw_entry in tree_entries
+                if (entry := _as_mapping(raw_entry)) is not None and entry.get("path") == file.path
+            ]
+            if (
+                len(matches) != 1
+                or matches[0].get("type") != "blob"
+                or matches[0].get("sha") != file.blob_sha
+            ):
+                raise RuntimeError(
+                    "work-product referenced blob was not resolved into exact tree path"
+                )
+
+    if _ref_head_sha(repository, token, plan.manifest.branch) != current_head:
+        raise RuntimeError("work-product branch base changed before carrier handoff")
+    if _ref_head_sha(repository, token, default_branch) != authorization_revision:
+        raise RuntimeError("work-product default branch changed before carrier handoff")
+    if _current_authorized_request(repository, token) != plan.source:
+        raise RuntimeError("work-product source dispatch changed before carrier handoff")
+
+    commit_message = (
+        _reconciliation_message(plan.expected_change) if replay_manifest else plan.manifest.message
+    )
+    commit_parents = [current_head]
+    if needs_default_reconciliation:
+        commit_parents.append(authorization_revision)
 
     commit_response = _as_mapping(
         cast(
@@ -679,9 +900,9 @@ def apply_work_product(
                 "git/commits",
                 method="POST",
                 payload={
-                    "message": plan.manifest.message,
+                    "message": commit_message,
                     "tree": cast(str, tree_sha),
-                    "parents": [plan.manifest.base_sha],
+                    "parents": commit_parents,
                 },
             ),
         )
@@ -690,8 +911,10 @@ def apply_work_product(
     if not _valid_sha(revision):
         raise RuntimeError("work-product commit creation returned no SHA")
 
-    if _ref_head_sha(repository, token, plan.manifest.branch) != plan.manifest.base_sha:
+    if _ref_head_sha(repository, token, plan.manifest.branch) != current_head:
         raise RuntimeError("work-product branch base changed before carrier handoff")
+    if _ref_head_sha(repository, token, default_branch) != authorization_revision:
+        raise RuntimeError("work-product default branch changed before carrier handoff")
     observed_pr: Mapping[str, object] | None = None
     observed_head: Mapping[str, object] | None = None
     for attempt in range(10):
@@ -708,7 +931,7 @@ def apply_work_product(
         if (
             observed_head is not None
             and observed_head.get("ref") == expected_branch
-            and (historical_merged_carrier or observed_head.get("sha") == plan.manifest.base_sha)
+            and observed_head.get("sha") == current_head
             and carrier_pr_identity(observed_pr) == carrier_pr_identity(pr)
         ):
             break
@@ -718,18 +941,9 @@ def apply_work_product(
         observed_pr is None
         or observed_head is None
         or observed_head.get("ref") != expected_branch
+        or observed_head.get("sha") != current_head
         or carrier_pr_identity(observed_pr) != carrier_pr_identity(pr)
     ):
-        raise RuntimeError("work-product PR-head postcondition was not observed")
-    if historical_merged_carrier:
-        if (
-            not _is_historical_merged_carrier(observed_pr)
-            or observed_pr.get("merge_commit_sha") != pr.get("merge_commit_sha")
-            or observed_pr.get("merged_at") != pr.get("merged_at")
-            or observed_head.get("sha") != pr_head_sha
-        ):
-            raise RuntimeError("work-product merged-carrier postcondition was not preserved")
-    elif observed_head.get("sha") != plan.manifest.base_sha:
         raise RuntimeError("work-product PR-head postcondition was not observed")
 
     observed_commit = _as_mapping(
@@ -737,14 +951,21 @@ def apply_work_product(
     )
     observed_tree = None if observed_commit is None else _as_mapping(observed_commit.get("tree"))
     parents = None if observed_commit is None else observed_commit.get("parents")
-    parent = None if not isinstance(parents, list) or len(parents) != 1 else _as_mapping(parents[0])
+    observed_parent_shas: list[str] = []
+    if isinstance(parents, list):
+        for raw_parent in parents:
+            parent = _as_mapping(raw_parent)
+            parent_sha = None if parent is None else parent.get("sha")
+            if not _valid_sha(parent_sha):
+                raise RuntimeError("work-product commit parent identity is incomplete")
+            observed_parent_shas.append(cast(str, parent_sha))
     if (
         observed_commit is None
         or observed_commit.get("sha") != revision
+        or observed_commit.get("message") != commit_message
         or observed_tree is None
         or observed_tree.get("sha") != tree_sha
-        or parent is None
-        or parent.get("sha") != plan.manifest.base_sha
+        or observed_parent_shas != commit_parents
     ):
         raise RuntimeError("work-product commit postcondition was not observed")
     for file in plan.manifest.files:
@@ -773,15 +994,21 @@ def apply_work_product(
         },
         expected={
             "ref": f"refs/heads/{plan.manifest.branch}",
-            "ref_sha": plan.manifest.base_sha,
+            "ref_sha": current_head,
             "pull_request": carrier_pr_identity(pr),
+            "commit_parents": commit_parents,
+            "commit_tree_sha": cast(str, tree_sha),
+            "commit_message": commit_message,
         },
         requested={
             "ref": f"refs/heads/{plan.manifest.branch}",
             "sha": cast(str, revision),
             "force": False,
             "pull_request_number": plan.pr_number,
-            "expected_head_sha": plan.manifest.base_sha,
+            "expected_head_sha": current_head,
+            "commit_parents": commit_parents,
+            "commit_tree_sha": cast(str, tree_sha),
+            "commit_message": commit_message,
         },
         expected_postcondition={
             "ref": f"refs/heads/{plan.manifest.branch}",
@@ -790,6 +1017,10 @@ def apply_work_product(
             "pull_request_head_sha": cast(str, revision),
             "state": "open",
             "merged": False,
+            "commit_sha": cast(str, revision),
+            "commit_parents": commit_parents,
+            "commit_tree_sha": cast(str, tree_sha),
+            "commit_message": commit_message,
         },
     )
     raise CarrierRequired(plan_id)
