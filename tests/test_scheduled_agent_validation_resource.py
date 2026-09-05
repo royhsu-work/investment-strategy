@@ -154,6 +154,7 @@ def test_executor_task_marker_is_the_only_nonreview_openspec_work_product() -> N
     assert not resource._is_executor_task_bookkeeping(source, _CHANGE, (design_file,))
     assert not resource._is_executor_task_bookkeeping(source, _CHANGE, (task_file, design_file))
 
+
 def _work_product_plan(
     *,
     source: WorkerRequest,
