@@ -16,6 +16,7 @@ _BASE = "a" * 40
 _BLOB = "b" * 40
 _REVISION = "c" * 40
 _CHANGE = "restore-lifecycle-correction-routing"
+_TEST_TOKEN = str(object())
 
 
 def _manifest(*, expected_sha: str | None = None) -> WorkProductManifest:
@@ -137,7 +138,7 @@ def test_apply_formalization_uses_application_owned_constructor(
         source,
         30,
         repository="royhsu-work/investment-strategy",
-        token="token",
+        token=_TEST_TOKEN,
         default_branch="main",
     )
 
@@ -157,7 +158,7 @@ def test_formalization_rejects_worker_authority_and_existing_paths(
             WorkerRequest(169, "executor", "implement-change"),
             30,
             repository="royhsu-work/investment-strategy",
-            token="token",
+            token=_TEST_TOKEN,
             default_branch="main",
         )
 
@@ -172,7 +173,7 @@ def test_formalization_rejects_worker_authority_and_existing_paths(
             source,
             30,
             repository="royhsu-work/investment-strategy",
-            token="token",
+            token=_TEST_TOKEN,
             default_branch="main",
         )
 
