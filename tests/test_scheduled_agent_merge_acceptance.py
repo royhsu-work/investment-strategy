@@ -375,6 +375,11 @@ def test_merge_effect_rechecks_acceptance_on_real_application_path(
     )
     monkeypatch.setattr(
         merge_acceptance.GitHubEffectAdapter,
+        "_default_branch_still_current",
+        lambda _self: True,
+    )
+    monkeypatch.setattr(
+        merge_acceptance.GitHubEffectAdapter,
         "_guard_github_mutation",
         lambda _self, _payload: True,
     )

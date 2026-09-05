@@ -1,42 +1,27 @@
-"""Run-scoped validation and content-addressed work-product application."""
+"""Application-owned exact validation and content-addressed work-product helpers."""
 
 from __future__ import annotations
 
-import argparse
-import base64
-import binascii
 import json
-import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from typing import cast
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
-from investment_strategy.issue_comment_bridge import MachineDispatchDecision
 from investment_strategy.scheduled_agent_action_model import TRANSITIONS
 from investment_strategy.scheduled_agent_action_model import (
     Action as ModelAction,
 )
-from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
-from investment_strategy.scheduled_agent_dispatch_result import fetch_dispatch_result
 from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
     acquire_current_github_preflight,
 )
 from investment_strategy.workflow_dispatch import classify_dispatch
 
-RESOURCE_REQUEST_MARKER = "VALIDATION_RESOURCE_REQUEST"
-WORK_PRODUCT_REQUEST_MARKER = "WORK_PRODUCT_REQUEST"
-DISPATCH_REQUEST_COMMENT_ID_PREFIX = "Dispatch-Request-Comment-ID: "
-DISPATCH_RUN_ID_PREFIX = "Dispatch-Run-ID: "
-PR_PREFIX = "PR: "
-EXPECTED_CHANGE_PREFIX = "Expected-Change: "
-MANIFEST_B64_PREFIX = "Manifest-B64: "
-_CHATGPT_CONNECTOR_APP_SLUG = "chatgpt-codex-connector"
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _OPEN_SPEC_AUTHORING_SOURCES = frozenset(
@@ -48,22 +33,11 @@ _OPEN_SPEC_AUTHORING_SOURCES = frozenset(
 
 
 @dataclass(frozen=True)
-class ValidationResourceRequest:
-    """One transport request for a deterministic exact-revision validation resource."""
-
-    dispatch_request_comment_id: int
-    dispatch_run_id: int
-    pr_number: int
-    expected_change: str
-
-
-@dataclass(frozen=True)
 class ValidationResourcePlan:
-    """Validated transport identity bound to one machine-authorized source action."""
+    """Application-owned validation target bound to one fresh source action."""
 
     should_validate: bool
     source: WorkerRequest | None = None
-    request_comment_id: int | None = None
     pr_number: int | None = None
     expected_change: str | None = None
 
@@ -77,6 +51,7 @@ class ValidationResourceTarget:
     correlation: str
     pr_number: int
     change: str
+    validation_required: bool = True
 
 
 @dataclass(frozen=True)
@@ -99,42 +74,14 @@ class WorkProductManifest:
 
 
 @dataclass(frozen=True)
-class WorkProductRequest:
-    """One M0 content-addressed work-product request."""
-
-    dispatch_request_comment_id: int
-    dispatch_run_id: int
-    pr_number: int
-    expected_change: str
-    manifest: WorkProductManifest
-
-
-@dataclass(frozen=True)
 class WorkProductPlan:
-    """Validated transport identity plus untrusted work-product manifest."""
+    """Application-owned work-product materialization plan."""
 
     should_apply: bool
     source: WorkerRequest | None = None
-    request_comment_id: int | None = None
     pr_number: int | None = None
     expected_change: str | None = None
     manifest: WorkProductManifest | None = None
-
-
-def _positive_decimal(value: str) -> int | None:
-    try:
-        parsed = int(value)
-    except ValueError:
-        return None
-    if parsed <= 0 or str(parsed) != value:
-        return None
-    return parsed
-
-
-def _positive_int(value: object) -> int | None:
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        return None
-    return value
 
 
 def _valid_change(value: str) -> bool:
@@ -199,314 +146,8 @@ def work_product_path_allowed(
     return False
 
 
-def parse_validation_resource_request(body: str) -> ValidationResourceRequest | None:
-    """Parse the exact trigger shape; no revision is accepted from the caller."""
-
-    lines = body.split("\n")
-    if not lines or lines[0] != RESOURCE_REQUEST_MARKER:
-        return None
-    if len(lines) != 5:
-        raise ValueError("VALIDATION_RESOURCE_REQUEST must contain exactly five lines")
-    prefixes = (
-        DISPATCH_REQUEST_COMMENT_ID_PREFIX,
-        DISPATCH_RUN_ID_PREFIX,
-        PR_PREFIX,
-        EXPECTED_CHANGE_PREFIX,
-    )
-    for line, prefix in zip(lines[1:], prefixes, strict=True):
-        if not line.startswith(prefix):
-            raise ValueError("VALIDATION_RESOURCE_REQUEST field order is invalid")
-
-    dispatch_request_comment_id = _positive_decimal(lines[1][len(prefixes[0]) :])
-    dispatch_run_id = _positive_decimal(lines[2][len(prefixes[1]) :])
-    pr_number = _positive_decimal(lines[3][len(prefixes[2]) :])
-    expected_change = lines[4][len(prefixes[3]) :]
-    if (
-        dispatch_request_comment_id is None
-        or dispatch_run_id is None
-        or pr_number is None
-        or not _valid_change(expected_change)
-    ):
-        raise ValueError("VALIDATION_RESOURCE_REQUEST identity is invalid")
-    return ValidationResourceRequest(
-        dispatch_request_comment_id=dispatch_request_comment_id,
-        dispatch_run_id=dispatch_run_id,
-        pr_number=pr_number,
-        expected_change=expected_change,
-    )
-
-
-def _parse_manifest(encoded_manifest: str) -> WorkProductManifest:
-    if not encoded_manifest or encoded_manifest != encoded_manifest.strip():
-        raise ValueError("WORK_PRODUCT_REQUEST manifest is invalid")
-    try:
-        raw = base64.b64decode(encoded_manifest.encode("ascii"), validate=True).decode("utf-8")
-        decoded = json.loads(raw)
-    except (UnicodeEncodeError, UnicodeDecodeError, binascii.Error, json.JSONDecodeError) as exc:
-        raise ValueError("WORK_PRODUCT_REQUEST manifest is not valid base64 JSON") from exc
-    if not isinstance(decoded, Mapping) or set(decoded) != {
-        "branch",
-        "base_sha",
-        "message",
-        "files",
-    }:
-        raise ValueError("WORK_PRODUCT_REQUEST manifest fields are invalid")
-    branch = decoded.get("branch")
-    base_sha = decoded.get("base_sha")
-    message = decoded.get("message")
-    raw_files = decoded.get("files")
-    if (
-        not _valid_branch(branch)
-        or not _valid_sha(base_sha)
-        or not isinstance(message, str)
-        or not message.strip()
-        or not isinstance(raw_files, list)
-        or not raw_files
-    ):
-        raise ValueError("WORK_PRODUCT_REQUEST manifest identity is invalid")
-
-    files: list[WorkProductFile] = []
-    seen_paths: set[str] = set()
-    for raw_file in raw_files:
-        if not isinstance(raw_file, Mapping) or set(raw_file) != {
-            "path",
-            "blob_sha",
-            "expected_sha",
-        }:
-            raise ValueError("WORK_PRODUCT_REQUEST file manifest is invalid")
-        path = raw_file.get("path")
-        blob_sha = raw_file.get("blob_sha")
-        expected_sha = raw_file.get("expected_sha")
-        if (
-            not _valid_repo_path(path)
-            or not _valid_sha(blob_sha)
-            or (expected_sha is not None and not _valid_sha(expected_sha))
-        ):
-            raise ValueError("WORK_PRODUCT_REQUEST file identity is invalid")
-        normalized_path = cast(str, path)
-        if normalized_path in seen_paths:
-            raise ValueError("WORK_PRODUCT_REQUEST contains duplicate paths")
-        seen_paths.add(normalized_path)
-        files.append(
-            WorkProductFile(
-                path=normalized_path,
-                blob_sha=cast(str, blob_sha),
-                expected_sha=cast(str | None, expected_sha),
-            )
-        )
-    return WorkProductManifest(
-        branch=cast(str, branch),
-        base_sha=cast(str, base_sha),
-        message=cast(str, message),
-        files=tuple(files),
-    )
-
-
-def parse_work_product_request(body: str) -> WorkProductRequest | None:
-    """Parse the M0 blob-reference request; source/spec content is never carried in the comment."""
-
-    lines = body.split("\n")
-    if not lines or lines[0] != WORK_PRODUCT_REQUEST_MARKER:
-        return None
-    if len(lines) != 6:
-        raise ValueError("WORK_PRODUCT_REQUEST must contain exactly six lines")
-    prefixes = (
-        DISPATCH_REQUEST_COMMENT_ID_PREFIX,
-        DISPATCH_RUN_ID_PREFIX,
-        PR_PREFIX,
-        EXPECTED_CHANGE_PREFIX,
-        MANIFEST_B64_PREFIX,
-    )
-    for line, prefix in zip(lines[1:], prefixes, strict=True):
-        if not line.startswith(prefix):
-            raise ValueError("WORK_PRODUCT_REQUEST field order is invalid")
-    dispatch_request_comment_id = _positive_decimal(lines[1][len(prefixes[0]) :])
-    dispatch_run_id = _positive_decimal(lines[2][len(prefixes[1]) :])
-    pr_number = _positive_decimal(lines[3][len(prefixes[2]) :])
-    expected_change = lines[4][len(prefixes[3]) :]
-    if (
-        dispatch_request_comment_id is None
-        or dispatch_run_id is None
-        or pr_number is None
-        or not _valid_change(expected_change)
-    ):
-        raise ValueError("WORK_PRODUCT_REQUEST identity is invalid")
-    return WorkProductRequest(
-        dispatch_request_comment_id=dispatch_request_comment_id,
-        dispatch_run_id=dispatch_run_id,
-        pr_number=pr_number,
-        expected_change=expected_change,
-        manifest=_parse_manifest(lines[5][len(prefixes[4]) :]),
-    )
-
-
 def _as_mapping(value: object) -> Mapping[str, object] | None:
     return cast(Mapping[str, object], value) if isinstance(value, Mapping) else None
-
-
-def _user_login(comment: Mapping[str, object]) -> str | None:
-    user = _as_mapping(comment.get("user"))
-    login = None if user is None else user.get("login")
-    return login if isinstance(login, str) else None
-
-
-def _app_slug(comment: Mapping[str, object]) -> str | None:
-    app = _as_mapping(comment.get("performed_via_github_app"))
-    slug = None if app is None else app.get("slug")
-    return slug if isinstance(slug, str) else None
-
-
-def _trusted_connector_comment(
-    comment: Mapping[str, object],
-    repository_owner: str,
-) -> bool:
-    return (
-        _user_login(comment) == repository_owner
-        and _app_slug(comment) == _CHATGPT_CONNECTOR_APP_SLUG
-    )
-
-
-def _source_from_dispatch(
-    request_comment_id: int,
-    dispatch_result: MachineDispatchDecision,
-    current_revision: str,
-) -> WorkerRequest:
-    if dispatch_result.request_comment_id != request_comment_id:
-        raise ValueError("dispatch result correlation is invalid")
-    if dispatch_result.default_branch_revision != current_revision:
-        raise ValueError("dispatch revision is stale")
-    if (
-        dispatch_result.disposition != "AUTHORIZE"
-        or dispatch_result.issue_number is None
-        or dispatch_result.role is None
-        or dispatch_result.action is None
-    ):
-        raise ValueError("application request requires an AUTHORIZE dispatch result")
-    return WorkerRequest(
-        dispatch_result.issue_number,
-        dispatch_result.role,
-        dispatch_result.action,
-    )
-
-
-def _event_comment_identity(
-    event: Mapping[str, object],
-    body: str,
-    repository: str,
-) -> tuple[int, int] | None:
-    issue = _as_mapping(event.get("issue"))
-    comment = _as_mapping(event.get("comment"))
-    if event.get("action") != "created" or issue is None or comment is None:
-        return None
-    if "pull_request" in issue or not is_runtime_checkin_issue(issue):
-        return None
-    comment_id = _positive_int(comment.get("id"))
-    issue_number = _positive_int(issue.get("number"))
-    owner = repository.split("/", 1)[0] if "/" in repository else ""
-    if (
-        comment_id is None
-        or issue_number is None
-        or comment.get("body") != body
-        or not _trusted_connector_comment(comment, owner)
-    ):
-        raise ValueError("application request event identity is invalid")
-    return comment_id, issue_number
-
-
-def _fresh_event_observation(
-    event: Mapping[str, object],
-    body: str,
-    repository: str,
-    token: str,
-) -> tuple[int, int]:
-    identity = _event_comment_identity(event, body, repository)
-    if identity is None:
-        raise ValueError("application request event is invalid")
-    comment_id, issue_number = identity
-    owner = repository.split("/", 1)[0]
-    observed_comment = _as_mapping(_github_json(repository, token, f"issues/comments/{comment_id}"))
-    if (
-        observed_comment is None
-        or observed_comment.get("id") != comment_id
-        or observed_comment.get("body") != body
-        or not _trusted_connector_comment(observed_comment, owner)
-    ):
-        raise ValueError("application request current comment observation is incomplete")
-    observed_issue = _as_mapping(_github_json(repository, token, f"issues/{issue_number}"))
-    if (
-        observed_issue is None
-        or observed_issue.get("number") != issue_number
-        or not is_runtime_checkin_issue(observed_issue)
-    ):
-        raise ValueError("application request current shard observation is invalid")
-    return comment_id, issue_number
-
-
-def plan_validation_resource(
-    *,
-    event: Mapping[str, object],
-    dispatch_result: MachineDispatchDecision,
-    repository: str,
-    current_revision: str,
-) -> ValidationResourcePlan:
-    """Bind one validation request to its exact run-scoped dispatch result."""
-
-    comment = _as_mapping(event.get("comment"))
-    body = None if comment is None else comment.get("body")
-    if not isinstance(body, str):
-        return ValidationResourcePlan(False)
-    request = parse_validation_resource_request(body)
-    if request is None:
-        return ValidationResourcePlan(False)
-    identity = _event_comment_identity(event, body, repository)
-    if identity is None:
-        return ValidationResourcePlan(False)
-    source = _source_from_dispatch(
-        request.dispatch_request_comment_id,
-        dispatch_result,
-        current_revision,
-    )
-    return ValidationResourcePlan(
-        True,
-        source=source,
-        request_comment_id=identity[0],
-        pr_number=request.pr_number,
-        expected_change=request.expected_change,
-    )
-
-
-def plan_work_product_application(
-    *,
-    event: Mapping[str, object],
-    dispatch_result: MachineDispatchDecision,
-    repository: str,
-    current_revision: str,
-) -> WorkProductPlan:
-    """Bind one blob-reference work product to its exact run-scoped dispatch."""
-
-    comment = _as_mapping(event.get("comment"))
-    body = None if comment is None else comment.get("body")
-    if not isinstance(body, str):
-        return WorkProductPlan(False)
-    request = parse_work_product_request(body)
-    if request is None:
-        return WorkProductPlan(False)
-    identity = _event_comment_identity(event, body, repository)
-    if identity is None:
-        return WorkProductPlan(False)
-    source = _source_from_dispatch(
-        request.dispatch_request_comment_id,
-        dispatch_result,
-        current_revision,
-    )
-    return WorkProductPlan(
-        True,
-        source=source,
-        request_comment_id=identity[0],
-        pr_number=request.pr_number,
-        expected_change=request.expected_change,
-        manifest=request.manifest,
-    )
 
 
 def _github_json(
@@ -718,7 +359,6 @@ def resolve_validation_resource_target(
     if (
         not plan.should_validate
         or plan.source is None
-        or plan.request_comment_id is None
         or plan.pr_number is None
         or plan.expected_change is None
     ):
@@ -739,7 +379,7 @@ def resolve_validation_resource_target(
     return ValidationResourceTarget(
         repository=repository,
         revision=revision,
-        correlation=f"validation-resource-request-{plan.request_comment_id}",
+        correlation=f"effect-request-{plan.source.issue_number}",
         pr_number=plan.pr_number,
         change=plan.expected_change,
     )
@@ -786,6 +426,57 @@ def _ref_head_sha(repository: str, token: str, branch: str) -> str:
     return cast(str, sha)
 
 
+def _revision_matches_manifest(
+    repository: str,
+    token: str,
+    *,
+    base_sha: str,
+    revision: str,
+    manifest: WorkProductManifest,
+) -> bool:
+    """Recognize an already-applied exact manifest without creating another commit."""
+
+    comparison = _as_mapping(
+        cast(object, _github_json(repository, token, f"compare/{base_sha}...{revision}"))
+    )
+    files = None if comparison is None else comparison.get("files")
+    commits = None if comparison is None else comparison.get("commits")
+    if (
+        comparison is None
+        or comparison.get("status") != "ahead"
+        or comparison.get("ahead_by") != 1
+        or comparison.get("behind_by") != 0
+        or not isinstance(commits, list)
+        or len(commits) != 1
+        or not isinstance(files, list)
+    ):
+        return False
+    paths: set[str] = set()
+    for raw_file in files:
+        file = _as_mapping(raw_file)
+        filename = None if file is None else file.get("filename")
+        if not isinstance(filename, str):
+            return False
+        paths.add(filename)
+    if paths != {file.path for file in manifest.files}:
+        return False
+    commit = _as_mapping(cast(object, _github_json(repository, token, f"git/commits/{revision}")))
+    parents = None if commit is None else commit.get("parents")
+    parent = None if not isinstance(parents, list) or len(parents) != 1 else _as_mapping(parents[0])
+    if (
+        commit is None
+        or commit.get("sha") != revision
+        or commit.get("message") != manifest.message
+        or parent is None
+        or parent.get("sha") != base_sha
+    ):
+        return False
+    return all(
+        _content_sha_at(repository, token, path=file.path, revision=revision) == file.blob_sha
+        for file in manifest.files
+    )
+
+
 def apply_work_product(
     plan: WorkProductPlan,
     *,
@@ -798,7 +489,6 @@ def apply_work_product(
     if (
         not plan.should_apply
         or plan.source is None
-        or plan.request_comment_id is None
         or plan.pr_number is None
         or plan.expected_change is None
         or plan.manifest is None
@@ -840,6 +530,24 @@ def apply_work_product(
         else pr_head_sha
     )
     if current_head != plan.manifest.base_sha or current_branch != plan.manifest.branch:
+        if (
+            not historical_merged_carrier
+            and _valid_sha(current_head)
+            and _revision_matches_manifest(
+                repository,
+                token,
+                base_sha=plan.manifest.base_sha,
+                revision=cast(str, current_head),
+                manifest=plan.manifest,
+            )
+        ):
+            return ValidationResourceTarget(
+                repository=repository,
+                revision=cast(str, current_head),
+                correlation=f"effect-request-{plan.source.issue_number}",
+                pr_number=plan.pr_number,
+                change=plan.expected_change,
+            )
         raise RuntimeError("work-product PR head/base identity is stale")
 
     for file in plan.manifest.files:
@@ -1011,132 +719,7 @@ def apply_work_product(
     return ValidationResourceTarget(
         repository=repository,
         revision=cast(str, revision),
-        correlation=f"work-product-request-{plan.request_comment_id}",
+        correlation=f"effect-request-{plan.source.issue_number}",
         pr_number=plan.pr_number,
         change=plan.expected_change,
     )
-
-
-def _write_outputs(target: ValidationResourceTarget | None) -> None:
-    output_path = os.environ.get("GITHUB_OUTPUT")
-    if not output_path:
-        return
-    lines = [f"validation_required={'true' if target is not None else 'false'}"]
-    if target is not None:
-        lines.extend(
-            (
-                f"validation_target_repository={target.repository}",
-                f"validation_target_revision={target.revision}",
-                f"validation_correlation={target.correlation}",
-                f"validation_pr_number={target.pr_number}",
-                f"validation_change={target.change}",
-            )
-        )
-    with Path(output_path).open("a", encoding="utf-8") as output:
-        output.write("\n".join(lines) + "\n")
-
-
-def _load_json(path: str) -> object:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--event-path", required=True)
-    parser.add_argument("--revision", required=True)
-    parser.add_argument("--default-branch", required=True)
-    args = parser.parse_args()
-
-    repository = os.environ.get("GITHUB_REPOSITORY")
-    token = os.environ.get("GITHUB_TOKEN")
-    if not repository or not token:
-        raise RuntimeError("GITHUB_REPOSITORY and GITHUB_TOKEN are required")
-    event = _as_mapping(_load_json(args.event_path))
-    if event is None:
-        raise ValueError("GitHub event payload must be an object")
-    event_comment = _as_mapping(event.get("comment"))
-    body = None if event_comment is None else event_comment.get("body")
-    if not isinstance(body, str):
-        _write_outputs(None)
-        return 0
-
-    request: ValidationResourceRequest | WorkProductRequest | None
-    if body.startswith(RESOURCE_REQUEST_MARKER):
-        request = parse_validation_resource_request(body)
-    elif body.startswith(WORK_PRODUCT_REQUEST_MARKER):
-        request = parse_work_product_request(body)
-    else:
-        _write_outputs(None)
-        return 0
-    if request is None:
-        _write_outputs(None)
-        return 0
-
-    _fresh_event_observation(event, body, repository, token)
-    if isinstance(request, ValidationResourceRequest):
-        dispatch_result = fetch_dispatch_result(
-            repository,
-            token,
-            request_comment_id=request.dispatch_request_comment_id,
-            run_id=request.dispatch_run_id,
-            current_revision=args.revision,
-        )
-        validation_plan = plan_validation_resource(
-            event=event,
-            dispatch_result=dispatch_result,
-            repository=repository,
-            current_revision=args.revision,
-        )
-        if validation_plan.should_validate:
-            target = resolve_validation_resource_target(
-                validation_plan,
-                repository=repository,
-                token=token,
-                default_branch=args.default_branch,
-            )
-        else:
-            target = None
-    else:
-        dispatch_result = fetch_dispatch_result(
-            repository,
-            token,
-            request_comment_id=request.dispatch_request_comment_id,
-            run_id=request.dispatch_run_id,
-            current_revision=args.revision,
-        )
-        work_product_plan = plan_work_product_application(
-            event=event,
-            dispatch_result=dispatch_result,
-            repository=repository,
-            current_revision=args.revision,
-        )
-        if work_product_plan.should_apply:
-            target = apply_work_product(
-                work_product_plan,
-                repository=repository,
-                token=token,
-                default_branch=args.default_branch,
-            )
-        else:
-            target = None
-
-    _write_outputs(target)
-    if target is not None:
-        print(
-            json.dumps(
-                {
-                    "resource": "openspec-exact-validation",
-                    "repository": target.repository,
-                    "revision": target.revision,
-                    "correlation": target.correlation,
-                    "pr_number": target.pr_number,
-                    "change": target.change,
-                },
-                sort_keys=True,
-            )
-        )
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

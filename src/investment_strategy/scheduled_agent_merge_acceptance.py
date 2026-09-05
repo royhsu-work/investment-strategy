@@ -542,6 +542,9 @@ def run_effect_application(
     token: str,
     pre_apply_guard: PreApplyGuard | None = None,
     current_revision: str | None = None,
+    apply_derived: bool = True,
+    materialization_promote_change: bool = False,
+    validated_materialization_revision: str | None = None,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Apply through shared effect guards plus an optional mutation-adjacent guard."""
 
@@ -554,6 +557,8 @@ def run_effect_application(
         source,
         authorized_change=batch.typed_result.change,
         current_revision=current_revision,
+        materialization_promote_change=materialization_promote_change,
+        validated_materialization_revision=validated_materialization_revision,
     )
 
     def apply_with_fresh_guard(effect: StagedEffect) -> None:
@@ -569,6 +574,7 @@ def run_effect_application(
             apply_effect=apply_with_fresh_guard,
             observe_postcondition=adapter.observe_postcondition,
             current_revision=current_revision,
+            apply_derived=apply_derived,
         )
     except _EffectPreconditionStale:
         result = ApplyResult(False, "effect precondition became stale")
@@ -582,6 +588,9 @@ def run_guarded_effect_application(
     repository: str,
     token: str,
     current_revision: str | None = None,
+    apply_derived: bool = True,
+    materialization_promote_change: bool = False,
+    validated_materialization_revision: str | None = None,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Reject stale merge acceptance before and immediately adjacent to merge application."""
 
@@ -606,6 +615,9 @@ def run_guarded_effect_application(
         repository=repository,
         token=token,
         current_revision=current_revision,
+        apply_derived=apply_derived,
+        materialization_promote_change=materialization_promote_change,
+        validated_materialization_revision=validated_materialization_revision,
         pre_apply_guard=lambda effect: _merge_effect_allows(
             effect,
             source=source,

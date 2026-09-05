@@ -27,6 +27,11 @@ from investment_strategy.scheduled_agent_action_model import (
 from investment_strategy.scheduled_agent_action_model import (
     ObservationProvenance as ModelObservationProvenance,
 )
+from investment_strategy.scheduled_agent_application_materialization import (
+    apply_materialization,
+    find_materialization_payload,
+    materialization_postcondition,
+)
 from investment_strategy.scheduled_agent_effect_contract import (
     GITHUB_MUTATION_KIND,
     allowed_github_mutation_operations,
@@ -37,6 +42,7 @@ from investment_strategy.scheduled_agent_runtime import (
     acquire_current_github_preflight,
     normalize_github_issue,
 )
+from investment_strategy.scheduled_agent_validation_resource import ValidationResourceTarget
 from investment_strategy.scheduled_agent_worker import parse_worker_result
 from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
@@ -344,6 +350,13 @@ def _github_mutation_structurally_valid(
     if operation not in allowed_github_mutation_operations(source.role, source.action):
         return False
 
+    if operation == "application-materialize":
+        try:
+            find_materialization_payload(payload, source)
+        except ValueError:
+            return False
+        return True
+
     if operation == "issue-update":
         fields = payload.get("fields")
         expected = payload.get("expected")
@@ -511,6 +524,7 @@ def apply_effect_batch(
     apply_effect: EffectApplier,
     observe_postcondition: PostconditionObserver,
     current_revision: str | None = None,
+    apply_derived: bool = True,
 ) -> ApplyResult:
     """Apply one typed batch after fresh source reauthorization."""
 
@@ -525,7 +539,7 @@ def apply_effect_batch(
     if typed_decision is None or derived_effect is None:
         return ApplyResult(False, "typed application rejected:plan-missing")
 
-    effects = [*batch.effects, derived_effect]
+    effects = [*batch.effects, derived_effect] if apply_derived else list(batch.effects)
     for effect in effects:
         if not effect_guard(effect):
             return ApplyResult(False, "effect precondition rejected")
@@ -635,18 +649,23 @@ class GitHubEffectAdapter:
         *,
         authorized_change: str,
         current_revision: str | None = None,
+        materialization_promote_change: bool = False,
+        validated_materialization_revision: str | None = None,
     ) -> None:
         self.repository = repository
         self.token = token
         self.source = source
         self.authorized_change = authorized_change
         self.current_revision = current_revision
+        self.materialization_promote_change = materialization_promote_change
+        self.validated_materialization_revision = validated_materialization_revision
         self._comment_ids: dict[StagedEffect, int] = {}
         self._routing_targets: dict[StagedEffect, str] = {}
         self._created_pr_numbers: dict[StagedEffect, int] = {}
         self._terminal_transitions: set[StagedEffect] = set()
         self._idempotent_merges: set[StagedEffect] = set()
         self._merge_metadata: dict[str, tuple[str, str]] = {}
+        self._materialization_targets: dict[StagedEffect, ValidationResourceTarget] = {}
 
     def _current_issue(self) -> Mapping[str, object] | None:
         payload = _github_json(
@@ -677,6 +696,12 @@ class GitHubEffectAdapter:
 
     def _source_still_current(self) -> bool:
         return self._authorized_issue_observation() is not None
+
+    def _default_branch_still_current(self) -> bool:
+        if self.current_revision is None:
+            return True
+        branch = self._default_branch()
+        return branch is not None and self._default_branch_revision(branch) == self.current_revision
 
     def _default_branch(self) -> str | None:
         payload = _github_json(self.repository, self.token, "")
@@ -873,6 +898,18 @@ class GitHubEffectAdapter:
         if observation is None:
             return False
         operation = cast(str, payload["operation"])
+        if operation == "application-materialize":
+            request = find_materialization_payload(payload, self.source)
+            if request is None:
+                return False
+            default_branch = self._default_branch()
+            return (
+                request.expected_change == self.authorized_change
+                and default_branch is not None
+                and self.current_revision is not None
+                and _valid_sha(self.current_revision)
+                and self._default_branch_revision(default_branch) == self.current_revision
+            )
         if operation == "issue-label-add":
             return True
         if operation == "workflow-dispatch":
@@ -1017,7 +1054,11 @@ class GitHubEffectAdapter:
         return False
 
     def guard(self, effect: StagedEffect) -> bool:
-        if not supported_effect_guard(self.source, effect) or not self._source_still_current():
+        if (
+            not supported_effect_guard(self.source, effect)
+            or not self._source_still_current()
+            or not self._default_branch_still_current()
+        ):
             return False
         if effect.kind in {"issue-comment", "routing-transition", "terminal-transition"}:
             return True
@@ -1066,6 +1107,24 @@ class GitHubEffectAdapter:
 
     def _apply_github_mutation(self, effect: StagedEffect, payload: Mapping[str, object]) -> None:
         operation = cast(str, payload["operation"])
+        if operation == "application-materialize":
+            default_branch = self._default_branch()
+            if default_branch is None or self.current_revision is None:
+                raise RuntimeError("application materialization default branch is unavailable")
+            target = apply_materialization(
+                payload,
+                self.source,
+                repository=self.repository,
+                token=self.token,
+                current_revision=self.current_revision,
+                default_branch=default_branch,
+                promote_change=self.materialization_promote_change,
+                validated_revision=self.validated_materialization_revision,
+            )
+            self._materialization_targets[effect] = target
+            if self.materialization_promote_change:
+                self.authorized_change = target.change
+            return
         if operation == "issue-update":
             _github_json(
                 self.repository,
@@ -1270,6 +1329,21 @@ class GitHubEffectAdapter:
         payload: Mapping[str, object],
     ) -> bool:
         operation = cast(str, payload["operation"])
+        if operation == "application-materialize":
+            default_branch = self._default_branch()
+            return (
+                default_branch is not None
+                and self.current_revision is not None
+                and materialization_postcondition(
+                    payload,
+                    self.source,
+                    repository=self.repository,
+                    token=self.token,
+                    current_revision=self.current_revision,
+                    default_branch=default_branch,
+                    target=self._materialization_targets.get(effect),
+                )
+            )
         if operation == "issue-update":
             current = self._current_issue()
             fields = payload.get("fields")
@@ -1412,6 +1486,9 @@ def run_effect_application(
     repository: str,
     token: str,
     current_revision: str | None = None,
+    apply_derived: bool = True,
+    materialization_promote_change: bool = False,
+    validated_materialization_revision: str | None = None,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Freshly reauthorize and apply one typed invocation-local effect batch."""
 
@@ -1424,6 +1501,8 @@ def run_effect_application(
         source,
         authorized_change=batch.typed_result.change,
         current_revision=current_revision,
+        materialization_promote_change=materialization_promote_change,
+        validated_materialization_revision=validated_materialization_revision,
     )
     result = apply_effect_batch(
         batch,
@@ -1432,6 +1511,7 @@ def run_effect_application(
         apply_effect=adapter.apply,
         observe_postcondition=adapter.observe_postcondition,
         current_revision=current_revision,
+        apply_derived=apply_derived,
     )
     return batch, result
 
