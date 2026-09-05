@@ -11,7 +11,10 @@ from urllib.request import Request
 import pytest
 
 import investment_strategy.scheduled_agent_dispatch_result as transport
-from investment_strategy.issue_comment_bridge import MachineDispatchDecision
+from investment_strategy.issue_comment_bridge import (
+    MachineDispatchDecision,
+    parse_dispatch_result_document,
+)
 
 _REVISION = "cb8f9ec12d826e0d71897a4c73ece961d00df59e"
 _REQUEST_ID = 100
@@ -161,22 +164,20 @@ def test_fetch_dispatch_result_rejects_expired_or_stale_artifact(
 
 
 def test_artifact_document_omits_role_and_derives_it_from_action() -> None:
-    result = transport._parse_dispatch_result_document(_authorize_document())
+    result = parse_dispatch_result_document(_authorize_document())
     assert result.role == "executor"
     assert result.action == "implement-change"
 
     with pytest.raises(RuntimeError, match="schema is invalid"):
-        transport._parse_dispatch_result_document(_authorize_document(role="executor"))
+        parse_dispatch_result_document(_authorize_document(role="executor"))
 
 
 def test_artifact_document_rejects_malformed_and_revision_mismatch() -> None:
     with pytest.raises(RuntimeError, match="UTF-8 JSON"):
-        transport._parse_dispatch_result_document(b"not-json")
+        parse_dispatch_result_document(b"not-json")
 
     with pytest.raises(RuntimeError, match="identity is invalid"):
-        transport._parse_dispatch_result_document(
-            _authorize_document(default_branch_revision="wrong")
-        )
+        parse_dispatch_result_document(_authorize_document(default_branch_revision="wrong"))
 
 
 def test_github_bytes_reads_signed_redirect_without_forwarding_bearer(
