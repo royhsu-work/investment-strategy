@@ -18,8 +18,10 @@ archive preparation is a Lead-only semantic step with no duplicate Change, PR, l
 deterministic cleanup obligations, and the evidence needed by Reviewer / review-archive. It does not
 perform normal PR merge mutation. A premature close or ambiguous cleanup condition is blocked.
 
-Return one structured `archive-ready`, `more-implementation-required`, `lifecycle-complete`,
-`human-decision-required`, `no-go`, or `blocked` result. The executable model derives
+For `finalize-change`, return `spec-blocker` only when fresh evidence proves a material specification, canonicalization, or lifecycle-contract defect outside the action's local repair authority; the executable model derives `resolve-question`. A progressing archive wait, known semantic-neutral mechanical recovery, genuine Human-reserved decision, or ambiguous evidence keeps its existing action-local or fail-closed handling. `spec-blocker` is not a generic recovery state.
+
+Return one structured `spec-blocker`, `archive-ready`, `more-implementation-required`,
+`lifecycle-complete`, `human-decision-required`, `no-go`, or `blocked` result. The executable model derives
 `review-archive`, `implement-change`, `finalize-archive`, or terminal state; the successor executes
 only on a later wake.
 

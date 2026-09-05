@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -352,6 +353,21 @@ def _review_openspec_required(source: WorkerRequest) -> bool:
     return any(successor is ModelAction.REVIEW_OPENSPEC for successor in successors)
 
 
+def _is_executor_task_bookkeeping(
+    source: WorkerRequest,
+    expected_change: str,
+    files: tuple[WorkProductFile, ...],
+) -> bool:
+    """Allow only the approved non-semantic task-marker update from implementation."""
+
+    return (
+        source.role == "executor"
+        and source.action == "implement-change"
+        and len(files) == 1
+        and files[0].path == f"openspec/changes/{expected_change}/tasks.md"
+    )
+
+
 def resolve_validation_resource_target(
     plan: ValidationResourcePlan,
     *,
@@ -689,9 +705,14 @@ def apply_work_product(
         for file in plan.manifest.files
     ):
         raise RuntimeError("work-product path is outside source Action capability")
-    if any(
-        file.path.startswith("openspec/") for file in plan.manifest.files
-    ) and not _review_openspec_required(plan.source):
+    if any(file.path.startswith("openspec/") for file in plan.manifest.files) and not (
+        _review_openspec_required(plan.source)
+        or _is_executor_task_bookkeeping(
+            plan.source,
+            plan.expected_change,
+            plan.manifest.files,
+        )
+    ):
         raise RuntimeError("work-product source has no required OpenSpec review gate")
 
     pr = _open_pr_payload(
@@ -894,18 +915,31 @@ def apply_work_product(
         raise RuntimeError("work-product branch base changed before carrier handoff")
     if _ref_head_sha(repository, token, default_branch) != authorization_revision:
         raise RuntimeError("work-product default branch changed before carrier handoff")
-    observed_pr = _open_pr_payload(
-        repository=repository,
-        token=token,
-        pr_number=plan.pr_number,
-        source=plan.source,
-        expected_change=plan.expected_change,
-        default_branch=default_branch,
-        allow_historical_merged_carrier=True,
-    )
-    observed_head = _as_mapping(observed_pr.get("head"))
+    observed_pr: Mapping[str, object] | None = None
+    observed_head: Mapping[str, object] | None = None
+    for attempt in range(10):
+        observed_pr = _open_pr_payload(
+            repository=repository,
+            token=token,
+            pr_number=plan.pr_number,
+            source=plan.source,
+            expected_change=plan.expected_change,
+            default_branch=default_branch,
+            allow_historical_merged_carrier=True,
+        )
+        observed_head = _as_mapping(observed_pr.get("head"))
+        if (
+            observed_head is not None
+            and observed_head.get("ref") == expected_branch
+            and observed_head.get("sha") == current_head
+            and carrier_pr_identity(observed_pr) == carrier_pr_identity(pr)
+        ):
+            break
+        if attempt < 9:
+            time.sleep(1)
     if (
-        observed_head is None
+        observed_pr is None
+        or observed_head is None
         or observed_head.get("ref") != expected_branch
         or observed_head.get("sha") != current_head
         or carrier_pr_identity(observed_pr) != carrier_pr_identity(pr)

@@ -81,11 +81,13 @@ configuration remains outside repository workflow authority.
 | `propose-change` | `no-go` | `terminal` |
 | `propose-change` | `blocked` | `propose-change` |
 | `resolve-question` | `ready-for-openspec-review` | `review-openspec` |
+| `resolve-question` | `lifecycle-ready` | `finalize-change` |
 | `resolve-question` | `ready` | `implement-change` |
 | `resolve-question` | `research-required` | `explore-change` |
 | `resolve-question` | `human-decision-required` | `resolve-question` |
 | `resolve-question` | `no-go` | `terminal` |
 | `resolve-question` | `blocked` | `resolve-question` |
+| `finalize-change` | `spec-blocker` | `resolve-question` |
 | `finalize-change` | `more-implementation-required` | `implement-change` |
 | `finalize-change` | `archive-ready` | `review-archive` |
 | `finalize-change` | `human-decision-required` | `finalize-change` |

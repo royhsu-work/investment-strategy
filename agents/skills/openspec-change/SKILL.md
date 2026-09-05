@@ -25,6 +25,8 @@ For a material correction, return one structured ready-for-openspec-review resul
 human-decision-required/blocked result with exact evidence. Do not choose or execute the successor
 in the same wake. Independent Reviewer / review-openspec must review the resulting exact revision.
 
+For `resolve-question`, return `lifecycle-ready` only when no material semantic OpenSpec revision remains, the already-merged implementation remains valid, and the post-merge lifecycle is again the legal consumer; the executable model derives `finalize-change` and the successor waits for a later wake. A material correction returns `ready-for-openspec-review`, while an implementation-ready resolution keeps `ready` and its existing `implement-change` handoff. `resolve-question` does not perform direct archive mutation.
+
 Skill maintenance traceability: Lead owns the declaration of materially affected Skills, their
 responsibility treatment, source/reference, rationale, and replacement. Reviewer independently checks
 the declaration; implementation does not reinterpret it.

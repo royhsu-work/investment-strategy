@@ -117,6 +117,40 @@ def test_typed_application_derives_unique_successor_without_execution() -> None:
     assert "execute_successor" not in decision.__dataclass_fields__
 
 
+@pytest.mark.parametrize(
+    ("action", "result_kind", "successor", "successor_role"),
+    [
+        (
+            Action.FINALIZE_CHANGE,
+            ResultKind.SPEC_BLOCKER,
+            Action.RESOLVE_QUESTION,
+            Role.LEAD,
+        ),
+        (
+            Action.RESOLVE_QUESTION,
+            ResultKind.LIFECYCLE_READY,
+            Action.FINALIZE_CHANGE,
+            Role.LEAD,
+        ),
+    ],
+)
+def test_lifecycle_correction_transitions_are_derived_at_application_boundary(
+    action: Action,
+    result_kind: ResultKind,
+    successor: Action,
+    successor_role: Role,
+) -> None:
+    decision = plan_action_application(
+        _source(action),
+        _result(action, result_kind),
+        _observation(action),
+    )
+
+    assert decision.accepted
+    assert decision.successor is successor
+    assert decision.successor_role is successor_role
+
+
 def test_same_role_successor_is_persisted_for_a_later_wake() -> None:
     decision = plan_action_application(
         _source(),
