@@ -67,8 +67,11 @@ this lifecycle meaning.
 ## Evidence and Traceability
 
 - Human architecture direction: #169 comment `issuecomment-5551181808`.
-- Semantic source Issue: #169, current default-branch routing `action:propose-change` with
-  `Change: unset`.
+- Historical pre-activation source evidence: before this Change was materialized, #169
+  was at action:propose-change with Change: unset.
+- Current review target: #169 is at action:review-openspec with Change
+  `restore-lifecycle-finalization-correction-routing`; PR #201 is open at exact reviewed head
+  `9892226fbb5dd4ea7408fd1ccb05b11138898a65` against default-branch revision `961384a79ef169658f031c03f8f1ba551b650a59`.
 - Current executable source: `src/investment_strategy/scheduled_agent_action_model.py`.
 - Current canonical capability: `openspec/specs/scheduled-agent-workflow/spec.md`, especially the
   executable-transition and Lead review/finalize requirements.
