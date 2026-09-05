@@ -20,21 +20,11 @@ from investment_strategy.workflow_dispatch import DispatchDecision, classify_dis
 REQUEST_MARKER = "DISPATCH_REQUEST"
 REQUESTED_AT_PREFIX = "Requested-At: "
 RUN_NAME_PREFIX = "Scheduled Agent Dispatch "
-RUN_RESULT_START_MARKER = "BEGIN_SCHEDULED_AGENT_DISPATCH_RESULT"
-RUN_RESULT_END_MARKER = "END_SCHEDULED_AGENT_DISPATCH_RESULT"
-DECISION_MARKER = "DISPATCH_DECISION"
-REQUEST_COMMENT_ID_PREFIX = "Request-Comment-ID: "
-DEFAULT_BRANCH_REVISION_PREFIX = "Default-Branch-Revision: "
-DISPOSITION_PREFIX = "Disposition: "
-ISSUE_PREFIX = "Issue: "
-ROLE_PREFIX = "Role: "
-ACTION_PREFIX = "Action: "
-REASON_PREFIX = "Reason: "
-BRIDGE_OK = "BRIDGE_OK"
+DISPATCH_RESULT_SCHEMA = "scheduled-agent-dispatch-result/v1"
 _DECISION_DISPOSITIONS = {"AUTHORIZE", "NO_WORK", "FAIL_CLOSED"}
-_ROLES = {"lead", "reviewer", "executor"}
 _MAX_REASON_LENGTH = 240
-_ACTIONS_LOG_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ")
+_MAX_RESULT_BYTES = 16_384
+_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
 @dataclass(frozen=True)
@@ -61,9 +51,20 @@ class BridgePlan:
     result_body: str | None = None
 
 
-def _normalize_actions_log_line(line: str) -> str:
-    match = _ACTIONS_LOG_TIMESTAMP.match(line)
-    return line[match.end() :] if match is not None else line
+def _positive_int(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
+def _valid_reason(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and value == value.strip()
+        and "\n" not in value
+        and len(value) <= _MAX_REASON_LENGTH
+    )
 
 
 def parse_dispatch_request(body: str) -> DispatchRequest | None:
@@ -97,150 +98,128 @@ def parse_dispatch_run_name(run_name: str) -> int | None:
     return parsed if parsed > 0 and str(parsed) == raw else None
 
 
-def render_dispatch_decision(
+def render_dispatch_result_document(
     *,
     request_comment_id: int,
     default_branch_revision: str,
     decision: DispatchDecision,
 ) -> str:
-    if request_comment_id <= 0 or not default_branch_revision.strip():
+    """Render the one canonical plaintext JSON result owned by an exact bridge run."""
+
+    if request_comment_id <= 0 or _SHA.fullmatch(default_branch_revision) is None:
         raise ValueError("dispatch result identity is invalid")
     if decision.disposition not in _DECISION_DISPOSITIONS:
         raise ValueError("unsupported dispatch disposition")
-    lines = [
-        DECISION_MARKER,
-        f"{REQUEST_COMMENT_ID_PREFIX}{request_comment_id}",
-        f"{DEFAULT_BRANCH_REVISION_PREFIX}{default_branch_revision}",
-        f"{DISPOSITION_PREFIX}{decision.disposition}",
-    ]
+
+    payload: dict[str, object] = {
+        "schema": DISPATCH_RESULT_SCHEMA,
+        "request_comment_id": request_comment_id,
+        "default_branch_revision": default_branch_revision,
+        "disposition": decision.disposition,
+    }
     if decision.disposition == "AUTHORIZE":
-        if decision.selected_issue_id is None or decision.selected_routing is None:
-            raise ValueError("AUTHORIZE requires one Action")
+        issue_number = decision.selected_issue_id
+        if (
+            isinstance(issue_number, bool)
+            or not isinstance(issue_number, int)
+            or issue_number <= 0
+            or decision.selected_routing is None
+        ):
+            raise ValueError("AUTHORIZE requires one Issue and Action")
         role, action = decision.selected_routing
-        lines.extend(
-            (
-                f"{ISSUE_PREFIX}{decision.selected_issue_id}",
-                f"{ROLE_PREFIX}{role}",
-                f"{ACTION_PREFIX}{action}",
-            )
-        )
         try:
-            if role_for(ModelAction(action)).value != role:
-                raise ValueError("dispatch role is not derived from Action")
+            parsed_action = ModelAction(action)
         except ValueError as exc:
             raise ValueError("dispatch Action is invalid") from exc
+        if role_for(parsed_action).value != role:
+            raise ValueError("dispatch role is not derived from Action")
+        payload.update({"issue_number": issue_number, "action": action})
     else:
         if decision.selected_issue_id is not None or decision.selected_routing is not None:
             raise ValueError("non-authorizing result carries selected work")
-        if (
-            len(decision.reason) == 0
-            or decision.reason != decision.reason.strip()
-            or "\n" in decision.reason
-            or len(decision.reason) > _MAX_REASON_LENGTH
-        ):
+        if not _valid_reason(decision.reason):
             raise ValueError("dispatch reason is invalid")
-        lines.append(f"{REASON_PREFIX}{decision.reason}")
-    return "\n".join(lines)
+        payload["reason"] = decision.reason
+
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
-def render_run_scoped_dispatch_result(
-    *,
-    request_comment_id: int,
-    default_branch_revision: str,
-    decision: DispatchDecision,
-) -> str:
-    body = render_dispatch_decision(
-        request_comment_id=request_comment_id,
-        default_branch_revision=default_branch_revision,
-        decision=decision,
-    )
-    return f"{RUN_RESULT_START_MARKER}\n{body}\n{RUN_RESULT_END_MARKER}"
+def parse_dispatch_result_document(raw: bytes | str) -> MachineDispatchDecision:
+    """Strictly parse the canonical plaintext JSON dispatch-result contract."""
 
+    if isinstance(raw, bytes):
+        if not raw or len(raw) > _MAX_RESULT_BYTES:
+            raise RuntimeError("exact dispatch result artifact size is invalid")
+        try:
+            document = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise RuntimeError("exact dispatch result artifact is not UTF-8 JSON") from exc
+    else:
+        encoded = raw.encode("utf-8")
+        if not encoded or len(encoded) > _MAX_RESULT_BYTES:
+            raise RuntimeError("exact dispatch result artifact size is invalid")
+        document = raw
 
-def parse_run_scoped_dispatch_result(
-    log: str,
-    *,
-    request_comment_id: int,
-) -> MachineDispatchDecision | None:
-    if request_comment_id <= 0:
-        return None
-    lines = [_normalize_actions_log_line(line) for line in log.splitlines()]
-    starts = [index for index, line in enumerate(lines) if line == RUN_RESULT_START_MARKER]
-    ends = [index for index, line in enumerate(lines) if line == RUN_RESULT_END_MARKER]
-    if len(starts) != 1 or len(ends) != 1 or starts[0] >= ends[0]:
-        return None
-    body = "\n".join(lines[starts[0] + 1 : ends[0]])
-    decision = parse_dispatch_decision(body)
-    if decision is None or decision.request_comment_id != request_comment_id:
-        return None
-    return decision
-
-
-def parse_dispatch_decision(body: str) -> MachineDispatchDecision | None:
-    lines = body.split("\n")
-    if len(lines) not in {4, 5, 7} or lines[0] != DECISION_MARKER:
-        return None
-    if not lines[1].startswith(REQUEST_COMMENT_ID_PREFIX):
-        return None
-    raw_id = lines[1][len(REQUEST_COMMENT_ID_PREFIX) :]
     try:
-        request_id = int(raw_id)
-    except ValueError:
-        return None
-    if request_id <= 0 or str(request_id) != raw_id:
-        return None
-    if not lines[2].startswith(DEFAULT_BRANCH_REVISION_PREFIX):
-        return None
-    revision = lines[2][len(DEFAULT_BRANCH_REVISION_PREFIX) :]
-    if not revision or revision != revision.strip():
-        return None
-    if not lines[3].startswith(DISPOSITION_PREFIX):
-        return None
-    disposition = lines[3][len(DISPOSITION_PREFIX) :]
+        decoded = json.loads(document)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("exact dispatch result artifact is not UTF-8 JSON") from exc
+    if not isinstance(decoded, Mapping):
+        raise RuntimeError("exact dispatch result artifact must be a JSON object")
+    payload = cast(Mapping[str, object], decoded)
+
+    disposition = payload.get("disposition")
     if disposition not in _DECISION_DISPOSITIONS:
-        return None
-    if disposition != "AUTHORIZE":
-        if len(lines) not in {4, 5}:
-            return None
-        if len(lines) == 5 and (
-            not lines[4].startswith(REASON_PREFIX)
-            or not lines[4][len(REASON_PREFIX) :].strip()
-            or len(lines[4][len(REASON_PREFIX) :]) > _MAX_REASON_LENGTH
-        ):
-            return None
-        reason = None if len(lines) == 4 else lines[4][len(REASON_PREFIX) :]
-        return MachineDispatchDecision(request_id, revision, disposition, reason=reason)
+        raise RuntimeError("exact dispatch result disposition is invalid")
+    common_keys = {
+        "schema",
+        "request_comment_id",
+        "default_branch_revision",
+        "disposition",
+    }
+    expected_keys = (
+        common_keys | {"issue_number", "action"}
+        if disposition == "AUTHORIZE"
+        else common_keys | {"reason"}
+    )
+    if set(payload) != expected_keys or payload.get("schema") != DISPATCH_RESULT_SCHEMA:
+        raise RuntimeError("exact dispatch result schema is invalid")
 
-    if len(lines) != 7:
-        return None
-    if not lines[4].startswith(ISSUE_PREFIX):
-        return None
-    raw_issue = lines[4][len(ISSUE_PREFIX) :]
-    try:
-        issue_number = int(raw_issue)
-    except ValueError:
-        return None
-    if issue_number <= 0 or str(issue_number) != raw_issue:
-        return None
-    if not lines[5].startswith(ROLE_PREFIX) or not lines[6].startswith(ACTION_PREFIX):
-        return None
-    role = lines[5][len(ROLE_PREFIX) :]
-    action = lines[6][len(ACTION_PREFIX) :]
-    if role not in _ROLES or not action or action != action.strip():
-        return None
-    try:
-        parsed_action = ModelAction(action)
-    except ValueError:
-        return None
-    if role_for(parsed_action).value != role:
-        return None
+    request_comment_id = _positive_int(payload.get("request_comment_id"))
+    revision = payload.get("default_branch_revision")
+    if (
+        request_comment_id is None
+        or not isinstance(revision, str)
+        or _SHA.fullmatch(revision) is None
+    ):
+        raise RuntimeError("exact dispatch result identity is invalid")
+
+    if disposition == "AUTHORIZE":
+        issue_number = _positive_int(payload.get("issue_number"))
+        action = payload.get("action")
+        if issue_number is None or not isinstance(action, str):
+            raise RuntimeError("AUTHORIZE dispatch result is incomplete")
+        try:
+            parsed_action = ModelAction(action)
+        except ValueError as exc:
+            raise RuntimeError("AUTHORIZE dispatch Action is invalid") from exc
+        return MachineDispatchDecision(
+            request_comment_id=request_comment_id,
+            default_branch_revision=revision,
+            disposition=disposition,
+            issue_number=issue_number,
+            role=role_for(parsed_action).value,
+            action=action,
+        )
+
+    reason = payload.get("reason")
+    if not _valid_reason(reason):
+        raise RuntimeError("non-authorizing dispatch reason is invalid")
     return MachineDispatchDecision(
-        request_id,
-        revision,
-        disposition,
-        issue_number=issue_number,
-        role=role,
-        action=action,
+        request_comment_id=request_comment_id,
+        default_branch_revision=revision,
+        disposition=disposition,
+        reason=cast(str, reason),
     )
 
 
@@ -284,7 +263,7 @@ def plan_dispatch_decision(
         should_emit=True,
         issue_number=issue_number,
         request_comment_id=request_comment_id,
-        result_body=render_dispatch_decision(
+        result_body=render_dispatch_result_document(
             request_comment_id=request_comment_id,
             default_branch_revision=default_branch_revision,
             decision=decision,
@@ -317,7 +296,7 @@ def _write_outputs(path: Path, plan: BridgePlan) -> None:
 
 def _write_result_payload(path: Path, plan: BridgePlan) -> None:
     if plan.should_emit and plan.result_body is not None:
-        path.write_text(json.dumps({"body": plan.result_body}) + "\n", encoding="utf-8")
+        path.write_text(plan.result_body + "\n", encoding="utf-8")
 
 
 def main() -> int:
