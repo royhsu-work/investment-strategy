@@ -346,6 +346,29 @@ def _default_branch_contains_commit(
     return comparison.get("status") in {"ahead", "identical"} and comparison.get("behind_by") == 0
 
 
+def _merge_commit_has_parent(
+    repository: str,
+    token: str,
+    *,
+    merge_commit_sha: str,
+    parent_sha: str,
+) -> bool:
+    """Bind a post-merge reconciliation to the pre-merge authorized base."""
+
+    try:
+        commit = _github_json(repository, token, f"commits/{merge_commit_sha}")
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return False
+    if not isinstance(commit, Mapping):
+        return False
+    parents = commit.get("parents")
+    if not isinstance(parents, list):
+        return False
+    return any(
+        isinstance(parent, Mapping) and parent.get("sha") == parent_sha for parent in parents
+    )
+
+
 def _historical_merged_carrier_allowed(
     payload: Mapping[str, object],
     *,
@@ -354,6 +377,7 @@ def _historical_merged_carrier_allowed(
     expected_head_sha: str,
     current_revision: str | None,
     expected_branch: str | None,
+    reviewer_pass_default_branch_revision: str | None = None,
 ) -> bool:
     if (
         not _is_historical_merged_carrier(payload)
@@ -383,11 +407,21 @@ def _historical_merged_carrier_allowed(
     ):
         return False
     merge_commit_sha = payload.get("merge_commit_sha")
-    return _valid_sha(merge_commit_sha) and _default_branch_contains_commit(
+    if not _valid_sha(merge_commit_sha) or not _default_branch_contains_commit(
         repository,
         token,
         merge_commit_sha=cast(str, merge_commit_sha),
         default_branch=default_branch,
+    ):
+        return False
+    return reviewer_pass_default_branch_revision is None or (
+        _valid_sha(reviewer_pass_default_branch_revision)
+        and _merge_commit_has_parent(
+            repository,
+            token,
+            merge_commit_sha=cast(str, merge_commit_sha),
+            parent_sha=reviewer_pass_default_branch_revision,
+        )
     )
 
 
@@ -461,11 +495,8 @@ def acquire_merge_acceptance_snapshot(
             expected_head_sha=expected_head_sha,
             current_revision=current_revision,
             expected_branch=expected_branch,
+            reviewer_pass_default_branch_revision=reviewer_pass_default_branch_revision,
         )
-    if historical_merged_carrier_allowed and (
-        reviewer_pass_default_branch_revision != current_revision
-    ):
-        historical_merged_carrier_allowed = False
     complete = review_complete and checks_complete and human_complete and native_complete
 
     return MergeAcceptanceSnapshot(
@@ -566,6 +597,10 @@ def run_effect_application(
             raise _EffectPreconditionStale
         adapter.apply(effect)
 
+    carrier_plan_provider = getattr(adapter, "carrier_plan_if_required", None)
+    if not callable(carrier_plan_provider):
+        carrier_plan_provider = None
+
     try:
         result = apply_effect_batch(
             batch,
@@ -575,6 +610,7 @@ def run_effect_application(
             observe_postcondition=adapter.observe_postcondition,
             current_revision=current_revision,
             apply_derived=apply_derived,
+            carrier_plan_for_effect=carrier_plan_provider,
         )
     except _EffectPreconditionStale:
         result = ApplyResult(False, "effect precondition became stale")

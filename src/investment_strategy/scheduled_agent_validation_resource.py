@@ -16,6 +16,11 @@ from investment_strategy.scheduled_agent_action_model import TRANSITIONS
 from investment_strategy.scheduled_agent_action_model import (
     Action as ModelAction,
 )
+from investment_strategy.scheduled_agent_carrier import (
+    CarrierRequired,
+    carrier_pr_identity,
+    make_carrier_plan,
+)
 from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
     acquire_current_github_preflight,
@@ -483,8 +488,9 @@ def apply_work_product(
     repository: str,
     token: str,
     default_branch: str,
+    authorization_revision: str,
 ) -> ValidationResourceTarget:
-    """Apply one content-addressed OpenSpec work product as one exact Git commit R."""
+    """Construct one exact commit and hand open-PR head movement to a carrier."""
 
     if (
         not plan.should_apply
@@ -494,6 +500,10 @@ def apply_work_product(
         or plan.manifest is None
     ):
         raise RuntimeError("work-product plan is incomplete")
+    if not _valid_sha(authorization_revision):
+        raise RuntimeError("work-product authorization revision is incomplete")
+    if _ref_head_sha(repository, token, default_branch) != authorization_revision:
+        raise RuntimeError("work-product default-branch authorization is stale")
     if _current_authorized_request(repository, token) != plan.source:
         raise RuntimeError("work-product source dispatch is stale")
     expected_branch = _source_branch(plan.expected_change)
@@ -523,13 +533,21 @@ def apply_work_product(
     current_branch = None if head is None else head.get("ref")
     if not _valid_sha(pr_head_sha):
         raise RuntimeError("work-product PR head identity is incomplete")
+    if current_branch != expected_branch:
+        raise RuntimeError("work-product PR branch identity is stale")
+    base = _as_mapping(pr.get("base"))
+    if (
+        base is None
+        or base.get("ref") != default_branch
+        or base.get("sha") != authorization_revision
+    ):
+        raise RuntimeError("work-product PR base identity is stale")
     historical_merged_carrier = _is_historical_merged_carrier(pr)
-    current_head = (
-        _ref_head_sha(repository, token, expected_branch)
-        if historical_merged_carrier
-        else pr_head_sha
-    )
-    if current_head != plan.manifest.base_sha or current_branch != plan.manifest.branch:
+    current_ref_head = _ref_head_sha(repository, token, expected_branch)
+    if current_ref_head != pr_head_sha:
+        raise RuntimeError("work-product PR/ref head identity is stale")
+    current_head = current_ref_head
+    if current_head != plan.manifest.base_sha:
         if (
             not historical_merged_carrier
             and _valid_sha(current_head)
@@ -549,6 +567,8 @@ def apply_work_product(
                 change=plan.expected_change,
             )
         raise RuntimeError("work-product PR head/base identity is stale")
+    if historical_merged_carrier:
+        raise RuntimeError("work-product cannot update a historical merged carrier")
 
     for file in plan.manifest.files:
         current_sha = _content_sha_at(
@@ -654,18 +674,7 @@ def apply_work_product(
         raise RuntimeError("work-product commit creation returned no SHA")
 
     if _ref_head_sha(repository, token, plan.manifest.branch) != plan.manifest.base_sha:
-        raise RuntimeError("work-product branch base changed before ref update")
-
-    _github_json(
-        repository,
-        token,
-        f"git/refs/heads/{quote(plan.manifest.branch, safe='/')}",
-        method="PATCH",
-        payload={"sha": cast(str, revision), "force": False},
-    )
-
-    if _ref_head_sha(repository, token, plan.manifest.branch) != revision:
-        raise RuntimeError("work-product ref postcondition was not observed")
+        raise RuntimeError("work-product branch base changed before carrier handoff")
     observed_pr = _open_pr_payload(
         repository=repository,
         token=token,
@@ -676,17 +685,12 @@ def apply_work_product(
         allow_historical_merged_carrier=True,
     )
     observed_head = _as_mapping(observed_pr.get("head"))
-    if observed_head is None or observed_head.get("ref") != expected_branch:
-        raise RuntimeError("work-product PR-head postcondition was not observed")
-    if historical_merged_carrier:
-        if (
-            not _is_historical_merged_carrier(observed_pr)
-            or observed_pr.get("merge_commit_sha") != pr.get("merge_commit_sha")
-            or observed_pr.get("merged_at") != pr.get("merged_at")
-            or observed_head.get("sha") != pr_head_sha
-        ):
-            raise RuntimeError("work-product merged-carrier postcondition was not preserved")
-    elif observed_head.get("sha") != revision:
+    if (
+        observed_head is None
+        or observed_head.get("ref") != expected_branch
+        or observed_head.get("sha") != plan.manifest.base_sha
+        or carrier_pr_identity(observed_pr) != carrier_pr_identity(pr)
+    ):
         raise RuntimeError("work-product PR-head postcondition was not observed")
 
     observed_commit = _as_mapping(
@@ -716,10 +720,37 @@ def apply_work_product(
         ):
             raise RuntimeError("work-product file postcondition was not observed")
 
-    return ValidationResourceTarget(
+    plan_id = make_carrier_plan(
         repository=repository,
-        revision=cast(str, revision),
-        correlation=f"effect-request-{plan.source.issue_number}",
-        pr_number=plan.pr_number,
+        issue_number=plan.source.issue_number,
         change=plan.expected_change,
+        action=plan.source.action,
+        authorization_revision=authorization_revision,
+        operation="pull-request-head-update",
+        target={
+            "repository": repository,
+            "pull_request_number": plan.pr_number,
+            "ref": f"refs/heads/{plan.manifest.branch}",
+        },
+        expected={
+            "ref": f"refs/heads/{plan.manifest.branch}",
+            "ref_sha": plan.manifest.base_sha,
+            "pull_request": carrier_pr_identity(pr),
+        },
+        requested={
+            "ref": f"refs/heads/{plan.manifest.branch}",
+            "sha": cast(str, revision),
+            "force": False,
+            "pull_request_number": plan.pr_number,
+            "expected_head_sha": plan.manifest.base_sha,
+        },
+        expected_postcondition={
+            "ref": f"refs/heads/{plan.manifest.branch}",
+            "ref_sha": cast(str, revision),
+            "pull_request_number": plan.pr_number,
+            "pull_request_head_sha": cast(str, revision),
+            "state": "open",
+            "merged": False,
+        },
     )
+    raise CarrierRequired(plan_id)
