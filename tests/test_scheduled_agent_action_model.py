@@ -327,4 +327,5 @@ def test_selection_enforces_human_authority_and_finish_first() -> None:
         SelectionDisposition.FAIL_CLOSED
     )
 
+
 # Connector-carried exact-head replay remains application-authorized.
