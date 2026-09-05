@@ -9,6 +9,7 @@ import pytest
 
 import investment_strategy.scheduled_agent_effects as effects
 from investment_strategy.scheduled_agent_action_model import ResultKind
+from investment_strategy.scheduled_agent_carrier import CarrierRequired
 from investment_strategy.scheduled_agent_effect_contract import (
     allowed_github_mutation_operations,
 )
@@ -970,9 +971,13 @@ def test_archive_pull_request_create_binds_exact_branch_head(
     )
 
     assert adapter.guard(effect)
-    adapter.apply(effect)
-    assert adapter.observe_postcondition(effect)
-    assert ("pulls", "POST") in calls
+    with pytest.raises(CarrierRequired) as raised:
+        adapter.apply(effect)
+    plan = raised.value.plan
+    assert plan.operation == "pull-request-create"
+    assert plan.requested["head_sha"] == archive_revision
+    assert plan.force is False
+    assert ("pulls", "POST") not in calls
 
 
 def test_archive_pull_request_create_reuses_exact_existing_carrier(

@@ -15,6 +15,10 @@ from dataclasses import dataclass
 from typing import cast
 from urllib.parse import quote, urlencode
 
+from investment_strategy.scheduled_agent_carrier import (
+    CarrierRequired,
+    make_carrier_plan,
+)
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 from investment_strategy.scheduled_agent_validation_resource import (
     ValidationResourcePlan,
@@ -249,6 +253,7 @@ def _pr_matches(
     revision: str,
     issue_number: int,
     change: str,
+    base_revision: str | None = None,
 ) -> bool:
     head = _as_mapping(pr.get("head"))
     base = _as_mapping(pr.get("base"))
@@ -271,6 +276,7 @@ def _pr_matches(
         and head.get("ref") == branch
         and head.get("sha") == revision
         and base.get("ref") == default_branch
+        and (base_revision is None or base.get("sha") == base_revision)
         and f"OpenSpec: {change}" in title
         and issue_link is not None
         and int(issue_link.group(1)) == issue_number
@@ -376,6 +382,7 @@ def _ensure_new_carrier(
     repository: str,
     token: str,
     default_branch: str,
+    authorization_revision: str,
 ) -> tuple[str, int]:
     for file in request.files:
         if (
@@ -417,34 +424,50 @@ def _ensure_new_carrier(
     if len(prs) > 1:
         raise RuntimeError("application materialization found duplicate Change PR carriers")
     if not prs:
-        created = _as_mapping(
-            cast(
-                object,
-                _github_json(
-                    repository,
-                    token,
-                    "pulls",
-                    method="POST",
-                    payload={
-                        "title": f"OpenSpec: {request.change}",
-                        "body": (
-                            f"Formalize OpenSpec change `{request.change}`.\n\n"
-                            f"Refs #{source.issue_number}"
-                        ),
-                        "head": request.branch,
-                        "base": default_branch,
-                        "draft": False,
-                    },
-                ),
-            )
+        title = f"OpenSpec: {request.change}"
+        body = f"Formalize OpenSpec change `{request.change}`.\n\nRefs #{source.issue_number}"
+        plan = make_carrier_plan(
+            repository=repository,
+            issue_number=source.issue_number,
+            change=request.change,
+            action=source.action,
+            authorization_revision=authorization_revision,
+            operation="pull-request-create",
+            target={
+                "head_ref": request.branch,
+                "base_ref": default_branch,
+                "repository": repository,
+            },
+            expected={
+                "head_ref": request.branch,
+                "head_sha": revision,
+                "base_ref": default_branch,
+                "base_sha": authorization_revision,
+                "existing_pr_count": 0,
+            },
+            requested={
+                "title": title,
+                "body": body,
+                "head": request.branch,
+                "base": default_branch,
+                "draft": False,
+                "head_sha": revision,
+            },
+            expected_postcondition={
+                "repository": repository,
+                "issue_number": source.issue_number,
+                "state": "open",
+                "merged": False,
+                "title": title,
+                "body": body,
+                "draft": False,
+                "head_ref": request.branch,
+                "head_sha": revision,
+                "base_ref": default_branch,
+                "base_sha": authorization_revision,
+            },
         )
-        number = None if created is None else created.get("number")
-        if _positive_int(number) is None:
-            raise RuntimeError("application materialization PR creation returned no identity")
-        fresh = _as_mapping(cast(object, _github_json(repository, token, f"pulls/{number}")))
-        if fresh is None:
-            raise RuntimeError("application materialization PR postcondition is unavailable")
-        prs = [fresh]
+        raise CarrierRequired(plan)
     pr = prs[0]
     number = pr.get("number")
     if _positive_int(number) is None or not _pr_matches(
@@ -455,6 +478,7 @@ def _ensure_new_carrier(
         revision=revision,
         issue_number=source.issue_number,
         change=request.change,
+        base_revision=authorization_revision,
     ):
         raise RuntimeError("application materialization Change PR identity is invalid")
     return revision, cast(int, number)
@@ -521,6 +545,7 @@ def _existing_target(
     repository: str,
     token: str,
     default_branch: str,
+    authorization_revision: str,
 ) -> ValidationResourceTarget:
     if request.pr_number is None:
         raise RuntimeError("existing Change materialization requires an exact PR")
@@ -542,6 +567,7 @@ def _existing_target(
             repository=repository,
             token=token,
             default_branch=default_branch,
+            authorization_revision=authorization_revision,
         )
     else:
         target = resolve_validation_resource_target(
@@ -605,6 +631,7 @@ def apply_materialization(
             repository=repository,
             token=token,
             default_branch=default_branch,
+            authorization_revision=current_revision,
         )
         target = _target(
             request,
@@ -625,6 +652,7 @@ def apply_materialization(
         repository=repository,
         token=token,
         default_branch=default_branch,
+        authorization_revision=current_revision,
     )
     return target
 
@@ -673,6 +701,7 @@ def materialization_postcondition(
                 revision=target.revision,
                 issue_number=source.issue_number,
                 change=request.change,
+                base_revision=current_revision,
             )
         current = _open_pr_payload(
             repository=repository,
@@ -725,6 +754,7 @@ def observe_materialization_target(
             revision=revision,
             issue_number=source.issue_number,
             change=request.change,
+            base_revision=current_revision,
         ):
             raise RuntimeError("application materialization carrier postcondition is invalid")
         _verify_revision(repository, token, request, revision)

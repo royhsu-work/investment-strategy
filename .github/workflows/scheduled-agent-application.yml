@@ -15,7 +15,7 @@ jobs:
       actions: write
       contents: write
       issues: write
-      pull-requests: write
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
       - name: Check out authoritative default branch
@@ -49,6 +49,33 @@ jobs:
           --event-path "$GITHUB_EVENT_PATH"
           --revision "${{ steps.revision.outputs.sha }}"
           --default-branch "${{ github.event.repository.default_branch }}"
+
+      - name: Persist exact external carrier plan
+        id: carrier
+        if: steps.apply.outputs.carrier_required == 'true'
+        env:
+          CARRIER_PLAN_B64: ${{ steps.apply.outputs.carrier_plan_b64 }}
+          CARRIER_PLAN_ID: ${{ steps.apply.outputs.carrier_plan_id }}
+        shell: bash
+        run: |
+          if [[ -z "$CARRIER_PLAN_B64" || -z "$CARRIER_PLAN_ID" ]]; then
+            echo "::error::Carrier plan identity is incomplete"
+            exit 1
+          fi
+          printf '%s' "$CARRIER_PLAN_B64" | base64 --decode > "$RUNNER_TEMP/carrier-plan.json"
+          jq -e --arg plan_id "$CARRIER_PLAN_ID" '.plan_id == $plan_id and .force == false' \
+            "$RUNNER_TEMP/carrier-plan.json" >/dev/null
+          echo "carrier_plan_path=$RUNNER_TEMP/carrier-plan.json" >> "$GITHUB_OUTPUT"
+
+      - name: Upload exact external carrier plan
+        if: steps.carrier.outputs.carrier_plan_path != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: carrier-plan.json
+          path: ${{ steps.carrier.outputs.carrier_plan_path }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Select the exact application-owned validation target
         id: validation
