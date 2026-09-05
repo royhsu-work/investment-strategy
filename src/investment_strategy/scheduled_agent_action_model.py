@@ -57,6 +57,7 @@ class ResultKind(StrEnum):
     FINDINGS = "findings"
     PASS = "pass"  # noqa: S105
     READY = "ready"
+    LIFECYCLE_READY = "lifecycle-ready"
     SPEC_BLOCKER = "spec-blocker"
     MORE_IMPLEMENTATION_REQUIRED = "more-implementation-required"
     ARCHIVE_READY = "archive-ready"
@@ -324,6 +325,7 @@ TRANSITIONS: Mapping[Action, Mapping[ResultKind, Action | None]] = MappingProxyT
         Action.RESOLVE_QUESTION: MappingProxyType(
             {
                 ResultKind.READY_FOR_OPENSPEC_REVIEW: Action.REVIEW_OPENSPEC,
+                ResultKind.LIFECYCLE_READY: Action.FINALIZE_CHANGE,
                 ResultKind.READY: Action.IMPLEMENT_CHANGE,
                 ResultKind.RESEARCH_REQUIRED: Action.EXPLORE_CHANGE,
                 ResultKind.HUMAN_DECISION_REQUIRED: Action.RESOLVE_QUESTION,
@@ -333,6 +335,7 @@ TRANSITIONS: Mapping[Action, Mapping[ResultKind, Action | None]] = MappingProxyT
         ),
         Action.FINALIZE_CHANGE: MappingProxyType(
             {
+                ResultKind.SPEC_BLOCKER: Action.RESOLVE_QUESTION,
                 ResultKind.MORE_IMPLEMENTATION_REQUIRED: Action.IMPLEMENT_CHANGE,
                 ResultKind.ARCHIVE_READY: Action.REVIEW_ARCHIVE,
                 ResultKind.HUMAN_DECISION_REQUIRED: Action.FINALIZE_CHANGE,

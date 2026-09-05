@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -666,17 +667,28 @@ def apply_work_product(
 
     if _ref_head_sha(repository, token, plan.manifest.branch) != revision:
         raise RuntimeError("work-product ref postcondition was not observed")
-    observed_pr = _open_pr_payload(
-        repository=repository,
-        token=token,
-        pr_number=plan.pr_number,
-        source=plan.source,
-        expected_change=plan.expected_change,
-        default_branch=default_branch,
-        allow_historical_merged_carrier=True,
-    )
-    observed_head = _as_mapping(observed_pr.get("head"))
-    if observed_head is None or observed_head.get("ref") != expected_branch:
+    observed_pr: Mapping[str, object] | None = None
+    observed_head: Mapping[str, object] | None = None
+    for attempt in range(3):
+        observed_pr = _open_pr_payload(
+            repository=repository,
+            token=token,
+            pr_number=plan.pr_number,
+            source=plan.source,
+            expected_change=plan.expected_change,
+            default_branch=default_branch,
+            allow_historical_merged_carrier=True,
+        )
+        observed_head = _as_mapping(observed_pr.get("head"))
+        if (
+            observed_head is not None
+            and observed_head.get("ref") == expected_branch
+            and (historical_merged_carrier or observed_head.get("sha") == revision)
+        ):
+            break
+        if attempt < 2:
+            time.sleep(1)
+    if observed_pr is None or observed_head is None or observed_head.get("ref") != expected_branch:
         raise RuntimeError("work-product PR-head postcondition was not observed")
     if historical_merged_carrier:
         if (
