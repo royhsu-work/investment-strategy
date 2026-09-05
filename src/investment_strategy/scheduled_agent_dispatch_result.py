@@ -199,11 +199,7 @@ def fetch_dispatch_result(
 ) -> MachineDispatchDecision:
     """Read exactly one successful bridge run and its one structured Artifact result."""
 
-    if (
-        request_comment_id <= 0
-        or run_id <= 0
-        or _SHA.fullmatch(current_revision) is None
-    ):
+    if request_comment_id <= 0 or run_id <= 0 or _SHA.fullmatch(current_revision) is None:
         raise RuntimeError("exact dispatch run identity is invalid")
 
     run = _as_mapping(_github_json(repository, token, f"actions/runs/{run_id}"))
