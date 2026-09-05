@@ -44,6 +44,16 @@ def test_action_vocabulary_derives_roles_and_rejects_generic_merge() -> None:
             Action.RESOLVE_QUESTION,
         ),
         (
+            Action.FINALIZE_CHANGE,
+            ResultKind.SPEC_BLOCKER,
+            Action.RESOLVE_QUESTION,
+        ),
+        (
+            Action.RESOLVE_QUESTION,
+            ResultKind.LIFECYCLE_READY,
+            Action.FINALIZE_CHANGE,
+        ),
+        (
             Action.REVIEW_OPENSPEC,
             ResultKind.PASS,
             Action.IMPLEMENT_CHANGE,
@@ -82,6 +92,18 @@ def test_next_action_is_a_single_deterministic_transition(
 def test_invalid_transition_fails_closed() -> None:
     with pytest.raises(InvalidTransition):
         next_action(Action.IMPLEMENT_CHANGE, TypedResult(ResultKind.PASS))
+
+
+@pytest.mark.parametrize(
+    ("current", "result"),
+    [
+        (Action.FINALIZE_CHANGE, ResultKind.LIFECYCLE_READY),
+        (Action.RESOLVE_QUESTION, ResultKind.SPEC_BLOCKER),
+    ],
+)
+def test_unrelated_lifecycle_results_remain_illegal(current: Action, result: ResultKind) -> None:
+    with pytest.raises(InvalidTransition):
+        next_action(current, TypedResult(result))
 
 
 def test_typed_result_has_no_successor_or_target_authority() -> None:
