@@ -85,14 +85,21 @@ def _github_bytes(repository: str, token: str, api_path: str) -> bytes:
             raise RuntimeError("exact dispatch artifact redirect is not trusted") from exc
         parsed = urlsplit(location)
         host = parsed.hostname.lower() if parsed.hostname is not None else None
-        if parsed.scheme != "https" or host is None or _ARTIFACT_REDIRECT_HOST.fullmatch(host) is None:
+        if (
+            parsed.scheme != "https"
+            or host is None
+            or _ARTIFACT_REDIRECT_HOST.fullmatch(host) is None
+        ):
             raise RuntimeError("exact dispatch artifact redirect is not trusted") from exc
-        redirected_request = Request(  # noqa: S310 - location is validated as a GitHub Actions host
+        redirected_request = Request(  # noqa: S310 - validated GitHub Actions host
             location,
             headers={"Accept": "application/octet-stream"},
         )
         try:
-            with urlopen(redirected_request, timeout=30) as response:  # noqa: S310 - validated GitHub Actions host
+            with urlopen(  # noqa: S310 - validated GitHub Actions host
+                redirected_request,
+                timeout=30,
+            ) as response:
                 return response.read()
         except (HTTPError, URLError, TimeoutError) as redirect_exc:
             raise RuntimeError("exact dispatch artifact response is invalid") from redirect_exc
@@ -140,7 +147,11 @@ def _parse_dispatch_result_document(raw: bytes) -> MachineDispatchDecision:
 
     request_comment_id = _positive_int(payload.get("request_comment_id"))
     revision = payload.get("default_branch_revision")
-    if request_comment_id is None or not isinstance(revision, str) or _SHA.fullmatch(revision) is None:
+    if (
+        request_comment_id is None
+        or not isinstance(revision, str)
+        or _SHA.fullmatch(revision) is None
+    ):
         raise RuntimeError("exact dispatch result identity is invalid")
 
     if disposition == "AUTHORIZE":
@@ -188,7 +199,11 @@ def fetch_dispatch_result(
 ) -> MachineDispatchDecision:
     """Read exactly one successful bridge run and its one structured Artifact result."""
 
-    if request_comment_id <= 0 or run_id <= 0 or _SHA.fullmatch(current_revision) is None:
+    if (
+        request_comment_id <= 0
+        or run_id <= 0
+        or _SHA.fullmatch(current_revision) is None
+    ):
         raise RuntimeError("exact dispatch run identity is invalid")
 
     run = _as_mapping(_github_json(repository, token, f"actions/runs/{run_id}"))
