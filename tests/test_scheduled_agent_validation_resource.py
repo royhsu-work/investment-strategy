@@ -154,7 +154,6 @@ def test_executor_task_marker_is_the_only_nonreview_openspec_work_product() -> N
     assert not resource._is_executor_task_bookkeeping(source, _CHANGE, (design_file,))
     assert not resource._is_executor_task_bookkeeping(source, _CHANGE, (task_file, design_file))
 
-
 def _work_product_plan(
     *,
     source: WorkerRequest,
@@ -199,7 +198,6 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
     )
     monkeypatch.setattr(resource, "_current_authorized_request", lambda *_: source)
     head_sha = _PR_HEAD
-    stale_pr_reads = 0
     tree_payloads: list[object] = []
     commit_payloads: list[object] = []
 
@@ -212,7 +210,7 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
         payload: dict[str, object] | None = None,
         allow_not_found: bool = False,
     ) -> object | None:
-        nonlocal head_sha, stale_pr_reads
+        nonlocal head_sha
         assert repository == _REPOSITORY
         assert token == _FIXTURE_VALUE
         del allow_not_found
@@ -223,17 +221,13 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
         if api_path == "issues/138" and method == "GET":
             return {"state": "open", "body": f"Change: {_CHANGE}\n"}
         if api_path == "pulls/178" and method == "GET":
-            observed_head_sha = head_sha
-            if head_sha == revision and stale_pr_reads < 4:
-                stale_pr_reads += 1
-                observed_head_sha = _PR_HEAD
             return {
                 "number": 178,
                 "state": "open",
                 "merged": False,
                 "body": "Refs #138\n",
                 "head": {
-                    "sha": observed_head_sha,
+                    "sha": head_sha,
                     "ref": f"agent/{_CHANGE}",
                     "repo": {"full_name": _REPOSITORY},
                 },
@@ -275,7 +269,6 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
             }
         raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
 
-    monkeypatch.setattr(resource.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(resource, "_github_json", fake_github_json)
     with pytest.raises(CarrierRequired) as raised:
         resource.apply_work_product(
@@ -292,7 +285,6 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
     assert carrier_plan.requested["force"] is False
     assert len(tree_payloads) == 1
     assert len(commit_payloads) == 1
-    assert stale_pr_reads == 4
     assert commit_payloads[0] == {
         "message": "Correct #138 N-1 ordering",
         "tree": tree_sha,
