@@ -52,6 +52,18 @@ this lifecycle meaning.
   conditions while retaining existing review, implementation, archive, Human, and fail-closed
   contracts.
 
+### Modified Repository Skills
+
+- `agents/skills/lifecycle-finalize/SKILL.md`: clarify that only a proven material
+  specification/canonicalization/lifecycle-contract defect outside action-local authority returns
+  `SPEC_BLOCKER`; progressing work, semantic-neutral recovery, Human decisions, and ambiguity retain
+  their existing handling. Source/reference: the approved `scheduled-agent-workflow` requirement;
+  replacement: bounded result and ownership guidance with no recovery state.
+- `agents/skills/openspec-change/SKILL.md`: clarify the bounded `LIFECYCLE_READY` return to
+  `finalize-change` and preserve `READY_FOR_OPENSPEC_REVIEW` / `READY` handoffs. Source/reference:
+  the approved `scheduled-agent-workflow` requirement; replacement: result-consumption guidance with
+  no direct archive mutation or worker successor authority.
+
 ## Scope Boundaries
 
 - No new Action, Role, recovery state machine, hidden lifecycle state, retry/lock/lease/heartbeat,
@@ -70,8 +82,9 @@ this lifecycle meaning.
 - Historical pre-activation source evidence: before this Change was materialized, #169
   was at action:propose-change with Change: unset.
 - Current review target: #169 is at action:review-openspec with Change
-  `restore-lifecycle-finalization-correction-routing`; PR #201 is open at exact reviewed head
-  `9892226fbb5dd4ea7408fd1ccb05b11138898a65` against default-branch revision `961384a79ef169658f031c03f8f1ba551b650a59`.
+  `restore-lifecycle-finalization-correction-routing`; PR #201 is the existing open carrier for this
+  Change. Each application/review invocation binds to its freshly verified exact PR head and
+  default-branch revision; no artifact-local head snapshot is authority.
 - Current executable source: `src/investment_strategy/scheduled_agent_action_model.py`.
 - Current canonical capability: `openspec/specs/scheduled-agent-workflow/spec.md`, especially the
   executable-transition and Lead review/finalize requirements.
