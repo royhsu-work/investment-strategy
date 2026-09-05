@@ -9,13 +9,16 @@ GITHUB_MUTATION_KIND: Final = "github-mutation"
 
 _ACTION_OPERATIONS: Final[dict[RoleAction, frozenset[str]]] = {
     ("lead", "explore-change"): frozenset({"issue-update", "issue-label-add"}),
-    ("lead", "propose-change"): frozenset({"issue-update", "issue-label-add"}),
+    ("lead", "propose-change"): frozenset(
+        {"issue-update", "issue-label-add", "application-materialize"}
+    ),
     ("lead", "resolve-question"): frozenset(
         {
             "issue-update",
             "issue-label-add",
             "pull-request-create",
             "pull-request-update",
+            "application-materialize",
         }
     ),
     ("lead", "finalize-change"): frozenset(
@@ -36,6 +39,7 @@ _ACTION_OPERATIONS: Final[dict[RoleAction, frozenset[str]]] = {
             "pull-request-create",
             "pull-request-update",
             "pull-request-ready",
+            "application-materialize",
         }
     ),
     ("executor", "merge-implementation-pr"): frozenset({"pull-request-merge", "ref-delete"}),
