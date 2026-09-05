@@ -126,6 +126,7 @@ def test_fetch_dispatch_result_rejects_zero_or_multiple_matching_artifacts(
         },
     )
     for listing in listings:
+
         def fake_json(repository: str, token: str, path: str, *, value: object = listing) -> object:
             del repository, token
             return _run() if path == f"actions/runs/{_RUN_ID}" else value
