@@ -19,7 +19,9 @@ from investment_strategy.scheduled_agent_application_materialization import (
     materialization_requires_validation,
     observe_materialization_target,
 )
+from investment_strategy.scheduled_agent_carrier import carrier_plan_document
 from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
+from investment_strategy.scheduled_agent_effects import ApplyResult
 from investment_strategy.scheduled_agent_merge_acceptance import run_guarded_effect_application
 from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
@@ -280,6 +282,24 @@ def _write_validation_outputs(target: ValidationResourceTarget | None) -> None:
         output.write("\n".join(lines) + "\n")
 
 
+def _write_carrier_outputs(result: ApplyResult) -> None:
+    """Expose an immutable carrier plan as run-scoped application evidence."""
+
+    output_path = os.environ.get("GITHUB_OUTPUT")
+    plan = result.carrier_plan
+    if output_path is None:
+        return
+    lines = [f"carrier_required={'true' if plan is not None else 'false'}"]
+    if plan is not None:
+        document = carrier_plan_document(plan)
+        encoded = base64.b64encode(
+            json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).decode("ascii")
+        lines.extend((f"carrier_plan_id={plan.plan_id}", f"carrier_plan_b64={encoded}"))
+    with Path(output_path).open("a", encoding="utf-8") as output:
+        output.write("\n".join(lines) + "\n")
+
+
 def main() -> int:
     """Apply one worker result after fresh repository authorization."""
 
@@ -374,6 +394,7 @@ def main() -> int:
         )
     else:
         target = None
+    _write_carrier_outputs(result)
     _write_validation_outputs(target)
     print(
         json.dumps(
@@ -383,11 +404,15 @@ def main() -> int:
                 "effects": len(batch.effects),
                 "validation_required": requires_validation,
                 "validation_completed": args.validation_passed,
+                "carrier_required": result.carrier_plan is not None,
+                "carrier_plan_id": None
+                if result.carrier_plan is None
+                else result.carrier_plan.plan_id,
             },
             sort_keys=True,
         )
     )
-    return 0 if result.applied else 1
+    return 0 if result.applied or result.carrier_plan is not None else 1
 
 
 if __name__ == "__main__":

@@ -32,6 +32,12 @@ from investment_strategy.scheduled_agent_application_materialization import (
     find_materialization_payload,
     materialization_postcondition,
 )
+from investment_strategy.scheduled_agent_carrier import (
+    CarrierPlan,
+    CarrierRequired,
+    carrier_pr_identity,
+    make_carrier_plan,
+)
 from investment_strategy.scheduled_agent_effect_contract import (
     GITHUB_MUTATION_KIND,
     allowed_github_mutation_operations,
@@ -76,12 +82,14 @@ class ApplyResult:
     applied: bool
     reason: str
     rejection: ApplicationRejection | None = None
+    carrier_plan: CarrierPlan | None = None
 
 
 FreshPreflight = Callable[[], DispatchPreflight]
 EffectGuard = Callable[[StagedEffect], bool]
 EffectApplier = Callable[[StagedEffect], None]
 PostconditionObserver = Callable[[StagedEffect], bool]
+CarrierPlanProvider = Callable[[StagedEffect], CarrierPlan | None]
 
 
 def parse_effect_batch(raw: str, source: WorkerRequest) -> EffectBatch:
@@ -525,6 +533,7 @@ def apply_effect_batch(
     observe_postcondition: PostconditionObserver,
     current_revision: str | None = None,
     apply_derived: bool = True,
+    carrier_plan_for_effect: CarrierPlanProvider | None = None,
 ) -> ApplyResult:
     """Apply one typed batch after fresh source reauthorization."""
 
@@ -557,7 +566,10 @@ def apply_effect_batch(
     for effect in effects:
         if not effect_guard(effect):
             return ApplyResult(False, "effect precondition rejected")
-        apply_effect(effect)
+        try:
+            apply_effect(effect)
+        except CarrierRequired as exc:
+            return ApplyResult(False, "carrier_required", carrier_plan=exc.plan)
         if not observe_postcondition(effect):
             return ApplyResult(False, "durable postcondition not observed")
 
@@ -597,25 +609,6 @@ def _github_json(
     if not raw:
         return None
     return json.loads(raw.decode("utf-8"))
-
-
-def _github_graphql(token: str, query: str, variables: Mapping[str, object]) -> object:
-    request = Request(
-        "https://api.github.com/graphql",
-        data=json.dumps({"query": query, "variables": variables}).encode("utf-8"),
-        method="POST",
-        headers={
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
-    )
-    with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
-        raw = response.read()
-    decoded = json.loads(raw.decode("utf-8"))
-    if not isinstance(decoded, Mapping) or decoded.get("errors"):
-        raise RuntimeError("GitHub GraphQL mutation failed")
-    return decoded
 
 
 def _shallow_matches(actual: Mapping[str, object], expected: Mapping[str, object]) -> bool:
@@ -782,7 +775,7 @@ class GitHubEffectAdapter:
             return False
         if request.get("head") == _archive_branch(self.authorized_change):
             return _valid_sha(self.current_revision) and base.get("sha") == self.current_revision
-        return True
+        return _valid_sha(self.current_revision) and base.get("sha") == self.current_revision
 
     def _source_pull_request(
         self,
@@ -830,6 +823,7 @@ class GitHubEffectAdapter:
         response = _github_json(self.repository, self.token, query)
         if not isinstance(response, list):
             return None
+        matches: list[Mapping[str, object]] = []
         for item in response:
             if not isinstance(item, Mapping):
                 continue
@@ -840,8 +834,10 @@ class GitHubEffectAdapter:
                 and number > 0
                 and self._pull_request_matches_create(item, number, payload)
             ):
-                return item
-        return None
+                matches.append(item)
+        if len(matches) > 1:
+            raise RuntimeError("carrier PR target is ambiguous: duplicate matching PRs")
+        return None if not matches else matches[0]
 
     def _existing_workflow_dispatch(
         self,
@@ -892,6 +888,209 @@ class GitHubEffectAdapter:
             and bool(merged_at.strip())
             and _pull_request_head_sha(payload) == expected_head_sha
         )
+
+    def _carrier_plan(
+        self,
+        *,
+        operation: str,
+        target: Mapping[str, object],
+        expected: Mapping[str, object],
+        requested: Mapping[str, object],
+        expected_postcondition: Mapping[str, object],
+    ) -> CarrierPlan:
+        """Bind one carrier-only operation to the current application authorization."""
+
+        if not _valid_sha(self.current_revision):
+            raise RuntimeError("carrier plan authorization revision is unavailable")
+        return make_carrier_plan(
+            repository=self.repository,
+            issue_number=self.source.issue_number,
+            change=self.authorized_change,
+            action=self.source.action,
+            authorization_revision=cast(str, self.current_revision),
+            operation=operation,
+            target=target,
+            expected=expected,
+            requested=requested,
+            expected_postcondition=expected_postcondition,
+        )
+
+    def _carrier_plan_for_github_mutation(
+        self,
+        payload: Mapping[str, object],
+    ) -> CarrierPlan:
+        """Create a plan only after the fresh operation guard has passed."""
+
+        operation = cast(str, payload["operation"])
+        number = payload.get("number")
+        if operation == "pull-request-create":
+            default_branch = self._default_branch()
+            branch = payload.get("head")
+            if default_branch is None or not isinstance(branch, str):
+                raise RuntimeError("carrier create plan target is unavailable")
+            head_ref = _github_json(
+                self.repository,
+                self.token,
+                _ref_api_path(f"refs/heads/{branch}"),
+                allow_not_found=True,
+            )
+            base_ref = _github_json(
+                self.repository,
+                self.token,
+                _ref_api_path(f"refs/heads/{default_branch}"),
+                allow_not_found=True,
+            )
+            head_object = head_ref.get("object") if isinstance(head_ref, Mapping) else None
+            base_object = base_ref.get("object") if isinstance(base_ref, Mapping) else None
+            head_sha = head_object.get("sha") if isinstance(head_object, Mapping) else None
+            base_sha = base_object.get("sha") if isinstance(base_object, Mapping) else None
+            if not _valid_sha(head_sha) or not _valid_sha(base_sha):
+                raise RuntimeError("carrier create plan ref identity is unavailable")
+            create_requested = {
+                "title": payload.get("title"),
+                "body": payload.get("body", ""),
+                "head": branch,
+                "base": default_branch,
+                "draft": payload.get("draft", False),
+                "head_sha": head_sha,
+            }
+            create_expected = {
+                "head_ref": branch,
+                "head_sha": head_sha,
+                "base_ref": default_branch,
+                "base_sha": base_sha,
+                "existing_pr_count": 0,
+            }
+            return self._carrier_plan(
+                operation=operation,
+                target={"head_ref": branch, "base_ref": default_branch},
+                expected=create_expected,
+                requested=create_requested,
+                expected_postcondition={
+                    "state": "open",
+                    "merged": False,
+                    "title": payload.get("title"),
+                    "body": payload.get("body", ""),
+                    "draft": payload.get("draft", False),
+                    "head_ref": branch,
+                    "head_sha": head_sha,
+                    "base_ref": default_branch,
+                    "base_sha": base_sha,
+                    "repository": self.repository,
+                },
+            )
+
+        if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+            raise RuntimeError("carrier plan PR identity is invalid")
+        current = self._source_pull_request(number, require_open=operation != "pull-request-merge")
+        if current is None:
+            raise RuntimeError("carrier plan PR observation is unavailable")
+        identity = carrier_pr_identity(current)
+        requested: dict[str, object]
+        expected_postcondition: dict[str, object]
+        if operation == "pull-request-update":
+            fields = payload.get("fields")
+            if not isinstance(fields, Mapping):
+                raise RuntimeError("carrier update plan fields are invalid")
+            requested = {
+                "fields": dict(fields),
+                "expected_head_sha": payload.get("expected_head_sha"),
+            }
+            expected_postcondition = {
+                "pr": number,
+                "head_sha": payload.get("expected_head_sha"),
+                "fields": dict(fields),
+            }
+        elif operation == "pull-request-ready":
+            requested = {"expected_head_sha": payload.get("expected_head_sha"), "draft": False}
+            expected_postcondition = {
+                "pr": number,
+                "state": "open",
+                "merged": False,
+                "draft": False,
+                "head_sha": payload.get("expected_head_sha"),
+            }
+        elif operation == "pull-request-merge":
+            requested = {
+                "expected_head_sha": payload.get("expected_head_sha"),
+                "merge_method": payload.get("merge_method", "merge"),
+            }
+            expected_postcondition = {
+                "pr": number,
+                "state": "closed",
+                "merged": True,
+                "head_sha": payload.get("expected_head_sha"),
+            }
+        else:
+            raise RuntimeError(f"unsupported carrier plan operation: {operation}")
+        return self._carrier_plan(
+            operation=operation,
+            target={"pull_request_number": number},
+            expected={"pull_request": identity},
+            requested=requested,
+            expected_postcondition=expected_postcondition,
+        )
+
+    def carrier_plan_if_required(self, effect: StagedEffect) -> CarrierPlan | None:
+        """Return a carrier plan only when a fresh PR postcondition is not current."""
+
+        if effect.kind != GITHUB_MUTATION_KIND:
+            return None
+        payload = _effect_payload(effect)
+        if payload is None:
+            return None
+        operation = payload.get("operation")
+        if operation not in {
+            "pull-request-create",
+            "pull-request-update",
+            "pull-request-ready",
+            "pull-request-merge",
+        }:
+            return None
+        if not self._guard_github_mutation(payload):
+            return None
+        if operation == "pull-request-create":
+            return (
+                None
+                if self._existing_pull_request_for_create(payload) is not None
+                else self._carrier_plan_for_github_mutation(payload)
+            )
+        number = payload.get("number")
+        if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+            return None
+        current = self._source_pull_request(
+            number,
+            require_open=operation != "pull-request-merge",
+        )
+        if current is None:
+            return None
+        if operation == "pull-request-update":
+            fields = payload.get("fields")
+            if (
+                isinstance(fields, Mapping)
+                and all(
+                    (
+                        (
+                            key == "base"
+                            and isinstance(current_base := current.get("base"), Mapping)
+                            and current_base.get("ref") == value
+                        )
+                        or (key != "base" and current.get(key) == value)
+                    )
+                    for key, value in fields.items()
+                )
+                and _pull_request_head_sha(current) == payload.get("expected_head_sha")
+            ):
+                return None
+        elif operation == "pull-request-ready":
+            if current.get("draft") is False and _pull_request_head_sha(current) == payload.get(
+                "expected_head_sha"
+            ):
+                return None
+        elif operation == "pull-request-merge":
+            if self._historical_merged_pr(current, cast(str, payload["expected_head_sha"])):
+                return None
+        return self._carrier_plan_for_github_mutation(payload)
 
     def _guard_github_mutation(self, payload: Mapping[str, object]) -> bool:
         observation = self._authorized_issue_observation()
@@ -1174,43 +1373,37 @@ class GitHubEffectAdapter:
                     raise RuntimeError("existing pull request number is invalid")
                 self._created_pr_numbers[effect] = number
                 return
-            response = _github_json(
-                self.repository,
-                self.token,
-                "pulls",
-                method="POST",
-                payload={
-                    "title": cast(str, payload["title"]),
-                    "body": cast(str, payload.get("body", "")),
-                    "head": cast(str, payload["head"]),
-                    "base": cast(str, payload["base"]),
-                    "draft": cast(bool, payload.get("draft", False)),
-                },
-            )
-            if not isinstance(response, Mapping) or not isinstance(response.get("number"), int):
-                raise RuntimeError("GitHub pull request creation returned no number")
-            self._created_pr_numbers[effect] = cast(int, response["number"])
+            raise CarrierRequired(self._carrier_plan_for_github_mutation(payload))
             return
         if operation == "pull-request-update":
-            _github_json(
-                self.repository,
-                self.token,
-                f"pulls/{cast(int, payload['number'])}",
-                method="PATCH",
-                payload=cast(Mapping[str, object], payload["fields"]),
-            )
+            current = self._source_pull_request(cast(int, payload["number"]), require_open=True)
+            fields = payload.get("fields")
+            if current is None or not isinstance(fields, Mapping):
+                raise RuntimeError("pull request update source became stale")
+            if all(
+                (
+                    (
+                        key == "base"
+                        and isinstance(current_base := current.get("base"), Mapping)
+                        and current_base.get("ref") == value
+                    )
+                    or (key != "base" and current.get(key) == value)
+                )
+                for key, value in fields.items()
+            ) and _pull_request_head_sha(current) == payload.get("expected_head_sha"):
+                return
+            raise CarrierRequired(self._carrier_plan_for_github_mutation(payload))
             return
         if operation == "pull-request-ready":
             number = cast(int, payload["number"])
-            current = _github_json(self.repository, self.token, f"pulls/{number}")
-            if not isinstance(current, Mapping) or not isinstance(current.get("node_id"), str):
-                raise RuntimeError("GitHub pull request has no node id for ready transition")
-            _github_graphql(
-                self.token,
-                "mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id})"
-                "{pullRequest{isDraft}}}",
-                {"id": cast(str, current["node_id"])},
-            )
+            ready_current = self._source_pull_request(number, require_open=True)
+            if ready_current is None:
+                raise RuntimeError("pull request ready source became stale")
+            if ready_current.get("draft") is False and _pull_request_head_sha(
+                ready_current
+            ) == payload.get("expected_head_sha"):
+                return
+            raise CarrierRequired(self._carrier_plan_for_github_mutation(payload))
             return
         if operation == "pull-request-merge":
             number = cast(int, payload["number"])
@@ -1228,16 +1421,7 @@ class GitHubEffectAdapter:
                 return
             if current.get("state") != "open" or current.get("merged") is True:
                 raise RuntimeError("pull request merge source is not open")
-            _github_json(
-                self.repository,
-                self.token,
-                f"pulls/{number}/merge",
-                method="PUT",
-                payload={
-                    "sha": expected_head_sha,
-                    "merge_method": cast(str, payload.get("merge_method", "merge")),
-                },
-            )
+            raise CarrierRequired(self._carrier_plan_for_github_mutation(payload))
             return
         raise RuntimeError(f"unsupported GitHub mutation operation: {operation}")
 
@@ -1380,7 +1564,17 @@ class GitHubEffectAdapter:
         if operation == "pull-request-create":
             number = self._created_pr_numbers.get(effect)
             if number is None:
-                return False
+                existing = self._existing_pull_request_for_create(payload)
+                if existing is None:
+                    return False
+                candidate_number = existing.get("number")
+                if (
+                    not isinstance(candidate_number, int)
+                    or isinstance(candidate_number, bool)
+                    or candidate_number <= 0
+                ):
+                    return False
+                number = candidate_number
             current_pr = _github_json(self.repository, self.token, f"pulls/{number}")
             return isinstance(current_pr, Mapping) and self._pull_request_matches_create(
                 current_pr, number, payload
@@ -1512,6 +1706,7 @@ def run_effect_application(
         observe_postcondition=adapter.observe_postcondition,
         current_revision=current_revision,
         apply_derived=apply_derived,
+        carrier_plan_for_effect=adapter.carrier_plan_if_required,
     )
     return batch, result
 
