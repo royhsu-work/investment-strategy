@@ -9,6 +9,7 @@ from urllib.request import Request
 import pytest
 
 import investment_strategy.scheduled_agent_validation_resource as resource
+from investment_strategy.scheduled_agent_carrier import CarrierRequired
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 
 _REPOSITORY = "royhsu-work/investment-strategy"
@@ -90,7 +91,11 @@ def test_resource_derives_current_pr_head_after_fresh_reauthorization(
                     "ref": f"agent/{_CHANGE}",
                     "repo": {"full_name": _REPOSITORY},
                 },
-                "base": {"ref": "main", "repo": {"full_name": _REPOSITORY}},
+                "base": {
+                    "ref": "main",
+                    "sha": _REVISION,
+                    "repo": {"full_name": _REPOSITORY},
+                },
             }
         if api_path == "pulls/178/files?per_page=100":
             return [
@@ -213,6 +218,8 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
         del allow_not_found
         if api_path == "" and method == "GET":
             return {"default_branch": "main"}
+        if api_path == "git/ref/heads/main" and method == "GET":
+            return {"object": {"sha": _REVISION}}
         if api_path == "issues/138" and method == "GET":
             return {"state": "open", "body": f"Change: {_CHANGE}\n"}
         if api_path == "pulls/178" and method == "GET":
@@ -230,7 +237,11 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
                     "ref": f"agent/{_CHANGE}",
                     "repo": {"full_name": _REPOSITORY},
                 },
-                "base": {"ref": "main", "repo": {"full_name": _REPOSITORY}},
+                "base": {
+                    "ref": "main",
+                    "sha": _REVISION,
+                    "repo": {"full_name": _REPOSITORY},
+                },
             }
         if api_path == "pulls/178/files?per_page=100" and method == "GET":
             return [{"filename": path}]
@@ -266,15 +277,19 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
 
     monkeypatch.setattr(resource.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(resource, "_github_json", fake_github_json)
-    target = resource.apply_work_product(
-        plan,
-        repository=_REPOSITORY,
-        token=_FIXTURE_VALUE,
-        default_branch="main",
-    )
+    with pytest.raises(CarrierRequired) as raised:
+        resource.apply_work_product(
+            plan,
+            repository=_REPOSITORY,
+            token=_FIXTURE_VALUE,
+            default_branch="main",
+            authorization_revision=_REVISION,
+        )
 
-    assert target.revision == revision
-    assert target.correlation == "effect-request-138"
+    carrier_plan = raised.value.plan
+    assert carrier_plan.operation == "pull-request-head-update"
+    assert carrier_plan.requested["sha"] == revision
+    assert carrier_plan.requested["force"] is False
     assert len(tree_payloads) == 1
     assert len(commit_payloads) == 1
     assert stale_pr_reads == 4
@@ -308,6 +323,10 @@ def test_work_product_rejects_stale_current_file_before_git_construction(
     ) -> object:
         if api_path == "":
             return {"default_branch": "main"}
+        if api_path == "git/ref/heads/main":
+            return {"object": {"sha": _REVISION}}
+        if api_path == f"git/ref/heads/agent/{_CHANGE}":
+            return {"object": {"sha": _PR_HEAD}}
         if api_path == "issues/138":
             return {"state": "open", "body": f"Change: {_CHANGE}\n"}
         if api_path == "pulls/178":
@@ -321,7 +340,11 @@ def test_work_product_rejects_stale_current_file_before_git_construction(
                     "ref": f"agent/{_CHANGE}",
                     "repo": {"full_name": _REPOSITORY},
                 },
-                "base": {"ref": "main", "repo": {"full_name": _REPOSITORY}},
+                "base": {
+                    "ref": "main",
+                    "sha": _REVISION,
+                    "repo": {"full_name": _REPOSITORY},
+                },
             }
         if api_path == "pulls/178/files?per_page=100":
             return [{"filename": path}]
@@ -336,6 +359,7 @@ def test_work_product_rejects_stale_current_file_before_git_construction(
             repository=_REPOSITORY,
             token=_FIXTURE_VALUE,
             default_branch="main",
+            authorization_revision=_REVISION,
         )
 
 
