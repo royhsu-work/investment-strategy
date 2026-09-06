@@ -181,7 +181,12 @@ def test_executor_cannot_materialize_repository_level_openspec_semantics(monkeyp
     monkeypatch.setattr(validation_resource, "_ref_head_sha", lambda *args: _BASE)
     monkeypatch.setattr(validation_resource, "_current_authorized_request", lambda *args: source)
 
-    assert validation_resource._is_executor_task_bookkeeping(source, _CHANGE, (config_file,)) is False
+    executor_bookkeeping = validation_resource._is_executor_task_bookkeeping(
+        source,
+        _CHANGE,
+        (config_file,),
+    )
+    assert executor_bookkeeping is False
     assert validation_resource._review_openspec_required(source) is False
     with pytest.raises(RuntimeError, match="no required OpenSpec review gate"):
         apply_work_product(
