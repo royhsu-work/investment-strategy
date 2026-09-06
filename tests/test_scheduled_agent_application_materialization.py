@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-import investment_strategy.scheduled_agent_validation_resource as validation_resource
 import investment_strategy.scheduled_agent_application_materialization as materialization
+import investment_strategy.scheduled_agent_validation_resource as validation_resource
 from investment_strategy.scheduled_agent_application_materialization import (
     materialization_postcondition,
     materialization_requires_validation,
@@ -23,9 +23,9 @@ from investment_strategy.scheduled_agent_effects import (
 )
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 from investment_strategy.scheduled_agent_validation_resource import (
+    ValidationResourceTarget,
     WorkProductFile,
     WorkProductManifest,
-    ValidationResourceTarget,
     WorkProductPlan,
     apply_work_product,
     work_product_path_allowed,
