@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import investment_strategy.scheduled_agent_validation_resource as validation_resource
 import pytest
 
 import investment_strategy.scheduled_agent_validation_resource as validation_resource
