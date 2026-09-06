@@ -133,9 +133,7 @@ def test_lead_openspec_authoring_can_update_only_the_existing_config_owner() -> 
     for action in ("propose-change", "resolve-question"):
         source = WorkerRequest(169, "lead", action)
         assert work_product_path_allowed(source, _CHANGE, "openspec/config.yaml")
-        assert work_product_path_allowed(
-            source, _CHANGE, f"openspec/changes/{_CHANGE}/proposal.md"
-        )
+        assert work_product_path_allowed(source, _CHANGE, f"openspec/changes/{_CHANGE}/proposal.md")
         assert not work_product_path_allowed(
             source, _CHANGE, "openspec/specs/repository-governance/spec.md"
         )
@@ -183,10 +181,7 @@ def test_executor_cannot_materialize_repository_level_openspec_semantics(monkeyp
     monkeypatch.setattr(validation_resource, "_ref_head_sha", lambda *args: _BASE)
     monkeypatch.setattr(validation_resource, "_current_authorized_request", lambda *args: source)
 
-    assert (
-        validation_resource._is_executor_task_bookkeeping(source, _CHANGE, (config_file,))
-        is False
-    )
+    assert validation_resource._is_executor_task_bookkeeping(source, _CHANGE, (config_file,)) is False
     assert validation_resource._review_openspec_required(source) is False
     with pytest.raises(RuntimeError, match="no required OpenSpec review gate"):
         apply_work_product(
