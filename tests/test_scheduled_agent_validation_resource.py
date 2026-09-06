@@ -658,7 +658,7 @@ def test_post_merge_task_materialization_builds_a_default_branch_carrier_plan(
         allow_not_found: bool = False,
     ) -> object | None:
         assert repository == _REPOSITORY
-        assert token == "fixture"
+        assert token == _FIXTURE_VALUE
         del allow_not_found
         if api_path == "" and method == "GET":
             return {"default_branch": "main"}
@@ -768,7 +768,7 @@ def test_post_merge_task_materialization_builds_a_default_branch_carrier_plan(
         resource.apply_work_product(
             plan,
             repository=_REPOSITORY,
-            token="fixture",
+            token=_FIXTURE_VALUE,
             default_branch="main",
             authorization_revision=default_revision,
         )

@@ -225,7 +225,7 @@ def test_post_merge_task_materialization_is_exactly_one_default_branch_task_mark
         "main",
         (
             validation_resource.WorkProductFile(
-                f"openspec/changes/other-change/design.md",
+                "openspec/changes/other-change/design.md",
                 _BLOB,
                 _BASE,
             ),
@@ -250,7 +250,7 @@ def test_post_merge_task_materialization_is_exactly_one_default_branch_task_mark
 
     payload["files"] = [
         {
-            "path": f"openspec/changes/other-change/design.md",
+            "path": "openspec/changes/other-change/design.md",
             "blob_sha": _BLOB,
             "expected_sha": _BASE,
         }
