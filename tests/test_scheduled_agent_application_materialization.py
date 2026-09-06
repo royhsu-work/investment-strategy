@@ -198,3 +198,63 @@ def test_executor_cannot_materialize_repository_level_openspec_semantics(
             default_branch="main",
             authorization_revision=_BASE,
         )
+
+
+def test_post_merge_task_materialization_is_exactly_one_default_branch_task_marker() -> None:
+    source = WorkerRequest(169, "executor", "implement-change")
+    task_path = f"openspec/changes/{_CHANGE}/tasks.md"
+    files = (validation_resource.WorkProductFile(task_path, _BLOB, _BASE),)
+
+    assert validation_resource.is_post_merge_task_bookkeeping(
+        source,
+        _CHANGE,
+        "main",
+        files,
+        default_branch="main",
+    )
+    assert not validation_resource.is_post_merge_task_bookkeeping(
+        source,
+        _CHANGE,
+        "other",
+        files,
+        default_branch="main",
+    )
+    assert not validation_resource.is_post_merge_task_bookkeeping(
+        source,
+        _CHANGE,
+        "main",
+        (
+            validation_resource.WorkProductFile(
+                "openspec/changes/other-change/design.md",
+                _BLOB,
+                _BASE,
+            ),
+        ),
+        default_branch="main",
+    )
+
+    payload = _payload(
+        expected_change=_CHANGE,
+        files=[
+            {
+                "path": task_path,
+                "blob_sha": _BLOB,
+                "expected_sha": _BASE,
+            }
+        ],
+    )
+    payload["branch"] = "main"
+    payload["pr_number"] = 210
+    request = parse_materialization_payload(payload, source)
+    assert request.branch == "main"
+
+    payload["files"] = [
+        {
+            "path": "openspec/changes/other-change/design.md",
+            "blob_sha": _BLOB,
+            "expected_sha": _BASE,
+        }
+    ]
+    payload["branch"] = f"agent/{_CHANGE}"
+    with pytest.raises(ValueError, match="outside Action capability"):
+        parse_materialization_payload(payload, source)

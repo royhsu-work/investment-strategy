@@ -35,11 +35,13 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _open_pr_payload,
     _ref_head_sha,
     _review_openspec_required,
+    _revision_matches_manifest,
     _source_branch,
     _valid_branch,
     _valid_repo_path,
     _valid_sha,
     apply_work_product,
+    is_post_merge_task_bookkeeping,
     resolve_validation_resource_target,
     work_product_path_allowed,
 )
@@ -119,9 +121,6 @@ def parse_materialization_payload(
         or (pr_number is not None and _positive_int(pr_number) is None)
     ):
         raise ValueError("application materialization identity is invalid")
-    if branch != _source_branch(change):
-        raise ValueError("application materialization branch is not bound to Change")
-
     files: list[WorkProductFile] = []
     seen_paths: set[str] = set()
     for raw_file in raw_files:
@@ -155,6 +154,8 @@ def parse_materialization_payload(
     normalized_expected = cast(str, expected_change)
     normalized_pr = None if pr_number is None else cast(int, pr_number)
     if normalized_expected == "unset":
+        if branch != _source_branch(change):
+            raise ValueError("first Change materialization branch is not bound to Change")
         if source != WorkerRequest(source.issue_number, "lead", "propose-change"):
             raise ValueError("first Change materialization is only legal for Lead / propose-change")
         if (
@@ -171,6 +172,13 @@ def parse_materialization_payload(
             raise ValueError("existing Change materialization requires an exact PR")
         if normalized_expected != change:
             raise ValueError("existing Change materialization Change identity is inconsistent")
+        if branch != _source_branch(change) and not is_post_merge_task_bookkeeping(
+            source,
+            normalized_expected,
+            branch,
+            tuple(files),
+        ):
+            raise ValueError("existing Change materialization branch is not bound to Change")
         if files and not all(
             work_product_path_allowed(source, normalized_expected, file.path) for file in files
         ):
@@ -687,6 +695,29 @@ def materialization_postcondition(
         current_change = _change_from_issue(issue)
         if current_change not in {request.expected_change, request.change}:
             return False
+        if is_post_merge_task_bookkeeping(
+            source,
+            request.expected_change,
+            request.branch,
+            request.files,
+            default_branch=default_branch,
+        ):
+            return (
+                target.pr_number == request.pr_number
+                and target.revision == current_revision
+                and _revision_matches_manifest(
+                    repository,
+                    token,
+                    base_sha=request.base_sha,
+                    revision=current_revision,
+                    manifest=WorkProductManifest(
+                        branch=request.branch,
+                        base_sha=request.base_sha,
+                        message=request.message,
+                        files=request.files,
+                    ),
+                )
+            )
         if _branch_head(repository, token, request.branch) != target.revision:
             return False
         pr = _as_mapping(cast(object, _github_json(repository, token, f"pulls/{target.pr_number}")))

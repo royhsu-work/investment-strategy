@@ -414,14 +414,17 @@ def _historical_merged_carrier_allowed(
         default_branch=default_branch,
     ):
         return False
-    return reviewer_pass_default_branch_revision is None or (
-        _valid_sha(reviewer_pass_default_branch_revision)
-        and _merge_commit_has_parent(
-            repository,
-            token,
-            merge_commit_sha=cast(str, merge_commit_sha),
-            parent_sha=reviewer_pass_default_branch_revision,
-        )
+    if reviewer_pass_default_branch_revision is None:
+        return True
+    if reviewer_pass_default_branch_revision == current_revision and _valid_sha(
+        reviewer_pass_default_branch_revision
+    ):
+        return True
+    return _valid_sha(reviewer_pass_default_branch_revision) and _merge_commit_has_parent(
+        repository,
+        token,
+        merge_commit_sha=cast(str, merge_commit_sha),
+        parent_sha=reviewer_pass_default_branch_revision,
     )
 
 

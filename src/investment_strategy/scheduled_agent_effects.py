@@ -48,7 +48,10 @@ from investment_strategy.scheduled_agent_runtime import (
     acquire_current_github_preflight,
     normalize_github_issue,
 )
-from investment_strategy.scheduled_agent_validation_resource import ValidationResourceTarget
+from investment_strategy.scheduled_agent_validation_resource import (
+    ValidationResourceTarget,
+    is_post_merge_task_bookkeeping,
+)
 from investment_strategy.scheduled_agent_worker import parse_worker_result
 from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
@@ -1102,8 +1105,19 @@ class GitHubEffectAdapter:
             if request is None:
                 return False
             default_branch = self._default_branch()
+            branch_allowed = request.branch == _source_branch(request.change) or (
+                default_branch is not None
+                and is_post_merge_task_bookkeeping(
+                    self.source,
+                    request.expected_change,
+                    request.branch,
+                    request.files,
+                    default_branch=default_branch,
+                )
+            )
             return (
                 request.expected_change == self.authorized_change
+                and branch_allowed
                 and default_branch is not None
                 and self.current_revision is not None
                 and _valid_sha(self.current_revision)
