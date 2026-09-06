@@ -16,7 +16,7 @@ This Change formalizes that staged-delivery contract at the existing OpenSpec ow
 - Add one reusable OpenSpec-domain procedure at agents/skills/openspec-delivery/SKILL.md for parent-outcome coverage, N-1 prerequisites, stage exit criteria, remaining mandatory outcome, and required continuation.
 - Make only the mapped OpenSpec procedures that need this concern compose the reusable procedure: Explore, Change, Review, implementation review, and lifecycle finalization. Existing archive review remains the downstream gate.
 - Require Proposal, Design, Tasks, Review, and finalization evidence to reconcile prior-stage completion, current-stage completion, and still-mandatory continuation. A stage-size or implementation decision cannot silently reduce scope.
-- Use the existing MORE_IMPLEMENTATION_REQUIRED continuation result when an approved parent outcome remains incomplete. Do not add a stage state, Action, Result kind, label, registry, artifact DAG, or history store.
+- Use the existing MORE_IMPLEMENTATION_REQUIRED continuation result when an approved parent outcome remains incomplete. Do not add a stage state, Action, Result kind, label, registry, artifact graph, or workflow mechanism.
 - Add focused regression coverage for stage evidence, parent-outcome reconciliation, N-1 prerequisites, and preservation of the existing Action/Role/Result topology.
 
 ## Ownership and canonical contract disposition
@@ -40,7 +40,7 @@ Out of scope:
 - changes to WIP, finish-first, Human authority, exact-head, carrier, archive, or merge semantics;
 - making agents/AGENTS.md or agents/workflow.md an owner of OpenSpec delivery policy;
 - reopening #138, #169, #200, or #201;
-- a new validator, conformance engine, history database, capability registry, or parallel artifact graph;
+- a parallel artifact graph, hidden progress state, or duplicated governance owner;
 - changing current canonical proportionality ownership or rewriting it in another surface.
 
 ## Evidence and traceability

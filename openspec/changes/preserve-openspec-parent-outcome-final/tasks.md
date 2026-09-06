@@ -43,8 +43,8 @@ Trace: Issue #180 mapped-consumer decision -> Design D3.
 Trace: Issue #180 parent-outcome exit criteria -> Design D4/D6.
 
 - [ ] 4.1 RED/GREEN - Add deterministic tests for complete stage coverage, missing mandatory continuation, explicit approved reduction/defer, and implementation-convenience omission.
-- [ ] 4.2 Verify no new Action, Result kind, route, label, state, registry, history store, validator framework, or conformance engine was added.
-- [ ] 4.3 Verify current canonical proportionality remains single-owned and unchanged; no duplicate normative copy is introduced.
+- [ ] 4.2 Verify no new Action, Result kind, route, label, state, or parallel artifact graph is added; existing continuation semantics are reused.
+- [ ] 4.3 Verify current ownership matrix and canonical proportionality remain single-owned and unchanged; no duplicate normative copy is introduced.
 - [ ] 4.4 Run full pytest, Ruff lint, Ruff format check, mypy, focused governance/Skill tests, and strict exact-revision OpenSpec validation.
 - [ ] 4.5 Confirm proposal -> no-canonical-spec delta -> design -> tasks traceability and exact current Issue/Change/PR linkage.
 - [ ] 4.6 Mark the Change implementation-ready only after exact-head required gates are green and independent Review has passed.
