@@ -8,7 +8,7 @@ The current default-branch evidence establishes:
 - repository-governance owns the project-wide ownership matrix and shared proportionality boundary;
 - agents/AGENTS.md owns shared Scheduled-Agent invariants;
 - agents/workflow.md presents lifecycle topology;
-- the executable Action model owns Action, Role derivation, transitions, Result vocabulary, selection, and deterministic effects;
+- the executable Action model owns Action, Role derivation, transitions, Result vocabulary, selection, and effects;
 - existing MORE_IMPLEMENTATION_REQUIRED is the continuation when approved work remains incomplete.
 
 This Change stays within that boundary. It makes the staged-delivery contract explicit at the existing OpenSpec owner and uses one action-specific procedure where stage reconciliation is needed. It does not copy this rule into shared runtime or topology documents.
@@ -34,7 +34,7 @@ Add agents/skills/openspec-delivery/SKILL.md as one reusable procedure. It owns 
 - distinguish explicit approved reduction or defer from implementation-driven omission;
 - hand incomplete approved work to the existing MORE_IMPLEMENTATION_REQUIRED path.
 
-It does not own routing, Action selection, Result vocabulary, Human authority, canonical requirements, validation infrastructure, or implementation details. When staged delivery is not present, the procedure is not loaded.
+It does not own routing, Action selection, Result vocabulary, Human authority, canonical requirements, or implementation details. When staged delivery is not present, the procedure is not loaded.
 
 ## D3 - Minimal mapped composition
 
@@ -74,9 +74,9 @@ Reuse existing repository tests and CI surfaces. Add focused structural and proc
 - mapped procedures reference the Skill conditionally without copied normative definitions;
 - a staged evidence example cannot claim completion while mandatory parent outcome remains unaccounted for;
 - an explicit approved reduction or defer is distinguishable from accidental omission;
-- Action, Role, Result, transition, selection, and current validation surfaces remain unchanged.
+- Action, Role, Result, transition, selection, and existing validation surfaces remain unchanged.
 
-Do not introduce a validator framework. Existing executable model and CI tests remain the enforcement surface for machine-decidable workflow invariants.
+Existing executable model and CI tests remain the enforcement surface for machine-decidable workflow invariants.
 
 ## D6 - Delivery-stage assessment
 

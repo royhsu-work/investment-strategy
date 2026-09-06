@@ -60,5 +60,5 @@ The Change is complete only when current default-branch evidence shows:
 2. the full parent outcome, requirements, constraints, and exit criteria are reconciled across prior, current, and remaining work;
 3. minimum stage evidence is reconstructable without hidden state;
 4. incomplete approved outcome follows the existing continuation path, while only an explicit approved reduction or defer decision removes scope;
-5. the existing Action/Role/Result topology and deterministic regression surfaces are unchanged;
+5. the existing Action/Role/Result topology and existing regression surfaces are unchanged;
 6. strict OpenSpec validation, tests, lint, and type checks pass at the exact reviewed revision.
