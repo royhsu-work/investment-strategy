@@ -786,6 +786,7 @@ def test_post_merge_task_materialization_builds_a_default_branch_carrier_plan(
     assert carrier_plan.expected_postcondition["path"] == task_path
     assert carrier_plan.expected_postcondition["blob_sha"] == task_blob_sha
 
+
 def test_post_merge_task_materialization_replay_accepts_existing_exact_carrier(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
