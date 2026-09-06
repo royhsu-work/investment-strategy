@@ -262,6 +262,7 @@ def test_post_merge_task_materialization_is_exactly_one_default_branch_task_mark
     with pytest.raises(ValueError, match="outside Action capability"):
         parse_materialization_payload(payload, source)
 
+
 def test_post_merge_task_postcondition_accepts_existing_replay_after_intervening_commit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

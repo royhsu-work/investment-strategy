@@ -769,10 +769,7 @@ def _task_marker_reconciliation_is_present(
 ) -> bool:
     if file.expected_sha is None:
         return False
-    if (
-        _content_sha_at(repository, token, path=file.path, revision=base_sha)
-        != file.expected_sha
-    ):
+    if _content_sha_at(repository, token, path=file.path, revision=base_sha) != file.expected_sha:
         return False
     try:
         _verify_task_marker_reconciliation(
