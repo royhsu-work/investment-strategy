@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -249,6 +250,8 @@ _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
 _ARCHIVE_WORKFLOW_ID = "openspec-archive.yml"
 _ARCHIVE_WORKFLOW_PATH = ".github/workflows/openspec-archive.yml"
 _WORKFLOW_DISPATCH_INPUTS = frozenset({"change", "issue", "revision", "request_key"})
+_WORKFLOW_DISPATCH_OBSERVATION_ATTEMPTS = 30
+_WORKFLOW_DISPATCH_OBSERVATION_DELAY_SECONDS = 1.0
 
 
 def _is_nonempty_string(value: object) -> bool:
@@ -877,6 +880,14 @@ class GitHubEffectAdapter:
                 return run
         return None
 
+    def _wait_for_workflow_dispatch(self, payload: Mapping[str, object]) -> bool:
+        for attempt in range(_WORKFLOW_DISPATCH_OBSERVATION_ATTEMPTS):
+            if self._existing_workflow_dispatch(payload) is not None:
+                return True
+            if attempt + 1 < _WORKFLOW_DISPATCH_OBSERVATION_ATTEMPTS:
+                time.sleep(_WORKFLOW_DISPATCH_OBSERVATION_DELAY_SECONDS)
+        return False
+
     def _historical_merged_pr(
         self,
         payload: Mapping[str, object],
@@ -1378,6 +1389,9 @@ class GitHubEffectAdapter:
                     "inputs": {key: cast(str, value) for key, value in inputs.items()},
                 },
             )
+            # GitHub records workflow_dispatch runs asynchronously; wait for the
+            # exact run identity before the batch performs its postcondition read.
+            self._wait_for_workflow_dispatch(payload)
             return
         if operation == "pull-request-create":
             existing = self._existing_pull_request_for_create(payload)
