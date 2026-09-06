@@ -92,9 +92,10 @@ def test_consumer_references_do_not_copy_the_shared_evidence_contract() -> None:
 
 def test_existing_topology_and_continuation_remain_the_owners() -> None:
     workflow = _normalized(ROOT / "agents/workflow.md")
+    action_model = _normalized(ROOT / "src/investment_strategy/scheduled_agent_action_model.py")
     shared = _normalized(ROOT / "agents/AGENTS.md")
 
-    assert "MORE_IMPLEMENTATION_REQUIRED" in workflow
+    assert "MORE_IMPLEMENTATION_REQUIRED" in action_model
     assert "Role = role_for(Action)" in shared
     assert "agents/skills/openspec-delivery/SKILL.md" not in workflow
     assert "agents/skills/openspec-delivery/SKILL.md" not in shared
