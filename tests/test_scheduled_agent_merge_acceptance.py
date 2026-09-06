@@ -542,3 +542,49 @@ def test_archive_merge_acceptance_binds_archive_branch(
         expected_change=change,
     )
     assert captured["expected_branch"] == f"agent/archive-{change}"
+
+
+def test_historical_merged_carrier_accepts_current_main_bound_re_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current_revision = "a" * 40
+    merge_commit = "b" * 40
+    premerge_revision = "c" * 40
+    payload = {
+        "state": "closed",
+        "merged": True,
+        "merge_commit_sha": merge_commit,
+        "merged_at": "2026-09-06T20:32:36Z",
+        "head": {
+            "ref": "agent/preserve-openspec-parent-outcome-final",
+            "sha": HEAD,
+            "repo": {"full_name": "owner/repo"},
+        },
+        "base": {
+            "ref": "main",
+            "sha": premerge_revision,
+            "repo": {"full_name": "owner/repo"},
+        },
+    }
+
+    def fake_github_json(_repository: str, _token: str, path: str) -> object:
+        if path == "":
+            return {"default_branch": "main"}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": current_revision}}
+        if path == f"compare/{merge_commit}...main":
+            return {"status": "ahead", "behind_by": 0}
+        if path == f"git/commits/{merge_commit}":
+            return {"parents": [{"sha": premerge_revision}]}
+        raise AssertionError(f"unexpected GitHub read: {path}")
+
+    monkeypatch.setattr(merge_acceptance, "_github_json", fake_github_json)
+    assert merge_acceptance._historical_merged_carrier_allowed(
+        payload,
+        repository="owner/repo",
+        token="",
+        expected_head_sha=HEAD,
+        current_revision=current_revision,
+        expected_branch="agent/preserve-openspec-parent-outcome-final",
+        reviewer_pass_default_branch_revision=current_revision,
+    )
