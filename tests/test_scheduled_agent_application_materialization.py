@@ -5,14 +5,20 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 import investment_strategy.scheduled_agent_validation_resource as validation_resource
-
+import pytest
 from investment_strategy.scheduled_agent_application_materialization import (
     materialization_requires_validation,
     parse_materialization_payload,
 )
+from investment_strategy.scheduled_agent_effect_contract import (
+    allowed_github_mutation_operations,
+)
+from investment_strategy.scheduled_agent_effects import (
+    StagedEffect,
+    supported_effect_guard,
+)
+from investment_strategy.scheduled_agent_runtime import WorkerRequest
 from investment_strategy.scheduled_agent_validation_resource import (
     WorkProductFile,
     WorkProductManifest,
@@ -20,13 +26,6 @@ from investment_strategy.scheduled_agent_validation_resource import (
     apply_work_product,
     work_product_path_allowed,
 )
-
-from investment_strategy.scheduled_agent_effect_contract import (
-    allowed_github_mutation_operations,
-)
-from investment_strategy.scheduled_agent_effects import StagedEffect, supported_effect_guard
-from investment_strategy.scheduled_agent_runtime import WorkerRequest
-
 _CHANGE = "restore-lifecycle-finalization-correction-routing"
 _BASE = "a" * 40
 _BLOB = "b" * 40
@@ -191,7 +190,7 @@ def test_executor_cannot_materialize_repository_level_openspec_semantics(monkeyp
         apply_work_product(
             plan,
             repository="royhsu-work/investment-strategy",
-            token="test-token",
+            token=_BASE,
             default_branch="main",
             authorization_revision=_BASE,
         )
