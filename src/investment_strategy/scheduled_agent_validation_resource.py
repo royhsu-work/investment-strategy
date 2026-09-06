@@ -477,9 +477,7 @@ def _content_text_at(
 
 
 def _blob_text(repository: str, token: str, blob_sha: str) -> str:
-    payload = _as_mapping(
-        cast(object, _github_json(repository, token, f"git/blobs/{blob_sha}"))
-    )
+    payload = _as_mapping(cast(object, _github_json(repository, token, f"git/blobs/{blob_sha}")))
     content = None if payload is None else payload.get("content")
     encoding = None if payload is None else payload.get("encoding")
     if not isinstance(content, str) or encoding != "base64":
@@ -784,10 +782,13 @@ def _implementation_review_pass(
         body = comment.get("body")
         if not isinstance(body, str) or "Reviewer / review-implementation" not in body:
             continue
-        if re.search(
-            r"Action:\s*(?:\x60)?Reviewer / review-implementation(?:\x60)?",
-            body,
-        ) is None:
+        if (
+            re.search(
+                r"Action:\s*(?:\x60)?Reviewer / review-implementation(?:\x60)?",
+                body,
+            )
+            is None
+        ):
             return False
         result_match = re.search(r"Result:\s*(?:\x60)?([A-Z_]+)(?:\x60)?", body)
         revision_match = re.search(r"Revision:\s*(?:\x60)?([0-9a-f]{40})(?:\x60)?", body)

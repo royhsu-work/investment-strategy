@@ -416,9 +416,8 @@ def _historical_merged_carrier_allowed(
         return False
     if reviewer_pass_default_branch_revision is None:
         return True
-    if (
-        reviewer_pass_default_branch_revision == current_revision
-        and _valid_sha(reviewer_pass_default_branch_revision)
+    if reviewer_pass_default_branch_revision == current_revision and _valid_sha(
+        reviewer_pass_default_branch_revision
     ):
         return True
     return _valid_sha(reviewer_pass_default_branch_revision) and _merge_commit_has_parent(
