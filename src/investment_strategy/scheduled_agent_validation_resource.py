@@ -939,7 +939,7 @@ def _apply_post_merge_task_bookkeeping(
     authorization_revision: str,
 ) -> ValidationResourceTarget:
     if (
-        manifest.base_sha != authorization_revision
+        not _valid_sha(manifest.base_sha)
         or manifest.message != _post_merge_task_message(expected_change)
         or not is_post_merge_task_bookkeeping(
             source,
