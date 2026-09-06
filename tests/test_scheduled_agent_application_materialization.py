@@ -7,10 +7,20 @@ from pathlib import Path
 
 import pytest
 
+import investment_strategy.scheduled_agent_validation_resource as validation_resource
+
 from investment_strategy.scheduled_agent_application_materialization import (
     materialization_requires_validation,
     parse_materialization_payload,
 )
+from investment_strategy.scheduled_agent_validation_resource import (
+    WorkProductFile,
+    WorkProductManifest,
+    WorkProductPlan,
+    apply_work_product,
+    work_product_path_allowed,
+)
+
 from investment_strategy.scheduled_agent_effect_contract import (
     allowed_github_mutation_operations,
 )
@@ -116,3 +126,72 @@ def test_legacy_application_protocols_are_not_in_runtime_surface() -> None:
         "Dispatch-Run-ID",
     ):
         assert marker not in runtime
+
+
+def test_lead_openspec_authoring_can_update_only_the_existing_config_owner() -> None:
+    for action in ("propose-change", "resolve-question"):
+        source = WorkerRequest(169, "lead", action)
+        assert work_product_path_allowed(source, _CHANGE, "openspec/config.yaml")
+        assert work_product_path_allowed(
+            source, _CHANGE, f"openspec/changes/{_CHANGE}/proposal.md"
+        )
+        assert not work_product_path_allowed(
+            source, _CHANGE, "openspec/specs/repository-governance/spec.md"
+        )
+        assert not work_product_path_allowed(
+            source, _CHANGE, "src/investment_strategy/scheduled_agent_validation_resource.py"
+        )
+        assert not work_product_path_allowed(source, _CHANGE, "openspec/config.yaml.bak")
+
+        payload = _payload(
+            expected_change=_CHANGE,
+            files=[
+                {
+                    "path": "openspec/config.yaml",
+                    "blob_sha": _BLOB,
+                    "expected_sha": None,
+                }
+            ],
+        )
+        payload["pr_number"] = 201
+        request = parse_materialization_payload(payload, source)
+        assert materialization_requires_validation(request, source)
+
+
+def test_executor_cannot_materialize_repository_level_openspec_semantics(monkeypatch) -> None:
+    source = WorkerRequest(169, "executor", "implement-change")
+    config_file = WorkProductFile(
+        path="openspec/config.yaml",
+        blob_sha=_BLOB,
+        expected_sha=None,
+    )
+    manifest = WorkProductManifest(
+        branch=f"agent/{_CHANGE}",
+        base_sha=_BASE,
+        message="bootstrap capability repair",
+        files=(config_file,),
+    )
+    plan = WorkProductPlan(
+        should_apply=True,
+        source=source,
+        pr_number=201,
+        expected_change=_CHANGE,
+        manifest=manifest,
+    )
+
+    monkeypatch.setattr(validation_resource, "_ref_head_sha", lambda *args: _BASE)
+    monkeypatch.setattr(validation_resource, "_current_authorized_request", lambda *args: source)
+
+    assert (
+        validation_resource._is_executor_task_bookkeeping(source, _CHANGE, (config_file,))
+        is False
+    )
+    assert validation_resource._review_openspec_required(source) is False
+    with pytest.raises(RuntimeError, match="no required OpenSpec review gate"):
+        apply_work_product(
+            plan,
+            repository="royhsu-work/investment-strategy",
+            token="test-token",
+            default_branch="main",
+            authorization_revision=_BASE,
+        )
