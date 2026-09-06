@@ -37,6 +37,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _review_openspec_required,
     _revision_matches_manifest,
     _source_branch,
+    _task_marker_reconciliation_is_present,
     _valid_branch,
     _valid_repo_path,
     _valid_sha,
@@ -702,20 +703,33 @@ def materialization_postcondition(
             request.files,
             default_branch=default_branch,
         ):
+            manifest = WorkProductManifest(
+                branch=request.branch,
+                base_sha=request.base_sha,
+                message=request.message,
+                files=request.files,
+            )
             return (
                 target.pr_number == request.pr_number
                 and target.revision == current_revision
-                and _revision_matches_manifest(
-                    repository,
-                    token,
-                    base_sha=request.base_sha,
-                    revision=current_revision,
-                    manifest=WorkProductManifest(
-                        branch=request.branch,
+                and (
+                    _revision_matches_manifest(
+                        repository,
+                        token,
                         base_sha=request.base_sha,
-                        message=request.message,
-                        files=request.files,
-                    ),
+                        revision=current_revision,
+                        manifest=manifest,
+                    )
+                    or (
+                        len(request.files) == 1
+                        and _task_marker_reconciliation_is_present(
+                            repository,
+                            token,
+                            base_sha=request.base_sha,
+                            revision=current_revision,
+                            file=request.files[0],
+                        )
+                    )
                 )
             )
         if _branch_head(repository, token, request.branch) != target.revision:

@@ -841,9 +841,31 @@ def test_post_merge_task_materialization_replay_accepts_existing_exact_carrier(
         matched.append((repository, token, revision))
         assert base_sha == previous_revision
         assert manifest.base_sha == previous_revision
-        return True
+        return False
 
     monkeypatch.setattr(resource, "_revision_matches_manifest", fake_revision_matches)
+
+    reconciled: list[tuple[str, str, str, str, str]] = []
+
+    def fake_task_reconciliation(
+        repository: str,
+        token: str,
+        *,
+        base_sha: str,
+        revision: str,
+        file: resource.WorkProductFile,
+    ) -> bool:
+        reconciled.append((repository, token, base_sha, revision, file.path))
+        assert base_sha == previous_revision
+        assert revision == current_revision
+        assert file.blob_sha == "4" * 40
+        return True
+
+    monkeypatch.setattr(
+        resource,
+        "_task_marker_reconciliation_is_present",
+        fake_task_reconciliation,
+    )
     target = resource._apply_post_merge_task_bookkeeping(
         source=source,
         pr_number=210,
@@ -864,3 +886,12 @@ def test_post_merge_task_materialization_replay_accepts_existing_exact_carrier(
         validation_required=False,
     )
     assert matched == [(_REPOSITORY, _FIXTURE_VALUE, current_revision)]
+    assert reconciled == [
+        (
+            _REPOSITORY,
+            _FIXTURE_VALUE,
+            previous_revision,
+            current_revision,
+            task_path,
+        )
+    ]

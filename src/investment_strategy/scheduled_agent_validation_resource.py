@@ -759,6 +759,30 @@ def _verify_task_marker_reconciliation(
         raise RuntimeError("post-merge task marker update is not the exact 4.6 reconciliation")
 
 
+def _task_marker_reconciliation_is_present(
+    repository: str,
+    token: str,
+    *,
+    base_sha: str,
+    revision: str,
+    file: WorkProductFile,
+) -> bool:
+    if file.expected_sha is None:
+        return False
+    if _content_sha_at(repository, token, path=file.path, revision=base_sha) != file.expected_sha:
+        return False
+    try:
+        _verify_task_marker_reconciliation(
+            repository,
+            token,
+            base_sha=base_sha,
+            file=file,
+        )
+    except RuntimeError:
+        return False
+    return _content_sha_at(repository, token, path=file.path, revision=revision) == file.blob_sha
+
+
 def _implementation_review_pass(
     repository: str,
     token: str,
@@ -974,6 +998,7 @@ def _apply_post_merge_task_bookkeeping(
     current_head = _ref_head_sha(repository, token, default_branch)
     if current_head != authorization_revision:
         raise RuntimeError("post-merge task bookkeeping default branch is stale")
+    file = manifest.files[0]
     if current_head != manifest.base_sha:
         if _revision_matches_manifest(
             repository,
@@ -981,6 +1006,12 @@ def _apply_post_merge_task_bookkeeping(
             base_sha=manifest.base_sha,
             revision=current_head,
             manifest=manifest,
+        ) or _task_marker_reconciliation_is_present(
+            repository,
+            token,
+            base_sha=manifest.base_sha,
+            revision=current_head,
+            file=file,
         ):
             return ValidationResourceTarget(
                 repository=repository,
@@ -991,7 +1022,6 @@ def _apply_post_merge_task_bookkeeping(
                 validation_required=False,
             )
         raise RuntimeError("post-merge task bookkeeping revision is stale")
-    file = manifest.files[0]
     current_sha = _content_sha_at(
         repository,
         token,
