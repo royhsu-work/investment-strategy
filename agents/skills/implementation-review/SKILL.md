@@ -35,3 +35,10 @@ procedural input, not runtime authority. The reserved capabilities `human:approv
 
 The exact-current-head gate is mandatory. A semantic OpenSpec bookkeeping exception does not weaken
 this gate.
+
+## Conditional staged-delivery composition
+
+When the implementation is one stage of an approved parent outcome, load
+agents/skills/openspec-delivery/SKILL.md as procedural input. Check exact-head stage coverage and
+uncompleted mandatory work before PASS, while preserving this Action's existing implementation-review
+scope and derived merge handoff.

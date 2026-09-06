@@ -48,3 +48,10 @@ Reviewers must preserve every still-applicable scenario/content when evaluating 
 Reviewer semantic uncertainty fails closed; a missing or contradictory review context cannot be treated as acceptance.
 
 Reviewer must fail closed when semantic context is incomplete.
+
+## Conditional staged-delivery composition
+
+When reviewing a staged OpenSpec plan, load
+agents/skills/openspec-delivery/SKILL.md as procedural input. Independently check that the reviewed
+revision accounts for completed work, current delivery, and mandatory follow-up while preserving this
+Action's exact-revision semantic gate and non-mutation boundary.

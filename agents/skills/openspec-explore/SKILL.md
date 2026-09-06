@@ -29,3 +29,10 @@ When this Action materially creates or modifies a repository Skill, load
 agents/skills/skill-creator/SKILL.md and
 agents/skills/skill-creator/references/repository-governance.md. This repository Skill guidance is
 procedural input and does not grant runtime authority.
+
+## Conditional staged-delivery composition
+
+When feasibility or delivery scope may require staged implementation on a then-current N-1 substrate, load
+agents/skills/openspec-delivery/SKILL.md as procedural input. Use it to establish the approved
+parent outcome, feasibility boundary, and continuation evidence while preserving this Action's existing
+proposal-ready/research-required/human-decision-required result boundary and effect authority.
