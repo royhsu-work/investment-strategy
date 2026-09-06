@@ -841,7 +841,7 @@ def test_post_merge_task_materialization_replay_accepts_existing_exact_carrier(
         matched.append((repository, token, revision))
         assert base_sha == previous_revision
         assert manifest.base_sha == previous_revision
-        return True
+        return False
 
     monkeypatch.setattr(resource, "_revision_matches_manifest", fake_revision_matches)
 
