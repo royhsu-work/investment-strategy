@@ -8,7 +8,9 @@ from pathlib import Path
 import pytest
 
 import investment_strategy.scheduled_agent_validation_resource as validation_resource
+import investment_strategy.scheduled_agent_application_materialization as materialization
 from investment_strategy.scheduled_agent_application_materialization import (
+    materialization_postcondition,
     materialization_requires_validation,
     parse_materialization_payload,
 )
@@ -23,6 +25,7 @@ from investment_strategy.scheduled_agent_runtime import WorkerRequest
 from investment_strategy.scheduled_agent_validation_resource import (
     WorkProductFile,
     WorkProductManifest,
+    ValidationResourceTarget,
     WorkProductPlan,
     apply_work_product,
     work_product_path_allowed,
@@ -258,3 +261,85 @@ def test_post_merge_task_materialization_is_exactly_one_default_branch_task_mark
     payload["branch"] = f"agent/{_CHANGE}"
     with pytest.raises(ValueError, match="outside Action capability"):
         parse_materialization_payload(payload, source)
+
+def test_post_merge_task_postcondition_accepts_existing_replay_after_intervening_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(180, "executor", "implement-change")
+    current_revision = "c" * 40
+    task_path = f"openspec/changes/{_CHANGE}/tasks.md"
+    payload = _payload(
+        expected_change=_CHANGE,
+        issue_number=180,
+        files=[
+            {
+                "path": task_path,
+                "blob_sha": _BLOB,
+                "expected_sha": _BASE,
+            }
+        ],
+    )
+    payload["branch"] = "main"
+    payload["message"] = f"Reconcile implementation-ready task marker for {_CHANGE}"
+    payload["pr_number"] = 210
+    target = ValidationResourceTarget(
+        repository="royhsu-work/investment-strategy",
+        revision=current_revision,
+        correlation="effect-request-180",
+        pr_number=210,
+        change=_CHANGE,
+        validation_required=False,
+    )
+
+    monkeypatch.setattr(materialization, "_current_default_branch", lambda *args: "main")
+    monkeypatch.setattr(materialization, "_ref_head_sha", lambda *args: current_revision)
+
+    def fake_github_json(repository: str, token: str, api_path: str) -> object:
+        assert repository == "royhsu-work/investment-strategy"
+        assert token == _BASE
+        assert api_path == "issues/180"
+        return {"state": "open", "body": f"Change: {_CHANGE}\n"}
+
+    monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    monkeypatch.setattr(
+        materialization,
+        "_revision_matches_manifest",
+        lambda *args, **kwargs: False,
+    )
+    observed: list[tuple[str, str, str, str, str]] = []
+
+    def fake_task_reconciliation(
+        repository: str,
+        token: str,
+        *,
+        base_sha: str,
+        revision: str,
+        file: WorkProductFile,
+    ) -> bool:
+        observed.append((repository, token, base_sha, revision, file.path))
+        return True
+
+    monkeypatch.setattr(
+        materialization,
+        "_task_marker_reconciliation_is_present",
+        fake_task_reconciliation,
+    )
+
+    assert materialization_postcondition(
+        payload,
+        source,
+        repository="royhsu-work/investment-strategy",
+        token=_BASE,
+        current_revision=current_revision,
+        default_branch="main",
+        target=target,
+    )
+    assert observed == [
+        (
+            "royhsu-work/investment-strategy",
+            _BASE,
+            _BASE,
+            current_revision,
+            task_path,
+        )
+    ]
