@@ -27,6 +27,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     apply_work_product,
     work_product_path_allowed,
 )
+
 _CHANGE = "restore-lifecycle-finalization-correction-routing"
 _BASE = "a" * 40
 _BLOB = "b" * 40
