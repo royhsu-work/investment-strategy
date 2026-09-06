@@ -157,7 +157,9 @@ def test_lead_openspec_authoring_can_update_only_the_existing_config_owner() -> 
         assert materialization_requires_validation(request, source)
 
 
-def test_executor_cannot_materialize_repository_level_openspec_semantics(monkeypatch) -> None:
+def test_executor_cannot_materialize_repository_level_openspec_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     source = WorkerRequest(169, "executor", "implement-change")
     config_file = WorkProductFile(
         path="openspec/config.yaml",
