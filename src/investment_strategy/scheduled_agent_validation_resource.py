@@ -828,8 +828,7 @@ def _implementation_review_pass(
         return False
     latest_pass = max(passes, key=lambda record: (record[0], record[1]))
     if any(
-        (record[0], record[1]) > (latest_pass[0], latest_pass[1])
-        and record[2] != "PASS"
+        (record[0], record[1]) > (latest_pass[0], latest_pass[1]) and record[2] != "PASS"
         for record in matching
     ):
         return False
@@ -868,9 +867,7 @@ def _commit_has_parent(
     commit_sha: str,
     parent_sha: str,
 ) -> bool:
-    commit = _as_mapping(
-        cast(object, _github_json(repository, token, f"git/commits/{commit_sha}"))
-    )
+    commit = _as_mapping(cast(object, _github_json(repository, token, f"git/commits/{commit_sha}")))
     parents = None if commit is None else commit.get("parents")
     return isinstance(parents, list) and any(
         isinstance(parent, Mapping) and parent.get("sha") == parent_sha for parent in parents
