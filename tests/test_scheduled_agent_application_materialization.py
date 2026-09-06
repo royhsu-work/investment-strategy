@@ -255,5 +255,6 @@ def test_post_merge_task_materialization_is_exactly_one_default_branch_task_mark
             "expected_sha": _BASE,
         }
     ]
+    payload["branch"] = f"agent/{_CHANGE}"
     with pytest.raises(ValueError, match="outside Action capability"):
         parse_materialization_payload(payload, source)
