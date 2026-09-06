@@ -785,3 +785,82 @@ def test_post_merge_task_materialization_builds_a_default_branch_carrier_plan(
     assert carrier_plan.expected["commit_parents"] == [default_revision]
     assert carrier_plan.expected_postcondition["path"] == task_path
     assert carrier_plan.expected_postcondition["blob_sha"] == task_blob_sha
+
+
+def test_post_merge_task_materialization_replay_accepts_existing_exact_carrier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(180, "executor", "implement-change")
+    change = "preserve-openspec-parent-outcome-final"
+    previous_revision = "2" * 40
+    current_revision = "3" * 40
+    task_path = f"openspec/changes/{change}/tasks.md"
+    manifest = resource.WorkProductManifest(
+        branch="main",
+        base_sha=previous_revision,
+        message=resource._post_merge_task_message(change),
+        files=(
+            resource.WorkProductFile(
+                task_path,
+                "4" * 40,
+                "5" * 40,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        resource,
+        "_open_pr_payload",
+        lambda **_: {
+            "number": 210,
+            "state": "closed",
+            "merged": True,
+            "head": {"sha": "6" * 40},
+        },
+    )
+    monkeypatch.setattr(
+        resource,
+        "_verify_post_merge_task_bookkeeping_evidence",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(resource, "_ref_head_sha", lambda *args, **kwargs: current_revision)
+    monkeypatch.setattr(
+        resource,
+        "_current_authorized_request",
+        lambda *args: source,
+    )
+    matched: list[tuple[str, str, str]] = []
+
+    def fake_revision_matches(
+        repository: str,
+        token: str,
+        *,
+        base_sha: str,
+        revision: str,
+        manifest: resource.WorkProductManifest,
+    ) -> bool:
+        matched.append((repository, token, revision))
+        assert base_sha == previous_revision
+        assert manifest.base_sha == previous_revision
+        return True
+
+    monkeypatch.setattr(resource, "_revision_matches_manifest", fake_revision_matches)
+    target = resource._apply_post_merge_task_bookkeeping(
+        source=source,
+        pr_number=210,
+        expected_change=change,
+        manifest=manifest,
+        repository=_REPOSITORY,
+        token=_FIXTURE_VALUE,
+        default_branch="main",
+        authorization_revision=current_revision,
+    )
+
+    assert target == resource.ValidationResourceTarget(
+        repository=_REPOSITORY,
+        revision=current_revision,
+        correlation="effect-request-180",
+        pr_number=210,
+        change=change,
+        validation_required=False,
+    )
+    assert matched == [(_REPOSITORY, _FIXTURE_VALUE, current_revision)]
