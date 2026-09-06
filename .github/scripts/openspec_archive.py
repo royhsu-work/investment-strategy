@@ -290,7 +290,8 @@ def _is_generated_purpose(purpose: str) -> bool:
 def _delta_capabilities(change_root: Path) -> list[tuple[str, Path]]:
     specs_root = change_root / "specs"
     if not specs_root.is_dir():
-        _fail(f"OpenSpec change has no specs directory: {specs_root}")
+        # A strict, validated skip_specs Change legitimately has no delta specs.
+        return []
 
     capabilities: list[tuple[str, Path]] = []
     for child in sorted(specs_root.iterdir()):
@@ -357,8 +358,8 @@ def _load_purpose_snapshot(snapshot_file: Path) -> tuple[str, list[dict[str, str
         _fail("Purpose snapshot is missing change")
     _validate_change_name(change)
     entries = payload.get("capabilities")
-    if not isinstance(entries, list) or not entries:
-        _fail("Purpose snapshot must contain capabilities")
+    if not isinstance(entries, list):
+        _fail("Purpose snapshot capabilities must be a list")
 
     normalized: list[dict[str, str]] = []
     seen: set[str] = set()

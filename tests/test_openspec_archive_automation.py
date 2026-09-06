@@ -352,6 +352,43 @@ def test_complete_change_is_eligible_for_archive(tmp_path: Path) -> None:
     assert "reason=change-complete" in result.stdout
 
 
+def test_skip_specs_change_has_empty_purpose_snapshot(tmp_path: Path) -> None:
+    changes_root = tmp_path / "openspec" / "changes"
+    change_root = changes_root / "change-a"
+    change_root.mkdir(parents=True)
+    (change_root / ".openspec.yaml").write_text(
+        "schema: spec-driven\\nskip_specs: true\\n", encoding="utf-8"
+    )
+    snapshot = tmp_path / "purpose.json"
+
+    result = _run(
+        "purpose-snapshot",
+        "--change",
+        "change-a",
+        "--changes-root",
+        str(changes_root),
+        "--specs-root",
+        str(tmp_path / "openspec" / "specs"),
+        "--snapshot-file",
+        str(snapshot),
+    )
+
+    assert result.returncode == 0
+    assert json.loads(snapshot.read_text(encoding="utf-8")) == {
+        "change": "change-a",
+        "capabilities": [],
+    }
+
+    preserve = _run(
+        "purpose-preserve",
+        "--snapshot-file",
+        str(snapshot),
+        "--specs-root",
+        str(tmp_path / "openspec" / "specs"),
+    )
+    assert preserve.returncode == 0
+
+
 def test_earlier_merge_snapshot_stays_incomplete_after_later_completion(tmp_path: Path) -> None:
     earlier = tmp_path / "earlier-snapshot.json"
     later = tmp_path / "later-main.json"

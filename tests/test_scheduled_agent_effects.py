@@ -727,6 +727,7 @@ def test_application_archive_workflow_dispatch_is_exact_revision_and_idempotent(
     }
     runs: list[dict[str, object]] = []
     dispatches: list[object] = []
+    dispatch_visibility_reads = 0
 
     def fake_github_json(
         _repository: str,
@@ -747,6 +748,10 @@ def test_application_archive_workflow_dispatch_is_exact_revision_and_idempotent(
             "actions/workflows/openspec-archive.yml/runs"
             "?event=workflow_dispatch&branch=main&per_page=100"
         ):
+            nonlocal dispatch_visibility_reads
+            dispatch_visibility_reads += 1
+            if dispatch_visibility_reads < 3:
+                return {"workflow_runs": []}
             return {"workflow_runs": list(runs)}
         if api_path == "actions/workflows/openspec-archive.yml/dispatches" and method == "POST":
             assert isinstance(payload, dict)
@@ -767,6 +772,7 @@ def test_application_archive_workflow_dispatch_is_exact_revision_and_idempotent(
         raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
 
     monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    monkeypatch.setattr(effects.time, "sleep", lambda _seconds: None)
     adapter = GitHubEffectAdapter(
         repository,
         "token",
