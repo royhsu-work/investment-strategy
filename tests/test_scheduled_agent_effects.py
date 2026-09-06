@@ -303,7 +303,6 @@ def test_merged_carrier_merge_is_idempotent_without_put(
         return issue
 
     monkeypatch.setattr(effects, "_github_json", fake_github_json)
-    monkeypatch.setattr(effects.time, "sleep", lambda _seconds: None)
     adapter = GitHubEffectAdapter(
         "owner/repo",
         "token",
@@ -773,6 +772,7 @@ def test_application_archive_workflow_dispatch_is_exact_revision_and_idempotent(
         raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
 
     monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    monkeypatch.setattr(effects.time, "sleep", lambda _seconds: None)
     adapter = GitHubEffectAdapter(
         repository,
         "token",
