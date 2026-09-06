@@ -144,7 +144,7 @@ def work_product_path_allowed(
     change_prefix = f"openspec/changes/{expected_change}/"
     source_identity = (source.role, source.action)
     if source_identity in _OPEN_SPEC_AUTHORING_SOURCES:
-        return path.startswith(change_prefix)
+        return path.startswith(change_prefix) or path == "openspec/config.yaml"
     if source_identity == ("executor", "implement-change"):
         if path.startswith("openspec/changes/"):
             return path.startswith(change_prefix)
