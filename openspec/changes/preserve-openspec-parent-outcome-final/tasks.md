@@ -47,7 +47,7 @@ Trace: Issue #180 parent-outcome exit criteria -> Design D4/D6.
 - [x] 4.3 Verify current ownership matrix and canonical proportionality remain single-owned and unchanged; no duplicate normative copy is introduced.
 - [x] 4.4 Run full pytest, Ruff lint, Ruff format check, mypy, focused governance/Skill tests, and strict exact-revision OpenSpec validation.
 - [x] 4.5 Confirm proposal -> no-canonical-spec delta -> design -> tasks traceability and exact current Issue/Change/PR linkage.
-- [ ] 4.6 Mark the Change implementation-ready only after exact-head required gates are green and independent Review has passed.
+- [x] 4.6 Mark the Change implementation-ready only after exact-head required gates are green and independent Review has passed.
 
 ## Continuation boundary
 
