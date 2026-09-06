@@ -15,6 +15,10 @@ rules:
     - Keep one clear change intent and state scope boundaries explicitly.
     - List affected capabilities and identify deferred work instead of expanding the change opportunistically.
     - Before retaining added complexity within the current change's relevant scope, identify the current requirement, safety property, or demonstrated failure mode that requires it.
+    - recursively decompose delivery until each stage is independently executable, testable, reviewable, mergeable, and deployable on then-current N-1.
+    - preserving the full approved parent outcome, requirements, constraints, and exit criteria across all delivery stages; outcome is not decomposed, delivery is.
+    - For staged delivery, record parent-outcome coverage, N-1 prerequisites, stage exit criteria, remaining mandatory outcome, and required continuation.
+    - only an explicit approved reduction or defer may remove parent scope; a Human-approved scope decision, not stage size or implementation convenience, is required to remove mandatory work.
     - Do not include implementation details that belong in design.md.
     - When a change adds or modifies public Decision or analytical Backtest artifacts, include the public-output disclaimer requirement in scope and impact.
 
