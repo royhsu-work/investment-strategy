@@ -63,3 +63,10 @@ creating the carrier; it must then re-read and verify the same postcondition.
 For `finalize-archive`, verify the archive PR is the exact non-closing carrier, the independent
 Reviewer PASS and current gates are fresh, the expected head is unchanged, and cleanup is
 deterministic before returning `lifecycle-complete`.
+
+## Conditional staged-delivery composition
+
+When deciding implementation or archive readiness for a staged Change, load
+agents/skills/openspec-delivery/SKILL.md as procedural input. Prevent completion while approved
+mandatory work remains and retain the existing MORE_IMPLEMENTATION_REQUIRED continuation; preserve
+this Action's existing finalization, archive, and terminal-result boundaries.

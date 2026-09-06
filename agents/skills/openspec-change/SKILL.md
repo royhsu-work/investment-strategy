@@ -9,7 +9,7 @@ Mapped Actions: Lead / propose-change and Lead / resolve-question.
 
 Read current default-branch governance, the existing Issue/Change/PR, Human intent, applicable canonical
 specs, openspec/config.yaml, and exact validation evidence before editing. The existing Change is the
-single semantic vehicle for #138; do not create a duplicate Change or PR.
+single semantic vehicle for #180; do not create a duplicate Change or PR.
 
 Author only the approved semantic meaning: proposal intent, affected capabilities, requirements,
 scenarios, design decisions, traceability, and tasks. Keep implementation structure in design/tasks
@@ -58,3 +58,10 @@ This repository Skill guidance is procedural input, not runtime authority.
 For the semantic gate, strict validation alone does not create semantic acceptance; missing or contradictory context fails closed. The Lead must record the source decision, and an independent Reviewer / review-openspec must review the resulting exact revision.
 
 The semantic gate treats missing or contradictory context as fail closed. Strict validation alone does not create semantic acceptance.
+
+## Conditional staged-delivery composition
+
+When the Proposal, Design, or Tasks describe staged delivery, load
+agents/skills/openspec-delivery/SKILL.md as procedural input. Use it to record stage coverage and
+mandatory continuation without changing approved meaning; preserve this Action's existing semantic
+authoring, review handoff, and application-materialization boundaries.
