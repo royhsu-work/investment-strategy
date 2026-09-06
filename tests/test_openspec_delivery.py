@@ -30,7 +30,8 @@ def test_config_owns_the_staged_delivery_authoring_predicate() -> None:
     config = _normalized(CONFIG)
 
     for required in (
-        "recursively decompose delivery until each stage is independently executable, testable, reviewable, mergeable, and deployable on then-current N-1",
+        "recursively decompose delivery until each stage is independently "
+        "executable, testable, reviewable, mergeable, and deployable on then-current N-1",
         "preserving the full approved parent outcome, requirements, constraints, and exit criteria",
         "parent-outcome coverage",
         "N-1 prerequisites",
@@ -62,7 +63,12 @@ def test_delivery_skill_defines_reconciliation_and_continuation() -> None:
         assert required in delivery
 
     assert "Mapped Action:" not in delivery
-    for prohibited_authority in ("new Action", "new Result kind", "lifecycle state", "stage-status label"):
+    for prohibited_authority in (
+        "new Action",
+        "new Result kind",
+        "lifecycle state",
+        "stage-status label",
+    ):
         assert prohibited_authority in delivery
 
 
