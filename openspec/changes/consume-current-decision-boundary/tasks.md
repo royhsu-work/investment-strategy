@@ -46,4 +46,4 @@ Trace: approved non-goals -> D6/D7 -> existing Skill-maintenance and CI gates.
 - [ ] 4.3 VERIFY - Run full pytest, Ruff lint, Ruff format check, mypy, focused governance/Skill tests, and strict exact-revision OpenSpec validation.
 - [ ] 4.4 VERIFY - Confirm proposal -> zero-delta disposition -> design -> tasks traceability and exact Issue/Change/PR linkage.
 - [ ] 4.5 VERIFY - Complete independent review, merge implementation, and prepare the required archive lifecycle.
-- [ ] 4.6 Mark the Change implementation-ready only after exact-head required gates are green and independent Review has passed.
+- [x] 4.6 Mark the Change implementation-ready only after exact-head required gates are green and independent Review has passed.
