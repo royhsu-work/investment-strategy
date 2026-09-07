@@ -13,7 +13,7 @@ and agents/skills/openspec-semantic-adapter.md as procedural input. None of thes
 runtime authority; Reviewer independence remains with default-branch governance.
 
 Fresh-read the current default branch, Issue/Change/PR, exact proposed revision, canonical specs,
-design, tasks, Human input, and exact-R validation. The exact semantic baseline is B and the reviewed
+design, tasks, Human input, and exact-R validation. The semantic baseline B is the exact baseline, and the reviewed
 target is R; a bookkeeping-only revision does not advance or invalidate B. Mechanical validation
 alone does not create semantic acceptance, even when strict validation passes.
 
@@ -23,6 +23,8 @@ current repository evidence. Preserve decided outcomes, invariants, constraints,
 decisions, safety properties, and scope boundaries. Consume the existing project-wide proportionality
 owner (`openspec/specs/repository-governance/spec.md`, referenced by `agents/proportionality.md`);
 this reference is not a competing authority.
+
+Apply remove -> reuse -> consolidate -> existing ownership layer before retaining or adding any mechanism.
 
 Review reverse-first and forward traceability:
 tasks -> design -> specs -> proposal
@@ -39,7 +41,7 @@ unqualified evidence is a finding or blocked result.
 Reviewer symmetry is an independent predicate. A retained or additional mechanism without an exact
 current requirement, concrete safety property, or demonstrated failure mode is an existing
 `FINDINGS`. A removal, reuse, consolidation, or existing ownership layer that is sufficient while
-a new mechanism remains is also an existing `FINDINGS`; the executable model routes that result
+a new mechanism remains is also an existing FINDINGS; the executable model routes that result
 through `resolve-question`. No new Action, Result, routing state, or review-result type is needed.
 
 Return one structured PASS, FINDINGS, HUMAN_DECISION_REQUIRED, NO_GO, or BLOCKED result with exact
