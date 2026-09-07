@@ -470,7 +470,13 @@ def task_checkpoint_is_exact(
     if (
         file.expected_sha is None
         or file.path != f"openspec/changes/{expected_change}/tasks.md"
-        or _content_sha_at(repository, token, path=file.path, revision=base_sha) != file.expected_sha
+        or _content_sha_at(
+            repository,
+            token,
+            path=file.path,
+            revision=base_sha,
+        )
+        != file.expected_sha
     ):
         return False
     try:
