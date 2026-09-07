@@ -155,6 +155,175 @@ def test_executor_task_marker_is_the_only_nonreview_openspec_work_product() -> N
     assert not resource._is_executor_task_bookkeeping(source, _CHANGE, (task_file, design_file))
 
 
+def test_executor_config_authoring_is_narrowly_bound() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    reviewer = WorkerRequest(138, "reviewer", "review-openspec")
+    config_file = resource.WorkProductFile("openspec/config.yaml", "b" * 40, "a" * 40)
+    task_file = resource.WorkProductFile(f"openspec/changes/{_CHANGE}/tasks.md", "b" * 40, "a" * 40)
+    spec_file = resource.WorkProductFile(
+        "openspec/specs/repository-governance/spec.md", "b" * 40, "a" * 40
+    )
+
+    assert resource._is_executor_config_authoring(source, _CHANGE, (config_file,))
+    assert not resource._is_executor_config_authoring(source, _CHANGE, (config_file, task_file))
+    assert not resource._is_executor_config_authoring(source, _CHANGE, (spec_file,))
+    assert not resource._is_executor_config_authoring(reviewer, _CHANGE, (config_file,))
+
+
+def test_executor_task_marker_update_accepts_only_monotonic_checkbox_changes() -> None:
+    current = "- [ ] 2.1 first implementation task\n- [ ] 2.2 second implementation task\n"
+    valid = "- [x] 2.1 first implementation task\n- [ ] 2.2 second implementation task\n"
+    assert resource._task_marker_update_is_monotonic(current, valid)
+
+    invalid_candidates = (
+        current,
+        ("- [x] 2.1 renamed implementation task\n- [ ] 2.2 second implementation task\n"),
+        (
+            "- [x] 2.1 first implementation task\n"
+            "- [ ] 2.2 second implementation task\n"
+            "- [ ] 2.3 added task\n"
+        ),
+        "- [x] 2.1 first implementation task\n",
+        ("- [ ] 2.2 second implementation task\n- [x] 2.1 first implementation task\n"),
+    )
+    assert all(
+        not resource._task_marker_update_is_monotonic(current, candidate)
+        for candidate in invalid_candidates
+    )
+
+    previously_checked = valid
+    unchecked = current
+    assert not resource._task_marker_update_is_monotonic(previously_checked, unchecked)
+
+
+def test_task_checkpoint_matches_only_first_incomplete_slice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task_path = f"openspec/changes/{_CHANGE}/tasks.md"
+    current = (
+        "## Slice 1 — first\n"
+        "- [ ] 1.1 first task\n"
+        "- [ ] 1.2 second task\n"
+        "## Slice 2 — later\n"
+        "- [ ] 2.1 later task\n"
+    )
+    valid = current.replace("- [ ] 1.1", "- [x] 1.1").replace("- [ ] 1.2", "- [x] 1.2")
+    multi_slice = valid.replace("- [ ] 2.1", "- [x] 2.1")
+    candidate = valid
+    task_file = resource.WorkProductFile(task_path, "b" * 40, _REVISION)
+
+    monkeypatch.setattr(
+        resource,
+        "_content_sha_at",
+        lambda *_args, **_kwargs: _REVISION,
+    )
+    monkeypatch.setattr(resource, "_content_text_at", lambda *_args, **_kwargs: current)
+    monkeypatch.setattr(
+        resource,
+        "_blob_text",
+        lambda *_args, **_kwargs: candidate,
+    )
+
+    assert resource.task_checkpoint_is_exact(
+        _REPOSITORY,
+        _FIXTURE_VALUE,
+        expected_change=_CHANGE,
+        base_sha=_REVISION,
+        file=task_file,
+        completed_task_ids=("1.1", "1.2"),
+    )
+
+    candidate = multi_slice
+    assert not resource.task_checkpoint_is_exact(
+        _REPOSITORY,
+        _FIXTURE_VALUE,
+        expected_change=_CHANGE,
+        base_sha=_REVISION,
+        file=task_file,
+        completed_task_ids=("1.1", "1.2"),
+    )
+
+    candidate = current.replace("- [ ] 1.1", "- [x] 1.1")
+    assert not resource.task_checkpoint_is_exact(
+        _REPOSITORY,
+        _FIXTURE_VALUE,
+        expected_change=_CHANGE,
+        base_sha=_REVISION,
+        file=task_file,
+        completed_task_ids=("1.1",),
+    )
+
+
+def test_apply_work_product_rejects_non_monotonic_task_marker_before_tree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    task_path = f"openspec/changes/{_CHANGE}/tasks.md"
+    plan = _work_product_plan(
+        source=source,
+        path=task_path,
+        blob_sha="b" * 40,
+        expected_sha="a" * 40,
+    )
+    current = "- [ ] 2.1 first implementation task\n- [ ] 2.2 second implementation task\n"
+    invalid = "- [x] 2.1 renamed implementation task\n- [ ] 2.2 second implementation task\n"
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_: source)
+    monkeypatch.setattr(
+        resource,
+        "_open_pr_payload",
+        lambda **_: {
+            "number": 178,
+            "state": "open",
+            "merged": False,
+            "body": "Refs #138\\n",
+            "head": {
+                "sha": _PR_HEAD,
+                "ref": f"agent/{_CHANGE}",
+                "repo": {"full_name": _REPOSITORY},
+            },
+            "base": {
+                "ref": "main",
+                "sha": _REVISION,
+                "repo": {"full_name": _REPOSITORY},
+            },
+        },
+    )
+    monkeypatch.setattr(
+        resource,
+        "_ref_head_sha",
+        lambda _repository, _token, branch: _REVISION if branch == "main" else _PR_HEAD,
+    )
+    monkeypatch.setattr(
+        resource,
+        "_default_branch_is_ancestor",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        resource,
+        "_content_sha_at",
+        lambda *_args, **_kwargs: "a" * 40,
+    )
+    monkeypatch.setattr(
+        resource,
+        "_content_text_at",
+        lambda *_args, **_kwargs: current,
+    )
+    monkeypatch.setattr(resource, "_blob_text", lambda *_args, **_kwargs: invalid)
+
+    def fail_github_json(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("task guard must run before GitHub tree construction")
+
+    monkeypatch.setattr(resource, "_github_json", fail_github_json)
+    with pytest.raises(RuntimeError, match="monotonic checkbox-only"):
+        resource.apply_work_product(
+            plan,
+            repository=_REPOSITORY,
+            token=_FIXTURE_VALUE,
+            default_branch="main",
+            authorization_revision=_REVISION,
+        )
+
+
 def _work_product_plan(
     *,
     source: WorkerRequest,
@@ -180,23 +349,6 @@ def _work_product_plan(
             ),
         ),
     )
-
-
-def test_executor_config_authoring_is_narrowly_bound() -> None:
-    source = WorkerRequest(138, "executor", "implement-change")
-    reviewer = WorkerRequest(138, "reviewer", "review-openspec")
-    config_file = resource.WorkProductFile("openspec/config.yaml", "b" * 40, "a" * 40)
-    task_file = resource.WorkProductFile(
-        f"openspec/changes/{_CHANGE}/tasks.md", "b" * 40, "a" * 40
-    )
-    spec_file = resource.WorkProductFile(
-        "openspec/specs/repository-governance/spec.md", "b" * 40, "a" * 40
-    )
-
-    assert resource._is_executor_config_authoring(source, _CHANGE, (config_file,))
-    assert not resource._is_executor_config_authoring(source, _CHANGE, (config_file, task_file))
-    assert not resource._is_executor_config_authoring(source, _CHANGE, (spec_file,))
-    assert not resource._is_executor_config_authoring(reviewer, _CHANGE, (config_file,))
 
 
 def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r(
@@ -621,294 +773,3 @@ def test_application_workflow_has_one_effect_ingress_and_no_legacy_families() ->
     ):
         assert forbidden not in workflow
         assert forbidden not in source
-
-
-def test_post_merge_task_materialization_builds_a_default_branch_carrier_plan(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import base64
-
-    source = WorkerRequest(180, "executor", "implement-change")
-    change = "preserve-openspec-parent-outcome-final"
-    default_revision = "1" * 40
-    historical_head = "2" * 40
-    merge_commit = "3" * 40
-    premerge_revision = "4" * 40
-    current_task_sha = "5" * 40
-    task_blob_sha = "6" * 40
-    tree_sha = "7" * 40
-    revision = "8" * 40
-    task_path = f"openspec/changes/{change}/tasks.md"
-    current_tasks = (
-        "- [ ] 4.6 Mark the Change implementation-ready only after exact-head "
-        "required gates are green and independent Review has passed.\n"
-    )
-    updated_tasks = current_tasks.replace("- [ ] 4.6", "- [x] 4.6", 1)
-    manifest = resource.WorkProductManifest(
-        branch="main",
-        base_sha=default_revision,
-        message=resource._post_merge_task_message(change),
-        files=(
-            resource.WorkProductFile(
-                task_path,
-                task_blob_sha,
-                current_task_sha,
-            ),
-        ),
-    )
-    plan = resource.WorkProductPlan(
-        True,
-        source=source,
-        pr_number=210,
-        expected_change=change,
-        manifest=manifest,
-    )
-    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_: source)
-
-    def fake_github_json(
-        repository: str,
-        token: str,
-        api_path: str,
-        *,
-        method: str = "GET",
-        payload: dict[str, object] | None = None,
-        allow_not_found: bool = False,
-    ) -> object | None:
-        assert repository == _REPOSITORY
-        assert token == _FIXTURE_VALUE
-        del allow_not_found
-        if api_path == "" and method == "GET":
-            return {"default_branch": "main"}
-        if api_path == "git/ref/heads/main" and method == "GET":
-            return {"object": {"sha": default_revision}}
-        if api_path == "issues/180" and method == "GET":
-            return {"state": "open", "body": f"Change: {change}\n"}
-        if api_path == "pulls/210" and method == "GET":
-            return {
-                "number": 210,
-                "state": "closed",
-                "merged": True,
-                "merge_commit_sha": merge_commit,
-                "merged_at": "2026-09-06T20:32:36Z",
-                "body": "Formalize OpenSpec change.\n\nRefs #180",
-                "head": {
-                    "sha": historical_head,
-                    "ref": f"agent/{change}",
-                    "repo": {"full_name": repository},
-                },
-                "base": {
-                    "sha": premerge_revision,
-                    "ref": "main",
-                    "repo": {"full_name": repository},
-                },
-            }
-        if api_path == "pulls/210/files?per_page=100" and method == "GET":
-            return [{"filename": task_path}]
-        if api_path == f"git/commits/{merge_commit}" and method == "GET":
-            return {"sha": merge_commit, "parents": [{"sha": premerge_revision}]}
-        if api_path == f"compare/{merge_commit}...{default_revision}" and method == "GET":
-            return {"status": "ahead", "ahead_by": 1, "behind_by": 0}
-        if api_path == "issues/180/comments?per_page=100" and method == "GET":
-            return [
-                {
-                    "id": 1,
-                    "created_at": "2026-09-06T20:24:10Z",
-                    "body": (
-                        "Action: Reviewer / review-implementation\n"
-                        "Result: PASS\n"
-                        f"Revision: {historical_head}\n"
-                        f"Default-Branch-Revision: {default_revision}"
-                    ),
-                }
-            ]
-        if api_path == f"commits/{historical_head}/check-runs?per_page=100" and method == "GET":
-            return {
-                "total_count": 2,
-                "check_runs": [
-                    {"status": "completed", "conclusion": "success"},
-                    {"status": "completed", "conclusion": "success"},
-                ],
-            }
-        if api_path.startswith(f"contents/{task_path}?") and method == "GET":
-            if f"ref={default_revision}" in api_path:
-                return {
-                    "sha": current_task_sha,
-                    "content": base64.b64encode(current_tasks.encode()).decode(),
-                    "encoding": "base64",
-                }
-            if f"ref={revision}" in api_path:
-                return {"sha": task_blob_sha}
-        if api_path == f"git/blobs/{task_blob_sha}" and method == "GET":
-            return {
-                "encoding": "base64",
-                "content": base64.b64encode(updated_tasks.encode()).decode(),
-            }
-        if api_path == f"git/commits/{default_revision}" and method == "GET":
-            return {"sha": default_revision, "tree": {"sha": "9" * 40}}
-        if api_path == "git/trees" and method == "POST":
-            assert payload == {
-                "base_tree": "9" * 40,
-                "tree": [
-                    {
-                        "path": task_path,
-                        "mode": "100644",
-                        "type": "blob",
-                        "sha": task_blob_sha,
-                    }
-                ],
-            }
-            return {"sha": tree_sha}
-        if api_path == f"git/trees/{tree_sha}?recursive=1" and method == "GET":
-            return {
-                "sha": tree_sha,
-                "truncated": False,
-                "tree": [{"path": task_path, "type": "blob", "sha": task_blob_sha}],
-            }
-        if api_path == "git/commits" and method == "POST":
-            assert payload == {
-                "message": resource._post_merge_task_message(change),
-                "tree": tree_sha,
-                "parents": [default_revision],
-            }
-            return {"sha": revision}
-        if api_path == f"git/commits/{revision}" and method == "GET":
-            return {
-                "sha": revision,
-                "message": resource._post_merge_task_message(change),
-                "tree": {"sha": tree_sha},
-                "parents": [{"sha": default_revision}],
-            }
-        raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
-
-    monkeypatch.setattr(resource, "_github_json", fake_github_json)
-    with pytest.raises(resource.CarrierRequired) as raised:
-        resource.apply_work_product(
-            plan,
-            repository=_REPOSITORY,
-            token=_FIXTURE_VALUE,
-            default_branch="main",
-            authorization_revision=default_revision,
-        )
-
-    carrier_plan = raised.value.plan
-    assert carrier_plan.operation == "default-branch-ref-update"
-    assert carrier_plan.requested == {
-        "repository": _REPOSITORY,
-        "ref": "refs/heads/main",
-        "sha": revision,
-        "force": False,
-    }
-    assert carrier_plan.expected["ref_sha"] == default_revision
-    assert carrier_plan.expected["commit_parents"] == [default_revision]
-    assert carrier_plan.expected_postcondition["path"] == task_path
-    assert carrier_plan.expected_postcondition["blob_sha"] == task_blob_sha
-
-
-def test_post_merge_task_materialization_replay_accepts_existing_exact_carrier(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = WorkerRequest(180, "executor", "implement-change")
-    change = "preserve-openspec-parent-outcome-final"
-    previous_revision = "2" * 40
-    current_revision = "3" * 40
-    task_path = f"openspec/changes/{change}/tasks.md"
-    manifest = resource.WorkProductManifest(
-        branch="main",
-        base_sha=previous_revision,
-        message=resource._post_merge_task_message(change),
-        files=(
-            resource.WorkProductFile(
-                task_path,
-                "4" * 40,
-                "5" * 40,
-            ),
-        ),
-    )
-    monkeypatch.setattr(
-        resource,
-        "_open_pr_payload",
-        lambda **_: {
-            "number": 210,
-            "state": "closed",
-            "merged": True,
-            "head": {"sha": "6" * 40},
-        },
-    )
-    monkeypatch.setattr(
-        resource,
-        "_verify_post_merge_task_bookkeeping_evidence",
-        lambda *args, **kwargs: None,
-    )
-    monkeypatch.setattr(resource, "_ref_head_sha", lambda *args, **kwargs: current_revision)
-    monkeypatch.setattr(
-        resource,
-        "_current_authorized_request",
-        lambda *args: source,
-    )
-    matched: list[tuple[str, str, str]] = []
-
-    def fake_revision_matches(
-        repository: str,
-        token: str,
-        *,
-        base_sha: str,
-        revision: str,
-        manifest: resource.WorkProductManifest,
-    ) -> bool:
-        matched.append((repository, token, revision))
-        assert base_sha == previous_revision
-        assert manifest.base_sha == previous_revision
-        return False
-
-    monkeypatch.setattr(resource, "_revision_matches_manifest", fake_revision_matches)
-
-    reconciled: list[tuple[str, str, str, str, str]] = []
-
-    def fake_task_reconciliation(
-        repository: str,
-        token: str,
-        *,
-        base_sha: str,
-        revision: str,
-        file: resource.WorkProductFile,
-    ) -> bool:
-        reconciled.append((repository, token, base_sha, revision, file.path))
-        assert base_sha == previous_revision
-        assert revision == current_revision
-        assert file.blob_sha == "4" * 40
-        return True
-
-    monkeypatch.setattr(
-        resource,
-        "_task_marker_reconciliation_is_present",
-        fake_task_reconciliation,
-    )
-    target = resource._apply_post_merge_task_bookkeeping(
-        source=source,
-        pr_number=210,
-        expected_change=change,
-        manifest=manifest,
-        repository=_REPOSITORY,
-        token=_FIXTURE_VALUE,
-        default_branch="main",
-        authorization_revision=current_revision,
-    )
-
-    assert target == resource.ValidationResourceTarget(
-        repository=_REPOSITORY,
-        revision=current_revision,
-        correlation="effect-request-180",
-        pr_number=210,
-        change=change,
-        validation_required=False,
-    )
-    assert matched == [(_REPOSITORY, _FIXTURE_VALUE, current_revision)]
-    assert reconciled == [
-        (
-            _REPOSITORY,
-            _FIXTURE_VALUE,
-            previous_revision,
-            current_revision,
-            task_path,
-        )
-    ]

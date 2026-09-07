@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+from collections.abc import Callable
 
 import pytest
 
@@ -118,6 +119,316 @@ def test_typed_application_derives_one_successor_without_continuation() -> None:
         "issue_number": 138,
         "action": "resolve-question",
     }
+
+
+def _accept_checkpoint(
+    _request: effects.MaterializationRequest,
+    _task_ids: tuple[str, ...],
+) -> bool:
+    return True
+
+
+def _implementation_checkpoint_effects() -> list[dict[str, str]]:
+    task_payload = {
+        "issue_number": 138,
+        "operation": "application-materialize",
+        "expected_change": _CHANGE,
+        "change": _CHANGE,
+        "branch": f"agent/{_CHANGE}",
+        "base_sha": _REVISION,
+        "message": "checkpoint verified task markers",
+        "files": [
+            {
+                "path": f"openspec/changes/{_CHANGE}/tasks.md",
+                "blob_sha": "b" * 40,
+                "expected_sha": "c" * 40,
+            }
+        ],
+        "pr_number": 178,
+    }
+    checkpoint_payload = {
+        "issue_number": 138,
+        "body": (
+            "SLICE_CHECKPOINT\n"
+            "Workflow: #138\n"
+            f"Change: {_CHANGE}\n"
+            "Action: implement-change\n"
+            "Role: executor\n"
+            "Completed-Tasks: 2.1, 2.2\n"
+            f"Revision: {_REVISION}\n"
+            "Gate-Evidence: exact-head VERIFY\n"
+            "Remaining-Approved-Boundary: continue with Slice 3"
+        ),
+    }
+    return [
+        {
+            "kind": "github-mutation",
+            "payload_json": json.dumps(task_payload),
+        },
+        {
+            "kind": "issue-comment",
+            "payload_json": json.dumps(checkpoint_payload),
+        },
+    ]
+
+
+@pytest.mark.parametrize(
+    "result_kind,requested_effects",
+    (
+        ("more-implementation-required", []),
+        ("ready", []),
+        ("more-implementation-required", _implementation_checkpoint_effects()[:1]),
+        ("ready", _implementation_checkpoint_effects()[1:]),
+    ),
+)
+def test_implement_completion_rejects_incomplete_checkpoint_effects(
+    result_kind: str,
+    requested_effects: list[dict[str, str]],
+) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    batch = parse_effect_batch(
+        _raw(result_kind=result_kind, requested_effects=requested_effects),
+        source,
+    )
+    applied: list[StagedEffect] = []
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: pytest.fail("incomplete implementation advanced"),
+        apply_effect=applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+    )
+
+    assert not result.applied
+    assert "implementation-checkpoint-incomplete" in result.reason
+    assert applied == []
+
+
+@pytest.mark.parametrize(
+    "result_kind,successor",
+    (
+        ("more-implementation-required", "implement-change"),
+        ("ready", "review-implementation"),
+    ),
+)
+def test_implement_completion_derives_successor_after_task_then_checkpoint(
+    result_kind: str,
+    successor: str,
+) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    batch = parse_effect_batch(
+        _raw(
+            result_kind=result_kind,
+            requested_effects=_implementation_checkpoint_effects(),
+        ),
+        source,
+    )
+    applied: list[StagedEffect] = []
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: True,
+        apply_effect=applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        validate_implementation_checkpoint=_accept_checkpoint,
+    )
+
+    assert result.applied
+    assert [effect.kind for effect in applied] == [
+        "github-mutation",
+        "issue-comment",
+        "routing-transition",
+    ]
+    assert applied[-1].derived
+    assert json.loads(applied[-1].payload_json) == {
+        "issue_number": 138,
+        "action": successor,
+    }
+
+
+def test_implement_completion_rejects_reordered_or_duplicate_checkpoint_effects() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    effects = _implementation_checkpoint_effects()
+    reordered = parse_effect_batch(
+        _raw(
+            result_kind="more-implementation-required",
+            requested_effects=list(reversed(effects)),
+        ),
+        source,
+    )
+    duplicated = parse_effect_batch(
+        _raw(
+            result_kind="more-implementation-required",
+            requested_effects=effects + [effects[1]],
+        ),
+        source,
+    )
+
+    for batch in (reordered, duplicated):
+        applied: list[StagedEffect] = []
+        result = apply_effect_batch(
+            batch,
+            fresh_preflight=_preflight,
+            effect_guard=lambda _effect: pytest.fail("invalid checkpoint advanced"),
+            apply_effect=applied.append,
+            observe_postcondition=lambda _effect: True,
+            current_revision=_REVISION,
+        )
+        assert not result.applied
+        assert "implementation-checkpoint-incomplete" in result.reason
+        assert applied == []
+
+
+def _complete_checkpoint_body() -> str:
+    return "\n".join(
+        (
+            "SLICE_CHECKPOINT",
+            "Workflow: #138",
+            f"Change: {_CHANGE}",
+            "Action: implement-change",
+            "Role: executor",
+            "Completed-Tasks: 2.1, 2.2",
+            f"Revision: {_REVISION}",
+            "Gate-Evidence: exact-head VERIFY",
+            "Remaining-Approved-Boundary: continue with Slice 3",
+        )
+    )
+
+
+def _checkpoint_effects_with_body(body: str) -> list[dict[str, str]]:
+    effects = _implementation_checkpoint_effects()
+    effects[1] = {
+        "kind": "issue-comment",
+        "payload_json": json.dumps({"issue_number": 138, "body": body}),
+    }
+    return effects
+
+
+def _apply_completion_effects(
+    requested_effects: list[dict[str, str]],
+    validate_checkpoint: Callable[[effects.MaterializationRequest, tuple[str, ...]], bool]
+    | None = None,
+) -> tuple[effects.ApplyResult, list[StagedEffect]]:
+    source = WorkerRequest(138, "executor", "implement-change")
+    batch = parse_effect_batch(
+        _raw(result_kind="more-implementation-required", requested_effects=requested_effects),
+        source,
+    )
+    applied: list[StagedEffect] = []
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: True,
+        apply_effect=applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        validate_implementation_checkpoint=validate_checkpoint,
+    )
+    return result, applied
+
+
+def _invalid_checkpoint_bodies() -> tuple[str, ...]:
+    valid = _complete_checkpoint_body()
+    return (
+        valid.replace("Workflow: #138", "Workflow: #139"),
+        valid.replace("Change: simplify-scheduled-agent-control-plane", "Change: other-change"),
+        valid.replace("Action: implement-change", "Action: review-implementation"),
+        valid.replace(
+            "Completed-Tasks: 2.1, 2.2",
+            "Completed-Tasks: 2.1, 2.1",
+        ),
+        valid.replace(
+            f"Revision: {_REVISION}",
+            f"Revision: {_REVISION}\nRevision: {_REVISION}",
+        ),
+        valid.replace("Gate-Evidence: exact-head VERIFY", "Gate-Evidence: "),
+        valid.replace(
+            "Remaining-Approved-Boundary: continue with Slice 3",
+            "Remaining-Approved-Boundary: ",
+        ),
+        valid + "\nUnexpected: value",
+    )
+
+
+@pytest.mark.parametrize("body", _invalid_checkpoint_bodies())
+def test_implement_completion_rejects_ambiguous_checkpoint_body(body: str) -> None:
+    result, applied = _apply_completion_effects(_checkpoint_effects_with_body(body))
+
+    assert not result.applied
+    assert "implementation-checkpoint-incomplete" in result.reason
+    assert applied == []
+
+
+def test_implement_completion_requires_executable_slice_validator() -> None:
+    result, applied = _apply_completion_effects(_implementation_checkpoint_effects())
+
+    assert not result.applied
+    assert "implementation-checkpoint-incomplete" in result.reason
+    assert applied == []
+
+
+def test_implement_completion_rejects_multiple_slice_task_ids_at_application_boundary() -> None:
+    body = _complete_checkpoint_body().replace(
+        "Completed-Tasks: 2.1, 2.2",
+        "Completed-Tasks: 2.1, 2.2, 3.1",
+    )
+    result, applied = _apply_completion_effects(
+        _checkpoint_effects_with_body(body),
+        lambda _request, task_ids: task_ids == ("2.1", "2.2"),
+    )
+
+    assert not result.applied
+    assert "implementation-checkpoint-incomplete" in result.reason
+    assert applied == []
+
+
+def test_durable_task_markers_without_checkpoint_do_not_advance() -> None:
+    result, applied = _apply_completion_effects(_implementation_checkpoint_effects()[:1])
+
+    assert not result.applied
+    assert "implementation-checkpoint-incomplete" in result.reason
+    assert applied == []
+
+
+def test_checkpoint_before_task_does_not_advance() -> None:
+    result, applied = _apply_completion_effects(
+        list(reversed(_checkpoint_effects_with_body(_complete_checkpoint_body())))
+    )
+
+    assert not result.applied
+    assert "implementation-checkpoint-incomplete" in result.reason
+    assert applied == []
+
+
+def test_replay_accepts_already_durable_checkpoint_effects() -> None:
+    requested_effects = _checkpoint_effects_with_body(_complete_checkpoint_body())
+    durable: set[tuple[str, str]] = set()
+
+    def apply_once(effect: StagedEffect) -> None:
+        durable.add((effect.kind, effect.payload_json))
+
+    first, _ = _apply_completion_effects(requested_effects, _accept_checkpoint)
+    second = apply_effect_batch(
+        parse_effect_batch(
+            _raw(
+                result_kind="more-implementation-required",
+                requested_effects=requested_effects,
+            ),
+            WorkerRequest(138, "executor", "implement-change"),
+        ),
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: True,
+        apply_effect=apply_once,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        validate_implementation_checkpoint=_accept_checkpoint,
+    )
+
+    assert first.applied
+    assert second.applied
+    assert len(durable) == 3
 
 
 def test_terminal_result_derives_closed_terminal_effect() -> None:

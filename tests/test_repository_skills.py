@@ -114,6 +114,21 @@ def test_standard_metadata_and_provenance_preserve_existing_action_ownership() -
         assert expected in body, f"{skill} must preserve its mapped role/action declaration"
 
 
+def test_implementation_skill_makes_verified_slice_recovery_boundary_explicit() -> None:
+    text = (Path("agents/skills/implementation/SKILL.md")).read_text(encoding="utf-8")
+
+    for phrase in (
+        "first incomplete slice",
+        "exactly one bounded slice",
+        "RED -> GREEN -> REFACTOR -> VERIFY",
+        "task markers first",
+        "one bounded SLICE_CHECKPOINT",
+        "never redo a verified slice",
+        "before READY or MORE_IMPLEMENTATION_REQUIRED",
+    ):
+        assert phrase in text
+
+
 def test_semantic_adapter_remains_a_separate_follow_up_resource() -> None:
     root = Path("agents/skills")
     assert (root / "openspec-semantic-adapter.md").is_file()

@@ -47,4 +47,6 @@ rules:
     - Use Markdown checkboxes and keep RED, GREEN, and REFACTOR work grouped at feature-slice granularity.
     - Include behavioral tests that verify public Decision and analytical Backtest artifacts contain the exact required disclaimer text.
     - Trace Behavior/Product tasks through proposal, capability specs, and design; Engineering/Governance tasks such as lint, type checks, and OpenSpec validation may trace through this config and design without adding artificial capability requirements.
+    - Implementation task markers SHALL describe only work Executor can implement and VERIFY during implement-change.
+    - Reviewer PASS, merge completion, archive completion, and later lifecycle transitions SHALL remain lifecycle gates and MUST NOT be implementation task markers.
     - Before declaring a change complete, run strict OpenSpec validation and resolve all reported issues.

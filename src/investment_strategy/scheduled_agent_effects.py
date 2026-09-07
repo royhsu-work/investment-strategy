@@ -22,6 +22,7 @@ from investment_strategy.scheduled_agent_action_model import (
     ActionSource,
     ApplicationRejection,
     BoundedActionResult,
+    ResultKind,
     plan_action_application,
     role_for,
 )
@@ -29,6 +30,7 @@ from investment_strategy.scheduled_agent_action_model import (
     ObservationProvenance as ModelObservationProvenance,
 )
 from investment_strategy.scheduled_agent_application_materialization import (
+    MaterializationRequest,
     apply_materialization,
     find_materialization_payload,
     materialization_postcondition,
@@ -51,7 +53,7 @@ from investment_strategy.scheduled_agent_runtime import (
 )
 from investment_strategy.scheduled_agent_validation_resource import (
     ValidationResourceTarget,
-    is_post_merge_task_bookkeeping,
+    task_checkpoint_is_exact,
 )
 from investment_strategy.scheduled_agent_worker import parse_worker_result
 from investment_strategy.workflow_dispatch import (
@@ -94,6 +96,7 @@ EffectGuard = Callable[[StagedEffect], bool]
 EffectApplier = Callable[[StagedEffect], None]
 PostconditionObserver = Callable[[StagedEffect], bool]
 CarrierPlanProvider = Callable[[StagedEffect], CarrierPlan | None]
+ImplementationCheckpointValidator = Callable[[MaterializationRequest, tuple[str, ...]], bool]
 
 
 def parse_effect_batch(raw: str, source: WorkerRequest) -> EffectBatch:
@@ -144,10 +147,161 @@ def _typed_terminal_effect_matches(
     }
 
 
+_IMPLEMENTATION_COMPLETION_RESULTS = frozenset(
+    {ResultKind.MORE_IMPLEMENTATION_REQUIRED, ResultKind.READY}
+)
+
+
+def _slice_checkpoint_completed_task_ids(
+    body: str,
+    *,
+    source: WorkerRequest,
+    change: str,
+    request: MaterializationRequest,
+) -> tuple[str, ...] | None:
+    """Parse the bounded checkpoint envelope and return its task IDs."""
+
+    lines = body.splitlines()
+    if len(lines) != 9 or lines[0] != "SLICE_CHECKPOINT":
+        return None
+    values: dict[str, str] = {}
+    for line in lines[1:]:
+        key, separator, value = line.partition(": ")
+        if not separator or key in values or not value or value != value.strip():
+            return None
+        values[key] = value
+    expected_keys = {
+        "Workflow",
+        "Change",
+        "Action",
+        "Role",
+        "Completed-Tasks",
+        "Revision",
+        "Gate-Evidence",
+        "Remaining-Approved-Boundary",
+    }
+    if set(values) != expected_keys:
+        return None
+    if (
+        values["Workflow"] != f"#{source.issue_number}"
+        or values["Change"] != change
+        or values["Action"] != source.action
+        or values["Role"] != source.role
+    ):
+        return None
+    task_ids = tuple(task_id.strip() for task_id in values["Completed-Tasks"].split(","))
+    if (
+        not task_ids
+        or len(task_ids) != len(set(task_ids))
+        or any(not re.fullmatch(r"\d+(?:\.\d+)+", task_id) for task_id in task_ids)
+    ):
+        return None
+    revision = values["Revision"]
+    if not re.fullmatch(r"[0-9a-f]{40}", revision) or revision != request.base_sha:
+        return None
+    if not values["Gate-Evidence"] or not values["Remaining-Approved-Boundary"]:
+        return None
+    return task_ids
+
+
+def _slice_checkpoint_body_is_bounded(
+    body: str,
+    *,
+    source: WorkerRequest,
+    change: str,
+    request: MaterializationRequest,
+) -> bool:
+    """Validate the canonical bounded checkpoint evidence envelope."""
+
+    return (
+        _slice_checkpoint_completed_task_ids(
+            body,
+            source=source,
+            change=change,
+            request=request,
+        )
+        is not None
+    )
+
+
+def _implementation_checkpoint_effects_complete(
+    batch: EffectBatch,
+    decision: ActionApplicationDecision,
+    validate_implementation_checkpoint: ImplementationCheckpointValidator | None,
+) -> bool:
+    """Require exact task/checkpoint effects before implementation advances."""
+
+    if (
+        batch.source.role != "executor"
+        or batch.source.action != "implement-change"
+        or decision.result.result.kind not in _IMPLEMENTATION_COMPLETION_RESULTS
+    ):
+        return True
+
+    materializations: list[tuple[int, MaterializationRequest]] = []
+    issue_comment_indexes: list[int] = []
+    checkpoint_indexes: list[int] = []
+    checkpoint_bodies: list[str] = []
+    for index, effect in enumerate(batch.effects):
+        if effect.kind == GITHUB_MUTATION_KIND:
+            payload = _effect_payload(effect)
+            if payload is None or payload.get("operation") != "application-materialize":
+                continue
+            try:
+                request = find_materialization_payload(payload, batch.source)
+            except ValueError:
+                return False
+            if request is None:
+                return False
+            materializations.append((index, request))
+            continue
+        if effect.kind != "issue-comment":
+            continue
+        payload = _effect_payload(effect)
+        if payload is None:
+            return False
+        body = payload.get("body")
+        if not isinstance(body, str):
+            return False
+        issue_comment_indexes.append(index)
+        if body.splitlines()[:1] == ["SLICE_CHECKPOINT"]:
+            checkpoint_indexes.append(index)
+            checkpoint_bodies.append(body)
+
+    if (
+        len(materializations) != 1
+        or len(issue_comment_indexes) != 1
+        or len(checkpoint_indexes) != 1
+    ):
+        return False
+    task_index, request = materializations[0]
+    completed_task_ids = _slice_checkpoint_completed_task_ids(
+        checkpoint_bodies[0],
+        source=batch.source,
+        change=decision.source.change,
+        request=request,
+    )
+    if (
+        request.expected_change != decision.source.change
+        or request.change != decision.source.change
+        or request.branch != f"agent/{decision.source.change}"
+        or request.pr_number is None
+        or len(request.files) != 1
+        or request.files[0].path != f"openspec/changes/{decision.source.change}/tasks.md"
+        or request.files[0].expected_sha is None
+        or completed_task_ids is None
+        or task_index >= checkpoint_indexes[0]
+        or validate_implementation_checkpoint is None
+    ):
+        return False
+    return validate_implementation_checkpoint(request, completed_task_ids)
+
+
 def _typed_application_plan(
     batch: EffectBatch,
     preflight: DispatchPreflight,
     current_revision: str | None,
+    validate_implementation_checkpoint: ImplementationCheckpointValidator | None,
 ) -> tuple[ActionApplicationDecision | None, StagedEffect | None, ApplyResult | None]:
     typed_result = batch.typed_result
     if typed_result is None:
@@ -211,6 +365,20 @@ def _typed_application_plan(
                 False,
                 f"typed application rejected:{classification}",
                 rejection=rejection,
+            ),
+        )
+
+    if not _implementation_checkpoint_effects_complete(
+        batch,
+        decision,
+        validate_implementation_checkpoint,
+    ):
+        return (
+            decision,
+            None,
+            ApplyResult(
+                False,
+                "typed application rejected:implementation-checkpoint-incomplete",
             ),
         )
 
@@ -538,6 +706,7 @@ def apply_effect_batch(
     apply_effect: EffectApplier,
     observe_postcondition: PostconditionObserver,
     current_revision: str | None = None,
+    validate_implementation_checkpoint: ImplementationCheckpointValidator | None = None,
     apply_derived: bool = True,
     carrier_plan_for_effect: CarrierPlanProvider | None = None,
 ) -> ApplyResult:
@@ -548,6 +717,7 @@ def apply_effect_batch(
         batch,
         current_preflight,
         current_revision,
+        validate_implementation_checkpoint,
     )
     if typed_rejection is not None:
         return typed_rejection
@@ -665,6 +835,24 @@ class GitHubEffectAdapter:
         self._idempotent_merges: set[StagedEffect] = set()
         self._merge_metadata: dict[str, tuple[str, str]] = {}
         self._materialization_targets: dict[StagedEffect, ValidationResourceTarget] = {}
+
+    def validate_implementation_checkpoint(
+        self,
+        request: MaterializationRequest,
+        completed_task_ids: tuple[str, ...],
+    ) -> bool:
+        """Validate task IDs against the exact first incomplete Change slice."""
+
+        if request.pr_number is None or len(request.files) != 1:
+            return False
+        return task_checkpoint_is_exact(
+            self.repository,
+            self.token,
+            expected_change=request.change,
+            base_sha=request.base_sha,
+            file=request.files[0],
+            completed_task_ids=completed_task_ids,
+        )
 
     def _current_issue(self) -> Mapping[str, object] | None:
         payload = _github_json(
@@ -1116,16 +1304,7 @@ class GitHubEffectAdapter:
             if request is None:
                 return False
             default_branch = self._default_branch()
-            branch_allowed = request.branch == _source_branch(request.change) or (
-                default_branch is not None
-                and is_post_merge_task_bookkeeping(
-                    self.source,
-                    request.expected_change,
-                    request.branch,
-                    request.files,
-                    default_branch=default_branch,
-                )
-            )
+            branch_allowed = request.branch == _source_branch(request.change)
             return (
                 request.expected_change == self.authorized_change
                 and branch_allowed
@@ -1733,6 +1912,7 @@ def run_effect_application(
         apply_effect=adapter.apply,
         observe_postcondition=adapter.observe_postcondition,
         current_revision=current_revision,
+        validate_implementation_checkpoint=adapter.validate_implementation_checkpoint,
         apply_derived=apply_derived,
         carrier_plan_for_effect=adapter.carrier_plan_if_required,
     )
