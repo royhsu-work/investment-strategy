@@ -91,16 +91,16 @@ existing review/merge/archive gates.
 Trace: normal verified-slice enforcement + green regressions + fresh consumer
 inventory -> workaround deletion decision.
 
-- [ ] 5.1 RED: add or extend an existing regression proving the normal path does
+- [x] 5.1 RED: add or extend an existing regression proving the normal path does
   not require a post-merge task-marker repair and that no active/legacy consumer
   is silently relied upon by the production application.
-- [ ] 5.2 GREEN: after the fresh deletion preconditions are satisfied, remove the
+- [x] 5.2 GREEN: after the fresh deletion preconditions are satisfied, remove the
   post-merge task reconciliation branch and its obsolete special-case tests;
   otherwise retain it and record the exact consumer/reason in the bounded result.
-- [ ] 5.3 REFACTOR: ensure normal implementation cannot route through a
+- [x] 5.3 REFACTOR: ensure normal implementation cannot route through a
   post-merge repair path and preserves all existing stale/replay/no-rewind
   safety.
-- [ ] 5.4 VERIFY: run the focused regression, full pytest, Ruff check, Ruff
+- [x] 5.4 VERIFY: run the focused regression, full pytest, Ruff check, Ruff
   format check, mypy, and strict OpenSpec validation on the exact head.
 
 ## Slice 6 — Final implementation readiness
