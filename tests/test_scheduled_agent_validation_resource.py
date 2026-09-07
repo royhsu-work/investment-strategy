@@ -155,6 +155,23 @@ def test_executor_task_marker_is_the_only_nonreview_openspec_work_product() -> N
     assert not resource._is_executor_task_bookkeeping(source, _CHANGE, (task_file, design_file))
 
 
+def test_executor_config_authoring_is_narrowly_bound() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    reviewer = WorkerRequest(138, "reviewer", "review-openspec")
+    config_file = resource.WorkProductFile("openspec/config.yaml", "b" * 40, "a" * 40)
+    task_file = resource.WorkProductFile(
+        f"openspec/changes/{_CHANGE}/tasks.md", "b" * 40, "a" * 40
+    )
+    spec_file = resource.WorkProductFile(
+        "openspec/specs/repository-governance/spec.md", "b" * 40, "a" * 40
+    )
+
+    assert resource._is_executor_config_authoring(source, _CHANGE, (config_file,))
+    assert not resource._is_executor_config_authoring(source, _CHANGE, (config_file, task_file))
+    assert not resource._is_executor_config_authoring(source, _CHANGE, (spec_file,))
+    assert not resource._is_executor_config_authoring(reviewer, _CHANGE, (config_file,))
+
+
 def test_executor_task_marker_update_accepts_only_monotonic_checkbox_changes() -> None:
     current = "- [ ] 2.1 first implementation task\n- [ ] 2.2 second implementation task\n"
     valid = "- [x] 2.1 first implementation task\n- [ ] 2.2 second implementation task\n"
