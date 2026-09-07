@@ -27,6 +27,21 @@ from investment_strategy.workflow_dispatch import (
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
 _ACTION_LABELS = {f"action:{action.value}": action.value for action in ModelAction}
 _ROUTING_LABEL_PREFIXES = ("agent:", "action:")
+_GITHUB_ACTIONS_BOT = "github-actions[bot]"
+_GITHUB_ACTIONS_APP = "github-actions"
+
+
+def is_github_actions_comment(payload: Mapping[str, object]) -> bool:
+    """Recognize formal evidence authored by the repository Actions app."""
+
+    user = payload.get("user")
+    app = payload.get("performed_via_github_app")
+    return (
+        isinstance(user, Mapping)
+        and user.get("login") == _GITHUB_ACTIONS_BOT
+        and isinstance(app, Mapping)
+        and app.get("slug") == _GITHUB_ACTIONS_APP
+    )
 
 
 @dataclass(frozen=True)

@@ -689,6 +689,7 @@ def test_issue_comment_reuses_existing_bot_comment_without_post(
         "id": 991,
         "body": body,
         "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
     }
     calls: list[tuple[str, str]] = []
 
@@ -725,11 +726,73 @@ def test_issue_comment_reuses_existing_bot_comment_without_post(
     )
 
     adapter.apply(effect)
+    assert adapter.observe_postcondition(effect)
 
     assert calls == [
         ("issues/138/comments?per_page=100&sort=created&direction=desc", "GET"),
+        ("issues/comments/991", "GET"),
     ]
+
+
+def test_issue_comment_does_not_reuse_connector_authored_formal_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = "royhsu-work/investment-strategy"
+    source = WorkerRequest(138, "lead", "finalize-change")
+    body = "ACTION_RESULT\nResult: ARCHIVE_READY"
+    connector_comment = {
+        "id": 991,
+        "body": body,
+        "user": {"login": "royhsu-work"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+    actions_comment = {
+        "id": 992,
+        "body": body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    calls: list[tuple[str, str]] = []
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        del payload
+        calls.append((api_path, method))
+        if api_path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            return [connector_comment]
+        if api_path == "issues/138/comments" and method == "POST":
+            return actions_comment
+        if api_path == "issues/comments/992":
+            return actions_comment
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        repository,
+        "token",
+        source,
+        authorized_change=_CHANGE,
+    )
+    effect = StagedEffect(
+        kind="issue-comment",
+        payload_json=json.dumps({"issue_number": 138, "body": body}),
+    )
+
+    adapter.apply(effect)
     assert adapter.observe_postcondition(effect)
+
+    assert calls == [
+        ("issues/138/comments?per_page=100&sort=created&direction=desc", "GET"),
+        ("issues/138/comments", "POST"),
+        ("issues/comments/992", "GET"),
+    ]
 
 
 def test_empty_github_api_path_uses_repository_endpoint(
@@ -1143,12 +1206,14 @@ def test_issue_comment_reuses_existing_bot_comment_on_later_page(
         "id": 992,
         "body": body,
         "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
     }
     first_page = [
         {
             "id": index,
             "body": f"unrelated-{index}",
             "user": {"login": "github-actions[bot]"},
+            "performed_via_github_app": {"slug": "github-actions"},
         }
         for index in range(100)
     ]

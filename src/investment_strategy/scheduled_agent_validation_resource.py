@@ -9,7 +9,6 @@ import re
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import PurePosixPath
 from typing import cast
 from urllib.error import HTTPError
@@ -834,82 +833,6 @@ def _verify_default_only_content(
             _content_sha_at(repository, token, path=path, revision=branch_revision)
         ):
             raise RuntimeError("work-product reconciliation would discard default-branch content")
-
-
-def _implementation_review_pass(
-    repository: str,
-    token: str,
-    *,
-    issue_number: int,
-    head_sha: str,
-    expected_default_revision: str,
-) -> bool:
-    comments = _github_json(
-        repository,
-        token,
-        f"issues/{issue_number}/comments?per_page=100",
-    )
-    if not isinstance(comments, list) or len(comments) >= 100:
-        return False
-    records: list[tuple[datetime, int, str, str, str | None]] = []
-    for raw_comment in comments:
-        comment = _as_mapping(raw_comment)
-        if comment is None:
-            return False
-        body = comment.get("body")
-        if not isinstance(body, str) or "Reviewer / review-implementation" not in body:
-            continue
-        if (
-            re.search(
-                r"Action:\s*(?:\x60)?Reviewer / review-implementation(?:\x60)?",
-                body,
-            )
-            is None
-        ):
-            return False
-        result_match = re.search(r"Result:\s*(?:\x60)?([A-Z_]+)(?:\x60)?", body)
-        revision_match = re.search(r"Revision:\s*(?:\x60)?([0-9a-f]{40})(?:\x60)?", body)
-        default_match = re.search(
-            r"Default-Branch-Revision:\s*(?:\x60)?([0-9a-f]{40})(?:\x60)?",
-            body,
-        )
-        created_at = comment.get("created_at")
-        comment_id = comment.get("id")
-        if (
-            result_match is None
-            or revision_match is None
-            or default_match is None
-            or not isinstance(created_at, str)
-            or not created_at.strip()
-            or not isinstance(comment_id, int)
-            or isinstance(comment_id, bool)
-            or comment_id <= 0
-        ):
-            return False
-        try:
-            timestamp = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-        except ValueError:
-            return False
-        records.append(
-            (
-                timestamp,
-                comment_id,
-                result_match.group(1),
-                revision_match.group(1),
-                default_match.group(1),
-            )
-        )
-    matching = [record for record in records if record[3] == head_sha]
-    passes = [record for record in matching if record[2] == "PASS"]
-    if not passes:
-        return False
-    latest_pass = max(passes, key=lambda record: (record[0], record[1]))
-    if any(
-        (record[0], record[1]) > (latest_pass[0], latest_pass[1]) and record[2] != "PASS"
-        for record in matching
-    ):
-        return False
-    return latest_pass[4] == expected_default_revision
 
 
 def _exact_head_checks_pass(repository: str, token: str, head_sha: str) -> bool:

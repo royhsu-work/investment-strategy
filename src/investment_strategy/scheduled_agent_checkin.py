@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -19,6 +20,8 @@ _CHECKIN_TITLE_PREFIX = "[Agent Runtime] "
 _CHECKIN_MARKER = "<!-- scheduled-agent-runtime-checkin -->"
 _REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _ALLOWED_HTTP_METHODS = {"GET", "POST", "PATCH"}
+_CREATE_POSTCONDITION_ATTEMPTS = 10
+_CREATE_POSTCONDITION_DELAY_SECONDS = 1.0
 
 
 class CheckinDisposition(StrEnum):
@@ -347,6 +350,26 @@ def _create_shard(repository: str, token: str, day: date) -> int:
     return _verify_shard(cast(Mapping[str, object], raw), day=day, expected_state="open")
 
 
+def _observe_created_shard(
+    repository: str,
+    token: str,
+    today: date,
+    created_issue: int,
+) -> RolloverPlan:
+    """Observe a newly created shard across bounded GitHub read-after-write lag."""
+
+    for attempt in range(_CREATE_POSTCONDITION_ATTEMPTS):
+        _, plan = _fresh_rollover(repository, token, today)
+        _require_plan(plan)
+        if plan.current_issue_number == created_issue:
+            return plan
+        if plan.disposition is not CheckinDisposition.CREATE:
+            raise RuntimeError("created shard was not the unique current-day shard")
+        if attempt + 1 < _CREATE_POSTCONDITION_ATTEMPTS:
+            time.sleep(_CREATE_POSTCONDITION_DELAY_SECONDS)
+    raise RuntimeError("created shard postcondition was not observed")
+
+
 def _close_shard(repository: str, token: str, issue_number: int, day: date) -> None:
     raw = _github_json(
         repository,
@@ -426,11 +449,7 @@ def main() -> int:
     retired: list[int] = []
     if plan.disposition is CheckinDisposition.CREATE:
         created_issue = _create_shard(repository, token, today)
-        issues, plan = _fresh_rollover(repository, token, today)
-        _require_plan(plan)
-        if plan.current_issue_number != created_issue:
-            raise RuntimeError("created shard was not the unique current-day shard")
-        del issues
+        plan = _observe_created_shard(repository, token, today, created_issue)
     elif plan.disposition is CheckinDisposition.SELECTED:
         if plan.current_issue_number is None:
             raise RuntimeError("selected shard has no Issue number")
