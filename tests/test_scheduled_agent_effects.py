@@ -121,7 +121,6 @@ def test_typed_application_derives_one_successor_without_continuation() -> None:
     }
 
 
-
 def _accept_checkpoint(
     _request: effects.MaterializationRequest,
     _task_ids: tuple[str, ...],
@@ -309,9 +308,7 @@ def _checkpoint_effects_with_body(body: str) -> list[dict[str, str]]:
 
 def _apply_completion_effects(
     requested_effects: list[dict[str, str]],
-    validate_checkpoint: Callable[
-        [effects.MaterializationRequest, tuple[str, ...]], bool
-    ]
+    validate_checkpoint: Callable[[effects.MaterializationRequest, tuple[str, ...]], bool]
     | None = None,
 ) -> tuple[effects.ApplyResult, list[StagedEffect]]:
     source = WorkerRequest(138, "executor", "implement-change")
