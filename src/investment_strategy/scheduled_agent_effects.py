@@ -49,6 +49,7 @@ from investment_strategy.scheduled_agent_runtime import (
     GitHubIssueObservation,
     WorkerRequest,
     acquire_current_github_preflight,
+    is_github_actions_comment,
     normalize_github_issue,
 )
 from investment_strategy.scheduled_agent_validation_resource import (
@@ -1649,10 +1650,9 @@ class GitHubEffectAdapter:
                 if not isinstance(item, Mapping) or item.get("body") != body:
                     continue
                 comment_id = item.get("id")
-                user = item.get("user")
-                if not isinstance(comment_id, int) or not isinstance(user, Mapping):
+                if not isinstance(comment_id, int) or isinstance(comment_id, bool):
                     continue
-                if user.get("login") == "github-actions[bot]":
+                if is_github_actions_comment(item):
                     return comment_id
             if len(payload) < 100:
                 return None
@@ -1836,6 +1836,7 @@ class GitHubEffectAdapter:
                 isinstance(response, Mapping)
                 and response.get("body") == payload.get("body")
                 and response.get("id") == comment_id
+                and is_github_actions_comment(response)
             )
 
         if effect.kind == "routing-transition":

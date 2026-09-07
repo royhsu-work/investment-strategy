@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
+import pytest
+
+import investment_strategy.scheduled_agent_checkin as checkin
 from investment_strategy.scheduled_agent_checkin import (
     CheckinDisposition,
     checkin_body,
@@ -84,6 +87,46 @@ def test_rollover_preserves_closed_in_flight_shard_and_rejects_bad_identity() ->
     rejected = plan_rollover([malformed], day)
     assert rejected.disposition is CheckinDisposition.FAIL_CLOSED
     assert rejected.reason == "invalid-shard-identity"
+
+
+def test_created_shard_postcondition_observes_eventual_consistency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    day = date(2026, 9, 3)
+    observations = iter(
+        (
+            checkin.RolloverPlan(
+                CheckinDisposition.CREATE,
+                day,
+                None,
+                (142,),
+            ),
+            checkin.RolloverPlan(
+                CheckinDisposition.CREATE,
+                day,
+                None,
+                (142,),
+            ),
+            checkin.RolloverPlan(
+                CheckinDisposition.RETIRE,
+                day,
+                143,
+                (142,),
+            ),
+        )
+    )
+
+    monkeypatch.setattr(
+        checkin,
+        "_fresh_rollover",
+        lambda _repository, _token, _today: ((), next(observations)),
+    )
+    monkeypatch.setattr(checkin.time, "sleep", lambda _seconds: None)
+
+    plan = checkin._observe_created_shard("owner/repo", "token", day, 143)
+
+    assert plan.current_issue_number == 143
+    assert plan.disposition is CheckinDisposition.RETIRE
 
 
 def test_daily_rollover_workflow_is_repository_owned_and_not_a_mailbox() -> None:

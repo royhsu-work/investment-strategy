@@ -34,6 +34,7 @@ from investment_strategy.scheduled_agent_effects import (
 from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
     acquire_current_github_preflight,
+    is_github_actions_comment,
 )
 
 _MERGE_REVIEW_ACTION = {
@@ -199,6 +200,9 @@ def _latest_matching_pass(
     for comment in comments:
         record = _review_record(comment.get("body"))
         if record is None:
+            continue
+        if not is_github_actions_comment(comment):
+            complete = False
             continue
         created_at = _timestamp(comment.get("created_at"))
         comment_id = comment.get("id")

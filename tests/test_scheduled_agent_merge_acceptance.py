@@ -168,6 +168,8 @@ def test_merge_action_requires_its_matching_review_action() -> None:
             "id": 1,
             "created_at": "2026-08-27T06:00:00Z",
             "body": (f"Action: Reviewer / review-archive\nResult: PASS\nRevision: {HEAD}"),
+            "user": {"login": "github-actions[bot]"},
+            "performed_via_github_app": {"slug": "github-actions"},
         },
     )
 
@@ -198,6 +200,8 @@ def test_review_pass_carries_current_default_branch_revision() -> None:
                 f"Revision: {HEAD}\n"
                 f"Default-Branch-Revision: {default_revision}"
             ),
+            "user": {"login": "github-actions[bot]"},
+            "performed_via_github_app": {"slug": "github-actions"},
         },
     )
     record = merge_acceptance._latest_matching_pass(
@@ -207,6 +211,27 @@ def test_review_pass_carries_current_default_branch_revision() -> None:
     )
     assert record[0] == HEAD
     assert record[5] == default_revision
+
+
+def test_connector_authored_review_pass_is_not_merge_evidence() -> None:
+    comments = (
+        {
+            "id": 1,
+            "created_at": "2026-08-27T06:00:00Z",
+            "body": (f"Action: Reviewer / review-implementation\nResult: PASS\nRevision: {HEAD}"),
+            "user": {"login": "royhsu-work"},
+            "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+        },
+    )
+
+    record = merge_acceptance._latest_matching_pass(
+        comments,
+        HEAD,
+        required_review_action="review-implementation",
+    )
+
+    assert record[0] is None
+    assert record[4] is False
 
 
 def test_historical_merged_carrier_requires_current_main_ancestry(
@@ -301,8 +326,8 @@ def test_merge_effect_rechecks_acceptance_on_real_application_path(
                 "Result: `PASS`\n"
                 f"Revision: `{HEAD}`"
             ),
-            "user": {"login": "royhsu-work"},
-            "performed_via_github_app": {"id": 1},
+            "user": {"login": "github-actions[bot]"},
+            "performed_via_github_app": {"slug": "github-actions"},
         },
     )
 
