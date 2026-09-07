@@ -178,9 +178,7 @@ def test_executor_task_marker_update_accepts_only_monotonic_checkbox_changes() -
 
     previously_checked = valid
     unchecked = current
-    assert not resource._task_marker_update_is_monotonic(
-        previously_checked, unchecked
-    )
+    assert not resource._task_marker_update_is_monotonic(previously_checked, unchecked)
 
 
 def test_apply_work_product_rejects_non_monotonic_task_marker_before_tree(
@@ -194,14 +192,8 @@ def test_apply_work_product_rejects_non_monotonic_task_marker_before_tree(
         blob_sha="b" * 40,
         expected_sha="a" * 40,
     )
-    current = (
-        "- [ ] 2.1 first implementation task\n"
-        "- [ ] 2.2 second implementation task\n"
-    )
-    invalid = (
-        "- [x] 2.1 renamed implementation task\n"
-        "- [ ] 2.2 second implementation task\n"
-    )
+    current = "- [ ] 2.1 first implementation task\n- [ ] 2.2 second implementation task\n"
+    invalid = "- [x] 2.1 renamed implementation task\n- [ ] 2.2 second implementation task\n"
     monkeypatch.setattr(resource, "_current_authorized_request", lambda *_: source)
     monkeypatch.setattr(
         resource,
