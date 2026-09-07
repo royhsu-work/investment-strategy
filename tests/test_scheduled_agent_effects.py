@@ -1228,7 +1228,8 @@ def test_archive_pull_request_create_reuses_exact_existing_carrier(
     assert adapter.observe_postcondition(effect)
     assert ("pulls", "POST") not in calls
 
-def test_debug_implementation_checkpoint_predicate() -> None:
+
+def test_debug_implementation_checkpoint_predicate_compact() -> None:
     source = WorkerRequest(138, "executor", "implement-change")
     batch = parse_effect_batch(
         _raw(
@@ -1237,11 +1238,7 @@ def test_debug_implementation_checkpoint_predicate() -> None:
         ),
         source,
     )
-    decision, _derived, rejection = effects._typed_application_plan(
-        batch,
-        _preflight(),
-        _REVISION,
-    )
+    decision, _derived, rejection = effects._typed_application_plan(batch, _preflight(), _REVISION)
     assert decision is not None, rejection
     details: list[object] = []
     for effect in batch.effects:
@@ -1253,10 +1250,26 @@ def test_debug_implementation_checkpoint_predicate() -> None:
                 parsed = effects.find_materialization_payload(payload, source)
             except ValueError as exc:
                 error = str(exc)
-        details.append((effect.kind, payload, parsed, error))
-    assert effects._implementation_checkpoint_effects_complete(batch, decision), {
-        "decision_source": decision.source,
-        "decision_result": decision.result,
+        details.append({
+            "kind": effect.kind,
+            "keys": sorted(payload) if payload is not None else None,
+            "operation": payload.get("operation") if payload is not None else None,
+            "issue_number": payload.get("issue_number") if payload is not None else None,
+            "parsed": None if parsed is None else {
+                "expected_change": parsed.expected_change,
+                "change": parsed.change,
+                "branch": parsed.branch,
+                "base_sha": parsed.base_sha,
+                "pr_number": parsed.pr_number,
+                "file_count": len(parsed.files),
+                "path": parsed.files[0].path if parsed.files else None,
+                "expected_sha": parsed.files[0].expected_sha if parsed.files else None,
+            },
+            "error": error,
+        })
+    pytest.fail(repr({
+        "decision_change": decision.source.change,
+        "decision_kind": decision.result.result.kind.value,
         "effects": details,
-        "effect_count": len(batch.effects),
-    }
+        "helper": effects._implementation_checkpoint_effects_complete(batch, decision),
+    }))
