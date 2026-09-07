@@ -33,7 +33,8 @@ from investment_strategy.workflow_dispatch import classify_dispatch
 
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
-_TASK_MARKER = re.compile(r"(?m)^- \[ \] [^\n]*$")
+_TASK_LINE = re.compile(r"^- \\[(?P<state>[ x])\\] (?P<id>\\d+(?:\\.\\d+)+)\\b")
+_SLICE_HEADING = re.compile(r"^## Slice (?P<number>[1-9][0-9]*)\\b")
 _ACCEPTED_CHECK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
 _OPEN_SPEC_AUTHORING_SOURCES = frozenset(
     {
@@ -389,38 +390,101 @@ def _is_executor_config_authoring(
     )
 
 
-def _task_marker_update_is_monotonic(current: str, candidate: str) -> bool:
-    """Accept only a non-empty, checkbox-only monotonic task update."""
+def _task_marker_delta(current: str, candidate: str) -> tuple[str, ...] | None:
+    """Return the ordered unchecked-to-checked task IDs in one candidate file."""
 
     current_lines = current.splitlines(keepends=True)
     candidate_lines = candidate.splitlines(keepends=True)
     if len(current_lines) != len(candidate_lines):
-        return False
+        return None
 
-    changed = 0
+    changed_ids: list[str] = []
     for current_line, candidate_line in zip(current_lines, candidate_lines, strict=True):
         if current_line == candidate_line:
             continue
-        if not current_line.startswith("- [ ] ") or candidate_line != "- [x]" + current_line[5:]:
-            return False
-        changed += 1
-    return changed > 0
+        current_match = _TASK_LINE.match(current_line)
+        candidate_match = _TASK_LINE.match(candidate_line)
+        if (
+            current_match is None
+            or candidate_match is None
+            or current_match.group("state") != " "
+            or candidate_match.group("state") != "x"
+            or current_match.group("id") != candidate_match.group("id")
+            or candidate_line != "- [x]" + current_line[5:]
+        ):
+            return None
+        changed_ids.append(current_match.group("id"))
+    if not changed_ids or len(changed_ids) != len(set(changed_ids)):
+        return None
+    return tuple(changed_ids)
 
 
-def is_post_merge_task_bookkeeping(
-    source: WorkerRequest,
-    expected_change: str,
-    branch: object,
-    files: tuple[WorkProductFile, ...],
+def _first_incomplete_slice_task_ids(content: str) -> tuple[str, ...] | None:
+    """Return the complete unchecked task set of the first incomplete slice."""
+
+    slices: list[list[tuple[str, bool]]] = []
+    current_slice: list[tuple[str, bool]] | None = None
+    seen_ids: set[str] = set()
+    for line in content.splitlines():
+        if _SLICE_HEADING.match(line) is not None:
+            current_slice = []
+            slices.append(current_slice)
+            continue
+        task = _TASK_LINE.match(line)
+        if task is None:
+            continue
+        if current_slice is None:
+            return None
+        task_id = task.group("id")
+        if task_id in seen_ids:
+            return None
+        seen_ids.add(task_id)
+        current_slice.append((task_id, task.group("state") == "x"))
+
+    if not slices or any(not task_slice for task_slice in slices):
+        return None
+    for task_slice in slices:
+        pending = tuple(task_id for task_id, checked in task_slice if not checked)
+        if pending:
+            return pending
+    return ()
+
+
+def _task_marker_update_is_monotonic(current: str, candidate: str) -> bool:
+    """Accept only a non-empty, checkbox-only monotonic task update."""
+
+    return _task_marker_delta(current, candidate) is not None
+
+
+def task_checkpoint_is_exact(
+    repository: str,
+    token: str,
     *,
-    default_branch: str | None = None,
+    expected_change: str,
+    base_sha: str,
+    file: WorkProductFile,
+    completed_task_ids: tuple[str, ...],
 ) -> bool:
-    """Recognize the one task-only reconciliation allowed after carrier merge."""
+    """Prove one task checkpoint completes exactly the first incomplete slice."""
 
+    if (
+        file.expected_sha is None
+        or file.path != f"openspec/changes/{expected_change}/tasks.md"
+        or _content_sha_at(repository, token, path=file.path, revision=base_sha) != file.expected_sha
+    ):
+        return False
+    try:
+        current = _content_text_at(repository, token, path=file.path, revision=base_sha)
+        candidate = _blob_text(repository, token, file.blob_sha)
+    except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
+        return False
+    changed_ids = _task_marker_delta(current, candidate)
+    first_incomplete_ids = _first_incomplete_slice_task_ids(current)
     return (
-        _is_executor_task_bookkeeping(source, expected_change, files)
-        and _valid_branch(branch)
-        and (default_branch is None or branch == default_branch)
+        changed_ids is not None
+        and first_incomplete_ids is not None
+        and changed_ids == completed_task_ids
+        and completed_task_ids == first_incomplete_ids
     )
 
 
@@ -766,55 +830,6 @@ def _verify_default_only_content(
             raise RuntimeError("work-product reconciliation would discard default-branch content")
 
 
-def _verify_task_marker_reconciliation(
-    repository: str,
-    token: str,
-    *,
-    base_sha: str,
-    file: WorkProductFile,
-) -> None:
-    current = _content_text_at(
-        repository,
-        token,
-        path=file.path,
-        revision=base_sha,
-    )
-    candidate = _blob_text(repository, token, file.blob_sha)
-    matches = tuple(_TASK_MARKER.finditer(current))
-    if not matches:
-        raise RuntimeError("post-merge task marker source has no unchecked task markers")
-    expected = current
-    for match in reversed(matches):
-        replacement = match.group(0).replace("- [ ]", "- [x]", 1)
-        expected = expected[: match.start()] + replacement + expected[match.end() :]
-    if candidate != expected:
-        raise RuntimeError("post-merge task marker update must check every pending task marker")
-
-
-def _task_marker_reconciliation_is_present(
-    repository: str,
-    token: str,
-    *,
-    base_sha: str,
-    revision: str,
-    file: WorkProductFile,
-) -> bool:
-    if file.expected_sha is None:
-        return False
-    if _content_sha_at(repository, token, path=file.path, revision=base_sha) != file.expected_sha:
-        return False
-    try:
-        _verify_task_marker_reconciliation(
-            repository,
-            token,
-            base_sha=base_sha,
-            file=file,
-        )
-    except RuntimeError:
-        return False
-    return _content_sha_at(repository, token, path=file.path, revision=revision) == file.blob_sha
-
-
 def _implementation_review_pass(
     repository: str,
     token: str,
@@ -916,317 +931,6 @@ def _exact_head_checks_pass(repository: str, token: str, head_sha: str) -> bool:
     )
 
 
-def _commit_has_parent(
-    repository: str,
-    token: str,
-    *,
-    commit_sha: str,
-    parent_sha: str,
-) -> bool:
-    commit = _as_mapping(cast(object, _github_json(repository, token, f"git/commits/{commit_sha}")))
-    parents = None if commit is None else commit.get("parents")
-    return isinstance(parents, list) and any(
-        isinstance(parent, Mapping) and parent.get("sha") == parent_sha for parent in parents
-    )
-
-
-def _verify_post_merge_task_bookkeeping_evidence(
-    repository: str,
-    token: str,
-    *,
-    pr: Mapping[str, object],
-    issue_number: int,
-    expected_head_sha: str,
-    authorization_revision: str,
-) -> None:
-    if not _is_historical_merged_carrier(pr):
-        raise RuntimeError("post-merge task bookkeeping requires a merged implementation carrier")
-    head = _as_mapping(pr.get("head"))
-    base = _as_mapping(pr.get("base"))
-    head_sha = None if head is None else head.get("sha")
-    base_sha = None if base is None else base.get("sha")
-    merge_commit_sha = pr.get("merge_commit_sha")
-    if (
-        head_sha != expected_head_sha
-        or not _valid_sha(head_sha)
-        or not _valid_sha(base_sha)
-        or not _valid_sha(merge_commit_sha)
-    ):
-        raise RuntimeError("post-merge task bookkeeping carrier identity is incomplete")
-    if not _commit_has_parent(
-        repository,
-        token,
-        commit_sha=cast(str, merge_commit_sha),
-        parent_sha=cast(str, base_sha),
-    ):
-        raise RuntimeError("post-merge task bookkeeping merge parent is not exact")
-    if not _default_branch_is_ancestor(
-        repository,
-        token,
-        default_revision=cast(str, merge_commit_sha),
-        revision=authorization_revision,
-    ):
-        raise RuntimeError("post-merge task bookkeeping merge is absent from current main")
-    if not _implementation_review_pass(
-        repository,
-        token,
-        issue_number=issue_number,
-        head_sha=cast(str, head_sha),
-        expected_default_revision=authorization_revision,
-    ):
-        raise RuntimeError("post-merge task bookkeeping implementation review is not current")
-    if not _exact_head_checks_pass(repository, token, cast(str, head_sha)):
-        raise RuntimeError("post-merge task bookkeeping exact-head checks are not green")
-
-
-def _post_merge_task_message(change: str) -> str:
-    return f"Reconcile implementation-ready task marker for {change}"
-
-
-def _apply_post_merge_task_bookkeeping(
-    *,
-    source: WorkerRequest,
-    pr_number: int,
-    expected_change: str,
-    manifest: WorkProductManifest,
-    repository: str,
-    token: str,
-    default_branch: str,
-    authorization_revision: str,
-) -> ValidationResourceTarget:
-    if (
-        not _valid_sha(manifest.base_sha)
-        or manifest.message != _post_merge_task_message(expected_change)
-        or not is_post_merge_task_bookkeeping(
-            source,
-            expected_change,
-            manifest.branch,
-            manifest.files,
-            default_branch=default_branch,
-        )
-    ):
-        raise RuntimeError("post-merge task bookkeeping manifest is not exact")
-    pr = _open_pr_payload(
-        repository=repository,
-        token=token,
-        pr_number=pr_number,
-        source=source,
-        expected_change=expected_change,
-        default_branch=default_branch,
-        allow_historical_merged_carrier=True,
-    )
-    pr_head = _as_mapping(pr.get("head"))
-    pr_head_sha = None if pr_head is None else pr_head.get("sha")
-    if not _valid_sha(pr_head_sha):
-        raise RuntimeError("post-merge task bookkeeping PR head is incomplete")
-    _verify_post_merge_task_bookkeeping_evidence(
-        repository,
-        token,
-        pr=pr,
-        issue_number=source.issue_number,
-        expected_head_sha=cast(str, pr_head_sha),
-        authorization_revision=authorization_revision,
-    )
-    current_head = _ref_head_sha(repository, token, default_branch)
-    if current_head != authorization_revision:
-        raise RuntimeError("post-merge task bookkeeping default branch is stale")
-    file = manifest.files[0]
-    if current_head != manifest.base_sha:
-        if _revision_matches_manifest(
-            repository,
-            token,
-            base_sha=manifest.base_sha,
-            revision=current_head,
-            manifest=manifest,
-        ) or _task_marker_reconciliation_is_present(
-            repository,
-            token,
-            base_sha=manifest.base_sha,
-            revision=current_head,
-            file=file,
-        ):
-            return ValidationResourceTarget(
-                repository=repository,
-                revision=current_head,
-                correlation=f"effect-request-{source.issue_number}",
-                pr_number=pr_number,
-                change=expected_change,
-                validation_required=False,
-            )
-        raise RuntimeError("post-merge task bookkeeping revision is stale")
-    current_sha = _content_sha_at(
-        repository,
-        token,
-        path=file.path,
-        revision=manifest.base_sha,
-    )
-    if current_sha != file.expected_sha:
-        raise RuntimeError("post-merge task marker expected content SHA is stale")
-    _verify_task_marker_reconciliation(
-        repository,
-        token,
-        base_sha=manifest.base_sha,
-        file=file,
-    )
-    base_commit = _as_mapping(
-        cast(object, _github_json(repository, token, f"git/commits/{current_head}"))
-    )
-    base_tree = None if base_commit is None else _as_mapping(base_commit.get("tree"))
-    base_tree_sha = None if base_tree is None else base_tree.get("sha")
-    if not _valid_sha(base_tree_sha):
-        raise RuntimeError("post-merge task bookkeeping base tree is incomplete")
-    try:
-        tree_response = _as_mapping(
-            cast(
-                object,
-                _github_json(
-                    repository,
-                    token,
-                    "git/trees",
-                    method="POST",
-                    payload={
-                        "base_tree": cast(str, base_tree_sha),
-                        "tree": [
-                            {
-                                "path": file.path,
-                                "mode": "100644",
-                                "type": "blob",
-                                "sha": file.blob_sha,
-                            }
-                        ],
-                    },
-                ),
-            )
-        )
-    except HTTPError as exc:
-        if exc.code in {404, 422}:
-            raise RuntimeError(
-                "post-merge task bookkeeping referenced blob is unavailable"
-            ) from exc
-        raise
-    tree_sha = None if tree_response is None else tree_response.get("sha")
-    if not _valid_sha(tree_sha):
-        raise RuntimeError("post-merge task bookkeeping tree creation returned no SHA")
-    observed_tree = _as_mapping(
-        cast(
-            object,
-            _github_json(repository, token, f"git/trees/{tree_sha}?recursive=1"),
-        )
-    )
-    tree_entries = None if observed_tree is None else observed_tree.get("tree")
-    if (
-        observed_tree is None
-        or observed_tree.get("sha") != tree_sha
-        or observed_tree.get("truncated") is True
-        or not isinstance(tree_entries, list)
-    ):
-        raise RuntimeError("post-merge task bookkeeping tree postcondition is incomplete")
-    matches = [
-        entry
-        for raw_entry in tree_entries
-        if (entry := _as_mapping(raw_entry)) is not None and entry.get("path") == file.path
-    ]
-    if (
-        len(matches) != 1
-        or matches[0].get("type") != "blob"
-        or matches[0].get("sha") != file.blob_sha
-    ):
-        raise RuntimeError("post-merge task bookkeeping tree path is not exact")
-    if _ref_head_sha(repository, token, default_branch) != authorization_revision:
-        raise RuntimeError("post-merge task bookkeeping default branch changed before carrier")
-    if _current_authorized_request(repository, token) != source:
-        raise RuntimeError("post-merge task bookkeeping source dispatch changed before carrier")
-    commit_message = manifest.message
-    commit_parents = [authorization_revision]
-    commit_response = _as_mapping(
-        cast(
-            object,
-            _github_json(
-                repository,
-                token,
-                "git/commits",
-                method="POST",
-                payload={
-                    "message": commit_message,
-                    "tree": cast(str, tree_sha),
-                    "parents": commit_parents,
-                },
-            ),
-        )
-    )
-    revision = None if commit_response is None else commit_response.get("sha")
-    if not _valid_sha(revision):
-        raise RuntimeError("post-merge task bookkeeping commit creation returned no SHA")
-    if _ref_head_sha(repository, token, default_branch) != authorization_revision:
-        raise RuntimeError("post-merge task bookkeeping default branch changed after commit")
-    observed_commit = _as_mapping(
-        cast(object, _github_json(repository, token, f"git/commits/{revision}"))
-    )
-    observed_tree = None if observed_commit is None else _as_mapping(observed_commit.get("tree"))
-    parents = None if observed_commit is None else observed_commit.get("parents")
-    observed_parent_shas: list[str] = []
-    if isinstance(parents, list):
-        for raw_parent in parents:
-            parent = _as_mapping(raw_parent)
-            parent_sha = None if parent is None else parent.get("sha")
-            if not _valid_sha(parent_sha):
-                raise RuntimeError("post-merge task bookkeeping commit parent is incomplete")
-            observed_parent_shas.append(cast(str, parent_sha))
-    if (
-        observed_commit is None
-        or observed_commit.get("sha") != revision
-        or observed_commit.get("message") != commit_message
-        or observed_tree is None
-        or observed_tree.get("sha") != tree_sha
-        or observed_parent_shas != commit_parents
-    ):
-        raise RuntimeError("post-merge task bookkeeping commit postcondition is incomplete")
-    if _content_sha_at(repository, token, path=file.path, revision=cast(str, revision)) != (
-        file.blob_sha
-    ):
-        raise RuntimeError("post-merge task bookkeeping file postcondition is incomplete")
-    plan = make_carrier_plan(
-        repository=repository,
-        issue_number=source.issue_number,
-        change=expected_change,
-        action=source.action,
-        authorization_revision=authorization_revision,
-        operation="default-branch-ref-update",
-        target={
-            "repository": repository,
-            "ref": f"refs/heads/{default_branch}",
-        },
-        expected={
-            "repository": repository,
-            "ref": f"refs/heads/{default_branch}",
-            "ref_sha": authorization_revision,
-            "commit_sha": cast(str, revision),
-            "commit_parents": commit_parents,
-            "commit_tree_sha": cast(str, tree_sha),
-            "commit_message": commit_message,
-            "historical_pr": carrier_pr_identity(pr),
-        },
-        requested={
-            "repository": repository,
-            "ref": f"refs/heads/{default_branch}",
-            "sha": cast(str, revision),
-            "force": False,
-        },
-        expected_postcondition={
-            "repository": repository,
-            "ref": f"refs/heads/{default_branch}",
-            "ref_sha": cast(str, revision),
-            "commit_sha": cast(str, revision),
-            "commit_parents": commit_parents,
-            "commit_tree_sha": cast(str, tree_sha),
-            "commit_message": commit_message,
-            "path": file.path,
-            "blob_sha": file.blob_sha,
-        },
-    )
-    raise CarrierRequired(plan)
-
-
 def apply_work_product(
     plan: WorkProductPlan,
     *,
@@ -1252,16 +956,7 @@ def apply_work_product(
     if _current_authorized_request(repository, token) != plan.source:
         raise RuntimeError("work-product source dispatch is stale")
     expected_branch = _source_branch(plan.expected_change)
-    post_merge_bookkeeping = is_post_merge_task_bookkeeping(
-        plan.source,
-        plan.expected_change,
-        plan.manifest.branch,
-        plan.manifest.files,
-        default_branch=default_branch,
-    )
-    if expected_branch is None or (
-        not post_merge_bookkeeping and plan.manifest.branch != expected_branch
-    ):
+    if expected_branch is None or plan.manifest.branch != expected_branch:
         raise RuntimeError("work-product branch is not bound to source Change")
     if not plan.manifest.files or not all(
         work_product_path_allowed(plan.source, plan.expected_change, file.path)
@@ -1282,18 +977,6 @@ def apply_work_product(
         )
     ):
         raise RuntimeError("work-product source has no required OpenSpec review gate")
-
-    if post_merge_bookkeeping:
-        return _apply_post_merge_task_bookkeeping(
-            source=plan.source,
-            pr_number=plan.pr_number,
-            expected_change=plan.expected_change,
-            manifest=plan.manifest,
-            repository=repository,
-            token=token,
-            default_branch=default_branch,
-            authorization_revision=authorization_revision,
-        )
 
     pr = _open_pr_payload(
         repository=repository,
