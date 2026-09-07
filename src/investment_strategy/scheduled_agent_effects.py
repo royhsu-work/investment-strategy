@@ -151,6 +151,61 @@ _IMPLEMENTATION_COMPLETION_RESULTS = frozenset(
 )
 
 
+def _slice_checkpoint_body_is_bounded(
+    body: str,
+    *,
+    source: WorkerRequest,
+    change: str,
+    request: MaterializationRequest,
+) -> bool:
+    """Validate the canonical bounded checkpoint evidence envelope."""
+
+    lines = body.splitlines()
+    if len(lines) != 9 or lines[0] != "SLICE_CHECKPOINT":
+        return False
+    values: dict[str, str] = {}
+    for line in lines[1:]:
+        key, separator, value = line.partition(": ")
+        if (
+            not separator
+            or key in values
+            or not value
+            or value != value.strip()
+        ):
+            return False
+        values[key] = value
+    expected_keys = {
+        "Workflow",
+        "Change",
+        "Action",
+        "Role",
+        "Completed-Tasks",
+        "Revision",
+        "Gate-Evidence",
+        "Remaining-Approved-Boundary",
+    }
+    if set(values) != expected_keys:
+        return False
+    if (
+        values["Workflow"] != f"#{source.issue_number}"
+        or values["Change"] != change
+        or values["Action"] != source.action
+        or values["Role"] != source.role
+    ):
+        return False
+    task_ids = [task_id.strip() for task_id in values["Completed-Tasks"].split(",")]
+    if (
+        not task_ids
+        or len(task_ids) != len(set(task_ids))
+        or any(not re.fullmatch(r"\d+(?:\.\d+)+", task_id) for task_id in task_ids)
+    ):
+        return False
+    revision = values["Revision"]
+    if not re.fullmatch(r"[0-9a-f]{40}", revision) or revision != request.base_sha:
+        return False
+    return bool(values["Gate-Evidence"] and values["Remaining-Approved-Boundary"])
+
+
 def _implementation_checkpoint_effects_complete(
     batch: EffectBatch,
     decision: ActionApplicationDecision,
@@ -167,6 +222,7 @@ def _implementation_checkpoint_effects_complete(
     materializations: list[tuple[int, MaterializationRequest]] = []
     issue_comment_indexes: list[int] = []
     checkpoint_indexes: list[int] = []
+    checkpoint_bodies: list[str] = []
     for index, effect in enumerate(batch.effects):
         if effect.kind == GITHUB_MUTATION_KIND:
             payload = _effect_payload(effect)
@@ -191,6 +247,7 @@ def _implementation_checkpoint_effects_complete(
         issue_comment_indexes.append(index)
         if body.splitlines()[:1] == ["SLICE_CHECKPOINT"]:
             checkpoint_indexes.append(index)
+            checkpoint_bodies.append(body)
 
     if (
         len(materializations) != 1
@@ -207,10 +264,15 @@ def _implementation_checkpoint_effects_complete(
         or len(request.files) != 1
         or request.files[0].path != f"openspec/changes/{decision.source.change}/tasks.md"
         or request.files[0].expected_sha is None
+        or not _slice_checkpoint_body_is_bounded(
+            checkpoint_bodies[0],
+            source=batch.source,
+            change=decision.source.change,
+            request=request,
+        )
     ):
         return False
     return task_index < checkpoint_indexes[0]
-
 
 def _typed_application_plan(
     batch: EffectBatch,

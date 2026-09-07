@@ -38,6 +38,23 @@ for correction and fresh independent review.
 Skill maintenance traceability: implementation consumes approved declarations; it does not claim
 semantic review. Executor does not perform semantic bidirectional OpenSpec review.
 
+## Verified-slice checkpoint boundary
+
+Every fresh `Executor / implement-change` invocation reconstructs current recovery truth from
+`tasks.md`, the current implementation PR/head, and current code/tests/evidence. It identifies the
+first incomplete slice and executes exactly one bounded slice with the sequence RED -> GREEN ->
+REFACTOR -> VERIFY.
+
+After VERIFY succeeds, persist task markers first and then one bounded SLICE_CHECKPOINT containing
+the exact Change, verified revision, completed task IDs, gate evidence, and remaining approved
+boundary. The checkpoint obligation must be durable before READY or MORE_IMPLEMENTATION_REQUIRED is
+emitted, before continuation or handoff, or before application derives a successor.
+
+If interruption occurs before implementation, task, or checkpoint durability, the next fresh wake
+reconstructs current truth and satisfies only the missing effect. It must never redo a verified slice,
+does not create a cursor or progress state, and resumes the first incomplete slice. A verified slice
+is not repeated merely to recreate missing evidence.
+
 ## Spec-driven semantic adapter
 
 When openspec/config.yaml declares schema: spec-driven, load

@@ -146,7 +146,10 @@ def _implementation_checkpoint_effects() -> list[dict[str, str]]:
             f"Change: {_CHANGE}\n"
             "Action: implement-change\n"
             "Role: executor\n"
-            f"Revision: {_REVISION}"
+            "Completed-Tasks: 2.1, 2.2\n"
+            f"Revision: {_REVISION}\n"
+            "Gate-Evidence: exact-head VERIFY\n"
+            "Remaining-Approved-Boundary: continue with Slice 3"
         ),
     }
     return [
