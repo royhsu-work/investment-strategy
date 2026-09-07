@@ -8,8 +8,8 @@ description: Lead procedure for bounded problem exploration and proposal-ready r
 Mapped Action: Lead / explore-change.
 
 Fresh-read the current default branch, Issue/Change state, Human-approved intent, applicable canonical
-specs/config, and current repository evidence. Before forming solution candidates, reconstruct the
-current decision boundary from those sources. Preserve already-decided outcomes, invariants,
+specs/config, and current repository evidence. Reconstruct the current decision boundary from those sources before
+forming solution candidates. Preserve already-decided outcomes, invariants,
 constraints, architecture decisions, safety properties, and scope boundaries; do not substitute
 implementation convenience or artifact wording for current authority.
 
