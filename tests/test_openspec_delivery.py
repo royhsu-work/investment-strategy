@@ -72,6 +72,19 @@ def test_delivery_skill_defines_reconciliation_and_continuation() -> None:
         assert prohibited_authority in delivery
 
 
+
+def test_task_markers_exclude_downstream_lifecycle_gates() -> None:
+    config = _normalized(CONFIG)
+
+    for required in (
+        "Implementation task markers SHALL describe only work Executor can implement "
+        "and VERIFY during implement-change.",
+        "Reviewer PASS, merge completion, archive completion, and later lifecycle "
+        "transitions SHALL remain lifecycle gates and MUST NOT be implementation task markers.",
+    ):
+        assert required in config
+
+
 def test_only_the_approved_mapped_procedures_load_delivery_skill() -> None:
     for relative in STAGE_CONSUMERS:
         body = _normalized(ROOT / relative)
