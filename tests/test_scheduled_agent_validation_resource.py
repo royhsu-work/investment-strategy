@@ -176,8 +176,8 @@ def test_executor_task_marker_update_accepts_only_monotonic_checkbox_changes() -
         for candidate in invalid_candidates
     )
 
-    previously_checked = "- [x] 2.1 first implementation task\n- [ ] 2.2 second implementation task\n"
-    unchecked = "- [ ] 2.1 first implementation task\n- [ ] 2.2 second implementation task\n"
+    previously_checked = valid
+    unchecked = current
     assert not resource._task_marker_update_is_monotonic(
         previously_checked, unchecked
     )
