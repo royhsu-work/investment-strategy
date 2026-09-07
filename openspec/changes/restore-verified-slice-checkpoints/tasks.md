@@ -56,18 +56,18 @@ materialization -> content/postcondition guards.
 Trace: canonical shared message/checkpoint presentation -> implementation
 procedure -> ordered task/checkpoint effects -> typed successor.
 
-- [ ] 3.1 RED: add regressions for missing/ambiguous checkpoint fields, missing
+- [x] 3.1 RED: add regressions for missing/ambiguous checkpoint fields, missing
   checkpoint after durable task markers, checkpoint-before-task interruption,
   and replay of an already durable checkpoint.
-- [ ] 3.2 GREEN: bind the existing bounded checkpoint comment effect to the exact
+- [x] 3.2 GREEN: bind the existing bounded checkpoint comment effect to the exact
   current Change, verified revision, task IDs, VERIFY/gate evidence, and
   remaining approved boundary; require it together with task-only materialization
   before `READY` or `MORE_IMPLEMENTATION_REQUIRED` continuation.
-- [ ] 3.3 GREEN: update the existing implementation Skill with the exact
+- [x] 3.3 GREEN: update the existing implementation Skill with the exact
   reconstruct -> first incomplete slice -> RED -> GREEN -> REFACTOR -> VERIFY ->
   task/checkpoint -> result boundary, including recovery after each interruption
   point. Do not add a cursor or progress state.
-- [ ] 3.4 VERIFY: run focused application/message/Skill tests, full quality
+- [x] 3.4 VERIFY: run focused application/message/Skill tests, full quality
   checks, and exact current OpenSpec validation required by the changed surface.
 
 ## Slice 4 — Keep lifecycle gates out of Executor task semantics
