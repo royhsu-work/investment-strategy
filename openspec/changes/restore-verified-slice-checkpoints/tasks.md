@@ -108,12 +108,12 @@ inventory -> workaround deletion decision.
 Trace: all approved vertical slices -> exact current evidence -> existing
 implementation handoff.
 
-- [ ] 6.1 VERIFY: fresh-reconstruct every approved slice from tasks.md, current
+- [x] 6.1 VERIFY: fresh-reconstruct every approved slice from tasks.md, current
   PR/head, code/tests/evidence, and bounded checkpoint comments; prove recovery
   resumes at the first incomplete slice and never repeats a verified slice.
-- [ ] 6.2 VERIFY: prove no new Action, Result kind, state, cursor, registry,
+- [x] 6.2 VERIFY: prove no new Action, Result kind, state, cursor, registry,
   carrier, lock, lease, second DAG, validator framework, or #218/#207 scope was
   introduced; confirm downstream lifecycle gates remain independent.
-- [ ] 6.3 VERIFY: complete all required exact-head quality/validation checks and
+- [x] 6.3 VERIFY: complete all required exact-head quality/validation checks and
   prepare the existing `READY` result only after every verified slice has its
   durable task/checkpoint boundary.
