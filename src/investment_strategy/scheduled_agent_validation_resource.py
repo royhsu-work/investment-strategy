@@ -33,7 +33,7 @@ from investment_strategy.workflow_dispatch import classify_dispatch
 
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
-_TASK_MARKER = re.compile(r"(?m)^- \[ \] 4\.6\b[^\n]*$")
+_TASK_MARKER = re.compile(r"(?m)^- \\[ \\] [^\\n]*$")
 _ACCEPTED_CHECK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
 _OPEN_SPEC_AUTHORING_SOURCES = frozenset(
     {
@@ -747,16 +747,14 @@ def _verify_task_marker_reconciliation(
     )
     candidate = _blob_text(repository, token, file.blob_sha)
     matches = tuple(_TASK_MARKER.finditer(current))
-    if len(matches) != 1:
-        raise RuntimeError("post-merge task marker source is not exactly one unchecked 4.6")
-    match = matches[0]
-    expected = (
-        current[: match.start()]
-        + match.group(0).replace("- [ ]", "- [x]", 1)
-        + current[match.end() :]
-    )
+    if not matches:
+        raise RuntimeError("post-merge task marker source has no unchecked task markers")
+    expected = current
+    for match in reversed(matches):
+        replacement = match.group(0).replace("- [ ]", "- [x]", 1)
+        expected = expected[: match.start()] + replacement + expected[match.end() :]
     if candidate != expected:
-        raise RuntimeError("post-merge task marker update is not the exact 4.6 reconciliation")
+        raise RuntimeError("post-merge task marker update must check every pending task marker")
 
 
 def _task_marker_reconciliation_is_present(
