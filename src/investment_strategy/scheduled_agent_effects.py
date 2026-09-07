@@ -29,6 +29,7 @@ from investment_strategy.scheduled_agent_action_model import (
     ObservationProvenance as ModelObservationProvenance,
 )
 from investment_strategy.scheduled_agent_application_materialization import (
+    MaterializationRequest,
     apply_materialization,
     find_materialization_payload,
     materialization_postcondition,
@@ -144,6 +145,72 @@ def _typed_terminal_effect_matches(
     }
 
 
+_IMPLEMENTATION_COMPLETION_RESULTS = frozenset(
+    {ResultKind.MORE_IMPLEMENTATION_REQUIRED, ResultKind.READY}
+)
+
+
+def _implementation_checkpoint_effects_complete(
+    batch: EffectBatch,
+    decision: ActionApplicationDecision,
+) -> bool:
+    """Require the existing task/checkpoint effects before implementation advances."""
+
+    if (
+        batch.source.role != "executor"
+        or batch.source.action != "implement-change"
+        or decision.result.result.kind not in _IMPLEMENTATION_COMPLETION_RESULTS
+    ):
+        return True
+
+    materializations: list[tuple[int, MaterializationRequest]] = []
+    issue_comment_indexes: list[int] = []
+    checkpoint_indexes: list[int] = []
+    for index, effect in enumerate(batch.effects):
+        if effect.kind == GITHUB_MUTATION_KIND:
+            payload = _effect_payload(effect)
+            if payload is None or payload.get("operation") != "application-materialize":
+                continue
+            try:
+                request = find_materialization_payload(payload, batch.source)
+            except ValueError:
+                return False
+            if request is None:
+                return False
+            materializations.append((index, request))
+            continue
+        if effect.kind != "issue-comment":
+            continue
+        payload = _effect_payload(effect)
+        if payload is None:
+            return False
+        body = payload.get("body")
+        if not isinstance(body, str):
+            return False
+        issue_comment_indexes.append(index)
+        if body.splitlines()[:1] == ["SLICE_CHECKPOINT"]:
+            checkpoint_indexes.append(index)
+
+    if (
+        len(materializations) != 1
+        or len(issue_comment_indexes) != 1
+        or len(checkpoint_indexes) != 1
+    ):
+        return False
+    task_index, request = materializations[0]
+    if (
+        request.expected_change != batch.source.change
+        or request.change != batch.source.change
+        or request.branch != f"agent/{batch.source.change}"
+        or request.pr_number is None
+        or len(request.files) != 1
+        or request.files[0].path != f"openspec/changes/{batch.source.change}/tasks.md"
+        or request.files[0].expected_sha is None
+    ):
+        return False
+    return task_index < checkpoint_indexes[0]
+
+
 def _typed_application_plan(
     batch: EffectBatch,
     preflight: DispatchPreflight,
@@ -213,6 +280,9 @@ def _typed_application_plan(
                 rejection=rejection,
             ),
         )
+
+    if not _implementation_checkpoint_effects_complete(batch, decision):
+        return decision, None, ApplyResult(False, "typed application rejected:implementation-checkpoint-incomplete")
 
     if decision.successor is not None:
         successor_effect = StagedEffect(

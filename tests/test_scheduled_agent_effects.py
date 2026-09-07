@@ -120,6 +120,155 @@ def test_typed_application_derives_one_successor_without_continuation() -> None:
     }
 
 
+def _implementation_checkpoint_effects() -> list[dict[str, str]]:
+    task_payload = {
+        "issue_number": 138,
+        "operation": "application-materialize",
+        "expected_change": _CHANGE,
+        "change": _CHANGE,
+        "branch": f"agent/{_CHANGE}",
+        "base_sha": _REVISION,
+        "message": "checkpoint verified task markers",
+        "files": [
+            {
+                "path": f"openspec/changes/{_CHANGE}/tasks.md",
+                "blob_sha": "b" * 40,
+                "expected_sha": "c" * 40,
+            }
+        ],
+        "pr_number": 178,
+    }
+    checkpoint_payload = {
+        "issue_number": 138,
+        "body": (
+            "SLICE_CHECKPOINT\\n"
+            "Workflow: #138\\n"
+            f"Change: {_CHANGE}\\n"
+            "Action: implement-change\\n"
+            "Role: executor\\n"
+            f"Revision: {_REVISION}"
+        ),
+    }
+    return [
+        {
+            "kind": "github-mutation",
+            "payload_json": json.dumps(task_payload),
+        },
+        {
+            "kind": "issue-comment",
+            "payload_json": json.dumps(checkpoint_payload),
+        },
+    ]
+
+
+@pytest.mark.parametrize(
+    "result_kind,requested_effects",
+    (
+        ("more-implementation-required", []),
+        ("ready", []),
+        ("more-implementation-required", _implementation_checkpoint_effects()[:1]),
+        ("ready", _implementation_checkpoint_effects()[1:]),
+    ),
+)
+def test_implement_completion_rejects_incomplete_checkpoint_effects(
+    result_kind: str,
+    requested_effects: list[dict[str, str]],
+) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    batch = parse_effect_batch(
+        _raw(result_kind=result_kind, requested_effects=requested_effects),
+        source,
+    )
+    applied: list[StagedEffect] = []
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: pytest.fail("incomplete implementation advanced"),
+        apply_effect=applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+    )
+
+    assert not result.applied
+    assert "implementation-checkpoint-incomplete" in result.reason
+    assert applied == []
+
+
+@pytest.mark.parametrize(
+    "result_kind,successor",
+    (
+        ("more-implementation-required", "implement-change"),
+        ("ready", "review-implementation"),
+    ),
+)
+def test_implement_completion_derives_successor_after_task_then_checkpoint(
+    result_kind: str,
+    successor: str,
+) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    batch = parse_effect_batch(
+        _raw(
+            result_kind=result_kind,
+            requested_effects=_implementation_checkpoint_effects(),
+        ),
+        source,
+    )
+    applied: list[StagedEffect] = []
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: True,
+        apply_effect=applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+    )
+
+    assert result.applied
+    assert [effect.kind for effect in applied] == [
+        "github-mutation",
+        "issue-comment",
+        "routing-transition",
+    ]
+    assert applied[-1].derived
+    assert json.loads(applied[-1].payload_json) == {
+        "issue_number": 138,
+        "action": successor,
+    }
+
+
+def test_implement_completion_rejects_reordered_or_duplicate_checkpoint_effects() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    effects = _implementation_checkpoint_effects()
+    reordered = parse_effect_batch(
+        _raw(
+            result_kind="more-implementation-required",
+            requested_effects=list(reversed(effects)),
+        ),
+        source,
+    )
+    duplicated = parse_effect_batch(
+        _raw(
+            result_kind="more-implementation-required",
+            requested_effects=effects + [effects[1]],
+        ),
+        source,
+    )
+
+    for batch in (reordered, duplicated):
+        applied: list[StagedEffect] = []
+        result = apply_effect_batch(
+            batch,
+            fresh_preflight=_preflight,
+            effect_guard=lambda _effect: pytest.fail("invalid checkpoint advanced"),
+            apply_effect=applied.append,
+            observe_postcondition=lambda _effect: True,
+            current_revision=_REVISION,
+        )
+        assert not result.applied
+        assert "implementation-checkpoint-incomplete" in result.reason
+        assert applied == []
+
+
 def test_terminal_result_derives_closed_terminal_effect() -> None:
     source = WorkerRequest(138, "lead", "finalize-archive")
     batch = parse_effect_batch(
