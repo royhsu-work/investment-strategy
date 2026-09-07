@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+from collections.abc import Callable
 
 import pytest
 
@@ -120,6 +121,14 @@ def test_typed_application_derives_one_successor_without_continuation() -> None:
     }
 
 
+
+def _accept_checkpoint(
+    _request: effects.MaterializationRequest,
+    _task_ids: tuple[str, ...],
+) -> bool:
+    return True
+
+
 def _implementation_checkpoint_effects() -> list[dict[str, str]]:
     task_payload = {
         "issue_number": 138,
@@ -224,6 +233,7 @@ def test_implement_completion_derives_successor_after_task_then_checkpoint(
         apply_effect=applied.append,
         observe_postcondition=lambda _effect: True,
         current_revision=_REVISION,
+        validate_implementation_checkpoint=_accept_checkpoint,
     )
 
     assert result.applied
@@ -299,6 +309,10 @@ def _checkpoint_effects_with_body(body: str) -> list[dict[str, str]]:
 
 def _apply_completion_effects(
     requested_effects: list[dict[str, str]],
+    validate_checkpoint: Callable[
+        [effects.MaterializationRequest, tuple[str, ...]], bool
+    ]
+    | None = None,
 ) -> tuple[effects.ApplyResult, list[StagedEffect]]:
     source = WorkerRequest(138, "executor", "implement-change")
     batch = parse_effect_batch(
@@ -313,6 +327,7 @@ def _apply_completion_effects(
         apply_effect=applied.append,
         observe_postcondition=lambda _effect: True,
         current_revision=_REVISION,
+        validate_implementation_checkpoint=validate_checkpoint,
     )
     return result, applied
 
@@ -349,6 +364,30 @@ def test_implement_completion_rejects_ambiguous_checkpoint_body(body: str) -> No
     assert applied == []
 
 
+
+def test_implement_completion_requires_executable_slice_validator() -> None:
+    result, applied = _apply_completion_effects(_implementation_checkpoint_effects())
+
+    assert not result.applied
+    assert "implementation-checkpoint-incomplete" in result.reason
+    assert applied == []
+
+
+def test_implement_completion_rejects_multiple_slice_task_ids_at_application_boundary() -> None:
+    body = _complete_checkpoint_body().replace(
+        "Completed-Tasks: 2.1, 2.2",
+        "Completed-Tasks: 2.1, 2.2, 3.1",
+    )
+    result, applied = _apply_completion_effects(
+        _checkpoint_effects_with_body(body),
+        lambda _request, task_ids: task_ids == ("2.1", "2.2"),
+    )
+
+    assert not result.applied
+    assert "implementation-checkpoint-incomplete" in result.reason
+    assert applied == []
+
+
 def test_durable_task_markers_without_checkpoint_do_not_advance() -> None:
     result, applied = _apply_completion_effects(_implementation_checkpoint_effects()[:1])
 
@@ -374,7 +413,7 @@ def test_replay_accepts_already_durable_checkpoint_effects() -> None:
     def apply_once(effect: StagedEffect) -> None:
         durable.add((effect.kind, effect.payload_json))
 
-    first, _ = _apply_completion_effects(requested_effects)
+    first, _ = _apply_completion_effects(requested_effects, _accept_checkpoint)
     second = apply_effect_batch(
         parse_effect_batch(
             _raw(
@@ -388,6 +427,7 @@ def test_replay_accepts_already_durable_checkpoint_effects() -> None:
         apply_effect=apply_once,
         observe_postcondition=lambda _effect: True,
         current_revision=_REVISION,
+        validate_implementation_checkpoint=_accept_checkpoint,
     )
 
     assert first.applied
