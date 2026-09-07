@@ -1227,3 +1227,36 @@ def test_archive_pull_request_create_reuses_exact_existing_carrier(
     adapter.apply(effect)
     assert adapter.observe_postcondition(effect)
     assert ("pulls", "POST") not in calls
+
+def test_debug_implementation_checkpoint_predicate() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    batch = parse_effect_batch(
+        _raw(
+            result_kind="more-implementation-required",
+            requested_effects=_implementation_checkpoint_effects(),
+        ),
+        source,
+    )
+    decision, _derived, rejection = effects._typed_application_plan(
+        batch,
+        _preflight(),
+        _REVISION,
+    )
+    assert decision is not None, rejection
+    details: list[object] = []
+    for effect in batch.effects:
+        payload = effects._effect_payload(effect)
+        parsed = None
+        error = None
+        if effect.kind == "github-mutation" and payload is not None:
+            try:
+                parsed = effects.find_materialization_payload(payload, source)
+            except ValueError as exc:
+                error = str(exc)
+        details.append((effect.kind, payload, parsed, error))
+    assert effects._implementation_checkpoint_effects_complete(batch, decision), {
+        "decision_source": decision.source,
+        "decision_result": decision.result,
+        "effects": details,
+        "effect_count": len(batch.effects),
+    }
