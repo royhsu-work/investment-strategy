@@ -159,9 +159,7 @@ def test_executor_config_authoring_is_narrowly_bound() -> None:
     source = WorkerRequest(138, "executor", "implement-change")
     reviewer = WorkerRequest(138, "reviewer", "review-openspec")
     config_file = resource.WorkProductFile("openspec/config.yaml", "b" * 40, "a" * 40)
-    task_file = resource.WorkProductFile(
-        f"openspec/changes/{_CHANGE}/tasks.md", "b" * 40, "a" * 40
-    )
+    task_file = resource.WorkProductFile(f"openspec/changes/{_CHANGE}/tasks.md", "b" * 40, "a" * 40)
     spec_file = resource.WorkProductFile(
         "openspec/specs/repository-governance/spec.md", "b" * 40, "a" * 40
     )

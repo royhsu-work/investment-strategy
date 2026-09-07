@@ -72,7 +72,6 @@ def test_delivery_skill_defines_reconciliation_and_continuation() -> None:
         assert prohibited_authority in delivery
 
 
-
 def test_task_markers_exclude_downstream_lifecycle_gates() -> None:
     config = _normalized(CONFIG)
 
