@@ -200,12 +200,12 @@ def _implementation_checkpoint_effects_complete(
         return False
     task_index, request = materializations[0]
     if (
-        request.expected_change != batch.source.change
-        or request.change != batch.source.change
-        or request.branch != f"agent/{batch.source.change}"
+        request.expected_change != decision.source.change
+        or request.change != decision.source.change
+        or request.branch != f"agent/{decision.source.change}"
         or request.pr_number is None
         or len(request.files) != 1
-        or request.files[0].path != f"openspec/changes/{batch.source.change}/tasks.md"
+        or request.files[0].path != f"openspec/changes/{decision.source.change}/tasks.md"
         or request.files[0].expected_sha is None
     ):
         return False
