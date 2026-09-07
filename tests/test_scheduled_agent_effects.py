@@ -269,6 +269,129 @@ def test_implement_completion_rejects_reordered_or_duplicate_checkpoint_effects(
         assert applied == []
 
 
+def _complete_checkpoint_body() -> str:
+    return "\n".join(
+        (
+            "SLICE_CHECKPOINT",
+            "Workflow: #138",
+            f"Change: {_CHANGE}",
+            "Action: implement-change",
+            "Role: executor",
+            "Completed-Tasks: 2.1, 2.2",
+            f"Revision: {_REVISION}",
+            "Gate-Evidence: exact-head VERIFY",
+            "Remaining-Approved-Boundary: continue with Slice 3",
+        )
+    )
+
+
+def _checkpoint_effects_with_body(body: str) -> list[dict[str, str]]:
+    effects = _implementation_checkpoint_effects()
+    effects[1] = {
+        "kind": "issue-comment",
+        "payload_json": json.dumps({"issue_number": 138, "body": body}),
+    }
+    return effects
+
+
+def _apply_completion_effects(
+    requested_effects: list[dict[str, str]],
+) -> tuple[effects.ApplyResult, list[StagedEffect]]:
+    source = WorkerRequest(138, "executor", "implement-change")
+    batch = parse_effect_batch(
+        _raw(result_kind="more-implementation-required", requested_effects=requested_effects),
+        source,
+    )
+    applied: list[StagedEffect] = []
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: True,
+        apply_effect=applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+    )
+    return result, applied
+
+
+def _invalid_checkpoint_bodies() -> tuple[str, ...]:
+    valid = _complete_checkpoint_body()
+    return (
+        valid.replace("Workflow: #138", "Workflow: #139"),
+        valid.replace("Change: simplify-scheduled-agent-control-plane", "Change: other-change"),
+        valid.replace("Action: implement-change", "Action: review-implementation"),
+        valid.replace(
+            "Completed-Tasks: 2.1, 2.2",
+            "Completed-Tasks: 2.1, 2.1",
+        ),
+        valid.replace(
+            f"Revision: {_REVISION}",
+            f"Revision: {_REVISION}\nRevision: {_REVISION}",
+        ),
+        valid.replace("Gate-Evidence: exact-head VERIFY", "Gate-Evidence: "),
+        valid.replace(
+            "Remaining-Approved-Boundary: continue with Slice 3",
+            "Remaining-Approved-Boundary: ",
+        ),
+        valid + "\nUnexpected: value",
+    )
+
+
+@pytest.mark.parametrize("body", _invalid_checkpoint_bodies())
+def test_implement_completion_rejects_ambiguous_checkpoint_body(body: str) -> None:
+    result, applied = _apply_completion_effects(_checkpoint_effects_with_body(body))
+
+    assert not result.applied
+    assert "implementation-checkpoint-incomplete" in result.reason
+    assert applied == []
+
+
+def test_durable_task_markers_without_checkpoint_do_not_advance() -> None:
+    result, applied = _apply_completion_effects(_implementation_checkpoint_effects()[:1])
+
+    assert not result.applied
+    assert "implementation-checkpoint-incomplete" in result.reason
+    assert applied == []
+
+
+def test_checkpoint_before_task_does_not_advance() -> None:
+    result, applied = _apply_completion_effects(
+        list(reversed(_checkpoint_effects_with_body(_complete_checkpoint_body())))
+    )
+
+    assert not result.applied
+    assert "implementation-checkpoint-incomplete" in result.reason
+    assert applied == []
+
+
+def test_replay_accepts_already_durable_checkpoint_effects() -> None:
+    requested_effects = _checkpoint_effects_with_body(_complete_checkpoint_body())
+    durable: set[tuple[str, str]] = set()
+
+    def apply_once(effect: StagedEffect) -> None:
+        durable.add((effect.kind, effect.payload_json))
+
+    first, _ = _apply_completion_effects(requested_effects)
+    second = apply_effect_batch(
+        parse_effect_batch(
+            _raw(
+                result_kind="more-implementation-required",
+                requested_effects=requested_effects,
+            ),
+            WorkerRequest(138, "executor", "implement-change"),
+        ),
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: True,
+        apply_effect=apply_once,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+    )
+
+    assert first.applied
+    assert second.applied
+    assert len(durable) == 3
+
+
 def test_terminal_result_derives_closed_terminal_effect() -> None:
     source = WorkerRequest(138, "lead", "finalize-archive")
     batch = parse_effect_batch(
