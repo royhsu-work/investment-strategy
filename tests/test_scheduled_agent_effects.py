@@ -361,7 +361,6 @@ def test_implement_completion_rejects_ambiguous_checkpoint_body(body: str) -> No
     assert applied == []
 
 
-
 def test_implement_completion_requires_executable_slice_validator() -> None:
     result, applied = _apply_completion_effects(_implementation_checkpoint_effects())
 
