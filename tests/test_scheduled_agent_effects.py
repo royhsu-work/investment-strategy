@@ -1227,5 +1227,3 @@ def test_archive_pull_request_create_reuses_exact_existing_carrier(
     adapter.apply(effect)
     assert adapter.observe_postcondition(effect)
     assert ("pulls", "POST") not in calls
-
-
