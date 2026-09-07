@@ -75,15 +75,15 @@ procedure -> ordered task/checkpoint effects -> typed successor.
 Trace: current OpenSpec authoring owner -> implementation task boundary ->
 existing review/merge/archive gates.
 
-- [ ] 4.1 RED: add a focused authoring/regression assertion for task markers that
+- [x] 4.1 RED: add a focused authoring/regression assertion for task markers that
   depend on Reviewer PASS, merge, archive, or a later lifecycle transition.
-- [ ] 4.2 GREEN: add the minimum current-owner task-authoring rule and correct the
+- [x] 4.2 GREEN: add the minimum current-owner task-authoring rule and correct the
   directly applicable approved task representation without changing the
   downstream lifecycle gate.
-- [ ] 4.3 REFACTOR: preserve canonical workflow/message ownership and remove only
+- [x] 4.3 REFACTOR: preserve canonical workflow/message ownership and remove only
   the duplicate Executor checkbox representation; do not create a lifecycle
   marker or alternate completion state.
-- [ ] 4.4 VERIFY: confirm Proposal/Design/Tasks traceability, strict OpenSpec
+- [x] 4.4 VERIFY: confirm Proposal/Design/Tasks traceability, strict OpenSpec
   validation, and focused task-authoring/application regressions.
 
 ## Slice 5 — Retire the compensating post-merge path after fresh proof
