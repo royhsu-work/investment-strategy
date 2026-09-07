@@ -141,11 +141,11 @@ def _implementation_checkpoint_effects() -> list[dict[str, str]]:
     checkpoint_payload = {
         "issue_number": 138,
         "body": (
-            "SLICE_CHECKPOINT\\n"
-            "Workflow: #138\\n"
-            f"Change: {_CHANGE}\\n"
-            "Action: implement-change\\n"
-            "Role: executor\\n"
+            "SLICE_CHECKPOINT\n"
+            "Workflow: #138\n"
+            f"Change: {_CHANGE}\n"
+            "Action: implement-change\n"
+            "Role: executor\n"
             f"Revision: {_REVISION}"
         ),
     }
@@ -1229,65 +1229,3 @@ def test_archive_pull_request_create_reuses_exact_existing_carrier(
     assert ("pulls", "POST") not in calls
 
 
-def test_debug_implementation_checkpoint_predicate_compact() -> None:
-    source = WorkerRequest(138, "executor", "implement-change")
-    batch = parse_effect_batch(
-        _raw(
-            result_kind="more-implementation-required",
-            requested_effects=_implementation_checkpoint_effects(),
-        ),
-        source,
-    )
-    decision, _derived, rejection = effects._typed_application_plan(batch, _preflight(), _REVISION)
-    assert decision is not None, rejection
-    details: list[object] = []
-    for effect in batch.effects:
-        payload = effects._effect_payload(effect)
-        parsed = None
-        error = None
-        if effect.kind == "github-mutation" and payload is not None:
-            try:
-                parsed = effects.find_materialization_payload(payload, source)
-            except ValueError as exc:
-                error = str(exc)
-        details.append({
-            "kind": effect.kind,
-            "keys": sorted(payload) if payload is not None else None,
-            "operation": payload.get("operation") if payload is not None else None,
-            "issue_number": payload.get("issue_number") if payload is not None else None,
-            "parsed": None if parsed is None else {
-                "expected_change": parsed.expected_change,
-                "change": parsed.change,
-                "branch": parsed.branch,
-                "base_sha": parsed.base_sha,
-                "pr_number": parsed.pr_number,
-                "file_count": len(parsed.files),
-                "path": parsed.files[0].path if parsed.files else None,
-                "expected_sha": parsed.files[0].expected_sha if parsed.files else None,
-            },
-            "error": error,
-        })
-    pytest.fail(repr({
-        "decision_change": decision.source.change,
-        "decision_kind": decision.result.result.kind.value,
-        "effects": details,
-        "helper": effects._implementation_checkpoint_effects_complete(batch, decision),
-    }))
-def test_debug_checkpoint_body_representation() -> None:
-    source = WorkerRequest(138, "executor", "implement-change")
-    batch = parse_effect_batch(
-        _raw(
-            result_kind="more-implementation-required",
-            requested_effects=_implementation_checkpoint_effects(),
-        ),
-        source,
-    )
-    payload = effects._effect_payload(batch.effects[1])
-    assert payload is not None
-    body = payload["body"]
-    assert isinstance(body, str)
-    pytest.fail(repr({
-        "body_repr": repr(body),
-        "first_line": body.splitlines()[:1],
-        "body_codes": [ord(char) for char in body[:30]],
-    }))
