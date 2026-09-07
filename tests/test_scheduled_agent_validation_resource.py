@@ -196,7 +196,6 @@ def test_executor_task_marker_update_accepts_only_monotonic_checkbox_changes() -
     assert not resource._task_marker_update_is_monotonic(previously_checked, unchecked)
 
 
-
 def test_task_checkpoint_matches_only_first_incomplete_slice(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -208,9 +207,7 @@ def test_task_checkpoint_matches_only_first_incomplete_slice(
         "## Slice 2 — later\n"
         "- [ ] 2.1 later task\n"
     )
-    valid = current.replace("- [ ] 1.1", "- [x] 1.1").replace(
-        "- [ ] 1.2", "- [x] 1.2"
-    )
+    valid = current.replace("- [ ] 1.1", "- [x] 1.1").replace("- [ ] 1.2", "- [x] 1.2")
     multi_slice = valid.replace("- [ ] 2.1", "- [x] 2.1")
     candidate = valid
     task_file = resource.WorkProductFile(task_path, "b" * 40, _REVISION)
