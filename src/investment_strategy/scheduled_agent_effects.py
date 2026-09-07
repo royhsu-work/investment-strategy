@@ -166,12 +166,7 @@ def _slice_checkpoint_body_is_bounded(
     values: dict[str, str] = {}
     for line in lines[1:]:
         key, separator, value = line.partition(": ")
-        if (
-            not separator
-            or key in values
-            or not value
-            or value != value.strip()
-        ):
+        if not separator or key in values or not value or value != value.strip():
             return False
         values[key] = value
     expected_keys = {
@@ -273,6 +268,7 @@ def _implementation_checkpoint_effects_complete(
     ):
         return False
     return task_index < checkpoint_indexes[0]
+
 
 def _typed_application_plan(
     batch: EffectBatch,

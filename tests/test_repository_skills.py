@@ -114,7 +114,6 @@ def test_standard_metadata_and_provenance_preserve_existing_action_ownership() -
         assert expected in body, f"{skill} must preserve its mapped role/action declaration"
 
 
-
 def test_implementation_skill_makes_verified_slice_recovery_boundary_explicit() -> None:
     text = (Path("agents/skills/implementation/SKILL.md")).read_text(encoding="utf-8")
 
