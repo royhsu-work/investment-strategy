@@ -373,6 +373,24 @@ def _is_executor_task_bookkeeping(
     )
 
 
+def _task_marker_update_is_monotonic(current: str, candidate: str) -> bool:
+    """Accept only a non-empty, checkbox-only monotonic task update."""
+
+    current_lines = current.splitlines(keepends=True)
+    candidate_lines = candidate.splitlines(keepends=True)
+    if len(current_lines) != len(candidate_lines):
+        return False
+
+    changed = 0
+    for current_line, candidate_line in zip(current_lines, candidate_lines):
+        if current_line == candidate_line:
+            continue
+        if not current_line.startswith("- [ ] ") or candidate_line != "- [x]" + current_line[5:]:
+            return False
+        changed += 1
+    return changed > 0
+
+
 def is_post_merge_task_bookkeeping(
     source: WorkerRequest,
     expected_change: str,
@@ -1338,6 +1356,22 @@ def apply_work_product(
             )
             if current_sha != file.expected_sha:
                 raise RuntimeError("work-product expected content SHA is stale")
+            if _is_executor_task_bookkeeping(
+                plan.source,
+                plan.expected_change,
+                plan.manifest.files,
+            ):
+                current = _content_text_at(
+                    repository,
+                    token,
+                    path=file.path,
+                    revision=plan.manifest.base_sha,
+                )
+                candidate = _blob_text(repository, token, file.blob_sha)
+                if not _task_marker_update_is_monotonic(current, candidate):
+                    raise RuntimeError(
+                        "work-product task marker update must be a monotonic checkbox-only update"
+                    )
 
     base_commit = _as_mapping(
         cast(object, _github_json(repository, token, f"git/commits/{current_head}"))
