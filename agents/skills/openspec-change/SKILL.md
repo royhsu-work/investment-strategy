@@ -9,7 +9,20 @@ Mapped Actions: Lead / propose-change and Lead / resolve-question.
 
 Read current default-branch governance, the existing Issue/Change/PR, Human intent, applicable canonical
 specs, openspec/config.yaml, and exact validation evidence before editing. The existing Change is the
-single semantic vehicle for #180; do not create a duplicate Change or PR.
+single semantic vehicle for the current Issue; do not create a duplicate Change or PR.
+
+Before material Proposal, Design, Tasks solution formation or semantic correction, reconstruct the
+current decision boundary from current Human-approved intent, applicable canonical specs, current
+default-branch governance/config, and current repository evidence. Preserve already-decided
+outcomes, invariants, constraints, architecture decisions, safety properties, and scope boundaries.
+
+Within that boundary, consume the existing project-wide proportionality owner
+(`openspec/specs/repository-governance/spec.md`, referenced by `agents/proportionality.md`) and
+apply remove -> reuse -> consolidate -> existing ownership layer. Only when those options are
+insufficient may a new mechanism be retained, and the exact current requirement, concrete safety
+property, or demonstrated failure mode that requires it must be recorded. Hypothetical future
+generality is not sufficient evidence. This action-local procedure does not define a second normative
+rule or competing authority.
 
 Author only the approved semantic meaning: proposal intent, affected capabilities, requirements,
 scenarios, design decisions, traceability, and tasks. Keep implementation structure in design/tasks
@@ -37,17 +50,8 @@ When openspec/config.yaml declares schema: spec-driven, load
 agents/skills/openspec-semantic-adapter.md. The adapter is a closed Apply context, not runtime
 authority. Strict validation alone does not establish semantic acceptance, even when strict validation
 passes. Preserve the approved proposal, applicable delta specs, design, tasks, canonical specs, and
-materially applicable config context; do not choose which upstream/config semantics count.
+materially applicable config context; do not choose which upstream/config semantics count. Missing or contradictory context fails closed.
 
-## Spec-driven semantic adapter
-
-When openspec/config.yaml declares schema: spec-driven, load agents/skills/openspec-semantic-adapter.md.
-The adapter is a closed Apply context, not runtime authority. Strict validation alone does not
-establish semantic acceptance, even when strict validation passes. Preserve approved proposal,
-applicable delta specs, design, tasks, canonical specs, and materially applicable config context;
-do not choose which upstream/config semantics count. Missing or contradictory context fails closed.
-
-The worker MUST NOT create a Git tree or commit, move a ref, mutate an Issue, or choose routing.
 ## Conditional repository Skill composition
 
 When this Action materially creates or modifies a repository Skill, conditionally compose:
@@ -55,9 +59,9 @@ When this Action materially creates or modifies a repository Skill, conditionall
 and `agents/skills/skill-creator/references/repository-governance.md`.
 This repository Skill guidance is procedural input, not runtime authority.
 
-For the semantic gate, strict validation alone does not create semantic acceptance; missing or contradictory context fails closed. The Lead must record the source decision, and an independent Reviewer / review-openspec must review the resulting exact revision.
+For the semantic gate, strict validation alone does not create semantic acceptance; missing or contradictory context must fail closed. The Lead must record the source decision, and an independent Reviewer / review-openspec must review the resulting exact revision.
 
-The semantic gate treats missing or contradictory context as fail closed. Strict validation alone does not create semantic acceptance.
+
 
 ## Conditional staged-delivery composition
 
