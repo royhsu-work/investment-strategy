@@ -21,17 +21,17 @@ without reducing the approved outcome.
 Trace: canonical verified-slice/checkpoint contract -> application completion
 predicate -> existing typed successor derivation.
 
-- [ ] 1.1 RED: add production-boundary regressions proving an
+- [x] 1.1 RED: add production-boundary regressions proving an
   `implement-change` `READY` or `MORE_IMPLEMENTATION_REQUIRED` result with no
   complete task/checkpoint effect set cannot derive or persist its successor,
   while incomplete/blocker dispositions retain their existing bounded behavior.
-- [ ] 1.2 GREEN: add the smallest completion-boundary predicate to the existing
+- [x] 1.2 GREEN: add the smallest completion-boundary predicate to the existing
   effect application path; preserve the current Action/Result vocabulary,
   effect ordering, fresh guards, postconditions, and derived successor model.
-- [ ] 1.3 REFACTOR: keep the predicate local to existing application/effect
+- [x] 1.3 REFACTOR: keep the predicate local to existing application/effect
   ownership and reject duplicate/ambiguous checkpoint effects without adding a
   new state machine or protocol.
-- [ ] 1.4 VERIFY: run focused result/effect tests, full pytest, Ruff check,
+- [x] 1.4 VERIFY: run focused result/effect tests, full pytest, Ruff check,
   Ruff format check, and mypy.
 
 ## Slice 2 — Enforce monotonic current-Change task checkpoints
