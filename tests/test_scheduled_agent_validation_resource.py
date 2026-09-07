@@ -155,6 +155,131 @@ def test_executor_task_marker_is_the_only_nonreview_openspec_work_product() -> N
     assert not resource._is_executor_task_bookkeeping(source, _CHANGE, (task_file, design_file))
 
 
+
+def test_executor_task_marker_update_accepts_only_monotonic_checkbox_changes() -> None:
+    current = (
+        "- [ ] 2.1 first implementation task\n"
+        "- [ ] 2.2 second implementation task\n"
+    )
+    valid = (
+        "- [x] 2.1 first implementation task\n"
+        "- [ ] 2.2 second implementation task\n"
+    )
+    assert resource._task_marker_update_is_monotonic(current, valid)
+
+    invalid_candidates = (
+        current,
+        (
+            "- [x] 2.1 renamed implementation task\n"
+            "- [ ] 2.2 second implementation task\n"
+        ),
+        (
+            "- [x] 2.1 first implementation task\n"
+            "- [ ] 2.2 second implementation task\n"
+            "- [ ] 2.3 added task\n"
+        ),
+        "- [x] 2.1 first implementation task\n",
+        (
+            "- [ ] 2.2 second implementation task\n"
+            "- [x] 2.1 first implementation task\n"
+        ),
+    )
+    assert all(
+        not resource._task_marker_update_is_monotonic(current, candidate)
+        for candidate in invalid_candidates
+    )
+
+    previously_checked = (
+        "- [x] 2.1 first implementation task\n"
+        "- [ ] 2.2 second implementation task\n"
+    )
+    unchecked = (
+        "- [ ] 2.1 first implementation task\n"
+        "- [ ] 2.2 second implementation task\n"
+    )
+    assert not resource._task_marker_update_is_monotonic(
+        previously_checked, unchecked
+    )
+
+
+def test_apply_work_product_rejects_non_monotonic_task_marker_before_tree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    task_path = f"openspec/changes/{_CHANGE}/tasks.md"
+    plan = _work_product_plan(
+        source=source,
+        path=task_path,
+        blob_sha="b" * 40,
+        expected_sha="a" * 40,
+    )
+    current = (
+        "- [ ] 2.1 first implementation task\n"
+        "- [ ] 2.2 second implementation task\n"
+    )
+    invalid = (
+        "- [x] 2.1 renamed implementation task\n"
+        "- [ ] 2.2 second implementation task\n"
+    )
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_: source)
+    monkeypatch.setattr(
+        resource,
+        "_open_pr_payload",
+        lambda **_: {
+            "number": 178,
+            "state": "open",
+            "merged": False,
+            "body": "Refs #138\\n",
+            "head": {
+                "sha": _PR_HEAD,
+                "ref": f"agent/{_CHANGE}",
+                "repo": {"full_name": _REPOSITORY},
+            },
+            "base": {
+                "ref": "main",
+                "sha": _REVISION,
+                "repo": {"full_name": _REPOSITORY},
+            },
+        },
+    )
+    monkeypatch.setattr(
+        resource,
+        "_ref_head_sha",
+        lambda _repository, _token, branch: _REVISION
+        if branch == "main"
+        else _PR_HEAD,
+    )
+    monkeypatch.setattr(
+        resource,
+        "_default_branch_is_ancestor",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        resource,
+        "_content_sha_at",
+        lambda *_args, **_kwargs: "a" * 40,
+    )
+    monkeypatch.setattr(
+        resource,
+        "_content_text_at",
+        lambda *_args, **_kwargs: current,
+    )
+    monkeypatch.setattr(resource, "_blob_text", lambda *_args, **_kwargs: invalid)
+
+    def fail_github_json(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("task guard must run before GitHub tree construction")
+
+    monkeypatch.setattr(resource, "_github_json", fail_github_json)
+    with pytest.raises(RuntimeError, match="monotonic checkbox-only"):
+        resource.apply_work_product(
+            plan,
+            repository=_REPOSITORY,
+            token=_FIXTURE_VALUE,
+            default_branch="main",
+            authorization_revision=_REVISION,
+        )
+
+
 def _work_product_plan(
     *,
     source: WorkerRequest,
