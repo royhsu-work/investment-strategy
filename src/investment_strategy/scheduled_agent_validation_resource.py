@@ -33,7 +33,7 @@ from investment_strategy.workflow_dispatch import classify_dispatch
 
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
-_TASK_MARKER = re.compile(r"(?m)^- \\[ \\] [^\\n]*$")
+_TASK_MARKER = re.compile(r"(?m)^- \[ \] [^\n]*$")
 _ACCEPTED_CHECK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
 _OPEN_SPEC_AUTHORING_SOURCES = frozenset(
     {
