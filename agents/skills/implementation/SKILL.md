@@ -42,8 +42,7 @@ semantic review. Executor does not perform semantic bidirectional OpenSpec revie
 
 Every fresh `Executor / implement-change` invocation reconstructs current recovery truth from
 `tasks.md`, the current implementation PR/head, and current code/tests/evidence. It identifies the
-first incomplete slice and executes exactly one bounded slice with the sequence RED -> GREEN ->
-REFACTOR -> VERIFY.
+first incomplete slice and executes exactly one bounded slice with the sequence RED -> GREEN -> REFACTOR -> VERIFY.
 
 After VERIFY succeeds, persist task markers first and then one bounded SLICE_CHECKPOINT containing
 the exact Change, verified revision, completed task IDs, gate evidence, and remaining approved
