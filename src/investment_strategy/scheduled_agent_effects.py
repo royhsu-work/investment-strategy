@@ -22,6 +22,7 @@ from investment_strategy.scheduled_agent_action_model import (
     ActionSource,
     ApplicationRejection,
     BoundedActionResult,
+    ResultKind,
     plan_action_application,
     role_for,
 )
