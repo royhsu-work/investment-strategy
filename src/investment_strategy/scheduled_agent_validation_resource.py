@@ -787,7 +787,7 @@ def _implementation_review_pass(
     *,
     issue_number: int,
     head_sha: str,
-    base_sha: str,
+    expected_default_revision: str,
 ) -> bool:
     comments = _github_json(
         repository,
@@ -854,7 +854,7 @@ def _implementation_review_pass(
         for record in matching
     ):
         return False
-    return latest_pass[4] == base_sha
+    return latest_pass[4] == expected_default_revision
 
 
 def _exact_head_checks_pass(repository: str, token: str, head_sha: str) -> bool:
@@ -938,7 +938,7 @@ def _verify_post_merge_task_bookkeeping_evidence(
         token,
         issue_number=issue_number,
         head_sha=cast(str, head_sha),
-        base_sha=cast(str, base_sha),
+        expected_default_revision=authorization_revision,
     ):
         raise RuntimeError("post-merge task bookkeeping implementation review is not current")
     if not _exact_head_checks_pass(repository, token, cast(str, head_sha)):
