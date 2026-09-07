@@ -75,7 +75,10 @@ def test_openspec_actions_consume_singular_current_boundary_in_phase_order() -> 
     for procedure in (explore, change, review):
         assert owner in procedure
         assert "remove -> reuse -> consolidate -> existing ownership layer" in procedure
-        assert "current requirement, concrete safety property, or demonstrated failure mode" in procedure
+        assert (
+            "current requirement, concrete safety property, or demonstrated failure mode"
+            in procedure
+        )
 
     assert explore.index("current decision boundary") < explore.index("solution candidates")
     assert change.index("current decision boundary") < change.index("Author only")
