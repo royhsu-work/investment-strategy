@@ -195,7 +195,7 @@ def _slice_checkpoint_completed_task_ids(
     if (
         not task_ids
         or len(task_ids) != len(set(task_ids))
-        or any(not re.fullmatch(r"\\d+(?:\\.\\d+)+", task_id) for task_id in task_ids)
+        or any(not re.fullmatch(r"\d+(?:\.\d+)+", task_id) for task_id in task_ids)
     ):
         return None
     revision = values["Revision"]
