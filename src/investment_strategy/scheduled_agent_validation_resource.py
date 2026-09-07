@@ -373,6 +373,22 @@ def _is_executor_task_bookkeeping(
     )
 
 
+def _is_executor_config_authoring(
+    source: WorkerRequest,
+    expected_change: str,
+    files: tuple[WorkProductFile, ...],
+) -> bool:
+    """Allow only the canonical task-authoring owner after OpenSpec approval."""
+
+    return (
+        source.role == "executor"
+        and source.action == "implement-change"
+        and len(files) == 1
+        and files[0].path == "openspec/config.yaml"
+        and _valid_change(expected_change)
+    )
+
+
 def is_post_merge_task_bookkeeping(
     source: WorkerRequest,
     expected_change: str,
@@ -1237,6 +1253,11 @@ def apply_work_product(
     if any(file.path.startswith("openspec/") for file in plan.manifest.files) and not (
         _review_openspec_required(plan.source)
         or _is_executor_task_bookkeeping(
+            plan.source,
+            plan.expected_change,
+            plan.manifest.files,
+        )
+        or _is_executor_config_authoring(
             plan.source,
             plan.expected_change,
             plan.manifest.files,

@@ -182,6 +182,23 @@ def _work_product_plan(
     )
 
 
+def test_executor_config_authoring_is_narrowly_bound() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    reviewer = WorkerRequest(138, "reviewer", "review-openspec")
+    config_file = resource.WorkProductFile("openspec/config.yaml", "b" * 40, "a" * 40)
+    task_file = resource.WorkProductFile(
+        f"openspec/changes/{_CHANGE}/tasks.md", "b" * 40, "a" * 40
+    )
+    spec_file = resource.WorkProductFile(
+        "openspec/specs/repository-governance/spec.md", "b" * 40, "a" * 40
+    )
+
+    assert resource._is_executor_config_authoring(source, _CHANGE, (config_file,))
+    assert not resource._is_executor_config_authoring(source, _CHANGE, (config_file, task_file))
+    assert not resource._is_executor_config_authoring(source, _CHANGE, (spec_file,))
+    assert not resource._is_executor_config_authoring(reviewer, _CHANGE, (config_file,))
+
+
 def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
