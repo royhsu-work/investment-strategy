@@ -349,7 +349,6 @@ def test_post_merge_task_postcondition_accepts_existing_replay_after_intervening
 def test_task_marker_reconciliation_checks_all_pending_markers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source_request = WorkerRequest(207, "executor", "implement-change")
     task_path = f"openspec/changes/{_CHANGE}/tasks.md"
     current = "- [ ] 1.1 RED\n- [ ] 2.1 GREEN\n- [x] 4.6 VERIFY\n"
     candidate = current.replace("- [ ]", "- [x]")
