@@ -1273,3 +1273,21 @@ def test_debug_implementation_checkpoint_predicate_compact() -> None:
         "effects": details,
         "helper": effects._implementation_checkpoint_effects_complete(batch, decision),
     }))
+def test_debug_checkpoint_body_representation() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    batch = parse_effect_batch(
+        _raw(
+            result_kind="more-implementation-required",
+            requested_effects=_implementation_checkpoint_effects(),
+        ),
+        source,
+    )
+    payload = effects._effect_payload(batch.effects[1])
+    assert payload is not None
+    body = payload["body"]
+    assert isinstance(body, str)
+    pytest.fail(repr({
+        "body_repr": repr(body),
+        "first_line": body.splitlines()[:1],
+        "body_codes": [ord(char) for char in body[:30]],
+    }))
