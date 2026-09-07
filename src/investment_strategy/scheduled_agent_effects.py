@@ -283,7 +283,14 @@ def _typed_application_plan(
         )
 
     if not _implementation_checkpoint_effects_complete(batch, decision):
-        return decision, None, ApplyResult(False, "typed application rejected:implementation-checkpoint-incomplete")
+        return (
+            decision,
+            None,
+            ApplyResult(
+                False,
+                "typed application rejected:implementation-checkpoint-incomplete",
+            ),
+        )
 
     if decision.successor is not None:
         successor_effect = StagedEffect(
