@@ -96,9 +96,7 @@ EffectGuard = Callable[[StagedEffect], bool]
 EffectApplier = Callable[[StagedEffect], None]
 PostconditionObserver = Callable[[StagedEffect], bool]
 CarrierPlanProvider = Callable[[StagedEffect], CarrierPlan | None]
-ImplementationCheckpointValidator = Callable[
-    [MaterializationRequest, tuple[str, ...]], bool
-]
+ImplementationCheckpointValidator = Callable[[MaterializationRequest, tuple[str, ...]], bool]
 
 
 def parse_effect_batch(raw: str, source: WorkerRequest) -> EffectBatch:
