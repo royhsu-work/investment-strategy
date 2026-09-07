@@ -700,7 +700,7 @@ def test_post_merge_task_materialization_builds_a_default_branch_carrier_plan(
                         "Action: Reviewer / review-implementation\n"
                         "Result: PASS\n"
                         f"Revision: {historical_head}\n"
-                        f"Default-Branch-Revision: {premerge_revision}"
+                        f"Default-Branch-Revision: {default_revision}"
                     ),
                 }
             ]
