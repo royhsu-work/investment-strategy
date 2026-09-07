@@ -240,7 +240,7 @@ def _completion(args: argparse.Namespace) -> None:
         )
         return
 
-    if args.mode == "normal":
+    if args.mode in {"normal", "request"}:
         _emit(
             should_archive="false",
             reason="change-incomplete",
