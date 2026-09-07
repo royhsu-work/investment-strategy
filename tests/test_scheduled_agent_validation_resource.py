@@ -155,48 +155,29 @@ def test_executor_task_marker_is_the_only_nonreview_openspec_work_product() -> N
     assert not resource._is_executor_task_bookkeeping(source, _CHANGE, (task_file, design_file))
 
 
-
 def test_executor_task_marker_update_accepts_only_monotonic_checkbox_changes() -> None:
-    current = (
-        "- [ ] 2.1 first implementation task\n"
-        "- [ ] 2.2 second implementation task\n"
-    )
-    valid = (
-        "- [x] 2.1 first implementation task\n"
-        "- [ ] 2.2 second implementation task\n"
-    )
+    current = "- [ ] 2.1 first implementation task\n- [ ] 2.2 second implementation task\n"
+    valid = "- [x] 2.1 first implementation task\n- [ ] 2.2 second implementation task\n"
     assert resource._task_marker_update_is_monotonic(current, valid)
 
     invalid_candidates = (
         current,
-        (
-            "- [x] 2.1 renamed implementation task\n"
-            "- [ ] 2.2 second implementation task\n"
-        ),
+        ("- [x] 2.1 renamed implementation task\n- [ ] 2.2 second implementation task\n"),
         (
             "- [x] 2.1 first implementation task\n"
             "- [ ] 2.2 second implementation task\n"
             "- [ ] 2.3 added task\n"
         ),
         "- [x] 2.1 first implementation task\n",
-        (
-            "- [ ] 2.2 second implementation task\n"
-            "- [x] 2.1 first implementation task\n"
-        ),
+        ("- [ ] 2.2 second implementation task\n- [x] 2.1 first implementation task\n"),
     )
     assert all(
         not resource._task_marker_update_is_monotonic(current, candidate)
         for candidate in invalid_candidates
     )
 
-    previously_checked = (
-        "- [x] 2.1 first implementation task\n"
-        "- [ ] 2.2 second implementation task\n"
-    )
-    unchecked = (
-        "- [ ] 2.1 first implementation task\n"
-        "- [ ] 2.2 second implementation task\n"
-    )
+    previously_checked = "- [x] 2.1 first implementation task\n- [ ] 2.2 second implementation task\n"
+    unchecked = "- [ ] 2.1 first implementation task\n- [ ] 2.2 second implementation task\n"
     assert not resource._task_marker_update_is_monotonic(
         previously_checked, unchecked
     )
@@ -245,9 +226,7 @@ def test_apply_work_product_rejects_non_monotonic_task_marker_before_tree(
     monkeypatch.setattr(
         resource,
         "_ref_head_sha",
-        lambda _repository, _token, branch: _REVISION
-        if branch == "main"
-        else _PR_HEAD,
+        lambda _repository, _token, branch: _REVISION if branch == "main" else _PR_HEAD,
     )
     monkeypatch.setattr(
         resource,
