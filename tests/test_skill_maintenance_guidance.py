@@ -58,3 +58,28 @@ def test_lead_idle_advisory_can_recommend_skill_maintenance_without_mutation_aut
     assert "recommendation remains advisory" in lead
     assert "independent repository-authorized admission evidence" in lead
     assert "Advisory-only findings remain non-routing" not in lead
+
+
+def test_openspec_actions_consume_singular_current_boundary_in_phase_order() -> None:
+    proportionality = _text(AGENTS / "proportionality.md")
+    owner = "openspec/specs/repository-governance/spec.md"
+
+    assert proportionality.count(owner) == 1
+    assert "reference only" in proportionality
+    assert "does not define a competing workflow-only normative rule" in proportionality
+
+    explore = _text(AGENTS / "skills/openspec-explore/SKILL.md")
+    change = _text(AGENTS / "skills/openspec-change/SKILL.md")
+    review = _text(AGENTS / "skills/openspec-review/SKILL.md")
+
+    for procedure in (explore, change, review):
+        assert owner in procedure
+        assert "remove -> reuse -> consolidate -> existing ownership layer" in procedure
+        assert "current requirement, concrete safety property, or demonstrated failure mode" in procedure
+
+    assert explore.index("current decision boundary") < explore.index("solution candidates")
+    assert change.index("current decision boundary") < change.index("Author only")
+    assert review.index("independently reconstruct") < review.index("Review reverse-first")
+    assert "existing FINDINGS" in review
+    assert "second normative rule" in change
+    assert "not a competing authority" in review
