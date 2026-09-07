@@ -382,7 +382,7 @@ def _task_marker_update_is_monotonic(current: str, candidate: str) -> bool:
         return False
 
     changed = 0
-    for current_line, candidate_line in zip(current_lines, candidate_lines):
+    for current_line, candidate_line in zip(current_lines, candidate_lines, strict=True):
         if current_line == candidate_line:
             continue
         if not current_line.startswith("- [ ] ") or candidate_line != "- [x]" + current_line[5:]:
