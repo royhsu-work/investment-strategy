@@ -39,16 +39,16 @@ predicate -> existing typed successor derivation.
 Trace: canonical task-completion boundary -> existing Executor task-only
 materialization -> content/postcondition guards.
 
-- [ ] 2.1 RED: add materialization regressions for wording changes,
+- [x] 2.1 RED: add materialization regressions for wording changes,
   add/remove/reorder, `[x] -> [ ]`, stale expected SHA, and a valid
   unchecked-to-checked update.
-- [ ] 2.2 GREEN: strengthen the existing task-only materialization guard and
+- [x] 2.2 GREEN: strengthen the existing task-only materialization guard and
   postcondition to accept only the exact monotonic checkbox-only current-Change
   task update for Executor / `implement-change`.
-- [ ] 2.3 REFACTOR: reuse existing content-addressed blobs, PR/ref/head
+- [x] 2.3 REFACTOR: reuse existing content-addressed blobs, PR/ref/head
   identity, idempotent replay, and fail-closed behavior; keep post-merge
   reconciliation separate until its retirement precondition is proven.
-- [ ] 2.4 VERIFY: run focused materialization tests and all current quality
+- [x] 2.4 VERIFY: run focused materialization tests and all current quality
   checks against the changed application boundary.
 
 ## Slice 3 — Persist the bounded SLICE_CHECKPOINT before continuation
