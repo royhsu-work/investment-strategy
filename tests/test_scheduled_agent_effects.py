@@ -605,9 +605,7 @@ def test_active_formal_route_rejects_connector_authored_direct_transition(
     )
     effect = StagedEffect(
         kind="routing-transition",
-        payload_json=json.dumps(
-            {"issue_number": 138, "action": "resolve-question"}
-        ),
+        payload_json=json.dumps({"issue_number": 138, "action": "resolve-question"}),
         derived=True,
     )
 
@@ -669,9 +667,7 @@ def test_active_terminal_rejects_connector_authored_premature_close(
     )
     effect = StagedEffect(
         kind="terminal-transition",
-        payload_json=json.dumps(
-            {"issue_number": 138, "expected_change": _CHANGE}
-        ),
+        payload_json=json.dumps({"issue_number": 138, "expected_change": _CHANGE}),
         derived=True,
     )
 
@@ -810,14 +806,11 @@ def test_change_unset_preactivation_route_remains_compatible(
     )
     effect = StagedEffect(
         kind="routing-transition",
-        payload_json=json.dumps(
-            {"issue_number": 138, "action": "explore-change"}
-        ),
+        payload_json=json.dumps({"issue_number": 138, "action": "explore-change"}),
         derived=True,
     )
 
     assert adapter.guard(effect)
-
 
 
 def test_stale_or_unqualified_source_fails_closed() -> None:

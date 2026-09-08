@@ -148,7 +148,6 @@ def _typed_terminal_effect_matches(
     }
 
 
-
 _FORMAL_RESULT_MARKERS = frozenset({"ACTION_RESULT", "REVIEW_RESULT", "MERGE_RESULT"})
 _FORMAL_CHECKPOINT_MARKER = "SLICE_CHECKPOINT"
 
@@ -184,10 +183,7 @@ def _formal_comment_is_bound(
     ):
         return False
     action = _formal_field(body, "Action")
-    if action is None or (
-        action != source.action
-        and not action.endswith(f"/ {source.action}")
-    ):
+    if action is None or (action != source.action and not action.endswith(f"/ {source.action}")):
         return False
     default_revision = _formal_field(body, "Default-Branch-Revision")
     if (
@@ -197,10 +193,7 @@ def _formal_comment_is_bound(
     ):
         return False
     if marker == _FORMAL_CHECKPOINT_MARKER:
-        return (
-            source.action == "implement-change"
-            and _valid_sha(_formal_field(body, "Revision"))
-        )
+        return source.action == "implement-change" and _valid_sha(_formal_field(body, "Revision"))
     expected_marker = (
         "REVIEW_RESULT"
         if source.action.startswith("review-")
@@ -209,9 +202,7 @@ def _formal_comment_is_bound(
         else "ACTION_RESULT"
     )
     expected_result = (
-        None
-        if expected_result_kind is None
-        else expected_result_kind.upper().replace("-", "_")
+        None if expected_result_kind is None else expected_result_kind.upper().replace("-", "_")
     )
     return (
         marker == expected_marker
@@ -219,6 +210,7 @@ def _formal_comment_is_bound(
         and _formal_field(body, "Result") == expected_result
         and _formal_field(body, "Revision") is not None
     )
+
 
 _IMPLEMENTATION_COMPLETION_RESULTS = frozenset(
     {ResultKind.MORE_IMPLEMENTATION_REQUIRED, ResultKind.READY}
@@ -839,6 +831,7 @@ def apply_effect_batch(
             return ApplyResult(False, "durable postcondition not observed")
 
     return ApplyResult(True, "applied")
+
 
 def _github_json(
     repository: str,
