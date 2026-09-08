@@ -78,22 +78,22 @@ stale/replay/no-rewind, and historical exact-head reconciliation machinery.
 Trace: Human active-state guard -> scheduled-agent-workflow canonical owner
 -> current runtime observation and application effect guard.
 
-- [ ] 3.1 RED: add regressions showing that with `Change != unset`, a
+- [x] 3.1 RED: add regressions showing that with `Change != unset`, a
   connector-authored or out-of-band direct `action:*` route is classified
   `INDETERMINATE` and fails closed even when its Issue/label shape is
   syntactically valid.
-- [ ] 3.2 RED: add a regression showing that a connector-authored premature
+- [x] 3.2 RED: add a regression showing that a connector-authored premature
   terminal/close mutation is also `INDETERMINATE` and cannot be accepted,
   rewound, or laundered by idempotent reconciliation.
-- [ ] 3.3 GREEN: add the smallest current-formal-state provenance guard at the
+- [x] 3.3 GREEN: add the smallest current-formal-state provenance guard at the
   existing runtime/application observation boundary. Require fresh
   repository-owned Actions/application transition evidence for active routing
   and terminal/close; keep connector ingress as bounded untrusted
   `EFFECT_REQUEST` transport.
-- [ ] 3.4 GREEN: prove a qualified repository-owned Actions/application formal
+- [x] 3.4 GREEN: prove a qualified repository-owned Actions/application formal
   transition remains accepted, while `Change: unset` pre-activation
   Explore/Propose behavior remains compatible.
-- [ ] 3.5 VERIFY: run focused provenance, pre-activation, routing, terminal,
+- [x] 3.5 VERIFY: run focused provenance, pre-activation, routing, terminal,
   and fail-closed regressions and all strict exact-head quality/validation
   checks.
 
