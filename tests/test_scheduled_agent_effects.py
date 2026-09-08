@@ -1519,3 +1519,257 @@ def test_archive_pull_request_create_reuses_exact_existing_carrier(
     adapter.apply(effect)
     assert adapter.observe_postcondition(effect)
     assert ("pulls", "POST") not in calls
+
+
+def test_non_merge_carrier_recovery_observes_current_postcondition_without_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    head_sha = "b" * 40
+    issue = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "created_at": "2026-09-08T00:00:00Z",
+        "closed_at": None,
+        "labels": [
+            {"name": "agent:executor"},
+            {"name": "action:implement-change"},
+        ],
+    }
+    pull_request = {
+        "number": 178,
+        "state": "open",
+        "merged": False,
+        "draft": True,
+        "body": "Implementation\\n\\nRefs #138\\n",
+        "head": {
+            "ref": f"agent/{_CHANGE}",
+            "sha": head_sha,
+            "repo": {"full_name": "owner/repo"},
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"full_name": "owner/repo"},
+        },
+    }
+    calls: list[tuple[str, str]] = []
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        calls.append((path, method))
+        if path == "":
+            return {"default_branch": "main"}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": _REVISION}}
+        if path == "issues/138":
+            if method == "PATCH" and isinstance(payload, dict):
+                labels = payload.get("labels")
+                if isinstance(labels, list):
+                    issue["labels"] = [
+                        {"name": label} for label in labels if isinstance(label, str)
+                    ]
+            return issue
+        if path == "pulls/178":
+            return pull_request
+        raise AssertionError(f"unexpected GitHub call: {method} {path} {payload!r}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    effect = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "pull-request-ready",
+                "number": 178,
+                "expected_head_sha": head_sha,
+            }
+        ),
+    )
+    first_adapter = GitHubEffectAdapter(
+        "owner/repo",
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+    )
+
+    with pytest.raises(CarrierRequired) as raised:
+        first_adapter.apply(effect)
+
+    assert raised.value.plan.operation == "pull-request-ready"
+    assert raised.value.plan.requested["draft"] is False
+
+    pull_request["draft"] = False
+    calls.clear()
+    second_adapter = GitHubEffectAdapter(
+        "owner/repo",
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+    )
+    batch = parse_effect_batch(
+        _raw(
+            result_kind="spec-blocker",
+            requested_effects=[
+                {
+                    "kind": effect.kind,
+                    "payload_json": effect.payload_json,
+                }
+            ],
+        ),
+        source,
+    )
+
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=second_adapter.guard,
+        apply_effect=second_adapter.apply,
+        observe_postcondition=second_adapter.observe_postcondition,
+        current_revision=_REVISION,
+    )
+
+    assert result.applied
+    assert calls.count(("issues/138", "PATCH")) == 1
+    assert all(
+        path != "pulls/178" or method == "GET"
+        for path, method in calls
+    )
+    assert issue["labels"] == [
+        {"name": "agent:executor"},
+        {"name": "action:resolve-question"},
+    ]
+
+
+def test_merge_carrier_recovery_rejects_old_authorization_after_main_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(159, "executor", "merge-implementation-pr")
+    change = "prevent-native-closing-bypass"
+    old_revision = "a" * 40
+    new_revision = "c" * 40
+    current_main_revision = old_revision
+    expected_head = "b" * 40
+    issue = {
+        "number": 159,
+        "state": "open",
+        "body": f"Change: {change}\n",
+        "created_at": "2026-09-08T00:00:00Z",
+        "closed_at": None,
+        "labels": [
+            {"name": "agent:executor"},
+            {"name": "action:merge-implementation-pr"},
+        ],
+    }
+    pull_request = {
+        "number": 167,
+        "state": "open",
+        "merged": False,
+        "body": "Implementation\\n\\nRefs #159\\n",
+        "head": {
+            "ref": f"agent/{change}",
+            "sha": expected_head,
+            "repo": {"full_name": "owner/repo"},
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"full_name": "owner/repo"},
+        },
+    }
+    calls: list[tuple[str, str]] = []
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        calls.append((path, method))
+        if path == "":
+            return {"default_branch": "main"}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": current_main_revision}}
+        if path == "issues/159":
+            return issue
+        if path == "pulls/167":
+            return pull_request
+        raise AssertionError(f"unexpected GitHub call: {method} {path} {payload!r}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    effect = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 159,
+                "operation": "pull-request-merge",
+                "number": 167,
+                "expected_head_sha": expected_head,
+                "merge_method": "merge",
+            }
+        ),
+    )
+    first_adapter = GitHubEffectAdapter(
+        "owner/repo",
+        "token",
+        source,
+        authorized_change=change,
+        current_revision=old_revision,
+    )
+
+    with pytest.raises(CarrierRequired):
+        first_adapter.apply(effect)
+
+    current_main_revision = new_revision
+    calls.clear()
+    fresh_adapter = GitHubEffectAdapter(
+        "owner/repo",
+        "token",
+        source,
+        authorized_change=change,
+        current_revision=old_revision,
+    )
+    raw = json.dumps(
+        {
+            "issue_number": 159,
+            "role": "executor",
+            "action": "merge-implementation-pr",
+            "change": change,
+            "result_kind": "merged",
+            "result_content": "MERGE_RESULT",
+            "requested_effects": [
+                {
+                    "kind": effect.kind,
+                    "payload_json": effect.payload_json,
+                }
+            ],
+        }
+    )
+    batch = parse_effect_batch(raw, source)
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=lambda: _preflight(
+            issue_number=159,
+            action="merge-implementation-pr",
+            change=change,
+        ),
+        effect_guard=fresh_adapter.guard,
+        apply_effect=fresh_adapter.apply,
+        observe_postcondition=fresh_adapter.observe_postcondition,
+        current_revision=old_revision,
+    )
+
+    assert not result.applied
+    assert result.reason == "effect precondition rejected"
+    assert not any(method != "GET" for _path, method in calls)
