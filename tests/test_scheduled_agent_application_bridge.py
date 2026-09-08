@@ -4,18 +4,21 @@ from __future__ import annotations
 
 import base64
 import json
+import sys
 from datetime import date
 from pathlib import Path
 from typing import cast
 
 import pytest
 
+import investment_strategy.scheduled_agent_application_bridge as bridge
 from investment_strategy.scheduled_agent_application_bridge import (
     APPLICATION_REQUEST_MARKER,
     AUTHORIZATION_REVISION_PREFIX,
     parse_application_request,
     plan_application,
 )
+from investment_strategy.scheduled_agent_carrier import CarrierRequired, make_carrier_plan
 from investment_strategy.scheduled_agent_checkin import checkin_title
 from investment_strategy.scheduled_agent_runtime import (
     GitHubIssueObservation,
@@ -203,3 +206,98 @@ def test_application_boundary_does_not_replay_dispatch_artifacts() -> None:
     assert "VALIDATION_RESOURCE_REQUEST" not in workflow
     assert "WORK_PRODUCT_REQUEST" not in workflow
     assert "FORMALIZE_CHANGE_REQUEST" not in workflow
+    assert "End invocation at CarrierRequired boundary" in workflow
+    assert workflow.count("steps.apply.outputs.carrier_required != 'true'") == 8
+
+
+def test_main_exits_at_carrier_boundary_before_formal_continuation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    worker_result = _worker_result(
+        action="implement-change",
+        role="executor",
+        result_kind="spec-blocker",
+    )
+    worker_result["change"] = "carrier-exit-change"
+    body = _effect_request(worker_result, revision=_REVISION)
+    event = _event(body)
+    event_path = tmp_path / "event.json"
+    event_path.write_text(json.dumps(event), encoding="utf-8")
+    output_path = tmp_path / "github-output.txt"
+    source = WorkerRequest(138, "executor", "implement-change")
+    carrier_plan = make_carrier_plan(
+        repository=_REPOSITORY,
+        issue_number=138,
+        change="carrier-exit-change",
+        action="implement-change",
+        authorization_revision=_REVISION,
+        operation="pull-request-ready",
+        target={"pull_request_number": 226},
+        expected={"head_sha": _REVISION},
+        requested={"head_sha": _REVISION, "draft": False},
+        expected_postcondition={"draft": False},
+    )
+    events: list[str] = []
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", _REPOSITORY)
+    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output_path))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "scheduled_agent_application_bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            _REVISION,
+            "--default-branch",
+            "main",
+        ],
+    )
+    monkeypatch.setattr(bridge, "_fresh_event_observation", lambda *_args: None)
+    monkeypatch.setattr(
+        bridge,
+        "acquire_current_github_preflight",
+        lambda *_args: _preflight(
+            action="implement-change",
+            issue_number=138,
+            change="carrier-exit-change",
+        ),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "plan_application",
+        lambda **_kwargs: bridge.ApplicationPlan(
+            should_apply=True,
+            source=source,
+            raw_worker_result=json.dumps(worker_result),
+        ),
+    )
+
+    def raise_carrier(*_args: object, **_kwargs: object) -> object:
+        events.append("application")
+        raise CarrierRequired(carrier_plan)
+
+    monkeypatch.setattr(bridge, "run_guarded_effect_application", raise_carrier)
+    monkeypatch.setattr(
+        bridge,
+        "_write_carrier_outputs",
+        lambda result: events.append(f"carrier:{result.carrier_plan.plan_id}"),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_write_validation_outputs",
+        lambda target: events.append(f"validation:{target}"),
+    )
+
+    assert bridge.main() == 0
+
+    assert events == ["application", f"carrier:{carrier_plan.plan_id}", "validation:None"]
+    output = capsys.readouterr().out
+    assert '"carrier_required": true' in output
+    assert '"effects": 0' in output
+    assert "ACTION_RESULT" not in output
+    assert "SLICE_CHECKPOINT" not in output
