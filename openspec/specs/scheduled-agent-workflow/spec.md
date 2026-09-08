@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 63630)
-Total output lines: 3153
-
 # scheduled-agent-workflow Specification
 
 ## Purpose
@@ -1298,7 +1295,702 @@ When the governance/template change is merged to the default branch, subsequent 
 
 Tests and documentation MUST distinguish the pre-activation governance-PR review boundary from post-merge enforcement. This activation rule MUST NOT add a feature-branch authority override, template-version state machine, runtime negotiation protocol, or message migration service.
 
-#### Sce…13630 tokens truncated… plus applicable proposal rules from default-branch `openspec/config.yaml` and must research existing canonical specs before declaring new/modified capabilities.
+#### Scenario: Unmerged governance PR cannot govern its own review
+
+- GIVEN default-branch governance does not yet contain the new canonical template contract
+- AND the feature PR under review introduces `agents/templates/messages.md` and role/skill references to it
+- WHEN Reviewer executes a gate for that feature PR
+- THEN Reviewer follows the current default-branch governance for its own invocation and durable presentation
+- AND treats the feature-branch template only as governed content under review
+- AND does not fail the review merely because the current invocation cannot be governed by an unmerged rule
+
+#### Scenario: Canonical templates become mandatory after merge
+
+- GIVEN the governance/template change has been merged to the repository default branch
+- WHEN a later applicable Scheduled Agent invocation loads default-branch governance and emits a covered durable workflow event
+- THEN the role/skill uses the canonical shared template source
+- AND does not revert to an ad-hoc competing presentation for that covered event
+
+### Requirement: Verified implementation slices persist a bounded coordination-Issue checkpoint
+
+For `Executor / implement-change`, after an approved vertical slice reaches successful `VERIFY`, Executor MUST persist all satisfied task markers for that slice and MUST persist exactly one bounded checkpoint comment on the persistent coordination Issue before beginning the next slice or handing off.
+
+The checkpoint comment MUST use the canonical `SLICE_CHECKPOINT` presentation contract when that contract is active on the default branch and MUST identify the completed slice or task IDs, the durable checkpoint or verified revision, the required VERIFY/gate result, and the remaining approved work or handoff target. Before template activation, the same evidence fields remain required by the then-authoritative workflow contract even if presentation is not yet canonical. The comment SHALL summarize the completion boundary and MUST NOT replace the PR/commit, task markers, or CI evidence as their respective sources of truth.
+
+RED/GREEN/refactor/test-trigger/compatibility-correction commits and ordinary governed artifact or task-marker edits inside the same not-yet-complete slice MUST NOT independently require coordination-Issue progress comments. This requirement is completion-boundary observability only and MUST NOT introduce periodic heartbeat, progress percentage, `status:in-progress`, lock, claim, lease, retry counter, hidden ownership state, or other live execution machinery.
+
+#### Scenario: Verified slice completes before another slice begins
+
+- GIVEN Executor completes an approved vertical slice
+- AND the slice's required VERIFY and repository gates succeed
+- WHEN Executor prepares to continue implementation
+- THEN all satisfied task markers for that slice are durably persisted
+- AND exactly one bounded `SLICE_CHECKPOINT`-equivalent completion record is durably recorded on the persistent coordination Issue using the currently authoritative presentation contract
+- AND the checkpoint identifies the completed work, durable revision, gate result, and remaining work
+- AND only then may Executor begin the next approved slice
+
+#### Scenario: Work continues inside an unverified slice
+
+- GIVEN Executor is performing RED, GREEN, refactor, test-trigger, compatibility correction, or ordinary artifact/task edits inside one approved slice
+- AND that slice has not yet reached successful VERIFY
+- WHEN those intermediate mutations are persisted
+- THEN Git/PR/task evidence remains the detailed source of truth
+- AND no additional implementation-progress Issue comment is required solely for those mutations
+
+#### Scenario: Task markers persisted but checkpoint write was interrupted
+
+- GIVEN a prior Executor run successfully verified a slice and durably persisted its satisfied task markers
+- BUT the run ended before the required coordination-Issue checkpoint was persisted
+- WHEN a later Executor run reconstructs the active implementation state
+- THEN it does not rerun or clear the already verified slice merely to recreate progress
+- AND it persists the missing bounded checkpoint from current durable evidence using the currently authoritative presentation contract before beginning another slice or handing off
+
+### Requirement: Native Archive close hands off to terminal Lead reconstruction
+
+The final Archive PR SHALL retain the repository-approved GitHub closing linkage to the persistent coordination Issue.
+
+After Executor successfully merges the authorized Archive PR, Executor MUST fresh-read the Archive PR and coordination Issue. If the PR is durably merged and the coordination Issue is observed natively `closed`, Executor MUST replace the consumed routing tuple with exactly `agent:lead + action:finalize-archive` on that closed Issue and MUST record a bounded handoff message whose evidence includes the merge/native-close boundary using the currently authoritative presentation contract. Executor MUST NOT execute Lead finalization in the same invocation.
+
+A closed coordination Issue with exactly `agent:lead + action:finalize-archive` SHALL be eligible only as the narrow terminal-reconstruction candidate defined by the active-workflow requirement above. Lead `finalize-archive` MUST reconstruct the authorized Archive PR merge, canonical archived default-branch state, and observed native Issue closure. On successful reconstruction Lead MUST record one bounded action result carrying `LIFECYCLE_COMPLETE` bound to the Archive PR exact head and merge commit using the currently authoritative presentation contract; the normal native-close path MUST NOT reopen or redundantly close the Issue.
+
+After valid Lead `LIFECYCLE_COMPLETE` evidence exists for the current archive merge, the closed tuple MUST remain terminal history but MUST NOT be selected again and MUST NOT block later workflow admission.
+
+#### Scenario: Archive merge native-closes the Issue
+
+- GIVEN Reviewer archive PASS and Lead merge authorization bind to exact Archive PR revision R
+- AND Executor confirms unchanged current head R and all merge preconditions
+- WHEN Executor merges the Archive PR and GitHub natively closes the coordination Issue through the approved closing linkage
+- THEN Executor fresh-reads and confirms the merged PR and closed Issue
+- AND replaces routing with `agent:lead + action:finalize-archive` on the closed Issue
+- AND records the bounded handoff evidence for the merge/native-close/terminal ownership boundary using the currently authoritative presentation contract
+- AND ends the invocation without executing Lead work
+
+#### Scenario: Lead completes terminal reconstruction on the closed Issue
+
+- GIVEN the Issue is closed and routed `Lead / finalize-archive`
+- AND the matching authorized Archive PR is merged
+- AND no valid Lead `LIFECYCLE_COMPLETE` evidence exists yet
+- WHEN Lead is dispatched for terminal reconstruction
+- THEN Lead verifies canonical archived default-branch state and native closure
+- AND records bounded action-result evidence with `LIFECYCLE_COMPLETE` bound to the Archive PR exact head and merge commit using the currently authoritative presentation contract
+- AND does not reopen or redundantly close the Issue
+- AND later dispatch excludes that closed tuple from active work
+
+#### Scenario: Merge succeeded but post-merge handoff was interrupted
+
+- GIVEN the authorized Archive PR is already merged and the Issue is natively closed
+- AND routing still contains the consumed pre-merge tuple because Executor stopped before terminal handoff
+- WHEN a later run reconstructs exact authorized merge and native-close evidence
+- THEN it MUST NOT re-merge
+- AND MAY repair only the missing `Lead / finalize-archive` terminal routing and handoff evidence according to the merge recovery contract
+
+### Requirement: Idle exploration considers recent relevant Issue activity
+
+Lead idle advisory SHALL remain available only when no active workflow requires work and no unresolved advisory already prevents duplicate advisory creation.
+
+When forming bounded idle recommendations, Lead SHALL consider relevant repository Issues created or materially active during the preceding seven days in addition to current default-branch repository state.
+
+#### Scenario: Recent Issue changes recommendation context
+
+- GIVEN workflow execution is idle
+- AND a relevant Issue was created or materially active within the preceding seven days
+- WHEN Lead forms an idle advisory
+- THEN that Issue is considered as current exploration evidence
+- AND the advisory remains bounded to at most three recommendations
+
+### Requirement: External asynchronous waits are revalidated from the awaited resource
+
+A selected Scheduled-Agent action MUST NOT classify the first observation of an exact external resource as a real cross-invocation asynchronous wait merely because the resource is absent, queued, or in progress.
+
+When the exact resource was created or triggered by the current selected action, routing/preconditions remain current, no different role/Human authority boundary is required, and the invocation still has bounded execution opportunity, the action MAY continue bounded observation of that same exact resource without introducing durable waiter state.
+
+If the resource resolves while that bounded same-invocation opportunity remains, the action MUST continue immediately actionable work under the shared work-conserving contract. If bounded execution opportunity is exhausted while the resource remains nonterminal, the action MAY yield as a real external asynchronous wait.
+
+When a scheduled invocation resumes work that previously yielded because a specific external asynchronous resource was not yet complete, the selected action SHALL fresh-read that awaited resource before concluding that the wait still exists. A prior coordination-Issue comment, checkpoint, or summarized observation that recorded the resource as `in_progress`, pending, or unavailable MUST be treated as historical evidence only and MUST NOT by itself justify another asynchronous-wait yield.
+
+If the fresh-read resource shows that the awaited condition has resolved and the selected role/action has immediately actionable work under current routing and preconditions, the invocation MUST continue that work under the shared work-conserving contract.
+
+This behavior MUST NOT create a polling service, durable timer, heartbeat, retry counter, hidden waiting state, or scheduler-side workflow state.
+
+#### Scenario: Just-triggered CI settles during the same invocation
+
+- GIVEN the selected action just created or triggered an exact-head validation resource
+- AND the first fresh read observes it absent, queued, or in progress
+- AND routing, revision, authority, and execution context remain current
+- WHEN the resource reaches success while bounded same-invocation execution opportunity remains
+- THEN the action continues the remaining immediately actionable work in the same invocation
+- AND the first nonterminal observation is not treated as an automatic cross-invocation yield boundary
+
+#### Scenario: Exact resource remains nonterminal beyond bounded opportunity
+
+- GIVEN the selected action is observing the exact external resource it just caused
+- AND the resource remains queued or in progress
+- WHEN the invocation can no longer continue bounded observation without exceeding its available execution context
+- THEN yielding is a legal real external asynchronous wait
+- AND the next wake MUST fresh-read that exact awaited resource before concluding that the wait still exists
+
+#### Scenario: Resumed wait is revalidated from the exact awaited resource
+
+- GIVEN a prior invocation yielded because a specific external asynchronous resource was not yet complete
+- AND a later wake reconstructs the same selected action
+- WHEN current wait status is evaluated
+- THEN the selected action fresh-reads that exact awaited resource
+- AND stale `in_progress`, pending, or unavailable evidence alone cannot justify another yield
+
+#### Scenario: Awaited gate has completed successfully
+
+- GIVEN a later wake fresh-reads the specific awaited validation run
+- AND the run is now completed successfully for the required revision
+- AND routing and other preconditions remain current
+- WHEN the selected action evaluates continuation
+- THEN the prior async-wait boundary no longer applies
+- AND the action continues its immediately actionable work in the same invocation
+
+#### Scenario: Nonterminal resource belongs to another authority boundary
+
+- GIVEN a nonterminal external dependency is not part of the current selected action's bounded continuation or requires another role/Human authority
+- WHEN the selected action evaluates whether to keep waiting locally
+- THEN it does not invent same-invocation polling to cross that authority boundary
+- AND it follows the existing legal handoff/escalation/async-wait contract
+
+### Requirement: Constrained branch integration preserves reviewed semantics and fail-closed gates
+
+When `Executor / implement-change` must reconcile its implementation branch with a newer default branch, Executor SHALL treat any constrained-tool reconciliation as an implementation correction and MAY use a repository mutation path that does not require ordinary local git merge/rebase tooling only when the operation is non-force, its source head and current default-branch base are fresh-read and still current, and the resulting commit/tree can be verified to preserve the intended approved implementation semantics.
+
+Such reconciliation MUST remain implementation-owned and MUST NOT redefine OpenSpec requirements, bypass independent Reviewer coverage, weaken exact-head validation, or manufacture merge authorization.
+
+If no available repository-governed mutation surface can safely perform the required reconciliation, Executor MUST preserve the observable execution failure and converge to bounded `Lead / resolve-question` diagnosis under the existing exception/finalization contract instead of repeatedly attempting an unchanged rejected operation or weakening gates.
+
+#### Scenario: Non-force reconciliation is available through constrained tooling
+
+- GIVEN Executor owns the current implementation action
+- AND the implementation PR requires integration with a newer default branch
+- AND a repository mutation surface can construct and move the branch to a non-force reconciliation commit using the still-current implementation head and default-branch head
+- WHEN Executor performs the correction
+- THEN the resulting branch ancestry is reconciled without force update
+- AND approved implementation semantics remain unchanged unless separately authorized
+- AND all exact-head quality/review readiness evidence must be obtained for the resulting new head
+
+#### Scenario: No legal constrained integration path exists
+
+- GIVEN branch integration is required before implementation can become review-ready
+- AND ordinary local git integration is unavailable
+- AND available repository mutation surfaces cannot safely complete the correction under current preconditions
+- WHEN Executor evaluates recovery
+- THEN it records the catchable execution evidence when possible
+- AND does not weaken revision-bound review or merge gates
+- AND hands bounded unresolved diagnosis to `Lead / resolve-question`
+
+### Requirement: Implementation PR is Ready before implementation review handoff
+
+Before `Executor / implement-change` hands an implementation PR to `Reviewer / review-implementation`, the current implementation PR SHALL be open and non-Draft at the exact handoff head.
+
+Executor owns the Draft-to-Ready transition as part of completing implementation presentation state. If the transition cannot be performed because the mutation is denied, unsupported, stale, or otherwise fails, the action MUST process that failure through the existing catchable-exception/finalization contract and MUST NOT claim implementation readiness.
+
+Reviewer implementation PASS and Lead merge authorization MUST NOT be used to paper over a Draft implementation PR that never completed the required Ready transition.
+
+#### Scenario: Executor completes implementation readiness
+
+- GIVEN all approved implementation work and required exact-head gates are complete for PR head R
+- AND the PR is still Draft
+- WHEN Executor prepares the `review-implementation` handoff
+- THEN Executor marks the PR Ready for review
+- AND fresh-read PR state is non-Draft at head R before the handoff is completed
+
+#### Scenario: Ready transition fails
+
+- GIVEN implementation work is otherwise ready for review
+- AND the PR remains Draft
+- WHEN the Draft-to-Ready mutation is denied or unavailable
+- THEN Executor does not hand the PR to Reviewer as implementation-ready
+- AND it preserves the observable failure and follows the legal recovery/diagnosis path
+
+### Requirement: Human escalation creates analytics-only notified observability
+
+After Lead durably records a canonical `HUMAN_DECISION_REQUIRED` escalation, Lead SHALL idempotently ensure the coordination Issue has the `human:notified` label when the repository label mutation surface is available.
+
+`human:notified` SHALL remain historical/analytics observability metadata only. Its presence or absence MUST NOT determine routing, waiting, authorization, resume eligibility, active-workflow identity, or whether Human has answered. A later Human answer or workflow resumption SHOULD NOT remove the label merely because the escalation was resolved.
+
+Failure to add the analytics label MUST NOT erase or invalidate already-durable `HUMAN_DECISION_REQUIRED` evidence. The label mutation failure SHALL be handled through the same execution-exception/minimum-evidence rules without repeated unchanged retries.
+
+#### Scenario: Escalation evidence exists and label is absent
+
+- GIVEN Lead has durably persisted `HUMAN_DECISION_REQUIRED`
+- AND `human:notified` is absent
+- WHEN Lead completes the escalation boundary
+- THEN it idempotently adds `human:notified`
+- AND routing/authorization semantics remain unchanged
+
+#### Scenario: Historical notified label remains after Human response
+
+- GIVEN `human:notified` was added for an earlier durable Human escalation
+- AND authoritative Human activity later resolves the decision
+- WHEN workflow routing advances
+- THEN the label MAY remain as historical observability metadata
+- AND current routing/evidence, not the label, determines whether Human input is still pending
+
+#### Scenario: Notified label alone does not create waiting state
+
+- GIVEN a coordination Issue has `human:notified`
+- AND no current durable Human-decision-required routing/evidence applies
+- WHEN a scheduled role reconstructs the workflow
+- THEN it does not infer that the workflow is waiting for Human merely from the label
+
+### Requirement: Workflow-owned temporary recovery branches are safely retired before terminal completion
+
+A temporary integration/recovery branch created or adopted as an intermediate workflow recovery surface SHALL have reconstructable workflow ownership and purpose from existing durable repository evidence. Branch naming alone MUST NOT establish temporary-branch identity or deletion authority, and this requirement MUST NOT introduce a hidden branch registry or second workflow state store.
+
+Normal feature and archive PR heads SHALL continue to use their existing PR/native branch lifecycle. This cleanup contract applies only to a separately workflow-owned temporary recovery/integration branch that is not the normal surviving implementation/archive PR head.
+
+Before deleting such a temporary branch, the responsible action MUST fresh-read branch, PR, and workflow state and MUST verify that the branch is not an open PR head or base, is not still referenced by active recovery/integration work, and has no commits outside canonical `main` or an explicitly retained successor branch. An `ahead_by == 0` comparison or equivalent no-unique-commits proof MAY satisfy the containment check. Stale observations, branch-name patterns, or an assumption that the workflow is finished MUST NOT by themselves authorize deletion.
+
+A force update/delete MUST NOT be used to hide unintegrated commits. If unique commits remain, branch ownership/use is ambiguous, or the branch is still active input, cleanup MUST fail closed and preserve the branch while routing to the legal recovery/diagnosis owner.
+
+If a temporary-branch delete mutation is denied, unsupported, or unavailable, the action MUST preserve minimum durable evidence and apply the same evidence-based no-identical-retry rule as other constrained mutations.
+
+Before Lead persists terminal `LIFECYCLE_COMPLETE`, Lead SHALL verify that no temporary branch still owned by that workflow is both unused and safely deletable. An intentionally retained branch is compatible with terminal completion only when a durable reconstructable reason and legal ownership/next disposition remain recorded. Lead's verification MUST NOT grant Lead authority to perform Executor-owned implementation/recovery branch mutations.
+
+#### Scenario: Temporary integration branch becomes cleanup-eligible
+
+- GIVEN a workflow-owned temporary integration branch is no longer an open PR head/base or active recovery input
+- AND a fresh comparison proves it has no commits not already contained in canonical `main`
+- WHEN the responsible recovery action evaluates terminal cleanup
+- THEN the branch is eligible for non-force deletion
+- AND deletion is not authorized merely by its name or an older progress comment
+
+#### Scenario: Temporary branch still has unique commits
+
+- GIVEN a workflow-owned temporary recovery branch still contains commits not present in canonical `main` or an explicitly retained successor
+- WHEN cleanup is evaluated
+- THEN the branch is not deleted
+- AND the workflow fails closed to the legal recovery/diagnosis owner rather than using force deletion
+
+#### Scenario: Temporary branch remains active workflow input
+
+- GIVEN a temporary branch is still an open PR head/base or is referenced by active recovery/integration work
+- WHEN cleanup is evaluated
+- THEN the branch is retained
+- AND terminal cleanup does not treat it as unused
+
+#### Scenario: Cleanup mutation is blocked by restricted tooling
+
+- GIVEN all safe-delete preconditions are satisfied
+- AND the repository branch-delete mutation is denied or unavailable
+- WHEN the responsible action handles the failure
+- THEN it preserves the cleanup obligation and observable minimum durable evidence
+- AND it does not repeatedly attempt the identical delete without a materially changed precondition or different legal operation surface
+
+#### Scenario: Terminal completion checks unresolved temporary residue
+
+- GIVEN Lead is preparing to persist `LIFECYCLE_COMPLETE`
+- AND a branch remains durably attributable to the workflow as a temporary recovery branch
+- WHEN Lead reconstructs terminal state
+- THEN Lead verifies whether the branch is still needed, safely deleted, or durably retained for a stated reason
+- AND Lead does not claim lifecycle completion while an unused safely deletable temporary branch remains without disposition
+
+### Requirement: Final Archive native-close occurs only after known terminal cleanup obligations are cleared
+
+Before Lead routes the final Archive PR to `Reviewer / review-archive`, Lead SHALL reconstruct any workflow-owned temporary correction/recovery branch known from explicit durable provenance and identify any terminal cleanup obligation that would become unreachable after native Issue closure. The normal validated `agent/archive-<change>` branch MUST NOT be inferred to be temporary cleanup input from its name or ordinary archive role.
+
+For an Archive PR merge, `Executor / merge-pr` SHALL fresh-read only the explicitly identified workflow-owned temporary correction/recovery branches before the Archive PR merge mutation. Any such branch that is already unused, safely deletable, and Executor-owned under the existing temporary-branch contract SHALL be deleted before the final Archive PR merge. If deletion is blocked, unsupported, stale, or unsafe, Executor MUST NOT merge the Archive PR; while the coordination Issue is still open it SHALL follow the existing exception/disposition path and, when required, return bounded diagnosis to Lead.
+
+The workflow SHALL prefer this pre-close ordering over adding a generic post-close Executor route. The change MUST NOT introduce a new post-close action, broad Issue reopen lifecycle, hidden cleanup state, branch registry, or normal-archive-branch cleanup rule.
+
+#### Scenario: Safely deletable temporary branch exists before Archive merge
+
+- GIVEN Lead reconstructs an explicitly provenance-owned temporary correction/recovery branch while preparing the final Archive PR
+- AND the branch is no longer an open PR head/base or active recovery input
+- AND fresh comparison proves it has no unique commits outside canonical `main` or an explicitly retained successor
+- WHEN Lead evaluates handoff to `review-archive`
+- THEN the cleanup obligation is recorded as part of lifecycle preparation for that Archive target
+- AND Reviewer can inspect that preparation with the exact Archive PR
+- AND Executor remains the owner of any later safe deletion immediately before merge
+
+#### Scenario: Pre-close cleanup mutation is unavailable
+
+- GIVEN an explicitly identified temporary branch is safely deletable and must be retired before terminal completion
+- AND Executor cannot perform the required deletion with the current legal repository mutation surface
+- WHEN `Executor / merge-pr` prepares the final Archive merge
+- THEN it does not merge the Archive PR
+- AND the coordination Issue remains open
+- AND the failure follows existing durable exception/disposition and Lead diagnosis rules
+
+#### Scenario: No known temporary cleanup obligation remains
+
+- GIVEN Lead's pre-review preparation found no unresolved temporary correction/recovery cleanup obligation or all such obligations have durable valid dispositions
+- AND Reviewer archive PASS exists for exact revision R
+- AND Executor fresh-reads the same preparation evidence and current merge preconditions
+- WHEN all Archive merge preconditions pass
+- THEN the final Archive PR may be merged without a separate Lead merge-authorization token
+- AND its closing linkage may natively close the coordination Issue
+
+#### Scenario: Normal archive branch is never a cleanup candidate
+
+- GIVEN repository automation produced `agent/archive-<change>` as the validated normal archive branch
+- WHEN Lead, Reviewer, or Executor reconstructs temporary correction/recovery cleanup obligations
+- THEN that normal archive branch is not treated as temporary cleanup input merely because its name begins with `agent/`
+- AND only separately provenance-owned temporary correction/recovery branches participate in the cleanup contract
+
+### Requirement: Optional pre-Propose Explore preserves upstream investigation semantics
+
+`Lead / explore-change` SHALL be an optional pre-Propose investigation action for Human-admitted work whose problem, feasibility, scope, or approach is not yet concrete enough for formal Change authoring.
+
+Explore SHALL preserve problem-before-solution semantics: Lead MUST distinguish the underlying problem/requirement/evidence from a proposed mechanism, and existing implementation patterns, familiar solutions, industry conventions, or solution-shaped wording MUST NOT become requirements merely because they are available.
+
+Explore MAY read/search the repository and relevant external evidence, compare meaningful options and trade-offs, inspect current behavior/root cause, perform Lead's existing bounded blast-radius analysis, and use simple diagrams when useful. Explore MUST NOT create an OpenSpec change folder, write proposal/spec/design/tasks artifacts, modify implementation code, or act as an alternative artifact generator.
+
+Explore MUST remain optional. Human-admitted concrete/buildable work MAY enter `Lead / propose-change` directly.
+
+#### Scenario: Fuzzy problem is investigated without artifact creation
+
+- GIVEN Human admits a problem whose material scope or feasible direction is still unclear
+- WHEN Lead executes `explore-change`
+- THEN Lead may inspect repository/external evidence and compare approaches
+- AND no formal OpenSpec Change artifacts or implementation code are created
+
+#### Scenario: Concrete work skips Explore
+
+- GIVEN Human has already supplied a concrete/buildable direction sufficient for bounded formal proposal authoring
+- WHEN Human admits the Issue directly to `Lead / propose-change`
+- THEN the workflow does not require an Explore pass merely for process uniformity
+
+#### Scenario: Solution-shaped input does not become a requirement automatically
+
+- GIVEN an Explore Issue or inspected source suggests a particular implementation mechanism
+- AND current Human-approved requirements do not require that mechanism
+- WHEN Lead investigates the problem
+- THEN Lead treats the mechanism as evidence or an option
+- AND first determines the actual requirement, constraint, and trade-off before recommending a direction
+
+### Requirement: Explore exits on decision-complete dispositions
+
+Lead SHALL treat Explore as complete when continued investigation is no longer required to choose the next legal disposition, rather than requiring exhaustive knowledge or a fixed research checklist.
+
+Before exiting Explore, each material unresolved question that could change the selected disposition MUST be resolved by evidence, shown to be non-blocking, identified as a genuine Human intent/authority decision, or sufficient to establish a current no-change/no-go conclusion.
+
+The legal Explore dispositions SHALL be:
+
+- `PROPOSAL_READY`: evidence supports a concrete/buildable direction and formal proposal authoring would not require Lead to invent a material requirement or solution decision; when the direction remains within a valid Human- or repository-authorized admission authority envelope and no new Human-reserved decision exists, this disposition authorizes same-Issue routing to Propose without a second generic Human proceed decision;
+- `NO_CHANGE_REQUIRED`: evidence shows no repository change is required;
+- `NO_GO`: evidence shows the contemplated change is currently infeasible or unjustified;
+- `HUMAN_DECISION_REQUIRED`: a material remaining decision belongs to Human intent/authority and cannot be resolved from repository/technical evidence.
+
+`SPECIFICATION_BLOCKED` MUST NOT be used as a terminal substitute for a decision-complete no-change/no-go Explore conclusion.
+
+#### Scenario: Explore is proposal-ready inside authority envelope
+
+- GIVEN Lead has resolved all material questions that would alter the proposed direction
+- AND a bounded proposal can be authored without inventing material requirements or solution choices
+- AND the result remains inside valid Human- or repository-authorized admission authority
+- WHEN Lead evaluates the Explore disposition
+- THEN the result is `PROPOSAL_READY`
+- AND Lead may transition the same Issue to Propose under the shared same-role continuation contract
+
+#### Scenario: Explore finds no change is required
+
+- GIVEN repository evidence already satisfies the problem or shows it is informational only
+- WHEN no material question remains that could require a repository change
+- THEN Lead records `NO_CHANGE_REQUIRED`
+- AND may close the research Issue without creating a fake Change
+
+#### Scenario: Explore reaches a current no-go
+
+- GIVEN evidence shows the contemplated direction is currently infeasible or unjustified
+- WHEN that evidence is sufficient to choose the disposition
+- THEN Lead records `NO_GO`
+- AND records a material reconsideration condition when one is identifiable
+- AND may close the research Issue without creating a fake Change
+
+#### Scenario: Remaining decision belongs to Human intent
+
+- GIVEN technical/repository investigation has narrowed the problem and options
+- AND the remaining material choice cannot be resolved without Human intent or authority
+- WHEN Lead exits the current investigation step
+- THEN Lead uses `HUMAN_DECISION_REQUIRED`
+- AND the Issue remains routed to Explore for resumption after authoritative Human input
+
+### Requirement: Explore persists bounded reconstructable evidence without a research state machine
+
+Scheduled Explore SHALL persist only the durable evidence needed for a later wake or Human decision to reconstruct the current conclusion and continue correctly.
+
+The bounded evidence SHALL identify, when applicable, the problem/question investigated, relevant evidence inspected, material constraints or meaningful alternatives needed for the conclusion, the selected disposition and rationale, the next Human/action boundary, and a material reconsideration condition for `NO_GO` when one is known.
+
+The workflow MUST NOT require live research progress logging, a fixed option count, completeness score, research database, hidden cross-run context, separate artifact DAG, claim, lease, heartbeat, retry counter, or new independent `review-explore` gate.
+
+#### Scenario: Explore resumes after a later wake
+
+- GIVEN an Explore invocation persisted a bounded nonterminal Human-decision result
+- AND the scheduled invocation ended
+- WHEN a later Lead wake reconstructs the same Issue
+- THEN Lead reads the durable conclusion/evidence and current Human response state
+- AND does not require prior conversation memory to resume correctly
+
+#### Scenario: Explore does not persist every intermediate thought
+
+- GIVEN Lead performs multiple repository searches and compares alternatives during Explore
+- WHEN the current investigation reaches a disposition boundary
+- THEN durable evidence records only the bounded facts and rationale needed to reconstruct that disposition
+- AND the workflow does not require a transcript, hidden memory, or research-progress state machine
+
+### Requirement: Explore becomes authoritative only after default-branch activation
+
+The #38 bootstrap Change SHALL continue to execute under the pre-Explore default-branch governance until the approved Explore implementation is merged to the repository default branch.
+
+Feature-branch `explore-change` actions, role text, skills, and specs are review input only and MUST NOT govern #38 itself before merge.
+
+After activation, existing non-`unset` active Changes SHALL continue their current lifecycle and MUST NOT be retroactively returned to Explore. Existing Human-admitted `Lead / propose-change + Change: unset` Issues SHALL remain valid direct-to-Propose entries. Deferred research Issues MAY enter the new Explore action only through valid Human admission/routing under the then-authoritative governance.
+
+#### Scenario: Bootstrap Change cannot self-activate Explore
+
+- GIVEN #38 is implementing `explore-change`
+- AND the implementation branch contains the future Explore governance
+- WHEN Scheduled execution processes #38 before that branch is merged
+- THEN current default-branch `Lead / propose-change` governance remains authoritative
+- AND the feature-branch Explore action is not used to reinterpret #38's own current routing
+
+#### Scenario: Existing active Change is not pulled backward after activation
+
+- GIVEN the Explore governance becomes authoritative on `main`
+- AND another coordination Issue already has a persisted non-`unset` Change identity
+- WHEN scheduled workflow reconstructs that active Change
+- THEN it continues from its current legal routing
+- AND Explore is not inserted retroactively into the active lifecycle
+
+### Requirement: Explicit required deferred follow-up becomes durable before lifecycle completion
+
+When an approved Lead-owned specification or scope decision explicitly classifies work as required separate follow-up or work that MUST still be handled later, the workflow SHALL treat that decision as a durable tracking obligation.
+
+Ordinary out-of-scope statements, non-goals, optional future ideas, and work merely not selected for the current change MUST NOT create this obligation by themselves.
+
+Lead SHALL create or reuse a durable tracking Issue at the defer-decision boundary and SHALL link it to reconstructable source evidence identifying the source coordination Issue/Change and the exact defer decision. Creation of that tracker MUST NOT itself Human-admit the tracker or add normal workflow routing.
+
+`Reviewer / review-openspec` SHALL treat an approved required-defer decision without reconstructable durable tracker/linkage as a material finding. `Lead / finalize-archive` SHALL reconstruct still-applicable required-defer obligations before `LIFECYCLE_COMPLETE` and MUST NOT complete the lifecycle while a required tracker is missing. If the obligation and intended tracker are unambiguous and only the tracker write was missed, Lead MAY perform an idempotent repair; it MUST NOT reinterpret ambiguous scope or auto-admit the tracker.
+
+Tracker idempotency SHALL rely on durable source linkage rather than title similarity alone.
+
+#### Scenario: Ordinary scope exclusion creates no tracker obligation
+
+- GIVEN an approved change marks an idea as out of scope without saying it must be handled later
+- WHEN Reviewer and Lead reconstruct deferred work
+- THEN no required follow-up tracker is demanded for that statement
+
+#### Scenario: Required deferred work must have a durable tracker
+
+- GIVEN an approved Lead decision explicitly says work W must be handled in a separate later change
+- WHEN Lead records that defer decision
+- THEN Lead creates or reuses a tracker linked to the source Change/Issue and decision evidence
+- AND the tracker is not automatically Human-admitted or routed into active workflow
+
+#### Scenario: OpenSpec review catches a missing required tracker
+
+- GIVEN the OpenSpec artifacts contain an approved required-defer obligation
+- AND no reconstructable linked tracker exists
+- WHEN Reviewer executes `review-openspec`
+- THEN Reviewer records a material finding
+- AND does not treat ordinary unrelated scope exclusions as missing trackers
+
+#### Scenario: Lifecycle completion fails safe on missing required tracker
+
+- GIVEN a Change is otherwise ready for `LIFECYCLE_COMPLETE`
+- AND a still-applicable required-defer obligation lacks a durable tracker
+- WHEN Lead executes terminal archive finalization
+- THEN lifecycle completion is blocked until the tracker is durably established or the obligation is authoritatively superseded
+
+### Requirement: Workflow admission is explicitly authority-controlled
+
+Scheduled agents MUST NOT autonomously create or route arbitrary Issues, PRs, repository activity, discussions, discovered requirements, or Agent-authored recommendations into workflow work. This requirement governs producer/materialization authority; it MUST NOT be used to require generic Human approval merely to execute an already-existing coherent Formal Explore Issue.
+
+Direct Human admission to `Lead / propose-change` remains governed by the repository Human-authority contract. Ordinary `Lead / explore-change` execution is not a Human-reserved boundary: an open Issue with `Change: unset + agent:lead + action:explore-change` may participate in deterministic pre-activation selection without a generic Human admission predicate, subject to coherent routing, dependencies/evidence, formal-WIP finish-first behavior, and the shared queue contract. Routing or Explore execution MUST NOT become Human authority for a later Human-reserved commitment.
+
+Lead MAY autonomously materialize one bounded `Lead / explore-change` coordination Issue with `Change: unset` only from the idle-discovery boundary when creation is independently justified by one of the following:
+
+- an applicable default-branch canonical MUST/SHALL requirement with a concrete material gap;
+- an approved required-deferred obligation with reconstructable source linkage;
+- an explicitly governed README project-direction commitment that is prospective, scoped, affirmative, non-contradictory with canonical specs, and not merely descriptive/current-state/non-goal/example/deferred-uncommitted text; or
+- concrete material behavior-preserving maintenance/friction evidence with a bounded ownership surface and no new Human-reserved product/scope/risk decision.
+
+An autonomous materialization MUST contain reconstructable evidence identifying the creation/source kind, exact observed default-branch revision where applicable, exact authority/evidence source, bounded problem statement, and why no Human-reserved decision is being made. Later reconstruction MUST validate that evidence and MUST fail closed when the cited source is absent, stale, contradictory, merely descriptive, insufficiently material, or otherwise does not authorize that producer action.
+
+Agent-authored advisory text, Explore conclusions, and prior Agent-created tickets MUST NOT recursively serve as sufficient authority for another autonomous materialization by themselves. Every autonomous creation SHALL trace to an independent default-branch authority source or current concrete repository/friction evidence.
+
+Autonomous creation MUST NOT add, remove, restore, or manufacture `intake:approved` or `human:approved`, MUST NOT persist a formal Change identity, and MUST NOT bypass Propose, Reviewer, implementation, merge, archive, or lifecycle gates.
+
+Approved required-separate-follow-up creation remains a distinct source-linked producer path. Its tracker MUST preserve the exact source defer decision/linkage required by governance; the tracker does not self-authorize from its own prose. Direct-Propose fallback to Explore may preserve its already-valid Propose authority envelope for scope/continuation purposes, but ordinary Explore dispatcher eligibility does not require reclassification into a special admission origin.
+
+When an existing Explore reaches `PROPOSAL_READY`, Lead MAY route the same Issue to `Lead / propose-change` without a generic second Human proceed decision only when formalization remains within the bounded researched problem/current canonical evidence and introduces no new Human-reserved decision. A new project/product direction, material externally observable behavior choice, material scope trade-off, explicit risk acceptance, materially different security/privacy/cost/operational commitment, contradictory authority evidence, or materially changed governing evidence SHALL require `HUMAN_DECISION_REQUIRED` before Propose.
+
+Lead idle advisory admission, where still used, continues to require its distinct Human-only advisory contract and `intake:approved` capability. Scheduled Lead, Reviewer, and Executor MUST NEVER add, remove, restore, or otherwise manufacture Human-only approval capabilities; they MAY only consume qualifying Human evidence where that capability remains applicable.
+
+#### Scenario: Human directly admits fuzzy work to Explore
+
+- GIVEN an open coordination Issue has `Change: unset`
+- AND current routing is exactly `Lead / explore-change`
+- AND its dependencies/evidence and repository-wide cardinality are coherent
+- AND deterministic pre-activation ordering selects it
+- WHEN scheduled workflow dispatches ordinary Formal Explore
+- THEN the Issue is valid queued pre-Change research without a generic Human admission ceremony
+- AND Explore does not create a formal Change identity
+- AND the Issue/routing/execution does not satisfy any later Human-reserved decision
+
+#### Scenario: Human directly admits concrete work to Propose
+
+- GIVEN Human admission satisfies the existing full provenance-bound direct-Propose predicate for `Lead / propose-change`
+- AND `Change:` is unset
+- WHEN scheduled workflow reconstructs direct-Propose admission
+- THEN the Issue is valid queued pre-activation work
+- AND Explore is not mandatory for that Issue
+- AND ordinary Explore eligibility does not satisfy direct-Propose admission
+
+#### Scenario: Canonical requirement authorizes bounded Explore
+
+- GIVEN no active/terminal-pending workflow or already eligible pre-activation work should be advanced first
+- AND default-branch canonical requirement R contains an applicable MUST/SHALL obligation
+- AND Lead observes a concrete material gap against R that introduces no new Human-reserved decision
+- WHEN Lead performs bounded idle discovery
+- THEN Lead may materialize at most one `Change: unset + Lead / explore-change` Issue
+- AND the Issue records reconstructable source evidence that cites R and the observed default-branch revision
+- AND no Human approval capability or formal Change identity is created
+
+#### Scenario: Arbitrary README prose cannot authorize admission
+
+- GIVEN README contains descriptive/current-state text, an example, a non-goal, or work marked merely deferred/uncommitted
+- WHEN Lead evaluates autonomous Explore creation
+- THEN that text alone is insufficient producer authority
+- AND Lead does not infer roadmap permission from arbitrary prose
+
+#### Scenario: Explicit README commitment can authorize bounded Explore
+
+- GIVEN README contains an explicitly governed prospective project-direction commitment
+- AND the commitment is scoped, affirmative, non-contradictory with canonical specs, and not merely deferred/uncommitted
+- AND a concrete material gap remains within that direction without introducing a Human-reserved decision
+- WHEN Lead evaluates bounded idle discovery
+- THEN that commitment may serve as source authority for one bounded Explore candidate
+- AND runtime routing semantics remain governed by `agents/AGENTS.md` rather than README prose
+
+#### Scenario: Recurring material workflow friction authorizes bounded maintenance Explore
+
+- GIVEN current repository evidence demonstrates a behavior-preserving recurring workflow failure or equivalent material structural friction
+- AND the problem has a bounded ownership surface
+- AND resolving the problem does not choose new product scope or require Human risk acceptance
+- WHEN Lead reaches the idle-discovery boundary
+- THEN Lead may autonomously materialize one bounded Formal Explore candidate
+- AND style preference or speculative cleanup alone would not satisfy the same threshold
+
+#### Scenario: Agent-created ticket cannot self-feed another admission
+
+- GIVEN an earlier Agent-created advisory or Explore Issue recommends additional work
+- AND no independent default-branch authority source or current concrete material friction evidence supports that additional work
+- WHEN Lead evaluates another autonomous creation
+- THEN the earlier Agent-authored artifact alone is insufficient authority
+- AND no recursive workflow ticket is materialized
+
+#### Scenario: Required separate follow-up preserves source authority
+
+- GIVEN an approved Lead-owned decision explicitly requires work W in a separate later Change
+- AND Lead materializes or repairs the required tracker under the source-defer contract
+- WHEN later workflow reconstructs that tracker
+- THEN its producer authority derives from the exact approved source decision/linkage
+- AND the tracker body does not self-authorize unrelated work
+- AND ordinary Explore execution does not require a second generic Human approval
+
+#### Scenario: Proposal-ready Explore proceeds inside admitted authority
+
+- GIVEN an existing Explore has a decision-complete `PROPOSAL_READY`
+- AND the proposed direction remains within the bounded researched problem and current canonical/repository evidence
+- AND no new Human-reserved decision is required
+- WHEN Lead completes Explore
+- THEN Lead may route the same Issue to `Lead / propose-change` without a generic second Human proceed decision
+- AND same-role continuation follows the existing reconstruction contract
+
+#### Scenario: Proposal-ready Explore exposes a new Human decision
+
+- GIVEN Explore discovers a material new product direction, scope/behavior trade-off, risk acceptance, or materially different security/privacy/cost/operational commitment
+- WHEN Lead evaluates the next disposition
+- THEN Lead records `HUMAN_DECISION_REQUIRED`
+- AND does not route to Propose until valid Human authority is reconstructed
+
+#### Scenario: Non-Human routing is insufficient
+
+- GIVEN an open Issue has coherent `Change: unset + agent:lead + action:explore-change` routing
+- WHEN scheduled workflow evaluates ordinary Explore execution
+- THEN the routing may make the Issue queue-eligible under the deterministic pre-activation contract
+- AND routing alone does not authorize Scheduled Agents to create arbitrary additional work
+- AND routing or successful Explore execution does not establish Human authority for direct Propose, advisory admission, escalation answers/resume, or any other Human-reserved boundary
+
+### Requirement: Lead idle advisory and discovery mode is bounded and non-disruptive
+
+Lead SHALL keep idle discovery/advisory behavior bounded and subordinate to existing workflow work.
+
+Lead may enter idle discovery only when no formal active or terminal-pending workflow requires advancement, no already eligible pre-activation work should be selected first, and no unresolved orphan/governance evidence requires diagnosis. Reviewer and Executor remain silent when they have no eligible workflow work.
+
+When the idle boundary is reached, Lead MAY create an idle advisory Issue containing at most three current recommendations only if no other open `advisory:idle` Issue exists. An advisory Issue MUST NOT contain `agent:*` or `action:*` routing labels and is not itself a coordination workflow instance. If an open advisory remains without valid Human admission, later Lead runs SHALL no-op rather than create duplicate advisory noise.
+
+When forming bounded advisory recommendations, Lead SHALL consider relevant Issues created or materially active during the preceding seven days and recent durable workflow evidence for Skill-maintenance opportunities such as repeated Agent mistakes or recoverable failures, missing or obsolete action guidance, unnecessary Skill complexity, and materially duplicated Skill guidance. A Skill-maintenance recommendation remains diagnostic/advisory only: it MUST NOT directly mutate governed Skill behavior, bypass Human admission, or create a second maintenance workflow.
+
+One idle invocation MAY instead autonomously materialize at most one valid repository-authorized Formal Explore candidate under the admission requirement above. Before creating that candidate, Lead MUST deduplicate against existing open or reconstructably unresolved Issues and required-deferred trackers.
+
+Idle discovery SHALL use materiality rather than style preference. Repeated materially similar responsibility/knowledge/workaround evidence MAY use Rule-of-Three as sufficient investigation evidence; a clear single-instance structural hazard such as dual authority, circular ownership, dead abstraction, or a known-always-failing normal workflow step MAY also satisfy the threshold when concrete cost/risk/friction and bounded ownership are demonstrated.
+
+Idle discovery MUST NOT introduce a scan cursor, TTL coverage registry, lease, heartbeat, progress counter, global priority score, hidden backlog state, or requirement for exhaustive repository coverage merely to remember what was inspected previously.
+
+#### Scenario: Existing idle advisory has no Human decision
+
+- GIVEN one open `advisory:idle` Issue exists
+- AND no valid Human admission has occurred
+- WHEN Lead runs while workflow is otherwise idle
+- THEN Lead does not create another advisory Issue
+- AND does not repeat the same recommendations as new workflow noise
+
+#### Scenario: Recent workflow evidence suggests a Skill improvement
+
+- GIVEN workflow execution is otherwise idle
+- AND recent durable evidence shows a repeated action mistake or missing/obsolete Skill guidance
+- WHEN Lead forms an eligible bounded idle advisory
+- THEN Lead may recommend the narrowest Skill-maintenance change supported by that evidence
+- AND the recommendation does not itself modify the Skill or create a parallel maintenance workflow
+- AND any governed behavior change still requires normal Human-admitted/OpenSpec lifecycle
+
+#### Scenario: Existing pre-activation work prevents autonomous materialization
+
+- GIVEN no formal active workflow exists
+- AND an eligible queued pre-activation Issue already exists
+- WHEN Lead wakes
+- THEN Lead advances the deterministic pre-activation winner before idle discovery
+- AND does not create a new autonomous Explore candidate first
+
+#### Scenario: One idle invocation creates at most one candidate
+
+- GIVEN Lead reaches the idle-discovery boundary
+- AND multiple material candidate problems are observed
+- WHEN Lead chooses to materialize repository-authorized Formal Explore work
+- THEN at most one new candidate Issue is created in that invocation
+- AND no global priority/scoring framework is introduced to rank the remaining observations
+
+#### Scenario: No material finding is a valid idle result
+
+- GIVEN Lead performs bounded idle discovery
+- AND no candidate meets repository-authority/materiality requirements
+- WHEN the invocation completes
+- THEN no workflow mutation is required
+- AND the run does not create repository noise merely to report that nothing material was found
+
+### Requirement: Scheduled roles preserve material OpenSpec semantics when CLI instructions are unavailable
+
+When a Scheduled role performs an OpenSpec action in an execution environment that cannot obtain material schema/artifact/action semantics from the OpenSpec CLI, the repository SHALL provide one accessible shared semantic adapter for the currently configured OpenSpec schema rather than allowing each role to infer or independently duplicate those semantics.
+
+For the current `schema: spec-driven` configuration, the adapter MUST represent the exact material semantics below, derived from the declared immutable upstream baseline `Fission-AI/OpenSpec@2826b8889e5223a9a8095d4428b60b56597e1020` `schemas/spec-driven/schema.yaml` and adapted by repository policy:
+
+1. **Artifact dependency/readiness contract**
+   - `proposal` has no artifact prerequisite.
+   - `specs` requires `proposal`.
+   - `design` requires `proposal`.
+   - `tasks` requires both `specs` and `design`.
+   - Apply requires `tasks` and tracks `tasks.md`.
+   - Proposal capability declarations define which delta specs must exist; zero-delta changes are legal only when the Change explicitly opts out with `skip_specs: true` because no spec-level behavior changes.
+   - Scheduled roles MUST treat these dependencies as authoring/consumption prerequisites, not as a second runtime routing DAG.
+
+2. **Artifact and config-rule consumption contract**
+   - Proposal authoring consumes current repository context plus applicable proposal rules from default-branch `openspec/config.yaml` and must research existing canonical specs before declaring new/modified capabilities.
    - Specs consume the proposal capability declaration, applicable canonical `openspec/specs/*`, and applicable spec rules from `openspec/config.yaml`.
    - Design consumes the proposal plus applicable specs and design rules; material questions that would change specs, approach, or task breakdown are not deferrable implementation choices.
    - Tasks consume specs plus design and applicable task rules; tasks are checkbox work items whose meaning comes from approved specs/design, not from Executor inference.
