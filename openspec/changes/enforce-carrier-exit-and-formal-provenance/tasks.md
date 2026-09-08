@@ -102,20 +102,20 @@ Trace: Human active-state guard -> scheduled-agent-workflow canonical owner
 Trace: unchanged #221 checkpoint contract -> existing Action/Result and
 lifecycle gates -> subtraction/reuse/consolidation decision.
 
-- [ ] 4.1 RED: extend existing regressions to prove exact checkpoint cardinality,
+- [x] 4.1 RED: extend existing regressions to prove exact checkpoint cardinality,
   `newly checked task IDs == SLICE_CHECKPOINT Completed-Tasks == first
   incomplete slice task set`, monotonic task bookkeeping, and no replay of
   already verified slices remain enforced after carrier interruption.
-- [ ] 4.2 GREEN: retain current one `implement-change` Action per bounded
+- [x] 4.2 GREEN: retain current one `implement-change` Action per bounded
   first-incomplete slice, task-before-checkpoint ordering, exact-head review/
   merge gates, independent Reviewer, and Human authority. Do not redesign
   checkpoint mechanics.
-- [ ] 4.3 REFACTOR: reconcile the existing PR #226 work product with the
+- [x] 4.3 REFACTOR: reconcile the existing PR #226 work product with the
   approved OpenSpec meaning by reusing only necessary changes, removing
   duplicate normative representations and unrelated edits, and keeping
   `agents/AGENTS.md`, `agents/workflow.md`, Roles, and Skills from becoming
   competing owners.
-- [ ] 4.4 VERIFY: inspect the complete changed-path inventory and current
+- [x] 4.4 VERIFY: inspect the complete changed-path inventory and current
   executable dispatch; prove no new Action, Result kind, state, registry,
   cursor, lease, heartbeat, retry counter, mailbox, carrier type,
   carrier-result protocol, generic provenance/recovery framework, token/App
