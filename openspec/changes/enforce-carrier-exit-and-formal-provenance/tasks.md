@@ -30,23 +30,23 @@ transitions remain lifecycle gates, not implementation tasks.
 Trace: Human repair direction -> shared repository-governance carrier contract
 -> existing application/effect and workflow bridge boundary.
 
-- [ ] 1.1 RED: add production-boundary regressions proving that when an exact,
+- [x] 1.1 RED: add production-boundary regressions proving that when an exact,
   freshly authorized `CarrierPlan` is required, the current invocation stops
   before any later `SLICE_CHECKPOINT`, `ACTION_RESULT`, `action:*`,
   terminal/close, or successor effect, while the exact plan remains available
   for the carrier.
-- [ ] 1.2 GREEN: propagate the existing `CarrierRequired` boundary through
+- [x] 1.2 GREEN: propagate the existing `CarrierRequired` boundary through
   the current application/effect bridge so it is not converted into an
   ordinary successful `ApplyResult`; expose only the exact plan and boundary
   outcome; preserve existing Action/Result/carrier primitives.
-- [ ] 1.3 GREEN: guard the existing workflow continuation/validation steps so
+- [x] 1.3 GREEN: guard the existing workflow continuation/validation steps so
   the carrier-required invocation exits after plan persistence and does not
   execute formal effects in the same wake. Keep the carrier limited to the
   plan's exact operation, target, and expected values.
-- [ ] 1.4 REFACTOR: remove only duplicate or unreachable continuation handling
+- [x] 1.4 REFACTOR: remove only duplicate or unreachable continuation handling
   introduced by the repair; do not add a carrier-result protocol, retry state,
   mailbox, successor path, or second workflow graph.
-- [ ] 1.5 VERIFY: run focused carrier/application/bridge regressions, the full
+- [x] 1.5 VERIFY: run focused carrier/application/bridge regressions, the full
   Python suite, Ruff check, Ruff format check, mypy, and strict OpenSpec
   validation on the exact implementation revision.
 
