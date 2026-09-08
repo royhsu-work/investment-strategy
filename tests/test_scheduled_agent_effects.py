@@ -743,6 +743,7 @@ def test_repository_actions_formal_transition_is_qualified_after_comment_postcon
         "token",
         source,
         authorized_change=_CHANGE,
+        current_revision=_REVISION,
         expected_result_kind="spec-blocker",
     )
     requested = {
@@ -760,6 +761,7 @@ def test_repository_actions_formal_transition_is_qualified_after_comment_postcon
         effect_guard=adapter.guard,
         apply_effect=adapter.apply,
         observe_postcondition=adapter.observe_postcondition,
+        current_revision=_REVISION,
     )
 
     assert result.applied
@@ -970,7 +972,6 @@ def test_merged_carrier_merge_is_idempotent_without_put(
         "token",
         source,
         authorized_change=change,
-        current_revision=_REVISION,
         expected_result_kind="merged",
     )
     monkeypatch.setattr(adapter, "_source_still_current", lambda: True)
