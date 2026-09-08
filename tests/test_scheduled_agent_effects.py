@@ -467,7 +467,6 @@ def test_checkpoint_before_task_does_not_advance() -> None:
     assert applied == []
 
 
-
 def test_carrier_recovery_durably_checkpoints_exact_slice_on_later_wake() -> None:
     source = WorkerRequest(138, "executor", "implement-change")
     requested_effects = _implementation_checkpoint_effects()
@@ -542,6 +541,7 @@ def test_carrier_recovery_durably_checkpoints_exact_slice_on_later_wake() -> Non
         "routing-transition",
     ]
     assert validation_calls == [(_REVISION, ("2.1", "2.2"))]
+
 
 def test_replay_accepts_already_durable_checkpoint_effects() -> None:
     requested_effects = _checkpoint_effects_with_body(_complete_checkpoint_body())
