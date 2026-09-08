@@ -926,6 +926,22 @@ def test_merged_carrier_merge_is_idempotent_without_put(
         "closed_at": None,
     }
     calls: list[tuple[str, str]] = []
+    formal_body = (
+        "MERGE_RESULT\n"
+        "Workflow: #159\n"
+        f"Change: {change}\n"
+        "Action: merge-implementation-pr\n"
+        "Role: executor\n"
+        "Result: MERGED\n"
+        f"Revision: {expected_head}\n"
+        "Evidence: carrier recovery formal transition qualification"
+    )
+    actions_comment = {
+        "id": 992,
+        "body": formal_body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
 
     def fake_github_json(
         _repository: str,
@@ -937,6 +953,12 @@ def test_merged_carrier_merge_is_idempotent_without_put(
         **_kwargs: object,
     ) -> object:
         calls.append((path, method))
+        if path == "issues/159/comments?per_page=100&sort=created&direction=desc":
+            return []
+        if path == "issues/159/comments" and method == "POST":
+            return actions_comment
+        if path == "issues/comments/992":
+            return actions_comment
         if path == "issues/159" and method == "PATCH":
             labels = payload["labels"] if isinstance(payload, dict) else []
             issue["labels"] = [{"name": name} for name in labels]
@@ -948,6 +970,8 @@ def test_merged_carrier_merge_is_idempotent_without_put(
         "token",
         source,
         authorized_change=change,
+        current_revision=_REVISION,
+        expected_result_kind="merged",
     )
     monkeypatch.setattr(adapter, "_source_still_current", lambda: True)
     monkeypatch.setattr(adapter, "_current_issue", lambda: issue)
@@ -968,6 +992,10 @@ def test_merged_carrier_merge_is_idempotent_without_put(
             }
         ),
     )
+    formal_effect = StagedEffect(
+        kind="issue-comment",
+        payload_json=json.dumps({"issue_number": 159, "body": formal_body}),
+    )
     raw = json.dumps(
         {
             "issue_number": 159,
@@ -976,7 +1004,10 @@ def test_merged_carrier_merge_is_idempotent_without_put(
             "change": change,
             "result_kind": "merged",
             "result_content": "MERGE_RESULT",
-            "requested_effects": [{"kind": effect.kind, "payload_json": effect.payload_json}],
+            "requested_effects": [
+                {"kind": effect.kind, "payload_json": effect.payload_json},
+                {"kind": formal_effect.kind, "payload_json": formal_effect.payload_json},
+            ],
         }
     )
     batch = parse_effect_batch(raw, source)
@@ -1818,6 +1849,22 @@ def test_non_merge_carrier_recovery_observes_current_postcondition_without_repla
         },
     }
     calls: list[tuple[str, str]] = []
+    formal_body = (
+        "ACTION_RESULT\n"
+        "Workflow: #138\n"
+        f"Change: {_CHANGE}\n"
+        "Action: implement-change\n"
+        "Role: executor\n"
+        "Result: SPEC_BLOCKER\n"
+        f"Revision: {_REVISION}\n"
+        "Evidence: carrier recovery formal transition qualification"
+    )
+    actions_comment = {
+        "id": 992,
+        "body": formal_body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
 
     def fake_github_json(
         _repository: str,
@@ -1829,6 +1876,12 @@ def test_non_merge_carrier_recovery_observes_current_postcondition_without_repla
         **_kwargs: object,
     ) -> object:
         calls.append((path, method))
+        if path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            return []
+        if path == "issues/138/comments" and method == "POST":
+            return actions_comment
+        if path == "issues/comments/992":
+            return actions_comment
         if path == "":
             return {"default_branch": "main"}
         if path == "git/ref/heads/main":
@@ -1879,6 +1932,11 @@ def test_non_merge_carrier_recovery_observes_current_postcondition_without_repla
         source,
         authorized_change=_CHANGE,
         current_revision=_REVISION,
+        expected_result_kind="spec-blocker",
+    )
+    formal_effect = StagedEffect(
+        kind="issue-comment",
+        payload_json=json.dumps({"issue_number": 138, "body": formal_body}),
     )
     batch = parse_effect_batch(
         _raw(
@@ -1887,7 +1945,11 @@ def test_non_merge_carrier_recovery_observes_current_postcondition_without_repla
                 {
                     "kind": effect.kind,
                     "payload_json": effect.payload_json,
-                }
+                },
+                {
+                    "kind": formal_effect.kind,
+                    "payload_json": formal_effect.payload_json,
+                },
             ],
         ),
         source,
