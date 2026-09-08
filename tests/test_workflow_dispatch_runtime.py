@@ -115,6 +115,24 @@ def test_production_preflight_enumerates_closed_routing_debt(
     def fake_page(url: str, token: str) -> tuple[dict[str, object], ...]:
         del token
         requested_urls.append(url)
+        if "/events?" in url:
+            return (
+                {
+                    "id": 1,
+                    "event": "closed",
+                    "created_at": "2026-09-03T01:00:00Z",
+                    "actor": {"login": "github-actions[bot]"},
+                    "performed_via_github_app": None,
+                },
+                {
+                    "id": 2,
+                    "event": "labeled",
+                    "created_at": "2026-09-03T00:30:00Z",
+                    "label": {"name": "action:implement-change"},
+                    "actor": {"login": "github-actions[bot]"},
+                    "performed_via_github_app": None,
+                },
+            )
         return (
             {
                 "number": 138,
@@ -130,9 +148,148 @@ def test_production_preflight_enumerates_closed_routing_debt(
     preflight = runtime.acquire_current_github_preflight("owner/repo", "token")
 
     assert requested_urls == [
-        "https://api.github.com/repos/owner/repo/issues?state=all&per_page=100&page=1"
+        "https://api.github.com/repos/owner/repo/issues?state=all&per_page=100&page=1",
+        "https://api.github.com/repos/owner/repo/issues/138/events?per_page=100&page=1",
     ]
     assert classify_dispatch(preflight).reason == "closed-routing-debt"
+
+
+def _state_event(
+    event_id: int,
+    event_name: str,
+    created_at: str,
+    *,
+    action: str | None = None,
+    actions_owned: bool,
+) -> dict[str, object]:
+    event: dict[str, object] = {
+        "id": event_id,
+        "event": event_name,
+        "created_at": created_at,
+        "actor": {
+            "login": "github-actions[bot]" if actions_owned else "royhsu-work",
+        },
+        "performed_via_github_app": (
+            None if actions_owned else {"slug": "chatgpt-codex-connector"}
+        ),
+    }
+    if action is not None:
+        event["label"] = {"name": f"action:{action}"}
+    return event
+
+
+def _formal_issue_payload(
+    *,
+    state: str = "open",
+    action: str | None = "implement-change",
+    change: str = "formal-change",
+) -> dict[str, object]:
+    return {
+        "number": 138,
+        "state": state,
+        "body": f"Change: {change}\n",
+        "created_at": "2026-09-03T00:00:00Z",
+        "closed_at": None if state == "open" else "2026-09-03T01:00:00Z",
+        "labels": [] if action is None else [{"name": f"action:{action}"}],
+    }
+
+
+def test_connector_authored_formal_routing_is_indeterminate_and_fails_closed() -> None:
+    observation = runtime.normalize_github_issue(
+        _formal_issue_payload(),
+        state_events=(
+            _state_event(
+                1,
+                "labeled",
+                "2026-09-03T00:30:00Z",
+                action="implement-change",
+                actions_owned=False,
+            ),
+        ),
+    )
+
+    assert observation is not None
+    assert observation.current_state_provenance.value == "INDETERMINATE"
+    decision = classify_dispatch(_preflight((observation,)))
+    assert decision.disposition == "FAIL_CLOSED"
+    assert decision.reason == "observations-unqualified"
+
+
+def test_connector_authored_premature_close_is_indeterminate_and_fails_closed() -> None:
+    observation = runtime.normalize_github_issue(
+        _formal_issue_payload(state="closed"),
+        state_events=(
+            _state_event(
+                1,
+                "labeled",
+                "2026-09-03T00:30:00Z",
+                action="implement-change",
+                actions_owned=True,
+            ),
+            _state_event(
+                2,
+                "closed",
+                "2026-09-03T01:00:00Z",
+                actions_owned=False,
+            ),
+            _state_event(
+                3,
+                "unlabeled",
+                "2026-09-03T01:01:00Z",
+                action="implement-change",
+                actions_owned=False,
+            ),
+        ),
+    )
+
+    assert observation is not None
+    assert observation.current_state_provenance.value == "INDETERMINATE"
+    decision = classify_dispatch(_preflight((observation,)))
+    assert decision.disposition == "FAIL_CLOSED"
+    assert decision.reason == "observations-unqualified"
+
+
+def test_actions_owned_formal_routing_transition_is_qualified() -> None:
+    observation = runtime.normalize_github_issue(
+        _formal_issue_payload(),
+        state_events=(
+            _state_event(
+                1,
+                "labeled",
+                "2026-09-03T00:30:00Z",
+                action="implement-change",
+                actions_owned=True,
+            ),
+        ),
+    )
+
+    assert observation is not None
+    assert observation.current_state_provenance.value == "QUALIFIED"
+    decision = classify_dispatch(_preflight((observation,)))
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.selected_routing == ("executor", "implement-change")
+
+
+def test_unset_change_keeps_preactivation_behavior_without_provenance_guard() -> None:
+    payload = _formal_issue_payload(change="unset", action="explore-change")
+    observation = runtime.normalize_github_issue(
+        payload,
+        state_events=(
+            _state_event(
+                1,
+                "labeled",
+                "2026-09-03T00:30:00Z",
+                action="explore-change",
+                actions_owned=False,
+            ),
+        ),
+    )
+
+    assert observation is not None
+    assert observation.current_state_provenance.value == "QUALIFIED"
+    decision = classify_dispatch(_preflight((observation,)))
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.selected_routing == ("lead", "explore-change")
 
 
 def test_shadow_is_a_pure_comparison_of_the_same_executable_model() -> None:

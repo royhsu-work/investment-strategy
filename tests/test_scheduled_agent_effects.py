@@ -5,12 +5,13 @@ from __future__ import annotations
 import inspect
 import json
 from collections.abc import Callable
+from dataclasses import replace
 
 import pytest
 
 import investment_strategy.scheduled_agent_effects as effects
 from investment_strategy.scheduled_agent_action_model import ResultKind
-from investment_strategy.scheduled_agent_carrier import CarrierRequired
+from investment_strategy.scheduled_agent_carrier import CarrierRequired, make_carrier_plan
 from investment_strategy.scheduled_agent_effect_contract import (
     allowed_github_mutation_operations,
 )
@@ -25,12 +26,14 @@ from investment_strategy.scheduled_agent_runtime import (
     GitHubIssueObservation,
     WorkerRequest,
     acquire_dispatch_preflight,
+    normalize_github_issue,
 )
 from investment_strategy.workflow_dispatch import (
     Action as WorkflowAction,
 )
 from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
+    ObservationProvenance,
     Role,
 )
 
@@ -119,6 +122,71 @@ def test_typed_application_derives_one_successor_without_continuation() -> None:
         "issue_number": 138,
         "action": "resolve-question",
     }
+
+
+def test_carrier_required_is_a_hard_invocation_exit_before_successor_effects() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    carrier_plan = make_carrier_plan(
+        repository="owner/repo",
+        issue_number=138,
+        change=_CHANGE,
+        action="implement-change",
+        authorization_revision=_REVISION,
+        operation="pull-request-ready",
+        target={"pull_request_number": 178},
+        expected={"head_sha": _REVISION},
+        requested={"head_sha": _REVISION, "draft": False},
+        expected_postcondition={"draft": False},
+    )
+    batch = parse_effect_batch(
+        _raw(
+            result_kind="spec-blocker",
+            requested_effects=[
+                {
+                    "kind": "github-mutation",
+                    "payload_json": json.dumps(
+                        {
+                            "issue_number": 138,
+                            "operation": "ref-delete",
+                            "ref": "heads/agent/temporary",
+                            "expected_sha": _REVISION,
+                        }
+                    ),
+                },
+                {
+                    "kind": "issue-comment",
+                    "payload_json": json.dumps(
+                        {"issue_number": 138, "body": "must not run after carrier"}
+                    ),
+                },
+            ],
+        ),
+        source,
+    )
+    applied: list[StagedEffect] = []
+    observed: list[StagedEffect] = []
+
+    def apply(effect: StagedEffect) -> None:
+        applied.append(effect)
+        raise CarrierRequired(carrier_plan)
+
+    def observe(effect: StagedEffect) -> bool:
+        observed.append(effect)
+        return True
+
+    with pytest.raises(CarrierRequired) as raised:
+        apply_effect_batch(
+            batch,
+            fresh_preflight=_preflight,
+            effect_guard=lambda _effect: True,
+            apply_effect=apply,
+            observe_postcondition=observe,
+            current_revision=_REVISION,
+        )
+
+    assert raised.value.plan == carrier_plan
+    assert len(applied) == 1
+    assert observed == []
 
 
 def _accept_checkpoint(
@@ -893,6 +961,53 @@ def test_routing_transition_replaces_all_routing_labels_atomically(
         }
     ]
     assert adapter.observe_postcondition(effect)
+
+
+def test_formal_routing_guard_rejects_unqualified_current_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = "royhsu-work/investment-strategy"
+    source = WorkerRequest(138, "executor", "implement-change")
+    issue: dict[str, object] = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "created_at": "2026-09-03T00:00:00Z",
+        "closed_at": None,
+        "labels": [{"name": "action:implement-change"}],
+    }
+    current = normalize_github_issue(issue)
+    assert current is not None
+    unqualified = replace(
+        current,
+        current_state_provenance=ObservationProvenance.INDETERMINATE,
+    )
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        **_kwargs: object,
+    ) -> object:
+        if api_path == "issues/138":
+            return issue
+        raise AssertionError(f"unexpected GitHub read: {api_path}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        repository,
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        state_observation_provider=lambda: unqualified,
+    )
+    effect = StagedEffect(
+        kind="routing-transition",
+        payload_json=json.dumps({"issue_number": 138, "action": "resolve-question"}),
+        derived=True,
+    )
+
+    assert not adapter.guard(effect)
 
 
 def test_terminal_transition_closes_and_clears_routing_atomically(

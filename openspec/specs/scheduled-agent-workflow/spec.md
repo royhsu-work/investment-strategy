@@ -3010,6 +3010,15 @@ The Action's primary execution unit SHALL be one bounded verified slice: Reconst
 
 The wake MUST NOT require same-role continuation, cross-role barriers, invocation-role comparison, a continuation cursor, a fresh-worker chain, a public recovery mode, or a separate normal transfer journal. Bounded async observation and at-least-once reconstruction remain safety capabilities, not new routing state.
 
+When application raises `CarrierRequired` for an exact authorized external mutation, it SHALL persist
+the exact CarrierPlan and end the invocation at that boundary. The carrier SHALL execute only the
+authorized mutation and MUST NOT write a checkpoint, ACTION_RESULT, routing, terminal, or successor
+state. A later fresh wake SHALL reconstruct current repository truth, observe the authorized
+postcondition, and apply only missing authorized effects. For a merge carrier, an authorization bound
+to an older default-branch revision is stale after the carrier changes `main`; the later wake SHALL
+freshly authorize the explicit historical exact-head read-only reconciliation before deriving any
+successor.
+
 #### Scenario: Same-role successor waits
 
 - GIVEN Lead completes one Action and application persists a legal next Lead Action
@@ -3035,6 +3044,12 @@ The wake MUST NOT require same-role continuation, cross-role barriers, invocatio
 ### Requirement: Application performs exact effects and ordinary idempotent reconciliation
 
 Repository application SHALL fresh-reauthorize the exact source Action, Change, Issue, PR/head, revision, Human/review/gate evidence, and effect-specific preconditions before every consequential mutation. It SHALL apply only necessary exact effects, preserve unrelated content, and fresh-observe each postcondition. Stale, replayed, ambiguous, contradictory, incomplete, or provenance-incomplete evidence MUST fail closed.
+
+When `Change != unset`, the current formal `action:*` routing and terminal/close state SHALL be
+qualified by fresh evidence of a repository-owned Actions/application transition. A connector or
+other out-of-band direct formal transition SHALL produce `INDETERMINATE` provenance and fail closed,
+even if the current labels or lifecycle shape is otherwise valid. The `Change: unset`
+pre-activation path SHALL retain its existing semantics.
 
 If an earlier invocation already made a required mutation durable, recovery MAY complete only still-required non-contradictory effects. It MUST NOT replay semantic work merely to recreate a missing record, and MUST NOT rewind current routing or lifecycle state when valid descendant evidence proves the earlier transition was consumed. Recovery is ordinary idempotent application/reconciliation; it is not another Action, lifecycle state, transaction framework, retry/lock/lease system, or public protocol. Deterministic rejections identify the exact failed guard class and relevant expected/observed evidence machine-readably.
 

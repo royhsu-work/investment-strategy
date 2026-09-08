@@ -19,7 +19,7 @@ from investment_strategy.scheduled_agent_application_materialization import (
     materialization_requires_validation,
     observe_materialization_target,
 )
-from investment_strategy.scheduled_agent_carrier import carrier_plan_document
+from investment_strategy.scheduled_agent_carrier import CarrierRequired, carrier_plan_document
 from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
 from investment_strategy.scheduled_agent_effects import ApplyResult
 from investment_strategy.scheduled_agent_merge_acceptance import run_guarded_effect_application
@@ -371,16 +371,60 @@ def main() -> int:
     elif args.validation_passed:
         raise RuntimeError("EFFECT_REQUEST validation completion has no materialization")
 
-    batch, result = run_guarded_effect_application(
-        plan.raw_worker_result,
-        source=plan.source,
-        repository=repository,
-        token=token,
-        current_revision=args.revision,
-        apply_derived=not requires_validation or args.validation_passed,
-        materialization_promote_change=args.validation_passed,
-        validated_materialization_revision=args.validated_revision,
-    )
+    try:
+        batch, result = run_guarded_effect_application(
+            plan.raw_worker_result,
+            source=plan.source,
+            repository=repository,
+            token=token,
+            current_revision=args.revision,
+            apply_derived=not requires_validation or args.validation_passed,
+            materialization_promote_change=args.validation_passed,
+            validated_materialization_revision=args.validated_revision,
+        )
+    except CarrierRequired as exc:
+        # CarrierRequired is the hard invocation-exit boundary. Persist only
+        # the exact application-authorized plan; a later fresh wake must
+        # reconstruct repository truth before any missing effect or successor.
+        carrier_result = ApplyResult(False, "carrier_required", carrier_plan=exc.plan)
+        _write_carrier_outputs(carrier_result)
+        _write_validation_outputs(None)
+        print(
+            json.dumps(
+                {
+                    "applied": False,
+                    "reason": carrier_result.reason,
+                    "effects": 0,
+                    "validation_required": requires_validation,
+                    "validation_completed": args.validation_passed,
+                    "carrier_required": True,
+                    "carrier_plan_id": exc.plan.plan_id,
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
+
+    if result.carrier_plan is not None:
+        # Keep compatibility with an adapter that returns the existing carrier
+        # result surface while enforcing the same invocation boundary.
+        _write_carrier_outputs(result)
+        _write_validation_outputs(None)
+        print(
+            json.dumps(
+                {
+                    "applied": False,
+                    "reason": result.reason,
+                    "effects": len(batch.effects),
+                    "validation_required": requires_validation,
+                    "validation_completed": args.validation_passed,
+                    "carrier_required": True,
+                    "carrier_plan_id": result.carrier_plan.plan_id,
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
     if result.applied and requires_validation and not args.validation_passed:
         if materialization is None:
             raise RuntimeError("validation gate has no materialization target")

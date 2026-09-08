@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -55,6 +55,7 @@ class GitHubIssueObservation:
     created_order: int
     authoritative: bool
     routing_debt: bool = False
+    current_state_provenance: ObservationProvenance = ObservationProvenance.QUALIFIED
 
 
 @dataclass(frozen=True)
@@ -108,7 +109,7 @@ def acquire_dispatch_preflight(
                 state="open" if observation.state == "open" else "closed",
                 created_order=observation.created_order,
                 current_state_provenance=(
-                    ObservationProvenance.QUALIFIED
+                    observation.current_state_provenance
                     if observation.authoritative
                     else ObservationProvenance.INDETERMINATE
                 ),
@@ -198,6 +199,145 @@ def _github_timestamp(value: object) -> bool:
     return parsed.tzinfo is not None
 
 
+def _event_order(event: Mapping[str, object]) -> tuple[int, int] | None:
+    """Return a deterministic order only when raw event identity is complete."""
+
+    created_order, created_valid = _created_order(event.get("created_at"), 0)
+    event_id = event.get("id")
+    if not created_valid or not isinstance(event_id, int) or isinstance(event_id, bool):
+        return None
+    return created_order, event_id
+
+
+def _actions_owned_event(event: Mapping[str, object]) -> bool:
+    """Recognize a state mutation emitted by repository-owned GitHub Actions.
+
+    Issue events expose the Actions bot with a null
+    ``performed_via_github_app`` value, while comments expose the GitHub App
+    slug. The raw event field must still be present; actor identity alone is
+    not sufficient provenance.
+    """
+
+    actor = event.get("actor")
+    if not isinstance(actor, Mapping) or actor.get("login") != _GITHUB_ACTIONS_BOT:
+        return False
+    if "performed_via_github_app" not in event:
+        return False
+    app = event.get("performed_via_github_app")
+    if app is None:
+        return True
+    return isinstance(app, Mapping) and app.get("slug") == _GITHUB_ACTIONS_APP
+
+
+def _event_label_name(event: Mapping[str, object]) -> str | None:
+    label = event.get("label")
+    if not isinstance(label, Mapping):
+        return None
+    name = label.get("name")
+    return name if isinstance(name, str) else None
+
+
+def _latest_event(
+    events: Iterable[Mapping[str, object]],
+    predicate: Callable[[Mapping[str, object]], bool],
+) -> Mapping[str, object] | None:
+    """Return the latest matching event, or None for incomplete event identity."""
+
+    matches: list[tuple[tuple[int, int], Mapping[str, object]]] = []
+    for event in events:
+        if not predicate(event):
+            continue
+        order = _event_order(event)
+        if order is None:
+            return None
+        matches.append((order, event))
+    if not matches:
+        return None
+    return max(matches, key=lambda item: item[0])[1]
+
+
+def _formal_state_provenance(
+    payload: Mapping[str, object],
+    events: Iterable[Mapping[str, object]],
+) -> ObservationProvenance:
+    """Classify formal current-state provenance from raw Issue events.
+
+    Preactivation ``Change: unset`` intentionally does not use this guard.
+    Once a Change exists, current routing and terminal closure must be
+    attributable to repository-owned Actions. Connector-authored or incomplete
+    event evidence remains indeterminate and therefore fail-closed.
+    """
+
+    change, change_valid = _change_from_body(payload.get("body"))
+    if not change_valid or change == "unset":
+        return ObservationProvenance.QUALIFIED
+
+    labels, labels_valid = _label_names(payload)
+    routing, routing_valid = _routing_from_labels(labels)
+    if not labels_valid or not routing_valid:
+        return ObservationProvenance.INDETERMINATE
+
+    event_list = tuple(events)
+    if payload.get("state") == "open":
+        if routing is None:
+            return ObservationProvenance.INDETERMINATE
+        action_label = f"action:{routing[1]}"
+        transition = _latest_event(
+            event_list,
+            lambda event: (
+                event.get("event") in {"labeled", "unlabeled"}
+                and _event_label_name(event) == action_label
+            ),
+        )
+        return (
+            ObservationProvenance.QUALIFIED
+            if transition is not None
+            and transition.get("event") == "labeled"
+            and _actions_owned_event(transition)
+            else ObservationProvenance.INDETERMINATE
+        )
+
+    if payload.get("state") != "closed":
+        return ObservationProvenance.INDETERMINATE
+
+    closed = _latest_event(event_list, lambda event: event.get("event") == "closed")
+    if closed is None or not _actions_owned_event(closed):
+        return ObservationProvenance.INDETERMINATE
+    if routing is None:
+        last_routing_transition = _latest_event(
+            event_list,
+            lambda event: (
+                event.get("event") in {"labeled", "unlabeled"}
+                and (
+                    (_event_label_name(event) in _ACTION_LABELS)
+                    or (_event_label_name(event) or "").startswith("agent:")
+                )
+            ),
+        )
+        if last_routing_transition is not None and (
+            last_routing_transition.get("event") != "unlabeled"
+            or not _actions_owned_event(last_routing_transition)
+        ):
+            return ObservationProvenance.INDETERMINATE
+        return ObservationProvenance.QUALIFIED
+
+    action_label = f"action:{routing[1]}"
+    transition = _latest_event(
+        event_list,
+        lambda event: (
+            event.get("event") in {"labeled", "unlabeled"}
+            and _event_label_name(event) == action_label
+        ),
+    )
+    return (
+        ObservationProvenance.QUALIFIED
+        if transition is not None
+        and transition.get("event") == "labeled"
+        and _actions_owned_event(transition)
+        else ObservationProvenance.INDETERMINATE
+    )
+
+
 def _change_from_body(body: object) -> tuple[str, bool]:
     if not isinstance(body, str):
         return "unset", False
@@ -214,6 +354,8 @@ def _change_from_body(body: object) -> tuple[str, bool]:
 
 def normalize_github_issue(
     payload: Mapping[str, object],
+    *,
+    state_events: Iterable[Mapping[str, object]] | None = None,
 ) -> GitHubIssueObservation | None:
     """Normalize one current GitHub Issue; agent labels are ignored."""
 
@@ -237,6 +379,11 @@ def normalize_github_issue(
     created_order, created_valid = _created_order(payload.get("created_at"), number)
     change, change_valid = _change_from_body(payload.get("body"))
     closed_valid = _github_timestamp(payload.get("closed_at"))
+    current_state_provenance = (
+        ObservationProvenance.QUALIFIED
+        if state_events is None
+        else _formal_state_provenance(payload, state_events)
+    )
     return GitHubIssueObservation(
         issue_number=number,
         change=change,
@@ -246,6 +393,7 @@ def normalize_github_issue(
         authoritative=all((labels_valid, routing_valid, created_valid, change_valid, closed_valid)),
         routing_debt=state == "closed"
         and any(name.startswith(_ROUTING_LABEL_PREFIXES) for name in labels),
+        current_state_provenance=current_state_provenance,
     )
 
 
@@ -314,11 +462,19 @@ def _github_issue_pages(
 
 def _normalized_observations(
     pages: Iterable[Iterable[Mapping[str, object]]],
+    *,
+    state_events: Mapping[int, tuple[Mapping[str, object], ...]] | None = None,
 ) -> tuple[GitHubIssueObservation, ...]:
     observations: list[GitHubIssueObservation] = []
     for page in pages:
         for payload in page:
-            observation = normalize_github_issue(payload)
+            number = payload.get("number")
+            events = (
+                None
+                if state_events is None or not isinstance(number, int) or isinstance(number, bool)
+                else state_events.get(number, ())
+            )
+            observation = normalize_github_issue(payload, state_events=events)
             if observation is None:
                 if "pull_request" not in payload and not is_runtime_checkin_issue(payload):
                     raise RuntimeError("GitHub Issues API returned an invalid Issue observation")
@@ -336,12 +492,73 @@ def acquire_current_github_preflight(
     """Fresh-read the complete current coordination-Issue surface, including closed debt."""
 
     del repository_root
-    observations = _normalized_observations(_github_issue_pages(repository, token))
+    pages = _github_issue_pages(repository, token)
+    formal_events: dict[int, tuple[Mapping[str, object], ...]] = {}
+    for page in pages:
+        for payload in page:
+            number = payload.get("number")
+            if (
+                not isinstance(number, int)
+                or isinstance(number, bool)
+                or "pull_request" in payload
+                or is_runtime_checkin_issue(payload)
+            ):
+                continue
+            change, change_valid = _change_from_body(payload.get("body"))
+            if not change_valid or change == "unset":
+                continue
+            formal_events[number] = _github_issue_event_pages(repository, token, number)
+    observations = _normalized_observations(pages, state_events=formal_events)
     return acquire_dispatch_preflight(
         observations=observations,
         source_total_count=len(observations),
         incomplete_results=False,
         exhausted=True,
+    )
+
+
+def _github_issue_event_pages(
+    repository: str,
+    token: str,
+    issue_number: int,
+) -> tuple[Mapping[str, object], ...]:
+    """Fetch every raw event page needed for one formal Issue provenance guard."""
+
+    events: list[Mapping[str, object]] = []
+    page = 1
+    while True:
+        current = _github_get_list_page(
+            f"https://api.github.com/repos/{repository}/issues/{issue_number}/events"
+            f"?per_page=100&page={page}",
+            token,
+        )
+        events.extend(current)
+        if len(current) < 100:
+            return tuple(events)
+        page += 1
+
+
+def current_issue_observation(
+    repository: str,
+    token: str,
+    issue_number: int,
+) -> GitHubIssueObservation | None:
+    """Freshly reconstruct one Issue, including its state provenance."""
+
+    preflight = acquire_current_github_preflight(repository, token)
+    matches = tuple(issue for issue in preflight.issues if issue.issue_number == issue_number)
+    if len(matches) != 1:
+        return None
+    match = matches[0]
+    return GitHubIssueObservation(
+        issue_number=match.issue_number,
+        change=match.change,
+        routing=match.routing,
+        state=match.state,
+        created_order=match.created_order,
+        authoritative=True,
+        routing_debt=match.routing_debt,
+        current_state_provenance=match.current_state_provenance,
     )
 
 

@@ -32,8 +32,10 @@ from investment_strategy.scheduled_agent_effects import (
     parse_effect_batch,
 )
 from investment_strategy.scheduled_agent_runtime import (
+    GitHubIssueObservation,
     WorkerRequest,
     acquire_current_github_preflight,
+    current_issue_observation,
     is_github_actions_comment,
 )
 
@@ -589,6 +591,10 @@ def run_effect_application(
     batch = parse_effect_batch(raw_worker_result, source)
     if batch.typed_result is None:
         return batch, ApplyResult(False, "typed application rejected:result-missing")
+
+    def fresh_state_observation() -> GitHubIssueObservation | None:
+        return current_issue_observation(repository, token, source.issue_number)
+
     adapter = GitHubEffectAdapter(
         repository,
         token,
@@ -597,6 +603,7 @@ def run_effect_application(
         current_revision=current_revision,
         materialization_promote_change=materialization_promote_change,
         validated_materialization_revision=validated_materialization_revision,
+        state_observation_provider=fresh_state_observation,
     )
 
     def apply_with_fresh_guard(effect: StagedEffect) -> None:
