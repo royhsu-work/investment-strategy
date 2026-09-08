@@ -1640,10 +1640,7 @@ def test_non_merge_carrier_recovery_observes_current_postcondition_without_repla
 
     assert result.applied
     assert calls.count(("issues/138", "PATCH")) == 1
-    assert all(
-        path != "pulls/178" or method == "GET"
-        for path, method in calls
-    )
+    assert all(path != "pulls/178" or method == "GET" for path, method in calls)
     assert issue["labels"] == [
         {"name": "action:resolve-question"},
     ]
