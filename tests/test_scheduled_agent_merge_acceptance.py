@@ -306,6 +306,42 @@ def test_native_close_recurrence_is_rejected_before_durable_merge(
     assert result.reason == "fresh merge acceptance rejected"
 
 
+def test_guarded_application_passes_checkpoint_validator_to_shared_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(issue_number=159, role="executor", action="implement-change")
+    raw_worker_result = json.dumps(
+        {
+            "issue_number": 159,
+            "role": "executor",
+            "action": "implement-change",
+            "change": "checkpoint-change",
+            "result_kind": "more-implementation-required",
+            "result_content": "Slice 1 verified",
+            "requested_effects": [],
+        }
+    )
+    captured: dict[str, object] = {}
+
+    def capture_validator(_batch: object, **kwargs: object) -> merge_acceptance.ApplyResult:
+        captured["validator"] = kwargs.get("validate_implementation_checkpoint")
+        return merge_acceptance.ApplyResult(False, "captured")
+
+    monkeypatch.setattr(merge_acceptance, "apply_effect_batch", capture_validator)
+
+    _batch, result = merge_acceptance.run_guarded_effect_application(
+        raw_worker_result,
+        source=source,
+        repository="royhsu-work/investment-strategy",
+        token=HEAD,
+        current_revision=HEAD,
+    )
+
+    assert not result.applied
+    assert result.reason == "captured"
+    assert callable(captured["validator"])
+
+
 def test_merge_effect_rechecks_acceptance_on_real_application_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -508,6 +544,13 @@ def test_run_effect_application_forwards_current_revision_to_effect_adapter(
             return None
 
         def observe_postcondition(self, _effect: object) -> bool:
+            return True
+
+        def validate_implementation_checkpoint(
+            self,
+            _request: object,
+            _completed_task_ids: object,
+        ) -> bool:
             return True
 
     monkeypatch.setattr(merge_acceptance, "GitHubEffectAdapter", FakeAdapter)
