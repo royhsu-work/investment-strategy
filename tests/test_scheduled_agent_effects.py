@@ -467,6 +467,82 @@ def test_checkpoint_before_task_does_not_advance() -> None:
     assert applied == []
 
 
+
+def test_carrier_recovery_durably_checkpoints_exact_slice_on_later_wake() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    requested_effects = _implementation_checkpoint_effects()
+    batch = parse_effect_batch(
+        _raw(
+            result_kind="more-implementation-required",
+            requested_effects=requested_effects,
+        ),
+        source,
+    )
+    carrier_plan = make_carrier_plan(
+        repository="owner/repo",
+        issue_number=138,
+        change=_CHANGE,
+        action="implement-change",
+        authorization_revision=_REVISION,
+        operation="pull-request-ready",
+        target={"pull_request_number": 178},
+        expected={"head_sha": _REVISION},
+        requested={"head_sha": _REVISION, "draft": False},
+        expected_postcondition={"draft": False},
+    )
+    first_applied: list[StagedEffect] = []
+    first_observed: list[StagedEffect] = []
+
+    def first_apply(effect: StagedEffect) -> None:
+        first_applied.append(effect)
+        raise CarrierRequired(carrier_plan)
+
+    def first_observe(effect: StagedEffect) -> bool:
+        first_observed.append(effect)
+        return True
+
+    with pytest.raises(CarrierRequired):
+        apply_effect_batch(
+            batch,
+            fresh_preflight=_preflight,
+            effect_guard=lambda _effect: True,
+            apply_effect=first_apply,
+            observe_postcondition=first_observe,
+            current_revision=_REVISION,
+            validate_implementation_checkpoint=_accept_checkpoint,
+        )
+
+    assert [effect.kind for effect in first_applied] == ["github-mutation"]
+    assert first_observed == []
+
+    second_applied: list[StagedEffect] = []
+    validation_calls: list[tuple[str, tuple[str, ...]]] = []
+
+    def validate_checkpoint(
+        request: effects.MaterializationRequest,
+        task_ids: tuple[str, ...],
+    ) -> bool:
+        validation_calls.append((request.base_sha, task_ids))
+        return request.base_sha == _REVISION and task_ids == ("2.1", "2.2")
+
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: True,
+        apply_effect=second_applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        validate_implementation_checkpoint=validate_checkpoint,
+    )
+
+    assert result.applied
+    assert [effect.kind for effect in second_applied] == [
+        "github-mutation",
+        "issue-comment",
+        "routing-transition",
+    ]
+    assert validation_calls == [(_REVISION, ("2.1", "2.2"))]
+
 def test_replay_accepts_already_durable_checkpoint_effects() -> None:
     requested_effects = _checkpoint_effects_with_body(_complete_checkpoint_body())
     durable: set[tuple[str, str]] = set()
