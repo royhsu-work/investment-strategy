@@ -55,22 +55,22 @@ Trace: Human repair direction -> shared repository-governance carrier contract
 Trace: Human fresh-reconstruction direction -> existing postcondition,
 stale/replay/no-rewind, and historical exact-head reconciliation machinery.
 
-- [ ] 2.1 RED: add a non-merge carrier interruption regression proving a later
+- [x] 2.1 RED: add a non-merge carrier interruption regression proving a later
   fresh repository-owned wake observes the already-current postcondition and
   applies only still-missing authorized effects, without replaying a verified
   slice or accepting carrier-asserted success.
-- [ ] 2.2 GREEN: reuse the current application reauthorization and idempotent
+- [x] 2.2 GREEN: reuse the current application reauthorization and idempotent
   postcondition observation so non-merge carrier completion resumes only from
   fresh current truth. Preserve existing checkpoint cardinality and exact
   first-incomplete-slice matching.
-- [ ] 2.3 RED: add a merge-carrier regression proving that a changed
+- [x] 2.3 RED: add a merge-carrier regression proving that a changed
   `main` makes the old authorization stale and that continuation cannot
   replay the stale `EFFECT_REQUEST`.
-- [ ] 2.4 GREEN: route merge completion through the existing historical
+- [x] 2.4 GREEN: route merge completion through the existing historical
   exact-head read-only reconciliation, then obtain fresh current-main
   authorization before any continuation or successor effect. Do not add a
   mailbox, registry, continuation token, retry state, or recovery graph.
-- [ ] 2.5 VERIFY: run focused non-merge/merge, stale, replay, no-rewind,
+- [x] 2.5 VERIFY: run focused non-merge/merge, stale, replay, no-rewind,
   exact-head, and postcondition regressions plus all current quality checks.
 
 ## Slice 3 — Qualify active formal transitions by provenance
