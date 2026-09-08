@@ -148,6 +148,78 @@ def _typed_terminal_effect_matches(
     }
 
 
+
+_FORMAL_RESULT_MARKERS = frozenset({"ACTION_RESULT", "REVIEW_RESULT", "MERGE_RESULT"})
+_FORMAL_CHECKPOINT_MARKER = "SLICE_CHECKPOINT"
+
+
+def _formal_field(body: str, key: str) -> str | None:
+    matches = re.findall(rf"(?m)^{re.escape(key)}:\s*(.*)$", body)
+    if len(matches) != 1:
+        return None
+    value = matches[0].strip()
+    return value.strip("`") if value else None
+
+
+def _formal_comment_is_bound(
+    body: str,
+    *,
+    source: WorkerRequest,
+    change: str,
+    expected_result_kind: str | None,
+    current_revision: str | None,
+) -> bool:
+    lines = body.splitlines()
+    if not lines:
+        return False
+    marker = lines[0].strip()
+    if marker.startswith("## "):
+        marker = marker[3:].strip()
+    if marker not in _FORMAL_RESULT_MARKERS | {_FORMAL_CHECKPOINT_MARKER}:
+        return False
+    if (
+        _formal_field(body, "Workflow") != f"#{source.issue_number}"
+        or _formal_field(body, "Change") != change
+        or _formal_field(body, "Role") != source.role
+    ):
+        return False
+    action = _formal_field(body, "Action")
+    if action is None or (
+        action != source.action
+        and not action.endswith(f"/ {source.action}")
+    ):
+        return False
+    default_revision = _formal_field(body, "Default-Branch-Revision")
+    if (
+        default_revision is not None
+        and current_revision is not None
+        and default_revision != current_revision
+    ):
+        return False
+    if marker == _FORMAL_CHECKPOINT_MARKER:
+        return (
+            source.action == "implement-change"
+            and _valid_sha(_formal_field(body, "Revision"))
+        )
+    expected_marker = (
+        "REVIEW_RESULT"
+        if source.action.startswith("review-")
+        else "MERGE_RESULT"
+        if source.action.startswith("merge-")
+        else "ACTION_RESULT"
+    )
+    expected_result = (
+        None
+        if expected_result_kind is None
+        else expected_result_kind.upper().replace("-", "_")
+    )
+    return (
+        marker == expected_marker
+        and expected_result is not None
+        and _formal_field(body, "Result") == expected_result
+        and _formal_field(body, "Revision") is not None
+    )
+
 _IMPLEMENTATION_COMPLETION_RESULTS = frozenset(
     {ResultKind.MORE_IMPLEMENTATION_REQUIRED, ResultKind.READY}
 )
@@ -725,22 +797,23 @@ def apply_effect_batch(
     if typed_decision is None or derived_effect is None:
         return ApplyResult(False, "typed application rejected:plan-missing")
 
-    effects = [*batch.effects, derived_effect] if apply_derived else list(batch.effects)
-    for effect in effects:
-        if not effect_guard(effect):
-            return ApplyResult(False, "effect precondition rejected")
-        if effect.kind == "routing-transition" and not _typed_successor_effect_matches(
-            effect,
+    if apply_derived:
+        if derived_effect.kind == "routing-transition" and not _typed_successor_effect_matches(
+            derived_effect,
             typed_decision,
         ):
             return ApplyResult(False, "typed application rejected:successor-effect")
-        if effect.kind == "terminal-transition" and not _typed_terminal_effect_matches(
-            effect,
+        if derived_effect.kind == "terminal-transition" and not _typed_terminal_effect_matches(
+            derived_effect,
             typed_decision,
         ):
             return ApplyResult(False, "typed application rejected:terminal-effect")
 
-    for effect in effects:
+    for effect in batch.effects:
+        if not effect_guard(effect):
+            return ApplyResult(False, "effect precondition rejected")
+
+    for effect in batch.effects:
         if not effect_guard(effect):
             return ApplyResult(False, "effect precondition rejected")
         try:
@@ -753,8 +826,19 @@ def apply_effect_batch(
         if not observe_postcondition(effect):
             return ApplyResult(False, "durable postcondition not observed")
 
-    return ApplyResult(True, "applied")
+    if apply_derived:
+        if not effect_guard(derived_effect):
+            return ApplyResult(False, "effect precondition rejected")
+        try:
+            apply_effect(derived_effect)
+        except CarrierRequired:
+            # Derived effects are never carrier operations today, but preserve
+            # the same hard invocation boundary if an adapter changes that.
+            raise
+        if not observe_postcondition(derived_effect):
+            return ApplyResult(False, "durable postcondition not observed")
 
+    return ApplyResult(True, "applied")
 
 def _github_json(
     repository: str,
@@ -822,6 +906,7 @@ class GitHubEffectAdapter:
         *,
         authorized_change: str,
         current_revision: str | None = None,
+        expected_result_kind: str | None = None,
         materialization_promote_change: bool = False,
         validated_materialization_revision: str | None = None,
     ) -> None:
@@ -830,6 +915,8 @@ class GitHubEffectAdapter:
         self.source = source
         self.authorized_change = authorized_change
         self.current_revision = current_revision
+        self.expected_result_kind = expected_result_kind
+        self._formal_evidence_observed: set[str] = set()
         self.materialization_promote_change = materialization_promote_change
         self.validated_materialization_revision = validated_materialization_revision
         self._comment_ids: dict[StagedEffect, int] = {}
@@ -1460,6 +1547,30 @@ class GitHubEffectAdapter:
             return True
         return False
 
+    def _formal_transition_is_qualified(self, effect: StagedEffect) -> bool:
+        if self.authorized_change == "unset":
+            return True
+        if effect.kind == "routing-transition":
+            payload = _effect_payload(effect)
+            current = self._current_issue()
+            observation = None if current is None else normalize_github_issue(current)
+            target_action = None if payload is None else payload.get("action")
+            try:
+                target_role = (
+                    None
+                    if not isinstance(target_action, str)
+                    else role_for(ModelAction(target_action)).value
+                )
+            except ValueError:
+                target_role = None
+            if (
+                observation is not None
+                and target_role is not None
+                and observation.routing == (target_role, target_action)
+            ):
+                return True
+        return bool(self._formal_evidence_observed)
+
     def guard(self, effect: StagedEffect) -> bool:
         if (
             not supported_effect_guard(self.source, effect)
@@ -1467,7 +1578,11 @@ class GitHubEffectAdapter:
             or not self._default_branch_still_current()
         ):
             return False
-        if effect.kind in {"issue-comment", "routing-transition", "terminal-transition"}:
+        if effect.kind in {"routing-transition", "terminal-transition"}:
+            if not self._formal_transition_is_qualified(effect):
+                return False
+            return True
+        if effect.kind == "issue-comment":
             return True
         payload = _effect_payload(effect)
         return payload is not None and self._guard_github_mutation(payload)
@@ -1697,13 +1812,18 @@ class GitHubEffectAdapter:
             labels = None if current is None else _transition_labels(current, target_action)
             if observation is None or labels is None:
                 raise RuntimeError("routing transition source is stale")
-            _github_json(
-                self.repository,
-                self.token,
-                f"issues/{self.source.issue_number}",
-                method="PATCH",
-                payload={"labels": labels},
-            )
+            try:
+                target_role = role_for(ModelAction(target_action)).value
+            except ValueError as exc:
+                raise RuntimeError("routing transition target is invalid") from exc
+            if observation.routing != (target_role, target_action):
+                _github_json(
+                    self.repository,
+                    self.token,
+                    f"issues/{self.source.issue_number}",
+                    method="PATCH",
+                    payload={"labels": labels},
+                )
             self._routing_targets[effect] = target_action
             return
 
@@ -1835,12 +1955,26 @@ class GitHubEffectAdapter:
                 self.token,
                 f"issues/comments/{comment_id}",
             )
-            return (
+            observed = (
                 isinstance(response, Mapping)
                 and response.get("body") == payload.get("body")
                 and response.get("id") == comment_id
                 and is_github_actions_comment(response)
             )
+            body = payload.get("body")
+            if (
+                observed
+                and isinstance(body, str)
+                and _formal_comment_is_bound(
+                    body,
+                    source=self.source,
+                    change=self.authorized_change,
+                    expected_result_kind=self.expected_result_kind,
+                    current_revision=self.current_revision,
+                )
+            ):
+                self._formal_evidence_observed.add(body)
+            return observed
 
         if effect.kind == "routing-transition":
             target_action = self._routing_targets.get(effect)

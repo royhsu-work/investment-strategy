@@ -595,6 +595,7 @@ def run_effect_application(
         source,
         authorized_change=batch.typed_result.change,
         current_revision=current_revision,
+        expected_result_kind=batch.typed_result.result.kind.value,
         materialization_promote_change=materialization_promote_change,
         validated_materialization_revision=validated_materialization_revision,
     )

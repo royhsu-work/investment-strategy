@@ -678,6 +678,142 @@ def test_active_terminal_rejects_connector_authored_premature_close(
     assert not adapter.guard(effect)
 
 
+def test_repository_actions_formal_transition_is_qualified_after_comment_postcondition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = "owner/repo"
+    source = WorkerRequest(138, "executor", "implement-change")
+    issue: dict[str, object] = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "created_at": "2026-09-08T00:00:00Z",
+        "closed_at": None,
+        "labels": [
+            {"name": "agent:executor"},
+            {"name": "action:implement-change"},
+        ],
+    }
+    body = (
+        "ACTION_RESULT\n"
+        "Workflow: #138\n"
+        f"Change: {_CHANGE}\n"
+        "Action: implement-change\n"
+        "Role: executor\n"
+        "Result: SPEC_BLOCKER\n"
+        f"Revision: {_REVISION}\n"
+        "Evidence: application postcondition\n"
+    )
+    actions_comment = {
+        "id": 1003,
+        "body": body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    patches: list[dict[str, object]] = []
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        if path == "issues/138":
+            if method == "PATCH":
+                assert isinstance(payload, dict)
+                patches.append(payload)
+                labels = payload.get("labels")
+                assert isinstance(labels, list)
+                issue["labels"] = [{"name": label} for label in labels]
+            return json.loads(json.dumps(issue))
+        if path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            return []
+        if path == "issues/138/comments" and method == "POST":
+            return actions_comment
+        if path == "issues/comments/1003":
+            return actions_comment
+        raise AssertionError(f"unexpected GitHub call: {method} {path} {payload!r}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        repository,
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        expected_result_kind="spec-blocker",
+    )
+    requested = {
+        "kind": "issue-comment",
+        "payload_json": json.dumps({"issue_number": 138, "body": body}),
+    }
+    batch = parse_effect_batch(
+        _raw(result_kind="spec-blocker", requested_effects=[requested]),
+        source,
+    )
+
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=adapter.guard,
+        apply_effect=adapter.apply,
+        observe_postcondition=adapter.observe_postcondition,
+    )
+
+    assert result.applied
+    assert patches == [{"labels": ["action:resolve-question"]}]
+
+
+def test_change_unset_preactivation_route_remains_compatible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    issue = {
+        "number": 138,
+        "state": "open",
+        "body": "Change: unset\n",
+        "created_at": "2026-09-08T00:00:00Z",
+        "closed_at": None,
+        "labels": [
+            {"name": "agent:lead"},
+            {"name": "action:propose-change"},
+        ],
+    }
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        del method, payload
+        if path == "issues/138":
+            return issue
+        raise AssertionError(f"unexpected GitHub call: {path}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        "owner/repo",
+        "token",
+        WorkerRequest(138, "lead", "propose-change"),
+        authorized_change="unset",
+    )
+    effect = StagedEffect(
+        kind="routing-transition",
+        payload_json=json.dumps(
+            {"issue_number": 138, "action": "explore-change"}
+        ),
+        derived=True,
+    )
+
+    assert adapter.guard(effect)
+
+
+
 def test_stale_or_unqualified_source_fails_closed() -> None:
     source = WorkerRequest(138, "executor", "implement-change")
     batch = parse_effect_batch(_raw(), source)
