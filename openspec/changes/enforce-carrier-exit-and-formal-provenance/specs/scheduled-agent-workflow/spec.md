@@ -1,3 +1,22 @@
+## Decision-boundary traceability (non-normative)
+
+This section records the Human decision boundary and source evidence carried by #227. It is context and traceability only; it is not an additional OpenSpec requirement and does not create a second normative owner.
+
+Source evidence:
+- #221 rejection and root-cause record: https://github.com/royhsu-work/investment-strategy/issues/221#issuecomment-5575078000
+- #221 latest Human-approved minimal repair direction: https://github.com/royhsu-work/investment-strategy/issues/221#issuecomment-5578787305
+- #221 deterministic implementation decision record: https://github.com/royhsu-work/investment-strategy/issues/221#issuecomment-5585904208
+- #227 current Explore evidence: https://github.com/royhsu-work/investment-strategy/issues/227#issuecomment-5581185977
+- The prior #227 review evidence at issuecomment-5582134734 is historical and was invalidated by later material changes.
+
+The preserved parent outcome is: verified slice, durable checkpoint, interruption, reconstruction from current truth without replay, and continuation at the first incomplete slice. The source records describe a fail-open execution boundary: formal durable state had a repository-owned Actions/application path and an LLM or direct-connector path, and the latter could still be treated as formal progress when the repository-owned path was unavailable or unverifiable. The defect is therefore the execution and provenance boundary, not checkpoint syntax.
+
+This delta keeps active formal routing and terminal provenance under the requirement below. The existing canonical scheduled-agent-workflow requirements remain the normative owner of verified-slice, checkpoint, interruption-recovery, no-replay, and first-incomplete-slice semantics. The shared CarrierRequired hard-exit contract is owned by repository-governance; this context refers to that owner without restating its normative text here. #221 remains historical and is not reopened, rewritten, or treated as Human accepted by this Change; #218 remains blocked.
+
+The approved boundary retains repository-owned Actions/application authorization and observed postconditions for formal progress, bounded untrusted EFFECT_REQUEST connector ingress, the existing application/carrier separation, one bounded implementation slice, task equality, and merge reconciliation from historical exact head plus fresh current main.
+
+Excluded from this correction are new Action or Result types, a checkpoint/progress registry, cursor, lease, heartbeat, retry state, mailbox, second DAG, new carrier type or result protocol, generic provenance/recovery framework, dedicated GitHub App or token infrastructure, a GITHUB_TOKEN-only carrier replacement, ruleset redesign, and #218/#207/#180 scope.
+
 ## ADDED Requirements
 
 ### Requirement: Active formal transitions require repository-owned provenance
@@ -69,40 +88,3 @@ Change is set.
 - THEN the existing compatibility contract remains applicable
 - AND the active-formal provenance guard is not used to require a Change
   before the approved Propose transition
-
-### Requirement: Corrective formal provenance preserves the verified-slice recovery outcome
-
-This requirement records the same approved #227 correction against the exact Human evidence: rejection/root cause `issuecomment-5575078000`, latest minimal repair `issuecomment-5578787305`, and implementation decision record `issuecomment-5585904208`. Those records are retained as decision/evidence provenance; they do not authorize a lifecycle transition by themselves.
-
-The formal provenance guard SHALL preserve the unchanged recovery sequence:
-
-```text
-verified slice → durable checkpoint → interruption
-→ reconstruct current truth → no replay → first incomplete slice
-```
-
-One `implement-change` Action SHALL consume one bounded first-incomplete slice. Existing task and `SLICE_CHECKPOINT` evidence SHALL remain monotonic and bounded: `newly checked task IDs == SLICE_CHECKPOINT Completed-Tasks == first incomplete slice task set`. A later wake SHALL use current repository truth and exact postconditions; it MUST NOT replay a previously verified slice or advance to a later slice before the current durable checkpoint obligation is satisfied.
-
-When `Change != unset`, an `ACTION_RESULT`, formal `action:*` routing, terminal/close boundary, or successor-related formal transition SHALL be accepted only after fresh repository-owned Actions/application provenance, exact postcondition observation, and the existing first-incomplete/monotonic evidence are qualified. Connector/out-of-band formal mutation SHALL be `INDETERMINATE` and fail closed: it MUST NOT be auto-accepted, rewound, or laundered through idempotent reconciliation. The merge-carrier case remains the repository-governance contract of historical exact-head read-only reconciliation plus fresh current-main authorization; stale authorization is not replayed.
-
-Connector ingress remains only the bounded untrusted `EFFECT_REQUEST` transport. It grants no routing, successor, retry, merge, terminal, or success authority. The repository-owned application derives formal effects from fresh current truth and observed postconditions. The carrier hard-exit and application/carrier separation are owned by `repository-governance`; this requirement consumes that contract without moving or duplicating its ownership.
-
-Existing pre-activation behavior for `Change: unset` SHALL remain compatible. Explore/Propose may use the current pre-activation contract, and the active-formal provenance guard SHALL NOT require a Change before the approved pre-activation transition.
-
-The repair SHALL remain subtraction/reuse within the existing surfaces. It SHALL NOT introduce a new Action or Result kind, registry, cursor, lease, heartbeat, retry state, mailbox, second DAG, carrier protocol, generic recovery/provenance framework, dedicated GitHub App/token architecture, or unrelated #218, #207, or #180 scope.
-
-#### Scenario: A later wake resumes only the first incomplete slice
-
-- GIVEN a verified slice has a durable checkpoint, an interruption occurs, and the next slice remains incomplete
-- WHEN a later fresh repository-owned Actions/application wake reconstructs the current Change, implementation head, task evidence, and postconditions
-- THEN it selects the first incomplete slice
-- AND it does not replay the verified slice or treat historical connector output as formal completion
-- AND it may derive only the existing qualified transition after the current checkpoint obligation and postcondition are durable
-
-#### Scenario: The approved formal boundary cannot be widened by connector ingress
-
-- GIVEN an active Change receives a connector-authored direct route, terminal/close mutation, or success claim
-- WHEN the application freshly reconstructs the active formal state
-- THEN the direct mutation is classified `INDETERMINATE` and fails closed
-- AND the bounded `EFFECT_REQUEST` transport remains untrusted and cannot authorize routing, successor, retry, merge, terminal, or success
-- AND no new Action, Result, recovery state, or provenance framework is created
