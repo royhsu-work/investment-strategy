@@ -721,6 +721,10 @@ def test_repository_actions_formal_transition_is_qualified_after_comment_postcon
         payload: object = None,
         **_kwargs: object,
     ) -> object:
+        if path == "":
+            return {"default_branch": "main"}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": _REVISION}}
         if path == "issues/138":
             if method == "PATCH":
                 assert isinstance(payload, dict)
