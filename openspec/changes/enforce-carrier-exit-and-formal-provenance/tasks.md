@@ -126,15 +126,15 @@ lifecycle gates -> subtraction/reuse/consolidation decision.
 Trace: all approved corrective slices -> exact current repository evidence ->
 existing implementation readiness boundary.
 
-- [ ] 5.1 VERIFY: fresh-reconstruct each approved implementation slice from
+- [x] 5.1 VERIFY: fresh-reconstruct each approved implementation slice from
   current `main`, the active Change, implementation PR/head, tests, and
   durable evidence; prove a later wake resumes the first incomplete slice and
   never replays a previously verified slice.
-- [ ] 5.2 VERIFY: fresh-check the exact carrier plans, postconditions,
+- [x] 5.2 VERIFY: fresh-check the exact carrier plans, postconditions,
   provenance evidence, checkpoint cardinality, stale/replay/no-rewind
   behavior, exact-head review/merge gates, Reviewer independence, Human
   authority, #221 historical boundary, and #218 blocked/unrouted state.
-- [ ] 5.3 VERIFY: run the repository's complete Python quality suite and
+- [x] 5.3 VERIFY: run the repository's complete Python quality suite and
   strict OpenSpec validation from the exact implementation head, record the
   evidence needed by the current executable result model, and prepare the
   existing `READY` result only after every required regression is green.
