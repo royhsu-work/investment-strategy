@@ -1579,9 +1579,7 @@ class GitHubEffectAdapter:
         ):
             return False
         if effect.kind in {"routing-transition", "terminal-transition"}:
-            if not self._formal_transition_is_qualified(effect):
-                return False
-            return True
+            return self._formal_transition_is_qualified(effect)
         if effect.kind == "issue-comment":
             return True
         payload = _effect_payload(effect)
