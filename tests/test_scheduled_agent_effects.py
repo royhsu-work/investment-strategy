@@ -1542,7 +1542,7 @@ def test_non_merge_carrier_recovery_observes_current_postcondition_without_repla
         "state": "open",
         "merged": False,
         "draft": True,
-        "body": "Implementation\\n\\nRefs #138\\n",
+        "body": "Implementation\n\nRefs #138\n",
         "head": {
             "ref": f"agent/{_CHANGE}",
             "sha": head_sha,
@@ -1674,7 +1674,7 @@ def test_merge_carrier_recovery_rejects_old_authorization_after_main_changes(
         "number": 167,
         "state": "open",
         "merged": False,
-        "body": "Implementation\\n\\nRefs #159\\n",
+        "body": "Implementation\n\nRefs #159\n",
         "head": {
             "ref": f"agent/{change}",
             "sha": expected_head,
