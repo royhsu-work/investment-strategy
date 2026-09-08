@@ -10,7 +10,7 @@ import pytest
 
 import investment_strategy.scheduled_agent_effects as effects
 from investment_strategy.scheduled_agent_action_model import ResultKind
-from investment_strategy.scheduled_agent_carrier import CarrierRequired
+from investment_strategy.scheduled_agent_carrier import CarrierRequired, make_carrier_plan
 from investment_strategy.scheduled_agent_effect_contract import (
     allowed_github_mutation_operations,
 )
@@ -119,6 +119,71 @@ def test_typed_application_derives_one_successor_without_continuation() -> None:
         "issue_number": 138,
         "action": "resolve-question",
     }
+
+
+def test_carrier_required_is_a_hard_invocation_exit_before_successor_effects() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    carrier_plan = make_carrier_plan(
+        repository="owner/repo",
+        issue_number=138,
+        change=_CHANGE,
+        action="implement-change",
+        authorization_revision=_REVISION,
+        operation="pull-request-ready",
+        target={"pull_request_number": 178},
+        expected={"head_sha": _REVISION},
+        requested={"head_sha": _REVISION, "draft": False},
+        expected_postcondition={"draft": False},
+    )
+    batch = parse_effect_batch(
+        _raw(
+            result_kind="spec-blocker",
+            requested_effects=[
+                {
+                    "kind": "github-mutation",
+                    "payload_json": json.dumps(
+                        {
+                            "issue_number": 138,
+                            "operation": "ref-delete",
+                            "ref": "heads/agent/temporary",
+                            "expected_sha": _REVISION,
+                        }
+                    ),
+                },
+                {
+                    "kind": "issue-comment",
+                    "payload_json": json.dumps(
+                        {"issue_number": 138, "body": "must not run after carrier"}
+                    ),
+                },
+            ],
+        ),
+        source,
+    )
+    applied: list[StagedEffect] = []
+    observed: list[StagedEffect] = []
+
+    def apply(effect: StagedEffect) -> None:
+        applied.append(effect)
+        raise CarrierRequired(carrier_plan)
+
+    def observe(effect: StagedEffect) -> bool:
+        observed.append(effect)
+        return True
+
+    with pytest.raises(CarrierRequired) as raised:
+        apply_effect_batch(
+            batch,
+            fresh_preflight=_preflight,
+            effect_guard=lambda _effect: True,
+            apply_effect=apply,
+            observe_postcondition=observe,
+            current_revision=_REVISION,
+        )
+
+    assert raised.value.plan == carrier_plan
+    assert len(applied) == 1
+    assert observed == []
 
 
 def _accept_checkpoint(
@@ -402,6 +467,82 @@ def test_checkpoint_before_task_does_not_advance() -> None:
     assert applied == []
 
 
+def test_carrier_recovery_durably_checkpoints_exact_slice_on_later_wake() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    requested_effects = _implementation_checkpoint_effects()
+    batch = parse_effect_batch(
+        _raw(
+            result_kind="more-implementation-required",
+            requested_effects=requested_effects,
+        ),
+        source,
+    )
+    carrier_plan = make_carrier_plan(
+        repository="owner/repo",
+        issue_number=138,
+        change=_CHANGE,
+        action="implement-change",
+        authorization_revision=_REVISION,
+        operation="pull-request-ready",
+        target={"pull_request_number": 178},
+        expected={"head_sha": _REVISION},
+        requested={"head_sha": _REVISION, "draft": False},
+        expected_postcondition={"draft": False},
+    )
+    first_applied: list[StagedEffect] = []
+    first_observed: list[StagedEffect] = []
+
+    def first_apply(effect: StagedEffect) -> None:
+        first_applied.append(effect)
+        raise CarrierRequired(carrier_plan)
+
+    def first_observe(effect: StagedEffect) -> bool:
+        first_observed.append(effect)
+        return True
+
+    with pytest.raises(CarrierRequired):
+        apply_effect_batch(
+            batch,
+            fresh_preflight=_preflight,
+            effect_guard=lambda _effect: True,
+            apply_effect=first_apply,
+            observe_postcondition=first_observe,
+            current_revision=_REVISION,
+            validate_implementation_checkpoint=_accept_checkpoint,
+        )
+
+    assert [effect.kind for effect in first_applied] == ["github-mutation"]
+    assert first_observed == []
+
+    second_applied: list[StagedEffect] = []
+    validation_calls: list[tuple[str, tuple[str, ...]]] = []
+
+    def validate_checkpoint(
+        request: effects.MaterializationRequest,
+        task_ids: tuple[str, ...],
+    ) -> bool:
+        validation_calls.append((request.base_sha, task_ids))
+        return request.base_sha == _REVISION and task_ids == ("2.1", "2.2")
+
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: True,
+        apply_effect=second_applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        validate_implementation_checkpoint=validate_checkpoint,
+    )
+
+    assert result.applied
+    assert [effect.kind for effect in second_applied] == [
+        "github-mutation",
+        "issue-comment",
+        "routing-transition",
+    ]
+    assert validation_calls == [(_REVISION, ("2.1", "2.2"))]
+
+
 def test_replay_accepts_already_durable_checkpoint_effects() -> None:
     requested_effects = _checkpoint_effects_with_body(_complete_checkpoint_body())
     durable: set[tuple[str, str]] = set()
@@ -483,6 +624,269 @@ def test_worker_cannot_submit_transition_authority() -> None:
     assert not result.applied
     assert "worker-transition-effect" in result.reason
     assert applied == []
+
+
+def test_active_formal_route_rejects_connector_authored_direct_transition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = "owner/repo"
+    source = WorkerRequest(138, "executor", "implement-change")
+    issue = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "created_at": "2026-09-08T00:00:00Z",
+        "closed_at": None,
+        "labels": [
+            {"name": "agent:executor"},
+            {"name": "action:implement-change"},
+        ],
+    }
+    connector_comment = {
+        "id": 1001,
+        "body": (
+            "ACTION_RESULT\n"
+            "Workflow: #138\n"
+            f"Change: {_CHANGE}\n"
+            "Action: implement-change\n"
+            "Role: executor\n"
+            "Result: SPEC_BLOCKER\n"
+        ),
+        "user": {"login": "royhsu-work"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        del method, payload
+        if path == "issues/138":
+            return issue
+        if path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            return [connector_comment]
+        raise AssertionError(f"unexpected GitHub call: {path}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        repository,
+        "token",
+        source,
+        authorized_change=_CHANGE,
+    )
+    effect = StagedEffect(
+        kind="routing-transition",
+        payload_json=json.dumps({"issue_number": 138, "action": "resolve-question"}),
+        derived=True,
+    )
+
+    assert not adapter.guard(effect)
+
+
+def test_active_terminal_rejects_connector_authored_premature_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = "owner/repo"
+    source = WorkerRequest(138, "lead", "finalize-archive")
+    issue = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "created_at": "2026-09-08T00:00:00Z",
+        "closed_at": None,
+        "labels": [
+            {"name": "agent:lead"},
+            {"name": "action:finalize-archive"},
+        ],
+    }
+    connector_comment = {
+        "id": 1002,
+        "body": (
+            "ACTION_RESULT\n"
+            "Workflow: #138\n"
+            f"Change: {_CHANGE}\n"
+            "Action: finalize-archive\n"
+            "Role: lead\n"
+            "Result: LIFECYCLE_COMPLETE\n"
+        ),
+        "user": {"login": "royhsu-work"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        del method, payload
+        if path == "issues/138":
+            return issue
+        if path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            return [connector_comment]
+        raise AssertionError(f"unexpected GitHub call: {path}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        repository,
+        "token",
+        source,
+        authorized_change=_CHANGE,
+    )
+    effect = StagedEffect(
+        kind="terminal-transition",
+        payload_json=json.dumps({"issue_number": 138, "expected_change": _CHANGE}),
+        derived=True,
+    )
+
+    assert not adapter.guard(effect)
+
+
+def test_repository_actions_formal_transition_is_qualified_after_comment_postcondition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = "owner/repo"
+    source = WorkerRequest(138, "executor", "implement-change")
+    issue: dict[str, object] = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "created_at": "2026-09-08T00:00:00Z",
+        "closed_at": None,
+        "labels": [
+            {"name": "agent:executor"},
+            {"name": "action:implement-change"},
+        ],
+    }
+    body = (
+        "ACTION_RESULT\n"
+        "Workflow: #138\n"
+        f"Change: {_CHANGE}\n"
+        "Action: implement-change\n"
+        "Role: executor\n"
+        "Result: SPEC_BLOCKER\n"
+        f"Revision: {_REVISION}\n"
+        "Evidence: application postcondition\n"
+    )
+    actions_comment = {
+        "id": 1003,
+        "body": body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    patches: list[dict[str, object]] = []
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        if path == "":
+            return {"default_branch": "main"}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": _REVISION}}
+        if path == "issues/138":
+            if method == "PATCH":
+                assert isinstance(payload, dict)
+                patches.append(payload)
+                labels = payload.get("labels")
+                assert isinstance(labels, list)
+                issue["labels"] = [{"name": label} for label in labels]
+            return json.loads(json.dumps(issue))
+        if path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            return []
+        if path == "issues/138/comments" and method == "POST":
+            return actions_comment
+        if path == "issues/comments/1003":
+            return actions_comment
+        raise AssertionError(f"unexpected GitHub call: {method} {path} {payload!r}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        repository,
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        expected_result_kind="spec-blocker",
+    )
+    requested = {
+        "kind": "issue-comment",
+        "payload_json": json.dumps({"issue_number": 138, "body": body}),
+    }
+    batch = parse_effect_batch(
+        _raw(result_kind="spec-blocker", requested_effects=[requested]),
+        source,
+    )
+
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=adapter.guard,
+        apply_effect=adapter.apply,
+        observe_postcondition=adapter.observe_postcondition,
+        current_revision=_REVISION,
+    )
+
+    assert result.applied
+    assert patches == [{"labels": ["action:resolve-question"]}]
+
+
+def test_change_unset_preactivation_route_remains_compatible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    issue = {
+        "number": 138,
+        "state": "open",
+        "body": "Change: unset\n",
+        "created_at": "2026-09-08T00:00:00Z",
+        "closed_at": None,
+        "labels": [
+            {"name": "agent:lead"},
+            {"name": "action:propose-change"},
+        ],
+    }
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        del method, payload
+        if path == "issues/138":
+            return issue
+        raise AssertionError(f"unexpected GitHub call: {path}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        "owner/repo",
+        "token",
+        WorkerRequest(138, "lead", "propose-change"),
+        authorized_change="unset",
+    )
+    effect = StagedEffect(
+        kind="routing-transition",
+        payload_json=json.dumps({"issue_number": 138, "action": "explore-change"}),
+        derived=True,
+    )
+
+    assert adapter.guard(effect)
 
 
 def test_stale_or_unqualified_source_fails_closed() -> None:
@@ -597,6 +1001,22 @@ def test_merged_carrier_merge_is_idempotent_without_put(
         "closed_at": None,
     }
     calls: list[tuple[str, str]] = []
+    formal_body = (
+        "MERGE_RESULT\n"
+        "Workflow: #159\n"
+        f"Change: {change}\n"
+        "Action: merge-implementation-pr\n"
+        "Role: executor\n"
+        "Result: MERGED\n"
+        f"Revision: {expected_head}\n"
+        "Evidence: carrier recovery formal transition qualification"
+    )
+    actions_comment = {
+        "id": 992,
+        "body": formal_body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
 
     def fake_github_json(
         _repository: str,
@@ -608,6 +1028,12 @@ def test_merged_carrier_merge_is_idempotent_without_put(
         **_kwargs: object,
     ) -> object:
         calls.append((path, method))
+        if path == "issues/159/comments?per_page=100&sort=created&direction=desc":
+            return []
+        if path == "issues/159/comments" and method == "POST":
+            return actions_comment
+        if path == "issues/comments/992":
+            return actions_comment
         if path == "issues/159" and method == "PATCH":
             labels = payload["labels"] if isinstance(payload, dict) else []
             issue["labels"] = [{"name": name} for name in labels]
@@ -619,6 +1045,7 @@ def test_merged_carrier_merge_is_idempotent_without_put(
         "token",
         source,
         authorized_change=change,
+        expected_result_kind="merged",
     )
     monkeypatch.setattr(adapter, "_source_still_current", lambda: True)
     monkeypatch.setattr(adapter, "_current_issue", lambda: issue)
@@ -639,6 +1066,10 @@ def test_merged_carrier_merge_is_idempotent_without_put(
             }
         ),
     )
+    formal_effect = StagedEffect(
+        kind="issue-comment",
+        payload_json=json.dumps({"issue_number": 159, "body": formal_body}),
+    )
     raw = json.dumps(
         {
             "issue_number": 159,
@@ -647,7 +1078,10 @@ def test_merged_carrier_merge_is_idempotent_without_put(
             "change": change,
             "result_kind": "merged",
             "result_content": "MERGE_RESULT",
-            "requested_effects": [{"kind": effect.kind, "payload_json": effect.payload_json}],
+            "requested_effects": [
+                {"kind": effect.kind, "payload_json": effect.payload_json},
+                {"kind": formal_effect.kind, "payload_json": formal_effect.payload_json},
+            ],
         }
     )
     batch = parse_effect_batch(raw, source)
@@ -1454,3 +1888,284 @@ def test_archive_pull_request_create_reuses_exact_existing_carrier(
     adapter.apply(effect)
     assert adapter.observe_postcondition(effect)
     assert ("pulls", "POST") not in calls
+
+
+def test_non_merge_carrier_recovery_observes_current_postcondition_without_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    head_sha = "b" * 40
+    issue = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "created_at": "2026-09-08T00:00:00Z",
+        "closed_at": None,
+        "labels": [
+            {"name": "agent:executor"},
+            {"name": "action:implement-change"},
+        ],
+    }
+    pull_request = {
+        "number": 178,
+        "state": "open",
+        "merged": False,
+        "draft": True,
+        "body": "Implementation\n\nRefs #138\n",
+        "head": {
+            "ref": f"agent/{_CHANGE}",
+            "sha": head_sha,
+            "repo": {"full_name": "owner/repo"},
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"full_name": "owner/repo"},
+        },
+    }
+    calls: list[tuple[str, str]] = []
+    formal_body = (
+        "ACTION_RESULT\n"
+        "Workflow: #138\n"
+        f"Change: {_CHANGE}\n"
+        "Action: implement-change\n"
+        "Role: executor\n"
+        "Result: SPEC_BLOCKER\n"
+        f"Revision: {_REVISION}\n"
+        "Evidence: carrier recovery formal transition qualification"
+    )
+    actions_comment = {
+        "id": 992,
+        "body": formal_body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        calls.append((path, method))
+        if path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            return []
+        if path == "issues/138/comments" and method == "POST":
+            return actions_comment
+        if path == "issues/comments/992":
+            return actions_comment
+        if path == "":
+            return {"default_branch": "main"}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": _REVISION}}
+        if path == "issues/138":
+            if method == "PATCH" and isinstance(payload, dict):
+                labels = payload.get("labels")
+                if isinstance(labels, list):
+                    issue["labels"] = [
+                        {"name": label} for label in labels if isinstance(label, str)
+                    ]
+            return issue
+        if path == "pulls/178":
+            return pull_request
+        raise AssertionError(f"unexpected GitHub call: {method} {path} {payload!r}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    effect = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "pull-request-ready",
+                "number": 178,
+                "expected_head_sha": head_sha,
+            }
+        ),
+    )
+    first_adapter = GitHubEffectAdapter(
+        "owner/repo",
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+    )
+
+    with pytest.raises(CarrierRequired) as raised:
+        first_adapter.apply(effect)
+
+    assert raised.value.plan.operation == "pull-request-ready"
+    assert raised.value.plan.requested["draft"] is False
+
+    pull_request["draft"] = False
+    calls.clear()
+    second_adapter = GitHubEffectAdapter(
+        "owner/repo",
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        expected_result_kind="spec-blocker",
+    )
+    formal_effect = StagedEffect(
+        kind="issue-comment",
+        payload_json=json.dumps({"issue_number": 138, "body": formal_body}),
+    )
+    batch = parse_effect_batch(
+        _raw(
+            result_kind="spec-blocker",
+            requested_effects=[
+                {
+                    "kind": effect.kind,
+                    "payload_json": effect.payload_json,
+                },
+                {
+                    "kind": formal_effect.kind,
+                    "payload_json": formal_effect.payload_json,
+                },
+            ],
+        ),
+        source,
+    )
+
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=second_adapter.guard,
+        apply_effect=second_adapter.apply,
+        observe_postcondition=second_adapter.observe_postcondition,
+        current_revision=_REVISION,
+    )
+
+    assert result.applied
+    assert calls.count(("issues/138", "PATCH")) == 1
+    assert all(path != "pulls/178" or method == "GET" for path, method in calls)
+    assert issue["labels"] == [
+        {"name": "action:resolve-question"},
+    ]
+
+
+def test_merge_carrier_recovery_rejects_old_authorization_after_main_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(159, "executor", "merge-implementation-pr")
+    change = "prevent-native-closing-bypass"
+    old_revision = "a" * 40
+    new_revision = "c" * 40
+    current_main_revision = old_revision
+    expected_head = "b" * 40
+    issue = {
+        "number": 159,
+        "state": "open",
+        "body": f"Change: {change}\n",
+        "created_at": "2026-09-08T00:00:00Z",
+        "closed_at": None,
+        "labels": [
+            {"name": "agent:executor"},
+            {"name": "action:merge-implementation-pr"},
+        ],
+    }
+    pull_request = {
+        "number": 167,
+        "state": "open",
+        "merged": False,
+        "body": "Implementation\n\nRefs #159\n",
+        "head": {
+            "ref": f"agent/{change}",
+            "sha": expected_head,
+            "repo": {"full_name": "owner/repo"},
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"full_name": "owner/repo"},
+        },
+    }
+    calls: list[tuple[str, str]] = []
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        calls.append((path, method))
+        if path == "":
+            return {"default_branch": "main"}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": current_main_revision}}
+        if path == "issues/159":
+            return issue
+        if path == "pulls/167":
+            return pull_request
+        raise AssertionError(f"unexpected GitHub call: {method} {path} {payload!r}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    effect = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 159,
+                "operation": "pull-request-merge",
+                "number": 167,
+                "expected_head_sha": expected_head,
+                "merge_method": "merge",
+            }
+        ),
+    )
+    first_adapter = GitHubEffectAdapter(
+        "owner/repo",
+        "token",
+        source,
+        authorized_change=change,
+        current_revision=old_revision,
+    )
+
+    with pytest.raises(CarrierRequired):
+        first_adapter.apply(effect)
+
+    current_main_revision = new_revision
+    calls.clear()
+    fresh_adapter = GitHubEffectAdapter(
+        "owner/repo",
+        "token",
+        source,
+        authorized_change=change,
+        current_revision=old_revision,
+    )
+    raw = json.dumps(
+        {
+            "issue_number": 159,
+            "role": "executor",
+            "action": "merge-implementation-pr",
+            "change": change,
+            "result_kind": "merged",
+            "result_content": "MERGE_RESULT",
+            "requested_effects": [
+                {
+                    "kind": effect.kind,
+                    "payload_json": effect.payload_json,
+                }
+            ],
+        }
+    )
+    batch = parse_effect_batch(raw, source)
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=lambda: _preflight(
+            issue_number=159,
+            action="merge-implementation-pr",
+            change=change,
+        ),
+        effect_guard=fresh_adapter.guard,
+        apply_effect=fresh_adapter.apply,
+        observe_postcondition=fresh_adapter.observe_postcondition,
+        current_revision=old_revision,
+    )
+
+    assert not result.applied
+    assert result.reason == "effect precondition rejected"
+    assert not any(method != "GET" for _path, method in calls)

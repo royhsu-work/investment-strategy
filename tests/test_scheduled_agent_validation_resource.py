@@ -773,3 +773,38 @@ def test_application_workflow_has_one_effect_ingress_and_no_legacy_families() ->
     ):
         assert forbidden not in workflow
         assert forbidden not in source
+
+
+def test_task_checkpoint_accepts_fresh_observation_of_previously_durable_slice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task_path = f"openspec/changes/{_CHANGE}/tasks.md"
+    current = (
+        "## Slice 1 — first\n"
+        "- [x] 1.1 first task\n"
+        "- [x] 1.2 second task\n"
+        "## Slice 2 — later\n"
+        "- [ ] 2.1 later task\n"
+    )
+    task_file = resource.WorkProductFile(task_path, "a" * 40, "a" * 40)
+
+    monkeypatch.setattr(resource, "_content_sha_at", lambda *_args, **_kwargs: "a" * 40)
+    monkeypatch.setattr(resource, "_content_text_at", lambda *_args, **_kwargs: current)
+    monkeypatch.setattr(resource, "_blob_text", lambda *_args, **_kwargs: current)
+
+    assert resource.task_checkpoint_is_exact(
+        _REPOSITORY,
+        _FIXTURE_VALUE,
+        expected_change=_CHANGE,
+        base_sha=_REVISION,
+        file=task_file,
+        completed_task_ids=("1.1", "1.2"),
+    )
+    assert not resource.task_checkpoint_is_exact(
+        _REPOSITORY,
+        _FIXTURE_VALUE,
+        expected_change=_CHANGE,
+        base_sha=_REVISION,
+        file=task_file,
+        completed_task_ids=("2.1",),
+    )
