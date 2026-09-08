@@ -745,8 +745,11 @@ def apply_effect_batch(
             return ApplyResult(False, "effect precondition rejected")
         try:
             apply_effect(effect)
-        except CarrierRequired as exc:
-            return ApplyResult(False, "carrier_required", carrier_plan=exc.plan)
+        except CarrierRequired:
+            # CarrierRequired is the hard boundary for this invocation. The
+            # top-level application bridge serializes the exact plan and exits;
+            # no result, checkpoint, routing, or successor effect may follow.
+            raise
         if not observe_postcondition(effect):
             return ApplyResult(False, "durable postcondition not observed")
 
