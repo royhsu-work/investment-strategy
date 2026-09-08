@@ -1645,7 +1645,6 @@ def test_non_merge_carrier_recovery_observes_current_postcondition_without_repla
         for path, method in calls
     )
     assert issue["labels"] == [
-        {"name": "agent:executor"},
         {"name": "action:resolve-question"},
     ]
 
