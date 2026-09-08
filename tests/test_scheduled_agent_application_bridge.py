@@ -203,3 +203,6 @@ def test_application_boundary_does_not_replay_dispatch_artifacts() -> None:
     assert "VALIDATION_RESOURCE_REQUEST" not in workflow
     assert "WORK_PRODUCT_REQUEST" not in workflow
     assert "FORMALIZE_CHANGE_REQUEST" not in workflow
+    assert "except CarrierRequired" in source
+    assert "End invocation at CarrierRequired boundary" in workflow
+    assert workflow.count("steps.apply.outputs.carrier_required != 'true'") == 8

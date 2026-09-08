@@ -77,9 +77,13 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: End invocation at CarrierRequired boundary
+        if: steps.apply.outputs.carrier_required == 'true'
+        run: echo "CarrierRequired plan persisted; no validation, checkpoint, routing, or successor effects run in this invocation."
+
       - name: Select the exact application-owned validation target
         id: validation
-        if: steps.apply.outputs.validation_required == 'true'
+        if: steps.apply.outputs.carrier_required != 'true' && steps.apply.outputs.validation_required == 'true'
         env:
           VALIDATION_REPOSITORY: ${{ steps.apply.outputs.validation_target_repository }}
           VALIDATION_REVISION: ${{ steps.apply.outputs.validation_target_revision }}
@@ -98,7 +102,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Checkout exact validation target
-        if: steps.validation.outputs.validation_required == 'true'
+        if: steps.apply.outputs.carrier_required != 'true' && steps.validation.outputs.validation_required == 'true'
         uses: actions/checkout@v4
         with:
           repository: ${{ steps.validation.outputs.validation_target_repository }}
@@ -107,7 +111,7 @@ jobs:
           persist-credentials: false
 
       - name: Verify exact validation checkout revision
-        if: steps.validation.outputs.validation_required == 'true'
+        if: steps.apply.outputs.carrier_required != 'true' && steps.validation.outputs.validation_required == 'true'
         working-directory: validation-target
         env:
           VALIDATION_TARGET_REPOSITORY: ${{ steps.validation.outputs.validation_target_repository }}
@@ -133,13 +137,13 @@ jobs:
           fi
 
       - name: Set up Node for exact validation
-        if: steps.validation.outputs.validation_required == 'true'
+        if: steps.apply.outputs.carrier_required != 'true' && steps.validation.outputs.validation_required == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "22"
 
       - name: Install qualified OpenSpec baseline
-        if: steps.validation.outputs.validation_required == 'true'
+        if: steps.apply.outputs.carrier_required != 'true' && steps.validation.outputs.validation_required == 'true'
         working-directory: validation-target
         shell: bash
         run: |
@@ -153,17 +157,17 @@ jobs:
           echo "qualified_openspec_version=$openspec_version"
 
       - name: Qualify pinned OpenSpec compatibility
-        if: steps.validation.outputs.validation_required == 'true'
+        if: steps.apply.outputs.carrier_required != 'true' && steps.validation.outputs.validation_required == 'true'
         working-directory: validation-target
         run: python .github/scripts/openspec_compatibility.py
 
       - name: Validate exact OpenSpec target strictly
-        if: steps.validation.outputs.validation_required == 'true'
+        if: steps.apply.outputs.carrier_required != 'true' && steps.validation.outputs.validation_required == 'true'
         working-directory: validation-target
         run: openspec validate --all --strict --json --no-interactive
 
       - name: Persist the derived successor after exact validation
-        if: steps.validation.outputs.validation_required == 'true'
+        if: steps.apply.outputs.carrier_required != 'true' && steps.validation.outputs.validation_required == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}

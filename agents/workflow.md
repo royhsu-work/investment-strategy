@@ -28,6 +28,12 @@ derives routing from the executable model and rejects stale, replayed, ambiguous
 incomplete input. Exact revision, content-addressed ingress, WIP=1, finish-first, Human authority,
 independent review, exact-head merge, and carrier separation remain mandatory.
 
+`CarrierRequired` ends the current invocation after the exact application-authorized CarrierPlan is
+persisted. The replaceable carrier performs only that mutation and cannot write checkpoint/result,
+routing, terminal, or successor state. A later fresh wake reconstructs current truth and reconciles
+only missing authorized effects. A merge carrier's old plan is stale after `main` advances; the later
+wake uses fresh authorization and the historical exact-head read-only reconciliation.
+
 ## Transport
 
 The Asia/Taipei daily shard is bounded transport only: one request, one Actions run, one structured

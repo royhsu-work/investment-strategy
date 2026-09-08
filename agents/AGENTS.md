@@ -65,6 +65,14 @@ The successor is only eligible for a later fresh wake, even when its derived Rol
 A worker cannot select an Issue, Role, Action, target, successor, retry, or success. The application
 derives those facts from current state and the executable model.
 
+`CarrierRequired` is a hard invocation-exit boundary. After application fresh-authorizes an exact
+carrier mutation, it emits the exact immutable CarrierPlan and exits the invocation. The carrier may
+execute only that plan; it MUST NOT write a checkpoint or ACTION_RESULT, change `action:*`, close or
+continue the lifecycle, or derive a successor. A later fresh wake reconstructs current repository
+truth, observes the authorized postcondition, and applies only missing authorized effects. A merge
+plan bound to an older default-branch SHA is stale after the carrier changes `main`; the later wake
+must use fresh authorization and the explicit historical exact-head read-only reconciliation.
+
 The normal path has no second workflow graph, generic orchestration kernel, hidden progress state,
 lock/lease/retry counter, timer, or mailbox authority. A failed or incomplete Action returns its
 bounded legal result and is reconstructed from current state on the next wake.
@@ -170,6 +178,11 @@ observation fails closed.
 Mutation carriers are replaceable actuators. They receive an already-authorized repository plan,
 execute only allowed operations, and return raw observed results; they cannot choose workflow meaning,
 targets, successors, retries, or success.
+
+For formal `Change != unset` state, current `action:*` routing and terminal/close state require fresh
+repository-owned Actions/application transition provenance. Connector or other out-of-band direct
+formal transitions are `INDETERMINATE` and fail closed even when the resulting labels or lifecycle
+shape looks valid. The pre-activation `Change: unset` behavior is unchanged.
 
 ## Shared exception capture and invocation finalization
 

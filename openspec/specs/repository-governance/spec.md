@@ -32,6 +32,20 @@ The Human-readable workflow surface MAY include rationale and semantic guidance 
 
 Repository application/kernel authorization and mutation-carrier identity SHALL remain separate. Application binds each effect to its exact target, preconditions, revision, and legal carrier class. A carrier is an actuator only and MUST NOT choose workflow meaning, target, effect, successor, retry, weaker preconditions, or success. Repository-owned fresh observation is required before a mutation can support a routing, gate, lifecycle, merge, or successor consequence.
 
+`CarrierRequired` SHALL be an invocation-exit boundary: after application fresh-authorizes one exact
+carrier mutation, it SHALL emit the exact CarrierPlan and end the current invocation. The carrier
+MUST execute only that plan and MUST NOT write checkpoint/result evidence, routing, terminal, or
+successor state. A later fresh wake SHALL reconstruct current repository truth and apply only missing
+authorized effects. A merge CarrierPlan bound to an older default-branch revision SHALL be stale
+after the carrier changes that revision and SHALL be reconciled only through the existing historical
+exact-head read-only path with fresh application authorization.
+
+For formal `Change != unset`, fresh evidence SHALL qualify the current `action:*` routing transition
+and terminal/close transition as repository-owned Actions/application state. A connector or other
+out-of-band direct formal transition SHALL be `INDETERMINATE` and fail closed; current labels or
+lifecycle shape alone SHALL not launder that provenance. `Change: unset` pre-activation semantics
+remain unchanged.
+
 For a carrier that is already closed and merged, application MAY authorize only the explicit read-only reconciliation contract: exact historical head, repositories/base/ref, merge metadata, current default-branch revision and ancestry, and the matching revision-bound independent PASS must all be fresh and coherent. The carrier performs no merge write; it only exposes the existing postcondition for application observation. Reopen, rewrite, force movement, substitution, duplicate merge writes, and duplicate PR creation are prohibited.
 
 Deterministic application rejection SHALL include a machine-readable guard classification and relevant expected/observed identity or predicate evidence whenever that boundary knows the failed predicate. Aggregate diagnostic text MAY accompany it but MUST NOT be the only rejection evidence. Rejection evidence never authorizes retry, weaker preconditions, alternate targets, or a worker-selected successor.

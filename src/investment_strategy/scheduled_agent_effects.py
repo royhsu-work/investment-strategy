@@ -49,6 +49,7 @@ from investment_strategy.scheduled_agent_runtime import (
     GitHubIssueObservation,
     WorkerRequest,
     acquire_current_github_preflight,
+    current_issue_observation,
     is_github_actions_comment,
     normalize_github_issue,
 )
@@ -745,8 +746,11 @@ def apply_effect_batch(
             return ApplyResult(False, "effect precondition rejected")
         try:
             apply_effect(effect)
-        except CarrierRequired as exc:
-            return ApplyResult(False, "carrier_required", carrier_plan=exc.plan)
+        except CarrierRequired:
+            # CarrierRequired is the hard boundary for this invocation. The
+            # top-level application bridge serializes the exact plan and exits;
+            # no result, checkpoint, routing, or successor effect may follow.
+            raise
         if not observe_postcondition(effect):
             return ApplyResult(False, "durable postcondition not observed")
 
@@ -821,6 +825,7 @@ class GitHubEffectAdapter:
         current_revision: str | None = None,
         materialization_promote_change: bool = False,
         validated_materialization_revision: str | None = None,
+        state_observation_provider: Callable[[], GitHubIssueObservation | None] | None = None,
     ) -> None:
         self.repository = repository
         self.token = token
@@ -829,6 +834,7 @@ class GitHubEffectAdapter:
         self.current_revision = current_revision
         self.materialization_promote_change = materialization_promote_change
         self.validated_materialization_revision = validated_materialization_revision
+        self.state_observation_provider = state_observation_provider
         self._comment_ids: dict[StagedEffect, int] = {}
         self._routing_targets: dict[StagedEffect, str] = {}
         self._created_pr_numbers: dict[StagedEffect, int] = {}
@@ -863,7 +869,7 @@ class GitHubEffectAdapter:
         )
         return payload if isinstance(payload, Mapping) else None
 
-    def _authorized_issue_observation(
+    def _current_issue_observation(
         self,
         current: Mapping[str, object] | None = None,
     ) -> GitHubIssueObservation | None:
@@ -871,6 +877,28 @@ class GitHubEffectAdapter:
         if payload is None:
             return None
         observation = normalize_github_issue(payload)
+        if observation is None:
+            return None
+        if self.authorized_change != "unset" and self.state_observation_provider is not None:
+            reconstructed = self.state_observation_provider()
+            if reconstructed is None or (
+                reconstructed.issue_number != observation.issue_number
+                or reconstructed.change != observation.change
+                or reconstructed.routing != observation.routing
+                or reconstructed.state != observation.state
+                or reconstructed.created_order != observation.created_order
+                or reconstructed.authoritative != observation.authoritative
+                or reconstructed.routing_debt != observation.routing_debt
+            ):
+                return None
+            observation = reconstructed
+        return observation
+
+    def _authorized_issue_observation(
+        self,
+        current: Mapping[str, object] | None = None,
+    ) -> GitHubIssueObservation | None:
+        observation = self._current_issue_observation(current)
         if (
             observation is None
             or not observation.authoritative
@@ -878,6 +906,10 @@ class GitHubEffectAdapter:
             or observation.state != "open"
             or observation.routing != _routing_identity(self.source)
             or observation.change != self.authorized_change
+            or (
+                self.authorized_change != "unset"
+                and observation.current_state_provenance is not ObservationProvenance.QUALIFIED
+            )
         ):
             return None
         return observation
@@ -1496,8 +1528,7 @@ class GitHubEffectAdapter:
             method="PATCH",
             payload={"state": "closed", "labels": labels},
         )
-        final = self._current_issue()
-        final_observation = None if final is None else normalize_github_issue(final)
+        final_observation = self._current_issue_observation()
         if (
             final_observation is None
             or not final_observation.authoritative
@@ -1505,6 +1536,7 @@ class GitHubEffectAdapter:
             or final_observation.change != payload.get("expected_change")
             or final_observation.routing is not None
             or final_observation.routing_debt
+            or final_observation.current_state_provenance is not ObservationProvenance.QUALIFIED
         ):
             raise RuntimeError("terminal transition postcondition not observed")
         self._terminal_transitions.add(effect)
@@ -1841,8 +1873,7 @@ class GitHubEffectAdapter:
 
         if effect.kind == "routing-transition":
             target_action = self._routing_targets.get(effect)
-            current = self._current_issue()
-            observation = None if current is None else normalize_github_issue(current)
+            observation = self._current_issue_observation()
             try:
                 target_role = (
                     None if target_action is None else role_for(ModelAction(target_action)).value
@@ -1857,12 +1888,15 @@ class GitHubEffectAdapter:
                 and observation.state == "open"
                 and not observation.routing_debt
                 and observation.routing == (target_role, target_action)
+                and (
+                    self.authorized_change == "unset"
+                    or observation.current_state_provenance is ObservationProvenance.QUALIFIED
+                )
             )
 
         if effect.kind == "terminal-transition":
             payload = _effect_payload(effect)
-            current = self._current_issue()
-            observation = None if current is None else normalize_github_issue(current)
+            observation = self._current_issue_observation()
             return bool(
                 effect in self._terminal_transitions
                 and payload is not None
@@ -1872,6 +1906,7 @@ class GitHubEffectAdapter:
                 and observation.change == payload.get("expected_change")
                 and observation.routing is None
                 and not observation.routing_debt
+                and observation.current_state_provenance is ObservationProvenance.QUALIFIED
             )
 
         if effect.kind == GITHUB_MUTATION_KIND:
@@ -1897,6 +1932,10 @@ def run_effect_application(
     batch = parse_effect_batch(raw_worker_result, source)
     if batch.typed_result is None:
         return batch, ApplyResult(False, "typed application rejected:result-missing")
+
+    def fresh_state_observation() -> GitHubIssueObservation | None:
+        return current_issue_observation(repository, token, source.issue_number)
+
     adapter = GitHubEffectAdapter(
         repository,
         token,
@@ -1905,6 +1944,7 @@ def run_effect_application(
         current_revision=current_revision,
         materialization_promote_change=materialization_promote_change,
         validated_materialization_revision=validated_materialization_revision,
+        state_observation_provider=fresh_state_observation,
     )
     result = apply_effect_batch(
         batch,
