@@ -418,8 +418,8 @@ def _task_marker_delta(current: str, candidate: str) -> tuple[str, ...] | None:
     return tuple(changed_ids)
 
 
-def _first_incomplete_slice_task_ids(content: str) -> tuple[str, ...] | None:
-    """Return the complete unchecked task set of the first incomplete slice."""
+def _task_slices(content: str) -> tuple[tuple[tuple[str, bool], ...], ...] | None:
+    """Parse non-empty, uniquely identified task slices in source order."""
 
     slices: list[list[tuple[str, bool]]] = []
     current_slice: list[tuple[str, bool]] | None = None
@@ -442,11 +442,34 @@ def _first_incomplete_slice_task_ids(content: str) -> tuple[str, ...] | None:
 
     if not slices or any(not task_slice for task_slice in slices):
         return None
+    return tuple(tuple(task_slice) for task_slice in slices)
+
+
+def _first_incomplete_slice_task_ids(content: str) -> tuple[str, ...] | None:
+    """Return the complete unchecked task set of the first incomplete slice."""
+
+    slices = _task_slices(content)
+    if slices is None:
+        return None
     for task_slice in slices:
         pending = tuple(task_id for task_id, checked in task_slice if not checked)
         if pending:
             return pending
     return ()
+
+
+def _previous_completed_slice_task_ids(content: str) -> tuple[str, ...] | None:
+    """Return the immediately preceding fully checked slice before the first incomplete one."""
+
+    slices = _task_slices(content)
+    if slices is None:
+        return None
+    for index, task_slice in enumerate(slices):
+        if any(not checked for _task_id, checked in task_slice):
+            if index == 0 or any(not checked for _task_id, checked in slices[index - 1]):
+                return None
+            return tuple(task_id for task_id, _checked in slices[index - 1])
+    return None
 
 
 def _task_marker_update_is_monotonic(current: str, candidate: str) -> bool:
@@ -484,10 +507,14 @@ def task_checkpoint_is_exact(
     except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
         return False
     changed_ids = _task_marker_delta(current, candidate)
+    if changed_ids is None:
+        return (
+            current == candidate
+            and _previous_completed_slice_task_ids(current) == completed_task_ids
+        )
     first_incomplete_ids = _first_incomplete_slice_task_ids(current)
     return (
-        changed_ids is not None
-        and first_incomplete_ids is not None
+        first_incomplete_ids is not None
         and changed_ids == completed_task_ids
         and completed_task_ids == first_incomplete_ids
     )
@@ -1001,7 +1028,9 @@ def apply_work_product(
                     revision=plan.manifest.base_sha,
                 )
                 candidate = _blob_text(repository, token, file.blob_sha)
-                if not _task_marker_update_is_monotonic(current, candidate):
+                if current != candidate and not _task_marker_update_is_monotonic(
+                    current, candidate
+                ):
                     raise RuntimeError(
                         "work-product task marker update must be a monotonic checkbox-only update"
                     )
@@ -1091,6 +1120,24 @@ def apply_work_product(
         raise RuntimeError("work-product default branch changed before carrier handoff")
     if _current_authorized_request(repository, token) != plan.source:
         raise RuntimeError("work-product source dispatch changed before carrier handoff")
+
+    if (
+        _is_executor_task_bookkeeping(
+            plan.source,
+            plan.expected_change,
+            plan.manifest.files,
+        )
+        and len(plan.manifest.files) == 1
+        and plan.manifest.files[0].expected_sha is not None
+        and plan.manifest.files[0].blob_sha == plan.manifest.files[0].expected_sha
+    ):
+        return ValidationResourceTarget(
+            repository=repository,
+            revision=current_head,
+            correlation=f"effect-request-{plan.source.issue_number}",
+            pr_number=plan.pr_number,
+            change=plan.expected_change,
+        )
 
     commit_message = (
         _reconciliation_message(plan.expected_change) if replay_manifest else plan.manifest.message
