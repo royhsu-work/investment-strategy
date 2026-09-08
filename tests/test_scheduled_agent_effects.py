@@ -550,6 +550,134 @@ def test_worker_cannot_submit_transition_authority() -> None:
     assert applied == []
 
 
+def test_active_formal_route_rejects_connector_authored_direct_transition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = "owner/repo"
+    source = WorkerRequest(138, "executor", "implement-change")
+    issue = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "created_at": "2026-09-08T00:00:00Z",
+        "closed_at": None,
+        "labels": [
+            {"name": "agent:executor"},
+            {"name": "action:implement-change"},
+        ],
+    }
+    connector_comment = {
+        "id": 1001,
+        "body": (
+            "ACTION_RESULT\n"
+            "Workflow: #138\n"
+            f"Change: {_CHANGE}\n"
+            "Action: implement-change\n"
+            "Role: executor\n"
+            "Result: SPEC_BLOCKER\n"
+        ),
+        "user": {"login": "royhsu-work"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        del method, payload
+        if path == "issues/138":
+            return issue
+        if path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            return [connector_comment]
+        raise AssertionError(f"unexpected GitHub call: {path}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        repository,
+        "token",
+        source,
+        authorized_change=_CHANGE,
+    )
+    effect = StagedEffect(
+        kind="routing-transition",
+        payload_json=json.dumps(
+            {"issue_number": 138, "action": "resolve-question"}
+        ),
+        derived=True,
+    )
+
+    assert not adapter.guard(effect)
+
+
+def test_active_terminal_rejects_connector_authored_premature_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = "owner/repo"
+    source = WorkerRequest(138, "lead", "finalize-archive")
+    issue = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "created_at": "2026-09-08T00:00:00Z",
+        "closed_at": None,
+        "labels": [
+            {"name": "agent:lead"},
+            {"name": "action:finalize-archive"},
+        ],
+    }
+    connector_comment = {
+        "id": 1002,
+        "body": (
+            "ACTION_RESULT\n"
+            "Workflow: #138\n"
+            f"Change: {_CHANGE}\n"
+            "Action: finalize-archive\n"
+            "Role: lead\n"
+            "Result: LIFECYCLE_COMPLETE\n"
+        ),
+        "user": {"login": "royhsu-work"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        del method, payload
+        if path == "issues/138":
+            return issue
+        if path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            return [connector_comment]
+        raise AssertionError(f"unexpected GitHub call: {path}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        repository,
+        "token",
+        source,
+        authorized_change=_CHANGE,
+    )
+    effect = StagedEffect(
+        kind="terminal-transition",
+        payload_json=json.dumps(
+            {"issue_number": 138, "expected_change": _CHANGE}
+        ),
+        derived=True,
+    )
+
+    assert not adapter.guard(effect)
+
+
 def test_stale_or_unqualified_source_fails_closed() -> None:
     source = WorkerRequest(138, "executor", "implement-change")
     batch = parse_effect_batch(_raw(), source)
