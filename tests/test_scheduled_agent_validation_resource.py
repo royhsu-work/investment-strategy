@@ -786,7 +786,7 @@ def test_task_checkpoint_accepts_fresh_observation_of_previously_durable_slice(
         "## Slice 2 — later\n"
         "- [ ] 2.1 later task\n"
     )
-    task_file = resource.WorkProductFile(task_path, "a" * 40, _REVISION)
+    task_file = resource.WorkProductFile(task_path, "a" * 40, "a" * 40)
 
     monkeypatch.setattr(resource, "_content_sha_at", lambda *_args, **_kwargs: "a" * 40)
     monkeypatch.setattr(resource, "_content_text_at", lambda *_args, **_kwargs: current)
