@@ -6,16 +6,14 @@ When a coordination Issue has `Change != unset`, the existing scheduled-agent cu
 
 ```text
 accepted Action / Result
-→ exact repository application authorization and correlation
+→ exact repository application authorization and mandatory application-owned correlation
 → model-derived routing or terminal consequence
 → exact durable postcondition
 ```
 
-The qualification SHALL use the latest applicable binding for the same Issue and immutable Change. Existing GitHub Issue lifecycle events MAY establish the order of relevant mutations and whether a later mutation superseded an earlier binding, including ABA analysis; event actor and timestamp are ordering metadata and do not supply authorization. A unique current binding is `QUALIFIED`. If the chain cannot be reconstructed uniquely, the current formal observation is `INDETERMINATE` and the existing fail-closed dispatch/application boundary applies.
+The qualification SHALL use the latest applicable binding for the same Issue and immutable Change and SHALL consume a complete relevant lifecycle observation for the current evaluation. Existing GitHub Issue lifecycle events MAY establish the order of relevant mutations and whether a later mutation superseded an earlier binding, including ABA analysis; event actor and timestamp are ordering metadata and do not supply authorization. If the relevant lifecycle observation is incomplete, contradictory, stale, or cannot establish one unique current binding, the current formal observation is `INDETERMINATE` and the existing fail-closed dispatch/application boundary applies. A unique current binding is `QUALIFIED`.
 
 The physical writer, connector, carrier, or GitHub Actions identity is not itself the qualification predicate. Connector-authored `EFFECT_REQUEST` remains bounded untrusted transport, and a carrier remains an actuator under an application-authorized plan. The existing finite Action/Role/Result vocabulary and transition model remain the executable workflow owner.
-
-Delivery SHALL preserve the existing staged boundary: Stage 1 produces the minimum application-owned correlation in existing formal evidence while current acceptance remains compatible; Stage 2 consumes that correlation and lifecycle ordering, removes equality-only authority, and enforces `QUALIFIED` / `INDETERMINATE` at the existing ingress/application boundaries. This is a one-time delivery sequence, not a migration state or permanent legacy fallback.
 
 #### Scenario: Connector-authored active routing fails closed
 
@@ -31,11 +29,19 @@ Delivery SHALL preserve the existing staged boundary: Stage 1 produces the minim
 - THEN the terminal boundary is `INDETERMINATE`
 - AND no terminal or success consequence is accepted
 
+#### Scenario: Incomplete lifecycle observation fails closed
+
+- GIVEN a coordination Issue has `Change != unset`
+- AND the lifecycle observation needed to determine whether a later relevant mutation superseded the candidate binding is incomplete or unavailable
+- WHEN current-state reconstruction evaluates the formal lifecycle
+- THEN the observation is `INDETERMINATE`
+- AND no route, successor, terminal, or success consequence is accepted
+
 #### Scenario: Repository-owned formal transition remains qualified
 
 - GIVEN a coordination Issue has `Change != unset`
-- AND existing formal evidence binds an accepted Action/Result to exact repository application authorization, the model-derived consequence, and its durable postcondition
-- AND lifecycle ordering identifies that binding as the latest applicable transition
+- AND existing formal evidence binds an accepted Action/Result to exact repository application authorization, mandatory application correlation, the model-derived consequence, and its durable postcondition
+- AND a complete lifecycle observation identifies that binding as the latest applicable transition
 - WHEN the application reconstructs the current formal lifecycle
 - THEN the action route or terminal boundary is `QUALIFIED`
 - AND the existing executable Action/Role/transition model may proceed
@@ -53,7 +59,7 @@ Delivery SHALL preserve the existing staged boundary: Stage 1 produces the minim
 #### Scenario: An ABA return does not inherit historical qualification
 
 - GIVEN a repository-authorized transition changes a value from A to B
-- AND later lifecycle events show a relevant out-of-band sequence changes B to C and then C back to B
+- AND a complete later lifecycle observation shows a relevant out-of-band sequence changes B to C and then C back to B
 - WHEN fresh current state equals B
 - THEN the earlier A-to-B binding is not the latest applicable qualification
 - AND the current active formal state remains `INDETERMINATE` unless a later repository-authorized binding and exact postcondition qualify it
