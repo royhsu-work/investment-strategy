@@ -2,47 +2,72 @@
 
 ## Why
 
-Issue #229 is the current pre-activation workflow for a bounded repository-wide correctness refinement. Its exact same-Issue Explore result, issuecomment-5595057852, is a durable ACTION_RESULT with PROPOSAL_READY at default-branch revision e4dcad8ad0326a6a38620998ee2f03ebcc060a19. The result identifies a narrow gap: the current ingress treats structurally valid Issue fields as authoritative current state, while the effect layer can accept an active route when it merely equals the requested target. That permits an out-of-band formal route to become eligible without affirmative repository-owned qualification.
+Issue #229 is the current formal workflow for a bounded repository-wide correctness refinement. Its parent outcome remains:
 
-The current Human direction in issuecomment-5594516745 and issuecomment-5594806867 requires a phase distinction. Change: unset remains compatible with legitimate bounded Explore and Propose intake, including Human-requested Explore, idle discovery, and scope-split intake. Once Change is non-unset, active formal routing, derived successor, and terminal consequences require affirmative repository-owned qualification. Consequence authority belongs to the repository-owned application and executable model; actor identity alone is not authority. No new Human decision is required for this bounded formalization.
+observable current evidence
++ explicit machine-decidable predicates
+→ qualification by the existing executable owner of the consequence
+→ consequence becomes eligible
 
-## Upstream verification
+The direct Human correction in issuecomment-5598442708 narrows the active Change before implementation. It preserves that repository-wide outcome, keeps the active-formal P0 as one concrete scheduled-agent proof case, and requires subtractive convergence before implementation.
 
-Before persisting a Change identity, Propose dereferenced the exact durable same-Issue Explore result issuecomment-5595057852 and reverse-verified each material formalization claim against fresh current default-branch evidence:
+## Human-approved correction
 
-| Explore claim | Fresh current evidence | Verification |
-| --- | --- | --- |
-| Current ingress promotes structural Issue validity to current-state authority | src/investment_strategy/scheduled_agent_runtime.py normalizes labels, Change, timestamps, and closed-state fields into authoritative observations; acquire_current_github_preflight passes those observations to dispatch | Confirmed |
-| The effect layer accepts an active route when it equals the requested target | src/investment_strategy/scheduled_agent_effects.py currently returns success for a matching observed route before consulting its formal evidence set | Confirmed |
-| Existing provenance primitives are reusable | The runtime already recognizes GitHub Actions authorship, and the effect layer already parses bounded formal Action/Result markers and observes comment postconditions | Confirmed |
-| The current direction is bounded and does not require a new decision | Fresh Human comments issuecomment-5594516745 and issuecomment-5594806867 preserve the same scope, phase distinction, and explicit non-goals; no newer direct Human decision was found | Confirmed |
+The latest Human direction requires:
 
-Fresh repository reconstruction also confirmed that main is e4dcad8ad0326a6a38620998ee2f03ebcc060a19, Issue #227 is completed, Issue #229 is the sole open pre-activation Propose candidate, and Issue #218 remains downstream and out of scope. The current default-branch governance, executable Action model, OpenSpec configuration, Lead role, and OpenSpec Change Skill were loaded from main. The existing canonical active-formal provenance requirement is the scheduled-agent-workflow owner and is modified in this Change; no competing workflow requirement is added.
+- one small generic affirmative-qualification invariant in repository-governance;
+- one concrete active-formal predicate owned by existing scheduled-agent current-state and application boundaries;
+- binding to the latest applicable qualified transition and exact durable postcondition, including ABA;
+- no qualification from actor, connector, carrier, timestamp, or current-value identity alone;
+- reuse of existing GitHub/application evidence before adding any correlation identity; and
+- explicit no-delta dispositions for already-correct materialization, pre-activation, carrier, OpenSpec configuration, and downstream boundaries.
+
+This is material semantic input. The previous OpenSpec PASS for revision 2366bbfa853576b4d1f736c9833d7ed3b799822c is stale for this revised meaning; the subsequent application result issuecomment-5598786757 returned the workflow to Lead / resolve-question.
+
+## Current truth and disposition
+
+Fresh reconstruction at main revision e4dcad8ad0326a6a38620998ee2f03ebcc060a19 found:
+
+- Issue #229 is open with Change qualify-active-formal-consequences and only action:resolve-question.
+- Pull request #232 is the existing same-Change carrier, open on agent/qualify-active-formal-consequences at revision 2366bbfa853576b4d1f736c9833d7ed3b799822c.
+- The latest direct Human comment is issuecomment-5598442708; no newer direct Human disposition is in the current Issue comment set.
+- Issue events record the earlier implement-change label at event 30808322249, then its removal at 30813815333 and the resolve-question label at 30813815362. Event ordering is freshness evidence, not authority from actor identity alone.
+
+The existing PR carrier is updated in place. No second Change, PR, or routing mechanism is created.
 
 ## What changes
 
-- Add one project-wide repository-governance requirement: an active formal machine-decidable consequence needs one canonical owner and an affirmative fresh-evidence qualification predicate. The shared requirement defines ownership and the failure rule; it does not duplicate the workflow-specific predicate.
-- Modify the existing scheduled-agent-workflow requirement Active formal transitions require repository-owned provenance so qualification is required during current-state reconstruction and dispatch ingress, before an active formal state can authorize work or a consequence. The concrete predicate binds the accepted repository-owned Action/Result, source and default-branch revisions, model-derived successor, and exact durable postcondition.
-- Update the existing runtime, application, and test surfaces only as needed to make the current executable owner enforce that contract. Reuse ObservationProvenance, the finite Action/Result model, application reauthorization, existing formal evidence parsing, carrier plans, and postcondition observation.
-- Keep openspec/config.yaml unchanged unless implementation evidence shows that its current authoring guidance is insufficient; no authoring rule is duplicated in the new delta.
+1. Add one generic repository-governance owner rule: when a repository-owned consequence is machine-decidable from observable evidence and deterministic predicates, its existing canonical executable owner evaluates the one affirmative qualification predicate before eligibility. Consumers use that result and do not infer eligibility from a matching value.
+2. Modify the existing scheduled-agent-workflow provenance requirement so active-formal routing or terminal/close state is qualified before dispatch or application consequence. Qualification binds the latest applicable repository-authorized transition to its exact durable postcondition, preserves the finite Action/Result model, and rejects an ABA return based on old evidence.
+3. Keep the physical writer replaceable. Connector ingress remains bounded transport, and a carrier can execute only an application-authorized plan; carrier or actor identity is not the predicate.
+4. Reuse application authorization, formal result parsing, GitHub lifecycle evidence, Action/Role derivation, and postcondition checks. Add a correlation identity only if implementation proves existing evidence cannot uniquely bind cause to consequence.
+5. Test observable equality-only rejection, direct/out-of-band failure, latest-transition binding, ABA rejection, exact carrier completion on a later fresh wake, and Change: unset compatibility.
+
+## No-delta dispositions
+
+- First Change materialization is already bounded by Lead / propose-change, exact main revision, Change branch and paths, PR linkage, validation revision, application authorization, and fresh postconditions. Existing owner sufficient; no materialization mechanism is added.
+- Change: unset pre-activation intake remains under its existing Explore/Propose contract.
+- CarrierRequired remains the existing hard invocation boundary and plan surface; no carrier protocol or carrier authority is added.
+- openspec/config.yaml remains unchanged because current authoring guidance is sufficient.
+- Issue #218 remains downstream and out of scope.
 
 ## Acceptance boundary
 
-The Change is complete when:
+The implementation stage is ready only when one exact reviewed revision shows:
 
-1. A Change: unset Issue remains eligible through the existing pre-activation contract, including legitimate bounded Explore, idle discovery, scope split, and Propose behavior.
-2. A repository-owned formal transition with fresh authorization, exact evidence binding, and its durable postcondition is classified QUALIFIED.
-3. A direct, connector-authored, equal-but-unqualified, missing, stale, ambiguous, contradictory, incomplete, or merely structural active formal state is classified INDETERMINATE and fails closed before dispatch or consequence.
-4. An exact authorized carrier plan and later observed postcondition can be qualified by the next fresh repository-owned wake; the carrier remains an actuator without workflow authority.
-5. Formal priority, single-active-workflow/WIP, finish-first, no-rewind, and no-fallback semantics remain unchanged.
-6. No new Action, Result kind, workflow phase/state, registry, cursor, mailbox, policy engine, carrier protocol, or second DAG is introduced.
+1. A machine-decidable repository consequence is qualified by its existing canonical executable owner.
+2. A qualified scheduled-agent transition binds current Change, Action/Role, relevant revisions, accepted Action/Result, model-derived next_action where applicable, latest applicable transition, and exact durable postcondition.
+3. Structurally valid, equal-valued, actor/timestamp-only, connector/out-of-band, missing, stale, ambiguous, contradictory, or superseded active-formal evidence is INDETERMINATE and fails closed.
+4. An authorized carrier is only an actuator and its exact postcondition is consumed by a later fresh wake.
+5. Change: unset, WIP/priority/finish-first/no-fallback, existing materialization, configuration, and #218 boundary are preserved.
+6. No new workflow state, registry, ledger, cursor, policy engine, carrier protocol, or competing owner is introduced.
 
 ## Scope and non-goals
 
-In scope are the two canonical specification owners, the existing executable current-state/dispatch and application/effect boundaries, and focused regression tests for the acceptance boundary. The only formal workflow target is Issue #229.
+In scope are the two canonical OpenSpec owners, existing scheduled-agent reconstruction/dispatch/application/effect boundaries, and focused executable regressions. The only formal workflow target is Issue #229.
 
-Out of scope are Issue #218, historical Issue reopening or rewriting, semantic correctness that requires Human or mapped Role judgment, generic provenance/security frameworks, new persistent workflow state, new transport or GitHub App infrastructure, ruleset redesign, and unrelated product behavior.
+Out of scope are Issue #218, implementation execution in this Lead wake, historical Issue rewriting, semantic correctness requiring Human or mapped Role judgment, generic provenance/security infrastructure, new persistent state, and unrelated product behavior.
 
 ## Delivery
 
-This is one independently reviewable implementation stage. The stage records the complete affirmative-qualification outcome, its N-1 prerequisites, vertical implementation slices, and executable exit checks. The application owns Change materialization and later lifecycle routing; this Propose result does not execute a successor in the current wake.
+This is one independently reviewable semantic correction stage. It records the parent outcome, current stage boundary, N-1 prerequisites, observable verification boundary, and remaining lifecycle continuation. The application owns materialization and later routing; this Lead result does not execute the successor in the current wake.
