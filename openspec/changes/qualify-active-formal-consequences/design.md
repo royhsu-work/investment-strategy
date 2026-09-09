@@ -2,73 +2,94 @@
 
 ## Decision boundary
 
-The parent outcome is repository-wide and remains small:
+The approved parent outcome remains:
 
+```text
 observable current evidence
 + explicit machine-decidable predicates
 → qualification by the existing executable owner of the consequence
 → consequence becomes eligible
+```
 
-Issue #229 is one concrete P0 proof case. The latest direct Human correction is issuecomment-5598442708. It removes workflow-specific mechanics from the generic rule, removes actor identity as a trust boundary, requires latest-applicable-transition binding including ABA, and requires no-delta dispositions before implementation.
+The active-formal scheduled-agent provenance gap is one concrete P0 proof case. The latest correction, issuecomment-5600436554, adds a required application-correlation and staged-cutover boundary without changing the parent outcome.
 
-Fresh evidence at main revision e4dcad8ad0326a6a38620998ee2f03ebcc060a19 is:
+Fresh evidence at default-branch revision `e4dcad8ad0326a6a38620998ee2f03ebcc060a19` is:
 
-- Issue #229 open, Change qualify-active-formal-consequences, action:resolve-question.
-- Existing PR #232 open on agent/qualify-active-formal-consequences at 2366bbfa853576b4d1f736c9833d7ed3b799822c.
-- Prior review PASS issuecomment-5597482415 targets 2366bbfa853576b4d1f736c9833d7ed3b799822c, but predates the material Human correction and is not approval of this revised meaning.
-- Application SPEC_BLOCKER issuecomment-5598786757 records the stale-review boundary.
+- Issue #229 is open with Change `qualify-active-formal-consequences` and `action:resolve-question`.
+- PR #232 is the existing same-Change carrier, open on `agent/qualify-active-formal-consequences` at exact head `ca4b66ca7cf5f89194ada8d4e5dcb2909807f640`.
+- Review PASS issuecomment-5599743969 targets that head, but the material correction issuecomment-5600436554 is newer; application result issuecomment-5600641388 correctly returned the workflow to Lead / resolve-question.
+- Current Issue events provide durable label/lifecycle ordering evidence, while current `scheduled_agent_runtime` preflight reconstructs Issue snapshots without complete lifecycle-event consumption.
 
-The existing Change and PR are updated in place. No new Change, PR, state, or workflow is introduced.
+The existing Change and PR are updated in place. No new Change, PR, workflow state, or control mechanism is introduced.
 
 ## Ownership and subtraction
 
-repository-governance owns one generic invariant: an existing canonical executable owner evaluates one affirmative qualification predicate before a machine-decidable repository consequence becomes eligible. It defines ownership and use of the result only. It does not define scheduled-agent routing, Change, ObservationProvenance, Action/Result, transport, carrier, terminal, or workflow-specific evidence.
+`repository-governance` owns one generic invariant: an existing canonical executable owner evaluates one affirmative qualification predicate before a machine-decidable repository consequence becomes eligible. It defines ownership and use of the result only. It does not define scheduled-agent routing, `Change`, `ObservationProvenance`, Action/Result, transport, carrier, terminal, or workflow-specific evidence.
 
-scheduled-agent-workflow owns the concrete P0 predicate. Existing executable owners remain:
+The existing scheduled-agent owner owns the concrete predicate. Existing executable owners remain:
 
-- scheduled_agent_runtime.py and workflow_dispatch.py for fresh current-state reconstruction and dispatch input;
-- scheduled_agent_action_model.py for the finite Action/Role/Result vocabulary, legal transitions, and model-derived successor;
-- scheduled_agent_effects.py and the application bridge for fresh application authorization and durable effect postconditions;
-- existing GitHub event, comment, label, branch, PR, and commit surfaces for evidence; and
+- `scheduled_agent_runtime.py` and `workflow_dispatch.py` for fresh current-state reconstruction and dispatch input;
+- `scheduled_agent_action_model.py` for the finite Action/Role/Result vocabulary, legal transitions, and model-derived successor;
+- `scheduled_agent_effects.py` and the application bridge for fresh application authorization, existing formal evidence, and durable effect postconditions;
+- GitHub Issue comments, lifecycle events, labels, branches, PRs, commits, and checks for observable evidence; and
 - the existing CarrierRequired plan for replaceable carrier execution.
 
-No new protocol, state registry, ledger, cursor, lease, retry state, policy engine, carrier type, or competing authority is introduced.
+The correction reuses these owners. It does not add a provenance framework, state registry, ledger, cursor, lease, retry state, receipt lifecycle, policy engine, carrier type, or competing authority.
 
-## Concrete qualification predicate
+## Stage 1 — produce correlation-bearing formal evidence
 
-For Change != unset, the existing scheduled-agent owner evaluates one predicate before dispatch or consequence:
+Stage 1 is the N-1 producer boundary. The existing application already receives an exact worker Action/Result, fresh-authorizes the current Issue/Change/Action and default-branch revision, derives the legal successor from the finite model, and observes the durable effect postcondition. Stage 1 adds the smallest application-owned correlation field(s) to the existing formal evidence written for that transition.
 
-1. Reconstruct the current Issue, routing, lifecycle, PR/ref, relevant comments, events, and default-branch revision from current GitHub evidence.
-2. Identify the latest applicable repository-authorized transition for the same Issue and immutable Change. Its evidence contains the accepted Action/Result and binds current Action/Role identity, relevant source and default-branch revisions, and model-derived next_action when a successor exists.
-3. Require the exact durable postcondition for that transition: current action label or terminal/close state, linked PR/ref/commit where applicable, or another existing application-owned postcondition.
-4. Order candidates with existing durable lifecycle/event history and reject a candidate if a later relevant mutation supersedes it. Actor, connector, carrier, timestamp, or value equality alone never supplies the binding.
-5. Mark the observation QUALIFIED only when one unique coherent binding remains. Otherwise mark it INDETERMINATE and let the existing complete-observation/dispatch boundary fail closed.
+The correlation representation is part of the existing formal evidence, not a new receipt protocol. It is generated or completed by the repository application from the exact application request/run and authorization context; a connector, actor, timestamp, or worker-supplied value is not trusted as the binding. It must make the following chain reconstructable:
 
-This is reconstruction-time judgment, not a persisted workflow state. The application still derives routing, successor, terminal, and success effects from the finite model and postconditions.
+```text
+accepted Action / Result
+→ exact repository application authorization
+→ model-derived routing or terminal consequence
+→ exact durable postcondition
+```
+
+Stage 1 keeps the current acceptance behavior. It produces correlation-bearing evidence for new application transitions but does not yet make the existing dispatch consumer require that evidence. That separation prevents a first Stage-2 wake from treating an old pre-Stage-1 route as proof or from introducing a permanent legacy exception.
+
+## Stage 2 — consume qualification at existing boundaries
+
+Stage 2 extends the existing current-state reconstruction and dispatch preflight to consume:
+
+1. the current Issue/Change/routing or terminal observation;
+2. the latest applicable correlation-bearing formal evidence;
+3. the exact accepted Action/Result and application authorization binding;
+4. the model-derived successor or terminal effect; and
+5. the exact durable postcondition.
+
+The existing GitHub Issue lifecycle-event surface is read to order relevant mutations and identify later supersession. It is not used as authorization. Actor and timestamp remain descriptive metadata. A unique current binding yields `QUALIFIED`; missing, contradictory, or superseded binding yields `INDETERMINATE`, which flows through the existing complete-observation and fail-closed dispatch/application boundary.
+
+The late formal equality shortcut is removed when the Stage-2 ingress/application qualification path is active. Current equality can support an idempotent observation after qualification, but it cannot establish qualification. No second predicate is retained as a competing authority.
 
 ## Latest transition and ABA
 
 The current value is not provenance identity:
 
-- T1: repository-authorized transition A to B;
-- T2: out-of-band mutation B to C;
-- T3: out-of-band mutation C to B;
-- fresh current state equals B.
+```text
+T1 repository-authorized transition A → B
+T2 out-of-band mutation B → C
+T3 out-of-band mutation C → B
+fresh current state == B
+```
 
-T1 is not applicable to the current B. The owner must bind the fresh observation to the latest applicable qualified transition and show that no later relevant mutation superseded it. If that cannot be established, the current active-formal observation is INDETERMINATE.
+Lifecycle events establish that T2/T3 are later relevant mutations. T1's correlation therefore cannot qualify the fresh B. The owner must find a later applicable repository-authorized correlation and exact postcondition for the current B; otherwise the observation is `INDETERMINATE`.
 
-## Evidence reuse and smallest fallback
+## Evidence reuse and minimal representation
 
-First reuse existing evidence:
+Reuse, in order:
 
-- Issue event identity and lifecycle ordering for label, close, reopen, and related mutations;
-- existing formal Action/Result comments and exact revision fields;
-- application authorization against current main;
-- current finite transition derivation;
-- branch, PR, commit, and exact postcondition observation; and
-- existing CarrierRequired plan and later ref/PR postcondition.
+- existing formal Action/Result, review, and merge evidence;
+- application authorization against the exact current default-branch revision;
+- the finite Action/Role/Result transition derivation;
+- current Issue and terminal postcondition observations;
+- Issue lifecycle events for ordering and supersession/ABA; and
+- the existing CarrierRequired plan and later ref/PR/terminal postcondition.
 
-Event history is ordering evidence, but actor and timestamp are not sufficient. If implementation proves these surfaces cannot uniquely establish causal binding, add only the smallest exact correlation identity required for that one binding. Do not add a registry, ledger, cursor, second protocol, or generic provenance framework.
+Only if implementation proves that this existing chain cannot be correlated uniquely may the application add the minimum field(s) to the existing formal evidence. That field addition is the approved correlation boundary; it must not become a registry, ledger, cursor, workflow state, receipt lifecycle, second protocol, or generic provenance service.
 
 ## No-delta dispositions
 
@@ -77,25 +98,25 @@ Event history is ordering evidence, but actor and timestamp are not sufficient. 
 | First Change materialization | Existing Lead / propose-change application path is sufficient; no delta. |
 | Change: unset intake | Existing Explore/Propose pre-activation contract remains; no active-formal guard before Change persistence. |
 | Carrier execution | Existing CarrierRequired boundary and immutable plan remain; carrier identity is not authority. |
-| OpenSpec authoring guidance | Current openspec/config.yaml is sufficient; no delta. |
-| #218 | Downstream boundary remains unchanged and out of scope. |
+| OpenSpec authoring guidance | Current `openspec/config.yaml` is sufficient; no delta. |
 | Action/Role/Result model | Existing finite model remains sole executable owner; no new vocabulary. |
-
-## Application and delivery boundary
-
-The Lead correction changes only the semantic OpenSpec work product. Existing application materialization remains responsible for checking exact main authorization, current Issue/Action/Role and PR identity, resolving content-addressed blobs into one Change-branch commit, requiring the existing carrier plan for the branch/ref move, and validating the exact PR head before deriving a successor.
-
-A carrier-required invocation persists only its exact plan and stops. A later fresh wake reconstructs current state and applies only still-missing effects. No successor is executed in the same wake.
+| #218 | Downstream boundary remains unchanged and out of scope. |
 
 ## Verification boundary
 
-The implementation must prove observable behavior:
+Stage 1 must prove that new repository application transitions produce durable correlation-bearing formal evidence while current acceptance remains compatible. Stage 2 must prove:
 
-- Change: unset legitimate intake remains eligible;
-- qualified repository-authorized active route and terminal boundary are accepted;
-- direct/out-of-band, structurally valid, equal-valued, actor/timestamp-only, missing, stale, ambiguous, contradictory, and superseded state fails closed;
-- the ABA sequence does not inherit T1 qualification;
-- an exact carrier plan followed by its observed postcondition qualifies only on a later fresh wake; and
-- WIP, priority, finish-first, no-rewind, no-fallback, materialization, configuration, and downstream boundaries remain unchanged.
+- one qualified repository-owned active route or terminal boundary is accepted;
+- a connector/out-of-band route or close without the application chain is `INDETERMINATE` and fails closed;
+- equality without a current application binding is not qualification;
+- the ABA sequence cannot inherit T1 qualification;
+- lifecycle events are used for ordering/supersession only;
+- an exact carrier plan qualifies only after a later fresh postcondition observation;
+- `Change: unset` intake remains compatible; and
+- WIP, priority, finish-first, no-rewind, no-fallback, materialization, configuration, Action/Role/Result, and #218 boundaries remain unchanged.
 
-Final gates are focused tests, full Python tests, Ruff check and format check, mypy, and strict OpenSpec validation at the exact independently reviewed revision.
+Final gates for each exact implementation revision remain focused tests, full Python tests, Ruff check and format check, mypy, and strict OpenSpec validation. Independent semantic review is required after each material OpenSpec revision before the next stage is consumed.
+
+## Delivery and continuation
+
+Stage 1 is independently executable, testable, reviewable, mergeable, and deployable on current N-1. Its exit evidence is correlation-bearing formal application evidence plus preserved current acceptance. Stage 2 is the mandatory continuation and consumes that evidence on the then-current default branch. The existing `MORE_IMPLEMENTATION_REQUIRED` result records the continuation; no stage label, migration state, or alternate runtime path is added.

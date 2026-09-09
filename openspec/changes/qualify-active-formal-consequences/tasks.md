@@ -1,51 +1,42 @@
 # Tasks: Qualify active formal consequences
 
-## Delivery stage 1 — One independently reviewable implementation stage
+## Parent outcome and staged delivery contract
 
-Parent outcome: correctness-critical active formal state participates in dispatch and consequence only after affirmative repository-authorized qualification, while legitimate Change: unset intake and semantic Human or mapped Role boundaries remain intact.
+Parent outcome: correctness-critical repository consequences become eligible only after observable current evidence is qualified by the existing executable owner through explicit machine-decidable predicates. The scheduled-agent active-formal provenance gap is the concrete proof and current delivery target; it does not replace the parent outcome.
 
-Current stage boundary: revise the existing Change semantics and acceptance contract only. Do not execute implementation in this Lead wake. Later implementation changes existing current-state, dispatch, application, and regression surfaces; it adds no workflow state, registry, ledger, cursor, protocol, carrier type, or policy engine.
+Stage 1 boundary: produce application-correlation-bearing evidence inside the existing formal Action/Result evidence while preserving current acceptance behavior.
 
-N-1 prerequisites: current default-branch governance and OpenSpec configuration; finite Action/Role/Result model; complete GitHub Issue and lifecycle-event reconstruction; existing formal evidence parsing; application reauthorization; current routing, terminal, PR, ref, commit, and carrier postcondition observation; and the existing quality and strict OpenSpec validation harness.
+Stage 2 boundary: consume that correlation plus lifecycle-event ordering at the existing current-state, dispatch, and application boundaries; remove equality-only authority and enforce `QUALIFIED` / `INDETERMINATE`.
 
-Stage exit criteria: all implementation slices are verified at one exact revision; direct, equality-only, actor/timestamp-only, missing, stale, ambiguous, contradictory, and ABA-superseded active formal state fails closed; repository-authorized state proceeds; Change: unset compatibility and selection semantics remain intact; quality and strict OpenSpec checks pass; and no unrelated Issue or product scope is present.
+N-1 prerequisites:
 
-## Slice 1 — Establish one qualification owner
+- current default-branch governance and the finite Action/Role/Result model;
+- complete current Issue snapshot reconstruction and current `ObservationProvenance` plumbing;
+- existing formal Action/Result parsing, application reauthorization, derived successor/terminal effects, CarrierRequired handling, and exact postcondition observation;
+- GitHub Issue lifecycle-event evidence is available as an authoritative read surface for ordering/supersession, but current dispatch preflight does not yet consume complete lifecycle-event reconstruction;
+- existing quality, strict OpenSpec validation, exact-revision, and independent review gates.
 
-Trace: parent outcome -> repository-governance invariant -> existing scheduled-agent current-state owner.
+Stage 1 exit criteria: every new repository application transition emits the minimum application-owned correlation in existing formal evidence; the correlation binds accepted Action/Result, application authorization, model-derived consequence, and exact durable postcondition; current acceptance behavior remains; no new workflow state/protocol/registry exists; and all Stage-1 tests and quality gates are green.
 
-- [ ] 1.1 RED: add fixtures for one machine-decidable consequence with qualified, unqualified, missing, stale, ambiguous, contradictory, and structurally matching evidence.
-- [ ] 1.2 RED: prove the generic owner rule is represented once and consumers cannot create a second acceptance shortcut.
-- [ ] 1.3 GREEN: carry affirmative active-formal qualification through existing current observations without persisting new workflow state.
-- [ ] 1.4 REFACTOR: keep the concrete predicate in the existing scheduled-agent executable owner and remove duplicate authority if introduced.
-- [ ] 1.5 VERIFY: run focused owner/observation tests, full Python tests, Ruff check, Ruff format check, mypy, and strict OpenSpec validation.
+Stage 2 exit criteria: the existing owners consume correlation and lifecycle ordering; one current binding is `QUALIFIED`; missing/out-of-band/equality-only/ABA-superseded state is `INDETERMINATE` and fails closed; carrier and `Change: unset` compatibility remain; the equality shortcut is removed; and all parent exit criteria and quality gates are green.
 
-## Slice 2 — Bind the latest transition and exact postcondition
+Remaining mandatory outcome after Stage 1: Stage 2 qualification consumption and equality-shortcut removal remain required. Stage 1 completion is not parent completion. Use the existing `MORE_IMPLEMENTATION_REQUIRED` continuation to preserve this boundary; after Stage 2, use the existing implementation-ready path and later review/merge/lifecycle gates.
 
-Trace: scheduled-agent-workflow modified requirement -> existing Action/Result evidence -> application authorization -> exact durable state.
+## Slice 1 — Produce correlation-bearing formal evidence (Stage 1)
 
-- [ ] 2.1 RED: prove a fresh repository-authorized Action/Result with matching Issue, Change, Action/Role, revisions, model-derived next_action, and exact postcondition is QUALIFIED.
-- [ ] 2.2 RED: prove direct or connector transport without application binding, actor/timestamp-only evidence, and merely structural or equal-valued state is INDETERMINATE.
-- [ ] 2.3 GREEN: reuse formal marker parsing, application reauthorization, finite transition derivation, lifecycle/event ordering, and postcondition observation.
-- [ ] 2.4 RED: add A-to-B, B-to-C, C-to-B and prove historical A-to-B evidence cannot qualify the ABA return.
-- [ ] 2.5 GREEN: accept an exact carrier plan only through application authorization and later observed postcondition; keep the carrier a replaceable actuator.
-- [ ] 2.6 VERIFY: run focused transition, ABA, postcondition, carrier regressions and all current quality checks.
+Trace: parent outcome -> `repository-governance` invariant -> existing application authorization/evidence owner.
 
-## Slice 3 — Enforce qualification before dispatch and consequence
+- [ ] 1.1 RED: add focused tests showing the existing formal result/postcondition chain lacks a machine-verifiable application-correlation binding, while preserving a fixture for the current acceptance path.
+- [ ] 1.2 GREEN: add the minimum application-owned correlation field(s) to the existing formal Action/Result evidence and bind them to the exact accepted source, application authorization, model-derived consequence, and durable postcondition.
+- [ ] 1.3 REFACTOR: reuse the existing formal evidence parser, application bridge, and postcondition observation; remove any duplicate receipt, transport, or correlation path.
+- [ ] 1.4 VERIFY: run the focused Stage-1 evidence tests, full Python tests, Ruff check, Ruff format check, mypy, and strict OpenSpec validation at the exact revision; verify Stage 1 preserves current acceptance and leaves the Stage-2 continuation explicit.
 
-Trace: current-state qualification -> deterministic dispatch -> application/effect guard.
+## Slice 2 — Consume latest qualified transition at existing boundaries (Stage 2)
 
-- [ ] 3.1 RED: prove a syntactically valid active route or terminal close fails closed before dispatch without affirmative qualification, even when equal to the requested target.
-- [ ] 3.2 GREEN: make active-formal qualification part of existing dispatch preflight while preserving complete enumeration, formal priority, single-active WIP, finish-first, no-rewind, and no-fallback.
-- [ ] 3.3 RED: prove the existing equality-only formal transition path cannot accept an out-of-band route or terminal transition.
-- [ ] 3.4 GREEN: make derived routing and terminal effects consume the one qualified evidence path; retain idempotent observation only after qualification.
-- [ ] 3.5 VERIFY: run focused dispatch/application tests, full Python quality, and strict OpenSpec validation.
+Trace: correlation-bearing formal evidence + lifecycle ordering -> current-state reconstruction/dispatch -> application/effect qualification.
 
-## Slice 4 — Preserve no-delta boundaries and observable behavior
-
-Trace: Human correction -> existing owners -> integration verification.
-
-- [ ] 4.1 RED: add integration regressions for Change: unset intake, repository-authorized active success, direct mutation failure, equality-only failure, ABA failure, exact carrier later-wake qualification, priority/WIP, finish-first, no-rewind, and no-fallback.
-- [ ] 4.2 GREEN: preserve first Change materialization, CarrierRequired, finite Action/Role/Result, and OpenSpec configuration; add no new registry, ledger, cursor, protocol, carrier mechanism, or second DAG.
-- [ ] 4.3 REFACTOR: remove redundant qualification, actor-based trust, equality shortcuts, or fallback code and keep #218 outside the implementation surface.
-- [ ] 4.4 VERIFY: run focused and full tests, Ruff, mypy, strict OpenSpec validation, and exact repository checks at the final implementation revision.
+- [ ] 2.1 RED: add focused fixtures for a qualified repository-owned transition, a direct/out-of-band route or close, current equality without a current binding, the A→B→C→B ABA sequence, exact carrier completion observed on a later wake, and `Change: unset` intake.
+- [ ] 2.2 GREEN: reconstruct the relevant Issue lifecycle events, select the latest applicable transition for the same Issue/Change, consume the correlation-bearing application evidence and exact postcondition, and classify the current formal observation as `QUALIFIED` only when one coherent binding exists; otherwise use existing `INDETERMINATE` / fail-closed handling.
+- [ ] 2.3 GREEN: make dispatch and application/effect consequences consume the one qualified observation path and remove the existing equality-only formal authority shortcut, while preserving finite Action/Role/Result, WIP/priority/finish-first/no-rewind/no-fallback, and CarrierRequired semantics.
+- [ ] 2.4 REFACTOR: keep lifecycle events limited to ordering/supersession/ABA, keep actor/connector/carrier/timestamp/value identity non-authoritative, and delete any redundant late authority check or permanent legacy fallback made unnecessary by ingress qualification.
+- [ ] 2.5 VERIFY: run the focused qualification, lifecycle-ordering, ABA, carrier, terminal, equality, and pre-activation tests; then run full Python tests, Ruff check, Ruff format check, mypy, strict OpenSpec validation, and exact repository checks at the final revision.
