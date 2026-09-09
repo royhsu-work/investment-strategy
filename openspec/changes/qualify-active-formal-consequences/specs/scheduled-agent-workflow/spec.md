@@ -12,7 +12,7 @@ Connector ingress remains limited to the bounded untrusted EFFECT_REQUEST transp
 
 Existing pre-activation behavior for Change: unset SHALL remain compatible: legitimate bounded Explore/Propose intake follows the current pre-activation contract and does not require active-formal provenance before Change is persisted.
 
-#### Scenario: Direct active routing without application binding fails closed
+#### Scenario: Connector-authored active routing fails closed
 
 - GIVEN a coordination Issue has Change != unset and a direct connector or other out-of-band mutation makes a syntactically valid action:* route current without the applicable application authorization and exact postcondition
 - WHEN current-state reconstruction or dispatch observes the active formal state
@@ -20,7 +20,7 @@ Existing pre-activation behavior for Change: unset SHALL remain compatible: legi
 - AND the application fails closed without accepting the route or deriving a successor
 - AND it does not auto-rewind or launder the mutation through reconciliation
 
-#### Scenario: Premature close without application binding fails closed
+#### Scenario: Connector-authored premature close fails closed
 
 - GIVEN a coordination Issue has Change != unset and a direct connector or other out-of-band mutation closes the Issue or presents terminal evidence without the applicable application authorization and exact postcondition
 - WHEN current-state reconstruction or the application freshly reconstructs the formal lifecycle
@@ -28,7 +28,7 @@ Existing pre-activation behavior for Change: unset SHALL remain compatible: legi
 - AND no terminal or success effect is accepted or derived
 - AND the next legal handling remains governed by fresh repository-owned evidence rather than the direct mutation
 
-#### Scenario: Repository-authorized formal transition remains qualified
+#### Scenario: Repository-owned formal transition remains qualified
 
 - GIVEN a coordination Issue has Change != unset and the application has fresh authorization, emits the accepted Action/Result, binds the source and default-branch revisions and model-derived next_action, and observes its exact durable postcondition
 - AND the physical writer may be a replaceable carrier acting under that authorization
