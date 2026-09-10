@@ -342,11 +342,7 @@ def main() -> int:
     if not plan.should_apply:
         _write_validation_outputs(None)
         return 0
-    if (
-        plan.source is None
-        or plan.raw_worker_result is None
-        or plan.request_comment_id is None
-    ):
+    if plan.source is None or plan.raw_worker_result is None or plan.request_comment_id is None:
         raise RuntimeError("application plan is missing validated source/result/request identity")
 
     materializations = _materialization_effects(plan.raw_worker_result, plan.source)

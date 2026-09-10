@@ -1902,9 +1902,7 @@ class GitHubEffectAdapter:
             return body
 
         correlation_indexes = [
-            index
-            for index, line in enumerate(lines)
-            if line.startswith("Application-Correlation:")
+            index for index, line in enumerate(lines) if line.startswith("Application-Correlation:")
         ]
         if len(correlation_indexes) > 1:
             raise RuntimeError("formal result has duplicate Application-Correlation fields")
