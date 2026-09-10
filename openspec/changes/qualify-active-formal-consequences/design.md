@@ -2,127 +2,107 @@
 
 ## Decision boundary
 
-The approved parent outcome remains:
+The approved parent outcome is machine-decidable consequence eligibility qualified by the existing executable owner from observable current evidence. The concrete scheduled-agent repair applies the #133/#134 decision-atomicity precedent:
 
 ```text
-observable current evidence
-+ explicit machine-decidable predicates
-→ qualification by the existing executable owner of the consequence
-→ consequence becomes eligible
+authoritative observation set
+→ one executable decision surface
+→ one structured decision
+→ all consequence consumers reuse that decision
 ```
 
-The active-formal scheduled-agent provenance gap is one concrete P0 proof case. The durable Human correction issuecomment-5602555101 preserves that parent outcome while materially tightening correlation, staged activation, continuation-carrier, lifecycle-ordering, and artifact-freshness semantics. It supersedes earlier revision-bound acceptance for the changed meaning.
+The final Human decisions are issuecomment-5607080928 and issuecomment-5611740462. The design preserves one Issue, one immutable Change, the two deployment stages, and #218 as a downstream boundary.
 
-The current Change and its existing physical carrier remain the semantic vehicle. A later physical implementation carrier is allowed only as the same Change's replaceable work-product carrier after the Stage 1 merge boundary; it is not a second workflow, Change, state machine, or stage registry.
+## Architecture-precedent disposition
 
-## Ownership and subtraction
+| Candidate delta | Consequence and current owner | Disposition |
+| --- | --- | --- |
+| Generic machine-decidable consequence rule | `repository-governance` one-authoritative-surface requirement | `CONSOLIDATE`: extend that requirement instead of adding a second generic requirement. |
+| Active-formal qualification | Existing scheduled-agent current-state/application owner | `REUSE`: add one domain qualification decision to the existing owner. |
+| `ObservationProvenance` result space | Existing Action model/runtime | `NO-DELTA`: reuse `QUALIFIED | INDETERMINATE`. |
+| Application correlation | Existing formal result/application evidence chain | `ADD`: add only the minimum identity missing from the current causal binding. |
+| Lifecycle ordering | GitHub Issue lifecycle read surface plus existing reconstruction | `REUSE`: use it only for ordering, supersession, and ABA. |
+| Continuation carrier | Existing materialization and CarrierRequired owners | `CONSOLIDATE`: extend only the missing post-merge same-Change case. |
+| Architecture-precedent discovery | `agents/AGENTS.md` shared governance | `ADD`: add a short hook that points changes back to their consequence and owner before another control concept is retained. |
 
-`repository-governance` owns one generic invariant: an existing canonical executable owner evaluates one affirmative qualification predicate before a machine-decidable repository consequence becomes eligible. It defines ownership and use of the result only. It does not define scheduled-agent routing, `Change`, `ObservationProvenance`, Action/Result, transport, carrier, terminal, or workflow-specific evidence.
+No new decision owner, workflow graph, or persistent state is required.
 
-The existing scheduled-agent owners remain:
+## One qualification decision
 
-- `scheduled_agent_runtime.py` and `workflow_dispatch.py` for fresh current-state reconstruction and dispatch input;
-- `scheduled_agent_action_model.py` for the finite Action/Role/Result vocabulary, legal transitions, and model-derived successor;
-- `scheduled_agent_effects.py` and the application bridge for fresh application authorization, existing formal evidence, and durable effect postconditions;
-- GitHub Issue snapshots and lifecycle events for observable current evidence and ordering/supersession only; and
-- the existing CarrierRequired plan for replaceable carrier execution.
+The existing active-formal owner receives one immutable `QualificationInput` containing:
 
-The correction reuses these owners. It does not add a provenance framework, state registry, ledger, cursor, lease, retry state, receipt lifecycle, policy engine, carrier type, or competing authority.
+- exact current Issue, immutable Change, current Action or terminal/close candidate;
+- the accepted typed Action/Result and model-derived consequence;
+- the minimum exact application request/run correlation produced by Stage 1;
+- the exact durable postcondition for that consequence;
+- a complete relevant lifecycle observation ordered by durable event identity; and
+- the absence of a later relevant mutation that supersedes the binding, including an A→B→C→B sequence.
 
-## Stage 1 — produce correlation-bearing formal evidence and continuation capability
+`qualify_current_formal_consequence(input)` returns only the existing `ObservationProvenance.QUALIFIED` or `ObservationProvenance.INDETERMINATE`. Consumers receive this structured decision. Dispatch and application/lifecycle code do not separately rebuild or reinterpret the same predicates.
 
-Stage 1 is the N-1 producer boundary. The existing application receives an exact worker Action/Result, fresh-authorizes the current Issue/Change/Action and default-branch revision, derives the legal successor from the finite model, and observes the durable effect postcondition.
+Structural validity and value equality may participate in postcondition reconciliation only after qualification. Actor, connector, carrier, timestamp, or physical writer identity does not supply consequence authority. Lifecycle events establish ordering and supersession, not application authorization.
 
-Stage 1 must add the minimum application-owned correlation to existing formal evidence. The correlation is mandatory and must make this chain uniquely reconstructable:
+## Decision atomicity and mutation atomicity
+
+The qualification call decides whether a current consequence is eligible. A `QUALIFIED` result does not perform a mutation and does not weaken the existing mutation boundary:
 
 ```text
-accepted Action / Result
-→ exact repository application authorization
-→ model-derived routing or terminal consequence
-→ exact durable postcondition
+qualification decision
+→ fresh application reauthorization
+→ exact necessary effect
+→ fresh postcondition observation
 ```
 
-Stage 1 must also provide the minimum existing-owner continuation-carrier capability needed after the Stage 1 implementation carrier is merged. After the existing review and merge Actions, `finalize-change` returns `MORE_IMPLEMENTATION_REQUIRED`; a later fresh wake may then materialize a fresh Stage 2 carrier from the then-current default branch through the same Change/Issue/application boundary.
+This keeps a single semantic/control decision while preserving effect-specific stale checks, carrier separation, and exact postconditions.
 
-Stage 1 keeps current acceptance compatible. It does not deploy the Stage 2 consumer, introduce a stage state, or treat a same-Action `MORE_IMPLEMENTATION_REQUIRED` result as a default-branch activation boundary.
+## Stage 1 — evidence producer and continuation capability
 
-## Stage 2 — consume qualification at existing boundaries
+Current N-1 already parses typed results, authorizes their exact source, derives the successor/terminal effect, applies it, and observes the postcondition. Stage 1 augments that existing chain with the minimum durable correlation needed to bind those facts uniquely. Current acceptance remains active; the strict qualification consumer is not deployed yet.
 
-Stage 2 extends the existing current-state reconstruction and dispatch/application owners to consume:
-
-1. the current Issue/Change/routing or terminal observation;
-2. a complete relevant lifecycle observation;
-3. the latest applicable correlation-bearing formal evidence for the same Issue and immutable Change;
-4. the exact accepted Action/Result and application authorization binding;
-5. the model-derived successor or terminal effect; and
-6. the exact durable postcondition.
-
-Lifecycle events establish the order of relevant mutations and identify later supersession or ABA. They are not authorization. Actor, timestamp, connector, carrier, and value equality remain descriptive or structural evidence only. If the relevant lifecycle observation is incomplete, contradictory, stale, or cannot establish a unique current binding, the owner returns `INDETERMINATE` and the existing fail-closed boundary applies.
-
-The late formal equality shortcut is removed when the Stage 2 qualified path is consumed. Current equality can support an idempotent observation after qualification, but cannot establish qualification. No second predicate is retained as a competing authority.
-
-## Latest transition and ABA
-
-The current value is not provenance identity:
+Stage 1 also adds the short `agents/AGENTS.md` discovery hook and extends the existing materialization owner for one missing case:
 
 ```text
-T1 repository-authorized transition A → B
-T2 out-of-band mutation B → C
-T3 out-of-band mutation C → B
-fresh current state == B
+same open Issue
++ same immutable Change
++ prior implementation carrier is exact merged history
++ current repository-derived implement-change remains
++ no eligible current implementation carrier
+→ materialize one fresh replacement carrier from current default branch
 ```
 
-Lifecycle evidence establishes that T2/T3 are later relevant mutations. T1's correlation therefore cannot qualify the fresh B. The owner must find a later applicable repository-authorized correlation and exact postcondition for the current B; otherwise the observation is `INDETERMINATE`.
+The carrier remains an actuator. The content-addressed manifest, fresh authorization, exact branch/PR identities, CarrierRequired boundary, and postcondition checks remain unchanged.
 
-## Evidence reuse and minimum representation
+## Stage 2 — qualification consumer
 
-Reuse, in order:
+After Stage 1 is reviewed, merged, active on the default branch, and `finalize-change` returns `MORE_IMPLEMENTATION_REQUIRED`, a later wake uses a fresh carrier. Stage 2:
 
-- existing formal Action/Result, review, and merge evidence;
-- application authorization against the then-current default-branch revision;
-- the finite Action/Role/Result transition derivation;
-- current Issue and terminal postcondition observations;
-- complete lifecycle events for ordering and supersession/ABA; and
-- the existing CarrierRequired plan and later ref/PR/terminal postcondition.
+1. reconstructs complete relevant lifecycle ordering;
+2. builds the one `QualificationInput` from current identity, correlation-bearing evidence, model consequence, and exact postcondition;
+3. calls the single qualifier;
+4. passes its structured result to every active-routing and terminal/close consumer; and
+5. deletes the equality-only authority shortcut and any duplicate local reconstruction made redundant by the qualifier.
 
-Application-owned correlation is required. The implementation may choose only the minimum field or identity representation inside existing formal evidence that makes the chain unique. If existing evidence cannot do so, add only that minimum representation; do not create a registry, ledger, cursor, workflow state, receipt lifecycle, second protocol, or generic provenance service.
+If relevant lifecycle evidence or any binding dimension is unavailable or incoherent, the qualifier returns `INDETERMINATE` and the existing fail-closed path applies.
 
-## No-delta dispositions
+## Activation and compatibility
 
-| Boundary | Disposition |
-| --- | --- |
-| First Change materialization | Existing Lead / propose-change application path remains the owner; exact validation and postconditions remain mandatory. |
-| Continuation carrier | Reuse the existing content-addressed materialization and CarrierRequired boundary; add only the minimum capability needed to bind a fresh post-merge carrier to the same Issue/Change. |
-| Change: unset intake | Existing Explore/Propose pre-activation contract remains. |
-| Carrier execution | Existing CarrierRequired boundary and immutable plan remain; carrier identity is not authority. |
-| OpenSpec authoring guidance | Current `openspec/config.yaml` remains the owner; no delta is required. |
-| Action/Role/Result model | Existing finite model remains sole executable owner; no new vocabulary. |
-| #218 | Downstream boundary remains unchanged and out of scope. |
+The default-branch merge remains the prospective activation boundary. Stage 2 does not retroactively invalidate or reopen workflows already terminal before activation. An active workflow rerouted or closed after activation without a qualifying current binding is `INDETERMINATE`; there is no migration registry, grandfather flag, or fallback.
 
-## Verification boundary
+`Change: unset` pre-activation behavior bypasses the active-formal qualifier and remains under existing admission semantics. Exact carrier completion becomes eligible only after a later fresh observation binds the application plan to its postcondition. Human gates, merge gates, typed successor derivation, WIP/finish-first, and carrier authority remain with their existing owners.
 
-Stage 1 must prove:
+## Staged-delivery evidence tuple
 
-- new repository application transitions produce mandatory application-owned correlation in existing formal evidence;
-- the correlation binds accepted Action/Result, application authorization, model-derived consequence, and exact durable postcondition;
-- current acceptance behavior remains compatible;
-- the minimum continuation-carrier capability can establish a fresh Stage 2 carrier from the then-current default branch after Stage 1 merge; and
-- no new workflow state, protocol, registry, or permanent legacy fallback is introduced.
+| Evidence | Stage 1 | Stage 2 |
+| --- | --- | --- |
+| Parent outcome | Preserved in full | Completed in full |
+| N-1 prerequisite | Existing Action/Result application chain and materialization owner | Stage-1 correlation producer and continuation carrier active on default branch |
+| Stage boundary | Produce binding; preserve acceptance; enable later carrier | Consume one qualifier; remove equality authority |
+| Exit criteria | Correlation, discovery hook, continuation capability, all gates green | Qualified and adverse cases, single-consumer path, all gates green |
+| Remaining mandatory outcome | Strict qualification consumption | None after all parent criteria pass |
+| Required continuation | Review → merge → finalize → `MORE_IMPLEMENTATION_REQUIRED` | Normal review/merge/finalize/archive lifecycle |
 
-Stage 2 must prove:
+## Verification
 
-- one qualified repository-owned active route or terminal boundary is accepted;
-- a connector/out-of-band route or close without the application chain is `INDETERMINATE` and fails closed;
-- equality without a current application binding is not qualification;
-- incomplete lifecycle observation is `INDETERMINATE`;
-- the ABA sequence cannot inherit T1 qualification;
-- lifecycle events are used for ordering/supersession only;
-- an exact carrier plan qualifies only after the later fresh postcondition observation;
-- `Change: unset` intake remains compatible; and
-- WIP, priority, finish-first, no-rewind, no-fallback, materialization, configuration, Action/Role/Result, and #218 boundaries remain unchanged.
+Stage 1 tests prove correlation uniqueness, preservation of current acceptance, the shared discovery hook, and the exact post-merge continuation-carrier predicates. Stage 2 tests prove qualified routing/terminal cases, missing or incomplete binding, out-of-band equality, ABA supersession, carrier and pre-activation compatibility, and single-decision consumption.
 
-Final gates for each exact implementation revision remain focused tests, full Python tests, Ruff check and format check, mypy, and strict OpenSpec validation. Independent semantic review is required after each material OpenSpec revision before the next stage is consumed.
-
-## Delivery and continuation
-
-The Change has two delivery stages, not two workflow states. Stage 1 crosses the existing implementation review, merge, and finalization lifecycle. `MORE_IMPLEMENTATION_REQUIRED` preserves the mandatory Stage 2 continuation. A later fresh wake uses the existing application/materialization owner to establish a new physical carrier from the then-current default branch, while preserving the same Issue, immutable Change, exact authorization, and postcondition boundaries.
+Each stage runs focused tests, full `pytest`, Ruff check and format check, mypy, strict OpenSpec validation, current required repository checks, and independent exact-revision review.
