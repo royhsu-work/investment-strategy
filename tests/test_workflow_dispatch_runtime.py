@@ -127,10 +127,30 @@ def test_production_preflight_enumerates_closed_routing_debt(
         )
 
     monkeypatch.setattr(runtime, "_github_get_list_page", fake_page)
+
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"default_branch":"main"}'
+
+    def fake_urlopen(_request: object, timeout: int) -> FakeResponse:
+        assert timeout == 30
+        return FakeResponse()
+
+    monkeypatch.setattr(runtime, "urlopen", fake_urlopen)
     preflight = runtime.acquire_current_github_preflight("owner/repo", "token")
 
     assert requested_urls == [
-        "https://api.github.com/repos/owner/repo/issues?state=all&per_page=100&page=1"
+        "https://api.github.com/repos/owner/repo/issues?state=all&per_page=100&page=1",
+        (
+            "https://api.github.com/repos/owner/repo/issues/138/comments?per_page=100"
+            "&sort=created&direction=desc"
+        ),
     ]
     assert classify_dispatch(preflight).reason == "closed-routing-debt"
 

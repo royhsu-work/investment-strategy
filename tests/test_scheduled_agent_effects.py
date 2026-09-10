@@ -828,7 +828,9 @@ def test_repository_actions_formal_transition_is_qualified_after_comment_postcon
         "Role: executor\n"
         "Result: SPEC_BLOCKER\n"
         f"Revision: {_REVISION}\n"
+        f"Default-Branch-Revision: {_REVISION}\n"
         f"Application-Correlation: {correlation}\n"
+        "Repository-derived successor: Lead / resolve-question\n"
         "Evidence: application postcondition\n"
     )
     actions_comment = {
@@ -931,7 +933,9 @@ def test_fresh_adapter_reconstructs_durable_formal_binding_without_local_memory(
         "Role: executor\n"
         "Result: SPEC_BLOCKER\n"
         f"Revision: {_REVISION}\n"
+        f"Default-Branch-Revision: {_REVISION}\n"
         f"Application-Correlation: {correlation}\n"
+        "Repository-derived successor: Lead / resolve-question\n"
         "Evidence: exact durable postcondition\n"
     )
     durable_comments: list[dict[str, object]] = []
@@ -1376,7 +1380,9 @@ def test_merged_carrier_merge_is_idempotent_without_put(
         "Role: executor\n"
         "Result: MERGED\n"
         f"Revision: {expected_head}\n"
+        f"Default-Branch-Revision: {_REVISION}\n"
         f"Application-Correlation: {correlation}\n"
+        "Repository-derived successor: Lead / finalize-change\n"
         "Evidence: carrier recovery formal transition qualification"
     )
     actions_comment = {
@@ -2312,7 +2318,9 @@ def test_non_merge_carrier_recovery_observes_current_postcondition_without_repla
         "Role: executor\n"
         "Result: SPEC_BLOCKER\n"
         f"Revision: {_REVISION}\n"
+        f"Default-Branch-Revision: {_REVISION}\n"
         f"Application-Correlation: {correlation}\n"
+        "Repository-derived successor: Lead / resolve-question\n"
         "Evidence: carrier recovery formal transition qualification"
     )
     actions_comment = {
@@ -2552,3 +2560,4 @@ def test_merge_carrier_recovery_rejects_old_authorization_after_main_changes(
     assert not result.applied
     assert result.reason == "effect precondition rejected"
     assert not any(method != "GET" for _path, method in calls)
+
