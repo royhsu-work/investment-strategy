@@ -34,6 +34,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _github_json,
     _open_pr_payload,
     _ref_head_sha,
+    _replacement_branch,
     _review_openspec_required,
     _source_branch,
     _valid_branch,
@@ -688,7 +689,14 @@ def materialization_postcondition(
         current_change = _change_from_issue(issue)
         if current_change not in {request.expected_change, request.change}:
             return False
-        if _branch_head(repository, token, request.branch) != target.revision:
+        target_branch = request.branch
+        if (
+            request.expected_change != "unset"
+            and request.pr_number is not None
+            and target.pr_number != request.pr_number
+        ):
+            target_branch = _replacement_branch(request.change, request.pr_number)
+        if _branch_head(repository, token, target_branch) != target.revision:
             return False
         pr = _as_mapping(cast(object, _github_json(repository, token, f"pulls/{target.pr_number}")))
         if pr is None:
@@ -711,6 +719,7 @@ def materialization_postcondition(
             source=source,
             expected_change=request.expected_change,
             default_branch=default_branch,
+            expected_branch=target_branch,
         )
         head = _as_mapping(current.get("head"))
         return head is not None and head.get("sha") == target.revision
@@ -769,6 +778,23 @@ def observe_materialization_target(
 
     if request.pr_number is None:
         raise RuntimeError("application materialization validation target lacks PR")
+    if request.files:
+        target = _existing_target(
+            request,
+            source,
+            repository=repository,
+            token=token,
+            default_branch=default_branch,
+            authorization_revision=current_revision,
+        )
+        return ValidationResourceTarget(
+            repository=target.repository,
+            revision=target.revision,
+            correlation=f"effect-request-{source.issue_number}",
+            pr_number=target.pr_number,
+            change=target.change,
+            validation_required=materialization_requires_validation(request, source),
+        )
     target = resolve_validation_resource_target(
         ValidationResourcePlan(
             True,

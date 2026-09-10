@@ -149,8 +149,16 @@ def test_executor_task_marker_is_the_only_nonreview_openspec_work_product() -> N
     design_file = resource.WorkProductFile(
         f"openspec/changes/{_CHANGE}/design.md", "b" * 40, "a" * 40
     )
+    implementation_file = resource.WorkProductFile(
+        "src/investment_strategy/example.py", "b" * 40, "a" * 40
+    )
 
     assert resource._is_executor_task_bookkeeping(source, _CHANGE, (task_file,))
+    assert resource._is_executor_task_bookkeeping(
+        source,
+        _CHANGE,
+        (task_file, implementation_file),
+    )
     assert not resource._is_executor_task_bookkeeping(source, _CHANGE, (design_file,))
     assert not resource._is_executor_task_bookkeeping(source, _CHANGE, (task_file, design_file))
 
@@ -470,6 +478,123 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
         "tree": tree_sha,
         "parents": [_PR_HEAD],
     }
+
+
+def test_apply_work_product_builds_same_change_replacement_after_merged_carrier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    expected_sha = "a" * 40
+    blob_sha = "b" * 40
+    tree_sha = "c" * 40
+    revision = "d" * 40
+    merge_commit = "e" * 40
+    replacement_branch = f"agent/{_CHANGE}-continuation-178"
+    path = "src/investment_strategy/example.py"
+    plan = resource.WorkProductPlan(
+        True,
+        source=source,
+        pr_number=178,
+        expected_change=_CHANGE,
+        manifest=resource.WorkProductManifest(
+            branch=f"agent/{_CHANGE}",
+            base_sha=_REVISION,
+            message="Continue #138 after merged carrier",
+            files=(resource.WorkProductFile(path, blob_sha, expected_sha),),
+        ),
+    )
+    old_pr = {
+        "number": 178,
+        "state": "closed",
+        "merged": True,
+        "merged_at": "2026-09-09T00:00:00Z",
+        "merge_commit_sha": merge_commit,
+        "body": "Implementation\n\nRefs #138\n",
+        "head": {
+            "ref": f"agent/{_CHANGE}",
+            "sha": _PR_HEAD,
+            "repo": {"full_name": _REPOSITORY},
+        },
+        "base": {
+            "ref": "main",
+            "sha": _REVISION,
+            "repo": {"full_name": _REPOSITORY},
+        },
+    }
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_: source)
+
+    def fake_github_json(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        assert repository == _REPOSITORY
+        assert token == _FIXTURE_VALUE
+        del payload
+        if api_path == "":
+            return {"default_branch": "main"}
+        if api_path == "git/ref/heads/main":
+            return {"object": {"sha": _REVISION}}
+        if api_path == "issues/138":
+            return {"state": "open", "body": f"Change: {_CHANGE}\n"}
+        if api_path == "pulls/178":
+            return old_pr
+        if api_path == "pulls/178/files?per_page=100":
+            return [{"filename": f"openspec/changes/{_CHANGE}/design.md"}]
+        if api_path == f"compare/{merge_commit}...{_REVISION}":
+            return {"status": "ahead", "ahead_by": 1, "behind_by": 0}
+        if api_path == f"compare/{_REVISION}...{_REVISION}":
+            return {"status": "identical", "ahead_by": 0, "behind_by": 0}
+        if api_path.startswith("pulls?state=open"):
+            assert replacement_branch.replace("/", "%2F") in api_path
+            return []
+        if api_path == f"git/ref/heads/{replacement_branch}":
+            if allow_not_found:
+                return None
+            return {"object": {"sha": revision}}
+        if api_path.startswith(f"contents/{path}?"):
+            return {"sha": blob_sha if f"ref={revision}" in api_path else expected_sha}
+        if api_path == f"git/commits/{_REVISION}":
+            return {"sha": _REVISION, "tree": {"sha": "f" * 40}, "parents": []}
+        if api_path == "git/trees" and method == "POST":
+            return {"sha": tree_sha}
+        if api_path == f"git/trees/{tree_sha}?recursive=1":
+            return {
+                "sha": tree_sha,
+                "truncated": False,
+                "tree": [{"path": path, "type": "blob", "sha": blob_sha}],
+            }
+        if api_path == "git/commits" and method == "POST":
+            return {"sha": revision}
+        if api_path == "git/refs" and method == "POST":
+            return {"object": {"sha": revision}}
+        if api_path == f"git/commits/{revision}":
+            return {
+                "sha": revision,
+                "message": "Continue #138 after merged carrier",
+                "tree": {"sha": tree_sha},
+                "parents": [{"sha": _REVISION}],
+            }
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path}")
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
+    with pytest.raises(CarrierRequired) as raised:
+        resource.apply_work_product(
+            plan,
+            repository=_REPOSITORY,
+            token=_FIXTURE_VALUE,
+            default_branch="main",
+            authorization_revision=_REVISION,
+        )
+
+    carrier_plan = raised.value.plan
+    assert carrier_plan.operation == "pull-request-create"
+    assert carrier_plan.requested["head"] == replacement_branch
+    assert carrier_plan.expected["historical_pull_request"] == 178
 
 
 def test_apply_work_product_reconciles_diverged_default_branch_with_two_parents(

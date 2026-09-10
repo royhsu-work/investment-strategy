@@ -21,6 +21,7 @@ from investment_strategy.scheduled_agent_action_model import (
     ActionObservation,
     ActionSource,
     ApplicationRejection,
+    ApplicationRejectionKind,
     BoundedActionResult,
     ResultKind,
     plan_action_application,
@@ -94,6 +95,7 @@ class ApplyResult:
 
 FreshPreflight = Callable[[], DispatchPreflight]
 EffectGuard = Callable[[StagedEffect], bool]
+EffectRejectionProvider = Callable[[], ApplicationRejection | None]
 EffectApplier = Callable[[StagedEffect], None]
 PostconditionObserver = Callable[[StagedEffect], bool]
 CarrierPlanProvider = Callable[[StagedEffect], CarrierPlan | None]
@@ -152,6 +154,21 @@ _FORMAL_RESULT_MARKERS = frozenset({"ACTION_RESULT", "REVIEW_RESULT", "MERGE_RES
 _FORMAL_CHECKPOINT_MARKER = "SLICE_CHECKPOINT"
 
 
+def formal_application_correlation(
+    source: WorkerRequest,
+    *,
+    change: str,
+    result_kind: str,
+    current_revision: str,
+) -> str:
+    """Derive the bounded durable identity for one application consequence."""
+
+    return (
+        f"application:{source.issue_number}:{change}:{source.role}:"
+        f"{source.action}:{result_kind}:{current_revision}"
+    )
+
+
 def _formal_field(body: str, key: str) -> str | None:
     matches = re.findall(rf"(?m)^{re.escape(key)}:\s*(.*)$", body)
     if len(matches) != 1:
@@ -167,6 +184,7 @@ def _formal_comment_is_bound(
     change: str,
     expected_result_kind: str | None,
     current_revision: str | None,
+    expected_evidence_ref: str | None = None,
 ) -> bool:
     lines = body.splitlines()
     if not lines:
@@ -181,6 +199,11 @@ def _formal_comment_is_bound(
         or _formal_field(body, "Change") != change
         or _formal_field(body, "Role") != source.role
     ):
+        return False
+    evidence_ref = _formal_field(body, "Application-Correlation") or _formal_field(
+        body, "Evidence-Ref"
+    )
+    if expected_evidence_ref is None or evidence_ref != expected_evidence_ref:
         return False
     action = _formal_field(body, "Action")
     if action is None or (action != source.action and not action.endswith(f"/ {source.action}")):
@@ -227,7 +250,7 @@ def _slice_checkpoint_completed_task_ids(
     """Parse the bounded checkpoint envelope and return its task IDs."""
 
     lines = body.splitlines()
-    if len(lines) != 9 or lines[0] != "SLICE_CHECKPOINT":
+    if len(lines) != 10 or lines[0] != "SLICE_CHECKPOINT":
         return None
     values: dict[str, str] = {}
     for line in lines[1:]:
@@ -242,6 +265,7 @@ def _slice_checkpoint_completed_task_ids(
         "Role",
         "Completed-Tasks",
         "Revision",
+        "Application-Correlation",
         "Gate-Evidence",
         "Remaining-Approved-Boundary",
     }
@@ -340,6 +364,11 @@ def _implementation_checkpoint_effects_complete(
     ):
         return False
     task_index, request = materializations[0]
+    task_files = tuple(
+        file
+        for file in request.files
+        if file.path == f"openspec/changes/{decision.source.change}/tasks.md"
+    )
     completed_task_ids = _slice_checkpoint_completed_task_ids(
         checkpoint_bodies[0],
         source=batch.source,
@@ -351,9 +380,8 @@ def _implementation_checkpoint_effects_complete(
         or request.change != decision.source.change
         or request.branch != f"agent/{decision.source.change}"
         or request.pr_number is None
-        or len(request.files) != 1
-        or request.files[0].path != f"openspec/changes/{decision.source.change}/tasks.md"
-        or request.files[0].expected_sha is None
+        or len(task_files) != 1
+        or task_files[0].expected_sha is None
         or completed_task_ids is None
         or task_index >= checkpoint_indexes[0]
         or validate_implementation_checkpoint is None
@@ -774,6 +802,7 @@ def apply_effect_batch(
     validate_implementation_checkpoint: ImplementationCheckpointValidator | None = None,
     apply_derived: bool = True,
     carrier_plan_for_effect: CarrierPlanProvider | None = None,
+    effect_rejection: EffectRejectionProvider | None = None,
 ) -> ApplyResult:
     """Apply one typed batch after fresh source reauthorization."""
 
@@ -801,13 +830,20 @@ def apply_effect_batch(
         ):
             return ApplyResult(False, "typed application rejected:terminal-effect")
 
-    for effect in batch.effects:
-        if not effect_guard(effect):
-            return ApplyResult(False, "effect precondition rejected")
+    def rejected(reason: str) -> ApplyResult:
+        return ApplyResult(
+            False,
+            reason,
+            rejection=None if effect_rejection is None else effect_rejection(),
+        )
 
     for effect in batch.effects:
         if not effect_guard(effect):
-            return ApplyResult(False, "effect precondition rejected")
+            return rejected("effect precondition rejected")
+
+    for effect in batch.effects:
+        if not effect_guard(effect):
+            return rejected("effect precondition rejected")
         try:
             apply_effect(effect)
         except CarrierRequired:
@@ -820,7 +856,7 @@ def apply_effect_batch(
 
     if apply_derived:
         if not effect_guard(derived_effect):
-            return ApplyResult(False, "effect precondition rejected")
+            return rejected("effect precondition rejected")
         try:
             apply_effect(derived_effect)
         except CarrierRequired:
@@ -909,9 +945,9 @@ class GitHubEffectAdapter:
         self.authorized_change = authorized_change
         self.current_revision = current_revision
         self.expected_result_kind = expected_result_kind
-        self._formal_evidence_observed: set[str] = set()
         self.materialization_promote_change = materialization_promote_change
         self.validated_materialization_revision = validated_materialization_revision
+        self._last_rejection: ApplicationRejection | None = None
         self._comment_ids: dict[StagedEffect, int] = {}
         self._routing_targets: dict[StagedEffect, str] = {}
         self._created_pr_numbers: dict[StagedEffect, int] = {}
@@ -927,16 +963,28 @@ class GitHubEffectAdapter:
     ) -> bool:
         """Validate task IDs against the exact first incomplete Change slice."""
 
-        if request.pr_number is None or len(request.files) != 1:
+        if request.pr_number is None:
+            return False
+        task_files = tuple(
+            file
+            for file in request.files
+            if file.path == f"openspec/changes/{request.change}/tasks.md"
+        )
+        if len(task_files) != 1:
             return False
         return task_checkpoint_is_exact(
             self.repository,
             self.token,
             expected_change=request.change,
             base_sha=request.base_sha,
-            file=request.files[0],
+            file=task_files[0],
             completed_task_ids=completed_task_ids,
         )
+
+    def effect_rejection(self) -> ApplicationRejection | None:
+        """Return the structured result of the most recent effect guard."""
+
+        return self._last_rejection
 
     def _current_issue(self) -> Mapping[str, object] | None:
         payload = _github_json(
@@ -995,6 +1043,54 @@ class GitHubEffectAdapter:
             return None
         sha = obj.get("sha")
         return sha if _valid_sha(sha) else None
+
+    def _formal_correlation(self) -> str | None:
+        if (
+            self.authorized_change == "unset"
+            or self.current_revision is None
+            or self.expected_result_kind is None
+        ):
+            return None
+        return formal_application_correlation(
+            self.source,
+            change=self.authorized_change,
+            result_kind=self.expected_result_kind,
+            current_revision=self.current_revision,
+        )
+
+    def _formal_evidence_exists(self) -> bool:
+        expected = self._formal_correlation()
+        if expected is None:
+            return False
+        page = 1
+        while True:
+            suffix = "" if page == 1 else f"&page={page}"
+            payload = _github_json(
+                self.repository,
+                self.token,
+                f"issues/{self.source.issue_number}/comments?per_page=100&sort=created"
+                f"&direction=desc{suffix}",
+            )
+            if not isinstance(payload, list):
+                return False
+            for item in payload:
+                if not isinstance(item, Mapping) or not is_github_actions_comment(item):
+                    continue
+                body = item.get("body")
+                if not isinstance(body, str):
+                    continue
+                if _formal_comment_is_bound(
+                    body,
+                    source=self.source,
+                    change=self.authorized_change,
+                    expected_result_kind=self.expected_result_kind,
+                    current_revision=self.current_revision,
+                    expected_evidence_ref=expected,
+                ):
+                    return True
+            if len(payload) < 100:
+                return False
+            page += 1
 
     def _pull_request_matches_source(
         self,
@@ -1562,21 +1658,57 @@ class GitHubEffectAdapter:
                 and observation.routing == (target_role, target_action)
             ):
                 return True
-        return bool(self._formal_evidence_observed)
+        return self._formal_evidence_exists()
 
     def guard(self, effect: StagedEffect) -> bool:
+        self._last_rejection = None
         if (
             not supported_effect_guard(self.source, effect)
             or not self._source_still_current()
             or not self._default_branch_still_current()
         ):
+            self._last_rejection = ApplicationRejection(
+                ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+                expected=json.dumps(
+                    {
+                        "source": {
+                            "issue_number": self.source.issue_number,
+                            "role": self.source.role,
+                            "action": self.source.action,
+                        },
+                        "default_branch_revision": self.current_revision,
+                    },
+                    sort_keys=True,
+                ),
+                observed=effect.payload_json,
+            )
             return False
         if effect.kind in {"routing-transition", "terminal-transition"}:
-            return self._formal_transition_is_qualified(effect)
+            qualified = self._formal_transition_is_qualified(effect)
+            if not qualified:
+                self._last_rejection = ApplicationRejection(
+                    ApplicationRejectionKind.OBSERVATION_UNQUALIFIED,
+                    expected=json.dumps(
+                        {
+                            "application_correlation": self._formal_correlation(),
+                            "repository_owned_formal_postcondition": True,
+                        },
+                        sort_keys=True,
+                    ),
+                    observed=effect.payload_json,
+                )
+            return qualified
         if effect.kind == "issue-comment":
             return True
         payload = _effect_payload(effect)
-        return payload is not None and self._guard_github_mutation(payload)
+        guarded = payload is not None and self._guard_github_mutation(payload)
+        if not guarded:
+            self._last_rejection = ApplicationRejection(
+                ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+                expected="fresh application-owned effect postcondition",
+                observed=effect.payload_json,
+            )
+        return guarded
 
     def _apply_terminal_transition(
         self,
@@ -1952,19 +2084,6 @@ class GitHubEffectAdapter:
                 and response.get("id") == comment_id
                 and is_github_actions_comment(response)
             )
-            body = payload.get("body")
-            if (
-                observed
-                and isinstance(body, str)
-                and _formal_comment_is_bound(
-                    body,
-                    source=self.source,
-                    change=self.authorized_change,
-                    expected_result_kind=self.expected_result_kind,
-                    current_revision=self.current_revision,
-                )
-            ):
-                self._formal_evidence_observed.add(body)
             return observed
 
         if effect.kind == "routing-transition":
@@ -2031,6 +2150,7 @@ def run_effect_application(
         source,
         authorized_change=batch.typed_result.change,
         current_revision=current_revision,
+        expected_result_kind=batch.typed_result.result.kind.value,
         materialization_promote_change=materialization_promote_change,
         validated_materialization_revision=validated_materialization_revision,
     )
@@ -2044,6 +2164,7 @@ def run_effect_application(
         validate_implementation_checkpoint=adapter.validate_implementation_checkpoint,
         apply_derived=apply_derived,
         carrier_plan_for_effect=adapter.carrier_plan_if_required,
+        effect_rejection=adapter.effect_rejection,
     )
     return batch, result
 

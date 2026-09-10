@@ -608,6 +608,9 @@ def run_effect_application(
     carrier_plan_provider = getattr(adapter, "carrier_plan_if_required", None)
     if not callable(carrier_plan_provider):
         carrier_plan_provider = None
+    effect_rejection_provider = getattr(adapter, "effect_rejection", None)
+    if not callable(effect_rejection_provider):
+        effect_rejection_provider = None
 
     try:
         result = apply_effect_batch(
@@ -620,6 +623,7 @@ def run_effect_application(
             validate_implementation_checkpoint=adapter.validate_implementation_checkpoint,
             apply_derived=apply_derived,
             carrier_plan_for_effect=carrier_plan_provider,
+            effect_rejection=effect_rejection_provider,
         )
     except _EffectPreconditionStale:
         result = ApplyResult(False, "effect precondition became stale")
