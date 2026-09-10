@@ -78,6 +78,11 @@ reference/content, and untrusted requested effects. It cannot carry successor or
 The application fresh-reads the Issue, routing, Change, branch/ref/PR state, required Human/review/gate
 evidence, and current default-branch revision before authorizing effects.
 
+Before retaining or adding a check, guard, qualification, lifecycle rule, gate, carrier rule, or
+state, identify the affected consequence and its existing executable owner. Classify the delta as
+`REUSE`, `CONSOLIDATE`, `NO-DELTA`, or `ADD`; an `ADD` requires an explicit architecture boundary
+and must not create a competing decision surface or persisted workflow state.
+
 Only the necessary repository-owned effects are applied. Routing and terminal effects are derived from
 next_action; worker-requested routing or terminal effects are rejected. Every consequential mutation
 has an exact expected identity and a fresh postcondition observation. Already-current state may be

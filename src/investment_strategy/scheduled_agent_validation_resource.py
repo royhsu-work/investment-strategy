@@ -10,7 +10,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import cast
+from typing import Literal, cast, overload
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -20,6 +20,7 @@ from investment_strategy.scheduled_agent_action_model import (
     Action as ModelAction,
 )
 from investment_strategy.scheduled_agent_carrier import (
+    CarrierPlan,
     CarrierRequired,
     carrier_pr_identity,
     make_carrier_plan,
@@ -123,6 +124,12 @@ def _source_branch(change: object) -> str | None:
         return None
     branch = f"agent/{change}"
     return branch if _valid_branch(branch) else None
+
+
+def _replacement_branch(change: str, historical_pr_number: int) -> str:
+    """Derive one deterministic same-Change branch after a merged carrier."""
+
+    return f"agent/{change}-continuation-{historical_pr_number}"
 
 
 def _valid_repo_path(value: object) -> bool:
@@ -257,11 +264,12 @@ def _open_pr_payload(
     expected_change: str,
     default_branch: str,
     allow_historical_merged_carrier: bool = False,
+    expected_branch: str | None = None,
 ) -> Mapping[str, object]:
     if _current_default_branch(repository, token) != default_branch:
         raise RuntimeError("validation resource repository default branch changed")
-    expected_branch = _source_branch(expected_change)
-    if expected_branch is None:
+    branch = _source_branch(expected_change) if expected_branch is None else expected_branch
+    if branch is None:
         raise RuntimeError("validation resource Change branch is invalid")
 
     issue = _as_mapping(
@@ -292,7 +300,7 @@ def _open_pr_payload(
         or base_repo is None
         or head_repo.get("full_name") != repository
         or base_repo.get("full_name") != repository
-        or head.get("ref") != expected_branch
+        or head.get("ref") != branch
         or base.get("ref") != default_branch
         or not _pr_has_nonclosing_issue_link(pr.get("body"), source.issue_number)
     ):
@@ -331,6 +339,7 @@ def _open_pr_target(
     source: WorkerRequest,
     expected_change: str,
     default_branch: str,
+    expected_branch: str | None = None,
 ) -> str:
     pr = _open_pr_payload(
         repository=repository,
@@ -339,12 +348,43 @@ def _open_pr_target(
         source=source,
         expected_change=expected_change,
         default_branch=default_branch,
+        expected_branch=expected_branch,
     )
     head = _as_mapping(pr.get("head"))
     revision = None if head is None else head.get("sha")
     if not _valid_sha(revision):
         raise RuntimeError("validation resource target PR head is incomplete")
     return cast(str, revision)
+
+
+def _open_prs_for_branch(
+    repository: str,
+    token: str,
+    *,
+    branch: str,
+    default_branch: str,
+) -> tuple[Mapping[str, object], ...]:
+    """Observe all open PRs for one exact repository branch/base pair."""
+
+    owner = repository.split("/", 1)[0]
+    query = urlencode(
+        {
+            "state": "open",
+            "head": f"{owner}:{branch}",
+            "base": default_branch,
+            "per_page": 100,
+        }
+    )
+    payload = _github_json(repository, token, f"pulls?{query}")
+    if not isinstance(payload, list) or len(payload) >= 100:
+        raise RuntimeError("validation resource replacement carrier discovery is incomplete")
+    result: list[Mapping[str, object]] = []
+    for raw in payload:
+        item = _as_mapping(raw)
+        if item is None:
+            raise RuntimeError("validation resource replacement carrier discovery is malformed")
+        result.append(item)
+    return tuple(result)
 
 
 def _review_openspec_required(source: WorkerRequest) -> bool:
@@ -371,6 +411,19 @@ def _is_executor_task_bookkeeping(
         and len(files) == 1
         and files[0].path == f"openspec/changes/{expected_change}/tasks.md"
     )
+
+
+def _executor_task_file(
+    source: WorkerRequest,
+    expected_change: str,
+    files: tuple[WorkProductFile, ...],
+) -> WorkProductFile | None:
+    """Return the one task file allowed in an implementation manifest."""
+
+    if not _is_executor_task_bookkeeping(source, expected_change, files):
+        return None
+    task_path = f"openspec/changes/{expected_change}/tasks.md"
+    return next(file for file in files if file.path == task_path)
 
 
 def _is_executor_config_authoring(
@@ -618,7 +671,33 @@ def _blob_text(repository: str, token: str, blob_sha: str) -> str:
         raise RuntimeError("work-product blob is not valid UTF-8") from exc
 
 
-def _ref_head_sha(repository: str, token: str, branch: str) -> str:
+@overload
+def _ref_head_sha(
+    repository: str,
+    token: str,
+    branch: str,
+    *,
+    allow_not_found: Literal[False] = False,
+) -> str: ...
+
+
+@overload
+def _ref_head_sha(
+    repository: str,
+    token: str,
+    branch: str,
+    *,
+    allow_not_found: Literal[True],
+) -> str | None: ...
+
+
+def _ref_head_sha(
+    repository: str,
+    token: str,
+    branch: str,
+    *,
+    allow_not_found: bool = False,
+) -> str | None:
     state = _as_mapping(
         cast(
             object,
@@ -626,9 +705,12 @@ def _ref_head_sha(repository: str, token: str, branch: str) -> str:
                 repository,
                 token,
                 f"git/ref/heads/{quote(branch, safe='/')}",
+                allow_not_found=allow_not_found,
             ),
         )
     )
+    if state is None and allow_not_found:
+        return None
     obj = None if state is None else _as_mapping(state.get("object"))
     sha = None if obj is None else obj.get("sha")
     if not _valid_sha(sha):
@@ -887,6 +969,67 @@ def _exact_head_checks_pass(repository: str, token: str, head_sha: str) -> bool:
     )
 
 
+def _replacement_carrier_plan(
+    *,
+    repository: str,
+    issue_number: int,
+    change: str,
+    action: str,
+    authorization_revision: str,
+    branch: str,
+    revision: str,
+    default_branch: str,
+    historical_pr_number: int,
+) -> CarrierPlan:
+    """Build the existing pull-request carrier plan for merged-history continuation."""
+
+    title = f"OpenSpec: {change} continuation"
+    body = f"Continue OpenSpec change `{change}` after the merged carrier.\n\nRefs #{issue_number}"
+    return make_carrier_plan(
+        repository=repository,
+        issue_number=issue_number,
+        change=change,
+        action=action,
+        authorization_revision=authorization_revision,
+        operation="pull-request-create",
+        target={
+            "head_ref": branch,
+            "base_ref": default_branch,
+            "repository": repository,
+            "historical_pull_request": historical_pr_number,
+        },
+        expected={
+            "head_ref": branch,
+            "head_sha": revision,
+            "base_ref": default_branch,
+            "base_sha": authorization_revision,
+            "existing_pr_count": 0,
+            "historical_pull_request": historical_pr_number,
+        },
+        requested={
+            "title": title,
+            "body": body,
+            "head": branch,
+            "base": default_branch,
+            "draft": False,
+            "head_sha": revision,
+        },
+        expected_postcondition={
+            "repository": repository,
+            "issue_number": issue_number,
+            "state": "open",
+            "merged": False,
+            "title": title,
+            "body": body,
+            "draft": False,
+            "head_ref": branch,
+            "head_sha": revision,
+            "base_ref": default_branch,
+            "base_sha": authorization_revision,
+        },
+    )
+
+
 def apply_work_product(
     plan: WorkProductPlan,
     *,
@@ -954,20 +1097,103 @@ def apply_work_product(
     if base is None or base.get("ref") != default_branch:
         raise RuntimeError("work-product PR base identity is stale")
     historical_merged_carrier = _is_historical_merged_carrier(pr)
-    current_ref_head = _ref_head_sha(repository, token, expected_branch)
-    if current_ref_head != pr_head_sha:
-        raise RuntimeError("work-product PR/ref head identity is stale")
-    current_head = current_ref_head
-    default_branch_is_ancestor = _default_branch_is_ancestor(
-        repository,
-        token,
-        default_revision=authorization_revision,
-        revision=current_head,
-    )
+    replacement_branch: str | None = None
+    replacement_ref_exists = False
+    if historical_merged_carrier:
+        merge_commit_sha = pr.get("merge_commit_sha")
+        if not _valid_sha(merge_commit_sha) or not _default_branch_is_ancestor(
+            repository,
+            token,
+            default_revision=cast(str, merge_commit_sha),
+            revision=authorization_revision,
+        ):
+            raise RuntimeError("work-product historical carrier is not in current default history")
+        if plan.manifest.base_sha != authorization_revision:
+            raise RuntimeError("replacement work-product base is not current default branch")
+        replacement_branch = _replacement_branch(plan.expected_change, plan.pr_number)
+        replacement_prs = _open_prs_for_branch(
+            repository,
+            token,
+            branch=replacement_branch,
+            default_branch=default_branch,
+        )
+        if len(replacement_prs) > 1:
+            raise RuntimeError("work-product replacement carrier is ambiguous")
+        if replacement_prs:
+            replacement_pr = _open_pr_payload(
+                repository=repository,
+                token=token,
+                pr_number=cast(int, replacement_prs[0]["number"]),
+                source=plan.source,
+                expected_change=plan.expected_change,
+                default_branch=default_branch,
+                expected_branch=replacement_branch,
+            )
+            replacement_head = _as_mapping(replacement_pr.get("head"))
+            replacement_revision = None if replacement_head is None else replacement_head.get("sha")
+            if not _valid_sha(replacement_revision) or not _revision_matches_manifest(
+                repository,
+                token,
+                base_sha=plan.manifest.base_sha,
+                revision=cast(str, replacement_revision),
+                manifest=plan.manifest,
+            ):
+                raise RuntimeError("work-product replacement carrier content is stale")
+            return ValidationResourceTarget(
+                repository=repository,
+                revision=cast(str, replacement_revision),
+                correlation=f"effect-request-{plan.source.issue_number}",
+                pr_number=cast(int, replacement_prs[0]["number"]),
+                change=plan.expected_change,
+            )
+        replacement_ref_head = _ref_head_sha(
+            repository,
+            token,
+            replacement_branch,
+            allow_not_found=True,
+        )
+        replacement_ref_exists = replacement_ref_head is not None
+        if replacement_ref_head is not None and _revision_matches_manifest(
+            repository,
+            token,
+            base_sha=plan.manifest.base_sha,
+            revision=replacement_ref_head,
+            manifest=plan.manifest,
+        ):
+            raise CarrierRequired(
+                _replacement_carrier_plan(
+                    repository=repository,
+                    issue_number=plan.source.issue_number,
+                    change=plan.expected_change,
+                    action=plan.source.action,
+                    authorization_revision=authorization_revision,
+                    branch=replacement_branch,
+                    revision=replacement_ref_head,
+                    default_branch=default_branch,
+                    historical_pr_number=plan.pr_number,
+                )
+            )
+        current_ref_head = replacement_ref_head
+        current_head = authorization_revision if current_ref_head is None else current_ref_head
+        default_branch_is_ancestor = _default_branch_is_ancestor(
+            repository,
+            token,
+            default_revision=authorization_revision,
+            revision=current_head,
+        )
+    else:
+        current_ref_head = _ref_head_sha(repository, token, expected_branch)
+        if current_ref_head != pr_head_sha:
+            raise RuntimeError("work-product PR/ref head identity is stale")
+        current_head = current_ref_head
+        default_branch_is_ancestor = _default_branch_is_ancestor(
+            repository,
+            token,
+            default_revision=authorization_revision,
+            revision=current_head,
+        )
     replay_manifest = False
     if current_head != plan.manifest.base_sha:
-        if historical_merged_carrier:
-            raise RuntimeError("work-product cannot update a historical merged carrier")
         manifest_applied = _revision_matches_manifest(
             repository,
             token,
@@ -994,9 +1220,6 @@ def apply_work_product(
         if not manifest_applied and not reconciled:
             raise RuntimeError("work-product PR head/base identity is stale")
         replay_manifest = True
-    if historical_merged_carrier:
-        raise RuntimeError("work-product PR head/base identity is stale")
-
     needs_default_reconciliation = not default_branch_is_ancestor
     if needs_default_reconciliation:
         _verify_default_only_content(
@@ -1016,11 +1239,12 @@ def apply_work_product(
             )
             if current_sha != file.expected_sha:
                 raise RuntimeError("work-product expected content SHA is stale")
-            if _is_executor_task_bookkeeping(
+            task_file = _executor_task_file(
                 plan.source,
                 plan.expected_change,
                 plan.manifest.files,
-            ):
+            )
+            if task_file is not None and file.path == task_file.path:
                 current = _content_text_at(
                     repository,
                     token,
@@ -1114,8 +1338,32 @@ def apply_work_product(
                     "work-product referenced blob was not resolved into exact tree path"
                 )
 
-    if _ref_head_sha(repository, token, plan.manifest.branch) != current_head:
-        raise RuntimeError("work-product branch base changed before carrier handoff")
+    materialization_branch = (
+        plan.manifest.branch if replacement_branch is None else replacement_branch
+    )
+    if replacement_branch is None:
+        observed_materialization_head: str | None = _ref_head_sha(
+            repository,
+            token,
+            materialization_branch,
+        )
+        if observed_materialization_head != current_head:
+            raise RuntimeError("work-product branch base changed before carrier handoff")
+    else:
+        observed_materialization_head = (
+            _ref_head_sha(repository, token, materialization_branch)
+            if replacement_ref_exists
+            else _ref_head_sha(
+                repository,
+                token,
+                materialization_branch,
+                allow_not_found=True,
+            )
+        )
+        if replacement_ref_exists and observed_materialization_head != current_head:
+            raise RuntimeError(
+                "replacement work-product branch base changed before carrier handoff"
+            )
     if _ref_head_sha(repository, token, default_branch) != authorization_revision:
         raise RuntimeError("work-product default branch changed before carrier handoff")
     if _current_authorized_request(repository, token) != plan.source:
@@ -1127,9 +1375,16 @@ def apply_work_product(
             plan.expected_change,
             plan.manifest.files,
         )
-        and len(plan.manifest.files) == 1
-        and plan.manifest.files[0].expected_sha is not None
-        and plan.manifest.files[0].blob_sha == plan.manifest.files[0].expected_sha
+        and (
+            task_file := _executor_task_file(
+                plan.source,
+                plan.expected_change,
+                plan.manifest.files,
+            )
+        )
+        is not None
+        and task_file.expected_sha is not None
+        and task_file.blob_sha == task_file.expected_sha
     ):
         return ValidationResourceTarget(
             repository=repository,
@@ -1166,10 +1421,89 @@ def apply_work_product(
     if not _valid_sha(revision):
         raise RuntimeError("work-product commit creation returned no SHA")
 
-    if _ref_head_sha(repository, token, plan.manifest.branch) != current_head:
-        raise RuntimeError("work-product branch base changed before carrier handoff")
+    if replacement_branch is not None and not replacement_ref_exists:
+        created_ref = _as_mapping(
+            cast(
+                object,
+                _github_json(
+                    repository,
+                    token,
+                    "git/refs",
+                    method="POST",
+                    payload={
+                        "ref": f"refs/heads/{replacement_branch}",
+                        "sha": cast(str, revision),
+                    },
+                ),
+            )
+        )
+        created_object = None if created_ref is None else _as_mapping(created_ref.get("object"))
+        if (
+            created_object is None
+            or created_object.get("sha") != revision
+            or _ref_head_sha(repository, token, replacement_branch) != revision
+        ):
+            raise RuntimeError("replacement work-product branch postcondition was not observed")
+
+    if replacement_branch is None:
+        if _ref_head_sha(repository, token, plan.manifest.branch) != current_head:
+            raise RuntimeError("work-product branch base changed before carrier handoff")
+    elif (
+        replacement_ref_exists
+        and _ref_head_sha(repository, token, replacement_branch) != current_head
+    ):
+        raise RuntimeError("replacement work-product branch base changed before carrier handoff")
     if _ref_head_sha(repository, token, default_branch) != authorization_revision:
         raise RuntimeError("work-product default branch changed before carrier handoff")
+    if replacement_branch is not None:
+        observed_commit = _as_mapping(
+            cast(object, _github_json(repository, token, f"git/commits/{revision}"))
+        )
+        observed_commit_tree = (
+            None if observed_commit is None else _as_mapping(observed_commit.get("tree"))
+        )
+        parents = None if observed_commit is None else observed_commit.get("parents")
+        replacement_parent_shas: list[str] = []
+        if isinstance(parents, list):
+            for raw_parent in parents:
+                parent = _as_mapping(raw_parent)
+                parent_sha = None if parent is None else parent.get("sha")
+                if not _valid_sha(parent_sha):
+                    raise RuntimeError("replacement work-product commit parent is incomplete")
+                replacement_parent_shas.append(cast(str, parent_sha))
+        if (
+            observed_commit is None
+            or observed_commit.get("sha") != revision
+            or observed_commit.get("message") != commit_message
+            or observed_commit_tree is None
+            or observed_commit_tree.get("sha") != tree_sha
+            or replacement_parent_shas != commit_parents
+        ):
+            raise RuntimeError("replacement work-product commit postcondition was not observed")
+        for file in plan.manifest.files:
+            if (
+                _content_sha_at(
+                    repository,
+                    token,
+                    path=file.path,
+                    revision=cast(str, revision),
+                )
+                != file.blob_sha
+            ):
+                raise RuntimeError("replacement work-product file postcondition was not observed")
+        raise CarrierRequired(
+            _replacement_carrier_plan(
+                repository=repository,
+                issue_number=plan.source.issue_number,
+                change=plan.expected_change,
+                action=plan.source.action,
+                authorization_revision=authorization_revision,
+                branch=replacement_branch,
+                revision=cast(str, revision),
+                default_branch=default_branch,
+                historical_pr_number=plan.pr_number,
+            )
+        )
     observed_pr: Mapping[str, object] | None = None
     observed_head: Mapping[str, object] | None = None
     for attempt in range(10):

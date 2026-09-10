@@ -583,6 +583,7 @@ def run_effect_application(
     apply_derived: bool = True,
     materialization_promote_change: bool = False,
     validated_materialization_revision: str | None = None,
+    request_comment_id: int | None = None,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Apply through shared effect guards plus an optional mutation-adjacent guard."""
 
@@ -596,6 +597,7 @@ def run_effect_application(
         authorized_change=batch.typed_result.change,
         current_revision=current_revision,
         expected_result_kind=batch.typed_result.result.kind.value,
+        request_comment_id=request_comment_id,
         materialization_promote_change=materialization_promote_change,
         validated_materialization_revision=validated_materialization_revision,
     )
@@ -608,6 +610,9 @@ def run_effect_application(
     carrier_plan_provider = getattr(adapter, "carrier_plan_if_required", None)
     if not callable(carrier_plan_provider):
         carrier_plan_provider = None
+    effect_rejection_provider = getattr(adapter, "effect_rejection", None)
+    if not callable(effect_rejection_provider):
+        effect_rejection_provider = None
 
     try:
         result = apply_effect_batch(
@@ -620,6 +625,7 @@ def run_effect_application(
             validate_implementation_checkpoint=adapter.validate_implementation_checkpoint,
             apply_derived=apply_derived,
             carrier_plan_for_effect=carrier_plan_provider,
+            effect_rejection=effect_rejection_provider,
         )
     except _EffectPreconditionStale:
         result = ApplyResult(False, "effect precondition became stale")
@@ -636,6 +642,7 @@ def run_guarded_effect_application(
     apply_derived: bool = True,
     materialization_promote_change: bool = False,
     validated_materialization_revision: str | None = None,
+    request_comment_id: int | None = None,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Reject stale merge acceptance before and immediately adjacent to merge application."""
 
@@ -663,6 +670,7 @@ def run_guarded_effect_application(
         apply_derived=apply_derived,
         materialization_promote_change=materialization_promote_change,
         validated_materialization_revision=validated_materialization_revision,
+        request_comment_id=request_comment_id,
         pre_apply_guard=lambda effect: _merge_effect_allows(
             effect,
             source=source,

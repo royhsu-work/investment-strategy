@@ -223,6 +223,7 @@ class ApplicationDisposition(StrEnum):
 
 
 class ApplicationRejectionKind(StrEnum):
+    EFFECT_PRECONDITION_UNSATISFIED = "effect-precondition-unsatisfied"
     OBSERVATION_UNQUALIFIED = "observation-unqualified"
     HUMAN_AUTHORITY_MISSING = "human-authority-missing"
     RESULT_ISSUE_MISMATCH = "result-issue-mismatch"

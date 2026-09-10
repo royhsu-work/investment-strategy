@@ -1,0 +1,40 @@
+# Tasks: Qualify active formal consequences
+
+## Parent outcome and staged delivery
+
+Parent outcome: observable current evidence and explicit deterministic predicates are evaluated by the existing executable owner through one structured qualification decision before a machine-decidable repository consequence becomes eligible. The active-formal scheduled-agent consequence is the concrete proof target.
+
+Stage 1 produces a unique application-owned binding anchored to an exact fresh-verified application/request identity, repairs fresh-continuation reconstruction while preserving intended accepted cases, exposes known application rejection evidence from the existing decision owner, adds the shared architecture-precedent discovery hook, and enables a fresh same-Change continuation carrier after merge. It exits through `READY → review-implementation → merge-implementation-pr`; `finalize-change → MORE_IMPLEMENTATION_REQUIRED` preserves mandatory Stage 2.
+
+Stage 2 starts on a later fresh carrier based on the then-current default branch. It consumes the binding and complete lifecycle ordering through one `QUALIFIED | INDETERMINATE` decision and removes equality-only authority. These stages are deployment boundaries, not persisted workflow state.
+
+## Slice 1 — Produce durable application binding and repair fresh continuation (Stage 1)
+
+Trace: controlling Human decisions through issuecomment-5614126835 and issuecomment-5619420395 → modified `repository-governance` one-owner invariant + existing rejection contract → existing scheduled-agent application/evidence/materialization owners.
+
+- [x] 1.1 RED: add focused tests that fail on N-1 for the exact fresh-continuation boundary: invocation N produces accepted typed Action/Result, exact application authorization/correlation and exact durable repository postcondition, execution crosses the validation/carrier/application boundary, invocation N+1 creates a fresh `GitHubEffectAdapter`, and the repository-derived successor is currently rejected because required qualification depends on invocation-local `_formal_evidence_observed`. In the same RED set, prove a known application predicate rejection can collapse to aggregate `effect precondition rejected` without the machine-readable failed classification and relevant evidence required by the existing repository-governance contract.
+- [x] 1.2 GREEN: add the minimum durable correlation/binding to the existing formal evidence chain and reconstruct the intended current qualification from durable repository evidence across a fresh adapter/application boundary. Remove same-invocation `_formal_evidence_observed` as an eligibility dependency; do not replay or recreate an old formal result solely to make the successor eligible; do not activate the full strict Stage-2 qualifier.
+- [x] 1.3 GREEN: at the existing application decision owner, expose the failed machine-readable guard classification plus relevant expected/observed effect, identity, or parser evidence from the same predicate evaluation whenever that boundary knows the failure. Preserve aggregate diagnostics only as supplemental text; do not add a second predicate reconstruction or decision owner.
+- [x] 1.4 GREEN: extend the existing materialization and CarrierRequired path only for the approved same-open-Issue, same-Change, exact-merged-history, current-implement-change, no-current-carrier predicates; materialize one fresh carrier from the then-current default branch.
+- [x] 1.5 GREEN: add the short `agents/AGENTS.md` architecture-precedent discovery hook requiring consequence/owner identification and `REUSE | CONSOLIDATE | NO-DELTA | ADD` classification before a check, guard, qualification, lifecycle rule, gate, carrier rule, or state is retained.
+- [x] 1.6 REFACTOR: reuse existing formal evidence parsing, durable GitHub observation, application authorization, postcondition observation, application decision, materialization, and carrier planning; remove duplicate decision, diagnostic, or continuation mechanisms introduced during GREEN.
+- [x] 1.7 VERIFY: prove the N→N+1 fresh-adapter regression now passes with no invocation-local memory and no replay/recreation of an old formal result; prove intended accepted cases remain accepted; prove known predicate rejection includes same-evaluation machine-readable classification/evidence; prove the strict Stage-2 lifecycle/ABA qualifier is still not activated; then run focused Stage-1 tests, full Python tests, Ruff check, Ruff format check, mypy, strict OpenSpec validation, and required repository checks. Verify the mandatory post-merge Stage-2 continuation remains explicit.
+
+## Slice 1 correction — exact application/request binding (still Stage 1)
+
+Trace: issuecomment-5619420395 → existing application bridge request identity + Stage-1 binding/postcondition owner; no new workflow state or decision owner.
+
+- [x] 1.8 RED: add the collision regression showing that two applications with equal Issue, Change, Role, Action, Result kind, and default-branch revision but different exact application/request identities produce different Application-Correlation bindings, and that evidence from one cannot qualify the other. Add the actual production-boundary fixture through the application bridge and prove the fresh `--validation-passed` path is the exercised boundary.
+- [x] 1.9 GREEN: bind Application-Correlation to the exact durable application/request execution identity already fresh-verified by the existing bridge, together with the model-derived consequence and exact postcondition. Do not use the tuple-only correlation, Evidence-Ref alias/fallback, invocation-local memory, or replay/recreation of an old formal result.
+- [x] 1.10 REFACTOR: reassess the implementation-resource bookkeeping widening that admits `tasks.md` plus arbitrary non-OpenSpec implementation files; remove it and its dedicated coverage when N-1 already provides the legal fresh-wake continuation, retaining only the smallest approved manifest behavior.
+- [x] 1.11 VERIFY: run the collision and actual bridge `--validation-passed` regressions, prove the corrected binding survives a fresh adapter/application boundary and the repository-derived successor remains eligible, verify no old result is replayed or recreated, and run the complete required quality/OpenSpec gates at the exact head. Confirm Stage 2 remains unchecked and its strict qualifier is not activated.
+
+## Slice 2 — Consume one current formal qualification decision (Stage 2)
+
+Trace: Stage-1 binding + complete relevant lifecycle ordering → `QualificationInput` → existing `ObservationProvenance` → dispatch and application/lifecycle consumers.
+
+- [ ] 2.1 RED: add focused fixtures for a qualified active route and terminal boundary, missing/incomplete binding, direct or equality-only state, A→B→C→B supersession, exact carrier completion on a later wake, and `Change: unset` intake; prove multiple consumers currently reconstruct eligibility independently.
+- [ ] 2.2 GREEN: reconstruct complete relevant lifecycle ordering, build one immutable `QualificationInput`, and implement `qualify_current_formal_consequence()` returning the existing `QUALIFIED | INDETERMINATE` result only when every current binding dimension is coherent and no later relevant mutation supersedes it.
+- [ ] 2.3 GREEN: make dispatch and application/lifecycle consumers consume that one structured decision; remove equality-only authority and independent predicate reconstruction while preserving typed successor derivation, fresh mutation reauthorization, exact effects, and postconditions.
+- [ ] 2.4 REFACTOR: keep lifecycle evidence limited to ordering/supersession/ABA, preserve pre-activation and carrier compatibility, and delete redundant checks or fallback paths made unnecessary by the single decision surface.
+- [ ] 2.5 VERIFY: run focused qualification, lifecycle-ordering, ABA, carrier, terminal, equality, completeness, pre-activation, and single-consumer tests; then run full Python tests, Ruff check, Ruff format check, mypy, strict OpenSpec validation, and required repository checks at the exact revision.
