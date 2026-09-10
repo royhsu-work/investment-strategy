@@ -13,7 +13,7 @@ observable current evidence
 
 The current active-formal scheduled-agent path can treat structural/value equality or invocation-local observation as sufficient current-state provenance. That permits independently reconstructed, superseded, or freshly continued evidence to participate in dispatch or lifecycle consequences without one application-owned binding that can be reconstructed from durable repository evidence. The repair must reuse the existing owner and decision surface rather than add another provenance or workflow system.
 
-The controlling Human decisions are issuecomment-5607080928, issuecomment-5611740462, issuecomment-5612882299, and the later correction issuecomment-5614126835. The latest correction supersedes only the earlier Stage-1 mechanism premise that “current acceptance remains unchanged”: Stage 1 must preserve the intended accepted cases while removing the same-invocation `_formal_evidence_observed` dependency. It preserves the original outcome, exactly two deployment stages, bounded untrusted `EFFECT_REQUEST` ingress, and #218 exclusion.
+The controlling Human decisions are issuecomment-5607080928, issuecomment-5611740462, issuecomment-5612882299, issuecomment-5614126835, and the later implementation correction issuecomment-5619420395. The latest correction supersedes only the earlier Stage-1 mechanism premise that “current acceptance remains unchanged”: Stage 1 must preserve the intended accepted cases while removing the same-invocation `_formal_evidence_observed` dependency. It preserves the original outcome, exactly two deployment stages, bounded untrusted `EFFECT_REQUEST` ingress, and #218 exclusion.
 
 ## Architecture decision
 
@@ -78,7 +78,7 @@ Stages are deployment boundaries, not workflow state. A merged carrier remains r
 
 Stage 1 is complete when one reviewed revision:
 
-1. emits the minimum durable application-owned correlation for new formal consequences;
+1. emits an application-owned correlation bound to one exact, fresh-verified durable application/request execution identity for each new formal consequence; the Issue/Change/Role/Action/Result/default-branch tuple alone is insufficient, and Evidence-Ref remains an evidence reference rather than a correlation alias;
 2. binds accepted Action/Result, exact application authorization, model-derived consequence, and exact durable postcondition while preserving intended accepted cases;
 3. proves the N→N+1 fresh-continuation regression: invocation N produces the exact durable repository-owned evidence, crosses the validation/carrier/application boundary, invocation N+1 creates a fresh `GitHubEffectAdapter`, and qualification plus the repository-derived successor remain reconstructable without invocation-local memory or replay/recreation of an old formal result;
 4. exposes a known application predicate rejection through the existing decision owner with machine-readable failed classification and relevant effect/identity/parser evidence from that same evaluation;
@@ -98,3 +98,14 @@ Stage 2 is complete when one later reviewed revision:
 In scope are the two named canonical capabilities, the `agents/AGENTS.md` discovery hook, existing scheduled-agent executable owners, minimum durable application binding, fresh-continuation reconstruction, same-evaluation machine-readable rejection evidence, complete relevant lifecycle ordering, continuation-carrier materialization, and focused regressions.
 
 Out of scope are #218; new Action/Role/Result or persistent workflow/stage state; registries, ledgers, cursors, leases, receipt lifecycles, policy engines, second DAGs, generic provenance services, fallback/migration behavior, historical Issue rewriting, and unrelated product behavior. Historical Issues, PRs, archived Changes, and active Changes remain evidence or review input and do not become competing authority.
+
+
+## Latest implementation correction — exact application binding
+
+The Human-approved correction in issuecomment-5619420395 is part of the Stage 1 meaning of this existing Change. It tightens the minimum binding without changing the parent outcome or the two-stage delivery boundary.
+
+For each new formal consequence, Stage 1 SHALL bind Application-Correlation to one exact durable application/request execution identity that the existing application bridge already fresh-verifies for that chain. The identity SHALL be unique to that application/request execution; the Issue + Change + Role + Action + Result kind + default-branch revision tuple is not sufficient. Evidence-Ref remains a reference to evidence and SHALL NOT be used as an alias or fallback for Application-Correlation unless the existing owner proves exact equivalence.
+
+The Stage 1 collision regression SHALL construct two applications with the same Issue, Change, Role, Action, Result kind, and default-branch revision but different exact application/request identities, and SHALL prove that their bindings differ and evidence from one cannot qualify the other. The production-boundary regression SHALL use the actual application bridge: invocation N persists the exact durable evidence, execution crosses the validation/application boundary, invocation N+1 runs the fresh `--validation-passed` application path, and the repository-derived successor remains eligible without replaying or recreating the old result or relying on invocation-local memory.
+
+The existing implementation-manifest widening that permits `tasks.md` plus arbitrary non-OpenSpec implementation files in one bookkeeping path is not part of the corrected Stage 1 scope unless a current #229 requirement, safety property, or demonstrated failure requires it. Where the current N-1 path already supports the legal fresh-wake continuation, the correction removes that widening and its dedicated coverage. No new registry, ledger, cursor, receipt lifecycle, workflow state, stage, Action/Result, or decision owner is introduced.

@@ -13,7 +13,9 @@ When a coordination Issue has `Change != unset`, the existing scheduled-agent cu
 
 The owner SHALL evaluate that input through one executable qualification decision and return only the existing `QUALIFIED` or `INDETERMINATE` provenance result. Every dispatch, routing, successor, terminal, and close consumer SHALL consume that same decision and SHALL NOT independently reconstruct consequence eligibility. All dimensions must be coherent and fresh for `QUALIFIED`; missing, incomplete, stale, ambiguous, contradictory, unverified, equality-only, or superseded evidence produces `INDETERMINATE` and uses the existing fail-closed path.
 
-Qualification evidence required for a repository-derived current formal consequence SHALL remain reconstructable from durable repository evidence across a process, validation, carrier, or application boundary and when a later invocation creates a fresh effect adapter. Invocation-local observation memory SHALL NOT be required to preserve an otherwise intended current qualification. A prior formal result SHALL NOT be replayed or recreated solely to repopulate invocation-local memory or make its repository-derived successor eligible.
+Qualification evidence required for a repository-derived current formal consequence SHALL remain reconstructable from durable repository evidence across a process, validation, carrier, or application boundary and when a later invocation creates a fresh effect adapter.
+
+Stage 1 Application-Correlation SHALL be bound to one exact durable application/request execution identity already fresh-verified by the existing application bridge. That identity SHALL be unique to the application/request execution. A tuple containing only the Issue, Change, Role, Action, Result, and default-branch revision is insufficient, and Evidence-Ref SHALL remain evidence rather than an alias or fallback correlation unless exact equivalence is established by the existing owner. Different exact application/request identities MUST produce different bindings even when all tuple fields are equal, and evidence from one binding MUST NOT qualify another. Invocation-local observation memory SHALL NOT be required to preserve an otherwise intended current qualification. A prior formal result SHALL NOT be replayed or recreated solely to repopulate invocation-local memory or make its repository-derived successor eligible.
 
 Lifecycle evidence SHALL establish relevant ordering and supersession only. Actor, connector, carrier, timestamp, physical writer, structural validity, and value equality do not supply application authorization. Equality MAY support postcondition reconciliation after qualification; it SHALL NOT authorize the consequence.
 
@@ -61,6 +63,24 @@ This contract activates prospectively on default-branch merge. Workflows termina
 - AND the repository-derived successor remains eligible when all other current predicates hold
 - AND the prior formal result is not replayed or recreated solely to restore eligibility
 - AND no invocation-local observation memory is required
+
+#### Scenario: Stage 1 application bindings are collision-resistant
+
+- GIVEN two applications have the same Issue, immutable Change, Role, Action, Result kind, and default-branch revision
+- AND the existing application bridge fresh-verifies different exact application/request identities
+- WHEN Stage 1 reconstructs their application bindings
+- THEN the bindings are different
+- AND evidence from one application does not qualify the other
+- AND no registry, ledger, cursor, receipt lifecycle, or second decision owner is introduced
+
+#### Scenario: The production fresh-continuation bridge remains eligible
+
+- GIVEN invocation N persists the exact durable application/request evidence required by the current Action
+- AND execution crosses the exact validation/application boundary
+- WHEN invocation N+1 creates a fresh adapter and runs the `--validation-passed` application path
+- THEN the repository-derived successor remains eligible when all other current predicates hold
+- AND the old formal result is not replayed or recreated
+- AND invocation-local observation memory is not required
 
 #### Scenario: Equality and ABA do not inherit historical qualification
 

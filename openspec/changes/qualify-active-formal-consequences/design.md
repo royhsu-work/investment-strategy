@@ -11,7 +11,7 @@ authoritative observation set
 → all consequence consumers reuse that decision
 ```
 
-The controlling Human decisions are issuecomment-5607080928, issuecomment-5611740462, issuecomment-5612882299, and issuecomment-5614126835. The latest correction preserves one Issue, one immutable Change, exactly two deployment stages, bounded untrusted `EFFECT_REQUEST` ingress, and #218 as a downstream boundary, while replacing the flawed Stage-1 same-invocation qualification mechanism.
+The controlling Human decisions are issuecomment-5607080928, issuecomment-5611740462, issuecomment-5612882299, issuecomment-5614126835, and issuecomment-5619420395. The latest correction preserves one Issue, one immutable Change, exactly two deployment stages, bounded untrusted `EFFECT_REQUEST` ingress, and #218 as a downstream boundary, while replacing the flawed Stage-1 same-invocation qualification mechanism.
 
 ## Architecture-precedent disposition
 
@@ -20,7 +20,7 @@ The controlling Human decisions are issuecomment-5607080928, issuecomment-561174
 | Generic machine-decidable consequence rule | `repository-governance` one-authoritative-surface requirement | `CONSOLIDATE`: extend that requirement instead of adding a second generic requirement. |
 | Active-formal qualification | Existing scheduled-agent current-state/application owner | `REUSE`: add one domain qualification decision to the existing owner. |
 | `ObservationProvenance` result space | Existing Action model/runtime | `NO-DELTA`: reuse `QUALIFIED | INDETERMINATE`. |
-| Application correlation | Existing formal result/application evidence chain | `ADD`: add only the minimum durable identity missing from the current causal binding. |
+| Application correlation | Existing formal result/application evidence chain | `ADD`: bind the existing chain to one exact, fresh-verified application/request execution identity that is unique to that execution; tuple-only correlation and Evidence-Ref aliasing are insufficient. |
 | Fresh-continuation reconstruction | Existing formal-evidence/current application owner | `CONSOLIDATE`: reconstruct intended current qualification from durable repository evidence; remove same-invocation `_formal_evidence_observed` authority without creating another store or owner. |
 | Known application rejection diagnostics | Existing application decision/repository-governance rejection contract | `REUSE`: emit failed classification and relevant effect/identity/parser evidence from the same evaluation; no second predicate reconstruction or decision owner. |
 | Lifecycle ordering | GitHub Issue lifecycle read surface plus existing reconstruction | `REUSE`: use it only for ordering, supersession, and ABA. |
@@ -127,3 +127,12 @@ Stage 1 tests prove correlation uniqueness, the exact N→N+1 fresh-adapter regr
 Stage 2 tests prove qualified routing/terminal cases, missing or incomplete binding, out-of-band equality, ABA supersession, carrier and pre-activation compatibility, and single-decision consumption.
 
 Each stage runs focused tests, full `pytest`, Ruff check and format check, mypy, strict OpenSpec validation, current required repository checks, and independent exact-revision review.
+
+
+## Latest implementation correction — exact application/request identity
+
+The Human-approved correction in issuecomment-5619420395 refines Stage 1's minimum binding. The existing application bridge's exact, fresh-verified request/event identity is the binding anchor for one application chain. The application-derived consequence, authorization revision, and exact durable postcondition remain part of the same existing chain. A deterministic tuple of Issue, Change, Role, Action, Result kind, and default-branch revision may describe the chain but cannot uniquely identify it; Evidence-Ref remains evidence and is not a fallback correlation.
+
+The correction adds two bounded regressions within Slice 1: a collision test proving that different exact request identities do not share a binding even when every tuple field is equal, and an actual bridge test that crosses the validation/application boundary and executes a fresh `--validation-passed` continuation without replaying the old result or depending on local adapter memory. It also rechecks the existing implementation-resource bookkeeping relaxation; because N-1 already demonstrates legal fresh-wake continuation, arbitrary non-OpenSpec files alongside `tasks.md` are removed from that bookkeeping exception unless a concrete #229 safety or failure case proves they are needed.
+
+This is a Stage 1 correction, not a third stage or new workflow state. Existing application, evidence, materialization, CarrierRequired, Action/Result, and fresh postcondition owners remain authoritative.
