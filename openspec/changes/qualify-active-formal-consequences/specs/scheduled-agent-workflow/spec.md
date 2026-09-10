@@ -17,6 +17,11 @@ Lifecycle evidence SHALL establish relevant ordering and supersession only. Acto
 
 Qualification decides consequence eligibility and remains separate from mutation execution. Fresh application reauthorization, exact necessary effects, carrier separation, and fresh postcondition observation remain required after a `QUALIFIED` decision. The existing finite Action/Role/Result model remains the workflow owner.
 
+Connector ingress remains limited to the bounded untrusted
+`EFFECT_REQUEST` transport needed by the current application bridge. Ingress
+does not grant routing, successor, retry, merge, terminal, or success
+authority; those effects remain application-derived and postcondition-bound.
+
 This contract activates prospectively on default-branch merge. Workflows terminal before activation remain terminal. Existing `Change: unset` pre-activation admission does not require the active-formal qualification input.
 
 #### Scenario: Connector-authored active routing fails closed
