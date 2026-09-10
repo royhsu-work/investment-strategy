@@ -21,6 +21,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
 from investment_strategy.scheduled_agent_carrier import CarrierRequired, make_carrier_plan
 from investment_strategy.scheduled_agent_checkin import checkin_title
 from investment_strategy.scheduled_agent_effects import (
+    EffectBatch,
     GitHubEffectAdapter,
     formal_application_correlation,
 )
@@ -290,7 +291,7 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
         apply_derived: bool = True,
         materialization_promote_change: bool = False,
         validated_materialization_revision: str | None = None,
-    ) -> tuple[object, bridge.ApplyResult]:
+    ) -> tuple[EffectBatch, bridge.ApplyResult]:
         assert source == expected_source
         assert request_comment_id == 102
         adapter = GitHubEffectAdapter(
@@ -335,7 +336,7 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
             assert validated_materialization_revision is None
             assert durable_evidence == []
             durable_evidence.append(bound)
-        return object(), bridge.ApplyResult(True, "applied")
+        return EffectBatch(source=source, effects=()), bridge.ApplyResult(True, "applied")
 
     monkeypatch.setattr(bridge, "run_guarded_effect_application", fake_run)
 
