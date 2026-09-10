@@ -13,6 +13,8 @@ When a coordination Issue has `Change != unset`, the existing scheduled-agent cu
 
 The owner SHALL evaluate that input through one executable qualification decision and return only the existing `QUALIFIED` or `INDETERMINATE` provenance result. Every dispatch, routing, successor, terminal, and close consumer SHALL consume that same decision and SHALL NOT independently reconstruct consequence eligibility. All dimensions must be coherent and fresh for `QUALIFIED`; missing, incomplete, stale, ambiguous, contradictory, unverified, equality-only, or superseded evidence produces `INDETERMINATE` and uses the existing fail-closed path.
 
+Qualification evidence required for a repository-derived current formal consequence SHALL remain reconstructable from durable repository evidence across a process, validation, carrier, or application boundary and when a later invocation creates a fresh effect adapter. Invocation-local observation memory SHALL NOT be required to preserve an otherwise intended current qualification. A prior formal result SHALL NOT be replayed or recreated solely to repopulate invocation-local memory or make its repository-derived successor eligible.
+
 Lifecycle evidence SHALL establish relevant ordering and supersession only. Actor, connector, carrier, timestamp, physical writer, structural validity, and value equality do not supply application authorization. Equality MAY support postcondition reconciliation after qualification; it SHALL NOT authorize the consequence.
 
 Qualification decides consequence eligibility and remains separate from mutation execution. Fresh application reauthorization, exact necessary effects, carrier separation, and fresh postcondition observation remain required after a `QUALIFIED` decision. The existing finite Action/Role/Result model remains the workflow owner.
@@ -49,6 +51,16 @@ This contract activates prospectively on default-branch merge. Workflows termina
 - THEN it returns `QUALIFIED`
 - AND every consequence consumer reuses that result
 - AND any mutation still requires fresh application reauthorization and postcondition observation
+
+#### Scenario: Fresh continuation reconstructs qualification from durable repository evidence
+
+- GIVEN invocation N produced the exact durable repository-owned evidence required by the current Action
+- AND execution crosses the exact validation, carrier, or application boundary
+- WHEN invocation N+1 creates a fresh `GitHubEffectAdapter`
+- THEN the required current qualification is reconstructable from durable repository evidence
+- AND the repository-derived successor remains eligible when all other current predicates hold
+- AND the prior formal result is not replayed or recreated solely to restore eligibility
+- AND no invocation-local observation memory is required
 
 #### Scenario: Equality and ABA do not inherit historical qualification
 

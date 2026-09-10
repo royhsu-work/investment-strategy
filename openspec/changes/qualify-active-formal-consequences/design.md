@@ -11,7 +11,7 @@ authoritative observation set
 → all consequence consumers reuse that decision
 ```
 
-The final Human decisions are issuecomment-5607080928 and issuecomment-5611740462. The design preserves one Issue, one immutable Change, the two deployment stages, and #218 as a downstream boundary.
+The controlling Human decisions are issuecomment-5607080928, issuecomment-5611740462, issuecomment-5612882299, and issuecomment-5614126835. The latest correction preserves one Issue, one immutable Change, exactly two deployment stages, bounded untrusted `EFFECT_REQUEST` ingress, and #218 as a downstream boundary, while replacing the flawed Stage-1 same-invocation qualification mechanism.
 
 ## Architecture-precedent disposition
 
@@ -20,12 +20,14 @@ The final Human decisions are issuecomment-5607080928 and issuecomment-561174046
 | Generic machine-decidable consequence rule | `repository-governance` one-authoritative-surface requirement | `CONSOLIDATE`: extend that requirement instead of adding a second generic requirement. |
 | Active-formal qualification | Existing scheduled-agent current-state/application owner | `REUSE`: add one domain qualification decision to the existing owner. |
 | `ObservationProvenance` result space | Existing Action model/runtime | `NO-DELTA`: reuse `QUALIFIED | INDETERMINATE`. |
-| Application correlation | Existing formal result/application evidence chain | `ADD`: add only the minimum identity missing from the current causal binding. |
+| Application correlation | Existing formal result/application evidence chain | `ADD`: add only the minimum durable identity missing from the current causal binding. |
+| Fresh-continuation reconstruction | Existing formal-evidence/current application owner | `CONSOLIDATE`: reconstruct intended current qualification from durable repository evidence; remove same-invocation `_formal_evidence_observed` authority without creating another store or owner. |
+| Known application rejection diagnostics | Existing application decision/repository-governance rejection contract | `REUSE`: emit failed classification and relevant effect/identity/parser evidence from the same evaluation; no second predicate reconstruction or decision owner. |
 | Lifecycle ordering | GitHub Issue lifecycle read surface plus existing reconstruction | `REUSE`: use it only for ordering, supersession, and ABA. |
 | Continuation carrier | Existing materialization and CarrierRequired owners | `CONSOLIDATE`: extend only the missing post-merge same-Change case. |
 | Architecture-precedent discovery | `agents/AGENTS.md` shared governance | `ADD`: add a short hook that points changes back to their consequence and owner before another control concept is retained. |
 
-No new decision owner, workflow graph, or persistent state is required.
+No new decision owner, workflow graph, registry, ledger, cursor, stage state, or other persistent workflow state is required.
 
 ## One qualification decision
 
@@ -55,9 +57,26 @@ qualification decision
 
 This keeps a single semantic/control decision while preserving effect-specific stale checks, carrier separation, and exact postconditions.
 
-## Stage 1 — evidence producer and continuation capability
+## Stage 1 — durable evidence producer, fresh continuation, and continuation capability
 
-Current N-1 already parses typed results, authorizes their exact source, derives the successor/terminal effect, applies it, and observes the postcondition. Stage 1 augments that existing chain with the minimum durable correlation needed to bind those facts uniquely. Current acceptance remains active; the strict qualification consumer is not deployed yet.
+Current N-1 already parses typed results, authorizes their exact source, derives the successor/terminal effect, applies it, and observes the postcondition. It also has an invocation-local `_formal_evidence_observed` set. A fresh `GitHubEffectAdapter` begins with that set empty; therefore a repository-derived successor can be rejected after an exact validation/carrier/application boundary even when invocation N already produced the durable evidence. Preserving that mechanism is not acceptable.
+
+Stage 1 augments the existing chain with the minimum durable application correlation/binding and changes current qualification reconstruction so intended accepted cases remain accepted across a fresh adapter/application boundary from durable repository evidence. Invocation-local `_formal_evidence_observed` is not required for eligibility, and the old formal result is not replayed or recreated solely to repopulate local memory. Stage 1 deliberately does not activate the full strict Stage-2 `QualificationInput` lifecycle/ABA consumer yet.
+
+The regression boundary is exact:
+
+```text
+invocation N
+→ accepted typed Action/Result
+→ exact application authorization/correlation
+→ exact durable repository postcondition
+→ validation/carrier/application boundary
+→ invocation N+1 creates a fresh GitHubEffectAdapter
+→ current qualification reconstructed from durable repository evidence
+→ repository-derived successor remains eligible
+```
+
+The existing application decision is also the diagnostic owner. When a known predicate fails, the same evaluation that rejects the effect exposes its machine-readable classification and relevant expected/observed effect, identity, or parser evidence. Aggregate diagnostic text may remain, but it does not replace the structured evidence and no second evaluator reconstructs the predicate.
 
 Stage 1 also adds the short `agents/AGENTS.md` discovery hook and extends the existing materialization owner for one missing case:
 
@@ -70,7 +89,7 @@ same open Issue
 → materialize one fresh replacement carrier from current default branch
 ```
 
-The carrier remains an actuator. The content-addressed manifest, fresh authorization, exact branch/PR identities, CarrierRequired boundary, and postcondition checks remain unchanged.
+The carrier remains an actuator. The content-addressed manifest, fresh authorization, exact branch/PR identities, bounded untrusted `EFFECT_REQUEST` ingress, CarrierRequired boundary, and postcondition checks remain unchanged.
 
 ## Stage 2 — qualification consumer
 
@@ -88,21 +107,23 @@ If relevant lifecycle evidence or any binding dimension is unavailable or incohe
 
 The default-branch merge remains the prospective activation boundary. Stage 2 does not retroactively invalidate or reopen workflows already terminal before activation. An active workflow rerouted or closed after activation without a qualifying current binding is `INDETERMINATE`; there is no migration registry, grandfather flag, or fallback.
 
-`Change: unset` pre-activation behavior bypasses the active-formal qualifier and remains under existing admission semantics. Exact carrier completion becomes eligible only after a later fresh observation binds the application plan to its postcondition. Human gates, merge gates, typed successor derivation, WIP/finish-first, and carrier authority remain with their existing owners.
+`Change: unset` pre-activation behavior bypasses the active-formal qualifier and remains under existing admission semantics. Exact carrier completion becomes eligible only after a later fresh observation binds the application plan to its postcondition. Human gates, merge gates, typed successor derivation, WIP/finish-first, bounded untrusted `EFFECT_REQUEST` ingress, and carrier authority remain with their existing owners.
 
 ## Staged-delivery evidence tuple
 
 | Evidence | Stage 1 | Stage 2 |
 | --- | --- | --- |
 | Parent outcome | Preserved in full | Completed in full |
-| N-1 prerequisite | Existing Action/Result application chain and materialization owner | Stage-1 correlation producer and continuation carrier active on default branch |
-| Stage boundary | Produce binding; preserve acceptance; enable later carrier | Consume one qualifier; remove equality authority |
-| Exit criteria | Correlation, discovery hook, continuation capability, all gates green | Qualified and adverse cases, single-consumer path, all gates green |
-| Remaining mandatory outcome | Strict qualification consumption | None after all parent criteria pass |
+| N-1 prerequisite | Existing Action/Result application chain, durable GitHub evidence surfaces, and materialization owner | Stage-1 durable binding/fresh-continuation repair and continuation carrier active on default branch |
+| Stage boundary | Produce durable binding; repair fresh reconstruction; preserve intended accepted cases; expose same-evaluation rejection evidence; enable later carrier | Consume one strict qualifier; remove equality authority |
+| Exit criteria | N→N+1 fresh-adapter regression, correlation, rejection evidence, discovery hook, continuation capability, all gates green | Qualified and adverse cases, single-consumer path, all gates green |
+| Remaining mandatory outcome | Strict full qualification consumption with complete lifecycle ordering/ABA | None after all parent criteria pass |
 | Required continuation | Review → merge → finalize → `MORE_IMPLEMENTATION_REQUIRED` | Normal review/merge/finalize/archive lifecycle |
 
 ## Verification
 
-Stage 1 tests prove correlation uniqueness, preservation of current acceptance, the shared discovery hook, and the exact post-merge continuation-carrier predicates. Stage 2 tests prove qualified routing/terminal cases, missing or incomplete binding, out-of-band equality, ABA supersession, carrier and pre-activation compatibility, and single-decision consumption.
+Stage 1 tests prove correlation uniqueness, the exact N→N+1 fresh-adapter regression, preservation of intended accepted cases without invocation-local memory or replay/recreation of an old formal result, same-evaluation machine-readable rejection detail, the shared discovery hook, and the exact post-merge continuation-carrier predicates. The N→N+1 regression must fail on current N-1 and pass after Stage 1.
+
+Stage 2 tests prove qualified routing/terminal cases, missing or incomplete binding, out-of-band equality, ABA supersession, carrier and pre-activation compatibility, and single-decision consumption.
 
 Each stage runs focused tests, full `pytest`, Ruff check and format check, mypy, strict OpenSpec validation, current required repository checks, and independent exact-revision review.
