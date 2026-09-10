@@ -160,11 +160,18 @@ def formal_application_correlation(
     change: str,
     result_kind: str,
     current_revision: str,
+    request_comment_id: int,
 ) -> str:
-    """Derive the bounded durable identity for one application consequence."""
+    """Derive the durable identity from the exact bridge-verified request."""
 
+    if (
+        isinstance(request_comment_id, bool)
+        or not isinstance(request_comment_id, int)
+        or request_comment_id <= 0
+    ):
+        raise ValueError("request_comment_id must be a positive integer")
     return (
-        f"application:{source.issue_number}:{change}:{source.role}:"
+        f"application:{request_comment_id}:{source.issue_number}:{change}:{source.role}:"
         f"{source.action}:{result_kind}:{current_revision}"
     )
 
@@ -184,7 +191,7 @@ def _formal_comment_is_bound(
     change: str,
     expected_result_kind: str | None,
     current_revision: str | None,
-    expected_evidence_ref: str | None = None,
+    expected_application_correlation: str | None = None,
 ) -> bool:
     lines = body.splitlines()
     if not lines:
@@ -200,10 +207,11 @@ def _formal_comment_is_bound(
         or _formal_field(body, "Role") != source.role
     ):
         return False
-    evidence_ref = _formal_field(body, "Application-Correlation") or _formal_field(
-        body, "Evidence-Ref"
-    )
-    if expected_evidence_ref is None or evidence_ref != expected_evidence_ref:
+    application_correlation = _formal_field(body, "Application-Correlation")
+    if (
+        expected_application_correlation is None
+        or application_correlation != expected_application_correlation
+    ):
         return False
     action = _formal_field(body, "Action")
     if action is None or (action != source.action and not action.endswith(f"/ {source.action}")):
@@ -936,6 +944,7 @@ class GitHubEffectAdapter:
         authorized_change: str,
         current_revision: str | None = None,
         expected_result_kind: str | None = None,
+        request_comment_id: int | None = None,
         materialization_promote_change: bool = False,
         validated_materialization_revision: str | None = None,
     ) -> None:
@@ -945,6 +954,7 @@ class GitHubEffectAdapter:
         self.authorized_change = authorized_change
         self.current_revision = current_revision
         self.expected_result_kind = expected_result_kind
+        self.request_comment_id = request_comment_id
         self.materialization_promote_change = materialization_promote_change
         self.validated_materialization_revision = validated_materialization_revision
         self._last_rejection: ApplicationRejection | None = None
@@ -1049,6 +1059,7 @@ class GitHubEffectAdapter:
             self.authorized_change == "unset"
             or self.current_revision is None
             or self.expected_result_kind is None
+            or self.request_comment_id is None
         ):
             return None
         return formal_application_correlation(
@@ -1056,6 +1067,7 @@ class GitHubEffectAdapter:
             change=self.authorized_change,
             result_kind=self.expected_result_kind,
             current_revision=self.current_revision,
+            request_comment_id=self.request_comment_id,
         )
 
     def _formal_evidence_exists(self) -> bool:
@@ -1085,7 +1097,7 @@ class GitHubEffectAdapter:
                     change=self.authorized_change,
                     expected_result_kind=self.expected_result_kind,
                     current_revision=self.current_revision,
-                    expected_evidence_ref=expected,
+                    expected_application_correlation=expected,
                 ):
                     return True
             if len(payload) < 100:
@@ -1874,6 +1886,41 @@ class GitHubEffectAdapter:
             return
         raise RuntimeError(f"unsupported GitHub mutation operation: {operation}")
 
+    def _application_bound_comment_body(self, body: str) -> str:
+        """Bind formal evidence to the exact bridge-verified request comment."""
+
+        correlation = self._formal_correlation()
+        if correlation is None:
+            return body
+        lines = body.splitlines()
+        if not lines:
+            return body
+        marker = lines[0].strip()
+        if marker.startswith("## "):
+            marker = marker[3:].strip()
+        if marker not in _FORMAL_RESULT_MARKERS | {_FORMAL_CHECKPOINT_MARKER}:
+            return body
+
+        correlation_indexes = [
+            index
+            for index, line in enumerate(lines)
+            if line.startswith("Application-Correlation:")
+        ]
+        if len(correlation_indexes) > 1:
+            raise RuntimeError("formal result has duplicate Application-Correlation fields")
+        if correlation_indexes:
+            lines[correlation_indexes[0]] = f"Application-Correlation: {correlation}"
+        else:
+            anchors = [
+                index
+                for index, line in enumerate(lines)
+                if line.startswith(("Revision:", "Default-Branch-Revision:"))
+            ]
+            insert_at = max(anchors) + 1 if anchors else min(1, len(lines))
+            lines.insert(insert_at, f"Application-Correlation: {correlation}")
+        suffix = "\n" if body.endswith("\n") else ""
+        return "\n".join(lines) + suffix
+
     def _existing_issue_comment(self, body: str) -> int | None:
         page = 1
         while True:
@@ -1905,7 +1952,7 @@ class GitHubEffectAdapter:
             raise RuntimeError("validated effect payload became unavailable")
 
         if effect.kind == "issue-comment":
-            body = cast(str, payload["body"])
+            body = self._application_bound_comment_body(cast(str, payload["body"]))
             existing = self._existing_issue_comment(body)
             if existing is not None:
                 self._comment_ids[effect] = existing
@@ -2080,7 +2127,8 @@ class GitHubEffectAdapter:
             )
             observed = (
                 isinstance(response, Mapping)
-                and response.get("body") == payload.get("body")
+                and response.get("body")
+                == self._application_bound_comment_body(cast(str, payload["body"]))
                 and response.get("id") == comment_id
                 and is_github_actions_comment(response)
             )

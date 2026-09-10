@@ -403,15 +403,13 @@ def _is_executor_task_bookkeeping(
     expected_change: str,
     files: tuple[WorkProductFile, ...],
 ) -> bool:
-    """Allow an implementation manifest carrying one exact task-marker file."""
+    """Allow only the approved non-semantic task-marker update from implementation."""
 
-    task_path = f"openspec/changes/{expected_change}/tasks.md"
-    task_files = tuple(file for file in files if file.path == task_path)
     return (
         source.role == "executor"
         and source.action == "implement-change"
-        and len(task_files) == 1
-        and all(file.path == task_path or not file.path.startswith("openspec/") for file in files)
+        and len(files) == 1
+        and files[0].path == f"openspec/changes/{expected_change}/tasks.md"
     )
 
 

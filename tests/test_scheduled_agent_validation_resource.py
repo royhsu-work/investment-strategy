@@ -149,16 +149,7 @@ def test_executor_task_marker_is_the_only_nonreview_openspec_work_product() -> N
     design_file = resource.WorkProductFile(
         f"openspec/changes/{_CHANGE}/design.md", "b" * 40, "a" * 40
     )
-    implementation_file = resource.WorkProductFile(
-        "src/investment_strategy/example.py", "b" * 40, "a" * 40
-    )
-
     assert resource._is_executor_task_bookkeeping(source, _CHANGE, (task_file,))
-    assert resource._is_executor_task_bookkeeping(
-        source,
-        _CHANGE,
-        (task_file, implementation_file),
-    )
     assert not resource._is_executor_task_bookkeeping(source, _CHANGE, (design_file,))
     assert not resource._is_executor_task_bookkeeping(source, _CHANGE, (task_file, design_file))
 

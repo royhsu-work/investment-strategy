@@ -37,6 +37,7 @@ from investment_strategy.workflow_dispatch import (
 
 _REVISION = "a" * 40
 _CHANGE = "simplify-scheduled-agent-control-plane"
+_REQUEST_COMMENT_ID = 1003
 
 
 def _preflight(
@@ -816,6 +817,7 @@ def test_repository_actions_formal_transition_is_qualified_after_comment_postcon
         source,
         change=_CHANGE,
         result_kind="spec-blocker",
+        request_comment_id=_REQUEST_COMMENT_ID,
         current_revision=_REVISION,
     )
     body = (
@@ -873,6 +875,7 @@ def test_repository_actions_formal_transition_is_qualified_after_comment_postcon
         source,
         authorized_change=_CHANGE,
         current_revision=_REVISION,
+        request_comment_id=_REQUEST_COMMENT_ID,
         expected_result_kind="spec-blocker",
     )
     requested = {
@@ -917,6 +920,7 @@ def test_fresh_adapter_reconstructs_durable_formal_binding_without_local_memory(
         source,
         change=_CHANGE,
         result_kind="spec-blocker",
+        request_comment_id=_REQUEST_COMMENT_ID,
         current_revision=_REVISION,
     )
     body = (
@@ -976,6 +980,7 @@ def test_fresh_adapter_reconstructs_durable_formal_binding_without_local_memory(
         source,
         authorized_change=_CHANGE,
         current_revision=_REVISION,
+        request_comment_id=_REQUEST_COMMENT_ID,
         expected_result_kind="spec-blocker",
     )
     batch = parse_effect_batch(
@@ -1012,6 +1017,7 @@ def test_fresh_adapter_reconstructs_durable_formal_binding_without_local_memory(
         source,
         authorized_change=_CHANGE,
         current_revision=_REVISION,
+        request_comment_id=_REQUEST_COMMENT_ID,
         expected_result_kind="spec-blocker",
     )
     derived = StagedEffect(
@@ -1026,6 +1032,100 @@ def test_fresh_adapter_reconstructs_durable_formal_binding_without_local_memory(
     assert fresh_adapter.guard(derived)
     assert calls.count(("issues/138/comments?per_page=100&sort=created&direction=desc", "GET")) >= 2
     assert calls.count(("issues/138/comments", "POST")) == 1
+
+
+def test_application_bindings_are_collision_resistant_and_do_not_alias_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = "owner/repo"
+    source = WorkerRequest(138, "executor", "implement-change")
+    issue = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "created_at": "2026-09-08T00:00:00Z",
+        "closed_at": None,
+        "labels": [
+            {"name": "agent:executor"},
+            {"name": "action:implement-change"},
+        ],
+    }
+    first_id = _REQUEST_COMMENT_ID
+    second_id = first_id + 1
+    first_correlation = formal_application_correlation(
+        source,
+        change=_CHANGE,
+        result_kind="spec-blocker",
+        current_revision=_REVISION,
+        request_comment_id=first_id,
+    )
+    second_correlation = formal_application_correlation(
+        source,
+        change=_CHANGE,
+        result_kind="spec-blocker",
+        current_revision=_REVISION,
+        request_comment_id=second_id,
+    )
+    assert first_correlation != second_correlation
+    body = (
+        "ACTION_RESULT\n"
+        "Workflow: #138\n"
+        f"Change: {_CHANGE}\n"
+        "Action: implement-change\n"
+        "Role: executor\n"
+        "Result: SPEC_BLOCKER\n"
+        f"Revision: {_REVISION}\n"
+        f"Application-Correlation: {first_correlation}\n"
+        "Evidence-Ref: issuecomment-first\n"
+    )
+    actions_comment = {
+        "id": 1005,
+        "body": body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        path: str,
+        **_kwargs: object,
+    ) -> object:
+        if path == "":
+            return {"default_branch": "main"}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": _REVISION}}
+        if path == "issues/138":
+            return issue
+        if path == "issues/138/comments?per_page=100&sort=created&direction=desc":
+            return [actions_comment]
+        raise AssertionError(f"unexpected GitHub call: {path}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        repository,
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        expected_result_kind="spec-blocker",
+        request_comment_id=second_id,
+    )
+    effect = StagedEffect(
+        kind="routing-transition",
+        payload_json=json.dumps(
+            {"issue_number": 138, "action": "resolve-question"},
+            sort_keys=True,
+        ),
+        derived=True,
+    )
+
+    assert not adapter.guard(effect)
+    actions_comment["body"] = body.replace(
+        f"Application-Correlation: {first_correlation}\n",
+        f"Evidence-Ref: {second_correlation}\n",
+    )
+    assert not adapter.guard(effect)
 
 
 def test_known_effect_guard_rejection_exposes_same_evaluation_evidence(
@@ -1067,6 +1167,7 @@ def test_known_effect_guard_rejection_exposes_same_evaluation_evidence(
         source,
         authorized_change=_CHANGE,
         current_revision=_REVISION,
+        request_comment_id=_REQUEST_COMMENT_ID,
         expected_result_kind="spec-blocker",
     )
     effect = StagedEffect(
@@ -1264,6 +1365,7 @@ def test_merged_carrier_merge_is_idempotent_without_put(
         source,
         change=change,
         result_kind="merged",
+        request_comment_id=_REQUEST_COMMENT_ID,
         current_revision=_REVISION,
     )
     formal_body = (
@@ -1316,6 +1418,7 @@ def test_merged_carrier_merge_is_idempotent_without_put(
         source,
         authorized_change=change,
         current_revision=_REVISION,
+        request_comment_id=_REQUEST_COMMENT_ID,
         expected_result_kind="merged",
     )
     monkeypatch.setattr(adapter, "_source_still_current", lambda: True)
@@ -2198,6 +2301,7 @@ def test_non_merge_carrier_recovery_observes_current_postcondition_without_repla
         source,
         change=_CHANGE,
         result_kind="spec-blocker",
+        request_comment_id=_REQUEST_COMMENT_ID,
         current_revision=_REVISION,
     )
     formal_body = (
@@ -2284,6 +2388,7 @@ def test_non_merge_carrier_recovery_observes_current_postcondition_without_repla
         source,
         authorized_change=_CHANGE,
         current_revision=_REVISION,
+        request_comment_id=_REQUEST_COMMENT_ID,
         expected_result_kind="spec-blocker",
     )
     formal_effect = StagedEffect(

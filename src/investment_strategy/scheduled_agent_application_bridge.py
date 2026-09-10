@@ -53,6 +53,7 @@ class ApplicationPlan:
     should_apply: bool
     source: WorkerRequest | None = None
     raw_worker_result: str | None = None
+    request_comment_id: int | None = None
 
 
 def _positive_int(value: object) -> int | None:
@@ -165,7 +166,8 @@ def plan_application(
     repository_owner = repository.split("/", 1)[0]
     if not _trusted_connector_comment(event_comment, repository_owner):
         raise ValueError("EFFECT_REQUEST must originate from the configured ChatGPT connector")
-    if _positive_int(event_comment.get("id")) is None:
+    request_comment_id = _positive_int(event_comment.get("id"))
+    if request_comment_id is None:
         raise ValueError("EFFECT_REQUEST event comment id is invalid")
 
     decision = classify_dispatch(preflight)
@@ -184,6 +186,7 @@ def plan_application(
         should_apply=True,
         source=source,
         raw_worker_result=request.raw_worker_result,
+        request_comment_id=request_comment_id,
     )
 
 
@@ -339,8 +342,12 @@ def main() -> int:
     if not plan.should_apply:
         _write_validation_outputs(None)
         return 0
-    if plan.source is None or plan.raw_worker_result is None:
-        raise RuntimeError("application plan is missing validated source/result identity")
+    if (
+        plan.source is None
+        or plan.raw_worker_result is None
+        or plan.request_comment_id is None
+    ):
+        raise RuntimeError("application plan is missing validated source/result/request identity")
 
     materializations = _materialization_effects(plan.raw_worker_result, plan.source)
     if len(materializations) > 1:
@@ -381,6 +388,7 @@ def main() -> int:
             apply_derived=not requires_validation or args.validation_passed,
             materialization_promote_change=args.validation_passed,
             validated_materialization_revision=args.validated_revision,
+            request_comment_id=plan.request_comment_id,
         )
     except CarrierRequired as exc:
         # CarrierRequired is the hard invocation-exit boundary. Persist only
