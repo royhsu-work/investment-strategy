@@ -928,11 +928,7 @@ def test_task_checkpoint_accepts_fresh_observation_of_previously_durable_slice(
 
 _CONTINUATION_CHANGE = "qualify-active-formal-consequences"
 _CONTINUATION_BRANCH = f"agent/{_CONTINUATION_CHANGE}-continuation-232"
-_CONTINUATION_PR_BODY = (
-    "Continue OpenSpec change "
-    + _CONTINUATION_CHANGE
-    + " after the merged carrier.\n\nRefs #229"
-)
+_CONTINUATION_PR_BODY = "Continue OpenSpec change " + _CONTINUATION_CHANGE + " after the merged carrier.\n\nRefs #229"
 
 
 def _open_continuation_with_files(

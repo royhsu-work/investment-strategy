@@ -29,9 +29,7 @@ _CORRELATION = re.compile(
     r"^application:([1-9][0-9]*):([1-9][0-9]*):([^:]+):"
     r"(lead|reviewer|executor):([a-z0-9-]+):([a-z0-9-]+):([0-9a-f]{40})$"
 )
-_SUCCESSOR = re.compile(
-    r"^(Lead|Reviewer|Executor)\s*/\s*([a-z0-9-]+)(?:\s+\([^)]*\))?$"
-)
+_SUCCESSOR = re.compile(r"^(Lead|Reviewer|Executor)\s*/\s*([a-z0-9-]+)(?:\s+\([^)]*\))?$")
 _ACTION_WITH_ROLE = re.compile(r"^(Lead|Reviewer|Executor)\s*/\s*([a-z0-9-]+)$")
 _GITHUB_ACTIONS_BOT = "github-actions[bot]"
 _GITHUB_ACTIONS_APP = "github-actions"
@@ -137,9 +135,7 @@ def _normalize_action(value: object) -> tuple[str | None, str | None]:
     match = _ACTION_WITH_ROLE.fullmatch(value)
     if match is not None:
         return (
-            {"Lead": "lead", "Reviewer": "reviewer", "Executor": "executor"}[
-                match.group(1)
-            ],
+            {"Lead": "lead", "Reviewer": "reviewer", "Executor": "executor"}[match.group(1)],
             match.group(2),
         )
     return None, value
@@ -177,9 +173,7 @@ def _successor_value(body: str) -> tuple[tuple[str, str] | None, bool]:
     match = _SUCCESSOR.fullmatch(value)
     if match is None:
         return None, False
-    role = {"Lead": "lead", "Reviewer": "reviewer", "Executor": "executor"}[
-        match.group(1)
-    ]
+    role = {"Lead": "lead", "Reviewer": "reviewer", "Executor": "executor"}[match.group(1)]
     return (role, match.group(2)), True
 
 
@@ -413,9 +407,8 @@ def qualify_current_formal_consequence(
         or (latest.role, latest.action) != qualification.source_routing
     ):
         return _indeterminate("pending-source-routing-not-qualified", latest)
-    if (
-        qualification.expected_result_kind is None
-        or latest.result_kind != _normalized_kind(qualification.expected_result_kind)
+    if qualification.expected_result_kind is None or latest.result_kind != _normalized_kind(
+        qualification.expected_result_kind
     ):
         return _indeterminate("pending-result-not-qualified", latest)
     if (

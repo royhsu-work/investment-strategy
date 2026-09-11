@@ -101,20 +101,26 @@ def test_current_route_requires_complete_repository_owned_binding() -> None:
         successor="Executor / implement-change",
         request_id=10,
     )
-    assert _decision(
-        [comment],
-        current_routing=("executor", "implement-change"),
-    ).provenance is ObservationProvenance.QUALIFIED
+    assert (
+        _decision(
+            [comment],
+            current_routing=("executor", "implement-change"),
+        ).provenance
+        is ObservationProvenance.QUALIFIED
+    )
 
     incomplete = dict(comment)
     incomplete["body"] = str(comment["body"]).replace(
         f"Default-Branch-Revision: {_REVISION}\n",
         "",
     )
-    assert _decision(
-        [incomplete],
-        current_routing=("executor", "implement-change"),
-    ).provenance is ObservationProvenance.INDETERMINATE
+    assert (
+        _decision(
+            [incomplete],
+            current_routing=("executor", "implement-change"),
+        ).provenance
+        is ObservationProvenance.INDETERMINATE
+    )
 
 
 def test_equality_only_or_connector_state_fails_closed() -> None:
@@ -131,10 +137,13 @@ def test_equality_only_or_connector_state_fails_closed() -> None:
         request_id=10,
         performed_by_actions=False,
     )
-    assert _decision(
-        [connector],
-        current_routing=("executor", "implement-change"),
-    ).provenance is ObservationProvenance.INDETERMINATE
+    assert (
+        _decision(
+            [connector],
+            current_routing=("executor", "implement-change"),
+        ).provenance
+        is ObservationProvenance.INDETERMINATE
+    )
 
 
 def test_aba_supersession_uses_the_latest_complete_lifecycle_suffix() -> None:
@@ -164,10 +173,13 @@ def test_aba_supersession_uses_the_latest_complete_lifecycle_suffix() -> None:
             request_id=3,
         ),
     ]
-    assert _decision(
-        comments,
-        current_routing=("lead", "resolve-question"),
-    ).provenance is ObservationProvenance.QUALIFIED
+    assert (
+        _decision(
+            comments,
+            current_routing=("lead", "resolve-question"),
+        ).provenance
+        is ObservationProvenance.QUALIFIED
+    )
 
     comments[-1] = _comment(
         3,
@@ -177,10 +189,13 @@ def test_aba_supersession_uses_the_latest_complete_lifecycle_suffix() -> None:
         successor="Executor / implement-change",
         request_id=4,
     )
-    assert _decision(
-        comments,
-        current_routing=("lead", "resolve-question"),
-    ).provenance is ObservationProvenance.INDETERMINATE
+    assert (
+        _decision(
+            comments,
+            current_routing=("lead", "resolve-question"),
+        ).provenance
+        is ObservationProvenance.INDETERMINATE
+    )
 
 
 def test_pending_successor_uses_the_same_binding_decision_shape() -> None:
@@ -192,18 +207,19 @@ def test_pending_successor_uses_the_same_binding_decision_shape() -> None:
         successor="Reviewer / review-implementation",
         request_id=55,
     )
-    correlation = (
-        f"application:55:229:{_CHANGE}:executor:implement-change:ready:{_REVISION}"
+    correlation = f"application:55:229:{_CHANGE}:executor:implement-change:ready:{_REVISION}"
+    assert (
+        _decision(
+            [comment],
+            current_routing=("executor", "implement-change"),
+            mode="pending",
+            expected_routing=("reviewer", "review-implementation"),
+            source_routing=("executor", "implement-change"),
+            expected_result_kind="ready",
+            expected_application_correlation=correlation,
+        ).provenance
+        is ObservationProvenance.QUALIFIED
     )
-    assert _decision(
-        [comment],
-        current_routing=("executor", "implement-change"),
-        mode="pending",
-        expected_routing=("reviewer", "review-implementation"),
-        source_routing=("executor", "implement-change"),
-        expected_result_kind="ready",
-        expected_application_correlation=correlation,
-    ).provenance is ObservationProvenance.QUALIFIED
 
 
 def test_current_terminal_requires_a_repository_owned_terminal_result() -> None:
@@ -215,16 +231,22 @@ def test_current_terminal_requires_a_repository_owned_terminal_result() -> None:
         successor=None,
         request_id=66,
     )
-    assert _decision(
-        [terminal],
-        current_routing=None,
-        state="closed",
-    ).provenance is ObservationProvenance.QUALIFIED
-    assert _decision(
-        [terminal],
-        current_routing=None,
-        state="open",
-    ).provenance is ObservationProvenance.INDETERMINATE
+    assert (
+        _decision(
+            [terminal],
+            current_routing=None,
+            state="closed",
+        ).provenance
+        is ObservationProvenance.QUALIFIED
+    )
+    assert (
+        _decision(
+            [terminal],
+            current_routing=None,
+            state="open",
+        ).provenance
+        is ObservationProvenance.INDETERMINATE
+    )
 
 
 def test_change_unset_remains_pre_activation_compatible() -> None:
@@ -236,6 +258,7 @@ def test_change_unset_remains_pre_activation_compatible() -> None:
         comments=(),
         current_revision=None,
     )
-    assert qualify_current_formal_consequence(
-        qualification_input
-    ).provenance is ObservationProvenance.QUALIFIED
+    assert (
+        qualify_current_formal_consequence(qualification_input).provenance
+        is ObservationProvenance.QUALIFIED
+    )

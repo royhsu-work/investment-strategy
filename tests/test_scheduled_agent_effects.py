@@ -2560,4 +2560,3 @@ def test_merge_carrier_recovery_rejects_old_authorization_after_main_changes(
     assert not result.applied
     assert result.reason == "effect precondition rejected"
     assert not any(method != "GET" for _path, method in calls)
-

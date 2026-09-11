@@ -325,11 +325,7 @@ def _open_pr_payload(
             if change_name and change_name != "archive":
                 active_change_names.add(change_name)
     continuation_prefix = f"agent/{expected_change}-continuation-"
-    continuation_suffix = (
-        None
-        if expected_branch is None
-        else expected_branch.removeprefix(continuation_prefix)
-    )
+    continuation_suffix = None if expected_branch is None else expected_branch.removeprefix(continuation_prefix)
     is_deterministic_continuation = (
         expected_branch is not None
         and expected_branch.startswith(continuation_prefix)
@@ -338,9 +334,7 @@ def _open_pr_payload(
     )
     if is_deterministic_continuation:
         if any(name != expected_change for name in active_change_names):
-            raise RuntimeError(
-                "validation resource continuation contains competing active Change"
-            )
+            raise RuntimeError("validation resource continuation contains competing active Change")
     elif not has_expected_change or active_change_names != {expected_change}:
         raise RuntimeError(
             "validation resource target PR does not uniquely represent the source Change"
@@ -1270,11 +1264,7 @@ def apply_work_product(
                 pr_number=plan.pr_number,
                 change=plan.expected_change,
             )
-        if (
-            not manifest_applied
-            and not reconciled
-            and not replacement_reconciliation_required
-        ):
+        if not manifest_applied and not reconciled and not replacement_reconciliation_required:
             raise RuntimeError("work-product PR head/base identity is stale")
         if manifest_applied or reconciled:
             replay_manifest = True
