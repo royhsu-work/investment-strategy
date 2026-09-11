@@ -1013,7 +1013,7 @@ def test_apply_work_product_reuses_exact_current_continuation_head_without_commi
     current_head = "d" * 40
     expected_sha = "e" * 40
     blob_sha = "f" * 40
-    path = "src/investment_strategy/scheduled_agent_formal_qualification.py"
+    path = f"openspec/changes/{_CONTINUATION_CHANGE}/tasks.md"
     replacement_branch = _CONTINUATION_BRANCH
     message = "Stage 2: materialize verified qualification implementation; checkpoint pending"
     plan = resource.WorkProductPlan(
@@ -1096,10 +1096,7 @@ def test_apply_work_product_reuses_exact_current_continuation_head_without_commi
         if api_path == "pulls/236":
             return replacement_pr
         if api_path == "pulls/236/files?per_page=100":
-            return [
-                {"filename": path},
-                {"filename": "tests/test_scheduled_agent_formal_qualification.py"},
-            ]
+            return [{"filename": path}]
         if api_path == f"git/ref/heads/{replacement_branch}":
             return {"object": {"sha": current_head}}
         if api_path == f"compare/{base_sha}...{current_head}":
