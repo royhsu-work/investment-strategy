@@ -325,7 +325,9 @@ def _open_pr_payload(
             if change_name and change_name != "archive":
                 active_change_names.add(change_name)
     continuation_prefix = f"agent/{expected_change}-continuation-"
-    continuation_suffix = None if expected_branch is None else expected_branch.removeprefix(continuation_prefix)
+    continuation_suffix = (
+        None if expected_branch is None else expected_branch.removeprefix(continuation_prefix)
+    )
     is_deterministic_continuation = (
         expected_branch is not None
         and expected_branch.startswith(continuation_prefix)
