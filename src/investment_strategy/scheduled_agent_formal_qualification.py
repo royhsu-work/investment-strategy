@@ -388,7 +388,9 @@ def qualify_current_formal_consequence(
             break
         relevant_suffix.append(event)
     relevant_suffix.reverse()
-    for previous, current in zip(relevant_suffix, relevant_suffix[1:], strict=True):
+    for index in range(len(relevant_suffix) - 1):
+        previous = relevant_suffix[index]
+        current = relevant_suffix[index + 1]
         if previous.successor != (current.role, current.action):
             return _indeterminate("lifecycle-ordering-incomplete", current)
     if qualification.mode == "current":
