@@ -849,6 +849,23 @@ def _manifest_content_matches(
     )
 
 
+def _manifest_expected_content_matches_base(
+    repository: str,
+    token: str,
+    *,
+    base_sha: str,
+    manifest: WorkProductManifest,
+) -> bool:
+    """Verify every supplied expected SHA still describes the requested base."""
+
+    return bool(manifest.files) and all(
+        file.expected_sha is None
+        or _content_sha_at(repository, token, path=file.path, revision=base_sha)
+        == file.expected_sha
+        for file in manifest.files
+    )
+
+
 def _reconciliation_message(change: str) -> str:
     return f"Reconcile default-branch ancestry for {change}"
 
@@ -1126,6 +1143,8 @@ def apply_work_product(
     replacement_pr: Mapping[str, object] | None = None
     replacement_pr_number: int | None = None
     replacement_reconciliation_required = False
+    current_carrier_is_materialized = replacement_branch is None
+    current_target_pr_number: int | None = plan.pr_number
     if historical_merged_carrier:
         merge_commit_sha = pr.get("merge_commit_sha")
         if not _valid_sha(merge_commit_sha) or not _default_branch_is_ancestor(
@@ -1230,6 +1249,12 @@ def apply_work_product(
             default_revision=authorization_revision,
             revision=current_head,
         )
+        current_carrier_is_materialized = (
+            replacement_pr is not None
+            and replacement_pr_number is not None
+            and replacement_ref_exists
+        )
+        current_target_pr_number = replacement_pr_number
     else:
         current_ref_head = _ref_head_sha(repository, token, expected_branch)
         if current_ref_head != pr_head_sha:
@@ -1240,6 +1265,30 @@ def apply_work_product(
             token,
             default_revision=authorization_revision,
             revision=current_head,
+        )
+    if (
+        current_carrier_is_materialized
+        and current_target_pr_number is not None
+        and default_branch_is_ancestor
+        and _manifest_expected_content_matches_base(
+            repository,
+            token,
+            base_sha=plan.manifest.base_sha,
+            manifest=plan.manifest,
+        )
+        and _manifest_content_matches(
+            repository,
+            token,
+            revision=current_head,
+            manifest=plan.manifest,
+        )
+    ):
+        return ValidationResourceTarget(
+            repository=repository,
+            revision=current_head,
+            correlation=f"effect-request-{plan.source.issue_number}",
+            pr_number=current_target_pr_number,
+            change=plan.expected_change,
         )
     replay_manifest = False
     if current_head != plan.manifest.base_sha:

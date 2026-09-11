@@ -1001,3 +1001,157 @@ def test_deterministic_continuation_rejects_competing_active_change(
         match="continuation contains competing active Change",
     ):
         _open_continuation_with_files(monkeypatch, files)
+
+
+def test_apply_work_product_reuses_exact_current_continuation_head_without_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(229, "executor", "implement-change")
+    base_sha = "a" * 40
+    merge_commit = "b" * 40
+    historical_head = "c" * 40
+    current_head = "d" * 40
+    expected_sha = "e" * 40
+    blob_sha = "f" * 40
+    path = "src/investment_strategy/scheduled_agent_formal_qualification.py"
+    replacement_branch = _CONTINUATION_BRANCH
+    message = "Stage 2: materialize verified qualification implementation; checkpoint pending"
+    plan = resource.WorkProductPlan(
+        True,
+        source=source,
+        pr_number=232,
+        expected_change=_CONTINUATION_CHANGE,
+        manifest=resource.WorkProductManifest(
+            branch=f"agent/{_CONTINUATION_CHANGE}",
+            base_sha=base_sha,
+            message=message,
+            files=(resource.WorkProductFile(path, blob_sha, expected_sha),),
+        ),
+    )
+    historical_pr = {
+        "number": 232,
+        "state": "closed",
+        "merged": True,
+        "merged_at": "2026-09-10T00:00:00Z",
+        "merge_commit_sha": merge_commit,
+        "body": "Stage 1\n\nRefs #229\n",
+        "head": {
+            "ref": f"agent/{_CONTINUATION_CHANGE}",
+            "sha": historical_head,
+            "repo": {"full_name": _REPOSITORY},
+        },
+        "base": {
+            "ref": "main",
+            "sha": base_sha,
+            "repo": {"full_name": _REPOSITORY},
+        },
+    }
+    replacement_pr = {
+        "number": 236,
+        "state": "open",
+        "merged": False,
+        "body": _CONTINUATION_PR_BODY,
+        "head": {
+            "ref": replacement_branch,
+            "sha": current_head,
+            "repo": {"full_name": _REPOSITORY},
+        },
+        "base": {
+            "ref": "main",
+            "sha": base_sha,
+            "repo": {"full_name": _REPOSITORY},
+        },
+    }
+    tree_payloads: list[object] = []
+    commit_payloads: list[object] = []
+
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_args: source)
+
+    def fake_github_json(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        assert repository == _REPOSITORY
+        assert token == _FIXTURE_VALUE
+        del allow_not_found
+        if api_path == "":
+            return {"default_branch": "main"}
+        if api_path == "git/ref/heads/main":
+            return {"object": {"sha": base_sha}}
+        if api_path == "issues/229":
+            return {"state": "open", "body": f"Change: {_CONTINUATION_CHANGE}\n"}
+        if api_path == "pulls/232":
+            return historical_pr
+        if api_path == "pulls/232/files?per_page=100":
+            return [{"filename": f"openspec/changes/{_CONTINUATION_CHANGE}/design.md"}]
+        if api_path == f"compare/{merge_commit}...{base_sha}":
+            return {"status": "ahead", "ahead_by": 1, "behind_by": 0}
+        if api_path.startswith("pulls?state=open"):
+            return [replacement_pr]
+        if api_path == "pulls/236":
+            return replacement_pr
+        if api_path == "pulls/236/files?per_page=100":
+            return [
+                {"filename": path},
+                {"filename": "tests/test_scheduled_agent_formal_qualification.py"},
+            ]
+        if api_path == f"git/ref/heads/{replacement_branch}":
+            return {"object": {"sha": current_head}}
+        if api_path == f"compare/{base_sha}...{current_head}":
+            return {
+                "status": "ahead",
+                "ahead_by": 2,
+                "behind_by": 0,
+                "files": [{"filename": path}],
+                "commits": [{"sha": historical_head}, {"sha": current_head}],
+            }
+        if api_path == f"git/commits/{current_head}":
+            return {
+                "sha": current_head,
+                "tree": {"sha": "1" * 40},
+                "parents": [{"sha": historical_head}],
+            }
+        if api_path.startswith(f"contents/{path}?"):
+            revision = api_path.rsplit("ref=", 1)[-1]
+            return {"sha": expected_sha if revision == base_sha else blob_sha}
+        if api_path == "git/trees" and method == "POST":
+            tree_payloads.append(payload)
+            return {"sha": "2" * 40}
+        if api_path == "git/trees/" + "2" * 40 + "?recursive=1":
+            return {
+                "sha": "2" * 40,
+                "truncated": False,
+                "tree": [{"path": path, "type": "blob", "sha": blob_sha}],
+            }
+        if api_path == "git/commits" and method == "POST":
+            commit_payloads.append(payload)
+            return {"sha": "3" * 40}
+        if api_path == "git/commits/" + "3" * 40:
+            return {
+                "sha": "3" * 40,
+                "message": message,
+                "tree": {"sha": "2" * 40},
+                "parents": [{"sha": current_head}],
+            }
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
+
+    target = resource.apply_work_product(
+        plan,
+        repository=_REPOSITORY,
+        token=_FIXTURE_VALUE,
+        default_branch="main",
+        authorization_revision=base_sha,
+    )
+
+    assert target.revision == current_head
+    assert target.pr_number == 236
+    assert target.change == _CONTINUATION_CHANGE
+    assert tree_payloads == []
+    assert commit_payloads == []
