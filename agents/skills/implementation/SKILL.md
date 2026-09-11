@@ -76,7 +76,8 @@ When openspec/config.yaml declares schema: spec-driven, load agents/skills/opens
 The adapter is a closed Apply context, not runtime authority. Missing or contradictory context fails
 closed. Do not choose which upstream/config semantics count.
 
-When there is no material semantic OpenSpec change, implementation completion routes directly to Reviewer / review-implementation. A material semantic OpenSpec change routes to Lead / resolve-question
+When there is no material semantic OpenSpec change, implementation completion routes directly to
+Reviewer / review-implementation. A material semantic OpenSpec change routes to Lead / resolve-question
 and then Reviewer / review-openspec. The exact-current-head gate and semantic OpenSpec bookkeeping
 exception do not weaken exact-head review.
 ## Conditional repository Skill composition
