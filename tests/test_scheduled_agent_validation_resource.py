@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 from urllib.request import Request
@@ -935,8 +936,8 @@ _CONTINUATION_PR_BODY = (
 
 def _open_continuation_with_files(
     monkeypatch: pytest.MonkeyPatch,
-    files: list[dict[str, object]],
-) -> object:
+    files: list[dict[str, str]],
+) -> Mapping[str, object]:
     source = WorkerRequest(229, "executor", "implement-change")
 
     monkeypatch.setattr(resource, "_current_default_branch", lambda *_args: "main")
