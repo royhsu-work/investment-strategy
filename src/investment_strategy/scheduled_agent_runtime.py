@@ -432,6 +432,9 @@ def _qualify_current_observations(
             token,
             observation.issue_number,
         )
+        if observation.routing_debt:
+            qualified.append(observation)
+            continue
         qualified.append(
             _qualify_current_observation(observation, comments, current_revision)
             if current_revision is not None
