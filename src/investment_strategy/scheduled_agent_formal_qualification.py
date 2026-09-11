@@ -22,7 +22,6 @@ from investment_strategy.scheduled_agent_action_model import (
 )
 from investment_strategy.workflow_dispatch import ObservationProvenance
 
-
 _FORMAL_RESULT_MARKERS = frozenset({"ACTION_RESULT", "REVIEW_RESULT", "MERGE_RESULT"})
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _WORKFLOW = re.compile(r"^#([1-9][0-9]*)$")

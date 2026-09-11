@@ -68,7 +68,6 @@ from investment_strategy.workflow_dispatch import (
     classify_dispatch,
 )
 
-
 _FORMAL_RESULT_MARKERS = frozenset({"ACTION_RESULT", "REVIEW_RESULT", "MERGE_RESULT"})
 _FORMAL_CHECKPOINT_MARKER = "SLICE_CHECKPOINT"
 
