@@ -424,7 +424,7 @@ def _qualify_current_observations(
     current_revision = _current_default_branch_revision(repository, token)
     qualified: list[GitHubIssueObservation] = []
     for observation in observations:
-        if observation.change == "unset" or observation.routing_debt:
+        if observation.change == "unset":
             qualified.append(observation)
             continue
         comments = _github_issue_comment_pages(

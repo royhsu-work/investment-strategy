@@ -247,7 +247,6 @@ def _event_from_comment(
         and parsed_correlation.group(4) == role
         and parsed_correlation.group(5) == action
         and parsed_correlation.group(6) == result.value
-        and parsed_correlation.group(7) == revision
     )
     comment_id = payload.get("id")
     valid_comment_id = (
