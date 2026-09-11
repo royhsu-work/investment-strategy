@@ -7,7 +7,6 @@ from investment_strategy.scheduled_agent_formal_qualification import (
 )
 from investment_strategy.workflow_dispatch import ObservationProvenance
 
-
 _CHANGE = "qualify-active-formal-consequences"
 _REVISION = "a" * 40
 

@@ -129,7 +129,7 @@ def test_production_preflight_enumerates_closed_routing_debt(
     monkeypatch.setattr(runtime, "_github_get_list_page", fake_page)
 
     class FakeResponse:
-        def __enter__(self) -> "FakeResponse":
+        def __enter__(self) -> FakeResponse:
             return self
 
         def __exit__(self, *_args: object) -> None:

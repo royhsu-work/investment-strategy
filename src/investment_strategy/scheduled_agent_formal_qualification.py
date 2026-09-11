@@ -8,9 +8,9 @@ state, cursor, registry, or carrier.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-import re
 from typing import Literal, cast
 
 from investment_strategy.scheduled_agent_action_model import (
@@ -388,7 +388,7 @@ def qualify_current_formal_consequence(
             break
         relevant_suffix.append(event)
     relevant_suffix.reverse()
-    for previous, current in zip(relevant_suffix, relevant_suffix[1:]):
+    for previous, current in zip(relevant_suffix, relevant_suffix[1:], strict=True):
         if previous.successor != (current.role, current.action):
             return _indeterminate("lifecycle-ordering-incomplete", current)
     if qualification.mode == "current":

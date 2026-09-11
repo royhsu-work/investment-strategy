@@ -42,13 +42,13 @@ from investment_strategy.scheduled_agent_carrier import (
     carrier_pr_identity,
     make_carrier_plan,
 )
-from investment_strategy.scheduled_agent_formal_qualification import (
-    build_qualification_input,
-    qualify_current_formal_consequence,
-)
 from investment_strategy.scheduled_agent_effect_contract import (
     GITHUB_MUTATION_KIND,
     allowed_github_mutation_operations,
+)
+from investment_strategy.scheduled_agent_formal_qualification import (
+    build_qualification_input,
+    qualify_current_formal_consequence,
 )
 from investment_strategy.scheduled_agent_runtime import (
     GitHubIssueObservation,
