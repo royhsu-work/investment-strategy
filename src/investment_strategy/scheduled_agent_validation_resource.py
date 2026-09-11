@@ -324,7 +324,24 @@ def _open_pr_payload(
             change_name = remainder.split("/", 1)[0]
             if change_name and change_name != "archive":
                 active_change_names.add(change_name)
-    if not has_expected_change or active_change_names != {expected_change}:
+    continuation_prefix = f"agent/{expected_change}-continuation-"
+    continuation_suffix = (
+        None
+        if expected_branch is None
+        else expected_branch.removeprefix(continuation_prefix)
+    )
+    is_deterministic_continuation = (
+        expected_branch is not None
+        and expected_branch.startswith(continuation_prefix)
+        and continuation_suffix is not None
+        and re.fullmatch(r"[1-9][0-9]*", continuation_suffix) is not None
+    )
+    if is_deterministic_continuation:
+        if any(name != expected_change for name in active_change_names):
+            raise RuntimeError(
+                "validation resource continuation contains competing active Change"
+            )
+    elif not has_expected_change or active_change_names != {expected_change}:
         raise RuntimeError(
             "validation resource target PR does not uniquely represent the source Change"
         )
@@ -886,6 +903,17 @@ def _is_reconciled_work_product_revision(
         return commit.get("message") == manifest.message
     if commit.get("message") != _reconciliation_message(manifest.branch.removeprefix("agent/")):
         return False
+    try:
+        reconciled_paths = _comparison_file_paths(
+            repository,
+            token,
+            base_sha=authorization_revision,
+            revision=revision,
+        )
+    except RuntimeError:
+        reconciled_paths = set()
+    if reconciled_paths == {file.path for file in manifest.files}:
+        return True
     if _revision_matches_manifest(
         repository,
         token,
@@ -1099,6 +1127,9 @@ def apply_work_product(
     historical_merged_carrier = _is_historical_merged_carrier(pr)
     replacement_branch: str | None = None
     replacement_ref_exists = False
+    replacement_pr: Mapping[str, object] | None = None
+    replacement_pr_number: int | None = None
+    replacement_reconciliation_required = False
     if historical_merged_carrier:
         merge_commit_sha = pr.get("merge_commit_sha")
         if not _valid_sha(merge_commit_sha) or not _default_branch_is_ancestor(
@@ -1129,23 +1160,33 @@ def apply_work_product(
                 default_branch=default_branch,
                 expected_branch=replacement_branch,
             )
+            raw_replacement_number = replacement_pr.get("number")
+            if (
+                isinstance(raw_replacement_number, bool)
+                or not isinstance(raw_replacement_number, int)
+                or raw_replacement_number <= 0
+            ):
+                raise RuntimeError("work-product replacement carrier number is incomplete")
+            replacement_pr_number = raw_replacement_number
             replacement_head = _as_mapping(replacement_pr.get("head"))
             replacement_revision = None if replacement_head is None else replacement_head.get("sha")
-            if not _valid_sha(replacement_revision) or not _revision_matches_manifest(
+            if not _valid_sha(replacement_revision):
+                raise RuntimeError("work-product replacement carrier head is incomplete")
+            if _revision_matches_manifest(
                 repository,
                 token,
                 base_sha=plan.manifest.base_sha,
                 revision=cast(str, replacement_revision),
                 manifest=plan.manifest,
             ):
-                raise RuntimeError("work-product replacement carrier content is stale")
-            return ValidationResourceTarget(
-                repository=repository,
-                revision=cast(str, replacement_revision),
-                correlation=f"effect-request-{plan.source.issue_number}",
-                pr_number=cast(int, replacement_prs[0]["number"]),
-                change=plan.expected_change,
-            )
+                return ValidationResourceTarget(
+                    repository=repository,
+                    revision=cast(str, replacement_revision),
+                    correlation=f"effect-request-{plan.source.issue_number}",
+                    pr_number=replacement_pr_number,
+                    change=plan.expected_change,
+                )
+            replacement_reconciliation_required = True
         replacement_ref_head = _ref_head_sha(
             repository,
             token,
@@ -1153,6 +1194,18 @@ def apply_work_product(
             allow_not_found=True,
         )
         replacement_ref_exists = replacement_ref_head is not None
+        replacement_pr_head = _as_mapping(
+            None if replacement_pr is None else replacement_pr.get("head")
+        )
+        replacement_pr_revision = (
+            None if replacement_pr_head is None else replacement_pr_head.get("sha")
+        )
+        if (
+            replacement_ref_exists
+            and replacement_pr is not None
+            and replacement_ref_head != replacement_pr_revision
+        ):
+            raise RuntimeError("work-product replacement PR/ref head identity is stale")
         if replacement_ref_head is not None and _revision_matches_manifest(
             repository,
             token,
@@ -1217,11 +1270,22 @@ def apply_work_product(
                 pr_number=plan.pr_number,
                 change=plan.expected_change,
             )
-        if not manifest_applied and not reconciled:
+        if (
+            not manifest_applied
+            and not reconciled
+            and not replacement_reconciliation_required
+        ):
             raise RuntimeError("work-product PR head/base identity is stale")
-        replay_manifest = True
+        if manifest_applied or reconciled:
+            replay_manifest = True
     needs_default_reconciliation = not default_branch_is_ancestor
-    if needs_default_reconciliation:
+    reconcile_replacement_from_default = (
+        needs_default_reconciliation
+        and replacement_reconciliation_required
+        and replacement_branch is not None
+        and replacement_ref_exists
+    )
+    if needs_default_reconciliation and not reconcile_replacement_from_default:
         _verify_default_only_content(
             repository,
             token,
@@ -1259,8 +1323,11 @@ def apply_work_product(
                         "work-product task marker update must be a monotonic checkbox-only update"
                     )
 
+    tree_base_revision = (
+        authorization_revision if reconcile_replacement_from_default else current_head
+    )
     base_commit = _as_mapping(
-        cast(object, _github_json(repository, token, f"git/commits/{current_head}"))
+        cast(object, _github_json(repository, token, f"git/commits/{tree_base_revision}"))
     )
     base_tree = None if base_commit is None else _as_mapping(base_commit.get("tree"))
     base_tree_sha = None if base_tree is None else base_tree.get("sha")
@@ -1491,19 +1558,65 @@ def apply_work_product(
                 != file.blob_sha
             ):
                 raise RuntimeError("replacement work-product file postcondition was not observed")
-        raise CarrierRequired(
-            _replacement_carrier_plan(
-                repository=repository,
-                issue_number=plan.source.issue_number,
-                change=plan.expected_change,
-                action=plan.source.action,
-                authorization_revision=authorization_revision,
-                branch=replacement_branch,
-                revision=cast(str, revision),
-                default_branch=default_branch,
-                historical_pr_number=plan.pr_number,
+        if replacement_pr is None or replacement_pr_number is None:
+            raise CarrierRequired(
+                _replacement_carrier_plan(
+                    repository=repository,
+                    issue_number=plan.source.issue_number,
+                    change=plan.expected_change,
+                    action=plan.source.action,
+                    authorization_revision=authorization_revision,
+                    branch=replacement_branch,
+                    revision=cast(str, revision),
+                    default_branch=default_branch,
+                    historical_pr_number=plan.pr_number,
+                )
             )
+        carrier_ref = f"refs/heads/{replacement_branch}"
+        carrier_plan = make_carrier_plan(
+            repository=repository,
+            issue_number=plan.source.issue_number,
+            change=plan.expected_change,
+            action=plan.source.action,
+            authorization_revision=authorization_revision,
+            operation="pull-request-head-update",
+            target={
+                "repository": repository,
+                "pull_request_number": replacement_pr_number,
+                "ref": carrier_ref,
+            },
+            expected={
+                "ref": carrier_ref,
+                "ref_sha": current_head,
+                "pull_request": carrier_pr_identity(replacement_pr),
+                "commit_parents": commit_parents,
+                "commit_tree_sha": cast(str, tree_sha),
+                "commit_message": commit_message,
+            },
+            requested={
+                "ref": carrier_ref,
+                "sha": cast(str, revision),
+                "force": False,
+                "pull_request_number": replacement_pr_number,
+                "expected_head_sha": current_head,
+                "commit_parents": commit_parents,
+                "commit_tree_sha": cast(str, tree_sha),
+                "commit_message": commit_message,
+            },
+            expected_postcondition={
+                "ref": carrier_ref,
+                "ref_sha": cast(str, revision),
+                "pull_request_number": replacement_pr_number,
+                "pull_request_head_sha": cast(str, revision),
+                "state": "open",
+                "merged": False,
+                "commit_sha": cast(str, revision),
+                "commit_parents": commit_parents,
+                "commit_tree_sha": cast(str, tree_sha),
+                "commit_message": commit_message,
+            },
         )
+        raise CarrierRequired(carrier_plan)
     observed_pr: Mapping[str, object] | None = None
     observed_head: Mapping[str, object] | None = None
     for attempt in range(10):
