@@ -924,3 +924,81 @@ def test_task_checkpoint_accepts_fresh_observation_of_previously_durable_slice(
         file=task_file,
         completed_task_ids=("2.1",),
     )
+
+
+_CONTINUATION_CHANGE = "qualify-active-formal-consequences"
+_CONTINUATION_BRANCH = f"agent/{_CONTINUATION_CHANGE}-continuation-232"
+_CONTINUATION_PR_BODY = (
+    "Continue OpenSpec change "
+    + _CONTINUATION_CHANGE
+    + " after the merged carrier.\n\nRefs #229"
+)
+
+
+def _open_continuation_with_files(
+    monkeypatch: pytest.MonkeyPatch,
+    files: list[dict[str, object]],
+) -> object:
+    source = WorkerRequest(229, "executor", "implement-change")
+
+    monkeypatch.setattr(resource, "_current_default_branch", lambda *_args: "main")
+
+    def fake_github_json(_repository: str, _token: str, api_path: str) -> object:
+        if api_path == "issues/229":
+            return {"state": "open", "body": f"Change: {_CONTINUATION_CHANGE}\n"}
+        if api_path == "pulls/236":
+            return {
+                "number": 236,
+                "state": "open",
+                "merged": False,
+                "body": _CONTINUATION_PR_BODY,
+                "head": {
+                    "ref": _CONTINUATION_BRANCH,
+                    "sha": "b" * 40,
+                    "repo": {"full_name": _REPOSITORY},
+                },
+                "base": {
+                    "ref": "main",
+                    "sha": "a" * 40,
+                    "repo": {"full_name": _REPOSITORY},
+                },
+            }
+        if api_path == "pulls/236/files?per_page=100":
+            return files
+        raise AssertionError(f"unexpected GitHub read: {api_path}")
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
+    return resource._open_pr_payload(
+        repository=_REPOSITORY,
+        token=_FIXTURE_VALUE,
+        pr_number=236,
+        source=source,
+        expected_change=_CONTINUATION_CHANGE,
+        default_branch="main",
+        expected_branch=_CONTINUATION_BRANCH,
+    )
+
+
+def test_code_only_deterministic_continuation_is_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = [
+        {"filename": "src/investment_strategy/scheduled_agent_formal_qualification.py"},
+        {"filename": "tests/test_scheduled_agent_formal_qualification.py"},
+    ]
+    payload = _open_continuation_with_files(monkeypatch, files)
+    assert payload["number"] == 236
+
+
+def test_deterministic_continuation_rejects_competing_active_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = [
+        {"filename": "src/investment_strategy/scheduled_agent_formal_qualification.py"},
+        {"filename": "openspec/changes/other-active-change/proposal.md"},
+    ]
+    with pytest.raises(
+        RuntimeError,
+        match="continuation contains competing active Change",
+    ):
+        _open_continuation_with_files(monkeypatch, files)
