@@ -1003,7 +1003,7 @@ def test_deterministic_continuation_rejects_competing_active_change(
         _open_continuation_with_files(monkeypatch, files)
 
 
-def test_apply_work_product_reuses_exact_current_continuation_head_without_commit(
+def test_apply_work_product_reuses_current_head_without_commit_when_ancestry_diverged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = WorkerRequest(229, "executor", "implement-change")
@@ -1101,9 +1101,9 @@ def test_apply_work_product_reuses_exact_current_continuation_head_without_commi
             return {"object": {"sha": current_head}}
         if api_path == f"compare/{base_sha}...{current_head}":
             return {
-                "status": "ahead",
+                "status": "diverged",
                 "ahead_by": 2,
-                "behind_by": 0,
+                "behind_by": 1,
                 "files": [{"filename": path}],
                 "commits": [{"sha": historical_head}, {"sha": current_head}],
             }

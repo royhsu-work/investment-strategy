@@ -1269,7 +1269,6 @@ def apply_work_product(
     if (
         current_carrier_is_materialized
         and current_target_pr_number is not None
-        and default_branch_is_ancestor
         and _manifest_expected_content_matches_base(
             repository,
             token,
