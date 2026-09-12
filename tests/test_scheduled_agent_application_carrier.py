@@ -134,10 +134,10 @@ def _fake_github(
             return [] if historical is None else [{"number": historical["number"]}]
         if api_path.startswith("pulls?") and "state=open" in api_path:
             return opens
-        if api_path.startswith(f"pulls/{current['number']}/files?"):
-            return files
         if historical is not None and api_path.startswith(f"pulls/{historical['number']}/files?"):
             return history_files
+        if api_path.startswith(f"pulls/{current['number']}/files?"):
+            return files
         if historical is not None and api_path == f"compare/{MERGE}...{default_revision}":
             return {
                 "status": "ahead" if historical_is_ancestor else "diverged",
