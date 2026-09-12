@@ -20,7 +20,6 @@ from investment_strategy.scheduled_agent_runtime import WorkerRequest
 
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
-_CONTINUATION_SUFFIX = re.compile(r"^[1-9][0-9]*$")
 
 CarrierDisposition = Literal[
     "QUALIFIED",
@@ -319,15 +318,9 @@ def _historical_carriers(
     result: list[tuple[int, Mapping[str, object]]] = []
     for summary in candidates:
         number = summary.get("number")
-        if (
-            not isinstance(number, int)
-            or isinstance(number, bool)
-            or number <= 0
-        ):
+        if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
             continue
-        pr = _as_mapping(
-            cast(object, _github_json(repository, token, f"pulls/{number}"))
-        )
+        pr = _as_mapping(cast(object, _github_json(repository, token, f"pulls/{number}")))
         if pr is None:
             raise RuntimeError("historical implementation carrier evidence is incomplete")
         identity = _pr_identity_is_coherent(
@@ -337,11 +330,13 @@ def _historical_carriers(
             default_branch=default_branch,
         )
         merge_sha = pr.get("merge_commit_sha")
+        active_changes, _has_code = _pr_active_changes(repository, token, number)
         if (
             identity is not None
             and identity[0] == canonical
             and _is_merged_pr(pr)
             and _valid_sha(merge_sha)
+            and active_changes == {change}
             and _compare_is_ancestor(
                 repository,
                 token,
@@ -369,9 +364,7 @@ def _claimed_open_carriers(
     canonical = canonical_implementation_branch(change)
     if canonical is None:
         return ()
-    continuation = re.compile(
-        rf"^{re.escape(canonical)}-continuation-([1-9][0-9]*)$"
-    )
+    continuation = re.compile(rf"^{re.escape(canonical)}-continuation-([1-9][0-9]*)$")
     result: list[Mapping[str, object]] = []
     for pr in prs:
         identity = _pr_identity_is_coherent(
@@ -461,11 +454,7 @@ def qualify_implementation_carrier(
         )
 
     default_branch, default_revision = _repository_default(repository, token)
-    if (
-        default_branch is None
-        or default_revision is None
-        or default_revision != current_revision
-    ):
+    if default_branch is None or default_revision is None or default_revision != current_revision:
         return _indeterminate(
             repository=repository,
             source=source,
@@ -486,11 +475,7 @@ def qualify_implementation_carrier(
             ),
         )
     )
-    if (
-        issue is None
-        or issue.get("state") != "open"
-        or _change_from_issue(issue) != change
-    ):
+    if issue is None or issue.get("state") != "open" or _change_from_issue(issue) != change:
         return _indeterminate(
             repository=repository,
             source=source,
@@ -561,18 +546,41 @@ def qualify_implementation_carrier(
         )
     historical_pr_number = historical[0][0] if historical else None
 
+    active_changes, _has_code = _pr_active_changes(repository, token, pr_number)
     if _is_merged_pr(pr):
-        if (
-            historical_pr_number is None
-            or pr_number != historical_pr_number
-            or branch != canonical
+        merge_sha = pr.get("merge_commit_sha")
+        if not _valid_sha(merge_sha) or not _compare_is_ancestor(
+            repository,
+            token,
+            ancestor=cast(str, merge_sha),
+            descendant=default_revision,
         ):
             return _indeterminate(
                 repository=repository,
                 source=source,
                 change=change,
                 pr_number=pr_number,
-                reason="carrier-merged-pr-is-not-historical-owner",
+                reason="carrier-merged-pr-is-not-in-current-default-history",
+                branch=branch,
+                head_sha=head_sha,
+                default_branch=default_branch,
+                default_revision=default_revision,
+                historical_pr_number=historical_pr_number,
+            )
+        canonical_merged = historical_pr_number == pr_number and branch == canonical
+        continuation_merged = (
+            historical_pr_number is not None
+            and pr_number != historical_pr_number
+            and branch == deterministic_continuation_branch(change, historical_pr_number)
+            and not any(active_change != change for active_change in active_changes)
+        )
+        if not canonical_merged and not continuation_merged:
+            return _indeterminate(
+                repository=repository,
+                source=source,
+                change=change,
+                pr_number=pr_number,
+                reason="carrier-merged-pr-is-not-approved-history",
                 branch=branch,
                 head_sha=head_sha,
                 default_branch=default_branch,
@@ -581,7 +589,11 @@ def qualify_implementation_carrier(
             )
         return ImplementationCarrierQualification(
             disposition="HISTORICAL_MERGED",
-            reason="historical-merged-carrier-qualified",
+            reason=(
+                "historical-merged-carrier-qualified"
+                if canonical_merged
+                else "merged-continuation-carrier-qualified"
+            ),
             repository=repository,
             issue_number=source.issue_number,
             change=change,
@@ -622,10 +634,7 @@ def qualify_implementation_carrier(
                 default_revision=default_revision,
             )
     else:
-        expected_continuation = deterministic_continuation_branch(
-            change,
-            historical_pr_number,
-        )
+        expected_continuation = deterministic_continuation_branch(change, historical_pr_number)
         if branch != expected_continuation:
             return _indeterminate(
                 repository=repository,
@@ -681,10 +690,8 @@ def qualify_implementation_carrier(
             historical_pr_number=historical_pr_number,
         )
 
-    active_changes, _has_code = _pr_active_changes(repository, token, pr_number)
-    if (
-        (historical_pr_number is None and active_changes != {change})
-        or any(active_change != change for active_change in active_changes)
+    if (historical_pr_number is None and active_changes != {change}) or any(
+        active_change != change for active_change in active_changes
     ):
         return _indeterminate(
             repository=repository,
