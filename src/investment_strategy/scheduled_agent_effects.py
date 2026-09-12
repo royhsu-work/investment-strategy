@@ -980,6 +980,7 @@ class GitHubEffectAdapter:
             change=request.change,
             pr_number=request.pr_number,
             current_revision=cast(str, self.current_revision),
+            read=_github_json,
         )
         if (
             decision.disposition not in {"QUALIFIED", "RECONCILIATION_REQUIRED"}
@@ -1136,6 +1137,7 @@ class GitHubEffectAdapter:
                 change=observation.change,
                 pr_number=number,
                 current_revision=latest_default,
+                read=_github_json,
             )
             return bool(
                 decision.recognized
@@ -1197,6 +1199,7 @@ class GitHubEffectAdapter:
                 change=observation.change,
                 pr_number=number,
                 current_revision=latest_default,
+                read=_github_json,
             )
             if (
                 decision.recognized
