@@ -286,6 +286,9 @@ def _human_input_fresh(
         if "performed_via_github_app" not in comment:
             return False, False
         if comment.get("performed_via_github_app") is None:
+            # The mutation adapter does not make semantic materiality judgments.
+            # A newer direct-Human comment therefore requires a later accepted
+            # review before merge rather than being inferred non-blocking here.
             return False, True
     return True, True
 
