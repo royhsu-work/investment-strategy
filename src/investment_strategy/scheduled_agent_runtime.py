@@ -6,7 +6,7 @@ import json
 import os
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -15,6 +15,10 @@ from urllib.request import Request, urlopen
 from investment_strategy.scheduled_agent_action_model import Action as ModelAction
 from investment_strategy.scheduled_agent_action_model import role_for
 from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
+from investment_strategy.scheduled_agent_formal_qualification import (
+    build_qualification_input,
+    qualify_current_formal_consequence,
+)
 from investment_strategy.workflow_dispatch import (
     DispatchPreflight,
     EnumerationEvidence,
@@ -54,6 +58,7 @@ class GitHubIssueObservation:
     state: str
     created_order: int
     authoritative: bool
+    current_state_provenance: ObservationProvenance = ObservationProvenance.QUALIFIED
     routing_debt: bool = False
 
 
@@ -108,7 +113,7 @@ def acquire_dispatch_preflight(
                 state="open" if observation.state == "open" else "closed",
                 created_order=observation.created_order,
                 current_state_provenance=(
-                    ObservationProvenance.QUALIFIED
+                    observation.current_state_provenance
                     if observation.authoritative
                     else ObservationProvenance.INDETERMINATE
                 ),
@@ -123,7 +128,11 @@ def acquire_dispatch_preflight(
             exhausted=exhausted,
             observation_provenance=(
                 ObservationProvenance.QUALIFIED
-                if all(observation.authoritative for observation in observations)
+                if all(
+                    observation.authoritative
+                    and observation.current_state_provenance is ObservationProvenance.QUALIFIED
+                    for observation in observations
+                )
                 else ObservationProvenance.INDETERMINATE
             ),
         ),
@@ -244,6 +253,7 @@ def normalize_github_issue(
         state=cast(str, state),
         created_order=created_order,
         authoritative=all((labels_valid, routing_valid, created_valid, change_valid, closed_valid)),
+        current_state_provenance=ObservationProvenance.QUALIFIED,
         routing_debt=state == "closed"
         and any(name.startswith(_ROUTING_LABEL_PREFIXES) for name in labels),
     )
@@ -327,6 +337,114 @@ def _normalized_observations(
     return tuple(observations)
 
 
+def _github_get_object(url: str, token: str) -> Mapping[str, object]:
+    request = Request(  # noqa: S310 - fixed trusted GitHub API host
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
+        decoded = json.loads(response.read().decode("utf-8"))
+    if not isinstance(decoded, Mapping):
+        raise RuntimeError("GitHub API returned a malformed object")
+    return cast(Mapping[str, object], decoded)
+
+
+def _current_default_branch_revision(
+    repository: str,
+    token: str,
+) -> str | None:
+    repository_url = f"https://api.github.com/repos/{repository}"
+    root = _github_get_object(repository_url, token)
+    branch = root.get("default_branch")
+    if not isinstance(branch, str) or not branch or branch.startswith("refs/"):
+        return None
+    ref = _github_get_object(
+        f"{repository_url}/git/ref/heads/{branch}",
+        token,
+    )
+    obj = ref.get("object")
+    revision = None if not isinstance(obj, Mapping) else obj.get("sha")
+    if isinstance(revision, str) and re.fullmatch(r"[0-9a-f]{40}", revision):
+        return revision
+    return None
+
+
+def _github_issue_comment_pages(
+    repository: str,
+    token: str,
+    issue_number: int,
+) -> tuple[Mapping[str, object], ...]:
+    comments: list[Mapping[str, object]] = []
+    page = 1
+    while True:
+        suffix = "" if page == 1 else f"&page={page}"
+        items = _github_get_list_page(
+            f"https://api.github.com/repos/{repository}/issues/{issue_number}/comments"
+            f"?per_page=100&sort=created&direction=desc{suffix}",
+            token,
+        )
+        comments.extend(items)
+        if len(items) < 100:
+            return tuple(comments)
+        page += 1
+
+
+def _qualify_current_observation(
+    observation: GitHubIssueObservation,
+    comments: tuple[Mapping[str, object], ...],
+    current_revision: str | None,
+) -> GitHubIssueObservation:
+    if observation.change == "unset":
+        return observation
+    qualification_input = build_qualification_input(
+        issue_number=observation.issue_number,
+        change=observation.change,
+        state=observation.state,
+        current_routing=observation.routing,
+        comments=comments,
+        current_revision=current_revision,
+    )
+    decision = qualify_current_formal_consequence(qualification_input)
+    return replace(
+        observation,
+        current_state_provenance=decision.provenance,
+    )
+
+
+def _qualify_current_observations(
+    repository: str,
+    token: str,
+    observations: tuple[GitHubIssueObservation, ...],
+) -> tuple[GitHubIssueObservation, ...]:
+    current_revision = _current_default_branch_revision(repository, token)
+    qualified: list[GitHubIssueObservation] = []
+    for observation in observations:
+        if observation.change == "unset":
+            qualified.append(observation)
+            continue
+        comments = _github_issue_comment_pages(
+            repository,
+            token,
+            observation.issue_number,
+        )
+        if observation.routing_debt:
+            qualified.append(observation)
+            continue
+        qualified.append(
+            _qualify_current_observation(observation, comments, current_revision)
+            if current_revision is not None
+            else replace(
+                observation,
+                current_state_provenance=ObservationProvenance.INDETERMINATE,
+            )
+        )
+    return tuple(qualified)
+
+
 def acquire_current_github_preflight(
     repository: str,
     token: str,
@@ -337,6 +455,7 @@ def acquire_current_github_preflight(
 
     del repository_root
     observations = _normalized_observations(_github_issue_pages(repository, token))
+    observations = _qualify_current_observations(repository, token, observations)
     return acquire_dispatch_preflight(
         observations=observations,
         source_total_count=len(observations),
