@@ -15,6 +15,7 @@ MAIN = "1" * 40
 HEAD = "2" * 40
 HISTORICAL_HEAD = "3" * 40
 MERGE = "4" * 40
+CONTINUATION_MERGE = "8" * 40
 TEST_VALUE = "opaque-test-value"
 
 
@@ -39,10 +40,7 @@ def _pr(
         "merged": merged,
         "merged_at": merged_at,
         "merge_commit_sha": merge_commit_sha,
-        "body": (
-            f"Continue OpenSpec change `{CHANGE}` after the merged carrier.\n\n"
-            f"Refs #{issue_number}"
-        ),
+        "body": f"Continue OpenSpec change `{CHANGE}` after the merged carrier.\n\nRefs #{issue_number}",
         "head": {
             "ref": branch,
             "sha": head_sha,
@@ -94,20 +92,23 @@ def _fake_github(
     historical_pr: dict[str, object] | None | object = _DEFAULT_HISTORICAL,
     open_prs: list[dict[str, object]] | None = None,
     pr_files: list[dict[str, object]] | None = None,
+    historical_files: list[dict[str, object]] | None = None,
     default_is_ancestor: bool = True,
     historical_is_ancestor: bool = True,
+    current_merge_is_ancestor: bool = True,
     branch_ref_sha: str | None = HEAD,
     default_revision: str = MAIN,
     issue_body: str | None = None,
 ) -> Callable[..., object | None]:
     current = current_pr or _continuation_pr()
-    historical = (
-        _historical_pr()
-        if historical_pr is _DEFAULT_HISTORICAL
-        else historical_pr
-    )
+    historical = _historical_pr() if historical_pr is _DEFAULT_HISTORICAL else historical_pr
     opens = [current] if open_prs is None else open_prs
     files = [{"filename": "src/investment_strategy/example.py"}] if pr_files is None else pr_files
+    history_files = (
+        [{"filename": f"openspec/changes/{CHANGE}/proposal.md"}]
+        if historical_files is None
+        else historical_files
+    )
     body = issue_body or f"Change: {CHANGE}\n"
 
     def fake(
@@ -135,10 +136,18 @@ def _fake_github(
             return opens
         if api_path.startswith(f"pulls/{current['number']}/files?"):
             return files
+        if historical is not None and api_path.startswith(f"pulls/{historical['number']}/files?"):
+            return history_files
         if historical is not None and api_path == f"compare/{MERGE}...{default_revision}":
             return {
                 "status": "ahead" if historical_is_ancestor else "diverged",
                 "behind_by": 0 if historical_is_ancestor else 1,
+            }
+        current_merge = current.get("merge_commit_sha")
+        if current_merge is not None and api_path == f"compare/{current_merge}...{default_revision}":
+            return {
+                "status": "ahead" if current_merge_is_ancestor else "diverged",
+                "behind_by": 0 if current_merge_is_ancestor else 1,
             }
         if api_path == f"compare/{default_revision}...{current['head']['sha']}":
             return {
@@ -346,3 +355,45 @@ def test_historical_carrier_is_recognized_from_current_default_history(
     )
     assert decision.disposition == "HISTORICAL_MERGED"
     assert decision.historical_pr_number == 232
+
+
+def test_merged_deterministic_continuation_is_recognized_from_default_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    continuation = _continuation_pr()
+    continuation.update(
+        {
+            "state": "closed",
+            "merged": True,
+            "merged_at": "2026-09-13T00:00:00Z",
+            "merge_commit_sha": CONTINUATION_MERGE,
+        }
+    )
+    decision = _qualify(
+        monkeypatch,
+        _fake_github(
+            current_pr=continuation,
+            open_prs=[],
+            branch_ref_sha=None,
+        ),
+    )
+    assert decision.disposition == "HISTORICAL_MERGED"
+    assert decision.reason == "merged-continuation-carrier-qualified"
+    assert decision.branch == f"agent/{CHANGE}-continuation-232"
+    assert decision.historical_pr_number == 232
+
+
+def test_historical_carrier_with_competing_active_change_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision = _qualify(
+        monkeypatch,
+        _fake_github(
+            historical_files=[
+                {"filename": f"openspec/changes/{CHANGE}/proposal.md"},
+                {"filename": "openspec/changes/other-change/tasks.md"},
+            ]
+        ),
+    )
+    assert decision.disposition == "INDETERMINATE"
+    assert decision.reason == "initial-carrier-branch-is-not-canonical"
