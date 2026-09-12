@@ -326,9 +326,7 @@ def _open_pr_payload(
                 active_change_names.add(change_name)
     continuation_prefix = f"agent/{expected_change}-continuation-"
     continuation_suffix = (
-        None
-        if expected_branch is None
-        else expected_branch.removeprefix(continuation_prefix)
+        None if expected_branch is None else expected_branch.removeprefix(continuation_prefix)
     )
     is_deterministic_continuation = (
         expected_branch is not None
@@ -338,9 +336,7 @@ def _open_pr_payload(
     )
     if is_deterministic_continuation:
         if any(name != expected_change for name in active_change_names):
-            raise RuntimeError(
-                "validation resource continuation contains competing active Change"
-            )
+            raise RuntimeError("validation resource continuation contains competing active Change")
     elif not has_expected_change or active_change_names != {expected_change}:
         raise RuntimeError(
             "validation resource target PR does not uniquely represent the source Change"
@@ -853,6 +849,23 @@ def _manifest_content_matches(
     )
 
 
+def _manifest_expected_content_matches_base(
+    repository: str,
+    token: str,
+    *,
+    base_sha: str,
+    manifest: WorkProductManifest,
+) -> bool:
+    """Verify every supplied expected SHA still describes the requested base."""
+
+    return bool(manifest.files) and all(
+        file.expected_sha is None
+        or _content_sha_at(repository, token, path=file.path, revision=base_sha)
+        == file.expected_sha
+        for file in manifest.files
+    )
+
+
 def _reconciliation_message(change: str) -> str:
     return f"Reconcile default-branch ancestry for {change}"
 
@@ -1130,6 +1143,8 @@ def apply_work_product(
     replacement_pr: Mapping[str, object] | None = None
     replacement_pr_number: int | None = None
     replacement_reconciliation_required = False
+    current_carrier_is_materialized = replacement_branch is None
+    current_target_pr_number: int | None = plan.pr_number
     if historical_merged_carrier:
         merge_commit_sha = pr.get("merge_commit_sha")
         if not _valid_sha(merge_commit_sha) or not _default_branch_is_ancestor(
@@ -1234,6 +1249,12 @@ def apply_work_product(
             default_revision=authorization_revision,
             revision=current_head,
         )
+        current_carrier_is_materialized = (
+            replacement_pr is not None
+            and replacement_pr_number is not None
+            and replacement_ref_exists
+        )
+        current_target_pr_number = replacement_pr_number
     else:
         current_ref_head = _ref_head_sha(repository, token, expected_branch)
         if current_ref_head != pr_head_sha:
@@ -1244,6 +1265,30 @@ def apply_work_product(
             token,
             default_revision=authorization_revision,
             revision=current_head,
+        )
+    if (
+        current_carrier_is_materialized
+        and current_target_pr_number is not None
+        and default_branch_is_ancestor
+        and _manifest_expected_content_matches_base(
+            repository,
+            token,
+            base_sha=plan.manifest.base_sha,
+            manifest=plan.manifest,
+        )
+        and _manifest_content_matches(
+            repository,
+            token,
+            revision=current_head,
+            manifest=plan.manifest,
+        )
+    ):
+        return ValidationResourceTarget(
+            repository=repository,
+            revision=current_head,
+            correlation=f"effect-request-{plan.source.issue_number}",
+            pr_number=current_target_pr_number,
+            change=plan.expected_change,
         )
     replay_manifest = False
     if current_head != plan.manifest.base_sha:
@@ -1270,11 +1315,7 @@ def apply_work_product(
                 pr_number=plan.pr_number,
                 change=plan.expected_change,
             )
-        if (
-            not manifest_applied
-            and not reconciled
-            and not replacement_reconciliation_required
-        ):
+        if not manifest_applied and not reconciled and not replacement_reconciliation_required:
             raise RuntimeError("work-product PR head/base identity is stale")
         if manifest_applied or reconciled:
             replay_manifest = True
