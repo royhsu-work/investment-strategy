@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal, cast
 from urllib.error import HTTPError
@@ -27,6 +27,7 @@ CarrierDisposition = Literal[
     "HISTORICAL_MERGED",
     "INDETERMINATE",
 ]
+GitHubReader = Callable[..., object | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,14 +124,20 @@ def _github_json(
     return json.loads(raw.decode("utf-8"))
 
 
-def _paged_list(repository: str, token: str, api_path: str) -> tuple[Mapping[str, object], ...]:
+def _paged_list(
+    repository: str,
+    token: str,
+    api_path: str,
+    *,
+    read: GitHubReader,
+) -> tuple[Mapping[str, object], ...]:
     """Exhaust one list endpoint; incomplete/malformed evidence fails closed."""
 
     items: list[Mapping[str, object]] = []
     page = 1
     separator = "&" if "?" in api_path else "?"
     while True:
-        payload = _github_json(
+        payload = read(
             repository,
             token,
             f"{api_path}{separator}per_page=100&page={page}",
@@ -164,15 +171,17 @@ def _pr_has_nonclosing_issue_link(body: object, issue_number: int) -> bool:
 def _repository_default(
     repository: str,
     token: str,
+    *,
+    read: GitHubReader,
 ) -> tuple[str | None, str | None]:
-    root = _as_mapping(cast(object, _github_json(repository, token, "")))
+    root = _as_mapping(cast(object, read(repository, token, "")))
     branch = None if root is None else root.get("default_branch")
     if not isinstance(branch, str) or not branch or branch.startswith("refs/"):
         return None, None
     ref = _as_mapping(
         cast(
             object,
-            _github_json(
+            read(
                 repository,
                 token,
                 f"git/ref/heads/{quote(branch, safe='/')}",
@@ -188,11 +197,13 @@ def _ref_head_sha(
     repository: str,
     token: str,
     branch: str,
+    *,
+    read: GitHubReader,
 ) -> str | None:
     ref = _as_mapping(
         cast(
             object,
-            _github_json(
+            read(
                 repository,
                 token,
                 f"git/ref/heads/{quote(branch, safe='/')}",
@@ -211,11 +222,12 @@ def _compare_is_ancestor(
     *,
     ancestor: str,
     descendant: str,
+    read: GitHubReader,
 ) -> bool:
     comparison = _as_mapping(
         cast(
             object,
-            _github_json(
+            read(
                 repository,
                 token,
                 f"compare/{ancestor}...{descendant}",
@@ -274,8 +286,15 @@ def _pr_active_changes(
     repository: str,
     token: str,
     pr_number: int,
+    *,
+    read: GitHubReader,
 ) -> tuple[set[str], bool]:
-    files = _paged_list(repository, token, f"pulls/{pr_number}/files?")
+    files = _paged_list(
+        repository,
+        token,
+        f"pulls/{pr_number}/files?",
+        read=read,
+    )
     if not files:
         return set(), False
     names: set[str] = set()
@@ -302,6 +321,7 @@ def _historical_carriers(
     change: str,
     default_branch: str,
     default_revision: str,
+    read: GitHubReader,
 ) -> tuple[tuple[int, Mapping[str, object]], ...]:
     canonical = canonical_implementation_branch(change)
     if canonical is None:
@@ -314,13 +334,13 @@ def _historical_carriers(
             "base": default_branch,
         }
     )
-    candidates = _paged_list(repository, token, f"pulls?{query}&")
+    candidates = _paged_list(repository, token, f"pulls?{query}&", read=read)
     result: list[tuple[int, Mapping[str, object]]] = []
     for summary in candidates:
         number = summary.get("number")
         if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
             continue
-        pr = _as_mapping(cast(object, _github_json(repository, token, f"pulls/{number}")))
+        pr = _as_mapping(cast(object, read(repository, token, f"pulls/{number}")))
         if pr is None:
             raise RuntimeError("historical implementation carrier evidence is incomplete")
         identity = _pr_identity_is_coherent(
@@ -330,7 +350,12 @@ def _historical_carriers(
             default_branch=default_branch,
         )
         merge_sha = pr.get("merge_commit_sha")
-        active_changes, _has_code = _pr_active_changes(repository, token, number)
+        active_changes, _has_code = _pr_active_changes(
+            repository,
+            token,
+            number,
+            read=read,
+        )
         if (
             identity is not None
             and identity[0] == canonical
@@ -342,6 +367,7 @@ def _historical_carriers(
                 token,
                 ancestor=cast(str, merge_sha),
                 descendant=default_revision,
+                read=read,
             )
         ):
             result.append((number, pr))
@@ -355,11 +381,13 @@ def _claimed_open_carriers(
     issue_number: int,
     change: str,
     default_branch: str,
+    read: GitHubReader,
 ) -> tuple[Mapping[str, object], ...]:
     prs = _paged_list(
         repository,
         token,
         f"pulls?{urlencode({'state': 'open', 'base': default_branch})}&",
+        read=read,
     )
     canonical = canonical_implementation_branch(change)
     if canonical is None:
@@ -418,6 +446,7 @@ def qualify_implementation_carrier(
     change: str,
     pr_number: int,
     current_revision: str,
+    read: GitHubReader | None = None,
 ) -> ImplementationCarrierQualification:
     """Freshly qualify one exact implementation carrier.
 
@@ -425,8 +454,12 @@ def qualify_implementation_carrier(
     current default branch is not yet an ancestor of the carrier head. Only
     application/materialization may use that disposition to construct a
     reconciliation. Validation/checkpoint/merge consumers require `QUALIFIED`.
+
+    `read` replaces transport only. The qualifier still acquires every piece
+    of evidence and owns the complete semantic decision.
     """
 
+    reader = _github_json if read is None else read
     if (
         source.issue_number <= 0
         or source.action
@@ -453,7 +486,11 @@ def qualify_implementation_carrier(
             reason="carrier-change-invalid",
         )
 
-    default_branch, default_revision = _repository_default(repository, token)
+    default_branch, default_revision = _repository_default(
+        repository,
+        token,
+        read=reader,
+    )
     if default_branch is None or default_revision is None or default_revision != current_revision:
         return _indeterminate(
             repository=repository,
@@ -468,7 +505,7 @@ def qualify_implementation_carrier(
     issue = _as_mapping(
         cast(
             object,
-            _github_json(
+            reader(
                 repository,
                 token,
                 f"issues/{source.issue_number}",
@@ -489,7 +526,7 @@ def qualify_implementation_carrier(
     pr = _as_mapping(
         cast(
             object,
-            _github_json(
+            reader(
                 repository,
                 token,
                 f"pulls/{pr_number}",
@@ -531,6 +568,7 @@ def qualify_implementation_carrier(
         change=change,
         default_branch=default_branch,
         default_revision=default_revision,
+        read=reader,
     )
     if len(historical) > 1:
         return _indeterminate(
@@ -546,7 +584,12 @@ def qualify_implementation_carrier(
         )
     historical_pr_number = historical[0][0] if historical else None
 
-    active_changes, _has_code = _pr_active_changes(repository, token, pr_number)
+    active_changes, _has_code = _pr_active_changes(
+        repository,
+        token,
+        pr_number,
+        read=reader,
+    )
     if _is_merged_pr(pr):
         merge_sha = pr.get("merge_commit_sha")
         if not _valid_sha(merge_sha) or not _compare_is_ancestor(
@@ -554,6 +597,7 @@ def qualify_implementation_carrier(
             token,
             ancestor=cast(str, merge_sha),
             descendant=default_revision,
+            read=reader,
         ):
             return _indeterminate(
                 repository=repository,
@@ -655,6 +699,7 @@ def qualify_implementation_carrier(
         issue_number=source.issue_number,
         change=change,
         default_branch=default_branch,
+        read=reader,
     )
     claimed_numbers = {
         cast(int, candidate["number"])
@@ -676,7 +721,7 @@ def qualify_implementation_carrier(
             historical_pr_number=historical_pr_number,
         )
 
-    if _ref_head_sha(repository, token, branch) != head_sha:
+    if _ref_head_sha(repository, token, branch, read=reader) != head_sha:
         return _indeterminate(
             repository=repository,
             source=source,
@@ -715,6 +760,7 @@ def qualify_implementation_carrier(
         token,
         ancestor=default_revision,
         descendant=head_sha,
+        read=reader,
     ):
         disposition: CarrierDisposition = "QUALIFIED"
         reason = (
@@ -744,6 +790,7 @@ def qualify_implementation_carrier(
 
 __all__ = [
     "CarrierDisposition",
+    "GitHubReader",
     "ImplementationCarrierQualification",
     "canonical_implementation_branch",
     "deterministic_continuation_branch",
