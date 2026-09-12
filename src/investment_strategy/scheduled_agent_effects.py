@@ -30,6 +30,9 @@ from investment_strategy.scheduled_agent_action_model import (
 from investment_strategy.scheduled_agent_action_model import (
     ObservationProvenance as ModelObservationProvenance,
 )
+from investment_strategy.scheduled_agent_application_carrier import (
+    qualify_implementation_carrier,
+)
 from investment_strategy.scheduled_agent_application_materialization import (
     MaterializationRequest,
     apply_materialization,
@@ -386,7 +389,6 @@ def _implementation_checkpoint_effects_complete(
     if (
         request.expected_change != decision.source.change
         or request.change != decision.source.change
-        or request.branch != f"agent/{decision.source.change}"
         or request.pr_number is None
         or len(task_files) != 1
         or task_files[0].expected_sha is None
@@ -521,6 +523,7 @@ _ARCHIVE_WORKFLOW_PATH = ".github/workflows/openspec-archive.yml"
 _WORKFLOW_DISPATCH_INPUTS = frozenset({"change", "issue", "revision", "request_key"})
 _WORKFLOW_DISPATCH_OBSERVATION_ATTEMPTS = 30
 _WORKFLOW_DISPATCH_OBSERVATION_DELAY_SECONDS = 1.0
+_IMPLEMENTATION_ACTIONS = frozenset({"implement-change", "merge-implementation-pr"})
 
 
 def _is_nonempty_string(value: object) -> bool:
@@ -855,9 +858,6 @@ def apply_effect_batch(
         try:
             apply_effect(effect)
         except CarrierRequired:
-            # CarrierRequired is the hard boundary for this invocation. The
-            # top-level application bridge serializes the exact plan and exits;
-            # no result, checkpoint, routing, or successor effect may follow.
             raise
         if not observe_postcondition(effect):
             return ApplyResult(False, "durable postcondition not observed")
@@ -868,8 +868,6 @@ def apply_effect_batch(
         try:
             apply_effect(derived_effect)
         except CarrierRequired:
-            # Derived effects are never carrier operations today, but preserve
-            # the same hard invocation boundary if an adapter changes that.
             raise
         if not observe_postcondition(derived_effect):
             return ApplyResult(False, "durable postcondition not observed")
@@ -971,9 +969,24 @@ class GitHubEffectAdapter:
         request: MaterializationRequest,
         completed_task_ids: tuple[str, ...],
     ) -> bool:
-        """Validate task IDs against the exact first incomplete Change slice."""
+        """Validate one checkpoint against the canonical carrier decision and task slice."""
 
-        if request.pr_number is None:
+        if request.pr_number is None or not _valid_sha(self.current_revision):
+            return False
+        decision = qualify_implementation_carrier(
+            repository=self.repository,
+            token=self.token,
+            source=self.source,
+            change=request.change,
+            pr_number=request.pr_number,
+            current_revision=cast(str, self.current_revision),
+            read=_github_json,
+        )
+        if (
+            decision.disposition not in {"QUALIFIED", "RECONCILIATION_REQUIRED"}
+            or decision.branch != request.branch
+            or decision.head_sha is None
+        ):
             return False
         task_files = tuple(
             file
@@ -992,8 +1005,6 @@ class GitHubEffectAdapter:
         )
 
     def effect_rejection(self) -> ApplicationRejection | None:
-        """Return the structured result of the most recent effect guard."""
-
         return self._last_rejection
 
     def _current_issue(self) -> Mapping[str, object] | None:
@@ -1115,6 +1126,27 @@ class GitHubEffectAdapter:
         base = payload.get("base")
         if not isinstance(head, Mapping) or not isinstance(base, Mapping):
             return False
+        if self.source.action in _IMPLEMENTATION_ACTIONS:
+            latest_default = self._default_branch_revision(default_branch)
+            if latest_default is None:
+                return False
+            decision = qualify_implementation_carrier(
+                repository=self.repository,
+                token=self.token,
+                source=self.source,
+                change=observation.change,
+                pr_number=number,
+                current_revision=latest_default,
+                read=_github_json,
+            )
+            return bool(
+                decision.recognized
+                and decision.branch == head.get("ref")
+                and decision.head_sha == head.get("sha")
+                and base.get("ref") == default_branch
+                and _repository_full_name(head.get("repo")) == self.repository
+                and _repository_full_name(base.get("repo")) == self.repository
+            )
         expected_branch = (
             _archive_branch(observation.change)
             if self.source.action == "merge-archive-pr"
@@ -1129,6 +1161,53 @@ class GitHubEffectAdapter:
             and _repository_full_name(head.get("repo")) == self.repository
             and _repository_full_name(base.get("repo")) == self.repository
         )
+
+    def _implementation_ref_matches_source(
+        self,
+        ref: str,
+        expected_sha: str,
+        observation: GitHubIssueObservation,
+        default_branch: str,
+    ) -> bool:
+        branch = ref.removeprefix("refs/heads/")
+        if ref != f"refs/heads/{branch}" or not _valid_branch(branch):
+            return False
+        latest_default = self._default_branch_revision(default_branch)
+        if latest_default is None:
+            return False
+        owner = self.repository.split("/", 1)[0]
+        head = quote(f"{owner}:{branch}", safe="")
+        base = quote(default_branch, safe="")
+        payload = _github_json(
+            self.repository,
+            self.token,
+            f"pulls?state=all&head={head}&base={base}&per_page=100",
+        )
+        if not isinstance(payload, list) or len(payload) >= 100:
+            return False
+        matches = 0
+        for item in payload:
+            if not isinstance(item, Mapping):
+                continue
+            number = item.get("number")
+            if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+                continue
+            decision = qualify_implementation_carrier(
+                repository=self.repository,
+                token=self.token,
+                source=self.source,
+                change=observation.change,
+                pr_number=number,
+                current_revision=latest_default,
+                read=_github_json,
+            )
+            if (
+                decision.recognized
+                and decision.branch == branch
+                and decision.head_sha == expected_sha
+            ):
+                matches += 1
+        return matches == 1
 
     def _pull_request_matches_create(
         self,
@@ -1292,8 +1371,6 @@ class GitHubEffectAdapter:
         requested: Mapping[str, object],
         expected_postcondition: Mapping[str, object],
     ) -> CarrierPlan:
-        """Bind one carrier-only operation to the current application authorization."""
-
         if not _valid_sha(self.current_revision):
             raise RuntimeError("carrier plan authorization revision is unavailable")
         return make_carrier_plan(
@@ -1313,8 +1390,6 @@ class GitHubEffectAdapter:
         self,
         payload: Mapping[str, object],
     ) -> CarrierPlan:
-        """Create a plan only after the fresh operation guard has passed."""
-
         operation = cast(str, payload["operation"])
         number = payload.get("number")
         if operation == "pull-request-create":
@@ -1426,8 +1501,6 @@ class GitHubEffectAdapter:
         )
 
     def carrier_plan_if_required(self, effect: StagedEffect) -> CarrierPlan | None:
-        """Return a carrier plan only when a fresh PR postcondition is not current."""
-
         if effect.kind != GITHUB_MUTATION_KIND:
             return None
         payload = _effect_payload(effect)
@@ -1496,10 +1569,8 @@ class GitHubEffectAdapter:
             if request is None:
                 return False
             default_branch = self._default_branch()
-            branch_allowed = request.branch == _source_branch(request.change)
             return (
                 request.expected_change == self.authorized_change
-                and branch_allowed
                 and default_branch is not None
                 and self.current_revision is not None
                 and _valid_sha(self.current_revision)
@@ -1543,18 +1614,31 @@ class GitHubEffectAdapter:
             else _source_ref(observation.change)
         )
         if operation == "ref-delete":
-            if expected_ref is None or payload.get("ref") != expected_ref:
+            ref = payload.get("ref")
+            expected_sha = payload.get("expected_sha")
+            if not isinstance(ref, str) or not isinstance(expected_sha, str):
+                return False
+            if self.source.action == "merge-implementation-pr":
+                default_branch = self._default_branch()
+                if default_branch is None or not self._implementation_ref_matches_source(
+                    ref,
+                    expected_sha,
+                    observation,
+                    default_branch,
+                ):
+                    return False
+            elif expected_ref is None or ref != expected_ref:
                 return False
             ref_state = _github_json(
                 self.repository,
                 self.token,
-                _ref_api_path(expected_ref),
+                _ref_api_path(ref),
                 allow_not_found=True,
             )
             if not isinstance(ref_state, Mapping):
                 return False
             obj = ref_state.get("object")
-            return isinstance(obj, Mapping) and obj.get("sha") == payload.get("expected_sha")
+            return isinstance(obj, Mapping) and obj.get("sha") == expected_sha
         if operation == "pull-request-create":
             default_branch = self._default_branch()
             source_branch = _source_branch(observation.change)
@@ -1674,10 +1758,17 @@ class GitHubEffectAdapter:
 
     def guard(self, effect: StagedEffect) -> bool:
         self._last_rejection = None
+        payload = _effect_payload(effect)
+        post_merge_ref_delete = bool(
+            effect.kind == GITHUB_MUTATION_KIND
+            and payload is not None
+            and payload.get("operation") == "ref-delete"
+            and self.source.action == "merge-implementation-pr"
+        )
         if (
             not supported_effect_guard(self.source, effect)
             or not self._source_still_current()
-            or not self._default_branch_still_current()
+            or (not post_merge_ref_delete and not self._default_branch_still_current())
         ):
             self._last_rejection = ApplicationRejection(
                 ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
@@ -1712,7 +1803,6 @@ class GitHubEffectAdapter:
             return qualified
         if effect.kind == "issue-comment":
             return True
-        payload = _effect_payload(effect)
         guarded = payload is not None and self._guard_github_mutation(payload)
         if not guarded:
             self._last_rejection = ApplicationRejection(
@@ -1822,8 +1912,6 @@ class GitHubEffectAdapter:
                     "inputs": {key: cast(str, value) for key, value in inputs.items()},
                 },
             )
-            # GitHub records workflow_dispatch runs asynchronously; wait for the
-            # exact run identity before the batch performs its postcondition read.
             self._wait_for_workflow_dispatch(payload)
             return
         if operation == "pull-request-create":
@@ -1835,7 +1923,6 @@ class GitHubEffectAdapter:
                 self._created_pr_numbers[effect] = number
                 return
             raise CarrierRequired(self._carrier_plan_for_github_mutation(payload))
-            return
         if operation == "pull-request-update":
             current = self._source_pull_request(cast(int, payload["number"]), require_open=True)
             fields = payload.get("fields")
@@ -1854,7 +1941,6 @@ class GitHubEffectAdapter:
             ) and _pull_request_head_sha(current) == payload.get("expected_head_sha"):
                 return
             raise CarrierRequired(self._carrier_plan_for_github_mutation(payload))
-            return
         if operation == "pull-request-ready":
             number = cast(int, payload["number"])
             ready_current = self._source_pull_request(number, require_open=True)
@@ -1865,7 +1951,6 @@ class GitHubEffectAdapter:
             ) == payload.get("expected_head_sha"):
                 return
             raise CarrierRequired(self._carrier_plan_for_github_mutation(payload))
-            return
         if operation == "pull-request-merge":
             number = cast(int, payload["number"])
             expected_head_sha = cast(str, payload["expected_head_sha"])
@@ -1883,12 +1968,9 @@ class GitHubEffectAdapter:
             if current.get("state") != "open" or current.get("merged") is True:
                 raise RuntimeError("pull request merge source is not open")
             raise CarrierRequired(self._carrier_plan_for_github_mutation(payload))
-            return
         raise RuntimeError(f"unsupported GitHub mutation operation: {operation}")
 
     def _application_bound_comment_body(self, body: str) -> str:
-        """Bind formal evidence to the exact bridge-verified request comment."""
-
         correlation = self._formal_correlation()
         if correlation is None:
             return body
@@ -2123,14 +2205,13 @@ class GitHubEffectAdapter:
                 self.token,
                 f"issues/comments/{comment_id}",
             )
-            observed = (
+            return bool(
                 isinstance(response, Mapping)
                 and response.get("body")
                 == self._application_bound_comment_body(cast(str, payload["body"]))
                 and response.get("id") == comment_id
                 and is_github_actions_comment(response)
             )
-            return observed
 
         if effect.kind == "routing-transition":
             target_action = self._routing_targets.get(effect)

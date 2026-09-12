@@ -553,10 +553,11 @@ def _merge_effect_allows(
         return False
     if not isinstance(expected_change, str) or not expected_change.strip():
         return False
+    # Implementation carrier identity is already freshly qualified by the shared
+    # GitHubEffectAdapter immediately before this mutation-adjacent guard. Keep
+    # branch ownership there; merge acceptance owns review/check/linkage/freshness.
     expected_branch = (
-        f"agent/archive-{expected_change}"
-        if source.action == "merge-archive-pr"
-        else f"agent/{expected_change}"
+        f"agent/archive-{expected_change}" if source.action == "merge-archive-pr" else None
     )
     snapshot = acquire_merge_acceptance_snapshot(
         repository=repository,
