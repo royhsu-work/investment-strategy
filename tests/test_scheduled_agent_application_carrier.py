@@ -15,6 +15,7 @@ MAIN = "1" * 40
 HEAD = "2" * 40
 HISTORICAL_HEAD = "3" * 40
 MERGE = "4" * 40
+TEST_VALUE = "opaque-test-value"
 
 
 def _repo(name: str = REPOSITORY) -> dict[str, object]:
@@ -38,7 +39,10 @@ def _pr(
         "merged": merged,
         "merged_at": merged_at,
         "merge_commit_sha": merge_commit_sha,
-        "body": f"Continue OpenSpec change `{CHANGE}` after the merged carrier.\n\nRefs #{issue_number}",
+        "body": (
+            f"Continue OpenSpec change `{CHANGE}` after the merged carrier.\n\n"
+            f"Refs #{issue_number}"
+        ),
         "head": {
             "ref": branch,
             "sha": head_sha,
@@ -114,7 +118,7 @@ def _fake_github(
         allow_not_found: bool = False,
     ) -> object | None:
         assert repository == REPOSITORY
-        assert token == "token"
+        assert token == TEST_VALUE
         if api_path == "":
             return {"default_branch": "main"}
         if api_path == "git/ref/heads/main":
@@ -159,7 +163,7 @@ def _qualify(monkeypatch: pytest.MonkeyPatch, fake: Callable[..., object | None]
     monkeypatch.setattr(carrier, "_github_json", fake)
     return carrier.qualify_implementation_carrier(
         repository=REPOSITORY,
-        token="token",
+        token=TEST_VALUE,
         source=_source(),
         change=CHANGE,
         pr_number=236,
@@ -334,7 +338,7 @@ def test_historical_carrier_is_recognized_from_current_default_history(
     )
     decision = carrier.qualify_implementation_carrier(
         repository=REPOSITORY,
-        token="token",
+        token=TEST_VALUE,
         source=_source(),
         change=CHANGE,
         pr_number=232,
