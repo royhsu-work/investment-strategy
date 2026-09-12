@@ -1,8 +1,8 @@
 """Application-owned Change/work-product materialization for one effect ingress.
 
-The semantic worker may request only content-addressed blob references.  This
+The semantic worker may request only content-addressed blob references. This
 module turns those references into a repository-owned carrier or exact
-validation target after fresh repository authorization.  It deliberately has
+validation target after fresh repository authorization. It deliberately has
 no Issue-comment protocol and never consumes a dispatch Artifact.
 """
 
@@ -15,8 +15,12 @@ from dataclasses import dataclass
 from typing import cast
 from urllib.parse import quote, urlencode
 
+from investment_strategy.scheduled_agent_application_carrier import (
+    qualify_implementation_carrier,
+)
 from investment_strategy.scheduled_agent_carrier import (
     CarrierRequired,
+    carrier_pr_identity,
     make_carrier_plan,
 )
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
@@ -28,10 +32,13 @@ from investment_strategy.scheduled_agent_validation_resource import (
     WorkProductPlan,
     _as_mapping,
     _change_from_issue,
+    _comparison_file_paths,
     _content_sha_at,
     _current_authorized_request,
     _current_default_branch,
     _github_json,
+    _is_executor_config_authoring,
+    _is_executor_task_bookkeeping,
     _open_pr_payload,
     _ref_head_sha,
     _replacement_branch,
@@ -47,8 +54,8 @@ from investment_strategy.scheduled_agent_validation_resource import (
 
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
 _ISSUE_LINK = re.compile(r"(?mi)^\s*Refs\s+#([0-9]+)\s*$")
-_SHA = re.compile(r"^[0-9a-f]{40}$")
 _MATERIALIZATION_OPERATION = "application-materialize"
+_IMPLEMENTATION_ACTION = "implement-change"
 
 
 @dataclass(frozen=True)
@@ -85,7 +92,7 @@ def parse_materialization_payload(
     payload: Mapping[str, object],
     source: WorkerRequest,
 ) -> MaterializationRequest:
-    """Validate the single generic materialization capability envelope."""
+    """Validate the structural materialization envelope, not carrier semantics."""
 
     allowed = {
         "issue_number",
@@ -153,6 +160,8 @@ def parse_materialization_payload(
     normalized_expected = cast(str, expected_change)
     normalized_pr = None if pr_number is None else cast(int, pr_number)
     if normalized_expected == "unset":
+        # First-carrier creation remains intentionally strict. Continuation
+        # qualification applies only after immutable Change identity exists.
         if branch != _source_branch(change):
             raise ValueError("first Change materialization branch is not bound to Change")
         if source != WorkerRequest(source.issue_number, "lead", "propose-change"):
@@ -171,8 +180,8 @@ def parse_materialization_payload(
             raise ValueError("existing Change materialization requires an exact PR")
         if normalized_expected != change:
             raise ValueError("existing Change materialization Change identity is inconsistent")
-        if branch != _source_branch(change):
-            raise ValueError("existing Change materialization branch is not bound to Change")
+        # Branch identity is intentionally structural here. The application
+        # carrier qualifier owns semantic initial/continuation eligibility.
         if files and not all(
             work_product_path_allowed(source, normalized_expected, file.path) for file in files
         ):
@@ -540,6 +549,572 @@ def _target(
     )
 
 
+def _implementation_manifest_capability_allowed(
+    request: MaterializationRequest,
+    source: WorkerRequest,
+) -> bool:
+    if not request.files:
+        return True
+    if not all(
+        work_product_path_allowed(source, request.expected_change, file.path)
+        for file in request.files
+    ):
+        return False
+    if not any(file.path.startswith("openspec/") for file in request.files):
+        return True
+    return _is_executor_task_bookkeeping(
+        source,
+        request.expected_change,
+        request.files,
+    ) or _is_executor_config_authoring(
+        source,
+        request.expected_change,
+        request.files,
+    )
+
+
+def _qualified_implementation_decision(
+    request: MaterializationRequest,
+    source: WorkerRequest,
+    *,
+    repository: str,
+    token: str,
+    current_revision: str,
+):
+    if request.pr_number is None:
+        raise RuntimeError("implementation materialization requires an exact PR")
+    decision = qualify_implementation_carrier(
+        repository=repository,
+        token=token,
+        source=source,
+        change=request.expected_change,
+        pr_number=request.pr_number,
+        current_revision=current_revision,
+    )
+    if (
+        decision.disposition not in {"QUALIFIED", "RECONCILIATION_REQUIRED"}
+        or decision.branch != request.branch
+        or decision.head_sha is None
+        or decision.pr_number != request.pr_number
+    ):
+        raise RuntimeError(f"implementation carrier is not eligible: {decision.reason}")
+    return decision
+
+
+def _revision_tree_snapshot(
+    repository: str,
+    token: str,
+    revision: str,
+) -> tuple[str, dict[str, Mapping[str, object]]]:
+    commit = _as_mapping(
+        cast(object, _github_json(repository, token, f"git/commits/{revision}"))
+    )
+    tree = None if commit is None else _as_mapping(commit.get("tree"))
+    tree_sha = None if tree is None else tree.get("sha")
+    if not _valid_sha(tree_sha):
+        raise RuntimeError("implementation carrier tree identity is incomplete")
+    payload = _as_mapping(
+        cast(
+            object,
+            _github_json(
+                repository,
+                token,
+                f"git/trees/{tree_sha}?recursive=1",
+            ),
+        )
+    )
+    raw_entries = None if payload is None else payload.get("tree")
+    if (
+        payload is None
+        or payload.get("sha") != tree_sha
+        or payload.get("truncated") is True
+        or not isinstance(raw_entries, list)
+    ):
+        raise RuntimeError("implementation carrier tree observation is incomplete")
+    entries: dict[str, Mapping[str, object]] = {}
+    for raw_entry in raw_entries:
+        entry = _as_mapping(raw_entry)
+        path = None if entry is None else entry.get("path")
+        mode = None if entry is None else entry.get("mode")
+        entry_type = None if entry is None else entry.get("type")
+        sha = None if entry is None else entry.get("sha")
+        if (
+            not isinstance(path, str)
+            or not isinstance(mode, str)
+            or not isinstance(entry_type, str)
+            or not isinstance(sha, str)
+            or path in entries
+        ):
+            raise RuntimeError("implementation carrier tree entry is malformed")
+        entries[path] = entry
+    return cast(str, tree_sha), entries
+
+
+def _tree_entry_identity(entry: Mapping[str, object] | None) -> tuple[object, object, object] | None:
+    if entry is None:
+        return None
+    return entry.get("mode"), entry.get("type"), entry.get("sha")
+
+
+def _fresh_implementation_write_authorization(
+    request: MaterializationRequest,
+    source: WorkerRequest,
+    *,
+    repository: str,
+    token: str,
+    default_branch: str,
+    current_revision: str,
+    expected_head: str,
+) -> None:
+    if _ref_head_sha(repository, token, default_branch) != current_revision:
+        raise RuntimeError("implementation materialization default branch changed")
+    if _current_authorized_request(repository, token) != source:
+        raise RuntimeError("implementation materialization source dispatch changed")
+    decision = _qualified_implementation_decision(
+        request,
+        source,
+        repository=repository,
+        token=token,
+        current_revision=current_revision,
+    )
+    if decision.head_sha != expected_head:
+        raise RuntimeError("implementation carrier head changed before mutation")
+
+
+def _verify_implementation_manifest_freshness(
+    request: MaterializationRequest,
+    *,
+    repository: str,
+    token: str,
+    current_revision: str,
+    carrier_head: str,
+) -> None:
+    if request.base_sha not in {current_revision, carrier_head}:
+        raise RuntimeError("implementation manifest base is not a current write base")
+    for file in request.files:
+        if (
+            _content_sha_at(
+                repository,
+                token,
+                path=file.path,
+                revision=request.base_sha,
+            )
+            != file.expected_sha
+        ):
+            raise RuntimeError("implementation manifest expected content is stale")
+        carrier_sha = _content_sha_at(
+            repository,
+            token,
+            path=file.path,
+            revision=carrier_head,
+        )
+        if request.base_sha != carrier_head and carrier_sha not in {
+            file.expected_sha,
+            file.blob_sha,
+        }:
+            raise RuntimeError(
+                "implementation manifest would overwrite unobserved carrier content"
+            )
+
+
+def _manifest_is_current(
+    request: MaterializationRequest,
+    *,
+    repository: str,
+    token: str,
+    revision: str,
+) -> bool:
+    return all(
+        _content_sha_at(repository, token, path=file.path, revision=revision) == file.blob_sha
+        for file in request.files
+    )
+
+
+def _reconciliation_overlay(
+    request: MaterializationRequest,
+    *,
+    repository: str,
+    token: str,
+    current_revision: str,
+    carrier_head: str,
+) -> tuple[str, list[dict[str, object]]]:
+    comparison = _as_mapping(
+        cast(
+            object,
+            _github_json(
+                repository,
+                token,
+                f"compare/{current_revision}...{carrier_head}",
+            ),
+        )
+    )
+    merge_base = None if comparison is None else _as_mapping(comparison.get("merge_base_commit"))
+    merge_base_sha = None if merge_base is None else merge_base.get("sha")
+    if not _valid_sha(merge_base_sha):
+        raise RuntimeError("implementation reconciliation merge-base is incomplete")
+
+    default_changed = _comparison_file_paths(
+        repository,
+        token,
+        base_sha=cast(str, merge_base_sha),
+        revision=current_revision,
+    )
+    carrier_changed = _comparison_file_paths(
+        repository,
+        token,
+        base_sha=cast(str, merge_base_sha),
+        revision=carrier_head,
+    )
+    carrier_tree_sha, carrier_entries = _revision_tree_snapshot(repository, token, carrier_head)
+    _default_tree_sha, default_entries = _revision_tree_snapshot(
+        repository,
+        token,
+        current_revision,
+    )
+    manifest_paths = {file.path for file in request.files}
+    for path in (default_changed & carrier_changed) - manifest_paths:
+        if _tree_entry_identity(default_entries.get(path)) != _tree_entry_identity(
+            carrier_entries.get(path)
+        ):
+            raise RuntimeError(
+                "implementation reconciliation has an unresolved overlapping change"
+            )
+
+    tree_elements: list[dict[str, object]] = []
+    for path in sorted(default_changed - manifest_paths):
+        default_entry = default_entries.get(path)
+        carrier_entry = carrier_entries.get(path)
+        if _tree_entry_identity(default_entry) == _tree_entry_identity(carrier_entry):
+            continue
+        if default_entry is None:
+            if carrier_entry is None:
+                continue
+            tree_elements.append(
+                {
+                    "path": path,
+                    "mode": carrier_entry["mode"],
+                    "type": carrier_entry["type"],
+                    "sha": None,
+                }
+            )
+            continue
+        if default_entry.get("type") != "blob":
+            raise RuntimeError("implementation reconciliation default change is not a blob")
+        tree_elements.append(
+            {
+                "path": path,
+                "mode": default_entry["mode"],
+                "type": "blob",
+                "sha": default_entry["sha"],
+            }
+        )
+
+    for file in request.files:
+        carrier_entry = carrier_entries.get(file.path)
+        default_entry = default_entries.get(file.path)
+        mode = "100644"
+        if carrier_entry is not None and carrier_entry.get("type") == "blob":
+            mode = cast(str, carrier_entry["mode"])
+        elif default_entry is not None and default_entry.get("type") == "blob":
+            mode = cast(str, default_entry["mode"])
+        tree_elements.append(
+            {
+                "path": file.path,
+                "mode": mode,
+                "type": "blob",
+                "sha": file.blob_sha,
+            }
+        )
+    return carrier_tree_sha, tree_elements
+
+
+def _implementation_carrier_plan(
+    request: MaterializationRequest,
+    source: WorkerRequest,
+    *,
+    repository: str,
+    token: str,
+    default_branch: str,
+    current_revision: str,
+    current_head: str,
+    revision: str,
+    tree_sha: str,
+    parents: list[str],
+    message: str,
+):
+    if request.pr_number is None:
+        raise RuntimeError("implementation carrier plan requires an exact PR")
+    pr = _as_mapping(
+        cast(object, _github_json(repository, token, f"pulls/{request.pr_number}"))
+    )
+    if pr is None:
+        raise RuntimeError("implementation carrier PR observation is unavailable")
+    carrier_ref = f"refs/heads/{request.branch}"
+    return make_carrier_plan(
+        repository=repository,
+        issue_number=source.issue_number,
+        change=request.expected_change,
+        action=source.action,
+        authorization_revision=current_revision,
+        operation="pull-request-head-update",
+        target={
+            "repository": repository,
+            "pull_request_number": request.pr_number,
+            "ref": carrier_ref,
+        },
+        expected={
+            "ref": carrier_ref,
+            "ref_sha": current_head,
+            "pull_request": carrier_pr_identity(pr),
+            "commit_parents": parents,
+            "commit_tree_sha": tree_sha,
+            "commit_message": message,
+        },
+        requested={
+            "ref": carrier_ref,
+            "sha": revision,
+            "force": False,
+            "pull_request_number": request.pr_number,
+            "expected_head_sha": current_head,
+            "commit_parents": parents,
+            "commit_tree_sha": tree_sha,
+            "commit_message": message,
+        },
+        expected_postcondition={
+            "ref": carrier_ref,
+            "ref_sha": revision,
+            "pull_request_number": request.pr_number,
+            "pull_request_head_sha": revision,
+            "state": "open",
+            "merged": False,
+            "commit_sha": revision,
+            "commit_parents": parents,
+            "commit_tree_sha": tree_sha,
+            "commit_message": message,
+            "base_ref": default_branch,
+        },
+    )
+
+
+def _materialize_implementation_target(
+    request: MaterializationRequest,
+    source: WorkerRequest,
+    *,
+    repository: str,
+    token: str,
+    default_branch: str,
+    current_revision: str,
+) -> ValidationResourceTarget:
+    if source.action != _IMPLEMENTATION_ACTION or source.role != "executor":
+        raise RuntimeError("implementation carrier materialization source is invalid")
+    if not _implementation_manifest_capability_allowed(request, source):
+        raise RuntimeError("work-product source has no required OpenSpec review gate")
+    decision = _qualified_implementation_decision(
+        request,
+        source,
+        repository=repository,
+        token=token,
+        current_revision=current_revision,
+    )
+    current_head = cast(str, decision.head_sha)
+    _verify_implementation_manifest_freshness(
+        request,
+        repository=repository,
+        token=token,
+        current_revision=current_revision,
+        carrier_head=current_head,
+    )
+    manifest_current = _manifest_is_current(
+        request,
+        repository=repository,
+        token=token,
+        revision=current_head,
+    )
+    if decision.disposition == "QUALIFIED" and manifest_current:
+        return _target(
+            request,
+            repository=repository,
+            revision=current_head,
+            pr_number=cast(int, request.pr_number),
+            validation_required=materialization_requires_validation(request, source),
+        )
+
+    if decision.disposition == "RECONCILIATION_REQUIRED":
+        base_tree_sha, tree_elements = _reconciliation_overlay(
+            request,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            carrier_head=current_head,
+        )
+        parents = [current_head, current_revision]
+        message = (
+            f"Reconcile default-branch ancestry for {request.expected_change}"
+            if manifest_current
+            else request.message
+        )
+    else:
+        base_tree_sha, _carrier_entries = _revision_tree_snapshot(
+            repository,
+            token,
+            current_head,
+        )
+        tree_elements = [
+            {
+                "path": file.path,
+                "mode": "100644",
+                "type": "blob",
+                "sha": file.blob_sha,
+            }
+            for file in request.files
+        ]
+        parents = [current_head]
+        message = request.message
+
+    tree_sha = base_tree_sha
+    if tree_elements:
+        _fresh_implementation_write_authorization(
+            request,
+            source,
+            repository=repository,
+            token=token,
+            default_branch=default_branch,
+            current_revision=current_revision,
+            expected_head=current_head,
+        )
+        tree = _as_mapping(
+            cast(
+                object,
+                _github_json(
+                    repository,
+                    token,
+                    "git/trees",
+                    method="POST",
+                    payload={"base_tree": base_tree_sha, "tree": tree_elements},
+                ),
+            )
+        )
+        observed_tree_sha = None if tree is None else tree.get("sha")
+        if not _valid_sha(observed_tree_sha):
+            raise RuntimeError("implementation materialization tree creation returned no SHA")
+        tree_sha = cast(str, observed_tree_sha)
+
+    _fresh_implementation_write_authorization(
+        request,
+        source,
+        repository=repository,
+        token=token,
+        default_branch=default_branch,
+        current_revision=current_revision,
+        expected_head=current_head,
+    )
+    created = _as_mapping(
+        cast(
+            object,
+            _github_json(
+                repository,
+                token,
+                "git/commits",
+                method="POST",
+                payload={"message": message, "tree": tree_sha, "parents": parents},
+            ),
+        )
+    )
+    revision = None if created is None else created.get("sha")
+    if not _valid_sha(revision):
+        raise RuntimeError("implementation materialization commit creation returned no SHA")
+    revision = cast(str, revision)
+
+    observed = _as_mapping(
+        cast(object, _github_json(repository, token, f"git/commits/{revision}"))
+    )
+    observed_tree = None if observed is None else _as_mapping(observed.get("tree"))
+    raw_parents = None if observed is None else observed.get("parents")
+    observed_parents: list[str] = []
+    if isinstance(raw_parents, list):
+        for raw_parent in raw_parents:
+            parent = _as_mapping(raw_parent)
+            parent_sha = None if parent is None else parent.get("sha")
+            if not _valid_sha(parent_sha):
+                raise RuntimeError("implementation materialization commit parent is incomplete")
+            observed_parents.append(cast(str, parent_sha))
+    if (
+        observed is None
+        or observed.get("sha") != revision
+        or observed.get("message") != message
+        or observed_tree is None
+        or observed_tree.get("sha") != tree_sha
+        or observed_parents != parents
+        or not _manifest_is_current(
+            request,
+            repository=repository,
+            token=token,
+            revision=revision,
+        )
+    ):
+        raise RuntimeError("implementation materialization commit postcondition was not observed")
+    if _ref_head_sha(repository, token, request.branch) != current_head:
+        raise RuntimeError("implementation carrier moved before carrier handoff")
+    if _ref_head_sha(repository, token, default_branch) != current_revision:
+        raise RuntimeError("implementation default branch moved before carrier handoff")
+
+    raise CarrierRequired(
+        _implementation_carrier_plan(
+            request,
+            source,
+            repository=repository,
+            token=token,
+            default_branch=default_branch,
+            current_revision=current_revision,
+            current_head=current_head,
+            revision=revision,
+            tree_sha=tree_sha,
+            parents=parents,
+            message=message,
+        )
+    )
+
+
+def _observe_implementation_target(
+    request: MaterializationRequest,
+    source: WorkerRequest,
+    *,
+    repository: str,
+    token: str,
+    current_revision: str,
+) -> ValidationResourceTarget:
+    decision = _qualified_implementation_decision(
+        request,
+        source,
+        repository=repository,
+        token=token,
+        current_revision=current_revision,
+    )
+    if decision.disposition != "QUALIFIED" or decision.head_sha is None:
+        raise RuntimeError("implementation carrier is not qualified for consumption")
+    _verify_implementation_manifest_freshness(
+        request,
+        repository=repository,
+        token=token,
+        current_revision=current_revision,
+        carrier_head=decision.head_sha,
+    )
+    if not _manifest_is_current(
+        request,
+        repository=repository,
+        token=token,
+        revision=decision.head_sha,
+    ):
+        raise RuntimeError("implementation materialization manifest is not current")
+    return _target(
+        request,
+        repository=repository,
+        revision=decision.head_sha,
+        pr_number=cast(int, request.pr_number),
+        validation_required=materialization_requires_validation(request, source),
+    )
+
+
 def _existing_target(
     request: MaterializationRequest,
     source: WorkerRequest,
@@ -551,6 +1126,15 @@ def _existing_target(
 ) -> ValidationResourceTarget:
     if request.pr_number is None:
         raise RuntimeError("existing Change materialization requires an exact PR")
+    if source.role == "executor" and source.action == _IMPLEMENTATION_ACTION:
+        return _materialize_implementation_target(
+            request,
+            source,
+            repository=repository,
+            token=token,
+            default_branch=default_branch,
+            current_revision=authorization_revision,
+        )
     plan = WorkProductPlan(
         True,
         source=source,
@@ -648,7 +1232,7 @@ def apply_materialization(
             _persist_change(request, repository=repository, token=token)
         return target
 
-    target = _existing_target(
+    return _existing_target(
         request,
         source,
         repository=repository,
@@ -656,7 +1240,45 @@ def apply_materialization(
         default_branch=default_branch,
         authorization_revision=current_revision,
     )
-    return target
+
+
+def _observe_nonimplementation_existing_target(
+    request: MaterializationRequest,
+    source: WorkerRequest,
+    *,
+    repository: str,
+    token: str,
+    default_branch: str,
+) -> ValidationResourceTarget:
+    if request.pr_number is None:
+        raise RuntimeError("application materialization validation target lacks PR")
+    pr = _open_pr_payload(
+        repository=repository,
+        token=token,
+        pr_number=request.pr_number,
+        source=source,
+        expected_change=request.expected_change,
+        default_branch=default_branch,
+        expected_branch=request.branch,
+    )
+    head = _as_mapping(pr.get("head"))
+    revision = None if head is None else head.get("sha")
+    if not _valid_sha(revision):
+        raise RuntimeError("application materialization PR head is incomplete")
+    if not _manifest_is_current(
+        request,
+        repository=repository,
+        token=token,
+        revision=cast(str, revision),
+    ):
+        raise RuntimeError("application materialization manifest is not current")
+    return _target(
+        request,
+        repository=repository,
+        revision=cast(str, revision),
+        pr_number=request.pr_number,
+        validation_required=materialization_requires_validation(request, source),
+    )
 
 
 def materialization_postcondition(
@@ -689,6 +1311,17 @@ def materialization_postcondition(
         current_change = _change_from_issue(issue)
         if current_change not in {request.expected_change, request.change}:
             return False
+
+        if source.role == "executor" and source.action == _IMPLEMENTATION_ACTION:
+            observed = _observe_implementation_target(
+                request,
+                source,
+                repository=repository,
+                token=token,
+                current_revision=current_revision,
+            )
+            return observed == target
+
         target_branch = request.branch
         if (
             request.expected_change != "unset"
@@ -736,7 +1369,7 @@ def observe_materialization_target(
     current_revision: str,
     default_branch: str,
 ) -> ValidationResourceTarget:
-    """Resolve the exact carrier revision after a materialization effect."""
+    """Read-only reconstruction of the exact carrier after materialization."""
 
     request = parse_materialization_payload(payload, source)
     if _current_authorized_request(repository, token) != source:
@@ -776,43 +1409,20 @@ def observe_materialization_target(
             validation_required=True,
         )
 
-    if request.pr_number is None:
-        raise RuntimeError("application materialization validation target lacks PR")
-    if request.files:
-        target = _existing_target(
+    if source.role == "executor" and source.action == _IMPLEMENTATION_ACTION:
+        return _observe_implementation_target(
             request,
             source,
             repository=repository,
             token=token,
-            default_branch=default_branch,
-            authorization_revision=current_revision,
+            current_revision=current_revision,
         )
-        return ValidationResourceTarget(
-            repository=target.repository,
-            revision=target.revision,
-            correlation=f"effect-request-{source.issue_number}",
-            pr_number=target.pr_number,
-            change=target.change,
-            validation_required=materialization_requires_validation(request, source),
-        )
-    target = resolve_validation_resource_target(
-        ValidationResourcePlan(
-            True,
-            source=source,
-            pr_number=request.pr_number,
-            expected_change=request.expected_change,
-        ),
+    return _observe_nonimplementation_existing_target(
+        request,
+        source,
         repository=repository,
         token=token,
         default_branch=default_branch,
-    )
-    return ValidationResourceTarget(
-        repository=target.repository,
-        revision=target.revision,
-        correlation=f"effect-request-{source.issue_number}",
-        pr_number=target.pr_number,
-        change=target.change,
-        validation_required=materialization_requires_validation(request, source),
     )
 
 
@@ -820,7 +1430,7 @@ def find_materialization_payload(
     payload: Mapping[str, object],
     source: WorkerRequest,
 ) -> MaterializationRequest | None:
-    """Return a validated materialization request, if this is that effect."""
+    """Return a structurally validated materialization request, if applicable."""
 
     if payload.get("operation") != _MATERIALIZATION_OPERATION:
         return None
