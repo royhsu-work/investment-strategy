@@ -194,8 +194,8 @@ def test_application_authored_plain_review_pass_is_merge_evidence() -> None:
             "id": 1,
             "created_at": "2026-08-27T06:00:00Z",
             "body": (
-                f"Action: review-implementation\\n"
-                "Result: PASS\\n"
+                f"Action: review-implementation\n"
+                "Result: PASS\n"
                 f"Revision: {HEAD}"
             ),
             "user": {"login": "github-actions[bot]"},
