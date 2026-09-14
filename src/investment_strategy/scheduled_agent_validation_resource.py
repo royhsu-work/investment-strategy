@@ -305,6 +305,7 @@ def _open_pr_payload(
     allow_historical_merged_carrier: bool = False,
     expected_branch: str | None = None,
     carrier_decision: ImplementationCarrierQualification | None = None,
+    allow_reconciliation: bool = False,
 ) -> Mapping[str, object]:
     if _current_default_branch(repository, token) != default_branch:
         raise RuntimeError("validation resource repository default branch changed")
@@ -360,7 +361,14 @@ def _open_pr_payload(
             expected_change=expected_change,
             pr_number=pr_number,
         )
-        if not decision.recognized or decision.pr_number != pr_number or decision.branch != branch:
+        if (
+            not (
+                decision.qualified
+                or (allow_reconciliation and decision.disposition == "RECONCILIATION_REQUIRED")
+            )
+            or decision.pr_number != pr_number
+            or decision.branch != branch
+        ):
             raise RuntimeError("validation resource continuation carrier is not qualified")
         return pr
 
@@ -945,6 +953,7 @@ def _is_reconciled_work_product_revision(
     base_sha: str,
     revision: str,
     manifest: WorkProductManifest,
+    expected_change: str,
     authorization_revision: str,
     seen: frozenset[str] = frozenset(),
 ) -> bool:
@@ -982,7 +991,7 @@ def _is_reconciled_work_product_revision(
         return False
     if parent_shas[0] == base_sha:
         return commit.get("message") == manifest.message
-    if commit.get("message") != _reconciliation_message(manifest.branch.removeprefix("agent/")):
+    if commit.get("message") != _reconciliation_message(expected_change):
         return False
     try:
         reconciled_paths = _comparison_file_paths(
@@ -1009,6 +1018,7 @@ def _is_reconciled_work_product_revision(
         base_sha=base_sha,
         revision=parent_shas[0],
         manifest=manifest,
+        expected_change=expected_change,
         authorization_revision=authorization_revision,
         seen=seen | {revision},
     )
@@ -1218,6 +1228,10 @@ def apply_work_product(
         allow_historical_merged_carrier=True,
         expected_branch=expected_branch,
         carrier_decision=carrier_decision,
+        allow_reconciliation=(
+            carrier_decision is not None
+            and carrier_decision.disposition == "RECONCILIATION_REQUIRED"
+        ),
     )
     head = _as_mapping(pr.get("head"))
     pr_head_sha = None if head is None else head.get("sha")
@@ -1266,6 +1280,7 @@ def apply_work_product(
                 expected_change=plan.expected_change,
                 default_branch=default_branch,
                 expected_branch=replacement_branch,
+                allow_reconciliation=True,
             )
             raw_replacement_number = replacement_pr.get("number")
             if (
@@ -1398,6 +1413,7 @@ def apply_work_product(
             base_sha=plan.manifest.base_sha,
             revision=current_head,
             manifest=plan.manifest,
+            expected_change=plan.expected_change,
             authorization_revision=authorization_revision,
         )
         if default_branch_is_ancestor and (manifest_applied or reconciled):
@@ -1764,6 +1780,12 @@ def apply_work_product(
             expected_change=plan.expected_change,
             default_branch=default_branch,
             allow_historical_merged_carrier=True,
+            expected_branch=expected_branch,
+            carrier_decision=carrier_decision,
+            allow_reconciliation=(
+                carrier_decision is not None
+                and carrier_decision.disposition == "RECONCILIATION_REQUIRED"
+            ),
         )
         observed_head = _as_mapping(observed_pr.get("head"))
         if (

@@ -322,7 +322,7 @@ def test_stale_default_revision_fails_closed(
     assert decision.reason == "carrier-default-revision-stale"
 
 
-def test_stale_open_carrier_base_fails_closed(
+def test_stale_open_continuation_carrier_is_reconcilable_but_not_qualified(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     current = _continuation_pr()
@@ -330,6 +330,26 @@ def test_stale_open_carrier_base_fails_closed(
     decision = _qualify(
         monkeypatch,
         _fake_github(current_pr=current, open_prs=[current]),
+    )
+    assert decision.disposition == "RECONCILIATION_REQUIRED"
+    assert decision.recognized
+    assert not decision.qualified
+    assert decision.reason == "carrier-pr-base-is-stale"
+
+
+def test_stale_open_initial_carrier_remains_strict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = _continuation_pr(branch=f"agent/{CHANGE}")
+    current["base"] = {"ref": "main", "sha": "7" * 40, "repo": _repo()}
+    decision = _qualify(
+        monkeypatch,
+        _fake_github(
+            current_pr=current,
+            historical_pr=None,
+            open_prs=[current],
+            pr_files=[{"filename": f"openspec/changes/{CHANGE}/proposal.md"}],
+        ),
     )
     assert decision.disposition == "INDETERMINATE"
     assert decision.reason == "carrier-pr-base-is-stale"

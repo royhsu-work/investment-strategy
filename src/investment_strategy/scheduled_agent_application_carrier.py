@@ -572,21 +572,15 @@ def qualify_implementation_carrier(
         )
     branch, head_sha = identity
 
-    if pr.get("state") == "open" and not _pr_base_is_current(
+    # An open continuation carrier with an old PR base is still an
+    # application-recognizable carrier.  The application owner must be able
+    # to observe that identity before it can construct the base-reconciliation
+    # handoff that repairs the PR.  Keep the initial carrier strict below:
+    # only a continuation with verified history may enter reconciliation.
+    base_is_current = _pr_base_is_current(
         pr,
         default_revision=default_revision,
-    ):
-        return _indeterminate(
-            repository=repository,
-            source=source,
-            change=change,
-            pr_number=pr_number,
-            reason="carrier-pr-base-is-stale",
-            branch=branch,
-            head_sha=head_sha,
-            default_branch=default_branch,
-            default_revision=default_revision,
-        )
+    )
 
     historical = _historical_carriers(
         repository,
@@ -775,6 +769,35 @@ def qualify_implementation_carrier(
                 if historical_pr_number is None
                 else "carrier-competing-active-change"
             ),
+            branch=branch,
+            head_sha=head_sha,
+            default_branch=default_branch,
+            default_revision=default_revision,
+            historical_pr_number=historical_pr_number,
+        )
+
+    if not base_is_current:
+        if historical_pr_number is None:
+            return _indeterminate(
+                repository=repository,
+                source=source,
+                change=change,
+                pr_number=pr_number,
+                reason="carrier-pr-base-is-stale",
+                branch=branch,
+                head_sha=head_sha,
+                default_branch=default_branch,
+                default_revision=default_revision,
+                historical_pr_number=historical_pr_number,
+            )
+        return ImplementationCarrierQualification(
+            disposition="RECONCILIATION_REQUIRED",
+            reason="carrier-pr-base-is-stale",
+            repository=repository,
+            issue_number=source.issue_number,
+            change=change,
+            action=source.action,
+            pr_number=pr_number,
             branch=branch,
             head_sha=head_sha,
             default_branch=default_branch,

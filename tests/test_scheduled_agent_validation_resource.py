@@ -1063,6 +1063,7 @@ def _open_continuation_with_files(
     files: list[dict[str, str]],
     *,
     carrier_decision: ImplementationCarrierQualification | None = None,
+    allow_reconciliation: bool = False,
 ) -> Mapping[str, object]:
     source = WorkerRequest(229, "executor", "implement-change")
 
@@ -1121,6 +1122,7 @@ def _open_continuation_with_files(
         expected_change=_CONTINUATION_CHANGE,
         default_branch="main",
         expected_branch=_CONTINUATION_BRANCH,
+        allow_reconciliation=allow_reconciliation,
     )
 
 
@@ -1164,6 +1166,41 @@ def test_deterministic_continuation_rejects_competing_active_change(
                 historical_pr_number=232,
             ),
         )
+
+
+def test_validation_requires_qualified_continuation_unless_reconciling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision = ImplementationCarrierQualification(
+        disposition="RECONCILIATION_REQUIRED",
+        reason="carrier-pr-base-is-stale",
+        repository=_REPOSITORY,
+        issue_number=229,
+        change=_CONTINUATION_CHANGE,
+        action="implement-change",
+        pr_number=236,
+        branch=_CONTINUATION_BRANCH,
+        head_sha="b" * 40,
+        default_branch="main",
+        default_revision="a" * 40,
+        historical_pr_number=232,
+    )
+    files = [
+        {"filename": "src/investment_strategy/scheduled_agent_formal_qualification.py"},
+    ]
+    with pytest.raises(RuntimeError, match="continuation carrier is not qualified"):
+        _open_continuation_with_files(
+            monkeypatch,
+            files,
+            carrier_decision=decision,
+        )
+    payload = _open_continuation_with_files(
+        monkeypatch,
+        files,
+        carrier_decision=decision,
+        allow_reconciliation=True,
+    )
+    assert payload["number"] == 236
 
 
 def test_apply_work_product_reuses_current_head_without_commit_when_ancestry_diverged(

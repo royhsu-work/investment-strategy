@@ -1121,6 +1121,8 @@ class GitHubEffectAdapter:
         number: int,
         observation: GitHubIssueObservation,
         default_branch: str,
+        *,
+        allow_reconciliation: bool = False,
     ) -> bool:
         head = payload.get("head")
         base = payload.get("base")
@@ -1140,7 +1142,10 @@ class GitHubEffectAdapter:
                 read=_github_json,
             )
             return bool(
-                decision.recognized
+                (
+                    decision.qualified
+                    or (allow_reconciliation and decision.disposition == "RECONCILIATION_REQUIRED")
+                )
                 and decision.branch == head.get("ref")
                 and decision.head_sha == head.get("sha")
                 and base.get("ref") == default_branch
@@ -1202,7 +1207,7 @@ class GitHubEffectAdapter:
                 read=_github_json,
             )
             if (
-                decision.recognized
+                (decision.qualified or decision.disposition == "HISTORICAL_MERGED")
                 and decision.branch == branch
                 and decision.head_sha == expected_sha
             ):
@@ -1247,6 +1252,7 @@ class GitHubEffectAdapter:
         number: int,
         *,
         require_open: bool,
+        allow_reconciliation: bool = False,
     ) -> Mapping[str, object] | None:
         observation = self._authorized_issue_observation()
         default_branch = self._default_branch()
@@ -1254,7 +1260,11 @@ class GitHubEffectAdapter:
             return None
         payload = _github_json(self.repository, self.token, f"pulls/{number}")
         if not isinstance(payload, Mapping) or not self._pull_request_matches_source(
-            payload, number, observation, default_branch
+            payload,
+            number,
+            observation,
+            default_branch,
+            allow_reconciliation=allow_reconciliation,
         ):
             return None
         if require_open and (payload.get("state") != "open" or payload.get("merged") is True):
@@ -1451,7 +1461,11 @@ class GitHubEffectAdapter:
 
         if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
             raise RuntimeError("carrier plan PR identity is invalid")
-        current = self._source_pull_request(number, require_open=operation != "pull-request-merge")
+        current = self._source_pull_request(
+            number,
+            require_open=operation != "pull-request-merge",
+            allow_reconciliation=operation == "pull-request-update",
+        )
         if current is None:
             raise RuntimeError("carrier plan PR observation is unavailable")
         identity = carrier_pr_identity(current)
@@ -1528,6 +1542,7 @@ class GitHubEffectAdapter:
         current = self._source_pull_request(
             number,
             require_open=operation != "pull-request-merge",
+            allow_reconciliation=operation == "pull-request-update",
         )
         if current is None:
             return None
@@ -1713,7 +1728,11 @@ class GitHubEffectAdapter:
             return pr_state.get("state") == "open" and pr_state.get("merged") is not True
         if operation in {"pull-request-update", "pull-request-ready"}:
             number = cast(int, payload["number"])
-            pr_state = self._source_pull_request(number, require_open=True)
+            pr_state = self._source_pull_request(
+                number,
+                require_open=True,
+                allow_reconciliation=operation == "pull-request-update",
+            )
             if pr_state is None or _pull_request_head_sha(pr_state) != payload.get(
                 "expected_head_sha"
             ):
@@ -1924,7 +1943,11 @@ class GitHubEffectAdapter:
                 return
             raise CarrierRequired(self._carrier_plan_for_github_mutation(payload))
         if operation == "pull-request-update":
-            current = self._source_pull_request(cast(int, payload["number"]), require_open=True)
+            current = self._source_pull_request(
+                cast(int, payload["number"]),
+                require_open=True,
+                allow_reconciliation=True,
+            )
             fields = payload.get("fields")
             if current is None or not isinstance(fields, Mapping):
                 raise RuntimeError("pull request update source became stale")
@@ -2160,7 +2183,11 @@ class GitHubEffectAdapter:
                 current_pr, number, payload
             )
         if operation == "pull-request-update":
-            current = self._source_pull_request(cast(int, payload["number"]), require_open=True)
+            current = self._source_pull_request(
+                cast(int, payload["number"]),
+                require_open=True,
+                allow_reconciliation=True,
+            )
             fields = payload.get("fields")
             if current is None or not isinstance(fields, Mapping):
                 return False
