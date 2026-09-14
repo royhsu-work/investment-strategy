@@ -378,7 +378,6 @@ def _implementation_checkpoint_effects_complete(
     return validate_implementation_checkpoint(request, completed_task_ids)
 
 
-
 def _typed_application_plan(
     batch: EffectBatch,
     preflight: DispatchPreflight,
