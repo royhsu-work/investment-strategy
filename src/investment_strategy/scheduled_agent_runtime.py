@@ -401,10 +401,9 @@ def _github_issue_timeline_pages(
     events: list[Mapping[str, object]] = []
     page = 1
     while True:
-        suffix = "" if page == 1 else f"&page={page}"
         items = _github_get_list_page(
             f"https://api.github.com/repos/{repository}/issues/{issue_number}/timeline"
-            f"?per_page=100&page={page}{suffix}",
+            f"?per_page=100&page={page}",
             token,
         )
         events.extend(items)
