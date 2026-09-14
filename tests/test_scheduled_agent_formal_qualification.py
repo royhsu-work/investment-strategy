@@ -42,7 +42,7 @@ def _comment(
         f"Default-Branch-Revision: {default_revision}",
         (
             f"Application-Correlation: application:{request_id}:{issue_number}:{change}:"
-            f"{role}:{action}:{result}:{revision}"
+            f"{role}:{action}:{result}:{default_revision}"
         ),
     ]
     if successor is not None:
@@ -346,6 +346,57 @@ def test_pending_successor_uses_the_same_binding_decision_shape() -> None:
             expected_application_correlation=correlation,
         ).provenance
         is ObservationProvenance.QUALIFIED
+    )
+
+
+def test_historical_default_revision_is_allowed_but_latest_must_match() -> None:
+    historical_revision = "b" * 40
+    comments = [
+        _comment(
+            1,
+            action="finalize-change",
+            role="lead",
+            result="more-implementation-required",
+            successor="Executor / implement-change",
+            request_id=1,
+            revision="c" * 40,
+            default_revision=historical_revision,
+        ),
+        _comment(
+            2,
+            action="implement-change",
+            role="executor",
+            result="ready",
+            successor="Reviewer / review-implementation",
+            request_id=2,
+            revision="d" * 40,
+            default_revision=_REVISION,
+        ),
+    ]
+    assert (
+        _decision(
+            comments,
+            current_routing=("reviewer", "review-implementation"),
+        ).provenance
+        is ObservationProvenance.QUALIFIED
+    )
+
+    comments[-1] = _comment(
+        2,
+        action="implement-change",
+        role="executor",
+        result="ready",
+        successor="Reviewer / review-implementation",
+        request_id=2,
+        revision="d" * 40,
+        default_revision=historical_revision,
+    )
+    assert (
+        _decision(
+            comments,
+            current_routing=("reviewer", "review-implementation"),
+        ).provenance
+        is ObservationProvenance.INDETERMINATE
     )
 
 
