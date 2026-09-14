@@ -314,7 +314,7 @@ def test_implement_completion_derives_successor_after_task_then_checkpoint(
     batch = parse_effect_batch(
         _raw(
             result_kind=result_kind,
-            requested_effects=_implementation_checkpoint_effects(),
+            requested_effects=_implementation_checkpoint_effects(result_kind=result_kind),
         ),
         source,
     )
@@ -645,7 +645,7 @@ def test_replay_accepts_already_durable_checkpoint_effects() -> None:
 
     assert first.applied
     assert second.applied
-    assert len(durable) == 3
+    assert len(durable) == 4
 
 
 def test_terminal_result_derives_closed_terminal_effect() -> None:
