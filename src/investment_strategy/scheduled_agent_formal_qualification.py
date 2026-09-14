@@ -319,11 +319,7 @@ def _event_from_checkpoint(
         isinstance(comment_id, int) and not isinstance(comment_id, bool) and comment_id > 0
     )
     default_branch_revision = None if parsed_correlation is None else parsed_correlation.group(7)
-    result = (
-        None
-        if parsed_correlation is None
-        else _normalize_result(parsed_correlation.group(6))
-    )
+    result = None if parsed_correlation is None else _normalize_result(parsed_correlation.group(6))
     successor: tuple[str, str] | None = None
     terminal = False
     transition_valid = False
@@ -351,7 +347,8 @@ def _event_from_checkpoint(
         and change is not None
         and action == Action.IMPLEMENT_CHANGE.value
         and role == role_for(Action.IMPLEMENT_CHANGE).value
-        and result in {
+        and result
+        in {
             ResultKind.MORE_IMPLEMENTATION_REQUIRED,
             ResultKind.READY,
         }
