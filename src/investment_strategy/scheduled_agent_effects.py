@@ -274,10 +274,41 @@ def _implementation_checkpoint_effects_complete(
     ):
         return True
 
+def _formal_action_result_body_is_bounded(
+    body: str,
+    *,
+    source: WorkerRequest,
+    decision: ActionApplicationDecision,
+) -> bool:
+    """Require the canonical structural envelope for an implementation result."""
+
+    lines = body.splitlines()
+    if not lines or lines[0] != "ACTION_RESULT":
+        return False
+    values: dict[str, str] = {}
+    for line in lines[1:]:
+        key, separator, value = line.partition(": ")
+        if not separator or key in values or not value or value != value.strip():
+            return False
+        values[key] = value
+    expected_result = decision.result.result.kind.value.upper().replace("-", "_")
+    return (
+        values.get("Workflow") == f"#{source.issue_number}"
+        and values.get("Change") == decision.source.change
+        and values.get("Action") == source.action
+        and values.get("Role") == source.role
+        and values.get("Result") == expected_result
+        and _valid_sha(values.get("Revision"))
+        and _valid_sha(values.get("Default-Branch-Revision"))
+        and _is_nonempty_string(values.get("Application-Correlation"))
+    )
+
+
     materializations: list[tuple[int, MaterializationRequest]] = []
     issue_comment_indexes: list[int] = []
     checkpoint_indexes: list[int] = []
     checkpoint_bodies: list[str] = []
+    formal_result_indexes: list[int] = []
     for index, effect in enumerate(batch.effects):
         if effect.kind == GITHUB_MUTATION_KIND:
             payload = _effect_payload(effect)
@@ -300,14 +331,24 @@ def _implementation_checkpoint_effects_complete(
         if not isinstance(body, str):
             return False
         issue_comment_indexes.append(index)
-        if body.splitlines()[:1] == ["SLICE_CHECKPOINT"]:
+        marker = body.splitlines()[:1]
+        if marker == ["SLICE_CHECKPOINT"]:
             checkpoint_indexes.append(index)
             checkpoint_bodies.append(body)
+        elif marker == ["ACTION_RESULT"]:
+            if not _formal_action_result_body_is_bounded(
+                body,
+                source=batch.source,
+                decision=decision,
+            ):
+                return False
+            formal_result_indexes.append(index)
 
     if (
         len(materializations) != 1
-        or len(issue_comment_indexes) != 1
+        or len(issue_comment_indexes) != 2
         or len(checkpoint_indexes) != 1
+        or len(formal_result_indexes) != 1
     ):
         return False
     task_index, request = materializations[0]
