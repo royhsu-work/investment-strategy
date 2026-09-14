@@ -329,12 +329,26 @@ def test_stale_open_continuation_carrier_is_reconcilable_but_not_qualified(
     current["base"] = {"ref": "main", "sha": "7" * 40, "repo": _repo()}
     decision = _qualify(
         monkeypatch,
-        _fake_github(current_pr=current, open_prs=[current]),
+        _fake_github(current_pr=current, open_prs=[current], default_is_ancestor=False),
     )
     assert decision.disposition == "RECONCILIATION_REQUIRED"
     assert decision.recognized
     assert not decision.qualified
     assert decision.reason == "carrier-pr-base-is-stale"
+
+
+def test_reconciled_continuation_branch_qualifies_even_if_pr_base_sha_is_old(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = _continuation_pr()
+    current["base"] = {"ref": "main", "sha": "7" * 40, "repo": _repo()}
+    decision = _qualify(
+        monkeypatch,
+        _fake_github(current_pr=current, open_prs=[current], default_is_ancestor=True),
+    )
+    assert decision.disposition == "QUALIFIED"
+    assert decision.recognized
+    assert decision.reason == "continuation-carrier-qualified-after-reconciliation"
 
 
 def test_stale_open_initial_carrier_remains_strict(
