@@ -195,7 +195,9 @@ def _accept_checkpoint(
     return True
 
 
-def _implementation_checkpoint_effects() -> list[dict[str, str]]:
+def _implementation_checkpoint_effects(
+    result_kind: str = "more-implementation-required",
+) -> list[dict[str, str]]:
     task_payload = {
         "issue_number": 138,
         "operation": "application-materialize",
@@ -228,6 +230,26 @@ def _implementation_checkpoint_effects() -> list[dict[str, str]]:
             "Remaining-Approved-Boundary: continue with Slice 3"
         ),
     }
+    successor = (
+        "Executor / implement-change"
+        if result_kind == "more-implementation-required"
+        else "Reviewer / review-implementation"
+    )
+    action_result_payload = {
+        "issue_number": 138,
+        "body": (
+            "ACTION_RESULT\n"
+            "Workflow: #138\n"
+            f"Change: {_CHANGE}\n"
+            "Action: implement-change\n"
+            "Role: executor\n"
+            f"Result: {result_kind.upper().replace('-', '_')}\n"
+            f"Revision: {_REVISION}\n"
+            f"Default-Branch-Revision: {_REVISION}\n"
+            "Application-Correlation: pending-application-binding\n"
+            f"Repository-derived successor: {successor}"
+        ),
+    }
     return [
         {
             "kind": "github-mutation",
@@ -236,6 +258,10 @@ def _implementation_checkpoint_effects() -> list[dict[str, str]]:
         {
             "kind": "issue-comment",
             "payload_json": json.dumps(checkpoint_payload),
+        },
+        {
+            "kind": "issue-comment",
+            "payload_json": json.dumps(action_result_payload),
         },
     ]
 
@@ -307,6 +333,7 @@ def test_implement_completion_derives_successor_after_task_then_checkpoint(
     assert [effect.kind for effect in applied] == [
         "github-mutation",
         "issue-comment",
+        "issue-comment",
         "routing-transition",
     ]
     assert applied[-1].derived
@@ -354,6 +381,7 @@ def test_implement_completion_accepts_code_and_task_checkpoint_in_one_manifest()
     assert result.applied
     assert [effect.kind for effect in applied] == [
         "github-mutation",
+        "issue-comment",
         "issue-comment",
         "routing-transition",
     ]
@@ -584,6 +612,7 @@ def test_carrier_recovery_durably_checkpoints_exact_slice_on_later_wake() -> Non
     assert result.applied
     assert [effect.kind for effect in second_applied] == [
         "github-mutation",
+        "issue-comment",
         "issue-comment",
         "routing-transition",
     ]
