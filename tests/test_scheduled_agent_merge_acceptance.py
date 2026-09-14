@@ -210,7 +210,7 @@ def test_application_authored_plain_review_pass_is_merge_evidence() -> None:
     )
 
     assert record[0] == HEAD
-    assert record[2] == "review-implementation"
+    assert record[1] == "review-implementation"
 
 
 def test_review_pass_carries_current_default_branch_revision() -> None:
