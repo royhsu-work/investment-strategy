@@ -166,7 +166,7 @@ def _review_record(body: object) -> tuple[str, str, str, str | None] | None:
     if not isinstance(body, str):
         return None
     action_match = re.search(
-        r"Action:\s*\x60?Reviewer / (review-(?:implementation|archive))\x60?",
+        r"Action:\s*\x60?(?:Reviewer / )?(review-(?:implementation|archive))\x60?",
         body,
     )
     result_match = re.search(
