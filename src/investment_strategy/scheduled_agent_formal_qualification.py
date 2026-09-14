@@ -254,6 +254,7 @@ def _event_from_comment(
         and parsed_correlation.group(4) == role
         and parsed_correlation.group(5) == action
         and parsed_correlation.group(6) == result.value
+        and parsed_correlation.group(7) == default_branch_revision
     )
     comment_id = payload.get("id")
     valid_comment_id = (
@@ -269,7 +270,6 @@ def _event_from_comment(
         and result is not None
         and _valid_sha(revision)
         and _valid_sha(default_branch_revision)
-        and (current_revision is not None and default_branch_revision == current_revision)
         and parsed_correlation is not None
         and correlation_valid
         and transition_valid
@@ -552,6 +552,8 @@ def qualify_current_formal_consequence(
         or latest.change != qualification.change
     ):
         return _indeterminate("latest-formal-evidence-incomplete", latest)
+    if latest.default_branch_revision != qualification.current_revision:
+        return _indeterminate("latest-formal-evidence-stale", latest)
     relevant_suffix: list[FormalLifecycleEvent] = []
     for event in reversed(qualification.events):
         if (
