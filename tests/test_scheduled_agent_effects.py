@@ -1773,6 +1773,8 @@ def test_github_adapter_binds_pr_and_ref_targets_to_authorized_change(
     repository = "royhsu-work/investment-strategy"
     source = WorkerRequest(138, "executor", "implement-change")
     head_sha = "b" * 40
+    default_sha = "a" * 40
+    canonical_branch = f"agent/{_CHANGE}"
     issue = {
         "number": 138,
         "state": "open",
@@ -1795,9 +1797,13 @@ def test_github_adapter_binds_pr_and_ref_targets_to_authorized_change(
             },
             "base": {
                 "ref": "main",
+                "sha": default_sha,
                 "repo": {"full_name": repository},
             },
         }
+
+    correct_pr_payload = pull_request(178, canonical_branch)
+    foreign_pr_payload = pull_request(167, "agent/other-change")
 
     def fake_github_json(
         _repository: str,
@@ -1809,12 +1815,26 @@ def test_github_adapter_binds_pr_and_ref_targets_to_authorized_change(
             return issue
         if api_path == "":
             return {"default_branch": "main"}
+        if api_path == "git/ref/heads/main":
+            return {"object": {"sha": default_sha}}
         if api_path == "pulls/178":
-            return pull_request(178, "agent/simplify-scheduled-agent-control-plane")
+            return correct_pr_payload
         if api_path == "pulls/167":
-            return pull_request(167, "agent/other-change")
-        if api_path == "git/ref/heads/agent/simplify-scheduled-agent-control-plane":
+            return foreign_pr_payload
+        if api_path.startswith("pulls?state=closed&"):
+            return []
+        if api_path.startswith("pulls?state=open&"):
+            return [correct_pr_payload]
+        if api_path.startswith("pulls?state=all&head="):
+            return [foreign_pr_payload] if "other-change" in api_path else [correct_pr_payload]
+        if api_path.startswith("pulls/178/files?"):
+            return [{"filename": f"openspec/changes/{_CHANGE}/tasks.md"}]
+        if api_path.startswith("pulls/167/files?"):
+            return [{"filename": "openspec/changes/other-change/tasks.md"}]
+        if api_path == f"git/ref/heads/{canonical_branch}":
             return {"object": {"sha": head_sha}}
+        if api_path.startswith(f"compare/{default_sha}...{head_sha}"):
+            return {"status": "ahead", "behind_by": 0}
         raise AssertionError(f"unexpected GitHub read: {api_path}")
 
     monkeypatch.setattr(
@@ -1890,6 +1910,98 @@ def test_github_adapter_binds_pr_and_ref_targets_to_authorized_change(
 
     assert ref_adapter.guard(correct_ref)
     assert not ref_adapter.guard(foreign_ref)
+
+
+def test_stale_continuation_base_is_only_admissible_to_update_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = "royhsu-work/investment-strategy"
+    issue_number = 229
+    change = "qualify-active-formal-consequences"
+    source = WorkerRequest(issue_number, "executor", "implement-change")
+    default_sha = "a" * 40
+    stale_base_sha = "b" * 40
+    head_sha = "c" * 40
+    historical_head = "d" * 40
+    merge_sha = "e" * 40
+    branch = f"agent/{change}-continuation-232"
+    canonical = f"agent/{change}"
+    issue = {
+        "number": issue_number,
+        "state": "open",
+        "body": f"Change: {change}\n",
+        "created_at": "2026-09-10T00:00:00Z",
+        "closed_at": None,
+        "labels": [{"name": "agent:executor"}, {"name": "action:implement-change"}],
+    }
+    current_pr = {
+        "number": 236,
+        "state": "open",
+        "merged": False,
+        "body": f"Continuation\n\nRefs #{issue_number}\n",
+        "head": {"ref": branch, "sha": head_sha, "repo": {"full_name": repository}},
+        "base": {"ref": "main", "sha": stale_base_sha, "repo": {"full_name": repository}},
+    }
+    historical_pr = {
+        "number": 232,
+        "state": "closed",
+        "merged": True,
+        "merged_at": "2026-09-11T00:00:00Z",
+        "merge_commit_sha": merge_sha,
+        "body": f"Stage 1\n\nRefs #{issue_number}\n",
+        "head": {"ref": canonical, "sha": historical_head, "repo": {"full_name": repository}},
+        "base": {"ref": "main", "sha": stale_base_sha, "repo": {"full_name": repository}},
+    }
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        **_kwargs: object,
+    ) -> object:
+        if api_path == "":
+            return {"default_branch": "main"}
+        if api_path == "git/ref/heads/main":
+            return {"object": {"sha": default_sha}}
+        if api_path == f"issues/{issue_number}":
+            return issue
+        if api_path == "pulls/236":
+            return current_pr
+        if api_path == "pulls/232":
+            return historical_pr
+        if api_path.startswith("pulls?state=closed"):
+            return [{"number": 232}]
+        if api_path.startswith("pulls?state=open"):
+            return [current_pr]
+        if api_path.startswith("pulls/232/files?"):
+            return [{"filename": f"openspec/changes/{change}/proposal.md"}]
+        if api_path.startswith("pulls/236/files?"):
+            return [{"filename": "src/investment_strategy/example.py"}]
+        if api_path == f"compare/{merge_sha}...{default_sha}":
+            return {"status": "ahead", "behind_by": 0}
+        if api_path == f"compare/{default_sha}...{head_sha}":
+            return {"status": "diverged", "behind_by": 1}
+        if api_path == f"git/ref/heads/{branch}":
+            return {"object": {"sha": head_sha}}
+        raise AssertionError(f"unexpected GitHub read: {api_path}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        repository,
+        "token",
+        source,
+        authorized_change=change,
+    )
+
+    assert (
+        adapter._source_pull_request(
+            236,
+            require_open=True,
+            allow_reconciliation=True,
+        )
+        == current_pr
+    )
+    assert adapter._source_pull_request(236, require_open=True) is None
 
 
 def test_application_archive_workflow_dispatch_is_exact_revision_and_idempotent(
@@ -2293,6 +2405,7 @@ def test_non_merge_carrier_recovery_observes_current_postcondition_without_repla
         },
         "base": {
             "ref": "main",
+            "sha": _REVISION,
             "repo": {"full_name": "owner/repo"},
         },
     }
@@ -2352,6 +2465,16 @@ def test_non_merge_carrier_recovery_observes_current_postcondition_without_repla
             return issue
         if path == "pulls/178":
             return pull_request
+        if path.startswith("pulls?state=closed&"):
+            return []
+        if path.startswith("pulls?state=open&"):
+            return [pull_request]
+        if path.startswith("pulls/178/files?"):
+            return [{"filename": f"openspec/changes/{_CHANGE}/tasks.md"}]
+        if path == f"git/ref/heads/agent/{_CHANGE}":
+            return {"object": {"sha": head_sha}}
+        if path.startswith(f"compare/{_REVISION}...{head_sha}"):
+            return {"status": "ahead", "behind_by": 0}
         raise AssertionError(f"unexpected GitHub call: {method} {path} {payload!r}")
 
     monkeypatch.setattr(effects, "_github_json", fake_github_json)
@@ -2461,6 +2584,7 @@ def test_merge_carrier_recovery_rejects_old_authorization_after_main_changes(
         },
         "base": {
             "ref": "main",
+            "sha": current_main_revision,
             "repo": {"full_name": "owner/repo"},
         },
     }
@@ -2484,6 +2608,16 @@ def test_merge_carrier_recovery_rejects_old_authorization_after_main_changes(
             return issue
         if path == "pulls/167":
             return pull_request
+        if path.startswith("pulls?state=closed&"):
+            return []
+        if path.startswith("pulls?state=open&"):
+            return [pull_request]
+        if path.startswith("pulls/167/files?"):
+            return [{"filename": f"openspec/changes/{change}/tasks.md"}]
+        if path == f"git/ref/heads/agent/{change}":
+            return {"object": {"sha": expected_head}}
+        if path.startswith(f"compare/{old_revision}...{expected_head}"):
+            return {"status": "ahead", "behind_by": 0}
         raise AssertionError(f"unexpected GitHub call: {method} {path} {payload!r}")
 
     monkeypatch.setattr(effects, "_github_json", fake_github_json)
