@@ -146,6 +146,50 @@ def test_resource_rejects_source_without_review_openspec_gate(
         )
 
 
+def test_implementation_validation_target_reuses_carrier_decision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(229, "reviewer", "review-implementation")
+    branch = f"agent/{_CHANGE}-continuation-178"
+    decision = ImplementationCarrierQualification(
+        disposition="QUALIFIED",
+        reason="fixture-qualified-continuation",
+        repository=_REPOSITORY,
+        issue_number=source.issue_number,
+        change=_CHANGE,
+        action=source.action,
+        pr_number=178,
+        branch=branch,
+        head_sha=_PR_HEAD,
+        default_branch="main",
+        default_revision=_REVISION,
+        historical_pr_number=178,
+    )
+    plan = resource.ValidationResourcePlan(
+        True,
+        source=source,
+        pr_number=178,
+        expected_change=_CHANGE,
+    )
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_args: source)
+    monkeypatch.setattr(
+        resource,
+        "_implementation_carrier_decision",
+        lambda *_args, **_kwargs: decision,
+    )
+
+    target = resource.resolve_validation_resource_target(
+        plan,
+        repository=_REPOSITORY,
+        token=_FIXTURE_VALUE,
+        default_branch="main",
+    )
+
+    assert target.revision == _PR_HEAD
+    assert target.pr_number == 178
+    assert target.branch == branch
+
+
 def test_executor_task_marker_is_the_only_nonreview_openspec_work_product() -> None:
     source = WorkerRequest(138, "executor", "implement-change")
     task_path = f"openspec/changes/{_CHANGE}/tasks.md"
@@ -1017,6 +1061,8 @@ _CONTINUATION_PR_BODY = (
 def _open_continuation_with_files(
     monkeypatch: pytest.MonkeyPatch,
     files: list[dict[str, str]],
+    *,
+    carrier_decision: ImplementationCarrierQualification | None = None,
 ) -> Mapping[str, object]:
     source = WorkerRequest(229, "executor", "implement-change")
 
@@ -1047,6 +1093,26 @@ def _open_continuation_with_files(
         raise AssertionError(f"unexpected GitHub read: {api_path}")
 
     monkeypatch.setattr(resource, "_github_json", fake_github_json)
+    if carrier_decision is None:
+        carrier_decision = ImplementationCarrierQualification(
+            disposition="QUALIFIED",
+            reason="fixture-qualified-continuation",
+            repository=_REPOSITORY,
+            issue_number=source.issue_number,
+            change=_CONTINUATION_CHANGE,
+            action=source.action,
+            pr_number=236,
+            branch=_CONTINUATION_BRANCH,
+            head_sha="b" * 40,
+            default_branch="main",
+            default_revision="a" * 40,
+            historical_pr_number=232,
+        )
+    monkeypatch.setattr(
+        resource,
+        "_implementation_carrier_decision",
+        lambda *_args, **_kwargs: carrier_decision,
+    )
     return resource._open_pr_payload(
         repository=_REPOSITORY,
         token=_FIXTURE_VALUE,
@@ -1078,9 +1144,26 @@ def test_deterministic_continuation_rejects_competing_active_change(
     ]
     with pytest.raises(
         RuntimeError,
-        match="continuation contains competing active Change",
+        match="continuation carrier is not qualified",
     ):
-        _open_continuation_with_files(monkeypatch, files)
+        _open_continuation_with_files(
+            monkeypatch,
+            files,
+            carrier_decision=ImplementationCarrierQualification(
+                disposition="INDETERMINATE",
+                reason="carrier-competing-active-change",
+                repository=_REPOSITORY,
+                issue_number=229,
+                change=_CONTINUATION_CHANGE,
+                action="implement-change",
+                pr_number=236,
+                branch=_CONTINUATION_BRANCH,
+                head_sha="b" * 40,
+                default_branch="main",
+                default_revision="a" * 40,
+                historical_pr_number=232,
+            ),
+        )
 
 
 def test_apply_work_product_reuses_current_head_without_commit_when_ancestry_diverged(
@@ -1146,6 +1229,24 @@ def test_apply_work_product_reuses_current_head_without_commit_when_ancestry_div
     commit_payloads: list[object] = []
 
     monkeypatch.setattr(resource, "_current_authorized_request", lambda *_args: source)
+    monkeypatch.setattr(
+        resource,
+        "_implementation_carrier_decision",
+        lambda *_args, **_kwargs: ImplementationCarrierQualification(
+            disposition="RECONCILIATION_REQUIRED",
+            reason="fixture-continuation-reconciliation",
+            repository=_REPOSITORY,
+            issue_number=source.issue_number,
+            change=_CONTINUATION_CHANGE,
+            action=source.action,
+            pr_number=236,
+            branch=replacement_branch,
+            head_sha=current_head,
+            default_branch="main",
+            default_revision=base_sha,
+            historical_pr_number=232,
+        ),
+    )
 
     def fake_github_json(
         repository: str,

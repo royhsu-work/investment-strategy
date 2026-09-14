@@ -43,7 +43,6 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _is_executor_task_bookkeeping,
     _open_pr_payload,
     _ref_head_sha,
-    _replacement_branch,
     _review_openspec_required,
     _source_branch,
     _valid_branch,
@@ -540,6 +539,7 @@ def _target(
     revision: str,
     pr_number: int,
     validation_required: bool,
+    branch: str | None = None,
 ) -> ValidationResourceTarget:
     return ValidationResourceTarget(
         repository=repository,
@@ -548,6 +548,7 @@ def _target(
         pr_number=pr_number,
         change=request.change,
         validation_required=validation_required,
+        branch=request.branch if branch is None else branch,
     )
 
 
@@ -1168,6 +1169,7 @@ def _existing_target(
         pr_number=target.pr_number,
         change=target.change,
         validation_required=materialization_requires_validation(request, source),
+        branch=target.branch,
     )
 
 
@@ -1316,13 +1318,9 @@ def materialization_postcondition(
             )
             return observed == target
 
-        target_branch = request.branch
-        if (
-            request.expected_change != "unset"
-            and request.pr_number is not None
-            and target.pr_number != request.pr_number
-        ):
-            target_branch = _replacement_branch(request.change, request.pr_number)
+        target_branch = target.branch
+        if target_branch is None:
+            return False
         if _branch_head(repository, token, target_branch) != target.revision:
             return False
         pr = _as_mapping(cast(object, _github_json(repository, token, f"pulls/{target.pr_number}")))

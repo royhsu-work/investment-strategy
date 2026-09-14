@@ -21,6 +21,7 @@ from investment_strategy.scheduled_agent_action_model import (
 )
 from investment_strategy.scheduled_agent_application_carrier import (
     ImplementationCarrierQualification,
+    canonical_implementation_branch,
     qualify_implementation_carrier,
 )
 from investment_strategy.scheduled_agent_carrier import (
@@ -68,6 +69,7 @@ class ValidationResourceTarget:
     pr_number: int
     change: str
     validation_required: bool = True
+    branch: str | None = None
 
 
 @dataclass(frozen=True)
@@ -302,6 +304,7 @@ def _open_pr_payload(
     default_branch: str,
     allow_historical_merged_carrier: bool = False,
     expected_branch: str | None = None,
+    carrier_decision: ImplementationCarrierQualification | None = None,
 ) -> Mapping[str, object]:
     if _current_default_branch(repository, token) != default_branch:
         raise RuntimeError("validation resource repository default branch changed")
@@ -343,6 +346,24 @@ def _open_pr_payload(
     ):
         raise RuntimeError("validation resource target PR linkage is invalid")
 
+    implementation_continuation = (
+        source.action in {"implement-change", "review-implementation", "merge-implementation-pr"}
+        and expected_branch is not None
+        and expected_branch != canonical_implementation_branch(expected_change)
+    )
+    if implementation_continuation:
+        decision = carrier_decision or _implementation_carrier_decision(
+            source,
+            repository=repository,
+            token=token,
+            default_branch=default_branch,
+            expected_change=expected_change,
+            pr_number=pr_number,
+        )
+        if not decision.recognized or decision.pr_number != pr_number or decision.branch != branch:
+            raise RuntimeError("validation resource continuation carrier is not qualified")
+        return pr
+
     files = _github_json(repository, token, f"pulls/{pr_number}/files?per_page=100")
     if not isinstance(files, list) or not files or len(files) >= 100:
         raise RuntimeError("validation resource target PR file evidence is incomplete")
@@ -361,20 +382,7 @@ def _open_pr_payload(
             change_name = remainder.split("/", 1)[0]
             if change_name and change_name != "archive":
                 active_change_names.add(change_name)
-    continuation_prefix = f"agent/{expected_change}-continuation-"
-    continuation_suffix = (
-        None if expected_branch is None else expected_branch.removeprefix(continuation_prefix)
-    )
-    is_deterministic_continuation = (
-        expected_branch is not None
-        and expected_branch.startswith(continuation_prefix)
-        and continuation_suffix is not None
-        and re.fullmatch(r"[1-9][0-9]*", continuation_suffix) is not None
-    )
-    if is_deterministic_continuation:
-        if any(name != expected_change for name in active_change_names):
-            raise RuntimeError("validation resource continuation contains competing active Change")
-    elif not has_expected_change or active_change_names != {expected_change}:
+    if not has_expected_change or active_change_names != {expected_change}:
         raise RuntimeError(
             "validation resource target PR does not uniquely represent the source Change"
         )
@@ -641,9 +649,6 @@ def resolve_validation_resource_target(
         raise RuntimeError("validation resource plan is incomplete")
     if _current_authorized_request(repository, token) != plan.source:
         raise RuntimeError("validation resource source dispatch is stale")
-    if not _review_openspec_required(plan.source):
-        raise RuntimeError("validation resource is not required by the current Action gate")
-
     if plan.source.role == "reviewer" and plan.source.action == "review-implementation":
         decision = _implementation_carrier_decision(
             plan.source,
@@ -663,7 +668,11 @@ def resolve_validation_resource_target(
             correlation=f"effect-request-{plan.source.issue_number}",
             pr_number=plan.pr_number,
             change=plan.expected_change,
+            branch=decision.branch,
         )
+
+    if not _review_openspec_required(plan.source):
+        raise RuntimeError("validation resource is not required by the current Action gate")
 
     revision = _open_pr_target(
         repository=repository,
@@ -679,6 +688,7 @@ def resolve_validation_resource_target(
         correlation=f"effect-request-{plan.source.issue_number}",
         pr_number=plan.pr_number,
         change=plan.expected_change,
+        branch=_source_branch(plan.expected_change),
     )
 
 
@@ -1153,22 +1163,30 @@ def apply_work_product(
         raise RuntimeError("work-product default-branch authorization is stale")
     if _current_authorized_request(repository, token) != plan.source:
         raise RuntimeError("work-product source dispatch is stale")
-    expected_branch = _source_branch(plan.expected_change)
-    if (
-        plan.source.role == "executor"
-        and plan.source.action == "implement-change"
-        and plan.manifest.branch != expected_branch
-    ):
-        decision = _implementation_carrier_decision(
-            plan.source,
-            repository=repository,
-            token=token,
-            default_branch=default_branch,
-            expected_change=plan.expected_change,
-            pr_number=plan.pr_number,
-        )
-        expected_branch = decision.branch
+    carrier_decision: ImplementationCarrierQualification | None = None
+    expected_branch: str | None = None
+    if plan.source.role == "executor" and plan.source.action == "implement-change":
+        expected_branch = plan.manifest.branch
+        canonical_branch = canonical_implementation_branch(plan.expected_change)
+        if canonical_branch is None:
+            raise RuntimeError("work-product source Change is invalid")
+        if expected_branch != canonical_branch:
+            carrier_decision = _implementation_carrier_decision(
+                plan.source,
+                repository=repository,
+                token=token,
+                default_branch=default_branch,
+                expected_change=plan.expected_change,
+                pr_number=plan.pr_number,
+            )
+            expected_branch = carrier_decision.branch
+    else:
+        expected_branch = _source_branch(plan.expected_change)
     if expected_branch is None or plan.manifest.branch != expected_branch:
+        if carrier_decision is not None:
+            raise RuntimeError(
+                f"work-product continuation carrier is not eligible: {carrier_decision.reason}"
+            )
         raise RuntimeError("work-product branch is not bound to source Change")
     if not plan.manifest.files or not all(
         work_product_path_allowed(plan.source, plan.expected_change, file.path)
@@ -1199,6 +1217,7 @@ def apply_work_product(
         default_branch=default_branch,
         allow_historical_merged_carrier=True,
         expected_branch=expected_branch,
+        carrier_decision=carrier_decision,
     )
     head = _as_mapping(pr.get("head"))
     pr_head_sha = None if head is None else head.get("sha")
@@ -1273,6 +1292,7 @@ def apply_work_product(
                     correlation=f"effect-request-{plan.source.issue_number}",
                     pr_number=replacement_pr_number,
                     change=plan.expected_change,
+                    branch=replacement_branch,
                 )
             replacement_reconciliation_required = True
         replacement_ref_head = _ref_head_sha(
@@ -1361,6 +1381,7 @@ def apply_work_product(
             correlation=f"effect-request-{plan.source.issue_number}",
             pr_number=current_target_pr_number,
             change=plan.expected_change,
+            branch=replacement_branch if replacement_branch is not None else expected_branch,
         )
     replay_manifest = False
     if current_head != plan.manifest.base_sha:
@@ -1386,6 +1407,7 @@ def apply_work_product(
                 correlation=f"effect-request-{plan.source.issue_number}",
                 pr_number=plan.pr_number,
                 change=plan.expected_change,
+                branch=replacement_branch if replacement_branch is not None else expected_branch,
             )
         if not manifest_applied and not reconciled and not replacement_reconciliation_required:
             raise RuntimeError("work-product PR head/base identity is stale")
@@ -1572,6 +1594,7 @@ def apply_work_product(
             correlation=f"effect-request-{plan.source.issue_number}",
             pr_number=plan.pr_number,
             change=plan.expected_change,
+            branch=replacement_branch if replacement_branch is not None else expected_branch,
         )
 
     commit_message = (
