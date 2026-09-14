@@ -393,9 +393,30 @@ def _github_issue_comment_pages(
         page += 1
 
 
+def _github_issue_timeline_pages(
+    repository: str,
+    token: str,
+    issue_number: int,
+) -> tuple[Mapping[str, object], ...]:
+    events: list[Mapping[str, object]] = []
+    page = 1
+    while True:
+        suffix = "" if page == 1 else f"&page={page}"
+        items = _github_get_list_page(
+            f"https://api.github.com/repos/{repository}/issues/{issue_number}/timeline"
+            f"?per_page=100&page={page}{suffix}",
+            token,
+        )
+        events.extend(items)
+        if len(items) < 100:
+            return tuple(events)
+        page += 1
+
+
 def _qualify_current_observation(
     observation: GitHubIssueObservation,
     comments: tuple[Mapping[str, object], ...],
+    lifecycle_events: tuple[Mapping[str, object], ...],
     current_revision: str | None,
 ) -> GitHubIssueObservation:
     if observation.change == "unset":
@@ -407,6 +428,7 @@ def _qualify_current_observation(
         current_routing=observation.routing,
         comments=comments,
         current_revision=current_revision,
+        lifecycle_events=lifecycle_events,
     )
     decision = qualify_current_formal_consequence(qualification_input)
     return replace(
@@ -431,11 +453,21 @@ def _qualify_current_observations(
             token,
             observation.issue_number,
         )
+        lifecycle_events = _github_issue_timeline_pages(
+            repository,
+            token,
+            observation.issue_number,
+        )
         if observation.routing_debt:
             qualified.append(observation)
             continue
         qualified.append(
-            _qualify_current_observation(observation, comments, current_revision)
+            _qualify_current_observation(
+                observation,
+                comments,
+                lifecycle_events,
+                current_revision,
+            )
             if current_revision is not None
             else replace(
                 observation,
