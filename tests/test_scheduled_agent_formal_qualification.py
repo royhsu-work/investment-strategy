@@ -446,10 +446,8 @@ def test_legacy_implementation_checkpoint_reconstructs_completion() -> None:
             "Role: executor\n"
             "Completed-Tasks: 2.1, 2.2, 2.3, 2.4, 2.5\n"
             f"Revision: {_REVISION}\n"
-            (
-                "Application-Correlation: application:2:229:"
-                f"{_CHANGE}:executor:implement-change:ready:{_REVISION}\n"
-            )
+            "Application-Correlation: application:2:229:"
+            f"{_CHANGE}:executor:implement-change:ready:{_REVISION}\n"
             "Gate-Evidence: exact-head VERIFY\n"
             "Remaining-Approved-Boundary: review-implementation required"
         ),
