@@ -330,6 +330,7 @@ def _implementation_checkpoint_effects_complete(
         or task_files[0].expected_sha is None
         or completed_task_ids is None
         or task_index >= checkpoint_indexes[0]
+        or checkpoint_indexes[0] >= formal_result_indexes[0]
         or validate_implementation_checkpoint is None
     ):
         return False
