@@ -153,10 +153,7 @@ def test_production_preflight_enumerates_closed_routing_debt(
             "https://api.github.com/repos/owner/repo/issues/138/comments?per_page=100"
             "&sort=created&direction=desc"
         ),
-        (
-            "https://api.github.com/repos/owner/repo/issues/138/timeline"
-            "?per_page=100&page=1"
-        ),
+        ("https://api.github.com/repos/owner/repo/issues/138/timeline?per_page=100&page=1"),
     ]
     assert classify_dispatch(preflight).reason == "closed-routing-debt"
 
@@ -234,10 +231,7 @@ def test_production_preflight_qualifies_from_issue_timeline(
             "https://api.github.com/repos/owner/repo/issues/229/comments?per_page=100"
             "&sort=created&direction=desc"
         ),
-        (
-            "https://api.github.com/repos/owner/repo/issues/229/timeline"
-            "?per_page=100&page=1"
-        ),
+        ("https://api.github.com/repos/owner/repo/issues/229/timeline?per_page=100&page=1"),
     ]
     assert classify_dispatch(preflight).disposition == "AUTHORIZE"
     assert classify_dispatch(preflight).selected_issue_id == 229
