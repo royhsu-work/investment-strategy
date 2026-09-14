@@ -16,9 +16,11 @@ from typing import cast
 from urllib.parse import quote, urlencode
 
 from investment_strategy.scheduled_agent_application_carrier import (
+    ImplementationCarrierQualification,
     qualify_implementation_carrier,
 )
 from investment_strategy.scheduled_agent_carrier import (
+    CarrierPlan,
     CarrierRequired,
     carrier_pr_identity,
     make_carrier_plan,
@@ -580,7 +582,7 @@ def _qualified_implementation_decision(
     repository: str,
     token: str,
     current_revision: str,
-):
+) -> ImplementationCarrierQualification:
     if request.pr_number is None:
         raise RuntimeError("implementation materialization requires an exact PR")
     decision = qualify_implementation_carrier(
@@ -606,9 +608,7 @@ def _revision_tree_snapshot(
     token: str,
     revision: str,
 ) -> tuple[str, dict[str, Mapping[str, object]]]:
-    commit = _as_mapping(
-        cast(object, _github_json(repository, token, f"git/commits/{revision}"))
-    )
+    commit = _as_mapping(cast(object, _github_json(repository, token, f"git/commits/{revision}")))
     tree = None if commit is None else _as_mapping(commit.get("tree"))
     tree_sha = None if tree is None else tree.get("sha")
     if not _valid_sha(tree_sha):
@@ -646,11 +646,13 @@ def _revision_tree_snapshot(
             or path in entries
         ):
             raise RuntimeError("implementation carrier tree entry is malformed")
-        entries[path] = entry
+        entries[cast(str, path)] = cast(Mapping[str, object], entry)
     return cast(str, tree_sha), entries
 
 
-def _tree_entry_identity(entry: Mapping[str, object] | None) -> tuple[object, object, object] | None:
+def _tree_entry_identity(
+    entry: Mapping[str, object] | None,
+) -> tuple[object, object, object] | None:
     if entry is None:
         return None
     return entry.get("mode"), entry.get("type"), entry.get("sha")
@@ -712,9 +714,7 @@ def _verify_implementation_manifest_freshness(
             file.expected_sha,
             file.blob_sha,
         }:
-            raise RuntimeError(
-                "implementation manifest would overwrite unobserved carrier content"
-            )
+            raise RuntimeError("implementation manifest would overwrite unobserved carrier content")
 
 
 def _manifest_is_current(
@@ -776,9 +776,7 @@ def _reconciliation_overlay(
         if _tree_entry_identity(default_entries.get(path)) != _tree_entry_identity(
             carrier_entries.get(path)
         ):
-            raise RuntimeError(
-                "implementation reconciliation has an unresolved overlapping change"
-            )
+            raise RuntimeError("implementation reconciliation has an unresolved overlapping change")
 
     tree_elements: list[dict[str, object]] = []
     for path in sorted(default_changed - manifest_paths):
@@ -841,12 +839,10 @@ def _implementation_carrier_plan(
     tree_sha: str,
     parents: list[str],
     message: str,
-):
+) -> CarrierPlan:
     if request.pr_number is None:
         raise RuntimeError("implementation carrier plan requires an exact PR")
-    pr = _as_mapping(
-        cast(object, _github_json(repository, token, f"pulls/{request.pr_number}"))
-    )
+    pr = _as_mapping(cast(object, _github_json(repository, token, f"pulls/{request.pr_number}")))
     if pr is None:
         raise RuntimeError("implementation carrier PR observation is unavailable")
     carrier_ref = f"refs/heads/{request.branch}"
@@ -1025,9 +1021,7 @@ def _materialize_implementation_target(
         raise RuntimeError("implementation materialization commit creation returned no SHA")
     revision = cast(str, revision)
 
-    observed = _as_mapping(
-        cast(object, _github_json(repository, token, f"git/commits/{revision}"))
-    )
+    observed = _as_mapping(cast(object, _github_json(repository, token, f"git/commits/{revision}")))
     observed_tree = None if observed is None else _as_mapping(observed.get("tree"))
     raw_parents = None if observed is None else observed.get("parents")
     observed_parents: list[str] = []

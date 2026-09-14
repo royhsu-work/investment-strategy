@@ -271,6 +271,17 @@ def _pr_identity_is_coherent(
     return branch, cast(str, head_sha)
 
 
+def _pr_base_is_current(
+    pr: Mapping[str, object],
+    *,
+    default_revision: str,
+) -> bool:
+    """Require an open carrier to target the freshly observed default head."""
+
+    base = _as_mapping(pr.get("base"))
+    return base is not None and base.get("sha") == default_revision
+
+
 def _is_merged_pr(pr: Mapping[str, object]) -> bool:
     merged_at = pr.get("merged_at")
     return (
@@ -560,6 +571,22 @@ def qualify_implementation_carrier(
             default_revision=default_revision,
         )
     branch, head_sha = identity
+
+    if pr.get("state") == "open" and not _pr_base_is_current(
+        pr,
+        default_revision=default_revision,
+    ):
+        return _indeterminate(
+            repository=repository,
+            source=source,
+            change=change,
+            pr_number=pr_number,
+            reason="carrier-pr-base-is-stale",
+            branch=branch,
+            head_sha=head_sha,
+            default_branch=default_branch,
+            default_revision=default_revision,
+        )
 
     historical = _historical_carriers(
         repository,

@@ -19,6 +19,10 @@ from investment_strategy.scheduled_agent_action_model import TRANSITIONS
 from investment_strategy.scheduled_agent_action_model import (
     Action as ModelAction,
 )
+from investment_strategy.scheduled_agent_application_carrier import (
+    ImplementationCarrierQualification,
+    qualify_implementation_carrier,
+)
 from investment_strategy.scheduled_agent_carrier import (
     CarrierPlan,
     CarrierRequired,
@@ -242,6 +246,39 @@ def _current_default_branch(repository: str, token: str) -> str:
     if not _valid_branch(branch):
         raise RuntimeError("validation resource repository default branch is incomplete")
     return cast(str, branch)
+
+
+def _implementation_carrier_decision(
+    source: WorkerRequest,
+    *,
+    repository: str,
+    token: str,
+    default_branch: str,
+    expected_change: str,
+    pr_number: int,
+) -> ImplementationCarrierQualification:
+    """Reuse the application owner for continuation-carrier semantics."""
+
+    current_revision = _ref_head_sha(
+        repository,
+        token,
+        default_branch,
+        allow_not_found=True,
+    )
+    if current_revision is None:
+        raise RuntimeError("validation resource default branch revision is unavailable")
+    decision = qualify_implementation_carrier(
+        repository=repository,
+        token=token,
+        source=source,
+        change=expected_change,
+        pr_number=pr_number,
+        current_revision=current_revision,
+        read=_github_json,
+    )
+    if not decision.recognized:
+        raise RuntimeError(f"validation resource carrier is not eligible: {decision.reason}")
+    return decision
 
 
 def _is_historical_merged_carrier(payload: Mapping[str, object]) -> bool:
@@ -606,6 +643,27 @@ def resolve_validation_resource_target(
         raise RuntimeError("validation resource source dispatch is stale")
     if not _review_openspec_required(plan.source):
         raise RuntimeError("validation resource is not required by the current Action gate")
+
+    if plan.source.role == "reviewer" and plan.source.action == "review-implementation":
+        decision = _implementation_carrier_decision(
+            plan.source,
+            repository=repository,
+            token=token,
+            default_branch=default_branch,
+            expected_change=plan.expected_change,
+            pr_number=plan.pr_number,
+        )
+        if not decision.qualified or decision.head_sha is None:
+            raise RuntimeError(
+                "validation resource implementation carrier is not qualified for consumption"
+            )
+        return ValidationResourceTarget(
+            repository=repository,
+            revision=decision.head_sha,
+            correlation=f"effect-request-{plan.source.issue_number}",
+            pr_number=plan.pr_number,
+            change=plan.expected_change,
+        )
 
     revision = _open_pr_target(
         repository=repository,
@@ -1096,6 +1154,20 @@ def apply_work_product(
     if _current_authorized_request(repository, token) != plan.source:
         raise RuntimeError("work-product source dispatch is stale")
     expected_branch = _source_branch(plan.expected_change)
+    if (
+        plan.source.role == "executor"
+        and plan.source.action == "implement-change"
+        and plan.manifest.branch != expected_branch
+    ):
+        decision = _implementation_carrier_decision(
+            plan.source,
+            repository=repository,
+            token=token,
+            default_branch=default_branch,
+            expected_change=plan.expected_change,
+            pr_number=plan.pr_number,
+        )
+        expected_branch = decision.branch
     if expected_branch is None or plan.manifest.branch != expected_branch:
         raise RuntimeError("work-product branch is not bound to source Change")
     if not plan.manifest.files or not all(
@@ -1126,6 +1198,7 @@ def apply_work_product(
         expected_change=plan.expected_change,
         default_branch=default_branch,
         allow_historical_merged_carrier=True,
+        expected_branch=expected_branch,
     )
     head = _as_mapping(pr.get("head"))
     pr_head_sha = None if head is None else head.get("sha")

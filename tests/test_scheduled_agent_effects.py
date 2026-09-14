@@ -1797,6 +1797,7 @@ def test_github_adapter_binds_pr_and_ref_targets_to_authorized_change(
             },
             "base": {
                 "ref": "main",
+                "sha": default_sha,
                 "repo": {"full_name": repository},
             },
         }
@@ -2312,6 +2313,7 @@ def test_non_merge_carrier_recovery_observes_current_postcondition_without_repla
         },
         "base": {
             "ref": "main",
+            "sha": _REVISION,
             "repo": {"full_name": "owner/repo"},
         },
     }
@@ -2490,6 +2492,7 @@ def test_merge_carrier_recovery_rejects_old_authorization_after_main_changes(
         },
         "base": {
             "ref": "main",
+            "sha": current_main_revision,
             "repo": {"full_name": "owner/repo"},
         },
     }

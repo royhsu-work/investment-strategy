@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import cast
 
 import pytest
 
@@ -33,6 +34,7 @@ def _pr(
     merged_at: str | None = None,
     merge_commit_sha: str | None = None,
     issue_number: int = 229,
+    base_sha: str = MAIN,
 ) -> dict[str, object]:
     return {
         "number": number,
@@ -40,7 +42,9 @@ def _pr(
         "merged": merged,
         "merged_at": merged_at,
         "merge_commit_sha": merge_commit_sha,
-        "body": f"Continue OpenSpec change `{CHANGE}` after the merged carrier.\n\nRefs #{issue_number}",
+        "body": (
+            f"Continue OpenSpec change `{CHANGE}` after the merged carrier.\n\nRefs #{issue_number}"
+        ),
         "head": {
             "ref": branch,
             "sha": head_sha,
@@ -48,7 +52,7 @@ def _pr(
         },
         "base": {
             "ref": "main",
-            "sha": MAIN,
+            "sha": base_sha,
             "repo": _repo(),
         },
     }
@@ -101,7 +105,11 @@ def _fake_github(
     issue_body: str | None = None,
 ) -> Callable[..., object | None]:
     current = current_pr or _continuation_pr()
-    historical = _historical_pr() if historical_pr is _DEFAULT_HISTORICAL else historical_pr
+    historical = (
+        _historical_pr()
+        if historical_pr is _DEFAULT_HISTORICAL
+        else cast(dict[str, object] | None, historical_pr)
+    )
     opens = [current] if open_prs is None else open_prs
     files = [{"filename": "src/investment_strategy/example.py"}] if pr_files is None else pr_files
     history_files = (
@@ -110,6 +118,7 @@ def _fake_github(
         else historical_files
     )
     body = issue_body or f"Change: {CHANGE}\n"
+    current_head = cast(dict[str, object], current["head"])
 
     def fake(
         repository: str,
@@ -144,17 +153,19 @@ def _fake_github(
                 "behind_by": 0 if historical_is_ancestor else 1,
             }
         current_merge = current.get("merge_commit_sha")
-        if current_merge is not None and api_path == f"compare/{current_merge}...{default_revision}":
+        if current_merge is not None and api_path == (
+            f"compare/{current_merge}...{default_revision}"
+        ):
             return {
                 "status": "ahead" if current_merge_is_ancestor else "diverged",
                 "behind_by": 0 if current_merge_is_ancestor else 1,
             }
-        if api_path == f"compare/{default_revision}...{current['head']['sha']}":
+        if api_path == f"compare/{default_revision}...{current_head['sha']}":
             return {
                 "status": "ahead" if default_is_ancestor else "diverged",
                 "behind_by": 0 if default_is_ancestor else 2,
             }
-        branch = current["head"]["ref"]
+        branch = cast(str, current_head["ref"])
         if api_path == f"git/ref/heads/{branch}":
             if branch_ref_sha is None and allow_not_found:
                 return None
@@ -168,7 +179,10 @@ def _source(action: str = "implement-change") -> WorkerRequest:
     return WorkerRequest(229, "executor", action)
 
 
-def _qualify(monkeypatch: pytest.MonkeyPatch, fake: Callable[..., object | None]):
+def _qualify(
+    monkeypatch: pytest.MonkeyPatch,
+    fake: Callable[..., object | None],
+) -> carrier.ImplementationCarrierQualification:
     monkeypatch.setattr(carrier, "_github_json", fake)
     return carrier.qualify_implementation_carrier(
         repository=REPOSITORY,
@@ -306,6 +320,19 @@ def test_stale_default_revision_fails_closed(
     )
     assert decision.disposition == "INDETERMINATE"
     assert decision.reason == "carrier-default-revision-stale"
+
+
+def test_stale_open_carrier_base_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = _continuation_pr()
+    current["base"] = {"ref": "main", "sha": "7" * 40, "repo": _repo()}
+    decision = _qualify(
+        monkeypatch,
+        _fake_github(current_pr=current, open_prs=[current]),
+    )
+    assert decision.disposition == "INDETERMINATE"
+    assert decision.reason == "carrier-pr-base-is-stale"
 
 
 def test_wrong_issue_link_fails_closed(

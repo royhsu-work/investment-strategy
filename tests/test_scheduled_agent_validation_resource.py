@@ -10,6 +10,9 @@ from urllib.request import Request
 import pytest
 
 import investment_strategy.scheduled_agent_validation_resource as resource
+from investment_strategy.scheduled_agent_application_carrier import (
+    ImplementationCarrierQualification,
+)
 from investment_strategy.scheduled_agent_carrier import CarrierRequired
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 
@@ -322,6 +325,83 @@ def test_apply_work_product_rejects_non_monotonic_task_marker_before_tree(
             default_branch="main",
             authorization_revision=_REVISION,
         )
+
+
+def test_apply_work_product_reuses_continuation_carrier_decision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Continuation branch identity comes from the shared carrier owner."""
+
+    source = WorkerRequest(229, "executor", "implement-change")
+    continuation_branch = f"agent/{_CHANGE}-continuation-178"
+    plan = resource.WorkProductPlan(
+        True,
+        source=source,
+        pr_number=178,
+        expected_change=_CHANGE,
+        manifest=resource.WorkProductManifest(
+            branch=continuation_branch,
+            base_sha=_REVISION,
+            message="Continue implementation after the merged carrier",
+            files=(
+                resource.WorkProductFile(
+                    path="src/investment_strategy/example.py",
+                    blob_sha="b" * 40,
+                    expected_sha="a" * 40,
+                ),
+            ),
+        ),
+    )
+    decisions: list[tuple[WorkerRequest, str, int]] = []
+
+    def fake_decision(
+        decision_source: WorkerRequest,
+        *,
+        repository: str,
+        token: str,
+        default_branch: str,
+        expected_change: str,
+        pr_number: int,
+    ) -> ImplementationCarrierQualification:
+        assert (repository, token, default_branch) == (_REPOSITORY, _FIXTURE_VALUE, "main")
+        decisions.append((decision_source, expected_change, pr_number))
+        return ImplementationCarrierQualification(
+            disposition="QUALIFIED",
+            reason="fixture-qualified-continuation",
+            repository=repository,
+            issue_number=decision_source.issue_number,
+            change=expected_change,
+            action=decision_source.action,
+            pr_number=pr_number,
+            branch=continuation_branch,
+            head_sha=_PR_HEAD,
+            default_branch=default_branch,
+            default_revision=_REVISION,
+            historical_pr_number=178,
+        )
+
+    class _ReachedOpenPR(RuntimeError):
+        pass
+
+    def fail_open_pr(**kwargs: object) -> Mapping[str, object]:
+        assert kwargs["expected_branch"] == continuation_branch
+        raise _ReachedOpenPR
+
+    monkeypatch.setattr(resource, "_ref_head_sha", lambda *_args, **_kwargs: _REVISION)
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_args: source)
+    monkeypatch.setattr(resource, "_implementation_carrier_decision", fake_decision)
+    monkeypatch.setattr(resource, "_open_pr_payload", fail_open_pr)
+
+    with pytest.raises(_ReachedOpenPR):
+        resource.apply_work_product(
+            plan,
+            repository=_REPOSITORY,
+            token=_FIXTURE_VALUE,
+            default_branch="main",
+            authorization_revision=_REVISION,
+        )
+
+    assert decisions == [(source, _CHANGE, 178)]
 
 
 def _work_product_plan(
