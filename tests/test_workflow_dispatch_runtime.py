@@ -161,7 +161,9 @@ def test_production_preflight_enumerates_closed_routing_debt(
     assert classify_dispatch(preflight).reason == "closed-routing-debt"
 
 
-def test_production_preflight_qualifies_from_issue_timeline(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_production_preflight_qualifies_from_issue_timeline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     revision = "a" * 40
     requested_urls: list[str] = []
     comment_body = "\n".join(
