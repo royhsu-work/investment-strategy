@@ -373,7 +373,9 @@ def _event_from_checkpoint(
         action=action,
         result_kind=None if result is None else result.value,
         revision=revision if _valid_sha(revision) else None,
-        default_branch_revision=default_branch_revision if _valid_sha(default_branch_revision) else None,
+        default_branch_revision=(
+            default_branch_revision if _valid_sha(default_branch_revision) else None
+        ),
         application_correlation=correlation,
         successor=successor,
         terminal=terminal,
@@ -483,7 +485,9 @@ def build_qualification_input(
         if checkpoint_event is not None:
             checkpoint_events.append(checkpoint_event)
     formal_correlations = {
-        event.application_correlation for event in events if event.application_correlation is not None
+        event.application_correlation
+        for event in events
+        if event.application_correlation is not None
     }
     events.extend(
         event
