@@ -427,6 +427,73 @@ def test_current_terminal_requires_a_repository_owned_terminal_result() -> None:
     )
 
 
+def test_legacy_implementation_checkpoint_reconstructs_completion() -> None:
+    finding = _comment(
+        1,
+        action="review-implementation",
+        role="reviewer",
+        result="findings",
+        successor="Executor / implement-change",
+        request_id=1,
+    )
+    checkpoint = {
+        "id": 2,
+        "body": (
+            "SLICE_CHECKPOINT\n"
+            "Workflow: #229\n"
+            f"Change: {_CHANGE}\n"
+            "Action: implement-change\n"
+            "Role: executor\n"
+            "Completed-Tasks: 2.1, 2.2, 2.3, 2.4, 2.5\n"
+            f"Revision: {_REVISION}\n"
+            (
+                "Application-Correlation: application:2:229:"
+                f"{_CHANGE}:executor:implement-change:ready:{_REVISION}\n"
+            )
+            "Gate-Evidence: exact-head VERIFY\n"
+            "Remaining-Approved-Boundary: review-implementation required"
+        ),
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    lifecycle_events = [
+        {"id": 1, "event": "commented", "created_at": "2026-09-12T00:00:01Z"},
+        {
+            "id": 10,
+            "event": "unlabeled",
+            "created_at": "2026-09-12T00:00:02Z",
+            "label": {"name": "action:review-implementation"},
+        },
+        {
+            "id": 11,
+            "event": "labeled",
+            "created_at": "2026-09-12T00:00:02Z",
+            "label": {"name": "action:implement-change"},
+        },
+        {"id": 2, "event": "commented", "created_at": "2026-09-12T00:00:03Z"},
+        {
+            "id": 12,
+            "event": "unlabeled",
+            "created_at": "2026-09-12T00:00:04Z",
+            "label": {"name": "action:implement-change"},
+        },
+        {
+            "id": 13,
+            "event": "labeled",
+            "created_at": "2026-09-12T00:00:04Z",
+            "label": {"name": "action:review-implementation"},
+        },
+    ]
+    assert (
+        _decision(
+            [finding, checkpoint],
+            current_routing=("reviewer", "review-implementation"),
+            lifecycle_events=lifecycle_events,
+        ).provenance
+        is ObservationProvenance.QUALIFIED
+    )
+
+
 def test_change_unset_remains_pre_activation_compatible() -> None:
     qualification_input = build_qualification_input(
         issue_number=229,
