@@ -260,20 +260,6 @@ def _slice_checkpoint_body_is_bounded(
     )
 
 
-def _implementation_checkpoint_effects_complete(
-    batch: EffectBatch,
-    decision: ActionApplicationDecision,
-    validate_implementation_checkpoint: ImplementationCheckpointValidator | None,
-) -> bool:
-    """Require exact task/checkpoint effects before implementation advances."""
-
-    if (
-        batch.source.role != "executor"
-        or batch.source.action != "implement-change"
-        or decision.result.result.kind not in _IMPLEMENTATION_COMPLETION_RESULTS
-    ):
-        return True
-
 def _formal_action_result_body_is_bounded(
     body: str,
     *,
@@ -303,6 +289,20 @@ def _formal_action_result_body_is_bounded(
         and _is_nonempty_string(values.get("Application-Correlation"))
     )
 
+
+def _implementation_checkpoint_effects_complete(
+    batch: EffectBatch,
+    decision: ActionApplicationDecision,
+    validate_implementation_checkpoint: ImplementationCheckpointValidator | None,
+) -> bool:
+    """Require exact task/checkpoint effects before implementation advances."""
+
+    if (
+        batch.source.role != "executor"
+        or batch.source.action != "implement-change"
+        or decision.result.result.kind not in _IMPLEMENTATION_COMPLETION_RESULTS
+    ):
+        return True
 
     materializations: list[tuple[int, MaterializationRequest]] = []
     issue_comment_indexes: list[int] = []
@@ -376,7 +376,6 @@ def _formal_action_result_body_is_bounded(
     ):
         return False
     return validate_implementation_checkpoint(request, completed_task_ids)
-
 
 def _typed_application_plan(
     batch: EffectBatch,
