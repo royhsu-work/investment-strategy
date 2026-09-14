@@ -188,6 +188,31 @@ def test_merge_action_requires_its_matching_review_action() -> None:
     assert archive[0] == HEAD
 
 
+def test_application_authored_plain_review_pass_is_merge_evidence() -> None:
+    comments = (
+        {
+            "id": 1,
+            "created_at": "2026-08-27T06:00:00Z",
+            "body": (
+                f"Action: review-implementation\\n"
+                "Result: PASS\\n"
+                f"Revision: {HEAD}"
+            ),
+            "user": {"login": "github-actions[bot]"},
+            "performed_via_github_app": {"slug": "github-actions"},
+        },
+    )
+
+    record = merge_acceptance._latest_matching_pass(
+        comments,
+        HEAD,
+        required_review_action="review-implementation",
+    )
+
+    assert record[0] == HEAD
+    assert record[2] == "review-implementation"
+
+
 def test_review_pass_carries_current_default_branch_revision() -> None:
     default_revision = "a" * 40
     comments = (
