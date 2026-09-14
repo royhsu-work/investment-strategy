@@ -65,6 +65,69 @@ def _comment(
     return comment
 
 
+def _lifecycle_events(
+    comments: list[dict[str, object]],
+    *,
+    pending: bool = False,
+) -> list[dict[str, object]]:
+    events: list[dict[str, object]] = []
+    current_label = "action:explore-change"
+    for index, comment in enumerate(comments):
+        comment_id = comment["id"]
+        assert isinstance(comment_id, int)
+        comment_time = f"2026-09-12T00:00:{index * 4 + 1:02d}Z"
+        events.append(
+            {
+                "id": comment_id,
+                "event": "commented",
+                "created_at": comment_time,
+            }
+        )
+        if pending and index == len(comments) - 1:
+            continue
+        body = comment["body"]
+        assert isinstance(body, str)
+        successor_lines = [
+            line for line in body.splitlines() if line.startswith("Repository-derived successor: ")
+        ]
+        if successor_lines:
+            target = successor_lines[0].split("/", 1)[1].split()[0]
+            events.extend(
+                [
+                    {
+                        "id": 10000 + index * 10,
+                        "event": "unlabeled",
+                        "created_at": f"2026-09-12T00:00:{index * 4 + 2:02d}Z",
+                        "label": {"name": current_label},
+                    },
+                    {
+                        "id": 10001 + index * 10,
+                        "event": "labeled",
+                        "created_at": f"2026-09-12T00:00:{index * 4 + 2:02d}Z",
+                        "label": {"name": f"action:{target}"},
+                    },
+                ]
+            )
+            current_label = f"action:{target}"
+        else:
+            events.extend(
+                [
+                    {
+                        "id": 10000 + index * 10,
+                        "event": "unlabeled",
+                        "created_at": f"2026-09-12T00:00:{index * 4 + 2:02d}Z",
+                        "label": {"name": current_label},
+                    },
+                    {
+                        "id": 10001 + index * 10,
+                        "event": "closed",
+                        "created_at": f"2026-09-12T00:00:{index * 4 + 2:02d}Z",
+                    },
+                ]
+            )
+    return events
+
+
 def _decision(
     comments: list[dict[str, object]],
     *,
@@ -75,6 +138,7 @@ def _decision(
     source_routing: tuple[str, str] | None = None,
     expected_result_kind: str | None = None,
     expected_application_correlation: str | None = None,
+    lifecycle_events: list[dict[str, object]] | None = None,
 ) -> QualificationDecision:
     qualification_input = build_qualification_input(
         issue_number=229,
@@ -88,6 +152,11 @@ def _decision(
         source_routing=source_routing,
         expected_result_kind=expected_result_kind,
         expected_application_correlation=expected_application_correlation,
+        lifecycle_events=(
+            _lifecycle_events(comments, pending=mode == "pending")
+            if lifecycle_events is None
+            else lifecycle_events
+        ),
     )
     return qualify_current_formal_consequence(qualification_input)
 
@@ -193,6 +262,64 @@ def test_aba_supersession_uses_the_latest_complete_lifecycle_suffix() -> None:
         _decision(
             comments,
             current_routing=("lead", "resolve-question"),
+        ).provenance
+        is ObservationProvenance.INDETERMINATE
+    )
+
+
+def test_aba_lifecycle_events_reject_unbound_route_replay() -> None:
+    comment = _comment(
+        10,
+        action="implement-change",
+        role="executor",
+        result="spec-blocker",
+        successor="Lead / resolve-question",
+        request_id=10,
+    )
+    lifecycle_events = [
+        {"id": 10, "event": "commented", "created_at": "2026-09-12T01:00:01Z"},
+        {
+            "id": 11,
+            "event": "unlabeled",
+            "created_at": "2026-09-12T01:00:02Z",
+            "label": {"name": "action:implement-change"},
+        },
+        {
+            "id": 12,
+            "event": "labeled",
+            "created_at": "2026-09-12T01:00:02Z",
+            "label": {"name": "action:resolve-question"},
+        },
+        {
+            "id": 13,
+            "event": "unlabeled",
+            "created_at": "2026-09-12T01:00:03Z",
+            "label": {"name": "action:resolve-question"},
+        },
+        {
+            "id": 14,
+            "event": "labeled",
+            "created_at": "2026-09-12T01:00:03Z",
+            "label": {"name": "action:review-openspec"},
+        },
+        {
+            "id": 15,
+            "event": "unlabeled",
+            "created_at": "2026-09-12T01:00:04Z",
+            "label": {"name": "action:review-openspec"},
+        },
+        {
+            "id": 16,
+            "event": "labeled",
+            "created_at": "2026-09-12T01:00:04Z",
+            "label": {"name": "action:resolve-question"},
+        },
+    ]
+    assert (
+        _decision(
+            [comment],
+            current_routing=("lead", "resolve-question"),
+            lifecycle_events=lifecycle_events,
         ).provenance
         is ObservationProvenance.INDETERMINATE
     )

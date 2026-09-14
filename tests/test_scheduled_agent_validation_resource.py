@@ -10,6 +10,9 @@ from urllib.request import Request
 import pytest
 
 import investment_strategy.scheduled_agent_validation_resource as resource
+from investment_strategy.scheduled_agent_application_carrier import (
+    ImplementationCarrierQualification,
+)
 from investment_strategy.scheduled_agent_carrier import CarrierRequired
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 
@@ -141,6 +144,50 @@ def test_resource_rejects_source_without_review_openspec_gate(
             token=_FIXTURE_VALUE,
             default_branch="main",
         )
+
+
+def test_implementation_validation_target_reuses_carrier_decision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(229, "reviewer", "review-implementation")
+    branch = f"agent/{_CHANGE}-continuation-178"
+    decision = ImplementationCarrierQualification(
+        disposition="QUALIFIED",
+        reason="fixture-qualified-continuation",
+        repository=_REPOSITORY,
+        issue_number=source.issue_number,
+        change=_CHANGE,
+        action=source.action,
+        pr_number=178,
+        branch=branch,
+        head_sha=_PR_HEAD,
+        default_branch="main",
+        default_revision=_REVISION,
+        historical_pr_number=178,
+    )
+    plan = resource.ValidationResourcePlan(
+        True,
+        source=source,
+        pr_number=178,
+        expected_change=_CHANGE,
+    )
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_args: source)
+    monkeypatch.setattr(
+        resource,
+        "_implementation_carrier_decision",
+        lambda *_args, **_kwargs: decision,
+    )
+
+    target = resource.resolve_validation_resource_target(
+        plan,
+        repository=_REPOSITORY,
+        token=_FIXTURE_VALUE,
+        default_branch="main",
+    )
+
+    assert target.revision == _PR_HEAD
+    assert target.pr_number == 178
+    assert target.branch == branch
 
 
 def test_executor_task_marker_is_the_only_nonreview_openspec_work_product() -> None:
@@ -322,6 +369,83 @@ def test_apply_work_product_rejects_non_monotonic_task_marker_before_tree(
             default_branch="main",
             authorization_revision=_REVISION,
         )
+
+
+def test_apply_work_product_reuses_continuation_carrier_decision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Continuation branch identity comes from the shared carrier owner."""
+
+    source = WorkerRequest(229, "executor", "implement-change")
+    continuation_branch = f"agent/{_CHANGE}-continuation-178"
+    plan = resource.WorkProductPlan(
+        True,
+        source=source,
+        pr_number=178,
+        expected_change=_CHANGE,
+        manifest=resource.WorkProductManifest(
+            branch=continuation_branch,
+            base_sha=_REVISION,
+            message="Continue implementation after the merged carrier",
+            files=(
+                resource.WorkProductFile(
+                    path="src/investment_strategy/example.py",
+                    blob_sha="b" * 40,
+                    expected_sha="a" * 40,
+                ),
+            ),
+        ),
+    )
+    decisions: list[tuple[WorkerRequest, str, int]] = []
+
+    def fake_decision(
+        decision_source: WorkerRequest,
+        *,
+        repository: str,
+        token: str,
+        default_branch: str,
+        expected_change: str,
+        pr_number: int,
+    ) -> ImplementationCarrierQualification:
+        assert (repository, token, default_branch) == (_REPOSITORY, _FIXTURE_VALUE, "main")
+        decisions.append((decision_source, expected_change, pr_number))
+        return ImplementationCarrierQualification(
+            disposition="QUALIFIED",
+            reason="fixture-qualified-continuation",
+            repository=repository,
+            issue_number=decision_source.issue_number,
+            change=expected_change,
+            action=decision_source.action,
+            pr_number=pr_number,
+            branch=continuation_branch,
+            head_sha=_PR_HEAD,
+            default_branch=default_branch,
+            default_revision=_REVISION,
+            historical_pr_number=178,
+        )
+
+    class _ReachedOpenPR(RuntimeError):
+        pass
+
+    def fail_open_pr(**kwargs: object) -> Mapping[str, object]:
+        assert kwargs["expected_branch"] == continuation_branch
+        raise _ReachedOpenPR
+
+    monkeypatch.setattr(resource, "_ref_head_sha", lambda *_args, **_kwargs: _REVISION)
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_args: source)
+    monkeypatch.setattr(resource, "_implementation_carrier_decision", fake_decision)
+    monkeypatch.setattr(resource, "_open_pr_payload", fail_open_pr)
+
+    with pytest.raises(_ReachedOpenPR):
+        resource.apply_work_product(
+            plan,
+            repository=_REPOSITORY,
+            token=_FIXTURE_VALUE,
+            default_branch="main",
+            authorization_revision=_REVISION,
+        )
+
+    assert decisions == [(source, _CHANGE, 178)]
 
 
 def _work_product_plan(
@@ -937,6 +1061,9 @@ _CONTINUATION_PR_BODY = (
 def _open_continuation_with_files(
     monkeypatch: pytest.MonkeyPatch,
     files: list[dict[str, str]],
+    *,
+    carrier_decision: ImplementationCarrierQualification | None = None,
+    allow_reconciliation: bool = False,
 ) -> Mapping[str, object]:
     source = WorkerRequest(229, "executor", "implement-change")
 
@@ -967,6 +1094,26 @@ def _open_continuation_with_files(
         raise AssertionError(f"unexpected GitHub read: {api_path}")
 
     monkeypatch.setattr(resource, "_github_json", fake_github_json)
+    if carrier_decision is None:
+        carrier_decision = ImplementationCarrierQualification(
+            disposition="QUALIFIED",
+            reason="fixture-qualified-continuation",
+            repository=_REPOSITORY,
+            issue_number=source.issue_number,
+            change=_CONTINUATION_CHANGE,
+            action=source.action,
+            pr_number=236,
+            branch=_CONTINUATION_BRANCH,
+            head_sha="b" * 40,
+            default_branch="main",
+            default_revision="a" * 40,
+            historical_pr_number=232,
+        )
+    monkeypatch.setattr(
+        resource,
+        "_implementation_carrier_decision",
+        lambda *_args, **_kwargs: carrier_decision,
+    )
     return resource._open_pr_payload(
         repository=_REPOSITORY,
         token=_FIXTURE_VALUE,
@@ -975,6 +1122,7 @@ def _open_continuation_with_files(
         expected_change=_CONTINUATION_CHANGE,
         default_branch="main",
         expected_branch=_CONTINUATION_BRANCH,
+        allow_reconciliation=allow_reconciliation,
     )
 
 
@@ -998,9 +1146,61 @@ def test_deterministic_continuation_rejects_competing_active_change(
     ]
     with pytest.raises(
         RuntimeError,
-        match="continuation contains competing active Change",
+        match="continuation carrier is not qualified",
     ):
-        _open_continuation_with_files(monkeypatch, files)
+        _open_continuation_with_files(
+            monkeypatch,
+            files,
+            carrier_decision=ImplementationCarrierQualification(
+                disposition="INDETERMINATE",
+                reason="carrier-competing-active-change",
+                repository=_REPOSITORY,
+                issue_number=229,
+                change=_CONTINUATION_CHANGE,
+                action="implement-change",
+                pr_number=236,
+                branch=_CONTINUATION_BRANCH,
+                head_sha="b" * 40,
+                default_branch="main",
+                default_revision="a" * 40,
+                historical_pr_number=232,
+            ),
+        )
+
+
+def test_validation_requires_qualified_continuation_unless_reconciling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision = ImplementationCarrierQualification(
+        disposition="RECONCILIATION_REQUIRED",
+        reason="carrier-pr-base-is-stale",
+        repository=_REPOSITORY,
+        issue_number=229,
+        change=_CONTINUATION_CHANGE,
+        action="implement-change",
+        pr_number=236,
+        branch=_CONTINUATION_BRANCH,
+        head_sha="b" * 40,
+        default_branch="main",
+        default_revision="a" * 40,
+        historical_pr_number=232,
+    )
+    files = [
+        {"filename": "src/investment_strategy/scheduled_agent_formal_qualification.py"},
+    ]
+    with pytest.raises(RuntimeError, match="continuation carrier is not qualified"):
+        _open_continuation_with_files(
+            monkeypatch,
+            files,
+            carrier_decision=decision,
+        )
+    payload = _open_continuation_with_files(
+        monkeypatch,
+        files,
+        carrier_decision=decision,
+        allow_reconciliation=True,
+    )
+    assert payload["number"] == 236
 
 
 def test_apply_work_product_reuses_current_head_without_commit_when_ancestry_diverged(
@@ -1066,6 +1266,24 @@ def test_apply_work_product_reuses_current_head_without_commit_when_ancestry_div
     commit_payloads: list[object] = []
 
     monkeypatch.setattr(resource, "_current_authorized_request", lambda *_args: source)
+    monkeypatch.setattr(
+        resource,
+        "_implementation_carrier_decision",
+        lambda *_args, **_kwargs: ImplementationCarrierQualification(
+            disposition="RECONCILIATION_REQUIRED",
+            reason="fixture-continuation-reconciliation",
+            repository=_REPOSITORY,
+            issue_number=source.issue_number,
+            change=_CONTINUATION_CHANGE,
+            action=source.action,
+            pr_number=236,
+            branch=replacement_branch,
+            head_sha=current_head,
+            default_branch="main",
+            default_revision=base_sha,
+            historical_pr_number=232,
+        ),
+    )
 
     def fake_github_json(
         repository: str,

@@ -1,9 +1,9 @@
 """One immutable affirmative qualification decision for current formal consequences.
 
 This module is deliberately a small pure decision boundary. It reconstructs only
-the repository-owned formal result evidence needed to decide whether the current
-route, or one pending derived consequence, is qualified. It owns no workflow
-state, cursor, registry, or carrier.
+the repository-owned formal result and Issue lifecycle evidence needed to decide
+whether the current route, or one pending derived consequence, is qualified. It
+owns no workflow state, cursor, registry, or carrier.
 """
 
 from __future__ import annotations
@@ -23,6 +23,8 @@ from investment_strategy.scheduled_agent_action_model import (
 from investment_strategy.workflow_dispatch import ObservationProvenance
 
 _FORMAL_RESULT_MARKERS = frozenset({"ACTION_RESULT", "REVIEW_RESULT", "MERGE_RESULT"})
+_LIFECYCLE_EVENTS = frozenset({"commented", "closed", "labeled", "reopened", "unlabeled"})
+_ACTION_LABEL_PREFIX = "action:"
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _WORKFLOW = re.compile(r"^#([1-9][0-9]*)$")
 _CORRELATION = re.compile(
@@ -54,6 +56,17 @@ class FormalLifecycleEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class IssueLifecycleEvent:
+    """One relevant event from the GitHub Issue timeline."""
+
+    event_id: int | None
+    event: str | None
+    label: str | None
+    created_at: str | None
+    valid: bool
+
+
+@dataclass(frozen=True, slots=True)
 class QualificationInput:
     """The complete immutable evidence set consumed by one qualification."""
 
@@ -69,6 +82,7 @@ class QualificationInput:
     current_revision: str | None
     mode: Literal["current", "pending"]
     events: tuple[FormalLifecycleEvent, ...]
+    lifecycle_events: tuple[IssueLifecycleEvent, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,6 +292,69 @@ def _event_from_comment(
     )
 
 
+def _issue_lifecycle_event_from_payload(
+    payload: Mapping[str, object],
+) -> IssueLifecycleEvent | None:
+    raw_event = payload.get("event")
+    if raw_event not in _LIFECYCLE_EVENTS:
+        return None
+    raw_id = payload.get("id")
+    raw_created_at = payload.get("created_at")
+    valid_id = isinstance(raw_id, int) and not isinstance(raw_id, bool) and raw_id > 0
+    valid_created_at = isinstance(raw_created_at, str) and bool(raw_created_at.strip())
+    label: str | None = None
+    valid = valid_id and valid_created_at
+    if raw_event in {"labeled", "unlabeled"}:
+        raw_label = payload.get("label")
+        label_payload = raw_label if isinstance(raw_label, Mapping) else None
+        label_value = None if label_payload is None else label_payload.get("name")
+        label = label_value if isinstance(label_value, str) else None
+        valid = (
+            valid
+            and label is not None
+            and label.startswith(_ACTION_LABEL_PREFIX)
+            and len(label) > len(_ACTION_LABEL_PREFIX)
+        )
+        if valid:
+            if label is None:
+                valid = False
+            else:
+                try:
+                    Action(label[len(_ACTION_LABEL_PREFIX) :])
+                except ValueError:
+                    valid = False
+    return IssueLifecycleEvent(
+        event_id=cast(int | None, raw_id) if valid_id else None,
+        event=cast(str | None, raw_event),
+        label=label,
+        created_at=cast(str | None, raw_created_at) if valid_created_at else None,
+        valid=valid,
+    )
+
+
+def _lifecycle_order_key(event: IssueLifecycleEvent) -> tuple[str, int]:
+    return (
+        "" if event.created_at is None else event.created_at,
+        10**30 if event.event_id is None else event.event_id,
+    )
+
+
+def _formal_order_key(
+    event: FormalLifecycleEvent,
+    lifecycle_events: tuple[IssueLifecycleEvent, ...],
+) -> tuple[str, int]:
+    if event.comment_id is not None:
+        matching = tuple(
+            item
+            for item in lifecycle_events
+            if item.event == "commented" and item.event_id == event.comment_id
+        )
+        if len(matching) == 1:
+            return _lifecycle_order_key(matching[0])
+        return "", event.comment_id
+    return "", 10**30
+
+
 def build_qualification_input(
     *,
     issue_number: int,
@@ -292,15 +369,26 @@ def build_qualification_input(
     source_routing: tuple[str, str] | None = None,
     expected_result_kind: str | None = None,
     expected_application_correlation: str | None = None,
+    lifecycle_events: Iterable[Mapping[str, object]] = (),
 ) -> QualificationInput:
     """Reconstruct one complete current/pending qualification input."""
 
+    lifecycle: list[IssueLifecycleEvent] = []
+    for raw_event in lifecycle_events:
+        if isinstance(raw_event, Mapping):
+            lifecycle_event = _issue_lifecycle_event_from_payload(raw_event)
+            if lifecycle_event is not None:
+                lifecycle.append(lifecycle_event)
+        else:
+            lifecycle.append(IssueLifecycleEvent(None, None, None, None, False))
+    lifecycle_tuple = tuple(sorted(lifecycle, key=_lifecycle_order_key))
+
     events: list[FormalLifecycleEvent] = []
     for comment in comments:
-        event = _event_from_comment(comment, current_revision=current_revision)
-        if event is not None:
-            events.append(event)
-    events.sort(key=lambda item: 10**30 if item.comment_id is None else item.comment_id)
+        formal_event = _event_from_comment(comment, current_revision=current_revision)
+        if formal_event is not None:
+            events.append(formal_event)
+    events.sort(key=lambda item: _formal_order_key(item, lifecycle_tuple))
     return QualificationInput(
         issue_number=issue_number,
         change=change,
@@ -314,6 +402,7 @@ def build_qualification_input(
         current_revision=current_revision,
         mode=mode,
         events=tuple(events),
+        lifecycle_events=lifecycle_tuple,
     )
 
 
@@ -342,6 +431,97 @@ def _normalized_kind(value: str | None) -> str | None:
     return value.lower().replace("_", "-")
 
 
+def _comment_order_key(
+    event: FormalLifecycleEvent,
+    lifecycle_events: tuple[IssueLifecycleEvent, ...],
+) -> tuple[str, int] | None:
+    if event.comment_id is None:
+        return None
+    matches = tuple(
+        item
+        for item in lifecycle_events
+        if item.event == "commented" and item.event_id == event.comment_id
+    )
+    if len(matches) != 1 or not matches[0].valid:
+        return None
+    return _lifecycle_order_key(matches[0])
+
+
+def _event_interval(
+    event: FormalLifecycleEvent,
+    next_event: FormalLifecycleEvent | None,
+    lifecycle_events: tuple[IssueLifecycleEvent, ...],
+) -> tuple[IssueLifecycleEvent, ...] | None:
+    start = _comment_order_key(event, lifecycle_events)
+    if start is None:
+        return None
+    end = None if next_event is None else _comment_order_key(next_event, lifecycle_events)
+    if next_event is not None and end is None:
+        return None
+    return tuple(
+        item
+        for item in lifecycle_events
+        if item.valid
+        and _lifecycle_order_key(item) > start
+        and (end is None or _lifecycle_order_key(item) < end)
+    )
+
+
+def _interval_binds_successor(
+    interval: tuple[IssueLifecycleEvent, ...],
+    successor: tuple[str, str] | None,
+    terminal: bool,
+) -> bool:
+    relevant = tuple(
+        item for item in interval if item.event in {"closed", "labeled", "reopened", "unlabeled"}
+    )
+    if terminal:
+        closes = tuple(item for item in relevant if item.event == "closed")
+        if len(closes) != 1 or any(item.event in {"labeled", "reopened"} for item in relevant):
+            return False
+        close_index = next(index for index, item in enumerate(relevant) if item is closes[0])
+        return all(
+            index < close_index for index, item in enumerate(relevant) if item.event == "unlabeled"
+        )
+    if successor is None:
+        return False
+    labels = tuple(item for item in relevant if item.event == "labeled")
+    if len(labels) != 1 or labels[0].label != f"{_ACTION_LABEL_PREFIX}{successor[1]}":
+        return False
+    label_index = next(index for index, item in enumerate(relevant) if item is labels[0])
+    return not any(
+        item.event in {"closed", "reopened"}
+        or (item.event == "labeled" and index != label_index)
+        or (item.event == "unlabeled" and index > label_index)
+        for index, item in enumerate(relevant)
+    )
+
+
+def _lifecycle_integrity(events: tuple[IssueLifecycleEvent, ...]) -> bool:
+    ids = tuple(event.event_id for event in events)
+    return (
+        bool(events)
+        and all(event.valid for event in events)
+        and all(event_id is not None for event_id in ids)
+        and len(set(ids)) == len(ids)
+        and tuple(sorted(events, key=_lifecycle_order_key)) == events
+    )
+
+
+def _formal_interval_is_bound(
+    events: tuple[FormalLifecycleEvent, ...],
+    index: int,
+    lifecycle_events: tuple[IssueLifecycleEvent, ...],
+) -> bool:
+    next_event = None if index + 1 >= len(events) else events[index + 1]
+    interval = _event_interval(events[index], next_event, lifecycle_events)
+    return interval is not None and _interval_binds_successor(
+        interval,
+        events[index].successor,
+        events[index].terminal,
+    )
+
+
 def qualify_current_formal_consequence(
     qualification: QualificationInput,
 ) -> QualificationDecision:
@@ -355,7 +535,6 @@ def qualify_current_formal_consequence(
     if (
         not isinstance(qualification.issue_number, int)
         or qualification.issue_number <= 0
-        or not qualification.change
         or qualification.state not in {"open", "closed"}
         or qualification.mode not in {"current", "pending"}
         or not _valid_sha(qualification.current_revision)
@@ -363,6 +542,8 @@ def qualify_current_formal_consequence(
         return _indeterminate("qualification-input-incomplete")
     if not qualification.events:
         return _indeterminate("formal-lifecycle-evidence-missing")
+    if not _lifecycle_integrity(qualification.lifecycle_events):
+        return _indeterminate("issue-lifecycle-evidence-incomplete")
 
     latest = qualification.events[-1]
     if (
@@ -381,12 +562,17 @@ def qualify_current_formal_consequence(
             break
         relevant_suffix.append(event)
     relevant_suffix.reverse()
-    for index in range(len(relevant_suffix) - 1):
-        previous = relevant_suffix[index]
-        current = relevant_suffix[index + 1]
+    suffix = tuple(relevant_suffix)
+    for index in range(len(suffix) - 1):
+        previous = suffix[index]
+        current = suffix[index + 1]
         if previous.successor != (current.role, current.action):
             return _indeterminate("lifecycle-ordering-incomplete", current)
+
     if qualification.mode == "current":
+        for index in range(len(suffix)):
+            if not _formal_interval_is_bound(suffix, index, qualification.lifecycle_events):
+                return _indeterminate("issue-lifecycle-binding-incomplete", suffix[index])
         if qualification.state == "open":
             if (
                 qualification.current_routing is None
@@ -416,6 +602,18 @@ def qualify_current_formal_consequence(
         or latest.application_correlation != qualification.expected_application_correlation
     ):
         return _indeterminate("pending-application-correlation-not-qualified", latest)
+
+    latest_interval = _event_interval(latest, None, qualification.lifecycle_events)
+    if latest_interval is None:
+        return _indeterminate("pending-comment-lifecycle-missing", latest)
+    if any(
+        item.event in {"closed", "labeled", "reopened", "unlabeled"} for item in latest_interval
+    ):
+        return _indeterminate("pending-lifecycle-superseded", latest)
+    for index in range(len(suffix) - 1):
+        if not _formal_interval_is_bound(suffix, index, qualification.lifecycle_events):
+            return _indeterminate("issue-lifecycle-binding-incomplete", suffix[index])
+
     if qualification.expected_terminal:
         if not latest.terminal:
             return _indeterminate("pending-terminal-not-qualified", latest)
@@ -431,6 +629,7 @@ def qualify_current_formal_consequence(
 
 __all__ = [
     "FormalLifecycleEvent",
+    "IssueLifecycleEvent",
     "QualificationDecision",
     "QualificationInput",
     "build_qualification_input",
