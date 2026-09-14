@@ -292,6 +292,95 @@ def _event_from_comment(
     )
 
 
+def _event_from_checkpoint(
+    payload: Mapping[str, object],
+    *,
+    current_revision: str | None,
+) -> FormalLifecycleEvent | None:
+    """Reconstruct a legacy implementation completion from its bound checkpoint."""
+
+    body = payload.get("body")
+    if not isinstance(body, str) or _marker(body) != "SLICE_CHECKPOINT":
+        return None
+    if not _is_github_actions_comment(payload):
+        return None
+    raw_workflow = _field(body, "Workflow")
+    workflow_match = None if raw_workflow is None else _WORKFLOW.fullmatch(raw_workflow)
+    issue_number = None if workflow_match is None else int(workflow_match.group(1))
+    change = _field(body, "Change")
+    role_field = _normalize_role(_field(body, "Role"))
+    action_role, action = _normalize_action(_field(body, "Action"))
+    role = role_field if role_field is not None else action_role
+    revision = _field(body, "Revision")
+    correlation = _field(body, "Application-Correlation")
+    parsed_correlation = None if correlation is None else _CORRELATION.fullmatch(correlation)
+    comment_id = payload.get("id")
+    valid_comment_id = (
+        isinstance(comment_id, int) and not isinstance(comment_id, bool) and comment_id > 0
+    )
+    default_branch_revision = None if parsed_correlation is None else parsed_correlation.group(7)
+    result = (
+        None
+        if parsed_correlation is None
+        else _normalize_result(parsed_correlation.group(6))
+    )
+    successor: tuple[str, str] | None = None
+    terminal = False
+    transition_valid = False
+    if action is not None and result is not None:
+        try:
+            model_action = Action(action)
+            if role != role_for(model_action).value:
+                raise ValueError
+            expected_successor_action = next_action(model_action, TypedResult(result))
+            terminal = expected_successor_action is None
+            successor = (
+                None
+                if expected_successor_action is None
+                else (
+                    role_for(expected_successor_action).value,
+                    expected_successor_action.value,
+                )
+            )
+            transition_valid = True
+        except (TypeError, ValueError):
+            transition_valid = False
+    valid = (
+        valid_comment_id
+        and issue_number is not None
+        and change is not None
+        and action == Action.IMPLEMENT_CHANGE.value
+        and role == role_for(Action.IMPLEMENT_CHANGE).value
+        and result in {
+            ResultKind.MORE_IMPLEMENTATION_REQUIRED,
+            ResultKind.READY,
+        }
+        and _valid_sha(revision)
+        and _valid_sha(default_branch_revision)
+        and parsed_correlation is not None
+        and parsed_correlation.group(2) == str(issue_number)
+        and parsed_correlation.group(3) == change
+        and parsed_correlation.group(4) == role
+        and parsed_correlation.group(5) == action
+        and parsed_correlation.group(7) == revision
+        and transition_valid
+    )
+    return FormalLifecycleEvent(
+        comment_id=cast(int | None, comment_id) if valid_comment_id else None,
+        issue_number=issue_number,
+        change=change,
+        role=role,
+        action=action,
+        result_kind=None if result is None else result.value,
+        revision=revision if _valid_sha(revision) else None,
+        default_branch_revision=default_branch_revision if _valid_sha(default_branch_revision) else None,
+        application_correlation=correlation,
+        successor=successor,
+        terminal=terminal,
+        valid=valid,
+    )
+
+
 def _issue_lifecycle_event_from_payload(
     payload: Mapping[str, object],
 ) -> IssueLifecycleEvent | None:
@@ -384,10 +473,23 @@ def build_qualification_input(
     lifecycle_tuple = tuple(sorted(lifecycle, key=_lifecycle_order_key))
 
     events: list[FormalLifecycleEvent] = []
+    checkpoint_events: list[FormalLifecycleEvent] = []
     for comment in comments:
         formal_event = _event_from_comment(comment, current_revision=current_revision)
         if formal_event is not None:
             events.append(formal_event)
+            continue
+        checkpoint_event = _event_from_checkpoint(comment, current_revision=current_revision)
+        if checkpoint_event is not None:
+            checkpoint_events.append(checkpoint_event)
+    formal_correlations = {
+        event.application_correlation for event in events if event.application_correlation is not None
+    }
+    events.extend(
+        event
+        for event in checkpoint_events
+        if event.application_correlation not in formal_correlations
+    )
     events.sort(key=lambda item: _formal_order_key(item, lifecycle_tuple))
     return QualificationInput(
         issue_number=issue_number,
