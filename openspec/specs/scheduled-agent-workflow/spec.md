@@ -3139,70 +3139,113 @@ The Change SHALL be delivered through Shadow, Cutover, and Delete boundaries. Af
 
 ### Requirement: Active formal transitions require repository-owned provenance
 
-When a coordination Issue has `Change != unset`, the current formal
-`action:*` routing transition and terminal/close boundary SHALL be accepted
-only when fresh evidence qualifies the transition as the result of a
-repository-owned GitHub Actions/application execution. The evidence MUST bind
-the transition to the application's fresh authorization and observed durable
-postcondition; syntactically valid Issue fields, labels, timestamps, or
-connector-authored comments alone are insufficient.
+When a coordination Issue has `Change != unset`, the existing scheduled-agent current-state owner SHALL build one current formal qualification input from:
 
-A connector-authored or other out-of-band direct formal routing or
-terminal/close mutation, and any transition whose repository-owned provenance
-is missing, incomplete, stale, ambiguous, contradictory, or unverified, SHALL
-be classified as `INDETERMINATE` and fail closed. The application MUST NOT
-auto-accept it, auto-rewind it, or launder it through idempotent
-reconciliation. A qualified repository-owned Actions/application transition
-continues to use the existing finite Action/Result vocabulary and transition
-model.
+- the exact current Issue, immutable Change, and Action or terminal/close candidate;
+- the accepted typed Action/Result and model-derived consequence;
+- the exact application-owned correlation for that authorization and consequence;
+- the exact durable postcondition;
+- a complete relevant lifecycle observation; and
+- the absence of a later relevant mutation that supersedes the binding, including ABA.
+
+The owner SHALL evaluate that input through one executable qualification decision and return only the existing `QUALIFIED` or `INDETERMINATE` provenance result. Every dispatch, routing, successor, terminal, and close consumer SHALL consume that same decision and SHALL NOT independently reconstruct consequence eligibility. All dimensions must be coherent and fresh for `QUALIFIED`; missing, incomplete, stale, ambiguous, contradictory, unverified, equality-only, or superseded evidence produces `INDETERMINATE` and uses the existing fail-closed path.
+
+Qualification evidence required for a repository-derived current formal consequence SHALL remain reconstructable from durable repository evidence across a process, validation, carrier, or application boundary and when a later invocation creates a fresh effect adapter.
+
+Stage 1 Application-Correlation SHALL be bound to one exact durable application/request execution identity already fresh-verified by the existing application bridge. That identity SHALL be unique to the application/request execution. A tuple containing only the Issue, Change, Role, Action, Result, and default-branch revision is insufficient, and Evidence-Ref SHALL remain evidence rather than an alias or fallback correlation unless exact equivalence is established by the existing owner. Different exact application/request identities MUST produce different bindings even when all tuple fields are equal, and evidence from one binding MUST NOT qualify another. Invocation-local observation memory SHALL NOT be required to preserve an otherwise intended current qualification. A prior formal result SHALL NOT be replayed or recreated solely to repopulate invocation-local memory or make its repository-derived successor eligible.
+
+Lifecycle evidence SHALL establish relevant ordering and supersession only. Actor, connector, carrier, timestamp, physical writer, structural validity, and value equality do not supply application authorization. Equality MAY support postcondition reconciliation after qualification; it SHALL NOT authorize the consequence.
+
+Qualification decides consequence eligibility and remains separate from mutation execution. Fresh application reauthorization, exact necessary effects, carrier separation, and fresh postcondition observation remain required after a `QUALIFIED` decision. The existing finite Action/Role/Result model remains the workflow owner.
 
 Connector ingress remains limited to the bounded untrusted
 `EFFECT_REQUEST` transport needed by the current application bridge. Ingress
 does not grant routing, successor, retry, merge, terminal, or success
 authority; those effects remain application-derived and postcondition-bound.
 
-Existing pre-activation behavior for `Change: unset` SHALL remain
-compatible: Explore/Propose selection may use the current pre-activation
-contract and does not require the active-formal provenance guard until a
-Change is set.
+This contract activates prospectively on default-branch merge. Workflows terminal before activation remain terminal. Existing `Change: unset` pre-activation admission does not require the active-formal qualification input.
 
 #### Scenario: Connector-authored active routing fails closed
 
-- GIVEN a coordination Issue has `Change != unset` and a connector-authored
-  direct comment or label mutation makes a syntactically valid `action:*`
-  route current
-- WHEN the application freshly observes the active formal state
-- THEN the transition is classified `INDETERMINATE`
-- AND the application fails closed without accepting the route or deriving a
-  successor
-- AND it does not auto-rewind or launder the mutation through reconciliation
+- GIVEN a coordination Issue has `Change != unset`
+- AND an out-of-band mutation makes a syntactically valid `action:*` route current without one exact application binding
+- WHEN the single qualification decision evaluates the active formal state
+- THEN it returns `INDETERMINATE`
+- AND dispatch and application consumers use that result without deriving a successor
 
 #### Scenario: Connector-authored premature close fails closed
 
-- GIVEN a coordination Issue has `Change != unset` and a connector-authored
-  direct mutation closes the Issue or presents terminal evidence
-- WHEN the application freshly reconstructs the formal lifecycle
-- THEN the close or terminal boundary is classified `INDETERMINATE`
-- AND no terminal/success effect is accepted or derived
-- AND the next legal handling remains governed by fresh repository-owned
-  evidence rather than the connector mutation
+- GIVEN a coordination Issue has `Change != unset`
+- AND an out-of-band mutation closes the Issue or presents terminal evidence without one exact application binding
+- WHEN the single qualification decision evaluates the terminal boundary
+- THEN it returns `INDETERMINATE`
+- AND no terminal or success consequence is accepted
 
 #### Scenario: Repository-owned formal transition remains qualified
 
-- GIVEN a coordination Issue has `Change != unset` and a repository-owned
-  Actions/application run has fresh authorization, emits the formal transition,
-  and its durable postcondition is observed
-- WHEN the application reconstructs the current formal lifecycle
-- THEN the `action:*` route or terminal/close boundary is classified
-  `QUALIFIED`
-- AND the existing executable Action/Role/transition model may proceed
-- AND no new Action, Result kind, or routing state is introduced
+- GIVEN a coordination Issue has `Change != unset`
+- AND one current binding coherently identifies the accepted Action/Result, exact application authorization and correlation, model-derived consequence, durable postcondition, and complete relevant lifecycle ordering
+- AND no later relevant mutation supersedes that binding
+- WHEN the single qualification decision evaluates the current routing or terminal boundary
+- THEN it returns `QUALIFIED`
+- AND every consequence consumer reuses that result
+- AND any mutation still requires fresh application reauthorization and postcondition observation
+
+#### Scenario: Fresh continuation reconstructs qualification from durable repository evidence
+
+- GIVEN invocation N produced the exact durable repository-owned evidence required by the current Action
+- AND execution crosses the exact validation, carrier, or application boundary
+- WHEN invocation N+1 creates a fresh `GitHubEffectAdapter`
+- THEN the required current qualification is reconstructable from durable repository evidence
+- AND the repository-derived successor remains eligible when all other current predicates hold
+- AND the prior formal result is not replayed or recreated solely to restore eligibility
+- AND no invocation-local observation memory is required
+
+#### Scenario: Stage 1 application bindings are collision-resistant
+
+- GIVEN two applications have the same Issue, immutable Change, Role, Action, Result kind, and default-branch revision
+- AND the existing application bridge fresh-verifies different exact application/request identities
+- WHEN Stage 1 reconstructs their application bindings
+- THEN the bindings are different
+- AND evidence from one application does not qualify the other
+- AND no registry, ledger, cursor, receipt lifecycle, or second decision owner is introduced
+
+#### Scenario: The production fresh-continuation bridge remains eligible
+
+- GIVEN invocation N persists the exact durable application/request evidence required by the current Action
+- AND execution crosses the exact validation/application boundary
+- WHEN invocation N+1 creates a fresh adapter and runs the `--validation-passed` application path
+- THEN the repository-derived successor remains eligible when all other current predicates hold
+- AND the old formal result is not replayed or recreated
+- AND invocation-local observation memory is not required
+
+#### Scenario: Equality and ABA do not inherit historical qualification
+
+- GIVEN a repository-authorized transition changes A to B
+- AND a complete later lifecycle observation shows B changes to C and then returns to B without a later application binding
+- WHEN fresh current value equals B
+- THEN the historical A-to-B binding does not qualify the current consequence
+- AND the single qualification decision returns `INDETERMINATE`
+
+#### Scenario: Incomplete lifecycle observation fails closed
+
+- GIVEN a coordination Issue has `Change != unset`
+- AND relevant lifecycle ordering is incomplete or cannot prove that no later mutation superseded the candidate binding
+- WHEN the single qualification decision evaluates the current consequence
+- THEN it returns `INDETERMINATE`
+- AND all consequence consumers use the existing fail-closed path
+
+#### Scenario: Exact carrier completion qualifies only after a later fresh wake
+
+- GIVEN an exact repository-authorized CarrierPlan has been executed
+- AND a later fresh wake observes its exact postcondition and reconstructs the same application binding with complete lifecycle ordering
+- WHEN the single qualification decision evaluates the current consequence
+- THEN it returns `QUALIFIED`
+- AND the carrier supplies no independent routing, successor, terminal, or success authority
 
 #### Scenario: Change-unset pre-activation remains compatible
 
-- GIVEN a coordination Issue still has `Change: unset` and is selected by the
-  existing pre-activation Explore/Propose dispatch
+- GIVEN a coordination Issue still has `Change: unset` and is selected by the existing pre-activation Explore or Propose dispatch
 - WHEN the application reconstructs the current pre-activation state
 - THEN the existing compatibility contract remains applicable
-- AND the active-formal provenance guard is not used to require a Change
-  before the approved Propose transition
+- AND the active-formal qualification input is not required

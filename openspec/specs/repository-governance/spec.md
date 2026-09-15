@@ -17,6 +17,7 @@ The minimum ownership model SHALL be:
 | Repository overview / Human entry point | README.md | MAY link to authoritative governance; MUST NOT redefine runtime protocol |
 | Shared Scheduled-Agent runtime protocol and safety invariants | agents/AGENTS.md | roles/skills MAY reference; MUST NOT duplicate the shared contract |
 | Machine-decidable Action vocabulary, Action→Role mapping, finite transition/result rules, deterministic selection, effect authorization, carrier eligibility, explicit merged-carrier reconciliation, stale/replay/no-rewind guards, and postconditions | one default-branch executable workflow model | agents/workflow.md MAY be generated or mechanically verified Human-readable presentation; AGENTS/roles/skills/runtime/transport/carriers MUST NOT maintain a competing production DAG or parse prose as topology |
+| Machine-decidable consequence qualification | the existing canonical executable owner of that consequence | consumers SHALL reuse the owner's structured decision and MUST NOT reconstruct a competing acceptance path |
 | Semantic role authority | agents/roles/*.md | AGENTS/Skills MAY orient/reference; MUST NOT redefine machine Action→Role or successor selection |
 | Action-specific semantic procedure and evidence meaning | agents/skills/* | roles/AGENTS MAY map/reference; MUST NOT duplicate machine topology/effect bodies |
 | OpenSpec authoring and validation conventions | openspec/config.yaml | Change artifacts follow them; MUST NOT restate them as runtime rules |
@@ -25,6 +26,10 @@ The minimum ownership model SHALL be:
 | Historical change provenance | archived OpenSpec changes | evidence only; MUST NOT override current default-branch governance or become routing state |
 | Scheduled Task cadence and transport wiring | external product configuration and a replaceable transport adapter | repository docs MAY describe deployment context; transport MUST NOT define Action/Role/WIP/successor state |
 | Project-wide proportionality and simplicity | openspec/specs/repository-governance/spec.md | runtime/documentation surfaces MAY implement or reference it; MUST NOT maintain a competing workflow-only definition |
+
+When a machine-decidable consequence depends on multiple authoritative observations, its existing executable owner SHALL consume the authoritative observation set through one executable decision surface and return one structured decision. All downstream consumers of that consequence SHALL consume the decision rather than independently reconstructing its predicates. This decision atomicity does not replace mutation atomicity: fresh application reauthorization, exact effects, and fresh postcondition observation remain required.
+
+Before retaining a new check, guard, qualification, lifecycle rule, gate, carrier rule, or state, repository design SHALL identify the affected consequence and its existing owner and classify the proposed delta as `REUSE`, `CONSOLIDATE`, `NO-DELTA`, or `ADD`. `ADD` is eligible only when current requirements or safety properties cannot be satisfied by reuse, consolidation, or no delta under the project-wide proportionality rule.
 
 The executable workflow model becomes authoritative for machine-decidable workflow semantics only after the approved implementation and delegating governance are merged to the current default branch. An active Change or feature branch containing a future model remains review input and MUST NOT govern its own invocation.
 
@@ -85,6 +90,23 @@ Deterministic application rejection SHALL include a machine-readable guard class
 - WHEN a legal connector/App carrier executes the plan
 - THEN the carrier changes no Issue/Action/Role/effect/successor/retry meaning
 - AND application accepts only the exact freshly observed postcondition
+
+#### Scenario: One structured decision is reused by all consequence consumers
+
+- GIVEN a machine-decidable consequence depends on an authoritative observation set and explicit predicates
+- AND that consequence has an existing canonical executable owner
+- WHEN the owner evaluates consequence eligibility
+- THEN it emits one structured decision
+- AND every downstream consumer consumes that decision without reconstructing another acceptance path
+- AND later mutation still requires fresh application authorization and postcondition observation
+
+#### Scenario: Architecture precedent is classified before adding control behavior
+
+- GIVEN a change proposes a check, guard, qualification, lifecycle rule, gate, carrier rule, or state
+- WHEN repository design evaluates the proposal
+- THEN it identifies the affected consequence and its existing owner
+- AND it classifies the delta as `REUSE`, `CONSOLIDATE`, `NO-DELTA`, or `ADD`
+- AND `ADD` is retained only when the current requirement or safety property cannot be satisfied by the other dispositions
 
 ### Requirement: Non-authoritative orientation is distinguishable from normative authority
 
