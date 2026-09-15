@@ -201,6 +201,11 @@ def _latest_matching_pass(
         record = _review_record(comment.get("body"))
         if record is None:
             continue
+        action, result, revision, default_revision = record
+        # Applicability precedes provenance: unrelated historical review evidence
+        # must not poison a current exact-head merge decision.
+        if action != required_review_action or revision != expected_head_sha:
+            continue
         if not is_github_actions_comment(comment):
             complete = False
             continue
@@ -209,7 +214,6 @@ def _latest_matching_pass(
         if created_at is None or not isinstance(comment_id, int):
             complete = False
             continue
-        action, result, revision, default_revision = record
         records.append((created_at, comment_id, action, result, revision, default_revision))
 
     matching = [record for record in records if record[4] == expected_head_sha]
