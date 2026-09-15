@@ -565,10 +565,16 @@ def _implementation_manifest_capability_allowed(
         return False
     if not any(file.path.startswith("openspec/") for file in request.files):
         return True
-    return _is_executor_task_bookkeeping(
-        source,
-        request.expected_change,
-        request.files,
+    openspec_files = tuple(file for file in request.files if file.path.startswith("openspec/"))
+    task_files = tuple(
+        file
+        for file in openspec_files
+        if file.path == f"openspec/changes/{request.expected_change}/tasks.md"
+    )
+    return (
+        len(openspec_files) == 1
+        and len(task_files) == 1
+        and _is_executor_task_bookkeeping(source, request.expected_change, task_files)
     ) or _is_executor_config_authoring(
         source,
         request.expected_change,
