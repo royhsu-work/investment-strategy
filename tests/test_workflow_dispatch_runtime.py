@@ -115,6 +115,8 @@ def test_production_preflight_enumerates_closed_routing_debt(
     def fake_page(url: str, token: str) -> tuple[dict[str, object], ...]:
         del token
         requested_urls.append(url)
+        if "/comments?" in url or "/timeline?" in url:
+            return ()
         return (
             {
                 "number": 138,
@@ -127,12 +129,113 @@ def test_production_preflight_enumerates_closed_routing_debt(
         )
 
     monkeypatch.setattr(runtime, "_github_get_list_page", fake_page)
+
+    class FakeResponse:
+        def __enter__(self) -> FakeResponse:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"default_branch":"main"}'
+
+    def fake_urlopen(_request: object, timeout: int) -> FakeResponse:
+        assert timeout == 30
+        return FakeResponse()
+
+    monkeypatch.setattr(runtime, "urlopen", fake_urlopen)
     preflight = runtime.acquire_current_github_preflight("owner/repo", "token")
 
     assert requested_urls == [
-        "https://api.github.com/repos/owner/repo/issues?state=all&per_page=100&page=1"
+        "https://api.github.com/repos/owner/repo/issues?state=all&per_page=100&page=1",
+        (
+            "https://api.github.com/repos/owner/repo/issues/138/comments?per_page=100"
+            "&sort=created&direction=desc"
+        ),
+        ("https://api.github.com/repos/owner/repo/issues/138/timeline?per_page=100&page=1"),
     ]
     assert classify_dispatch(preflight).reason == "closed-routing-debt"
+
+
+def test_production_preflight_qualifies_from_issue_timeline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision = "a" * 40
+    requested_urls: list[str] = []
+    comment_body = "\n".join(
+        (
+            "ACTION_RESULT",
+            "Workflow: #229",
+            "Change: qualify-active-formal-consequences",
+            "Action: finalize-change",
+            "Role: lead",
+            "Result: MORE_IMPLEMENTATION_REQUIRED",
+            "Revision: " + "b" * 40,
+            "Default-Branch-Revision: " + revision,
+            (
+                "Application-Correlation: "
+                "application:10:229:qualify-active-formal-consequences:lead:"
+                "finalize-change:more-implementation-required:" + revision
+            ),
+            "Repository-derived successor: Executor / implement-change",
+        )
+    )
+    issue = {
+        "number": 229,
+        "state": "open",
+        "body": "Change: qualify-active-formal-consequences\n",
+        "created_at": "2026-09-12T00:00:00Z",
+        "closed_at": None,
+        "labels": [{"name": "action:implement-change"}],
+    }
+    comment = {
+        "id": 10,
+        "body": comment_body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    timeline = (
+        {
+            "id": 10,
+            "event": "commented",
+            "created_at": "2026-09-12T00:00:01Z",
+        },
+        {
+            "id": 11,
+            "event": "labeled",
+            "created_at": "2026-09-12T00:00:02Z",
+            "label": {"name": "action:implement-change"},
+        },
+    )
+
+    def fake_page(url: str, token: str) -> tuple[dict[str, object], ...]:
+        del token
+        requested_urls.append(url)
+        if "/issues?" in url:
+            return (issue,)
+        if "/comments?" in url:
+            return (comment,)
+        if "/timeline?" in url:
+            return timeline
+        raise AssertionError(url)
+
+    monkeypatch.setattr(runtime, "_github_get_list_page", fake_page)
+    monkeypatch.setattr(runtime, "_current_default_branch_revision", lambda *_args: revision)
+
+    preflight = runtime.acquire_current_github_preflight("owner/repo", "token")
+
+    assert requested_urls == [
+        "https://api.github.com/repos/owner/repo/issues?state=all&per_page=100&page=1",
+        (
+            "https://api.github.com/repos/owner/repo/issues/229/comments?per_page=100"
+            "&sort=created&direction=desc"
+        ),
+        ("https://api.github.com/repos/owner/repo/issues/229/timeline?per_page=100&page=1"),
+    ]
+    assert classify_dispatch(preflight).disposition == "AUTHORIZE"
+    assert classify_dispatch(preflight).selected_issue_id == 229
+    assert classify_dispatch(preflight).selected_routing == ("executor", "implement-change")
 
 
 def test_shadow_is_a_pure_comparison_of_the_same_executable_model() -> None:

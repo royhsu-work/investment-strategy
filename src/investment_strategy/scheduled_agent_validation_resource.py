@@ -639,6 +639,31 @@ def task_checkpoint_is_exact(
     )
 
 
+def completed_task_bookkeeping_is_current(
+    repository: str,
+    token: str,
+    *,
+    change: str,
+    revision: str,
+    files: tuple[WorkProductFile, ...],
+) -> bool:
+    """Recognize only an unchanged, fully completed historical task checkpoint."""
+    if len(files) != 1:
+        return False
+    file = files[0]
+    if (
+        file.path != f"openspec/changes/{change}/tasks.md"
+        or file.expected_sha != file.blob_sha
+        or _content_sha_at(repository, token, path=file.path, revision=revision) != file.blob_sha
+    ):
+        return False
+    content = _content_text_at(repository, token, path=file.path, revision=revision)
+    return (
+        _first_incomplete_slice_task_ids(content) == ()
+        and _previous_completed_slice_task_ids(content) is not None
+    )
+
+
 def resolve_validation_resource_target(
     plan: ValidationResourcePlan,
     *,
@@ -666,7 +691,10 @@ def resolve_validation_resource_target(
             expected_change=plan.expected_change,
             pr_number=plan.pr_number,
         )
-        if not decision.qualified or decision.head_sha is None:
+        if (
+            decision.disposition not in {"QUALIFIED", "HISTORICAL_MERGED"}
+            or decision.head_sha is None
+        ):
             raise RuntimeError(
                 "validation resource implementation carrier is not qualified for consumption"
             )

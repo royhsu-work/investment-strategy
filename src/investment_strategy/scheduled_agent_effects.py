@@ -49,6 +49,10 @@ from investment_strategy.scheduled_agent_effect_contract import (
     GITHUB_MUTATION_KIND,
     allowed_github_mutation_operations,
 )
+from investment_strategy.scheduled_agent_formal_qualification import (
+    build_qualification_input,
+    qualify_current_formal_consequence,
+)
 from investment_strategy.scheduled_agent_runtime import (
     GitHubIssueObservation,
     WorkerRequest,
@@ -58,6 +62,7 @@ from investment_strategy.scheduled_agent_runtime import (
 )
 from investment_strategy.scheduled_agent_validation_resource import (
     ValidationResourceTarget,
+    completed_task_bookkeeping_is_current,
     task_checkpoint_is_exact,
 )
 from investment_strategy.scheduled_agent_worker import parse_worker_result
@@ -66,6 +71,31 @@ from investment_strategy.workflow_dispatch import (
     ObservationProvenance,
     classify_dispatch,
 )
+
+_FORMAL_RESULT_MARKERS = frozenset({"ACTION_RESULT", "REVIEW_RESULT", "MERGE_RESULT"})
+_FORMAL_CHECKPOINT_MARKER = "SLICE_CHECKPOINT"
+
+
+def formal_application_correlation(
+    source: WorkerRequest,
+    *,
+    change: str,
+    result_kind: str,
+    current_revision: str,
+    request_comment_id: int,
+) -> str:
+    """Derive the durable identity from the exact bridge-verified request."""
+
+    if (
+        isinstance(request_comment_id, bool)
+        or not isinstance(request_comment_id, int)
+        or request_comment_id <= 0
+    ):
+        raise ValueError("request_comment_id must be a positive integer")
+    return (
+        f"application:{request_comment_id}:{source.issue_number}:{change}:{source.role}:"
+        f"{source.action}:{result_kind}:{current_revision}"
+    )
 
 
 @dataclass(frozen=True)
@@ -151,99 +181,6 @@ def _typed_terminal_effect_matches(
         "issue_number": decision.source.issue_number,
         "expected_change": decision.source.change,
     }
-
-
-_FORMAL_RESULT_MARKERS = frozenset({"ACTION_RESULT", "REVIEW_RESULT", "MERGE_RESULT"})
-_FORMAL_CHECKPOINT_MARKER = "SLICE_CHECKPOINT"
-
-
-def formal_application_correlation(
-    source: WorkerRequest,
-    *,
-    change: str,
-    result_kind: str,
-    current_revision: str,
-    request_comment_id: int,
-) -> str:
-    """Derive the durable identity from the exact bridge-verified request."""
-
-    if (
-        isinstance(request_comment_id, bool)
-        or not isinstance(request_comment_id, int)
-        or request_comment_id <= 0
-    ):
-        raise ValueError("request_comment_id must be a positive integer")
-    return (
-        f"application:{request_comment_id}:{source.issue_number}:{change}:{source.role}:"
-        f"{source.action}:{result_kind}:{current_revision}"
-    )
-
-
-def _formal_field(body: str, key: str) -> str | None:
-    matches = re.findall(rf"(?m)^{re.escape(key)}:\s*(.*)$", body)
-    if len(matches) != 1:
-        return None
-    value = matches[0].strip()
-    return value.strip("`") if value else None
-
-
-def _formal_comment_is_bound(
-    body: str,
-    *,
-    source: WorkerRequest,
-    change: str,
-    expected_result_kind: str | None,
-    current_revision: str | None,
-    expected_application_correlation: str | None = None,
-) -> bool:
-    lines = body.splitlines()
-    if not lines:
-        return False
-    marker = lines[0].strip()
-    if marker.startswith("## "):
-        marker = marker[3:].strip()
-    if marker not in _FORMAL_RESULT_MARKERS | {_FORMAL_CHECKPOINT_MARKER}:
-        return False
-    if (
-        _formal_field(body, "Workflow") != f"#{source.issue_number}"
-        or _formal_field(body, "Change") != change
-        or _formal_field(body, "Role") != source.role
-    ):
-        return False
-    application_correlation = _formal_field(body, "Application-Correlation")
-    if (
-        expected_application_correlation is None
-        or application_correlation != expected_application_correlation
-    ):
-        return False
-    action = _formal_field(body, "Action")
-    if action is None or (action != source.action and not action.endswith(f"/ {source.action}")):
-        return False
-    default_revision = _formal_field(body, "Default-Branch-Revision")
-    if (
-        default_revision is not None
-        and current_revision is not None
-        and default_revision != current_revision
-    ):
-        return False
-    if marker == _FORMAL_CHECKPOINT_MARKER:
-        return source.action == "implement-change" and _valid_sha(_formal_field(body, "Revision"))
-    expected_marker = (
-        "REVIEW_RESULT"
-        if source.action.startswith("review-")
-        else "MERGE_RESULT"
-        if source.action.startswith("merge-")
-        else "ACTION_RESULT"
-    )
-    expected_result = (
-        None if expected_result_kind is None else expected_result_kind.upper().replace("-", "_")
-    )
-    return (
-        marker == expected_marker
-        and expected_result is not None
-        and _formal_field(body, "Result") == expected_result
-        and _formal_field(body, "Revision") is not None
-    )
 
 
 _IMPLEMENTATION_COMPLETION_RESULTS = frozenset(
@@ -408,18 +345,12 @@ def _implementation_checkpoint_effects_complete(
                 return False
             formal_result_indexes.append(index)
 
-    if len(materializations) != 1 or len(checkpoint_indexes) != 1:
-        return False
-    # Keep the direct effect API's historical checkpoint-only form valid while
-    # accepting the production bridge's paired checkpoint/formal-result batch.
-    # A two-comment batch must contain exactly one structurally bounded result.
-    if len(issue_comment_indexes) == 1:
-        if formal_result_indexes:
-            return False
-    elif len(issue_comment_indexes) == 2:
-        if len(formal_result_indexes) != 1:
-            return False
-    else:
+    if (
+        len(materializations) != 1
+        or len(issue_comment_indexes) != 2
+        or len(checkpoint_indexes) != 1
+        or len(formal_result_indexes) != 1
+    ):
         return False
     task_index, request = materializations[0]
     task_files = tuple(
@@ -441,7 +372,7 @@ def _implementation_checkpoint_effects_complete(
         or task_files[0].expected_sha is None
         or completed_task_ids is None
         or task_index >= checkpoint_indexes[0]
-        or (formal_result_indexes and checkpoint_indexes[0] >= formal_result_indexes[0])
+        or checkpoint_indexes[0] >= formal_result_indexes[0]
         or validate_implementation_checkpoint is None
     ):
         return False
@@ -1031,9 +962,21 @@ class GitHubEffectAdapter:
             read=_github_json,
         )
         if (
-            decision.disposition not in {"QUALIFIED", "RECONCILIATION_REQUIRED"}
+            decision.disposition
+            not in {"QUALIFIED", "RECONCILIATION_REQUIRED", "HISTORICAL_MERGED"}
             or decision.branch != request.branch
             or decision.head_sha is None
+        ):
+            return False
+        if decision.disposition == "HISTORICAL_MERGED" and (
+            request.base_sha != decision.head_sha
+            or not completed_task_bookkeeping_is_current(
+                self.repository,
+                self.token,
+                change=request.change,
+                revision=decision.head_sha,
+                files=request.files,
+            )
         ):
             return False
         task_files = tuple(
@@ -1129,40 +1072,6 @@ class GitHubEffectAdapter:
             request_comment_id=self.request_comment_id,
         )
 
-    def _formal_evidence_exists(self) -> bool:
-        expected = self._formal_correlation()
-        if expected is None:
-            return False
-        page = 1
-        while True:
-            suffix = "" if page == 1 else f"&page={page}"
-            payload = _github_json(
-                self.repository,
-                self.token,
-                f"issues/{self.source.issue_number}/comments?per_page=100&sort=created"
-                f"&direction=desc{suffix}",
-            )
-            if not isinstance(payload, list):
-                return False
-            for item in payload:
-                if not isinstance(item, Mapping) or not is_github_actions_comment(item):
-                    continue
-                body = item.get("body")
-                if not isinstance(body, str):
-                    continue
-                if _formal_comment_is_bound(
-                    body,
-                    source=self.source,
-                    change=self.authorized_change,
-                    expected_result_kind=self.expected_result_kind,
-                    current_revision=self.current_revision,
-                    expected_application_correlation=expected,
-                ):
-                    return True
-            if len(payload) < 100:
-                return False
-            page += 1
-
     def _pull_request_matches_source(
         self,
         payload: Mapping[str, object],
@@ -1192,6 +1101,12 @@ class GitHubEffectAdapter:
             return bool(
                 (
                     decision.qualified
+                    or (
+                        self.source.action == "merge-implementation-pr"
+                        and decision.disposition == "HISTORICAL_MERGED"
+                        and payload.get("state") == "closed"
+                        and payload.get("merged") is True
+                    )
                     or (allow_reconciliation and decision.disposition == "RECONCILIATION_REQUIRED")
                 )
                 and decision.branch == head.get("ref")
@@ -1799,29 +1714,91 @@ class GitHubEffectAdapter:
             return True
         return False
 
+    def _formal_comments(self) -> tuple[Mapping[str, object], ...]:
+        comments: list[Mapping[str, object]] = []
+        page = 1
+        while True:
+            suffix = "" if page == 1 else f"&page={page}"
+            payload = _github_json(
+                self.repository,
+                self.token,
+                f"issues/{self.source.issue_number}/comments?per_page=100&sort=created"
+                f"&direction=desc{suffix}",
+            )
+            if not isinstance(payload, list):
+                return ()
+            for item in payload:
+                if isinstance(item, Mapping):
+                    comments.append(cast(Mapping[str, object], item))
+            if len(payload) < 100:
+                return tuple(comments)
+            page += 1
+
+    def _formal_lifecycle_events(self) -> tuple[Mapping[str, object], ...]:
+        """Read the durable Issue mutation history for ordering and ABA proof."""
+
+        events: list[Mapping[str, object]] = []
+        page = 1
+        while True:
+            payload = _github_json(
+                self.repository,
+                self.token,
+                f"issues/{self.source.issue_number}/timeline?per_page=100&page={page}",
+            )
+            if not isinstance(payload, list):
+                return ()
+            for item in payload:
+                if isinstance(item, Mapping):
+                    events.append(cast(Mapping[str, object], item))
+            if len(payload) < 100:
+                return tuple(events)
+            page += 1
+
     def _formal_transition_is_qualified(self, effect: StagedEffect) -> bool:
         if self.authorized_change == "unset":
             return True
-        if effect.kind == "routing-transition":
-            payload = _effect_payload(effect)
-            current = self._current_issue()
-            observation = None if current is None else normalize_github_issue(current)
-            target_action = None if payload is None else payload.get("action")
+        payload = _effect_payload(effect)
+        current = self._current_issue()
+        observation = None if current is None else normalize_github_issue(current)
+        if (
+            payload is None
+            or observation is None
+            or not observation.authoritative
+            or observation.issue_number != self.source.issue_number
+            or observation.state != "open"
+            or observation.change != self.authorized_change
+            or observation.routing != (self.source.role, self.source.action)
+            or self.current_revision is None
+        ):
+            return False
+        expected_terminal = effect.kind == "terminal-transition"
+        expected_routing: tuple[str, str] | None = None
+        if not expected_terminal:
+            target_action = payload.get("action")
+            if not isinstance(target_action, str):
+                return False
             try:
-                target_role = (
-                    None
-                    if not isinstance(target_action, str)
-                    else role_for(ModelAction(target_action)).value
-                )
+                target = ModelAction(target_action)
             except ValueError:
-                target_role = None
-            if (
-                observation is not None
-                and target_role is not None
-                and observation.routing == (target_role, target_action)
-            ):
-                return True
-        return self._formal_evidence_exists()
+                return False
+            expected_routing = (role_for(target).value, target.value)
+        formal_comments = self._formal_comments()
+        qualification_input = build_qualification_input(
+            issue_number=self.source.issue_number,
+            change=self.authorized_change,
+            state=observation.state,
+            current_routing=observation.routing,
+            comments=formal_comments,
+            current_revision=self.current_revision,
+            mode="pending",
+            expected_routing=expected_routing,
+            expected_terminal=expected_terminal,
+            source_routing=(self.source.role, self.source.action),
+            expected_result_kind=self.expected_result_kind,
+            expected_application_correlation=self._formal_correlation(),
+            lifecycle_events=self._formal_lifecycle_events() if formal_comments else (),
+        )
+        return qualify_current_formal_consequence(qualification_input).qualified
 
     def guard(self, effect: StagedEffect) -> bool:
         self._last_rejection = None

@@ -195,7 +195,9 @@ def _accept_checkpoint(
     return True
 
 
-def _implementation_checkpoint_effects() -> list[dict[str, str]]:
+def _implementation_checkpoint_effects(
+    result_kind: str = "more-implementation-required",
+) -> list[dict[str, str]]:
     task_payload = {
         "issue_number": 138,
         "operation": "application-materialize",
@@ -228,6 +230,26 @@ def _implementation_checkpoint_effects() -> list[dict[str, str]]:
             "Remaining-Approved-Boundary: continue with Slice 3"
         ),
     }
+    successor = (
+        "Executor / implement-change"
+        if result_kind == "more-implementation-required"
+        else "Reviewer / review-implementation"
+    )
+    action_result_payload = {
+        "issue_number": 138,
+        "body": (
+            "ACTION_RESULT\n"
+            "Workflow: #138\n"
+            f"Change: {_CHANGE}\n"
+            "Action: implement-change\n"
+            "Role: executor\n"
+            f"Result: {result_kind.upper().replace('-', '_')}\n"
+            f"Revision: {_REVISION}\n"
+            f"Default-Branch-Revision: {_REVISION}\n"
+            "Application-Correlation: pending-application-binding\n"
+            f"Repository-derived successor: {successor}"
+        ),
+    }
     return [
         {
             "kind": "github-mutation",
@@ -236,6 +258,10 @@ def _implementation_checkpoint_effects() -> list[dict[str, str]]:
         {
             "kind": "issue-comment",
             "payload_json": json.dumps(checkpoint_payload),
+        },
+        {
+            "kind": "issue-comment",
+            "payload_json": json.dumps(action_result_payload),
         },
     ]
 
@@ -288,7 +314,7 @@ def test_implement_completion_derives_successor_after_task_then_checkpoint(
     batch = parse_effect_batch(
         _raw(
             result_kind=result_kind,
-            requested_effects=_implementation_checkpoint_effects(),
+            requested_effects=_implementation_checkpoint_effects(result_kind=result_kind),
         ),
         source,
     )
@@ -306,6 +332,7 @@ def test_implement_completion_derives_successor_after_task_then_checkpoint(
     assert result.applied
     assert [effect.kind for effect in applied] == [
         "github-mutation",
+        "issue-comment",
         "issue-comment",
         "routing-transition",
     ]
@@ -354,6 +381,7 @@ def test_implement_completion_accepts_code_and_task_checkpoint_in_one_manifest()
     assert result.applied
     assert [effect.kind for effect in applied] == [
         "github-mutation",
+        "issue-comment",
         "issue-comment",
         "routing-transition",
     ]
@@ -585,6 +613,7 @@ def test_carrier_recovery_durably_checkpoints_exact_slice_on_later_wake() -> Non
     assert [effect.kind for effect in second_applied] == [
         "github-mutation",
         "issue-comment",
+        "issue-comment",
         "routing-transition",
     ]
     assert validation_calls == [(_REVISION, ("2.1", "2.2"))]
@@ -616,7 +645,7 @@ def test_replay_accepts_already_durable_checkpoint_effects() -> None:
 
     assert first.applied
     assert second.applied
-    assert len(durable) == 3
+    assert len(durable) == 4
 
 
 def test_terminal_result_derives_closed_terminal_effect() -> None:
@@ -828,7 +857,9 @@ def test_repository_actions_formal_transition_is_qualified_after_comment_postcon
         "Role: executor\n"
         "Result: SPEC_BLOCKER\n"
         f"Revision: {_REVISION}\n"
+        f"Default-Branch-Revision: {_REVISION}\n"
         f"Application-Correlation: {correlation}\n"
+        "Repository-derived successor: Lead / resolve-question\n"
         "Evidence: application postcondition\n"
     )
     actions_comment = {
@@ -862,6 +893,8 @@ def test_repository_actions_formal_transition_is_qualified_after_comment_postcon
             return json.loads(json.dumps(issue))
         if path == "issues/138/comments?per_page=100&sort=created&direction=desc":
             return [actions_comment]
+        if path == "issues/138/timeline?per_page=100&page=1":
+            return [{"id": 1003, "event": "commented", "created_at": "2026-09-08T01:00:00Z"}]
         if path == "issues/138/comments" and method == "POST":
             return actions_comment
         if path == "issues/comments/1003":
@@ -931,7 +964,9 @@ def test_fresh_adapter_reconstructs_durable_formal_binding_without_local_memory(
         "Role: executor\n"
         "Result: SPEC_BLOCKER\n"
         f"Revision: {_REVISION}\n"
+        f"Default-Branch-Revision: {_REVISION}\n"
         f"Application-Correlation: {correlation}\n"
+        "Repository-derived successor: Lead / resolve-question\n"
         "Evidence: exact durable postcondition\n"
     )
     durable_comments: list[dict[str, object]] = []
@@ -960,6 +995,8 @@ def test_fresh_adapter_reconstructs_durable_formal_binding_without_local_memory(
             return json.loads(json.dumps(issue))
         if path == "issues/138/comments?per_page=100&sort=created&direction=desc":
             return durable_comments
+        if path == "issues/138/timeline?per_page=100&page=1":
+            return [{"id": 1003, "event": "commented", "created_at": "2026-09-08T01:00:00Z"}]
         if path == "issues/138/comments" and method == "POST":
             comment = {
                 "id": 1003,
@@ -1099,6 +1136,8 @@ def test_application_bindings_are_collision_resistant_and_do_not_alias_evidence(
             return issue
         if path == "issues/138/comments?per_page=100&sort=created&direction=desc":
             return [actions_comment]
+        if path == "issues/138/timeline?per_page=100&page=1":
+            return [{"id": 1005, "event": "commented", "created_at": "2026-09-08T01:00:00Z"}]
         raise AssertionError(f"unexpected GitHub call: {path}")
 
     monkeypatch.setattr(effects, "_github_json", fake_github_json)
@@ -1376,7 +1415,9 @@ def test_merged_carrier_merge_is_idempotent_without_put(
         "Role: executor\n"
         "Result: MERGED\n"
         f"Revision: {expected_head}\n"
+        f"Default-Branch-Revision: {_REVISION}\n"
         f"Application-Correlation: {correlation}\n"
+        "Repository-derived successor: Lead / finalize-change\n"
         "Evidence: carrier recovery formal transition qualification"
     )
     actions_comment = {
@@ -1398,6 +1439,8 @@ def test_merged_carrier_merge_is_idempotent_without_put(
         calls.append((path, method))
         if path == "issues/159/comments?per_page=100&sort=created&direction=desc":
             return [actions_comment]
+        if path == "issues/159/timeline?per_page=100&page=1":
+            return [{"id": 992, "event": "commented", "created_at": "2026-08-27T05:30:00Z"}]
         if path == "issues/159/comments" and method == "POST":
             return actions_comment
         if path == "issues/comments/992":
@@ -2425,7 +2468,9 @@ def test_non_merge_carrier_recovery_observes_current_postcondition_without_repla
         "Role: executor\n"
         "Result: SPEC_BLOCKER\n"
         f"Revision: {_REVISION}\n"
+        f"Default-Branch-Revision: {_REVISION}\n"
         f"Application-Correlation: {correlation}\n"
+        "Repository-derived successor: Lead / resolve-question\n"
         "Evidence: carrier recovery formal transition qualification"
     )
     actions_comment = {
@@ -2447,6 +2492,8 @@ def test_non_merge_carrier_recovery_observes_current_postcondition_without_repla
         calls.append((path, method))
         if path == "issues/138/comments?per_page=100&sort=created&direction=desc":
             return [actions_comment]
+        if path == "issues/138/timeline?per_page=100&page=1":
+            return [{"id": 992, "event": "commented", "created_at": "2026-09-08T01:00:00Z"}]
         if path == "issues/138/comments" and method == "POST":
             return actions_comment
         if path == "issues/comments/992":

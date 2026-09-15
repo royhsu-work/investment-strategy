@@ -49,6 +49,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _valid_repo_path,
     _valid_sha,
     apply_work_product,
+    completed_task_bookkeeping_is_current,
     resolve_validation_resource_target,
     work_product_path_allowed,
 )
@@ -565,16 +566,10 @@ def _implementation_manifest_capability_allowed(
         return False
     if not any(file.path.startswith("openspec/") for file in request.files):
         return True
-    openspec_files = tuple(file for file in request.files if file.path.startswith("openspec/"))
-    task_files = tuple(
-        file
-        for file in openspec_files
-        if file.path == f"openspec/changes/{request.expected_change}/tasks.md"
-    )
-    return (
-        len(openspec_files) == 1
-        and len(task_files) == 1
-        and _is_executor_task_bookkeeping(source, request.expected_change, task_files)
+    return _is_executor_task_bookkeeping(
+        source,
+        request.expected_change,
+        request.files,
     ) or _is_executor_config_authoring(
         source,
         request.expected_change,
@@ -601,12 +596,25 @@ def _qualified_implementation_decision(
         current_revision=current_revision,
     )
     if (
-        decision.disposition not in {"QUALIFIED", "RECONCILIATION_REQUIRED"}
+        decision.disposition not in {"QUALIFIED", "RECONCILIATION_REQUIRED", "HISTORICAL_MERGED"}
         or decision.branch != request.branch
         or decision.head_sha is None
         or decision.pr_number != request.pr_number
     ):
         raise RuntimeError(f"implementation carrier is not eligible: {decision.reason}")
+    if decision.disposition == "HISTORICAL_MERGED" and (
+        request.base_sha != decision.head_sha
+        or not completed_task_bookkeeping_is_current(
+            repository,
+            token,
+            change=request.change,
+            revision=decision.head_sha,
+            files=request.files,
+        )
+    ):
+        raise RuntimeError(
+            "historical implementation only permits unchanged complete task observation"
+        )
     return decision
 
 
@@ -699,22 +707,7 @@ def _verify_implementation_manifest_freshness(
     carrier_head: str,
 ) -> None:
     if request.base_sha not in {current_revision, carrier_head}:
-        comparison = _as_mapping(
-            cast(
-                object,
-                _github_json(
-                    repository,
-                    token,
-                    f"compare/{request.base_sha}...{carrier_head}",
-                ),
-            )
-        )
-        if (
-            comparison is None
-            or comparison.get("status") not in {"ahead", "identical"}
-            or comparison.get("behind_by") != 0
-        ):
-            raise RuntimeError("implementation manifest base is not a current write base")
+        raise RuntimeError("implementation manifest base is not a current write base")
     for file in request.files:
         if (
             _content_sha_at(
@@ -948,7 +941,7 @@ def _materialize_implementation_target(
         token=token,
         revision=current_head,
     )
-    if decision.disposition == "QUALIFIED" and manifest_current:
+    if decision.disposition in {"QUALIFIED", "HISTORICAL_MERGED"} and manifest_current:
         return _target(
             request,
             repository=repository,
@@ -1106,7 +1099,7 @@ def _observe_implementation_target(
         token=token,
         current_revision=current_revision,
     )
-    if decision.disposition != "QUALIFIED" or decision.head_sha is None:
+    if decision.disposition not in {"QUALIFIED", "HISTORICAL_MERGED"} or decision.head_sha is None:
         raise RuntimeError("implementation carrier is not qualified for consumption")
     _verify_implementation_manifest_freshness(
         request,
