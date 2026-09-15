@@ -588,7 +588,7 @@ def _previous_completed_slice_task_ids(content: str) -> tuple[str, ...] | None:
             if index == 0 or any(not checked for _task_id, checked in slices[index - 1]):
                 return None
             return tuple(task_id for task_id, _checked in slices[index - 1])
-    return None
+    return tuple(task_id for task_id, _checked in slices[-1])
 
 
 def _task_marker_update_is_monotonic(current: str, candidate: str) -> bool:
