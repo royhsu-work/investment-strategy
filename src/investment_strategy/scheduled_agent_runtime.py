@@ -449,6 +449,15 @@ def _qualify_current_observations(
         if observation.change == "unset":
             qualified.append(observation)
             continue
+        # Closed Issues without a current routing label are inert historical
+        # workflow records.  Their pre-activation terminal evidence may use
+        # legacy result envelopes, but they cannot be selected or supply a
+        # current consequence.  Keep the strict qualifier for open routes and
+        # closed routing debt so active and premature-close cases still fail
+        # closed.
+        if observation.state == "closed" and observation.routing is None:
+            qualified.append(observation)
+            continue
         comments = _github_issue_comment_pages(
             repository,
             token,
