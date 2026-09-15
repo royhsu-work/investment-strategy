@@ -7,7 +7,7 @@ import os
 import re
 import sys
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import cast
@@ -22,6 +22,10 @@ from investment_strategy.native_closing_preflight import (
     MergeStrategy,
     NativeClosingDisposition,
 )
+from investment_strategy.scheduled_agent_action_model import (
+    ApplicationRejection,
+    ApplicationRejectionKind,
+)
 from investment_strategy.scheduled_agent_effect_contract import GITHUB_MUTATION_KIND
 from investment_strategy.scheduled_agent_effects import (
     ApplyResult,
@@ -31,10 +35,15 @@ from investment_strategy.scheduled_agent_effects import (
     apply_effect_batch,
     parse_effect_batch,
 )
+from investment_strategy.scheduled_agent_formal_result import (
+    _field_values,
+    _normalize_action,
+    parse_formal_result,
+)
 from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
+    _change_from_body,
     acquire_current_github_preflight,
-    is_github_actions_comment,
 )
 
 _MERGE_REVIEW_ACTION = {
@@ -73,20 +82,24 @@ class MergeAcceptanceSnapshot:
     historical_merged_carrier_allowed: bool = False
 
 
+def _failed_merge_predicates(snapshot: MergeAcceptanceSnapshot) -> tuple[str, ...]:
+    predicates = {
+        "complete": snapshot.complete,
+        "current_carrier": snapshot.pr_open or snapshot.historical_merged_carrier_allowed,
+        "exact_head": snapshot.current_head_sha == snapshot.expected_head_sha,
+        "exact_review": snapshot.reviewer_pass_head_sha == snapshot.expected_head_sha,
+        "required_checks": snapshot.required_checks_pass,
+        "non_closing_linkage": snapshot.non_closing_linkage,
+        "native_closing_preflight": snapshot.native_closing_preflight_allowed,
+        "no_contradiction": not snapshot.contradictory_evidence,
+        "human_freshness": snapshot.human_input_fresh,
+    }
+    return tuple(name for name, allowed in predicates.items() if not allowed)
+
+
 def merge_acceptance_allows(snapshot: MergeAcceptanceSnapshot) -> bool:
     """Return whether all fresh merge-acceptance predicates hold together."""
-
-    return (
-        snapshot.complete
-        and (snapshot.pr_open or snapshot.historical_merged_carrier_allowed)
-        and snapshot.current_head_sha == snapshot.expected_head_sha
-        and snapshot.reviewer_pass_head_sha == snapshot.expected_head_sha
-        and snapshot.required_checks_pass
-        and snapshot.non_closing_linkage
-        and snapshot.native_closing_preflight_allowed
-        and not snapshot.contradictory_evidence
-        and snapshot.human_input_fresh
-    )
+    return not _failed_merge_predicates(snapshot)
 
 
 def _github_json(repository: str, token: str, api_path: str) -> object:
@@ -162,55 +175,54 @@ def _merge_payload(effect: StagedEffect) -> Mapping[str, object] | None:
     return cast(Mapping[str, object], payload)
 
 
-def _review_record(body: object) -> tuple[str, str, str, str | None] | None:
-    if not isinstance(body, str):
-        return None
-    action_match = re.search(
-        r"Action:\s*\x60?(?:Reviewer / )?(review-(?:implementation|archive))\x60?",
-        body,
-    )
-    result_match = re.search(
-        r"Result:\s*\x60?(PASS|IMPLEMENTATION_FINDINGS|FINDINGS)\x60?",
-        body,
-    )
-    revision_match = re.search(r"Revision:\s*\x60?([0-9a-f]{40})\x60?", body)
-    default_revision_match = re.search(
-        r"Default-Branch-Revision:\s*\x60?([0-9a-f]{40})\x60?",
-        body,
-    )
-    if action_match is None or result_match is None or revision_match is None:
-        return None
-    default_revision = None if default_revision_match is None else default_revision_match.group(1)
-    return (
-        action_match.group(1),
-        result_match.group(1),
-        revision_match.group(1),
-        default_revision,
-    )
-
-
 def _latest_matching_pass(
     comments: tuple[Mapping[str, object], ...],
     expected_head_sha: str,
     *,
     required_review_action: str,
+    issue_number: int,
+    change: str,
 ) -> tuple[str | None, str | None, datetime | None, bool, bool, str | None]:
     records: list[tuple[datetime, int, str, str, str, str | None]] = []
     complete = True
     for comment in comments:
-        record = _review_record(comment.get("body"))
-        if record is None:
-            continue
-        if not is_github_actions_comment(comment):
+        body = comment.get("body")
+        if not isinstance(body, str):
             complete = False
             continue
+        # Applicability precedes provenance: unrelated historical evidence is
+        # not an acquisition failure, but an invalid applicable candidate is.
+        actions = {_normalize_action(value)[1] for value in _field_values(body, "Action")}
+        revisions = _field_values(body, "Revision")
+        if required_review_action not in actions or expected_head_sha not in revisions:
+            continue
+        event = parse_formal_result(comment, current_revision=None)
         created_at = _timestamp(comment.get("created_at"))
-        comment_id = comment.get("id")
-        if created_at is None or not isinstance(comment_id, int):
+        updated_at = _timestamp(comment.get("updated_at", comment.get("created_at")))
+        if (
+            event is None
+            or not event.valid
+            or event.issue_number != issue_number
+            or event.change != change
+            or created_at is None
+            or updated_at != created_at
+            or event.comment_id is None
+            or event.result_kind is None
+            or event.action is None
+            or event.revision is None
+        ):
             complete = False
             continue
-        action, result, revision, default_revision = record
-        records.append((created_at, comment_id, action, result, revision, default_revision))
+        records.append(
+            (
+                created_at,
+                event.comment_id,
+                event.action,
+                event.result_kind.upper().replace("-", "_"),
+                event.revision,
+                event.default_branch_revision,
+            )
+        )
 
     matching = [record for record in records if record[4] == expected_head_sha]
     passes = [
@@ -350,29 +362,6 @@ def _default_branch_contains_commit(
     return comparison.get("status") in {"ahead", "identical"} and comparison.get("behind_by") == 0
 
 
-def _merge_commit_has_parent(
-    repository: str,
-    token: str,
-    *,
-    merge_commit_sha: str,
-    parent_sha: str,
-) -> bool:
-    """Bind a post-merge reconciliation to the pre-merge authorized base."""
-
-    try:
-        commit = _github_json(repository, token, f"commits/{merge_commit_sha}")
-    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
-        return False
-    if not isinstance(commit, Mapping):
-        return False
-    parents = commit.get("parents")
-    if not isinstance(parents, list):
-        return False
-    return any(
-        isinstance(parent, Mapping) and parent.get("sha") == parent_sha for parent in parents
-    )
-
-
 def _historical_merged_carrier_allowed(
     payload: Mapping[str, object],
     *,
@@ -418,17 +407,8 @@ def _historical_merged_carrier_allowed(
         default_branch=default_branch,
     ):
         return False
-    if reviewer_pass_default_branch_revision is None:
-        return True
-    if reviewer_pass_default_branch_revision == current_revision and _valid_sha(
+    return reviewer_pass_default_branch_revision == current_revision and _valid_sha(
         reviewer_pass_default_branch_revision
-    ):
-        return True
-    return _valid_sha(reviewer_pass_default_branch_revision) and _merge_commit_has_parent(
-        repository,
-        token,
-        merge_commit_sha=cast(str, merge_commit_sha),
-        parent_sha=reviewer_pass_default_branch_revision,
     )
 
 
@@ -456,16 +436,19 @@ def acquire_merge_acceptance_snapshot(
 
     try:
         pr = _github_json(repository, token, f"pulls/{pr_number}")
+        issue = _github_json(repository, token, f"issues/{issue_number}")
         comments = _paged_github_list(repository, token, f"issues/{issue_number}/comments")
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
         return MergeAcceptanceSnapshot(
             False, None, expected_head_sha, None, False, False, False, True, False, False
         )
-    if not isinstance(pr, Mapping):
+    if not isinstance(pr, Mapping) or not isinstance(issue, Mapping):
         return MergeAcceptanceSnapshot(
             False, None, expected_head_sha, None, False, False, False, True, False, False
         )
 
+    change, change_valid = _change_from_body(issue.get("body"))
+    identity_complete = change_valid and change != "unset" and issue.get("number") == issue_number
     (
         reviewer_pass_head,
         review_action,
@@ -477,6 +460,8 @@ def acquire_merge_acceptance_snapshot(
         comments,
         expected_head_sha,
         required_review_action=required_review_action,
+        issue_number=issue_number,
+        change=change,
     )
     try:
         checks_pass, checks_complete = _required_checks_pass(repository, token, expected_head_sha)
@@ -504,7 +489,13 @@ def acquire_merge_acceptance_snapshot(
             expected_branch=expected_branch,
             reviewer_pass_default_branch_revision=reviewer_pass_default_branch_revision,
         )
-    complete = review_complete and checks_complete and human_complete and native_complete
+    complete = (
+        identity_complete
+        and review_complete
+        and checks_complete
+        and human_complete
+        and native_complete
+    )
 
     return MergeAcceptanceSnapshot(
         pr_open=pr.get("state") == "open",
@@ -529,6 +520,7 @@ def _merge_effect_allows(
     token: str,
     current_revision: str | None = None,
     expected_change: str | None = None,
+    on_rejection: Callable[[ApplicationRejection], None] | None = None,
 ) -> bool:
     """Freshly re-evaluate one merge effect at the mutation-adjacent boundary."""
 
@@ -570,7 +562,27 @@ def _merge_effect_allows(
         current_revision=current_revision,
         expected_branch=expected_branch,
     )
-    return merge_acceptance_allows(snapshot)
+    failed = _failed_merge_predicates(snapshot)
+    if failed and on_rejection is not None:
+        on_rejection(
+            ApplicationRejection(
+                ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+                json.dumps(
+                    {
+                        "issue": source.issue_number,
+                        "change": expected_change,
+                        "pr": number,
+                        "head": expected_head_sha,
+                        "failed_predicates": [],
+                    },
+                    sort_keys=True,
+                ),
+                json.dumps(
+                    {"failed_predicates": failed, "snapshot": asdict(snapshot)}, sort_keys=True
+                ),
+            )
+        )
+    return not failed
 
 
 def run_effect_application(
@@ -649,6 +661,7 @@ def run_guarded_effect_application(
 
     batch = parse_effect_batch(raw_worker_result, source)
     expected_change = None if batch.typed_result is None else batch.typed_result.change
+    rejections: list[ApplicationRejection] = []
     for effect in batch.effects:
         if _merge_payload(effect) is None:
             continue
@@ -659,10 +672,15 @@ def run_guarded_effect_application(
             token=token,
             current_revision=current_revision,
             expected_change=expected_change,
+            on_rejection=rejections.append,
         ):
-            return batch, ApplyResult(False, "fresh merge acceptance rejected")
+            return batch, ApplyResult(
+                False,
+                "fresh merge acceptance rejected",
+                rejection=rejections[-1] if rejections else None,
+            )
 
-    return run_effect_application(
+    applied_batch, result = run_effect_application(
         raw_worker_result,
         source=source,
         repository=repository,
@@ -679,8 +697,12 @@ def run_guarded_effect_application(
             token=token,
             current_revision=current_revision,
             expected_change=expected_change,
+            on_rejection=rejections.append,
         ),
     )
+    if not result.applied and rejections:
+        result = replace(result, rejection=rejections[-1])
+    return applied_batch, result
 
 
 def _source_from_environment() -> WorkerRequest:

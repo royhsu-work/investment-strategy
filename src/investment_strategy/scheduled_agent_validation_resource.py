@@ -39,7 +39,7 @@ from investment_strategy.workflow_dispatch import classify_dispatch
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _TASK_LINE = re.compile(r"^- \[(?P<state>[ x])\] (?P<id>\d+(?:\.\d+)+)\b")
-_SLICE_HEADING = re.compile(r"^## Slice (?P<number>[1-9][0-9]*)\b")
+_SLICE_HEADING = re.compile(r"^## Slice (?P<number>[1-9][0-9]*)(?:\s+—|\s*$)")
 _ACCEPTED_CHECK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
 _OPEN_SPEC_AUTHORING_SOURCES = frozenset(
     {
@@ -588,7 +588,7 @@ def _previous_completed_slice_task_ids(content: str) -> tuple[str, ...] | None:
             if index == 0 or any(not checked for _task_id, checked in slices[index - 1]):
                 return None
             return tuple(task_id for task_id, _checked in slices[index - 1])
-    return None
+    return tuple(task_id for task_id, _checked in slices[-1])
 
 
 def _task_marker_update_is_monotonic(current: str, candidate: str) -> bool:
@@ -639,6 +639,31 @@ def task_checkpoint_is_exact(
     )
 
 
+def completed_task_bookkeeping_is_current(
+    repository: str,
+    token: str,
+    *,
+    change: str,
+    revision: str,
+    files: tuple[WorkProductFile, ...],
+) -> bool:
+    """Recognize only an unchanged, fully completed historical task checkpoint."""
+    if len(files) != 1:
+        return False
+    file = files[0]
+    if (
+        file.path != f"openspec/changes/{change}/tasks.md"
+        or file.expected_sha != file.blob_sha
+        or _content_sha_at(repository, token, path=file.path, revision=revision) != file.blob_sha
+    ):
+        return False
+    content = _content_text_at(repository, token, path=file.path, revision=revision)
+    return (
+        _first_incomplete_slice_task_ids(content) == ()
+        and _previous_completed_slice_task_ids(content) is not None
+    )
+
+
 def resolve_validation_resource_target(
     plan: ValidationResourcePlan,
     *,
@@ -666,7 +691,10 @@ def resolve_validation_resource_target(
             expected_change=plan.expected_change,
             pr_number=plan.pr_number,
         )
-        if not decision.qualified or decision.head_sha is None:
+        if (
+            decision.disposition not in {"QUALIFIED", "HISTORICAL_MERGED"}
+            or decision.head_sha is None
+        ):
             raise RuntimeError(
                 "validation resource implementation carrier is not qualified for consumption"
             )

@@ -417,6 +417,7 @@ def _qualify_current_observation(
     comments: tuple[Mapping[str, object], ...],
     lifecycle_events: tuple[Mapping[str, object], ...],
     current_revision: str | None,
+    authorization_ancestry: tuple[tuple[str, str], ...] = (),
 ) -> GitHubIssueObservation:
     if observation.change == "unset":
         return observation
@@ -428,6 +429,7 @@ def _qualify_current_observation(
         comments=comments,
         current_revision=current_revision,
         lifecycle_events=lifecycle_events,
+        authorization_ancestry=authorization_ancestry,
     )
     decision = qualify_current_formal_consequence(qualification_input)
     return replace(
@@ -460,12 +462,40 @@ def _qualify_current_observations(
         if observation.routing_debt:
             qualified.append(observation)
             continue
+        # Observe ancestry of the bound historical authorization. The qualifier
+        # still owns causal binding and lifecycle no-supersession; ancestry alone
+        # never makes a current route eligible and cannot authorize new effects.
+        authorization_ancestry: list[tuple[str, str]] = []
+        if current_revision is not None:
+            from investment_strategy.scheduled_agent_formal_result import parse_formal_result
+
+            revisions = {
+                event.default_branch_revision
+                for comment in comments
+                if (event := parse_formal_result(comment, current_revision=None)) is not None
+                and event.valid
+                and event.issue_number == observation.issue_number
+                and event.change == observation.change
+                and event.default_branch_revision is not None
+                and event.default_branch_revision != current_revision
+            }
+            for revision in sorted(revisions):
+                comparison = _github_get_object(
+                    f"https://api.github.com/repos/{repository}/compare/{revision}...{current_revision}",
+                    token,
+                )
+                if (
+                    comparison.get("status") in {"ahead", "identical"}
+                    and comparison.get("behind_by") == 0
+                ):
+                    authorization_ancestry.append((revision, current_revision))
         qualified.append(
             _qualify_current_observation(
                 observation,
                 comments,
                 lifecycle_events,
                 current_revision,
+                tuple(authorization_ancestry),
             )
             if current_revision is not None
             else replace(

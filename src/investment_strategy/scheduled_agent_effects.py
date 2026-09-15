@@ -62,6 +62,7 @@ from investment_strategy.scheduled_agent_runtime import (
 )
 from investment_strategy.scheduled_agent_validation_resource import (
     ValidationResourceTarget,
+    completed_task_bookkeeping_is_current,
     task_checkpoint_is_exact,
 )
 from investment_strategy.scheduled_agent_worker import parse_worker_result
@@ -961,9 +962,21 @@ class GitHubEffectAdapter:
             read=_github_json,
         )
         if (
-            decision.disposition not in {"QUALIFIED", "RECONCILIATION_REQUIRED"}
+            decision.disposition
+            not in {"QUALIFIED", "RECONCILIATION_REQUIRED", "HISTORICAL_MERGED"}
             or decision.branch != request.branch
             or decision.head_sha is None
+        ):
+            return False
+        if decision.disposition == "HISTORICAL_MERGED" and (
+            request.base_sha != decision.head_sha
+            or not completed_task_bookkeeping_is_current(
+                self.repository,
+                self.token,
+                change=request.change,
+                revision=decision.head_sha,
+                files=request.files,
+            )
         ):
             return False
         task_files = tuple(
@@ -1088,6 +1101,12 @@ class GitHubEffectAdapter:
             return bool(
                 (
                     decision.qualified
+                    or (
+                        self.source.action == "merge-implementation-pr"
+                        and decision.disposition == "HISTORICAL_MERGED"
+                        and payload.get("state") == "closed"
+                        and payload.get("merged") is True
+                    )
                     or (allow_reconciliation and decision.disposition == "RECONCILIATION_REQUIRED")
                 )
                 and decision.branch == head.get("ref")

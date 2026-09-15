@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -29,6 +30,27 @@ from investment_strategy.workflow_dispatch import (
 HEAD = "367ec125f919546443e2f006bec2a1ae1a78d4ce"
 STALE_HEAD = "0000000000000000000000000000000000000000"
 CORRECTED_HEAD = "1111111111111111111111111111111111111111"
+
+
+def _bound_reviews(comments: tuple[dict[str, object], ...]) -> tuple[dict[str, object], ...]:
+    """Supply complete application-produced envelopes for legacy shape fixtures."""
+    bound: list[dict[str, object]] = []
+    for comment in comments:
+        body = str(comment["body"])
+        action = "review-archive" if "review-archive" in body else "review-implementation"
+        match = re.search(r"Default-Branch-Revision: ([0-9a-f]{40})", body)
+        revision = "a" * 40 if match is None else match.group(1)
+        if not body.startswith("## REVIEW_RESULT"):
+            body = "REVIEW_RESULT\n" + body
+        body += (
+            "\nWorkflow: #159\nChange: prevent-native-closing-bypass\nRole: reviewer"
+            + (f"\nDefault-Branch-Revision: {revision}" if match is None else "")
+            + f"\nApplication-Correlation: application:{comment['id']}:159:"
+            f"prevent-native-closing-bypass:reviewer:{action}:pass:{revision}"
+            + f"\nRepository-derived successor: Executor / {action.replace('review-', 'merge-')}-pr"
+        )
+        bound.append({**comment, "body": body})
+    return tuple(bound)
 
 
 def _accepted(**overrides: object) -> MergeAcceptanceSnapshot:
@@ -174,13 +196,17 @@ def test_merge_action_requires_its_matching_review_action() -> None:
     )
 
     implementation = merge_acceptance._latest_matching_pass(
-        comments,
+        _bound_reviews(comments),
         HEAD,
+        issue_number=159,
+        change="prevent-native-closing-bypass",
         required_review_action="review-implementation",
     )
     archive = merge_acceptance._latest_matching_pass(
-        comments,
+        _bound_reviews(comments),
         HEAD,
+        issue_number=159,
+        change="prevent-native-closing-bypass",
         required_review_action="review-archive",
     )
 
@@ -200,8 +226,10 @@ def test_application_authored_plain_review_pass_is_merge_evidence() -> None:
     )
 
     record = merge_acceptance._latest_matching_pass(
-        comments,
+        _bound_reviews(comments),
         HEAD,
+        issue_number=159,
+        change="prevent-native-closing-bypass",
         required_review_action="review-implementation",
     )
 
@@ -226,8 +254,10 @@ def test_review_pass_carries_current_default_branch_revision() -> None:
         },
     )
     record = merge_acceptance._latest_matching_pass(
-        comments,
+        _bound_reviews(comments),
         HEAD,
+        issue_number=159,
+        change="prevent-native-closing-bypass",
         required_review_action="review-implementation",
     )
     assert record[0] == HEAD
@@ -246,8 +276,10 @@ def test_connector_authored_review_pass_is_not_merge_evidence() -> None:
     )
 
     record = merge_acceptance._latest_matching_pass(
-        comments,
+        _bound_reviews(comments),
         HEAD,
+        issue_number=159,
+        change="prevent-native-closing-bypass",
         required_review_action="review-implementation",
     )
 
@@ -296,6 +328,7 @@ def test_historical_merged_carrier_requires_current_main_ancestry(
         expected_head_sha=HEAD,
         current_revision=current_revision,
         expected_branch="agent/prevent-native-closing-bypass",
+        reviewer_pass_default_branch_revision=current_revision,
     )
     assert reads == ["", "git/ref/heads/main", f"compare/{merge_commit}...main"]
 
@@ -390,6 +423,8 @@ def test_merge_effect_rechecks_acceptance_on_real_application_path(
 
     def fake_github_json(repository: str, token: str, api_path: str) -> object:
         del repository, token
+        if api_path == "issues/159":
+            return {"number": 159, "body": "Change: prevent-native-closing-bypass"}
         if api_path == "pulls/167":
             return {
                 "state": "open",
@@ -438,7 +473,7 @@ def test_merge_effect_rechecks_acceptance_on_real_application_path(
     monkeypatch.setattr(
         merge_acceptance,
         "_paged_github_list",
-        lambda *_args, **_kwargs: comments,
+        lambda *_args, **_kwargs: _bound_reviews(comments),
     )
     monkeypatch.setattr(
         merge_acceptance,
