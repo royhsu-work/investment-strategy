@@ -488,6 +488,130 @@ def test_partial_first_activation_recovery_requires_exact_evidence_and_preserves
     assert patches == [{"labels": ["keep-me", "action:resolve-question"]}]
 
 
+def test_partial_activation_recovery_resumes_after_durable_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failed_revision = "c" * 40
+    materialization = _activation_materialization()
+    materialization["base_sha"] = failed_revision
+    raw = json.dumps(
+        _activation_result(
+            requested_effects=[
+                {
+                    "kind": "github-mutation",
+                    "payload_json": json.dumps(materialization, sort_keys=True),
+                }
+            ]
+        )
+    )
+    request = bridge.ApplicationRequest(failed_revision, raw)
+    event: dict[str, object] = {"comment": {"id": 901}}
+    recovery_body = "\n".join(
+        (
+            "APPLICATION_RECOVERY",
+            "Workflow: #138",
+            f"Change: {_CHANGE}",
+            "Source: Lead / propose-change",
+            "Target: Lead / resolve-question",
+            f"Default-Branch-Revision: {_REVISION}",
+            f"Failed-Authorization-Revision: {failed_revision}",
+            "Request-Comment-ID: 901",
+            "Reason: partial-first-activation",
+        )
+    )
+    recovery_comment: dict[str, object] = {
+        "id": 777,
+        "body": recovery_body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    lifecycle_event: dict[str, object] = {
+        "id": 777,
+        "event": "commented",
+        "created_at": "2026-09-16T17:30:00Z",
+    }
+    issue: dict[str, object] = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "labels": [{"name": "action:propose-change"}, {"name": "keep-me"}],
+    }
+    patches: list[dict[str, object]] = []
+
+    def fake_normalize(payload: object) -> GitHubIssueObservation | None:
+        if not isinstance(payload, dict):
+            return None
+        labels = payload.get("labels")
+        if not isinstance(labels, list):
+            return None
+        names = {
+            item if isinstance(item, str) else item.get("name")
+            for item in labels
+            if isinstance(item, str)
+            or (isinstance(item, dict) and isinstance(item.get("name"), str))
+        }
+        action = "resolve-question" if "action:resolve-question" in names else "propose-change"
+        return GitHubIssueObservation(
+            issue_number=138,
+            change=_CHANGE,
+            routing=cast(Routing, ("lead", action)),
+            state="open",
+            created_order=1,
+            authoritative=True,
+        )
+
+    def fake_github(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+    ) -> object:
+        assert api_path == "issues/138"
+        if method == "PATCH":
+            assert isinstance(payload, dict)
+            patches.append(dict(payload))
+            issue.update(payload)
+        return issue
+
+    def fake_paged(
+        _repository: str,
+        _token: str,
+        api_path: str,
+    ) -> tuple[dict[str, object], ...]:
+        if "/comments?" in api_path:
+            return (recovery_comment,)
+        if api_path.endswith("/timeline"):
+            return (lifecycle_event,)
+        raise AssertionError(f"unexpected paged path: {api_path}")
+
+    def fail_if_reposted(*_args: object, **_kwargs: object) -> int:
+        raise AssertionError("existing recovery evidence must be reused")
+
+    monkeypatch.setattr(bridge, "_authorization_revision_is_ancestor", lambda *_args: True)
+    monkeypatch.setattr(
+        bridge,
+        "_partial_activation_carrier_matches",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(bridge, "_paged_github_list", fake_paged)
+    monkeypatch.setattr(bridge, "_persist_recovery_comment", fail_if_reposted)
+    monkeypatch.setattr(bridge, "_formal_qualification", lambda **_kwargs: True)
+    monkeypatch.setattr(bridge, "_github_json", fake_github)
+    monkeypatch.setattr(bridge, "normalize_github_issue", fake_normalize)
+
+    assert bridge._recover_partial_first_activation(
+        request=request,
+        event=event,
+        repository="royhsu-work/investment-strategy",
+        token=_REVISION,
+        current_revision=_REVISION,
+        default_branch="main",
+    )
+    assert patches == [{"labels": ["keep-me", "action:resolve-question"]}]
+
+
 def test_partial_activation_recovery_rejects_unproven_stale_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
