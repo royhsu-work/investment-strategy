@@ -138,12 +138,8 @@ def _recovery_event_from_payload(
     change = _field(body, "Change")
     source_role, source_action = _normalize_action(_field(body, "Source"))
     target_role, target_action = _normalize_action(_field(body, "Target"))
-    source = (
-        None if source_role is None or source_action is None else (source_role, source_action)
-    )
-    target = (
-        None if target_role is None or target_action is None else (target_role, target_action)
-    )
+    source = None if source_role is None or source_action is None else (source_role, source_action)
+    target = None if target_role is None or target_action is None else (target_role, target_action)
     default_branch_revision = _field(body, "Default-Branch-Revision")
     failed_authorization_revision = _field(body, "Failed-Authorization-Revision")
     request_comment_id = _positive_decimal(_field(body, "Request-Comment-ID"))
@@ -577,10 +573,14 @@ def _qualify_administrative_recovery(
         or recovery.reason != _RECOVERY_REASON
     ):
         return _indeterminate("administrative-recovery-evidence-incomplete", recovery)
-    if recovery.default_branch_revision != qualification.current_revision and (
-        recovery.default_branch_revision,
-        qualification.current_revision,
-    ) not in qualification.authorization_ancestry:
+    if (
+        recovery.default_branch_revision != qualification.current_revision
+        and (
+            recovery.default_branch_revision,
+            qualification.current_revision,
+        )
+        not in qualification.authorization_ancestry
+    ):
         return _indeterminate("administrative-recovery-evidence-stale", recovery)
     if (
         qualification.state != "open"
