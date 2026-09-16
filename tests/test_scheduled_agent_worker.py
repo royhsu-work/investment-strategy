@@ -577,7 +577,7 @@ def test_partial_activation_carrier_uses_slash_preserving_ref_path(
         materialization,
         source,
         repository="royhsu-work/investment-strategy",
-        token="token",
+        token=_REVISION,
         failed_revision=failed_revision,
         default_branch="main",
     )
