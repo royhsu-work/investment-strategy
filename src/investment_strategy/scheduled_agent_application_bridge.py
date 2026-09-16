@@ -357,7 +357,10 @@ def _activation_result_body(
 
     if source != WorkerRequest(source.issue_number, "lead", "propose-change"):
         raise RuntimeError("first activation requires Lead / propose-change")
-    if worker_result.change != "unset" or worker_result.typed_result.result.kind.value != _FIRST_ACTIVATION_RESULT:
+    if (
+        worker_result.change != "unset"
+        or worker_result.typed_result.result.kind.value != _FIRST_ACTIVATION_RESULT
+    ):
         raise RuntimeError("first activation worker result is not activation-ready")
     successor = next_action(worker_result.typed_result.action, worker_result.typed_result.result)
     if successor is None:
@@ -615,7 +618,9 @@ def _existing_activation_correlation(
         expected_routing=successor_routing,
         mode="pending",
     ):
-        raise RuntimeError("existing first activation result is no longer a valid pending consequence")
+        raise RuntimeError(
+            "existing first activation result is no longer a valid pending consequence"
+        )
     return correlation
 
 
