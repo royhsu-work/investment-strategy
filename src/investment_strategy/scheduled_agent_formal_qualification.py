@@ -614,10 +614,19 @@ def qualify_current_formal_consequence(
         return _indeterminate("qualification-input-incomplete")
     if not _lifecycle_integrity(qualification.lifecycle_events):
         return _indeterminate("issue-lifecycle-evidence-incomplete")
-    if not qualification.events:
+    if qualification.recovery_events:
+        competing = tuple(
+            event for event in qualification.events if event.change == qualification.change
+        )
+        if competing:
+            return _indeterminate(
+                "administrative-recovery-competing-formal-evidence",
+                competing[-1],
+            )
         recovery = _qualify_administrative_recovery(qualification)
         if recovery is not None:
             return recovery
+    if not qualification.events:
         return _indeterminate("formal-lifecycle-evidence-missing")
 
     latest = qualification.events[-1]
