@@ -119,7 +119,18 @@ def _recovery_event_from_payload(
     if not isinstance(body, str) or _marker(body) != _RECOVERY_MARKER:
         return None
     if not _is_github_actions_comment(payload):
-        return AdministrativeRecoveryEvent(None, None, None, None, None, None, None, None, None, False)
+        return AdministrativeRecoveryEvent(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            False,
+        )
 
     raw_workflow = _field(body, "Workflow")
     workflow_match = None if raw_workflow is None else _WORKFLOW.fullmatch(raw_workflow)
