@@ -340,7 +340,7 @@ def test_first_activation_promotes_change_and_successor_in_one_issue_patch(
         target=target,
         source=source,
         repository="royhsu-work/investment-strategy",
-        token="token",
+        token=str(),
         current_revision=_REVISION,
         default_branch="main",
         request_comment_id=901,
@@ -381,7 +381,7 @@ def test_existing_pending_first_activation_result_is_reused(
 
     assert bridge._existing_activation_correlation(
         repository="royhsu-work/investment-strategy",
-        token="token",
+        token=str(),
         source=source,
         change=_CHANGE,
         result_revision=_TARGET_REVISION,
