@@ -389,3 +389,120 @@ def test_existing_pending_first_activation_result_is_reused(
         result_kind="ready-for-openspec-review",
         successor_routing=("reviewer", "review-openspec"),
     ) == correlation
+
+
+def test_partial_first_activation_recovery_requires_exact_evidence_and_preserves_labels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failed_revision = "c" * 40
+    materialization = _activation_materialization()
+    materialization["base_sha"] = failed_revision
+    raw = json.dumps(
+        _activation_result(
+            requested_effects=[
+                {
+                    "kind": "github-mutation",
+                    "payload_json": json.dumps(materialization, sort_keys=True),
+                }
+            ]
+        )
+    )
+    request = bridge.ApplicationRequest(failed_revision, raw)
+    event: dict[str, object] = {"comment": {"id": 901}}
+    issue: dict[str, object] = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "labels": [{"name": "action:propose-change"}, {"name": "keep-me"}],
+    }
+    patches: list[dict[str, object]] = []
+    recovery_bodies: list[str] = []
+
+    def fake_normalize(payload: object) -> GitHubIssueObservation | None:
+        if not isinstance(payload, dict):
+            return None
+        labels = payload.get("labels")
+        if not isinstance(labels, list):
+            return None
+        names = {
+            item if isinstance(item, str) else item.get("name")
+            for item in labels
+            if isinstance(item, str)
+            or (isinstance(item, dict) and isinstance(item.get("name"), str))
+        }
+        action = "resolve-question" if "action:resolve-question" in names else "propose-change"
+        return GitHubIssueObservation(
+            issue_number=138,
+            change=_CHANGE,
+            routing=("lead", action),
+            state="open",
+            created_order=1,
+            authoritative=True,
+        )
+
+    def fake_github(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+    ) -> object:
+        assert api_path == "issues/138"
+        if method == "PATCH":
+            assert isinstance(payload, dict)
+            patches.append(dict(payload))
+            issue.update(payload)
+        return issue
+
+    monkeypatch.setattr(bridge, "_authorization_revision_is_ancestor", lambda *_args: True)
+    monkeypatch.setattr(bridge, "_partial_activation_carrier_matches", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(bridge, "_paged_github_list", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(
+        bridge,
+        "_persist_recovery_comment",
+        lambda body, **_kwargs: recovery_bodies.append(body) or 777,
+    )
+    monkeypatch.setattr(bridge, "_formal_qualification", lambda **_kwargs: True)
+    monkeypatch.setattr(bridge, "_github_json", fake_github)
+    monkeypatch.setattr(bridge, "normalize_github_issue", fake_normalize)
+
+    assert bridge._recover_partial_first_activation(
+        request=request,
+        event=event,
+        repository="royhsu-work/investment-strategy",
+        token=_REVISION,
+        current_revision=_REVISION,
+        default_branch="main",
+    )
+    assert len(recovery_bodies) == 1
+    assert "Reason: partial-first-activation" in recovery_bodies[0]
+    assert patches == [{"labels": ["keep-me", "action:resolve-question"]}]
+
+
+def test_partial_activation_recovery_rejects_unproven_stale_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failed_revision = "c" * 40
+    materialization = _activation_materialization()
+    materialization["base_sha"] = failed_revision
+    raw = json.dumps(
+        _activation_result(
+            requested_effects=[
+                {
+                    "kind": "github-mutation",
+                    "payload_json": json.dumps(materialization, sort_keys=True),
+                }
+            ]
+        )
+    )
+    request = bridge.ApplicationRequest(failed_revision, raw)
+    monkeypatch.setattr(bridge, "_authorization_revision_is_ancestor", lambda *_args: False)
+    assert not bridge._recover_partial_first_activation(
+        request=request,
+        event={"comment": {"id": 901}},
+        repository="royhsu-work/investment-strategy",
+        token=_REVISION,
+        current_revision=_REVISION,
+        default_branch="main",
+    )
