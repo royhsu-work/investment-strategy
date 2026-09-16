@@ -505,3 +505,193 @@ def test_change_unset_remains_pre_activation_compatible() -> None:
         qualify_current_formal_consequence(qualification_input).provenance
         is ObservationProvenance.QUALIFIED
     )
+
+
+def _recovery_comment(
+    *,
+    comment_id: int = 50,
+    revision: str = _REVISION,
+    performed_by_actions: bool = True,
+) -> dict[str, object]:
+    comment: dict[str, object] = {
+        "id": comment_id,
+        "body": (
+            "APPLICATION_RECOVERY\n"
+            "Workflow: #229\n"
+            f"Change: {_CHANGE}\n"
+            "Source: Lead / propose-change\n"
+            "Target: Lead / resolve-question\n"
+            f"Default-Branch-Revision: {revision}\n"
+            f"Failed-Authorization-Revision: {'b' * 40}\n"
+            "Request-Comment-ID: 901\n"
+            "Reason: partial-first-activation"
+        ),
+    }
+    if performed_by_actions:
+        comment.update(
+            {
+                "user": {"login": "github-actions[bot]"},
+                "performed_via_github_app": {"slug": "github-actions"},
+            }
+        )
+    else:
+        comment.update(
+            {
+                "user": {"login": "royhsu-work"},
+                "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+            }
+        )
+    return comment
+
+
+def _recovery_lifecycle(*, superseded: bool = False) -> list[dict[str, object]]:
+    events: list[dict[str, object]] = [
+        {"id": 50, "event": "commented", "created_at": "2026-09-16T01:00:01Z"},
+        {
+            "id": 51,
+            "event": "unlabeled",
+            "created_at": "2026-09-16T01:00:02Z",
+            "label": {"name": "action:propose-change"},
+        },
+        {
+            "id": 52,
+            "event": "labeled",
+            "created_at": "2026-09-16T01:00:02Z",
+            "label": {"name": "action:resolve-question"},
+        },
+    ]
+    if superseded:
+        events.extend(
+            [
+                {
+                    "id": 53,
+                    "event": "unlabeled",
+                    "created_at": "2026-09-16T01:00:03Z",
+                    "label": {"name": "action:resolve-question"},
+                },
+                {
+                    "id": 54,
+                    "event": "labeled",
+                    "created_at": "2026-09-16T01:00:03Z",
+                    "label": {"name": "action:review-openspec"},
+                },
+            ]
+        )
+    return events
+
+
+def test_administrative_recovery_qualifies_only_exact_actions_owned_binding() -> None:
+    qualification_input = build_qualification_input(
+        issue_number=229,
+        change=_CHANGE,
+        state="open",
+        current_routing=("lead", "resolve-question"),
+        comments=[_recovery_comment()],
+        current_revision=_REVISION,
+        lifecycle_events=_recovery_lifecycle(),
+    )
+    decision = qualify_current_formal_consequence(qualification_input)
+    assert decision.provenance is ObservationProvenance.QUALIFIED
+    assert decision.reason == "current-administrative-recovery-route-qualified"
+
+    connector_input = build_qualification_input(
+        issue_number=229,
+        change=_CHANGE,
+        state="open",
+        current_routing=("lead", "resolve-question"),
+        comments=[_recovery_comment(performed_by_actions=False)],
+        current_revision=_REVISION,
+        lifecycle_events=_recovery_lifecycle(),
+    )
+    assert (
+        qualify_current_formal_consequence(connector_input).provenance
+        is ObservationProvenance.INDETERMINATE
+    )
+
+
+def test_administrative_recovery_rejects_stale_or_superseded_binding() -> None:
+    stale_input = build_qualification_input(
+        issue_number=229,
+        change=_CHANGE,
+        state="open",
+        current_routing=("lead", "resolve-question"),
+        comments=[_recovery_comment(revision="c" * 40)],
+        current_revision=_REVISION,
+        lifecycle_events=_recovery_lifecycle(),
+    )
+    assert (
+        qualify_current_formal_consequence(stale_input).provenance
+        is ObservationProvenance.INDETERMINATE
+    )
+
+    superseded_input = build_qualification_input(
+        issue_number=229,
+        change=_CHANGE,
+        state="open",
+        current_routing=("lead", "resolve-question"),
+        comments=[_recovery_comment()],
+        current_revision=_REVISION,
+        lifecycle_events=_recovery_lifecycle(superseded=True),
+    )
+    assert (
+        qualify_current_formal_consequence(superseded_input).provenance
+        is ObservationProvenance.INDETERMINATE
+    )
+
+
+def _unbound_formal_comment(*, comment_id: int, change: str) -> dict[str, object]:
+    return {
+        "id": comment_id,
+        "body": (
+            "ACTION_RESULT\n"
+            "Workflow: #229\n"
+            f"Change: {change}\n"
+            "Action: explore-change\n"
+            "Role: lead\n"
+            "Result: PROPOSAL_READY\n"
+            f"Revision: {_REVISION}\n"
+            f"Default-Branch-Revision: {_REVISION}"
+        ),
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+
+
+def test_administrative_recovery_ignores_historical_preactivation_formal_shape() -> None:
+    historical = _unbound_formal_comment(comment_id=40, change="unset")
+    lifecycle = [
+        {"id": 40, "event": "commented", "created_at": "2026-09-16T00:59:59Z"},
+        *_recovery_lifecycle(),
+    ]
+    qualification_input = build_qualification_input(
+        issue_number=229,
+        change=_CHANGE,
+        state="open",
+        current_routing=("lead", "resolve-question"),
+        comments=[historical, _recovery_comment()],
+        current_revision=_REVISION,
+        lifecycle_events=lifecycle,
+    )
+    decision = qualify_current_formal_consequence(qualification_input)
+    assert decision.provenance is ObservationProvenance.QUALIFIED
+    assert decision.reason == "current-administrative-recovery-route-qualified"
+
+
+def test_administrative_recovery_rejects_unbound_current_change_formal_shape() -> None:
+    competing = _unbound_formal_comment(comment_id=40, change=_CHANGE)
+    lifecycle = [
+        {"id": 40, "event": "commented", "created_at": "2026-09-16T00:59:59Z"},
+        *_recovery_lifecycle(),
+    ]
+    qualification_input = build_qualification_input(
+        issue_number=229,
+        change=_CHANGE,
+        state="open",
+        current_routing=("lead", "resolve-question"),
+        comments=[competing, _recovery_comment()],
+        current_revision=_REVISION,
+        lifecycle_events=lifecycle,
+    )
+    decision = qualify_current_formal_consequence(qualification_input)
+    assert decision.provenance is ObservationProvenance.INDETERMINATE
+    assert decision.reason == "administrative-recovery-competing-formal-evidence"

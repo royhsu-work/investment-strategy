@@ -36,6 +36,10 @@ from investment_strategy.workflow_dispatch import ObservationProvenance
 
 _LIFECYCLE_EVENTS = frozenset({"commented", "closed", "labeled", "reopened", "unlabeled"})
 _ACTION_LABEL_PREFIX = "action:"
+_RECOVERY_MARKER = "APPLICATION_RECOVERY"
+_RECOVERY_REASON = "partial-first-activation"
+_RECOVERY_SOURCE = ("lead", "propose-change")
+_RECOVERY_TARGET = ("lead", "resolve-question")
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +50,22 @@ class IssueLifecycleEvent:
     event: str | None
     label: str | None
     created_at: str | None
+    valid: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AdministrativeRecoveryEvent:
+    """One repository-Actions repair of a stranded first formal activation."""
+
+    comment_id: int | None
+    issue_number: int | None
+    change: str | None
+    source: tuple[str, str] | None
+    target: tuple[str, str] | None
+    default_branch_revision: str | None
+    failed_authorization_revision: str | None
+    request_comment_id: int | None
+    reason: str | None
     valid: bool
 
 
@@ -65,6 +85,7 @@ class QualificationInput:
     current_revision: str | None
     mode: Literal["current", "pending"]
     events: tuple[FormalLifecycleEvent, ...]
+    recovery_events: tuple[AdministrativeRecoveryEvent, ...]
     lifecycle_events: tuple[IssueLifecycleEvent, ...]
     authorization_ancestry: tuple[tuple[str, str], ...] = ()
 
@@ -75,11 +96,86 @@ class QualificationDecision:
 
     provenance: ObservationProvenance
     reason: str
-    event: FormalLifecycleEvent | None = None
+    event: FormalLifecycleEvent | AdministrativeRecoveryEvent | None = None
 
     @property
     def qualified(self) -> bool:
         return self.provenance is ObservationProvenance.QUALIFIED
+
+
+def _positive_decimal(value: str | None) -> int | None:
+    if value is None or not value.isdigit() or value.startswith("0"):
+        return None
+    parsed = int(value)
+    return parsed if parsed > 0 else None
+
+
+def _recovery_event_from_payload(
+    payload: Mapping[str, object],
+    *,
+    current_revision: str | None,
+) -> AdministrativeRecoveryEvent | None:
+    body = payload.get("body")
+    if not isinstance(body, str) or _marker(body) != _RECOVERY_MARKER:
+        return None
+    if not _is_github_actions_comment(payload):
+        return AdministrativeRecoveryEvent(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            False,
+        )
+
+    raw_workflow = _field(body, "Workflow")
+    workflow_match = None if raw_workflow is None else _WORKFLOW.fullmatch(raw_workflow)
+    issue_number = None if workflow_match is None else int(workflow_match.group(1))
+    change = _field(body, "Change")
+    source_role, source_action = _normalize_action(_field(body, "Source"))
+    target_role, target_action = _normalize_action(_field(body, "Target"))
+    source = None if source_role is None or source_action is None else (source_role, source_action)
+    target = None if target_role is None or target_action is None else (target_role, target_action)
+    default_branch_revision = _field(body, "Default-Branch-Revision")
+    failed_authorization_revision = _field(body, "Failed-Authorization-Revision")
+    request_comment_id = _positive_decimal(_field(body, "Request-Comment-ID"))
+    reason = _field(body, "Reason")
+    comment_id = payload.get("id")
+    valid_comment_id = (
+        isinstance(comment_id, int) and not isinstance(comment_id, bool) and comment_id > 0
+    )
+    valid = (
+        valid_comment_id
+        and issue_number is not None
+        and change not in {None, "", "unset"}
+        and source == _RECOVERY_SOURCE
+        and target == _RECOVERY_TARGET
+        and _valid_sha(default_branch_revision)
+        and _valid_sha(failed_authorization_revision)
+        and request_comment_id is not None
+        and reason == _RECOVERY_REASON
+        and current_revision is not None
+    )
+    return AdministrativeRecoveryEvent(
+        comment_id=cast(int | None, comment_id) if valid_comment_id else None,
+        issue_number=issue_number,
+        change=change,
+        source=source,
+        target=target,
+        default_branch_revision=(
+            default_branch_revision if _valid_sha(default_branch_revision) else None
+        ),
+        failed_authorization_revision=(
+            failed_authorization_revision if _valid_sha(failed_authorization_revision) else None
+        ),
+        request_comment_id=request_comment_id,
+        reason=reason,
+        valid=valid,
+    )
 
 
 def _event_from_checkpoint(
@@ -233,6 +329,22 @@ def _formal_order_key(
     return "", 10**30
 
 
+def _recovery_order_key(
+    event: AdministrativeRecoveryEvent,
+    lifecycle_events: tuple[IssueLifecycleEvent, ...],
+) -> tuple[str, int]:
+    if event.comment_id is not None:
+        matching = tuple(
+            item
+            for item in lifecycle_events
+            if item.event == "commented" and item.event_id == event.comment_id
+        )
+        if len(matching) == 1:
+            return _lifecycle_order_key(matching[0])
+        return "", event.comment_id
+    return "", 10**30
+
+
 def build_qualification_input(
     *,
     issue_number: int,
@@ -264,7 +376,15 @@ def build_qualification_input(
 
     events: list[FormalLifecycleEvent] = []
     checkpoint_events: list[FormalLifecycleEvent] = []
+    recovery_events: list[AdministrativeRecoveryEvent] = []
     for comment in comments:
+        recovery_event = _recovery_event_from_payload(
+            comment,
+            current_revision=current_revision,
+        )
+        if recovery_event is not None:
+            recovery_events.append(recovery_event)
+            continue
         formal_event = parse_formal_result(comment, current_revision=current_revision)
         if formal_event is not None:
             events.append(formal_event)
@@ -283,6 +403,7 @@ def build_qualification_input(
         if event.application_correlation not in formal_correlations
     )
     events.sort(key=lambda item: _formal_order_key(item, lifecycle_tuple))
+    recovery_events.sort(key=lambda item: _recovery_order_key(item, lifecycle_tuple))
     return QualificationInput(
         issue_number=issue_number,
         change=change,
@@ -296,6 +417,7 @@ def build_qualification_input(
         current_revision=current_revision,
         mode=mode,
         events=tuple(events),
+        recovery_events=tuple(recovery_events),
         lifecycle_events=lifecycle_tuple,
         authorization_ancestry=authorization_ancestry,
     )
@@ -303,7 +425,7 @@ def build_qualification_input(
 
 def _indeterminate(
     reason: str,
-    event: FormalLifecycleEvent | None = None,
+    event: FormalLifecycleEvent | AdministrativeRecoveryEvent | None = None,
 ) -> QualificationDecision:
     return QualificationDecision(
         ObservationProvenance.INDETERMINATE,
@@ -312,7 +434,10 @@ def _indeterminate(
     )
 
 
-def _qualified(reason: str, event: FormalLifecycleEvent) -> QualificationDecision:
+def _qualified(
+    reason: str,
+    event: FormalLifecycleEvent | AdministrativeRecoveryEvent,
+) -> QualificationDecision:
     return QualificationDecision(
         ObservationProvenance.QUALIFIED,
         reason,
@@ -327,7 +452,7 @@ def _normalized_kind(value: str | None) -> str | None:
 
 
 def _comment_order_key(
-    event: FormalLifecycleEvent,
+    event: FormalLifecycleEvent | AdministrativeRecoveryEvent,
     lifecycle_events: tuple[IssueLifecycleEvent, ...],
 ) -> tuple[str, int] | None:
     if event.comment_id is None:
@@ -343,8 +468,8 @@ def _comment_order_key(
 
 
 def _event_interval(
-    event: FormalLifecycleEvent,
-    next_event: FormalLifecycleEvent | None,
+    event: FormalLifecycleEvent | AdministrativeRecoveryEvent,
+    next_event: FormalLifecycleEvent | AdministrativeRecoveryEvent | None,
     lifecycle_events: tuple[IssueLifecycleEvent, ...],
 ) -> tuple[IssueLifecycleEvent, ...] | None:
     start = _comment_order_key(event, lifecycle_events)
@@ -432,6 +557,43 @@ def _formal_interval_is_bound(
     )
 
 
+def _qualify_administrative_recovery(
+    qualification: QualificationInput,
+) -> QualificationDecision | None:
+    if qualification.mode != "current" or not qualification.recovery_events:
+        return None
+    recovery = qualification.recovery_events[-1]
+    if (
+        len(qualification.recovery_events) != 1
+        or not recovery.valid
+        or recovery.issue_number != qualification.issue_number
+        or recovery.change != qualification.change
+        or recovery.source != _RECOVERY_SOURCE
+        or recovery.target != _RECOVERY_TARGET
+        or recovery.reason != _RECOVERY_REASON
+    ):
+        return _indeterminate("administrative-recovery-evidence-incomplete", recovery)
+    if (
+        recovery.default_branch_revision != qualification.current_revision
+        and (
+            recovery.default_branch_revision,
+            qualification.current_revision,
+        )
+        not in qualification.authorization_ancestry
+    ):
+        return _indeterminate("administrative-recovery-evidence-stale", recovery)
+    if (
+        qualification.state != "open"
+        or qualification.current_routing != recovery.target
+        or recovery.target is None
+    ):
+        return _indeterminate("administrative-recovery-postcondition-not-qualified", recovery)
+    interval = _event_interval(recovery, None, qualification.lifecycle_events)
+    if interval is None or not _interval_binds_successor(interval, recovery.target, False):
+        return _indeterminate("administrative-recovery-binding-incomplete", recovery)
+    return _qualified("current-administrative-recovery-route-qualified", recovery)
+
+
 def qualify_current_formal_consequence(
     qualification: QualificationInput,
 ) -> QualificationDecision:
@@ -450,10 +612,22 @@ def qualify_current_formal_consequence(
         or not _valid_sha(qualification.current_revision)
     ):
         return _indeterminate("qualification-input-incomplete")
-    if not qualification.events:
-        return _indeterminate("formal-lifecycle-evidence-missing")
     if not _lifecycle_integrity(qualification.lifecycle_events):
         return _indeterminate("issue-lifecycle-evidence-incomplete")
+    if qualification.recovery_events:
+        competing = tuple(
+            event for event in qualification.events if event.change == qualification.change
+        )
+        if competing:
+            return _indeterminate(
+                "administrative-recovery-competing-formal-evidence",
+                competing[-1],
+            )
+        recovery = _qualify_administrative_recovery(qualification)
+        if recovery is not None:
+            return recovery
+    if not qualification.events:
+        return _indeterminate("formal-lifecycle-evidence-missing")
 
     latest = qualification.events[-1]
     if (
@@ -544,6 +718,7 @@ def qualify_current_formal_consequence(
 
 
 __all__ = [
+    "AdministrativeRecoveryEvent",
     "FormalLifecycleEvent",
     "IssueLifecycleEvent",
     "QualificationDecision",
