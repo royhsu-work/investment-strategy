@@ -637,3 +637,61 @@ def test_administrative_recovery_rejects_stale_or_superseded_binding() -> None:
         qualify_current_formal_consequence(superseded_input).provenance
         is ObservationProvenance.INDETERMINATE
     )
+
+
+def _unbound_formal_comment(*, comment_id: int, change: str) -> dict[str, object]:
+    return {
+        "id": comment_id,
+        "body": (
+            "ACTION_RESULT\n"
+            "Workflow: #229\n"
+            f"Change: {change}\n"
+            "Action: explore-change\n"
+            "Role: lead\n"
+            "Result: PROPOSAL_READY\n"
+            f"Revision: {_REVISION}\n"
+            f"Default-Branch-Revision: {_REVISION}"
+        ),
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+
+
+def test_administrative_recovery_ignores_historical_preactivation_formal_shape() -> None:
+    historical = _unbound_formal_comment(comment_id=40, change="unset")
+    lifecycle = [
+        {"id": 40, "event": "commented", "created_at": "2026-09-16T00:59:59Z"},
+        *_recovery_lifecycle(),
+    ]
+    qualification_input = build_qualification_input(
+        issue_number=229,
+        change=_CHANGE,
+        state="open",
+        current_routing=("lead", "resolve-question"),
+        comments=[historical, _recovery_comment()],
+        current_revision=_REVISION,
+        lifecycle_events=lifecycle,
+    )
+    decision = qualify_current_formal_consequence(qualification_input)
+    assert decision.provenance is ObservationProvenance.QUALIFIED
+    assert decision.reason == "current-administrative-recovery-route-qualified"
+
+
+def test_administrative_recovery_rejects_unbound_current_change_formal_shape() -> None:
+    competing = _unbound_formal_comment(comment_id=40, change=_CHANGE)
+    lifecycle = [
+        {"id": 40, "event": "commented", "created_at": "2026-09-16T00:59:59Z"},
+        *_recovery_lifecycle(),
+    ]
+    qualification_input = build_qualification_input(
+        issue_number=229,
+        change=_CHANGE,
+        state="open",
+        current_routing=("lead", "resolve-question"),
+        comments=[competing, _recovery_comment()],
+        current_revision=_REVISION,
+        lifecycle_events=lifecycle,
+    )
+    decision = qualify_current_formal_consequence(qualification_input)
+    assert decision.provenance is ObservationProvenance.INDETERMINATE
+    assert decision.reason == "administrative-recovery-competing-formal-evidence"
