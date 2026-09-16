@@ -820,7 +820,7 @@ def _partial_activation_carrier_matches(
         _github_json(
             repository,
             token,
-            f"git/ref/heads/{quote(request.branch, safe='')}",
+            f"git/ref/heads/{request.branch}",
         )
     )
     ref_object = None if ref is None else _as_mapping(ref.get("object"))
@@ -843,9 +843,7 @@ def _partial_activation_carrier_matches(
     if parent is None or parent.get("sha") != failed_revision or not isinstance(tree_sha, str):
         return False
 
-    tree_payload = _as_mapping(
-        _github_json(repository, token, f"git/trees/{tree_sha}?recursive=1")
-    )
+    tree_payload = _as_mapping(_github_json(repository, token, f"git/trees/{tree_sha}?recursive=1"))
     raw_entries = None if tree_payload is None else tree_payload.get("tree")
     if not isinstance(raw_entries, list):
         return False
