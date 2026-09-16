@@ -1041,7 +1041,7 @@ def _recover_partial_first_activation(
         observation.routing != _RECOVERY_SOURCE
         or decision.qualified
         or (qualification.recovery_events and not recovery_matches_request)
-        or any(event.valid and event.change == parsed.change for event in qualification.events)
+        or any(event.change == parsed.change for event in qualification.events)
     ):
         return False
 
