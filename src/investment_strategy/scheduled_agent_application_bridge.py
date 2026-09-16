@@ -1018,12 +1018,17 @@ def _recover_partial_first_activation(
         lifecycle_events=lifecycle,
     )
     decision = qualify_current_formal_consequence(qualification)
-    recovery_matches_request = any(
-        recovery.valid
+    matching_recoveries = tuple(
+        recovery
+        for recovery in qualification.recovery_events
+        if recovery.valid
         and recovery.request_comment_id == request_comment_id
         and recovery.failed_authorization_revision == request.authorization_revision
+        and recovery.default_branch_revision == current_revision
         and recovery.change == parsed.change
-        for recovery in qualification.recovery_events
+    )
+    recovery_matches_request = (
+        len(qualification.recovery_events) == 1 and len(matching_recoveries) == 1
     )
     if (
         observation.routing == _RECOVERY_TARGET
@@ -1035,24 +1040,25 @@ def _recover_partial_first_activation(
     if (
         observation.routing != _RECOVERY_SOURCE
         or decision.qualified
-        or qualification.recovery_events
+        or (qualification.recovery_events and not recovery_matches_request)
         or any(event.valid and event.change == parsed.change for event in qualification.events)
     ):
         return False
 
-    body = _recovery_body(
-        source=source,
-        change=parsed.change,
-        current_revision=current_revision,
-        failed_authorization_revision=request.authorization_revision,
-        request_comment_id=request_comment_id,
-    )
-    _persist_recovery_comment(
-        body,
-        repository=repository,
-        token=token,
-        issue_number=source.issue_number,
-    )
+    if not recovery_matches_request:
+        body = _recovery_body(
+            source=source,
+            change=parsed.change,
+            current_revision=current_revision,
+            failed_authorization_revision=request.authorization_revision,
+            request_comment_id=request_comment_id,
+        )
+        _persist_recovery_comment(
+            body,
+            repository=repository,
+            token=token,
+            issue_number=source.issue_number,
+        )
 
     fresh_issue = _as_mapping(_github_json(repository, token, f"issues/{source.issue_number}"))
     fresh_observation = None if fresh_issue is None else normalize_github_issue(fresh_issue)
