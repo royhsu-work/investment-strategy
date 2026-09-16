@@ -15,6 +15,7 @@ from investment_strategy.scheduled_agent_effects import EffectBatch, formal_appl
 from investment_strategy.scheduled_agent_runtime import GitHubIssueObservation, WorkerRequest
 from investment_strategy.scheduled_agent_validation_resource import ValidationResourceTarget
 from investment_strategy.scheduled_agent_worker import parse_worker_result
+from investment_strategy.workflow_dispatch import Routing
 
 _REVISION = "4e3241d7d84a64012bf3b6218442128a4cb48d7a"
 _TARGET_REVISION = "b" * 40
@@ -301,7 +302,7 @@ def test_first_activation_promotes_change_and_successor_in_one_issue_patch(
         return GitHubIssueObservation(
             issue_number=138,
             change=change,
-            routing=cast(tuple[str, str], (role, action)),
+            routing=cast(Routing, (role, action)),
             state="open",
             created_order=1,
             authoritative=True,
@@ -437,7 +438,7 @@ def test_partial_first_activation_recovery_requires_exact_evidence_and_preserves
         return GitHubIssueObservation(
             issue_number=138,
             change=_CHANGE,
-            routing=("lead", action),
+            routing=cast(Routing, ("lead", action)),
             state="open",
             created_order=1,
             authoritative=True,
@@ -458,6 +459,10 @@ def test_partial_first_activation_recovery_requires_exact_evidence_and_preserves
             issue.update(payload)
         return issue
 
+    def fake_persist_recovery(body: str, **_kwargs: object) -> int:
+        recovery_bodies.append(body)
+        return 777
+
     monkeypatch.setattr(bridge, "_authorization_revision_is_ancestor", lambda *_args: True)
     monkeypatch.setattr(
         bridge,
@@ -465,11 +470,7 @@ def test_partial_first_activation_recovery_requires_exact_evidence_and_preserves
         lambda *_args, **_kwargs: True,
     )
     monkeypatch.setattr(bridge, "_paged_github_list", lambda *_args, **_kwargs: ())
-    monkeypatch.setattr(
-        bridge,
-        "_persist_recovery_comment",
-        lambda body, **_kwargs: recovery_bodies.append(body) or 777,
-    )
+    monkeypatch.setattr(bridge, "_persist_recovery_comment", fake_persist_recovery)
     monkeypatch.setattr(bridge, "_formal_qualification", lambda **_kwargs: True)
     monkeypatch.setattr(bridge, "_github_json", fake_github)
     monkeypatch.setattr(bridge, "normalize_github_issue", fake_normalize)
