@@ -291,9 +291,10 @@ def test_first_activation_promotes_change_and_successor_in_one_issue_patch(
             return None
         change = _CHANGE if f"Change: {_CHANGE}" in body else "unset"
         names = {
-            item.get("name")
+            item if isinstance(item, str) else item.get("name")
             for item in labels
-            if isinstance(item, dict) and isinstance(item.get("name"), str)
+            if isinstance(item, str)
+            or (isinstance(item, dict) and isinstance(item.get("name"), str))
         }
         action = "review-openspec" if "action:review-openspec" in names else "propose-change"
         role = "reviewer" if action == "review-openspec" else "lead"
