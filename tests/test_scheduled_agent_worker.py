@@ -456,7 +456,11 @@ def test_partial_first_activation_recovery_requires_exact_evidence_and_preserves
         return issue
 
     monkeypatch.setattr(bridge, "_authorization_revision_is_ancestor", lambda *_args: True)
-    monkeypatch.setattr(bridge, "_partial_activation_carrier_matches", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        bridge,
+        "_partial_activation_carrier_matches",
+        lambda *_args, **_kwargs: True,
+    )
     monkeypatch.setattr(bridge, "_paged_github_list", lambda *_args, **_kwargs: ())
     monkeypatch.setattr(
         bridge,
