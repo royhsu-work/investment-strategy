@@ -379,16 +379,19 @@ def test_existing_pending_first_activation_result_is_reused(
     )
     monkeypatch.setattr(bridge, "_formal_qualification", lambda **_kwargs: True)
 
-    assert bridge._existing_activation_correlation(
-        repository="royhsu-work/investment-strategy",
-        token=_REVISION,
-        source=source,
-        change=_CHANGE,
-        result_revision=_TARGET_REVISION,
-        current_revision=_REVISION,
-        result_kind="ready-for-openspec-review",
-        successor_routing=("reviewer", "review-openspec"),
-    ) == correlation
+    assert (
+        bridge._existing_activation_correlation(
+            repository="royhsu-work/investment-strategy",
+            token=_REVISION,
+            source=source,
+            change=_CHANGE,
+            result_revision=_TARGET_REVISION,
+            current_revision=_REVISION,
+            result_kind="ready-for-openspec-review",
+            successor_routing=("reviewer", "review-openspec"),
+        )
+        == correlation
+    )
 
 
 def test_partial_first_activation_recovery_requires_exact_evidence_and_preserves_labels(
@@ -510,3 +513,72 @@ def test_partial_activation_recovery_rejects_unproven_stale_request(
         current_revision=_REVISION,
         default_branch="main",
     )
+
+
+def test_partial_activation_carrier_uses_slash_preserving_ref_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "lead", "propose-change")
+    materialization = _activation_materialization()
+    failed_revision = _REVISION
+    head_sha = "d" * 40
+    tree_sha = "e" * 40
+    paths: list[str] = []
+
+    def fake_github(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+    ) -> object:
+        assert method == "GET"
+        assert payload is None
+        paths.append(api_path)
+        if api_path == f"git/ref/heads/agent/{_CHANGE}":
+            return {"object": {"sha": head_sha}}
+        if api_path == f"git/commits/{head_sha}":
+            return {
+                "message": "formalize bounded proposal",
+                "parents": [{"sha": failed_revision}],
+                "tree": {"sha": tree_sha},
+            }
+        if api_path == f"git/trees/{tree_sha}?recursive=1":
+            return {
+                "tree": [
+                    {
+                        "path": f"openspec/changes/{_CHANGE}/.openspec.yaml",
+                        "sha": "a" * 40,
+                    }
+                ]
+            }
+        if api_path.startswith("pulls?state=all&head="):
+            return [
+                {
+                    "state": "open",
+                    "head": {
+                        "ref": f"agent/{_CHANGE}",
+                        "sha": head_sha,
+                        "repo": {"full_name": "royhsu-work/investment-strategy"},
+                    },
+                    "base": {
+                        "ref": "main",
+                        "repo": {"full_name": "royhsu-work/investment-strategy"},
+                    },
+                    "body": "Refs #138",
+                }
+            ]
+        raise AssertionError(f"unexpected API path: {api_path}")
+
+    monkeypatch.setattr(bridge, "_github_json", fake_github)
+
+    assert bridge._partial_activation_carrier_matches(
+        materialization,
+        source,
+        repository="royhsu-work/investment-strategy",
+        token="token",
+        failed_revision=failed_revision,
+        default_branch="main",
+    )
+    assert paths[0] == f"git/ref/heads/agent/{_CHANGE}"
