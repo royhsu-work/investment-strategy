@@ -959,12 +959,19 @@ def _reconciliation_tree_elements(
     )
     manifest_paths = {file.path for file in manifest.files}
     for path in sorted((default_changed & carrier_changed) - manifest_paths):
-        if _content_sha_at(repository, token, path=path, revision=default_revision) != _content_sha_at(
+        default_sha = _content_sha_at(
+            repository,
+            token,
+            path=path,
+            revision=default_revision,
+        )
+        carrier_sha = _content_sha_at(
             repository,
             token,
             path=path,
             revision=carrier_revision,
-        ):
+        )
+        if default_sha != carrier_sha:
             raise RuntimeError("work-product reconciliation has an unresolved overlapping change")
 
     tree_elements: list[dict[str, object]] = []
