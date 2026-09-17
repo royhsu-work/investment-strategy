@@ -31,7 +31,11 @@ from investment_strategy.scheduled_agent_runtime import (
     acquire_dispatch_preflight,
 )
 from investment_strategy.scheduled_agent_validation_resource import ValidationResourceTarget
-from investment_strategy.workflow_dispatch import DispatchPreflight, Routing
+from investment_strategy.workflow_dispatch import (
+    DispatchPreflight,
+    ObservationProvenance,
+    Routing,
+)
 
 _REPOSITORY = "royhsu-work/investment-strategy"
 _REVISION = "4e3241d7d84a64012bf3b6218442128a4cb48d7a"
@@ -78,6 +82,7 @@ def _preflight(
     issue_number: int = 138,
     change: str = "unset",
     human_authorized: bool = True,
+    current_state_provenance: ObservationProvenance = ObservationProvenance.QUALIFIED,
 ) -> DispatchPreflight:
     role = (
         "reviewer"
@@ -95,6 +100,7 @@ def _preflight(
                 state="open",
                 created_order=1,
                 authoritative=True,
+                current_state_provenance=current_state_provenance,
             ),
         ),
         source_total_count=1,
@@ -291,9 +297,14 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
         apply_derived: bool = True,
         materialization_promote_change: bool = False,
         validated_materialization_revision: str | None = None,
+        defer_issue_comments: bool = False,
+        allow_pending_continuation: bool = False,
+        pending_application_correlation: str | None = None,
     ) -> tuple[EffectBatch, bridge.ApplyResult]:
         assert source == expected_source
         assert request_comment_id == 102
+        assert allow_pending_continuation is False
+        assert pending_application_correlation is None
         adapter = GitHubEffectAdapter(
             repository,
             token,
@@ -310,6 +321,9 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
                 "apply_derived": apply_derived,
                 "materialization_promote_change": materialization_promote_change,
                 "validated_materialization_revision": validated_materialization_revision,
+                "defer_issue_comments": defer_issue_comments,
+                "allow_pending_continuation": allow_pending_continuation,
+                "pending_application_correlation": pending_application_correlation,
             }
         )
         correlation = formal_application_correlation(
@@ -379,12 +393,18 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
             "apply_derived": False,
             "materialization_promote_change": False,
             "validated_materialization_revision": None,
+            "defer_issue_comments": True,
+            "allow_pending_continuation": False,
+            "pending_application_correlation": None,
         },
         {
             "request_comment_id": 102,
             "apply_derived": True,
             "materialization_promote_change": True,
             "validated_materialization_revision": target.revision,
+            "defer_issue_comments": False,
+            "allow_pending_continuation": False,
+            "pending_application_correlation": None,
         },
     ]
     assert len(applications) == 2
@@ -409,6 +429,126 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
     output = capsys.readouterr().out
     assert '"validation_completed": false' in output
     assert '"validation_completed": true' in output
+
+
+def test_plan_application_recovers_a_persisted_validation_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "lead", "resolve-question")
+    result_body = (
+        "ACTION_RESULT\n"
+        "Workflow: #138\n"
+        f"Change: {_CHANGE}\n"
+        "Action: resolve-question\n"
+        "Role: lead\n"
+        "Result: READY_FOR_OPENSPEC_REVIEW\n"
+        f"Revision: {_REVISION}\n"
+        f"Default-Branch-Revision: {_REVISION}\n"
+        "Evidence-Ref: issuecomment-worker-evidence\n"
+        "Repository-derived successor: Reviewer / review-openspec\n"
+    )
+    correlation = formal_application_correlation(
+        source,
+        change=_CHANGE,
+        result_kind="ready-for-openspec-review",
+        current_revision=_REVISION,
+        request_comment_id=777,
+    )
+    bound_lines = result_body.splitlines()
+    bound_lines.insert(
+        next(
+            index
+            for index, line in enumerate(bound_lines)
+            if line.startswith("Default-Branch-Revision:")
+        )
+        + 1,
+        f"Application-Correlation: {correlation}",
+    )
+    bound_body = "\n".join(bound_lines)
+    materialization = {
+        "issue_number": 138,
+        "operation": "application-materialize",
+        "expected_change": _CHANGE,
+        "change": _CHANGE,
+        "branch": f"agent/{_CHANGE}",
+        "base_sha": _REVISION,
+        "message": "test validation boundary",
+        "files": [],
+        "pr_number": 178,
+    }
+    worker_result = {
+        "issue_number": 138,
+        "role": "lead",
+        "action": "resolve-question",
+        "change": _CHANGE,
+        "result_kind": "ready-for-openspec-review",
+        "evidence_ref": "issuecomment-worker-evidence",
+        "result_content": result_body,
+        "requested_effects": [
+            {
+                "kind": "github-mutation",
+                "payload_json": json.dumps(materialization, sort_keys=True),
+            },
+            {
+                "kind": "issue-comment",
+                "payload_json": json.dumps({"issue_number": 138, "body": result_body}),
+            },
+        ],
+    }
+    body = _effect_request(worker_result)
+    request = parse_application_request(body)
+    assert request is not None
+    comment = {
+        "id": 900,
+        "body": bound_body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    monkeypatch.setattr(
+        bridge,
+        "_github_json",
+        lambda *_args, **_kwargs: {
+            "number": 138,
+            "state": "open",
+            "created_at": "2026-09-17T00:00:00Z",
+            "closed_at": None,
+            "labels": [{"name": "action:resolve-question"}],
+            "body": f"Change: {_CHANGE}",
+        },
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_paged_github_list",
+        lambda _repository, _token, path: (
+            (comment,)
+            if "comments" in path
+            else (
+                {
+                    "event": "commented",
+                    "id": 900,
+                    "created_at": "2026-09-17T00:00:00Z",
+                },
+            )
+        ),
+    )
+
+    plan = plan_application(
+        event=_event(body),
+        request=request,
+        preflight=_preflight(
+            action="resolve-question",
+            issue_number=138,
+            change=_CHANGE,
+            current_state_provenance=ObservationProvenance.INDETERMINATE,
+        ),
+        repository=_REPOSITORY,
+        current_revision=_REVISION,
+    )
+
+    assert plan.should_apply
+    assert plan.source == source
+    assert plan.pending_continuation
+    assert plan.pending_application_correlation == correlation
 
 
 def test_application_boundary_does_not_replay_dispatch_artifacts() -> None:

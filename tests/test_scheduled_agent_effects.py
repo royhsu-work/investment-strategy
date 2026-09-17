@@ -123,6 +123,36 @@ def test_typed_application_derives_one_successor_without_continuation() -> None:
     }
 
 
+def test_validation_gate_defers_formal_comments_until_validation() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    batch = parse_effect_batch(
+        _raw(
+            requested_effects=[
+                {
+                    "kind": "issue-comment",
+                    "payload_json": json.dumps({"issue_number": 138, "body": "ACTION_RESULT"}),
+                }
+            ]
+        ),
+        source,
+    )
+    applied: list[StagedEffect] = []
+
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: True,
+        apply_effect=applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        apply_derived=False,
+        defer_issue_comments=True,
+    )
+
+    assert result.applied
+    assert applied == []
+
+
 def test_carrier_required_is_a_hard_invocation_exit_before_successor_effects() -> None:
     source = WorkerRequest(138, "executor", "implement-change")
     carrier_plan = make_carrier_plan(
