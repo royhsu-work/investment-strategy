@@ -25,6 +25,10 @@ from investment_strategy.scheduled_agent_effects import (
     GitHubEffectAdapter,
     formal_application_correlation,
 )
+from investment_strategy.scheduled_agent_formal_qualification import (
+    QualificationDecision,
+    QualificationInput,
+)
 from investment_strategy.scheduled_agent_runtime import (
     GitHubIssueObservation,
     WorkerRequest,
@@ -1033,10 +1037,10 @@ def test_real_issue233_mixed_formal_history_recovers_persisted_review_result(
             else lifecycle
         ),
     )
-    decisions: list[object] = []
+    decisions: list[QualificationDecision] = []
     real_qualifier = bridge.qualify_current_formal_consequence
 
-    def capture_qualification(qualification: object) -> object:
+    def capture_qualification(qualification: QualificationInput) -> QualificationDecision:
         decision = real_qualifier(qualification)
         decisions.append(decision)
         return decision
