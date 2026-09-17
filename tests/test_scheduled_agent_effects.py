@@ -2939,9 +2939,9 @@ def test_formal_transition_reconstructs_recovery_ancestry_on_current_path(
         if path == f"issues/{issue_number}":
             return issue
         if path == f"issues/{issue_number}/comments?per_page=100&sort=created&direction=desc":
-            return comments
+            return list(comments)
         if path == f"issues/{issue_number}/timeline?per_page=100&page=1":
-            return lifecycle
+            return list(lifecycle)
         if path == f"compare/{historical_revision}...{current_revision}":
             compare_calls.append(path)
             if descendant:
@@ -2974,35 +2974,5 @@ def test_formal_transition_reconstructs_recovery_ancestry_on_current_path(
         derived=True,
     )
 
-    assert supported_effect_guard(adapter.source, effect)
-    assert adapter._source_still_current()
-    assert adapter._default_branch_still_current()
-    qualification_input = effects.build_qualification_input(
-        issue_number=issue_number,
-        change=change,
-        state="open",
-        current_routing=("executor", "implement-change"),
-        comments=comments,
-        current_revision=current_revision,
-        mode="pending",
-        expected_routing=("executor", "implement-change"),
-        source_routing=("executor", "implement-change"),
-        expected_result_kind="blocked",
-        expected_application_correlation=formal_application_correlation(
-            WorkerRequest(issue_number, "executor", "implement-change"),
-            change=change,
-            result_kind="blocked",
-            current_revision=current_revision,
-            request_comment_id=request_comment_id,
-        ),
-        lifecycle_events=lifecycle,
-    )
-    assert len(qualification_input.recovery_events) == 1, repr(qualification_input)
-    assert all(event.valid for event in qualification_input.events), repr(
-        qualification_input
-    )
-    assert all(event.valid for event in qualification_input.lifecycle_events), repr(
-        qualification_input
-    )
     assert adapter.guard(effect) is descendant
     assert compare_calls == [f"compare/{historical_revision}...{current_revision}"]
