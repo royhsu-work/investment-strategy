@@ -806,11 +806,7 @@ def test_plan_application_recovers_persisted_formal_result_without_materializati
     )
 
     plan = plan_application(
-        event={
-            "action": "created",
-            "issue": current_issue,
-            "comment": _connector_comment(102, body),
-        },
+        event=_event(body),
         request=request,
         preflight=_preflight(
             action="review-openspec",
