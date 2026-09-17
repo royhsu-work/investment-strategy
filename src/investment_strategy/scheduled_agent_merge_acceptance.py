@@ -469,11 +469,7 @@ def _historical_review_baseline_is_compatible(
     if reviewer_pass_default_branch_revision == current_revision:
         return True
     pr_number = payload.get("number")
-    if (
-        not isinstance(pr_number, int)
-        or isinstance(pr_number, bool)
-        or pr_number <= 0
-    ):
+    if not isinstance(pr_number, int) or isinstance(pr_number, bool) or pr_number <= 0:
         return False
     parent_sha = _first_parent_sha(
         repository,
