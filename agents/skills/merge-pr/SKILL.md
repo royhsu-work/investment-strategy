@@ -19,6 +19,11 @@ For merge-implementation-pr, require review-implementation PASS for exact head a
 completion. For merge-archive-pr, additionally require review-archive PASS, archive preparation,
 terminal evidence, and known safe cleanup. Never infer the phase from a generic merge label or prose.
 
+When squash presentation would otherwise inherit history, provide the application with explicit
+single-line commit_title and exact trimmed commit_message values. Keep that presentation in the
+effect payload so the repository-owned preflight, carrier plan, and postcondition all evaluate the
+same bytes; use a non-closing body such as the repository's Refs linkage.
+
 Apply only the repository-authorized merge plan through the mutation carrier. For an open PR, require
 exact head unchanged immediately before and after the merge write, preserve unrelated labels/content,
 and observe the PR merged postcondition. For a closed+merged carrier, send no merge write and instead

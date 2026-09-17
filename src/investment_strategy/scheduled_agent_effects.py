@@ -53,6 +53,7 @@ from investment_strategy.scheduled_agent_formal_qualification import (
     build_qualification_input,
     qualify_current_formal_consequence,
 )
+from investment_strategy.native_closing_preflight import explicit_merge_presentation
 from investment_strategy.scheduled_agent_runtime import (
     GitHubIssueObservation,
     WorkerRequest,
@@ -721,11 +722,22 @@ def _github_mutation_structurally_valid(
         method = payload.get("merge_method", "merge")
         if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
             return False
-        return (
-            _valid_sha(payload.get("expected_head_sha"))
-            and isinstance(method, str)
-            and method in _ALLOWED_MERGE_METHODS
+        if (
+            not _valid_sha(payload.get("expected_head_sha"))
+            or not isinstance(method, str)
+            or method not in _ALLOWED_MERGE_METHODS
+        ):
+            return False
+        presentation_keys = {"commit_title", "commit_message"} & set(payload)
+        if not presentation_keys:
+            return True
+        if presentation_keys != {"commit_title", "commit_message"} or method == "rebase":
+            return False
+        _, presentation_complete = explicit_merge_presentation(
+            cast(str | None, payload.get("commit_title")),
+            cast(str | None, payload.get("commit_message")),
         )
+        return presentation_complete
     return False
 
 
@@ -1518,12 +1530,31 @@ class GitHubEffectAdapter:
                 "expected_head_sha": payload.get("expected_head_sha"),
                 "merge_method": payload.get("merge_method", "merge"),
             }
+            effective_message, presentation_complete = explicit_merge_presentation(
+                cast(str | None, payload.get("commit_title"))
+                if "commit_title" in payload
+                else None,
+                cast(str | None, payload.get("commit_message"))
+                if "commit_message" in payload
+                else None,
+            )
+            if not presentation_complete:
+                raise RuntimeError("carrier merge presentation is invalid")
+            if effective_message is not None:
+                requested.update(
+                    {
+                        "commit_title": payload.get("commit_title"),
+                        "commit_message": payload.get("commit_message"),
+                    }
+                )
             expected_postcondition = {
                 "pr": number,
                 "state": "closed",
                 "merged": True,
                 "head_sha": payload.get("expected_head_sha"),
             }
+            if effective_message is not None:
+                expected_postcondition["merge_commit_message"] = effective_message
         else:
             raise RuntimeError(f"unsupported carrier plan operation: {operation}")
         return self._carrier_plan(
@@ -2355,7 +2386,29 @@ class GitHubEffectAdapter:
                 cast(str, current["merged_at"]),
             )
             expected_metadata = self._merge_metadata.get(json.dumps(payload, sort_keys=True))
-            return expected_metadata is None or expected_metadata == metadata
+            if expected_metadata is not None and expected_metadata != metadata:
+                return False
+            expected_message, presentation_complete = explicit_merge_presentation(
+                cast(str | None, payload.get("commit_title"))
+                if "commit_title" in payload
+                else None,
+                cast(str | None, payload.get("commit_message"))
+                if "commit_message" in payload
+                else None,
+            )
+            if not presentation_complete:
+                return False
+            if expected_message is None:
+                return True
+            merge_commit = _github_json(
+                self.repository,
+                self.token,
+                f"git/commits/{cast(str, current['merge_commit_sha'])}",
+            )
+            return (
+                isinstance(merge_commit, Mapping)
+                and merge_commit.get("message") == expected_message
+            )
         return False
 
     def observe_postcondition(self, effect: StagedEffect) -> bool:

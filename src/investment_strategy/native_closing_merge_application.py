@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 from investment_strategy.native_closing_preflight import (
     MergePresentationInput,
     MergeStrategy,
+    explicit_merge_presentation,
     NativeClosingDisposition,
     NativeClosingPreflightResult,
     evaluate_native_closing_preflight,
@@ -34,6 +35,8 @@ class MergeApplicationEvidence:
     commit_enumeration_complete: bool
     presentation_complete: bool
     generated_message: str | None
+    commit_title: str | None = None
+    commit_message: str | None = None
 
 
 def native_closing_merge_result(
@@ -55,6 +58,8 @@ def native_closing_merge_result(
             commit_enumeration_complete=evidence.commit_enumeration_complete,
             presentation_complete=evidence.presentation_complete,
             generated_message=evidence.generated_message,
+            commit_title=evidence.commit_title,
+            commit_message=evidence.commit_message,
         )
     )
 
@@ -180,11 +185,21 @@ def _generated_merge_message(
     pr_number: int,
     strategy: MergeStrategy,
     commit_messages: tuple[str, ...],
+    commit_title: str | None = None,
+    commit_message: str | None = None,
 ) -> tuple[str | None, bool]:
     if not _merge_strategy_enabled(repository, strategy):
         return None, False
+    explicit_message, explicit_complete = explicit_merge_presentation(
+        commit_title,
+        commit_message,
+    )
+    if not explicit_complete:
+        return None, False
     if strategy is MergeStrategy.REBASE:
-        return None, True
+        return None, explicit_message is None
+    if explicit_message is not None:
+        return explicit_message, True
 
     title = pr.get("title")
     body = pr.get("body")
@@ -244,6 +259,8 @@ def acquire_native_closing_merge_result(
     expected_head_sha: str,
     lifecycle_context: str,
     merge_strategy: MergeStrategy,
+    commit_title: str | None = None,
+    commit_message: str | None = None,
 ) -> NativeClosingPreflightResult:
     """Acquire complete current GitHub presentation and evaluate one exact-head preflight."""
 
@@ -264,6 +281,8 @@ def acquire_native_closing_merge_result(
             pr_number=pr_number,
             strategy=merge_strategy,
             commit_messages=commit_messages,
+            commit_title=commit_title,
+            commit_message=commit_message,
         )
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
         return _fail_closed()
@@ -284,5 +303,7 @@ def acquire_native_closing_merge_result(
             commit_enumeration_complete=commits_complete,
             presentation_complete=presentation_complete,
             generated_message=generated_message,
+            commit_title=commit_title,
+            commit_message=commit_message,
         )
     )
