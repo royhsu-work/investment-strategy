@@ -277,7 +277,9 @@ def _pending_application_correlation(
         or worker_default_revision is None
         or _SHA.fullmatch(worker_revision) is None
         or _SHA.fullmatch(worker_default_revision) is None
-        or worker_revision != worker_default_revision
+        # Result revision identifies the reviewed work product; the default-branch
+        # revision identifies the authorization snapshot. They are independent
+        # identities and must not be collapsed into one SHA.
     ):
         return None
     authorization_ancestry: tuple[tuple[str, str], ...] = ()
