@@ -1857,14 +1857,18 @@ class GitHubEffectAdapter:
             lifecycle_events=lifecycle_events,
         )
         current_revision = self.current_revision
-        if self.allow_pending_continuation and current_revision is not None:
-            expected_correlation = self._expected_formal_correlation()
+        if current_revision is not None:
+            # Current and pending continuations share the same historical-proof
+            # boundary. A valid formal result or recovery may have been emitted
+            # before main advanced; qualification must reconstruct its recorded
+            # authorization revision before evaluating the derived postcondition.
             historical_revisions: list[str] = []
             for event in qualification_input.events:
                 historical_revision = event.default_branch_revision
                 if (
-                    expected_correlation is None
-                    or event.application_correlation != expected_correlation
+                    not event.valid
+                    or event.issue_number != self.source.issue_number
+                    or event.change != self.authorized_change
                     or historical_revision is None
                     or historical_revision == current_revision
                 ):
@@ -1874,14 +1878,17 @@ class GitHubEffectAdapter:
                 historical_revision = recovery.default_branch_revision
                 if (
                     not recovery.valid
+                    or recovery.issue_number != self.source.issue_number
                     or recovery.change != self.authorized_change
                     or historical_revision is None
                     or historical_revision == current_revision
                 ):
                     continue
                 historical_revisions.append(historical_revision)
-            ancestry: list[tuple[str, str]] = []
+            ancestry: list[tuple[str, str]] = list(qualification_input.authorization_ancestry)
             for historical_revision in dict.fromkeys(historical_revisions):
+                if (historical_revision, current_revision) in ancestry:
+                    continue
                 comparison = _github_json(
                     self.repository,
                     self.token,
@@ -1897,7 +1904,7 @@ class GitHubEffectAdapter:
                     and base_commit.get("sha") == historical_revision
                 ):
                     ancestry.append((historical_revision, current_revision))
-            if ancestry:
+            if tuple(ancestry) != qualification_input.authorization_ancestry:
                 qualification_input = replace(
                     qualification_input,
                     authorization_ancestry=tuple(ancestry),

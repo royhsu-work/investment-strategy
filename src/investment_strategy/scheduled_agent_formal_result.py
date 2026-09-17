@@ -205,7 +205,10 @@ def parse_formal_result(
         and parsed_correlation.group(4) == role
         and parsed_correlation.group(5) == action
         and parsed_correlation.group(6) == result.value
-        and parsed_correlation.group(7) == default_branch_revision
+        # Result/default revisions describe the worker evidence. The final
+        # correlation revision identifies the application observation and may be
+        # newer when the default branch advances before application.
+        and _valid_sha(parsed_correlation.group(7))
     )
     comment_id = payload.get("id")
     valid_comment_id = (
