@@ -241,6 +241,99 @@ def _compare_is_ancestor(
     return status in {"ahead", "identical"} and behind_by == 0
 
 
+def _changed_paths(
+    repository: str,
+    token: str,
+    *,
+    ancestor: str,
+    descendant: str,
+    read: GitHubReader,
+) -> frozenset[str] | None:
+    comparison = _as_mapping(
+        cast(
+            object,
+            read(
+                repository,
+                token,
+                f"compare/{ancestor}...{descendant}",
+            ),
+        )
+    )
+    if comparison is None:
+        return None
+    files = comparison.get("files")
+    if not isinstance(files, list) or len(files) >= 300:
+        return None
+    paths: set[str] = set()
+    for raw_file in files:
+        file = _as_mapping(raw_file)
+        filename = None if file is None else file.get("filename")
+        if not isinstance(filename, str) or not filename:
+            return None
+        paths.add(filename)
+    return frozenset(paths)
+
+
+def _pr_changed_paths(
+    repository: str,
+    token: str,
+    *,
+    pr_number: int,
+    read: GitHubReader,
+) -> frozenset[str] | None:
+    files = _paged_list(repository, token, f"pulls/{pr_number}/files?", read=read)
+    if not files:
+        return None
+    paths: set[str] = set()
+    for file in files:
+        filename = file.get("filename")
+        if not isinstance(filename, str) or not filename:
+            return None
+        paths.add(filename)
+    return frozenset(paths)
+
+
+def _initial_carrier_base_advance_is_disjoint(
+    repository: str,
+    token: str,
+    *,
+    pr: Mapping[str, object],
+    pr_number: int,
+    default_revision: str,
+    read: GitHubReader,
+) -> bool:
+    base = _as_mapping(pr.get("base"))
+    base_sha = None if base is None else base.get("sha")
+    if not _valid_sha(base_sha) or cast(str, base_sha) == default_revision:
+        return False
+    if not _compare_is_ancestor(
+        repository,
+        token,
+        ancestor=cast(str, base_sha),
+        descendant=default_revision,
+        read=read,
+    ):
+        return False
+    default_paths = _changed_paths(
+        repository,
+        token,
+        ancestor=cast(str, base_sha),
+        descendant=default_revision,
+        read=read,
+    )
+    carrier_paths = _pr_changed_paths(
+        repository,
+        token,
+        pr_number=pr_number,
+        read=read,
+    )
+    return (
+        default_paths is not None
+        and carrier_paths is not None
+        and default_paths.isdisjoint(carrier_paths)
+    )
+
+
 def _pr_identity_is_coherent(
     pr: Mapping[str, object],
     *,
@@ -788,39 +881,50 @@ def qualify_implementation_carrier(
     reason: str
     if not base_is_current:
         if historical_pr_number is None:
-            return _indeterminate(
-                repository=repository,
-                source=source,
-                change=change,
+            if not _initial_carrier_base_advance_is_disjoint(
+                repository,
+                token,
+                pr=pr,
                 pr_number=pr_number,
-                reason="carrier-pr-base-is-stale",
-                branch=branch,
-                head_sha=head_sha,
-                default_branch=default_branch,
                 default_revision=default_revision,
-                historical_pr_number=historical_pr_number,
-            )
-        if not default_is_ancestor:
-            return ImplementationCarrierQualification(
-                disposition="RECONCILIATION_REQUIRED",
-                reason="carrier-pr-base-is-stale",
-                repository=repository,
-                issue_number=source.issue_number,
-                change=change,
-                action=source.action,
-                pr_number=pr_number,
-                branch=branch,
-                head_sha=head_sha,
-                default_branch=default_branch,
-                default_revision=default_revision,
-                historical_pr_number=historical_pr_number,
-            )
-        # GitHub keeps an open PR's recorded base SHA at the old base commit
-        # after the application creates the explicit reconciliation commit.
-        # The branch ancestry is the authoritative postcondition; retaining
-        # the stale base field must not cause a second reconciliation forever.
-        disposition = "QUALIFIED"
-        reason = "continuation-carrier-qualified-after-reconciliation"
+                read=reader,
+            ):
+                return _indeterminate(
+                    repository=repository,
+                    source=source,
+                    change=change,
+                    pr_number=pr_number,
+                    reason="carrier-pr-base-is-stale",
+                    branch=branch,
+                    head_sha=head_sha,
+                    default_branch=default_branch,
+                    default_revision=default_revision,
+                    historical_pr_number=historical_pr_number,
+                )
+            disposition = "QUALIFIED"
+            reason = "initial-carrier-qualified-after-disjoint-default-advance"
+        else:
+            if not default_is_ancestor:
+                return ImplementationCarrierQualification(
+                    disposition="RECONCILIATION_REQUIRED",
+                    reason="carrier-pr-base-is-stale",
+                    repository=repository,
+                    issue_number=source.issue_number,
+                    change=change,
+                    action=source.action,
+                    pr_number=pr_number,
+                    branch=branch,
+                    head_sha=head_sha,
+                    default_branch=default_branch,
+                    default_revision=default_revision,
+                    historical_pr_number=historical_pr_number,
+                )
+            # GitHub keeps an open PR's recorded base SHA at the old base commit
+            # after the application creates the explicit reconciliation commit.
+            # The branch ancestry is the authoritative postcondition; retaining
+            # the stale base field must not cause a second reconciliation forever.
+            disposition = "QUALIFIED"
+            reason = "continuation-carrier-qualified-after-reconciliation"
     elif default_is_ancestor:
         disposition = "QUALIFIED"
         reason = (

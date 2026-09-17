@@ -99,6 +99,7 @@ def _fake_github(
     historical_files: list[dict[str, object]] | None = None,
     default_is_ancestor: bool = True,
     historical_is_ancestor: bool = True,
+    default_advance_files: list[dict[str, object]] | None = None,
     current_merge_is_ancestor: bool = True,
     branch_ref_sha: str | None = HEAD,
     default_revision: str = MAIN,
@@ -165,6 +166,20 @@ def _fake_github(
                 "status": "ahead" if default_is_ancestor else "diverged",
                 "behind_by": 0 if default_is_ancestor else 2,
             }
+        base = cast(dict[str, object], current["base"])
+        base_sha = base.get("sha")
+        if (
+            default_advance_files is not None
+            and isinstance(base_sha, str)
+            and api_path == f"compare/{base_sha}...{default_revision}"
+        ):
+            return {
+                "status": "ahead",
+                "behind_by": 0,
+                "files": default_advance_files,
+            }
+        if api_path.startswith("compare/"):
+            return None
         branch = cast(str, current_head["ref"])
         if api_path == f"git/ref/heads/{branch}":
             if branch_ref_sha is None and allow_not_found:
@@ -182,6 +197,8 @@ def _source(action: str = "implement-change") -> WorkerRequest:
 def _qualify(
     monkeypatch: pytest.MonkeyPatch,
     fake: Callable[..., object | None],
+    *,
+    current_revision: str = MAIN,
 ) -> carrier.ImplementationCarrierQualification:
     monkeypatch.setattr(carrier, "_github_json", fake)
     return carrier.qualify_implementation_carrier(
@@ -190,7 +207,7 @@ def _qualify(
         source=_source(),
         change=CHANGE,
         pr_number=236,
-        current_revision=MAIN,
+        current_revision=current_revision,
     )
 
 
@@ -458,3 +475,42 @@ def test_historical_carrier_with_competing_active_change_fails_closed(
     )
     assert decision.disposition == "INDETERMINATE"
     assert decision.reason == "initial-carrier-branch-is-not-canonical"
+
+
+@pytest.mark.parametrize(
+    ("default_advance_files", "qualified"),
+    [
+        ([{"filename": "src/investment_strategy/bootstrap.py"}], True),
+        ([{"filename": "src/investment_strategy/example.py"}], False),
+    ],
+)
+def test_initial_carrier_accepts_only_disjoint_ancestry_proven_default_advance(
+    monkeypatch: pytest.MonkeyPatch,
+    default_advance_files: list[dict[str, object]],
+    qualified: bool,
+) -> None:
+    old_base = "7" * 40
+    new_default = "9" * 40
+    current = _continuation_pr(branch=f"agent/{CHANGE}")
+    current["base"] = {"ref": "main", "sha": old_base, "repo": _repo()}
+    decision = _qualify(
+        monkeypatch,
+        _fake_github(
+            current_pr=current,
+            historical_pr=None,
+            open_prs=[current],
+            pr_files=[
+                {"filename": f"openspec/changes/{CHANGE}/proposal.md"},
+                {"filename": "src/investment_strategy/example.py"},
+            ],
+            default_is_ancestor=False,
+            default_revision=new_default,
+            default_advance_files=default_advance_files,
+        ),
+        current_revision=new_default,
+    )
+    assert decision.qualified is qualified
+    if qualified:
+        assert decision.reason == "initial-carrier-qualified-after-disjoint-default-advance"
+    else:
+        assert decision.reason == "carrier-pr-base-is-stale"
