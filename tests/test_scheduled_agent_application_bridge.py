@@ -1077,6 +1077,8 @@ def test_live_main_application_bridge_replays_issue233_request(
     preflight = runtime.acquire_current_github_preflight(_REPOSITORY, token)
     shard = bridge._github_json(_REPOSITORY, token, "issues/252")
     assert isinstance(shard, dict)
+    issue233_raw = bridge._github_json(_REPOSITORY, token, "issues/233")
+    issue233_observation = runtime.normalize_github_issue(issue233_raw)
     request_comments = bridge._paged_github_list(
         _REPOSITORY,
         token,
@@ -1204,6 +1206,18 @@ def test_live_main_application_bridge_replays_issue233_request(
                         for issue in preflight.issues
                         if issue.issue_number == 233
                     ],
+                    "normalized_issue233": (
+                        None
+                        if issue233_observation is None
+                        else {
+                            "issue_number": issue233_observation.issue_number,
+                            "state": issue233_observation.state,
+                            "change": issue233_observation.change,
+                            "routing": issue233_observation.routing,
+                            "authoritative": issue233_observation.authoritative,
+                            "routing_debt": issue233_observation.routing_debt,
+                        }
+                    ),
                     "claimed": {
                         "issue_number": bridge._claimed_source(request.raw_worker_result).issue_number,
                         "role": bridge._claimed_source(request.raw_worker_result).role,
