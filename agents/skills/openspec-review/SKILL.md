@@ -17,6 +17,15 @@ design, tasks, Human input, and exact-R validation. The semantic baseline B is t
 target is R; a bookkeeping-only revision does not advance or invalidate B. Mechanical validation
 alone does not create semantic acceptance, even when strict validation passes.
 
+## Semantic-proof loop
+
+Run one compact proof loop for every material semantic boundary before returning PASS:
+
+1. **DERIVE** — Reconstruct the approved decision boundary independently from Human-approved intent, applicable same-Issue Explore evidence, canonical owners, current default-branch governance/config, and exact baseline `B` plus reviewed target `R`. Record outcomes, invariants, constraints, safety properties, and scope boundaries that the candidate must preserve.
+2. **CHALLENGE** — For each material acceptance predicate, choose the smallest discriminating case that could change PASS to FINDINGS: a negative case, twin, partition, bypass, replay, mutate-away-and-back case, exception, or competing-ownership comparison. Use the case to test consequence, not to expand scope.
+3. **REALIZE** — Classify each claimed proof by its observable substrate: current default/review execution, exact candidate revision, staged/future state, or unavailable/unverified evidence. Match current claims to current evidence; use candidate/staged/future evidence for claims about those states. Reconstruct history when the claim depends on ordering, provenance, replay, supersession, or review-time knowledge.
+4. **CLOSE** — For reuse, consolidation, one-owner, removal, or no-delta claims, state the decided consequence and intended semantic owner, then disposition competing authority and affected boundaries enough to establish closure. OpenSpec review closes design/spec/task-level meaning; `review-implementation` closes exact code-level removal, consumer coverage, and runtime postconditions.
+
 Before accepting the proposal, independently reconstruct the current decision boundary from current
 Human-approved intent, applicable canonical specs, current default-branch governance/config, and
 current repository evidence. Preserve decided outcomes, invariants, constraints, architecture
