@@ -654,11 +654,12 @@ def test_plan_application_recovers_persisted_result_after_main_advances(
         ),
     )
     ancestry_calls: list[tuple[object, ...]] = []
-    monkeypatch.setattr(
-        bridge,
-        "_authorization_revision_is_ancestor",
-        lambda *args: ancestry_calls.append(args) or True,
-    )
+
+    def fake_ancestor(*args: str) -> bool:
+        ancestry_calls.append(args)
+        return True
+
+    monkeypatch.setattr(bridge, "_authorization_revision_is_ancestor", fake_ancestor)
 
     plan = plan_application(
         event=_event(body),
