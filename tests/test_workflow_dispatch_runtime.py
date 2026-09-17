@@ -238,6 +238,93 @@ def test_production_preflight_qualifies_from_issue_timeline(
     assert classify_dispatch(preflight).selected_routing == ("executor", "implement-change")
 
 
+def test_production_preflight_qualifies_recovery_after_default_branch_advances(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A durable recovery remains qualified on a descendant main revision."""
+    previous_revision = "b" * 40
+    current_revision = "a" * 40
+    requested_urls: list[str] = []
+    recovery_body = "\n".join(
+        (
+            "APPLICATION_RECOVERY",
+            "Workflow: #233",
+            "Change: operationalize-review-openspec-semantic-proof",
+            "Source: Lead / propose-change",
+            "Target: Lead / resolve-question",
+            "Default-Branch-Revision: " + previous_revision,
+            "Failed-Authorization-Revision: " + ("c" * 40),
+            "Request-Comment-ID: 901",
+            "Reason: partial-first-activation",
+        )
+    )
+    issue = {
+        "number": 233,
+        "state": "open",
+        "body": "Change: operationalize-review-openspec-semantic-proof\n",
+        "created_at": "2026-09-09T07:28:08Z",
+        "closed_at": None,
+        "labels": [{"name": "action:resolve-question"}],
+    }
+    recovery = {
+        "id": 50,
+        "body": recovery_body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    lifecycle = (
+        {"id": 50, "event": "commented", "created_at": "2026-09-17T01:52:20Z"},
+        {
+            "id": 51,
+            "event": "unlabeled",
+            "created_at": "2026-09-17T01:52:22Z",
+            "label": {"name": "action:propose-change"},
+        },
+        {
+            "id": 52,
+            "event": "labeled",
+            "created_at": "2026-09-17T01:52:22Z",
+            "label": {"name": "action:resolve-question"},
+        },
+    )
+
+    def fake_page(url: str, token: str) -> tuple[dict[str, object], ...]:
+        del token
+        requested_urls.append(url)
+        if "/issues?" in url:
+            return (issue,)
+        if "/comments?" in url:
+            return (recovery,)
+        if "/timeline?" in url:
+            return lifecycle
+        raise AssertionError(url)
+
+    def fake_object(url: str, token: str) -> dict[str, object]:
+        del token
+        expected = (
+            "https://api.github.com/repos/owner/repo/compare/"
+            + previous_revision
+            + "..."
+            + current_revision
+        )
+        assert url == expected
+        return {"status": "ahead", "behind_by": 0}
+
+    monkeypatch.setattr(runtime, "_github_get_list_page", fake_page)
+    monkeypatch.setattr(runtime, "_github_get_object", fake_object)
+    monkeypatch.setattr(
+        runtime, "_current_default_branch_revision", lambda *_args: current_revision
+    )
+
+    preflight = runtime.acquire_current_github_preflight("owner/repo", "token")
+    decision = classify_dispatch(preflight)
+
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.selected_issue_id == 233
+    assert decision.selected_routing == ("lead", "resolve-question")
+    assert any("compare/" in url for url in requested_urls) is False
+
+
 def test_production_preflight_ignores_closed_inert_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -319,6 +406,122 @@ def test_production_preflight_ignores_closed_inert_history(
     assert classify_dispatch(preflight).selected_issue_id == 229
     assert classify_dispatch(preflight).selected_routing == ("executor", "implement-change")
     assert all("/issues/227/" not in url for url in requested_urls)
+
+
+def test_production_preflight_ignores_closed_inert_history_with_null_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GitHub's null body on inert history cannot poison a live formal route."""
+
+    revision = "a" * 40
+    requested_urls: list[str] = []
+    active_comment_body = "\n".join(
+        (
+            "ACTION_RESULT",
+            "Workflow: #229",
+            "Change: qualify-active-formal-consequences",
+            "Action: finalize-change",
+            "Role: lead",
+            "Result: MORE_IMPLEMENTATION_REQUIRED",
+            "Revision: " + "b" * 40,
+            "Default-Branch-Revision: " + revision,
+            (
+                "Application-Correlation: "
+                "application:10:229:qualify-active-formal-consequences:lead:"
+                "finalize-change:more-implementation-required:" + revision
+            ),
+            "Repository-derived successor: Executor / implement-change",
+        )
+    )
+    historical = {
+        "number": 248,
+        "state": "closed",
+        "body": None,
+        "created_at": None,
+        "closed_at": None,
+        "labels": [],
+    }
+    active = {
+        "number": 229,
+        "state": "open",
+        "body": "Change: qualify-active-formal-consequences\n",
+        "created_at": "2026-09-12T00:00:00Z",
+        "closed_at": None,
+        "labels": [{"name": "action:implement-change"}],
+    }
+    active_comment = {
+        "id": 10,
+        "body": active_comment_body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    active_timeline = (
+        {
+            "id": 10,
+            "event": "commented",
+            "created_at": "2026-09-12T00:00:01Z",
+        },
+        {
+            "id": 11,
+            "event": "labeled",
+            "created_at": "2026-09-12T00:00:02Z",
+            "label": {"name": "action:implement-change"},
+        },
+    )
+
+    def fake_page(url: str, token: str) -> tuple[dict[str, object], ...]:
+        del token
+        requested_urls.append(url)
+        if "/issues?" in url:
+            return (historical, active)
+        if "/issues/229/comments?" in url:
+            return (active_comment,)
+        if "/issues/229/timeline?" in url:
+            return active_timeline
+        if "/issues/248/" in url:
+            raise AssertionError("inert null-body history should not be qualified")
+        raise AssertionError(url)
+
+    monkeypatch.setattr(runtime, "_github_get_list_page", fake_page)
+    monkeypatch.setattr(runtime, "_current_default_branch_revision", lambda *_args: revision)
+
+    preflight = runtime.acquire_current_github_preflight("owner/repo", "token")
+    decision = classify_dispatch(preflight)
+
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.selected_issue_id == 229
+    assert decision.selected_routing == ("executor", "implement-change")
+    assert all("/issues/248/" not in url for url in requested_urls)
+
+
+@pytest.mark.parametrize(
+    ("state", "body", "labels"),
+    (
+        ("open", None, [{"name": "action:explore-change"}]),
+        ("closed", None, [{"name": "action:implement-change"}]),
+        ("closed", None, [{"name": "action:not-a-real-action"}]),
+        ("closed", None, None),
+    ),
+)
+def test_missing_body_stays_fail_closed_for_non_inert_observations(
+    state: str,
+    body: object,
+    labels: object,
+) -> None:
+    payload = {
+        "number": 248,
+        "state": state,
+        "body": body,
+        "created_at": "2026-09-16T10:40:51Z",
+        "closed_at": None if state == "open" else "2026-09-16T10:41:07Z",
+        "labels": labels,
+    }
+
+    preflight = runtime.acquire_from_issue_pages(((payload,),), exhausted=True)
+    decision = classify_dispatch(preflight)
+
+    assert decision.disposition == "FAIL_CLOSED"
+    assert decision.reason == "observations-unqualified"
 
 
 def test_shadow_is_a_pure_comparison_of_the_same_executable_model() -> None:

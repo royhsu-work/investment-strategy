@@ -6,6 +6,27 @@
 
 The Human direction also constrains the solution against an unrealistic ideal verifier. The correction must operate on evidence and capabilities available to the current review/default-branch execution substrate and must not add a second Reviewer, hidden state, exhaustive replay requirement, or another normative owner.
 
+## Residual formal-activation boundary
+
+The fresh #233 progression demonstrated that review-procedure correctness and runtime transition correctness are coupled at one consequence boundary. The observed path was not a reason to weaken qualification. It was a producer/application/continuation closure problem: a durable recovery was valid at an earlier default-branch revision, but fresh qualification on the descendant main revision did not reconstruct that recovery revision for ancestry comparison.
+
+The current default branch supplies the generic repairs for the two observed classes:
+
+- closed Issues that are structurally inert historical records do not become unqualified observations that poison a fresh active work item;
+- valid `APPLICATION_RECOVERY` evidence contributes its recorded default-branch revision to the existing descendant comparison, while current routing, no-supersession, lifecycle ordering, and current postcondition predicates remain in force.
+
+This is an existing-owner repair in `scheduled_agent_runtime` plus the existing formal qualification/application boundary. It does not add a state, registry, correlation authority, fallback acceptance path, or #233-specific exception. The review Change must explicitly verify the complete transition:
+
+```text
+pre-activation / formal promotion
+→ durable producer or application recovery at N
+→ fresh qualification on descendant main N+1
+→ one typed Lead result
+→ existing application-derived continuation/postcondition
+```
+
+The smallest proof is a fresh current-main dispatch/application replay using the real GitHub evidence surface, supplemented by deterministic regression tests for the two boundary predicates. Labels, actor identity, current shape, and a prior fail-closed artifact remain evidence dimensions; none is promoted to consequence authority by this design.
+
 ## Goals
 
 - Make already-owned semantic obligations decision-affecting before `PASS`.
@@ -133,6 +154,11 @@ Rejected because `openspec-review/SKILL.md` is already compact and there is no d
 2. **GREEN**: add the minimum Skill procedure while preserving current exact-revision semantics, source/evidence reconstruction, proportionality, mapped Action, existing results, and non-mutation boundary.
 3. **REFACTOR**: remove or collapse nearby duplicative procedural prose if the new loop would otherwise restate the same obligation twice.
 4. **VERIFY**: run the focused regression, adopted Skill quick validation, repository Skill/action-ownership tests, full test suite, type checks, lint checks, and strict OpenSpec validation for this zero-delta Change.
+5. **Current-main transition replay**: fresh-lock the merged default branch, run the real dispatcher for #233, and verify that the repaired recovery/descendant boundary produces one `AUTHORIZE` decision before any typed continuation is applied. Application postconditions must be observed through the existing bridge.
+
+## Runtime boundary ownership
+
+The residual activation/application defect is verified through the existing runtime and application owners; this Change does not create a second owner or defer the causal/ancestry decision to implementation convenience. PRs #253 and #254 are current-main prerequisite repairs, and the focused tests plus fresh #233 replay are the proof that the boundary remains closed after main advancement.
 
 ## Deferred decisions
 

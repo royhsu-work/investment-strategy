@@ -713,6 +713,93 @@ def test_apply_work_product_builds_same_change_replacement_after_merged_carrier(
     assert carrier_plan.expected["historical_pull_request"] == 178
 
 
+def test_reconciliation_overlays_default_only_changes_on_a_stale_carrier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = f"openspec/changes/{_CHANGE}/design.md"
+    manifest = resource.WorkProductManifest(
+        branch=f"agent/{_CHANGE}",
+        base_sha=_PR_HEAD,
+        message="Correct #138 N-1 ordering",
+        files=(
+            resource.WorkProductFile(
+                path=path,
+                blob_sha="b" * 40,
+                expected_sha="a" * 40,
+            ),
+        ),
+    )
+    default_only_path = "README.md"
+    default_sha = "f" * 40
+    carrier_sha = "g" * 40
+    merge_base = "e" * 40
+    requested_urls: list[str] = []
+
+    def fake_github_json(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object | None:
+        assert repository == _REPOSITORY
+        assert token == _FIXTURE_VALUE
+        del method, payload, allow_not_found
+        requested_urls.append(api_path)
+        if api_path == f"compare/{_REVISION}...{_PR_HEAD}":
+            return {
+                "status": "diverged",
+                "merge_base_commit": {"sha": merge_base},
+            }
+        if api_path == f"compare/{merge_base}...{_REVISION}":
+            return {"files": [{"filename": default_only_path}]}
+        if api_path == f"compare/{merge_base}...{_PR_HEAD}":
+            return {"files": []}
+        if api_path.startswith(f"contents/{default_only_path}?"):
+            return {"sha": default_sha}
+        if api_path.startswith(f"contents/{default_only_path}?") and "ref=" in api_path:
+            return {"sha": carrier_sha}
+        raise AssertionError(api_path)
+
+    def fake_content_sha(
+        _repository: str,
+        _token: str,
+        *,
+        path: str,
+        revision: str,
+    ) -> str | None:
+        assert path == default_only_path
+        return default_sha if revision == _REVISION else carrier_sha
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
+    monkeypatch.setattr(resource, "_content_sha_at", fake_content_sha)
+
+    elements = resource._reconciliation_tree_elements(
+        _REPOSITORY,
+        _FIXTURE_VALUE,
+        default_revision=_REVISION,
+        carrier_revision=_PR_HEAD,
+        manifest=manifest,
+    )
+
+    assert elements == [
+        {
+            "path": default_only_path,
+            "mode": "100644",
+            "type": "blob",
+            "sha": default_sha,
+        },
+        {
+            "path": path,
+            "mode": "100644",
+            "type": "blob",
+            "sha": "b" * 40,
+        },
+    ]
+
+
 def test_apply_work_product_reconciles_diverged_default_branch_with_two_parents(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

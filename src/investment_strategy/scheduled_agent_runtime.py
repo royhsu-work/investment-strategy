@@ -195,6 +195,25 @@ def _routing_from_labels(
     return (role_for(action).value, action.value), True
 
 
+def _is_inert_closed_history(
+    *,
+    state: str,
+    routing: Routing | None,
+    routing_debt: bool,
+    labels_valid: bool,
+    routing_valid: bool,
+) -> bool:
+    """Identify a closed record that cannot affect a current consequence."""
+
+    return (
+        state == "closed"
+        and labels_valid
+        and routing_valid
+        and routing is None
+        and not routing_debt
+    )
+
+
 def _github_timestamp(value: object) -> bool:
     if value is None:
         return True
@@ -224,7 +243,13 @@ def _change_from_body(body: object) -> tuple[str, bool]:
 def normalize_github_issue(
     payload: Mapping[str, object],
 ) -> GitHubIssueObservation | None:
-    """Normalize one current GitHub Issue; agent labels are ignored."""
+    """Normalize one current GitHub Issue; agent labels are ignored.
+
+    ``authoritative`` covers facts that can affect the current dispatch
+    consequence. A safely identified closed, unrouted, non-debt record is
+    terminal history, so its body and ordering metadata are not current
+    consequence inputs and must not poison the repository preflight.
+    """
 
     if "pull_request" in payload:
         return None
@@ -246,16 +271,30 @@ def normalize_github_issue(
     created_order, created_valid = _created_order(payload.get("created_at"), number)
     change, change_valid = _change_from_body(payload.get("body"))
     closed_valid = _github_timestamp(payload.get("closed_at"))
+    routing_debt = state == "closed" and any(
+        name.startswith(_ROUTING_LABEL_PREFIXES) for name in labels
+    )
+    inert_closed_history = _is_inert_closed_history(
+        state=cast(str, state),
+        routing=routing,
+        routing_debt=routing_debt,
+        labels_valid=labels_valid,
+        routing_valid=routing_valid,
+    )
+    authoritative = (
+        labels_valid and routing_valid
+        if inert_closed_history
+        else all((labels_valid, routing_valid, created_valid, change_valid, closed_valid))
+    )
     return GitHubIssueObservation(
         issue_number=number,
         change=change,
         routing=routing,
         state=cast(str, state),
         created_order=created_order,
-        authoritative=all((labels_valid, routing_valid, created_valid, change_valid, closed_valid)),
+        authoritative=authoritative,
         current_state_provenance=ObservationProvenance.QUALIFIED,
-        routing_debt=state == "closed"
-        and any(name.startswith(_ROUTING_LABEL_PREFIXES) for name in labels),
+        routing_debt=routing_debt,
     )
 
 
@@ -476,18 +515,38 @@ def _qualify_current_observations(
         # never makes a current route eligible and cannot authorize new effects.
         authorization_ancestry: list[tuple[str, str]] = []
         if current_revision is not None:
-            from investment_strategy.scheduled_agent_formal_result import parse_formal_result
-
+            # Reuse the formal evidence parser for both ordinary results and
+            # application-owned recovery. A recovery is itself a durable
+            # authorization at its recorded default-branch revision; omitting
+            # that revision makes a valid recovery stale as soon as main
+            # advances through the repair it enabled.
+            qualification_input = build_qualification_input(
+                issue_number=observation.issue_number,
+                change=observation.change,
+                state=observation.state,
+                current_routing=observation.routing,
+                comments=comments,
+                current_revision=current_revision,
+                lifecycle_events=lifecycle_events,
+            )
             revisions = {
                 event.default_branch_revision
-                for comment in comments
-                if (event := parse_formal_result(comment, current_revision=None)) is not None
-                and event.valid
+                for event in qualification_input.events
+                if event.valid
                 and event.issue_number == observation.issue_number
                 and event.change == observation.change
                 and event.default_branch_revision is not None
                 and event.default_branch_revision != current_revision
             }
+            revisions.update(
+                event.default_branch_revision
+                for event in qualification_input.recovery_events
+                if event.valid
+                and event.issue_number == observation.issue_number
+                and event.change == observation.change
+                and event.default_branch_revision is not None
+                and event.default_branch_revision != current_revision
+            )
             for revision in sorted(revisions):
                 comparison = _github_get_object(
                     f"https://api.github.com/repos/{repository}/compare/{revision}...{current_revision}",
