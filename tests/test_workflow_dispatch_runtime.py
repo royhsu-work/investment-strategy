@@ -238,6 +238,93 @@ def test_production_preflight_qualifies_from_issue_timeline(
     assert classify_dispatch(preflight).selected_routing == ("executor", "implement-change")
 
 
+
+def test_production_preflight_qualifies_recovery_after_default_branch_advances(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A durable recovery remains qualified on a descendant main revision."""
+    previous_revision = "b" * 40
+    current_revision = "a" * 40
+    requested_urls: list[str] = []
+    recovery_body = "\n".join(
+        (
+            "APPLICATION_RECOVERY",
+            "Workflow: #233",
+            "Change: operationalize-review-openspec-semantic-proof",
+            "Source: Lead / propose-change",
+            "Target: Lead / resolve-question",
+            "Default-Branch-Revision: " + previous_revision,
+            "Failed-Authorization-Revision: " + ("c" * 40),
+            "Request-Comment-ID: 901",
+            "Reason: partial-first-activation",
+        )
+    )
+    issue = {
+        "number": 233,
+        "state": "open",
+        "body": "Change: operationalize-review-openspec-semantic-proof\n",
+        "created_at": "2026-09-09T07:28:08Z",
+        "closed_at": None,
+        "labels": [{"name": "action:resolve-question"}],
+    }
+    recovery = {
+        "id": 50,
+        "body": recovery_body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    lifecycle = (
+        {"id": 50, "event": "commented", "created_at": "2026-09-17T01:52:20Z"},
+        {
+            "id": 51,
+            "event": "unlabeled",
+            "created_at": "2026-09-17T01:52:22Z",
+            "label": {"name": "action:propose-change"},
+        },
+        {
+            "id": 52,
+            "event": "labeled",
+            "created_at": "2026-09-17T01:52:22Z",
+            "label": {"name": "action:resolve-question"},
+        },
+    )
+
+    def fake_page(url: str, token: str) -> tuple[dict[str, object], ...]:
+        del token
+        requested_urls.append(url)
+        if "/issues?" in url:
+            return (issue,)
+        if "/comments?" in url:
+            return (recovery,)
+        if "/timeline?" in url:
+            return lifecycle
+        raise AssertionError(url)
+
+    def fake_object(url: str, token: str) -> dict[str, object]:
+        del token
+        expected = (
+            "https://api.github.com/repos/owner/repo/compare/"
+            + previous_revision
+            + "..."
+            + current_revision
+        )
+        assert url == expected
+        return {"status": "ahead", "behind_by": 0}
+
+    monkeypatch.setattr(runtime, "_github_get_list_page", fake_page)
+    monkeypatch.setattr(runtime, "_github_get_object", fake_object)
+    monkeypatch.setattr(
+        runtime, "_current_default_branch_revision", lambda *_args: current_revision
+    )
+
+    preflight = runtime.acquire_current_github_preflight("owner/repo", "token")
+    decision = classify_dispatch(preflight)
+
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.selected_issue_id == 233
+    assert decision.selected_routing == ("lead", "resolve-question")
+    assert any("compare/" in url for url in requested_urls) is False
+
 def test_production_preflight_ignores_closed_inert_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
