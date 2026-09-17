@@ -1245,11 +1245,7 @@ class GitHubEffectAdapter:
                 if require_merged
                 else decision.qualified or decision.disposition == "HISTORICAL_MERGED"
             )
-            if (
-                decision_matches
-                and decision.branch == branch
-                and decision.head_sha == expected_sha
-            ):
+            if decision_matches and decision.branch == branch and decision.head_sha == expected_sha:
                 matches += 1
         return matches == 1
 
