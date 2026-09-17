@@ -488,16 +488,14 @@ def _historical_review_baseline_is_compatible(
         ancestor=cast(str, reviewer_pass_default_branch_revision),
         descendant=parent_sha,
     )
+    if default_paths is None:
+        return False
     carrier_paths = _pr_changed_paths(
         repository,
         token,
         pr_number=pr_number,
     )
-    return (
-        default_paths is not None
-        and carrier_paths is not None
-        and default_paths.isdisjoint(carrier_paths)
-    )
+    return carrier_paths is not None and default_paths.isdisjoint(carrier_paths)
 
 
 def _historical_merged_carrier_allowed(
