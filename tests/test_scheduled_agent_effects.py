@@ -2118,7 +2118,7 @@ def test_ref_delete_keeps_unproven_absent_carrier_blocked(
             return {"default_branch": "main"}
         if api_path == "git/ref/heads/main":
             return {"object": {"sha": _REVISION}}
-        if api_path == f"git/ref/heads/{_CHANGE}":
+        if api_path == f"git/ref/heads/agent/{_CHANGE}":
             return None
         raise AssertionError(f"unexpected GitHub read: {api_path}")
 
