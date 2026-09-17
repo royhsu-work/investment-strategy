@@ -636,9 +636,12 @@ def qualify_current_formal_consequence(
         or latest.change != qualification.change
     ):
         return _indeterminate("latest-formal-evidence-incomplete", latest)
-    if latest.default_branch_revision != qualification.current_revision and (
-        qualification.mode == "pending"
-        or (latest.default_branch_revision, qualification.current_revision)
+    if (
+        latest.default_branch_revision != qualification.current_revision
+        and (
+            latest.default_branch_revision,
+            qualification.current_revision,
+        )
         not in qualification.authorization_ancestry
     ):
         return _indeterminate("latest-formal-evidence-stale", latest)

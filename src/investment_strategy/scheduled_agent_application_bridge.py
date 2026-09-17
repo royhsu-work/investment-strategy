@@ -232,6 +232,29 @@ def _pending_application_correlation(
         return None
     if worker_result.change in {"", "unset"}:
         return None
+    worker_revision = _field(worker_result.result_content, "Revision")
+    worker_default_revision = _field(
+        worker_result.result_content,
+        "Default-Branch-Revision",
+    )
+    if (
+        worker_revision is None
+        or worker_default_revision is None
+        or _SHA.fullmatch(worker_revision) is None
+        or _SHA.fullmatch(worker_default_revision) is None
+        or worker_revision != worker_default_revision
+    ):
+        return None
+    authorization_ancestry: tuple[tuple[str, str], ...] = ()
+    if worker_default_revision != current_revision:
+        if not _authorization_revision_is_ancestor(
+            repository,
+            token,
+            worker_default_revision,
+            current_revision,
+        ):
+            return None
+        authorization_ancestry = ((worker_default_revision, current_revision),)
     materializations = _materialization_effects(raw_worker_result, source)
     if len(materializations) != 1:
         return None
@@ -273,8 +296,8 @@ def _pending_application_correlation(
             or event.role != source.role
             or event.action != source.action
             or event.result_kind != expected_result_kind
-            or event.revision != current_revision
-            or event.default_branch_revision != current_revision
+            or event.revision != worker_revision
+            or event.default_branch_revision != worker_default_revision
             or event.successor != expected_routing
             or event.terminal != expected_terminal
             or event.application_correlation is None
@@ -299,6 +322,7 @@ def _pending_application_correlation(
         expected_result_kind=expected_result_kind,
         expected_application_correlation=candidate.application_correlation,
         lifecycle_events=lifecycle,
+        authorization_ancestry=authorization_ancestry,
     )
     if not qualify_current_formal_consequence(qualification).qualified:
         return None

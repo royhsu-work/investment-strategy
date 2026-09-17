@@ -8,7 +8,7 @@ import re
 import sys
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import cast
 from urllib.error import HTTPError
@@ -1840,6 +1840,7 @@ class GitHubEffectAdapter:
                 return False
             expected_routing = (role_for(target).value, target.value)
         formal_comments = self._formal_comments()
+        lifecycle_events = self._formal_lifecycle_events() if formal_comments else ()
         qualification_input = build_qualification_input(
             issue_number=self.source.issue_number,
             change=self.authorized_change,
@@ -1853,8 +1854,43 @@ class GitHubEffectAdapter:
             source_routing=(self.source.role, self.source.action),
             expected_result_kind=self.expected_result_kind,
             expected_application_correlation=self._expected_formal_correlation(),
-            lifecycle_events=self._formal_lifecycle_events() if formal_comments else (),
+            lifecycle_events=lifecycle_events,
         )
+        current_revision = self.current_revision
+        if self.allow_pending_continuation and current_revision is not None:
+            expected_correlation = self._expected_formal_correlation()
+            ancestry: list[tuple[str, str]] = []
+            for event in qualification_input.events:
+                historical_revision = event.default_branch_revision
+                if (
+                    expected_correlation is None
+                    or event.application_correlation != expected_correlation
+                    or historical_revision is None
+                    or historical_revision == current_revision
+                ):
+                    continue
+                comparison = _github_json(
+                    self.repository,
+                    self.token,
+                    f"compare/{historical_revision}...{current_revision}",
+                )
+                base_commit = (
+                    comparison.get("base_commit")
+                    if isinstance(comparison, Mapping)
+                    else None
+                )
+                if (
+                    isinstance(comparison, Mapping)
+                    and comparison.get("status") == "ahead"
+                    and isinstance(base_commit, Mapping)
+                    and base_commit.get("sha") == historical_revision
+                ):
+                    ancestry.append((historical_revision, current_revision))
+            if ancestry:
+                qualification_input = replace(
+                    qualification_input,
+                    authorization_ancestry=tuple(ancestry),
+                )
         return qualify_current_formal_consequence(qualification_input).qualified
 
     def guard(self, effect: StagedEffect) -> bool:

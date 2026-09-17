@@ -551,6 +551,135 @@ def test_plan_application_recovers_a_persisted_validation_result(
     assert plan.pending_application_correlation == correlation
 
 
+def test_plan_application_recovers_persisted_result_after_main_advances(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "lead", "resolve-question")
+    historical_revision = "3" * 40
+    current_revision = "4" * 40
+    result_body = (
+        "ACTION_RESULT\n"
+        "Workflow: #138\n"
+        f"Change: {_CHANGE}\n"
+        "Action: resolve-question\n"
+        "Role: lead\n"
+        "Result: READY_FOR_OPENSPEC_REVIEW\n"
+        f"Revision: {historical_revision}\n"
+        f"Default-Branch-Revision: {historical_revision}\n"
+        "Evidence-Ref: issuecomment-worker-evidence\n"
+        "Repository-derived successor: Reviewer / review-openspec\n"
+    )
+    correlation = formal_application_correlation(
+        source,
+        change=_CHANGE,
+        result_kind="ready-for-openspec-review",
+        current_revision=historical_revision,
+        request_comment_id=777,
+    )
+    bound_lines = result_body.splitlines()
+    bound_lines.insert(
+        next(
+            index
+            for index, line in enumerate(bound_lines)
+            if line.startswith("Default-Branch-Revision:")
+        )
+        + 1,
+        f"Application-Correlation: {correlation}",
+    )
+    bound_body = "\n".join(bound_lines)
+    materialization = {
+        "issue_number": 138,
+        "operation": "application-materialize",
+        "expected_change": _CHANGE,
+        "change": _CHANGE,
+        "branch": f"agent/{_CHANGE}",
+        "base_sha": historical_revision,
+        "message": "test validation boundary",
+        "files": [],
+        "pr_number": 178,
+    }
+    worker_result = {
+        "issue_number": 138,
+        "role": "lead",
+        "action": "resolve-question",
+        "change": _CHANGE,
+        "result_kind": "ready-for-openspec-review",
+        "evidence_ref": "issuecomment-worker-evidence",
+        "result_content": result_body,
+        "requested_effects": [
+            {
+                "kind": "github-mutation",
+                "payload_json": json.dumps(materialization, sort_keys=True),
+            },
+            {
+                "kind": "issue-comment",
+                "payload_json": json.dumps({"issue_number": 138, "body": result_body}),
+            },
+        ],
+    }
+    body = _effect_request(worker_result, revision=current_revision)
+    request = parse_application_request(body)
+    assert request is not None
+    comment = {
+        "id": 900,
+        "body": bound_body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    monkeypatch.setattr(
+        bridge,
+        "_github_json",
+        lambda *_args, **_kwargs: {
+            "number": 138,
+            "state": "open",
+            "created_at": "2026-09-17T00:00:00Z",
+            "closed_at": None,
+            "labels": [{"name": "action:resolve-question"}],
+            "body": f"Change: {_CHANGE}",
+        },
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_paged_github_list",
+        lambda _repository, _token, path: (
+            (comment,)
+            if "comments" in path
+            else (
+                {
+                    "event": "commented",
+                    "id": 900,
+                    "created_at": "2026-09-17T00:00:00Z",
+                },
+            )
+        ),
+    )
+    ancestry_calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        bridge,
+        "_authorization_revision_is_ancestor",
+        lambda *args: (ancestry_calls.append(args) or True),
+    )
+
+    plan = plan_application(
+        event=_event(body),
+        request=request,
+        preflight=_preflight(
+            action="resolve-question",
+            issue_number=138,
+            change=_CHANGE,
+            current_state_provenance=ObservationProvenance.INDETERMINATE,
+        ),
+        repository=_REPOSITORY,
+        current_revision=current_revision,
+    )
+
+    assert plan.should_apply
+    assert plan.source == source
+    assert plan.pending_continuation
+    assert plan.pending_application_correlation == correlation
+    assert len(ancestry_calls) == 1
+
+
 def test_application_boundary_does_not_replay_dispatch_artifacts() -> None:
     source = Path("src/investment_strategy/scheduled_agent_application_bridge.py").read_text(
         encoding="utf-8"
