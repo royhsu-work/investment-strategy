@@ -498,7 +498,10 @@ def test_initial_carrier_accepts_only_disjoint_ancestry_proven_default_advance(
             current_pr=current,
             historical_pr=None,
             open_prs=[current],
-            pr_files=[{"filename": "src/investment_strategy/example.py"}],
+            pr_files=[
+                {"filename": f"openspec/changes/{CHANGE}/proposal.md"},
+                {"filename": "src/investment_strategy/example.py"},
+            ],
             default_is_ancestor=False,
             default_revision=new_default,
             default_advance_files=default_advance_files,
