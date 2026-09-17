@@ -594,6 +594,67 @@ def _qualify_administrative_recovery(
     return _qualified("current-administrative-recovery-route-qualified", recovery)
 
 
+def _qualify_administrative_recovery_predecessor(
+    qualification: QualificationInput,
+    formal_event: FormalLifecycleEvent,
+) -> QualificationDecision:
+    """Qualify recovery as the predecessor of a later formal consequence.
+
+    Recovery is an application-owned repair of a partially persisted first
+    activation.  A later formal result for the same Change is therefore the
+    continuation of that repair when the repository timeline proves that the
+    recovery established its source route before the formal comment.  The
+    formal result still has to pass the normal qualification below; this
+    helper only proves the predecessor relationship.
+    """
+
+    recovery = qualification.recovery_events[-1]
+    if (
+        len(qualification.recovery_events) != 1
+        or not recovery.valid
+        or recovery.issue_number != qualification.issue_number
+        or recovery.change != qualification.change
+        or recovery.source != _RECOVERY_SOURCE
+        or recovery.target != _RECOVERY_TARGET
+        or recovery.reason != _RECOVERY_REASON
+    ):
+        return _indeterminate("administrative-recovery-evidence-incomplete", recovery)
+    if (
+        recovery.default_branch_revision != qualification.current_revision
+        and (
+            recovery.default_branch_revision,
+            qualification.current_revision,
+        )
+        not in qualification.authorization_ancestry
+    ):
+        return _indeterminate("administrative-recovery-evidence-stale", recovery)
+    if (
+        not formal_event.valid
+        or formal_event.issue_number != qualification.issue_number
+        or formal_event.change != qualification.change
+        or formal_event.role != recovery.target[0]
+        or formal_event.action != recovery.target[1]
+    ):
+        return _indeterminate(
+            "administrative-recovery-competing-formal-evidence",
+            formal_event,
+        )
+    recovery_order = _comment_order_key(recovery, qualification.lifecycle_events)
+    formal_order = _comment_order_key(formal_event, qualification.lifecycle_events)
+    if recovery_order is None or formal_order is None or recovery_order >= formal_order:
+        return _indeterminate(
+            "administrative-recovery-formal-ordering-incomplete",
+            formal_event,
+        )
+    interval = _event_interval(recovery, formal_event, qualification.lifecycle_events)
+    if interval is None or not _interval_binds_successor(interval, recovery.target, False):
+        return _indeterminate(
+            "administrative-recovery-predecessor-binding-incomplete",
+            recovery,
+        )
+    return _qualified("administrative-recovery-precedes-formal", recovery)
+
+
 def qualify_current_formal_consequence(
     qualification: QualificationInput,
 ) -> QualificationDecision:
@@ -619,13 +680,16 @@ def qualify_current_formal_consequence(
             event for event in qualification.events if event.change == qualification.change
         )
         if competing:
-            return _indeterminate(
-                "administrative-recovery-competing-formal-evidence",
-                competing[-1],
+            predecessor = _qualify_administrative_recovery_predecessor(
+                qualification,
+                competing[0],
             )
-        recovery = _qualify_administrative_recovery(qualification)
-        if recovery is not None:
-            return recovery
+            if not predecessor.qualified:
+                return predecessor
+        else:
+            recovery = _qualify_administrative_recovery(qualification)
+            if recovery is not None:
+                return recovery
     if not qualification.events:
         return _indeterminate("formal-lifecycle-evidence-missing")
 
@@ -636,9 +700,12 @@ def qualify_current_formal_consequence(
         or latest.change != qualification.change
     ):
         return _indeterminate("latest-formal-evidence-incomplete", latest)
-    if latest.default_branch_revision != qualification.current_revision and (
-        qualification.mode == "pending"
-        or (latest.default_branch_revision, qualification.current_revision)
+    if (
+        latest.default_branch_revision != qualification.current_revision
+        and (
+            latest.default_branch_revision,
+            qualification.current_revision,
+        )
         not in qualification.authorization_ancestry
     ):
         return _indeterminate("latest-formal-evidence-stale", latest)

@@ -133,3 +133,16 @@ def test_semantic_adapter_remains_a_separate_follow_up_resource() -> None:
     root = Path("agents/skills")
     assert (root / "openspec-semantic-adapter.md").is_file()
     assert not (root / "openspec-semantic-adapter" / "SKILL.md").exists()
+
+
+def test_openspec_review_exposes_compact_semantic_proof_loop() -> None:
+    text = (Path("agents/skills/openspec-review/SKILL.md")).read_text(encoding="utf-8")
+
+    markers = ("**DERIVE**", "**CHALLENGE**", "**REALIZE**", "**CLOSE**")
+    positions = [text.index(marker) for marker in markers]
+    assert positions == sorted(positions)
+    assert text.count("## Semantic-proof loop") == 1
+    assert "current default/review execution" in text
+    assert "exact candidate revision" in text
+    assert "review-implementation" in text
+    assert "OpenSpec review closes design/spec/task-level meaning" in text

@@ -10,7 +10,7 @@ import os
 import re
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, cast
 from urllib.parse import quote
@@ -32,7 +32,10 @@ from investment_strategy.scheduled_agent_formal_qualification import (
     build_qualification_input,
     qualify_current_formal_consequence,
 )
-from investment_strategy.scheduled_agent_formal_result import parse_formal_result
+from investment_strategy.scheduled_agent_formal_result import (
+    FormalLifecycleEvent,
+    parse_formal_result,
+)
 from investment_strategy.scheduled_agent_merge_acceptance import run_guarded_effect_application
 from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
@@ -42,7 +45,11 @@ from investment_strategy.scheduled_agent_runtime import (
 )
 from investment_strategy.scheduled_agent_validation_resource import ValidationResourceTarget
 from investment_strategy.scheduled_agent_worker import WorkerActionResult, parse_worker_result
-from investment_strategy.workflow_dispatch import DispatchPreflight, classify_dispatch
+from investment_strategy.workflow_dispatch import (
+    DispatchPreflight,
+    ObservationProvenance,
+    classify_dispatch,
+)
 
 APPLICATION_REQUEST_MARKER = "EFFECT_REQUEST"
 AUTHORIZATION_REVISION_PREFIX = "Authorization-Revision: "
@@ -76,6 +83,8 @@ class ApplicationPlan:
     source: WorkerRequest | None = None
     raw_worker_result: str | None = None
     request_comment_id: int | None = None
+    pending_continuation: bool = False
+    pending_application_correlation: str | None = None
 
 
 def _positive_int(value: object) -> int | None:
@@ -160,6 +169,196 @@ def _claimed_source(raw_worker_result: str) -> WorkerRequest:
     return WorkerRequest(cast(int, issue_number), role, action)
 
 
+def _without_application_correlation(body: str) -> str:
+    """Normalize worker/formal bodies for exact replay identity."""
+
+    return "\n".join(
+        line for line in body.splitlines() if not line.startswith("Application-Correlation:")
+    )
+
+
+def _pending_application_correlation(
+    *,
+    raw_worker_result: str,
+    source: WorkerRequest,
+    preflight: DispatchPreflight,
+    repository: str,
+    token: str,
+    current_revision: str,
+) -> str | None:
+    """Find one already-persisted formal result that can finish this application."""
+
+    enumeration = preflight.enumeration
+    matching = tuple(
+        issue for issue in preflight.issues if issue.issue_number == source.issue_number
+    )
+    decision = classify_dispatch(preflight)
+    if (
+        decision.disposition != "FAIL_CLOSED"
+        or decision.reason != "observations-unqualified"
+        or preflight.human_authorized is not True
+        or enumeration.incomplete_results
+        or not enumeration.exhausted
+        or enumeration.source_total_count is None
+        or enumeration.observed_count != enumeration.source_total_count
+        or len({issue.issue_number for issue in preflight.issues}) != len(preflight.issues)
+        or len(matching) != 1
+        or matching[0].current_state_provenance is not ObservationProvenance.INDETERMINATE
+        or matching[0].state != "open"
+        or matching[0].routing != (source.role, source.action)
+    ):
+        return None
+    if any(
+        issue.current_state_provenance is not ObservationProvenance.QUALIFIED
+        for issue in preflight.issues
+        if issue.issue_number != source.issue_number
+    ):
+        return None
+
+    issue = _as_mapping(_github_json(repository, token, f"issues/{source.issue_number}"))
+    observation = None if issue is None else normalize_github_issue(issue)
+    if (
+        observation is None
+        or not observation.authoritative
+        or observation.issue_number != source.issue_number
+        or observation.state != "open"
+        or observation.routing != (source.role, source.action)
+    ):
+        return None
+
+    try:
+        worker_result = parse_worker_result(raw_worker_result, source)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if worker_result.change in {"", "unset"}:
+        return None
+    worker_revision = _field(worker_result.result_content, "Revision")
+    worker_default_revision = _field(
+        worker_result.result_content,
+        "Default-Branch-Revision",
+    )
+    if (
+        worker_revision is None
+        or worker_default_revision is None
+        or _SHA.fullmatch(worker_revision) is None
+        or _SHA.fullmatch(worker_default_revision) is None
+        # Result revision identifies the reviewed work product; the default-branch
+        # revision identifies the authorization snapshot. They are independent
+        # identities and must not be collapsed into one SHA.
+    ):
+        return None
+    authorization_ancestry: tuple[tuple[str, str], ...] = ()
+    if worker_default_revision != current_revision:
+        if not _authorization_revision_is_ancestor(
+            repository,
+            token,
+            worker_default_revision,
+            current_revision,
+        ):
+            return None
+        authorization_ancestry = ((worker_default_revision, current_revision),)
+    # A formal result may already be durable while its derived successor
+    # was not.  First-activation recovery still requires its exact validation
+    # materialization; ordinary formal results can resume from the persisted
+    # result itself and re-run the existing application-owned successor guard.
+    materializations = _materialization_effects(raw_worker_result, source)
+    if len(materializations) > 1:
+        return None
+    if materializations:
+        materialization = find_materialization_payload(materializations[0], source)
+        if (
+            materialization is None
+            or materialization.expected_change != worker_result.change
+            or not materialization_requires_validation(materialization, source)
+        ):
+            return None
+
+    typed = worker_result.typed_result
+    expected_result_kind = typed.result.kind.value
+    try:
+        successor = next_action(typed.action, typed.result)
+    except (TypeError, ValueError):
+        return None
+    expected_terminal = successor is None
+    expected_routing = None if successor is None else (role_for(successor).value, successor.value)
+    comments = _paged_github_list(
+        repository,
+        token,
+        f"issues/{source.issue_number}/comments?sort=created",
+    )
+    lifecycle = _paged_github_list(
+        repository,
+        token,
+        f"issues/{source.issue_number}/timeline",
+    )
+    worker_body = _without_application_correlation(worker_result.result_content)
+    candidates: list[tuple[Mapping[str, object], FormalLifecycleEvent]] = []
+    for comment in comments:
+        event = parse_formal_result(comment, current_revision=current_revision)
+        if (
+            event is None
+            or not event.valid
+            or event.issue_number != source.issue_number
+            or event.change != worker_result.change
+            or event.role != source.role
+            or event.action != source.action
+            or event.result_kind != expected_result_kind
+            or event.revision != worker_revision
+            or event.default_branch_revision != worker_default_revision
+            or event.successor != expected_routing
+            or event.terminal != expected_terminal
+            or event.application_correlation is None
+            or _without_application_correlation(cast(str, comment.get("body", ""))) != worker_body
+        ):
+            continue
+        candidates.append((comment, event))
+    if len(candidates) != 1:
+        return None
+    _comment, candidate = candidates[0]
+    qualification = build_qualification_input(
+        issue_number=source.issue_number,
+        change=worker_result.change,
+        state=observation.state,
+        current_routing=observation.routing,
+        comments=comments,
+        current_revision=current_revision,
+        mode="pending",
+        expected_routing=expected_routing,
+        expected_terminal=expected_terminal,
+        source_routing=(source.role, source.action),
+        expected_result_kind=expected_result_kind,
+        expected_application_correlation=candidate.application_correlation,
+        lifecycle_events=lifecycle,
+        authorization_ancestry=authorization_ancestry,
+    )
+    if current_revision is not None:
+        ancestry = list(authorization_ancestry)
+        for recovery in qualification.recovery_events:
+            historical_revision = recovery.default_branch_revision
+            if (
+                not recovery.valid
+                or historical_revision is None
+                or historical_revision == current_revision
+                or (historical_revision, current_revision) in ancestry
+            ):
+                continue
+            if _authorization_revision_is_ancestor(
+                repository,
+                token,
+                historical_revision,
+                current_revision,
+            ):
+                ancestry.append((historical_revision, current_revision))
+        if tuple(ancestry) != authorization_ancestry:
+            qualification = replace(
+                qualification,
+                authorization_ancestry=tuple(ancestry),
+            )
+    if not qualify_current_formal_consequence(qualification).qualified:
+        return None
+    return candidate.application_correlation
+
+
 def plan_application(
     *,
     event: Mapping[str, object],
@@ -167,6 +366,7 @@ def plan_application(
     preflight: DispatchPreflight,
     repository: str,
     current_revision: str,
+    token: str | None = None,
 ) -> ApplicationPlan:
     """Freshly derive the only legal source Issue/Action/Role from the repository."""
 
@@ -192,16 +392,33 @@ def plan_application(
     if request_comment_id is None:
         raise ValueError("EFFECT_REQUEST event comment id is invalid")
 
+    claimed = _claimed_source(request.raw_worker_result)
     decision = classify_dispatch(preflight)
     if (
         decision.disposition != "AUTHORIZE"
         or decision.selected_issue_id is None
         or decision.selected_routing is None
     ):
-        raise ValueError("EFFECT_REQUEST has no current AUTHORIZE dispatch")
+        pending_correlation = _pending_application_correlation(
+            raw_worker_result=request.raw_worker_result,
+            source=claimed,
+            preflight=preflight,
+            repository=repository,
+            token=os.environ.get("GITHUB_TOKEN", "") if token is None else token,
+            current_revision=current_revision,
+        )
+        if pending_correlation is None:
+            raise ValueError("EFFECT_REQUEST has no current AUTHORIZE dispatch")
+        return ApplicationPlan(
+            should_apply=True,
+            source=claimed,
+            raw_worker_result=request.raw_worker_result,
+            request_comment_id=request_comment_id,
+            pending_continuation=True,
+            pending_application_correlation=pending_correlation,
+        )
     selected_role, selected_action = decision.selected_routing
     source = WorkerRequest(decision.selected_issue_id, selected_role, selected_action)
-    claimed = _claimed_source(request.raw_worker_result)
     if claimed != source:
         raise ValueError("EFFECT_REQUEST worker source does not match fresh repository Action")
     return ApplicationPlan(
@@ -1208,6 +1425,7 @@ def main() -> int:
         preflight=preflight,
         repository=repository,
         current_revision=args.revision,
+        token=token,
     )
     if not plan.should_apply:
         _write_validation_outputs(None)
@@ -1246,6 +1464,7 @@ def main() -> int:
                 token=token,
                 current_revision=args.revision,
                 default_branch=args.default_branch,
+                allow_pending_continuation=plan.pending_continuation,
             )
             if args.validated_revision is None or target.revision != args.validated_revision:
                 raise RuntimeError("EFFECT_REQUEST validation proof is stale")
@@ -1266,6 +1485,9 @@ def main() -> int:
                 materialization_promote_change=False,
                 validated_materialization_revision=args.validated_revision,
                 request_comment_id=plan.request_comment_id,
+                defer_issue_comments=first_activation,
+                allow_pending_continuation=plan.pending_continuation,
+                pending_application_correlation=plan.pending_application_correlation,
             )
             if result.applied:
                 if materialization is None or target is None:
@@ -1292,6 +1514,9 @@ def main() -> int:
                 materialization_promote_change=args.validation_passed,
                 validated_materialization_revision=args.validated_revision,
                 request_comment_id=plan.request_comment_id,
+                defer_issue_comments=requires_validation and not args.validation_passed,
+                allow_pending_continuation=plan.pending_continuation,
+                pending_application_correlation=plan.pending_application_correlation,
             )
     except CarrierRequired as exc:
         # CarrierRequired is the hard invocation-exit boundary. Persist only
@@ -1346,6 +1571,7 @@ def main() -> int:
             token=token,
             current_revision=args.revision,
             default_branch=args.default_branch,
+            allow_pending_continuation=plan.pending_continuation,
         )
     else:
         target = None

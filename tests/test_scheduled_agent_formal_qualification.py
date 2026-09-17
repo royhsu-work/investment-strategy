@@ -139,6 +139,7 @@ def _decision(
     expected_result_kind: str | None = None,
     expected_application_correlation: str | None = None,
     lifecycle_events: list[dict[str, object]] | None = None,
+    authorization_ancestry: tuple[tuple[str, str], ...] = (),
 ) -> QualificationDecision:
     qualification_input = build_qualification_input(
         issue_number=229,
@@ -157,6 +158,7 @@ def _decision(
             if lifecycle_events is None
             else lifecycle_events
         ),
+        authorization_ancestry=authorization_ancestry,
     )
     return qualify_current_formal_consequence(qualification_input)
 
@@ -347,6 +349,48 @@ def test_pending_successor_uses_the_same_binding_decision_shape() -> None:
         ).provenance
         is ObservationProvenance.QUALIFIED
     )
+
+
+def test_pending_historical_result_requires_explicit_descendant_binding() -> None:
+    historical_revision = "b" * 40
+    comment = _comment(
+        5,
+        action="implement-change",
+        role="executor",
+        result="ready",
+        successor="Reviewer / review-implementation",
+        request_id=55,
+        revision=historical_revision,
+        default_revision=historical_revision,
+    )
+    correlation = (
+        f"application:55:229:{_CHANGE}:executor:implement-change:ready:{historical_revision}"
+    )
+    lifecycle_events = _lifecycle_events([comment], pending=True)
+    without_ancestry = _decision(
+        [comment],
+        current_routing=("executor", "implement-change"),
+        mode="pending",
+        expected_routing=("reviewer", "review-implementation"),
+        source_routing=("executor", "implement-change"),
+        expected_result_kind="ready",
+        expected_application_correlation=correlation,
+        lifecycle_events=lifecycle_events,
+    )
+    assert without_ancestry.provenance is ObservationProvenance.INDETERMINATE
+
+    with_ancestry = _decision(
+        [comment],
+        current_routing=("executor", "implement-change"),
+        mode="pending",
+        expected_routing=("reviewer", "review-implementation"),
+        source_routing=("executor", "implement-change"),
+        expected_result_kind="ready",
+        expected_application_correlation=correlation,
+        lifecycle_events=lifecycle_events,
+        authorization_ancestry=((historical_revision, _REVISION),),
+    )
+    assert with_ancestry.provenance is ObservationProvenance.QUALIFIED
 
 
 def test_historical_default_revision_is_allowed_but_latest_must_match() -> None:
@@ -637,6 +681,63 @@ def test_administrative_recovery_rejects_stale_or_superseded_binding() -> None:
         qualify_current_formal_consequence(superseded_input).provenance
         is ObservationProvenance.INDETERMINATE
     )
+
+
+def test_administrative_recovery_chains_into_later_pending_formal_result() -> None:
+    recovery_revision = "c" * 40
+    formal_revision = "d" * 40
+    recovery = _recovery_comment(revision=recovery_revision)
+    formal = _comment(
+        60,
+        action="resolve-question",
+        role="lead",
+        result="ready-for-openspec-review",
+        successor="Reviewer / review-openspec",
+        request_id=902,
+        revision=formal_revision,
+        default_revision=formal_revision,
+    )
+    lifecycle = [
+        {"id": 50, "event": "commented", "created_at": "2026-09-16T01:00:01Z"},
+        {
+            "id": 51,
+            "event": "unlabeled",
+            "created_at": "2026-09-16T01:00:02Z",
+            "label": {"name": "action:propose-change"},
+        },
+        {
+            "id": 52,
+            "event": "labeled",
+            "created_at": "2026-09-16T01:00:02Z",
+            "label": {"name": "action:resolve-question"},
+        },
+        {"id": 60, "event": "commented", "created_at": "2026-09-16T01:00:03Z"},
+    ]
+    correlation = (
+        f"application:902:229:{_CHANGE}:lead:resolve-question:"
+        f"ready-for-openspec-review:{formal_revision}"
+    )
+    qualification_input = build_qualification_input(
+        issue_number=229,
+        change=_CHANGE,
+        state="open",
+        current_routing=("lead", "resolve-question"),
+        comments=[recovery, formal],
+        current_revision=_REVISION,
+        mode="pending",
+        expected_routing=("reviewer", "review-openspec"),
+        source_routing=("lead", "resolve-question"),
+        expected_result_kind="ready-for-openspec-review",
+        expected_application_correlation=correlation,
+        lifecycle_events=lifecycle,
+        authorization_ancestry=(
+            (recovery_revision, _REVISION),
+            (formal_revision, _REVISION),
+        ),
+    )
+    decision = qualify_current_formal_consequence(qualification_input)
+    assert decision.provenance is ObservationProvenance.QUALIFIED
+    assert decision.reason == "pending-successor-qualified"
 
 
 def _unbound_formal_comment(*, comment_id: int, change: str) -> dict[str, object]:

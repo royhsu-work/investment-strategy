@@ -8,7 +8,7 @@ import re
 import sys
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import cast
 from urllib.error import HTTPError
@@ -379,11 +379,46 @@ def _implementation_checkpoint_effects_complete(
     return validate_implementation_checkpoint(request, completed_task_ids)
 
 
+def _pending_continuation_is_eligible(
+    preflight: DispatchPreflight,
+    source: WorkerRequest,
+    expected_change: str,
+) -> bool:
+    """Accept only the current source while formal evidence awaits its successor."""
+
+    decision = classify_dispatch(preflight)
+    enumeration = preflight.enumeration
+    matching = tuple(
+        issue for issue in preflight.issues if issue.issue_number == source.issue_number
+    )
+    return (
+        decision.disposition == "FAIL_CLOSED"
+        and decision.reason == "observations-unqualified"
+        and preflight.human_authorized is True
+        and not enumeration.incomplete_results
+        and enumeration.exhausted
+        and enumeration.source_total_count is not None
+        and enumeration.observed_count == enumeration.source_total_count
+        and len({issue.issue_number for issue in preflight.issues}) == len(preflight.issues)
+        and len(matching) == 1
+        and matching[0].current_state_provenance is ObservationProvenance.INDETERMINATE
+        and matching[0].state == "open"
+        and matching[0].change == expected_change
+        and matching[0].routing == _routing_identity(source)
+        and all(
+            issue.current_state_provenance is ObservationProvenance.QUALIFIED
+            for issue in preflight.issues
+            if issue.issue_number != source.issue_number
+        )
+    )
+
+
 def _typed_application_plan(
     batch: EffectBatch,
     preflight: DispatchPreflight,
     current_revision: str | None,
     validate_implementation_checkpoint: ImplementationCheckpointValidator | None,
+    allow_pending_continuation: bool,
 ) -> tuple[ActionApplicationDecision | None, StagedEffect | None, ApplyResult | None]:
     typed_result = batch.typed_result
     if typed_result is None:
@@ -406,12 +441,18 @@ def _typed_application_plan(
         return None, None, ApplyResult(False, "typed application rejected:source-action-invalid")
 
     selected = classify_dispatch(preflight)
-    if (
-        selected.disposition != "AUTHORIZE"
-        or selected.selected_issue_id != source.issue_number
-        or selected.selected_routing is None
-        or selected.selected_routing[1] != source.action.value
-    ):
+    pending_source = allow_pending_continuation and _pending_continuation_is_eligible(
+        preflight,
+        batch.source,
+        typed_result.change,
+    )
+    selected_source = (
+        selected.disposition == "AUTHORIZE"
+        and selected.selected_issue_id == source.issue_number
+        and selected.selected_routing is not None
+        and selected.selected_routing[1] == source.action.value
+    )
+    if not selected_source and not pending_source:
         return None, None, ApplyResult(False, "typed application rejected:model-selection")
 
     matching_issues = tuple(
@@ -428,7 +469,7 @@ def _typed_application_plan(
         revision=current_revision,
         provenance=(
             ModelObservationProvenance.QUALIFIED
-            if issue.current_state_provenance is ObservationProvenance.QUALIFIED
+            if pending_source or issue.current_state_provenance is ObservationProvenance.QUALIFIED
             else ModelObservationProvenance.INDETERMINATE
         ),
         human_authorized=preflight.human_authorized,
@@ -791,6 +832,8 @@ def apply_effect_batch(
     current_revision: str | None = None,
     validate_implementation_checkpoint: ImplementationCheckpointValidator | None = None,
     apply_derived: bool = True,
+    defer_issue_comments: bool = False,
+    allow_pending_continuation: bool = False,
     carrier_plan_for_effect: CarrierPlanProvider | None = None,
     effect_rejection: EffectRejectionProvider | None = None,
 ) -> ApplyResult:
@@ -802,6 +845,7 @@ def apply_effect_batch(
         current_preflight,
         current_revision,
         validate_implementation_checkpoint,
+        allow_pending_continuation,
     )
     if typed_rejection is not None:
         return typed_rejection
@@ -820,6 +864,12 @@ def apply_effect_batch(
         ):
             return ApplyResult(False, "typed application rejected:terminal-effect")
 
+    effects_to_apply = tuple(
+        effect
+        for effect in batch.effects
+        if not (defer_issue_comments and effect.kind == "issue-comment")
+    )
+
     def rejected(reason: str) -> ApplyResult:
         return ApplyResult(
             False,
@@ -827,11 +877,11 @@ def apply_effect_batch(
             rejection=None if effect_rejection is None else effect_rejection(),
         )
 
-    for effect in batch.effects:
+    for effect in effects_to_apply:
         if not effect_guard(effect):
             return rejected("effect precondition rejected")
 
-    for effect in batch.effects:
+    for effect in effects_to_apply:
         if not effect_guard(effect):
             return rejected("effect precondition rejected")
         try:
@@ -924,6 +974,8 @@ class GitHubEffectAdapter:
         request_comment_id: int | None = None,
         materialization_promote_change: bool = False,
         validated_materialization_revision: str | None = None,
+        allow_pending_continuation: bool = False,
+        pending_application_correlation: str | None = None,
     ) -> None:
         self.repository = repository
         self.token = token
@@ -934,6 +986,8 @@ class GitHubEffectAdapter:
         self.request_comment_id = request_comment_id
         self.materialization_promote_change = materialization_promote_change
         self.validated_materialization_revision = validated_materialization_revision
+        self.allow_pending_continuation = allow_pending_continuation
+        self.pending_application_correlation = pending_application_correlation
         self._last_rejection: ApplicationRejection | None = None
         self._comment_ids: dict[StagedEffect, int] = {}
         self._routing_targets: dict[StagedEffect, str] = {}
@@ -1071,6 +1125,9 @@ class GitHubEffectAdapter:
             current_revision=self.current_revision,
             request_comment_id=self.request_comment_id,
         )
+
+    def _expected_formal_correlation(self) -> str | None:
+        return self.pending_application_correlation or self._formal_correlation()
 
     def _pull_request_matches_source(
         self,
@@ -1783,6 +1840,7 @@ class GitHubEffectAdapter:
                 return False
             expected_routing = (role_for(target).value, target.value)
         formal_comments = self._formal_comments()
+        lifecycle_events = self._formal_lifecycle_events() if formal_comments else ()
         qualification_input = build_qualification_input(
             issue_number=self.source.issue_number,
             change=self.authorized_change,
@@ -1795,9 +1853,55 @@ class GitHubEffectAdapter:
             expected_terminal=expected_terminal,
             source_routing=(self.source.role, self.source.action),
             expected_result_kind=self.expected_result_kind,
-            expected_application_correlation=self._formal_correlation(),
-            lifecycle_events=self._formal_lifecycle_events() if formal_comments else (),
+            expected_application_correlation=self._expected_formal_correlation(),
+            lifecycle_events=lifecycle_events,
         )
+        current_revision = self.current_revision
+        if self.allow_pending_continuation and current_revision is not None:
+            expected_correlation = self._expected_formal_correlation()
+            historical_revisions: list[str] = []
+            for event in qualification_input.events:
+                historical_revision = event.default_branch_revision
+                if (
+                    expected_correlation is None
+                    or event.application_correlation != expected_correlation
+                    or historical_revision is None
+                    or historical_revision == current_revision
+                ):
+                    continue
+                historical_revisions.append(historical_revision)
+            for recovery in qualification_input.recovery_events:
+                historical_revision = recovery.default_branch_revision
+                if (
+                    not recovery.valid
+                    or recovery.change != self.authorized_change
+                    or historical_revision is None
+                    or historical_revision == current_revision
+                ):
+                    continue
+                historical_revisions.append(historical_revision)
+            ancestry: list[tuple[str, str]] = []
+            for historical_revision in dict.fromkeys(historical_revisions):
+                comparison = _github_json(
+                    self.repository,
+                    self.token,
+                    f"compare/{historical_revision}...{current_revision}",
+                )
+                base_commit = (
+                    comparison.get("base_commit") if isinstance(comparison, Mapping) else None
+                )
+                if (
+                    isinstance(comparison, Mapping)
+                    and comparison.get("status") == "ahead"
+                    and isinstance(base_commit, Mapping)
+                    and base_commit.get("sha") == historical_revision
+                ):
+                    ancestry.append((historical_revision, current_revision))
+            if ancestry:
+                qualification_input = replace(
+                    qualification_input,
+                    authorization_ancestry=tuple(ancestry),
+                )
         return qualify_current_formal_consequence(qualification_input).qualified
 
     def guard(self, effect: StagedEffect) -> bool:
@@ -1837,7 +1941,7 @@ class GitHubEffectAdapter:
                     ApplicationRejectionKind.OBSERVATION_UNQUALIFIED,
                     expected=json.dumps(
                         {
-                            "application_correlation": self._formal_correlation(),
+                            "application_correlation": self._expected_formal_correlation(),
                             "repository_owned_formal_postcondition": True,
                         },
                         sort_keys=True,
@@ -1911,6 +2015,7 @@ class GitHubEffectAdapter:
                 default_branch=default_branch,
                 promote_change=self.materialization_promote_change,
                 validated_revision=self.validated_materialization_revision,
+                allow_pending_continuation=self.allow_pending_continuation,
             )
             self._materialization_targets[effect] = target
             if self.materialization_promote_change:
@@ -2019,7 +2124,7 @@ class GitHubEffectAdapter:
         raise RuntimeError(f"unsupported GitHub mutation operation: {operation}")
 
     def _application_bound_comment_body(self, body: str) -> str:
-        correlation = self._formal_correlation()
+        correlation = self._expected_formal_correlation()
         if correlation is None:
             return body
         lines = body.splitlines()
@@ -2317,6 +2422,9 @@ def run_effect_application(
     apply_derived: bool = True,
     materialization_promote_change: bool = False,
     validated_materialization_revision: str | None = None,
+    defer_issue_comments: bool = False,
+    allow_pending_continuation: bool = False,
+    pending_application_correlation: str | None = None,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Freshly reauthorize and apply one typed invocation-local effect batch."""
 
@@ -2332,6 +2440,8 @@ def run_effect_application(
         expected_result_kind=batch.typed_result.result.kind.value,
         materialization_promote_change=materialization_promote_change,
         validated_materialization_revision=validated_materialization_revision,
+        allow_pending_continuation=allow_pending_continuation,
+        pending_application_correlation=pending_application_correlation,
     )
     result = apply_effect_batch(
         batch,
@@ -2342,6 +2452,8 @@ def run_effect_application(
         current_revision=current_revision,
         validate_implementation_checkpoint=adapter.validate_implementation_checkpoint,
         apply_derived=apply_derived,
+        defer_issue_comments=defer_issue_comments,
+        allow_pending_continuation=allow_pending_continuation,
         carrier_plan_for_effect=adapter.carrier_plan_if_required,
         effect_rejection=adapter.effect_rejection,
     )

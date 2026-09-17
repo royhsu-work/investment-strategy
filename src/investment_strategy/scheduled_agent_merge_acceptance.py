@@ -597,6 +597,9 @@ def run_effect_application(
     materialization_promote_change: bool = False,
     validated_materialization_revision: str | None = None,
     request_comment_id: int | None = None,
+    defer_issue_comments: bool = False,
+    allow_pending_continuation: bool = False,
+    pending_application_correlation: str | None = None,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Apply through shared effect guards plus an optional mutation-adjacent guard."""
 
@@ -613,6 +616,8 @@ def run_effect_application(
         request_comment_id=request_comment_id,
         materialization_promote_change=materialization_promote_change,
         validated_materialization_revision=validated_materialization_revision,
+        allow_pending_continuation=allow_pending_continuation,
+        pending_application_correlation=pending_application_correlation,
     )
 
     def apply_with_fresh_guard(effect: StagedEffect) -> None:
@@ -637,6 +642,8 @@ def run_effect_application(
             current_revision=current_revision,
             validate_implementation_checkpoint=adapter.validate_implementation_checkpoint,
             apply_derived=apply_derived,
+            defer_issue_comments=defer_issue_comments,
+            allow_pending_continuation=allow_pending_continuation,
             carrier_plan_for_effect=carrier_plan_provider,
             effect_rejection=effect_rejection_provider,
         )
@@ -656,6 +663,9 @@ def run_guarded_effect_application(
     materialization_promote_change: bool = False,
     validated_materialization_revision: str | None = None,
     request_comment_id: int | None = None,
+    defer_issue_comments: bool = False,
+    allow_pending_continuation: bool = False,
+    pending_application_correlation: str | None = None,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Reject stale merge acceptance before and immediately adjacent to merge application."""
 
@@ -690,6 +700,9 @@ def run_guarded_effect_application(
         materialization_promote_change=materialization_promote_change,
         validated_materialization_revision=validated_materialization_revision,
         request_comment_id=request_comment_id,
+        defer_issue_comments=defer_issue_comments,
+        allow_pending_continuation=allow_pending_continuation,
+        pending_application_correlation=pending_application_correlation,
         pre_apply_guard=lambda effect: _merge_effect_allows(
             effect,
             source=source,

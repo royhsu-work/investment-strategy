@@ -42,6 +42,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _is_executor_config_authoring,
     _is_executor_task_bookkeeping,
     _open_pr_payload,
+    _pending_source_is_current,
     _ref_head_sha,
     _review_openspec_required,
     _source_branch,
@@ -1132,6 +1133,7 @@ def _existing_target(
     token: str,
     default_branch: str,
     authorization_revision: str,
+    allow_pending_continuation: bool = False,
 ) -> ValidationResourceTarget:
     if request.pr_number is None:
         raise RuntimeError("existing Change materialization requires an exact PR")
@@ -1163,6 +1165,7 @@ def _existing_target(
             token=token,
             default_branch=default_branch,
             authorization_revision=authorization_revision,
+            allow_pending_continuation=allow_pending_continuation,
         )
     else:
         target = resolve_validation_resource_target(
@@ -1175,6 +1178,7 @@ def _existing_target(
             repository=repository,
             token=token,
             default_branch=default_branch,
+            allow_pending_continuation=allow_pending_continuation,
         )
     return ValidationResourceTarget(
         repository=target.repository,
@@ -1197,11 +1201,22 @@ def apply_materialization(
     default_branch: str,
     promote_change: bool = False,
     validated_revision: str | None = None,
+    allow_pending_continuation: bool = False,
 ) -> ValidationResourceTarget:
     """Freshly authorize and apply one generic carrier/materialization effect."""
 
     request = parse_materialization_payload(payload, source)
-    if _current_authorized_request(repository, token) != source:
+    if (
+        not allow_pending_continuation and _current_authorized_request(repository, token) != source
+    ) or (
+        allow_pending_continuation
+        and not _pending_source_is_current(
+            repository,
+            token,
+            source,
+            request.expected_change,
+        )
+    ):
         raise RuntimeError("application materialization source dispatch is stale")
     if _current_default_branch(repository, token) != default_branch:
         raise RuntimeError("application materialization default branch changed")
@@ -1249,6 +1264,7 @@ def apply_materialization(
         token=token,
         default_branch=default_branch,
         authorization_revision=current_revision,
+        allow_pending_continuation=allow_pending_continuation,
     )
 
 
@@ -1374,11 +1390,22 @@ def observe_materialization_target(
     token: str,
     current_revision: str,
     default_branch: str,
+    allow_pending_continuation: bool = False,
 ) -> ValidationResourceTarget:
     """Read-only reconstruction of the exact carrier after materialization."""
 
     request = parse_materialization_payload(payload, source)
-    if _current_authorized_request(repository, token) != source:
+    if (
+        not allow_pending_continuation and _current_authorized_request(repository, token) != source
+    ) or (
+        allow_pending_continuation
+        and not _pending_source_is_current(
+            repository,
+            token,
+            source,
+            request.expected_change,
+        )
+    ):
         raise RuntimeError("application materialization source dispatch is stale")
     if _current_default_branch(repository, token) != default_branch:
         raise RuntimeError("application materialization default branch changed")
