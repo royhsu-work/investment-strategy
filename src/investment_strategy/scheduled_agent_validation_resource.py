@@ -914,6 +914,97 @@ def _comparison_file_paths(
     return paths
 
 
+def _reconciliation_tree_elements(
+    repository: str,
+    token: str,
+    *,
+    default_revision: str,
+    carrier_revision: str,
+    manifest: WorkProductManifest,
+) -> list[dict[str, object]]:
+    """Build a safe overlay for a stale carrier on the current default branch.
+
+    The branch tree remains the base so carrier-only work is preserved. Default
+    changes are overlaid only when the carrier did not also change that path.
+    An unresolved overlap remains fail-closed unless the worker supplied that
+    path explicitly in the manifest.
+    """
+
+    comparison = _as_mapping(
+        cast(
+            object,
+            _github_json(
+                repository,
+                token,
+                f"compare/{default_revision}...{carrier_revision}",
+            ),
+        )
+    )
+    merge_base = None if comparison is None else _as_mapping(comparison.get("merge_base_commit"))
+    merge_base_sha = None if merge_base is None else merge_base.get("sha")
+    if not _valid_sha(merge_base_sha):
+        raise RuntimeError("work-product reconciliation merge-base identity is incomplete")
+
+    default_changed = _comparison_file_paths(
+        repository,
+        token,
+        base_sha=cast(str, merge_base_sha),
+        revision=default_revision,
+    )
+    carrier_changed = _comparison_file_paths(
+        repository,
+        token,
+        base_sha=cast(str, merge_base_sha),
+        revision=carrier_revision,
+    )
+    manifest_paths = {file.path for file in manifest.files}
+    for path in sorted((default_changed & carrier_changed) - manifest_paths):
+        if _content_sha_at(repository, token, path=path, revision=default_revision) != _content_sha_at(
+            repository,
+            token,
+            path=path,
+            revision=carrier_revision,
+        ):
+            raise RuntimeError("work-product reconciliation has an unresolved overlapping change")
+
+    tree_elements: list[dict[str, object]] = []
+    for path in sorted((default_changed - carrier_changed) - manifest_paths):
+        default_sha = _content_sha_at(repository, token, path=path, revision=default_revision)
+        carrier_sha = _content_sha_at(repository, token, path=path, revision=carrier_revision)
+        if default_sha == carrier_sha:
+            continue
+        if default_sha is None:
+            if carrier_sha is not None:
+                tree_elements.append(
+                    {
+                        "path": path,
+                        "mode": "100644",
+                        "type": "blob",
+                        "sha": None,
+                    }
+                )
+            continue
+        tree_elements.append(
+            {
+                "path": path,
+                "mode": "100644",
+                "type": "blob",
+                "sha": default_sha,
+            }
+        )
+
+    tree_elements.extend(
+        {
+            "path": file.path,
+            "mode": "100644",
+            "type": "blob",
+            "sha": file.blob_sha,
+        }
+        for file in manifest.files
+    )
+    return tree_elements
+
+
 def _default_branch_is_ancestor(
     repository: str,
     token: str,
@@ -1464,12 +1555,14 @@ def apply_work_product(
         and replacement_branch is not None
         and replacement_ref_exists
     )
+    reconciliation_tree_elements: list[dict[str, object]] | None = None
     if needs_default_reconciliation and not reconcile_replacement_from_default:
-        _verify_default_only_content(
+        reconciliation_tree_elements = _reconciliation_tree_elements(
             repository,
             token,
             default_revision=authorization_revision,
-            branch_revision=current_head,
+            carrier_revision=current_head,
+            manifest=plan.manifest,
         )
 
     if not replay_manifest:
@@ -1514,7 +1607,20 @@ def apply_work_product(
         raise RuntimeError("work-product base tree identity is incomplete")
 
     tree_sha = cast(str, base_tree_sha)
-    if not replay_manifest:
+    tree_elements = (
+        reconciliation_tree_elements
+        if reconciliation_tree_elements is not None
+        else [
+            {
+                "path": file.path,
+                "mode": "100644",
+                "type": "blob",
+                "sha": file.blob_sha,
+            }
+            for file in plan.manifest.files
+        ]
+    )
+    if not replay_manifest or reconciliation_tree_elements is not None:
         try:
             tree_response = _as_mapping(
                 cast(
@@ -1526,15 +1632,7 @@ def apply_work_product(
                         method="POST",
                         payload={
                             "base_tree": cast(str, base_tree_sha),
-                            "tree": [
-                                {
-                                    "path": file.path,
-                                    "mode": "100644",
-                                    "type": "blob",
-                                    "sha": file.blob_sha,
-                                }
-                                for file in plan.manifest.files
-                            ],
+                            "tree": tree_elements,
                         },
                     ),
                 )
@@ -1568,7 +1666,7 @@ def apply_work_product(
         or not isinstance(tree_entries, list)
     ):
         raise RuntimeError("work-product tree postcondition is incomplete")
-    if not replay_manifest:
+    if not replay_manifest or reconciliation_tree_elements is not None:
         for file in plan.manifest.files:
             matches = [
                 entry
