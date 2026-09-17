@@ -214,6 +214,7 @@ def _pending_application_correlation(
         if issue.issue_number != source.issue_number
     ):
         return None
+    print("DBG initial passed", source, decision)
 
     issue = _as_mapping(_github_json(repository, token, f"issues/{source.issue_number}"))
     observation = None if issue is None else normalize_github_issue(issue)
@@ -225,6 +226,7 @@ def _pending_application_correlation(
         or observation.routing != (source.role, source.action)
     ):
         return None
+    print("DBG observation passed", observation)
 
     try:
         worker_result = parse_worker_result(raw_worker_result, source)
@@ -247,6 +249,7 @@ def _pending_application_correlation(
         # identities and must not be collapsed into one SHA.
     ):
         return None
+    print("DBG revisions", worker_revision, worker_default_revision, current_revision)
     authorization_ancestry: tuple[tuple[str, str], ...] = ()
     if worker_default_revision != current_revision:
         if not _authorization_revision_is_ancestor(
@@ -264,6 +267,7 @@ def _pending_application_correlation(
     materializations = _materialization_effects(raw_worker_result, source)
     if len(materializations) > 1:
         return None
+    print("DBG ancestry passed", authorization_ancestry, "materializations", len(materializations))
     if materializations:
         materialization = find_materialization_payload(materializations[0], source)
         if (
@@ -312,6 +316,7 @@ def _pending_application_correlation(
         ):
             continue
         candidates.append((comment, event))
+    print("DBG candidates", len(candidates), [event.application_correlation for _comment, event in candidates])
     if len(candidates) != 1:
         return None
     _comment, candidate = candidates[0]
@@ -354,7 +359,9 @@ def _pending_application_correlation(
                 qualification,
                 authorization_ancestry=tuple(ancestry),
             )
-    if not qualify_current_formal_consequence(qualification).qualified:
+    qualification_decision = qualify_current_formal_consequence(qualification)
+    print("DBG qualification", qualification_decision)
+    if not qualification_decision.qualified:
         return None
     return candidate.application_correlation
 
