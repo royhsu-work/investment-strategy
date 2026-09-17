@@ -21,6 +21,7 @@ def _comment(
     request_id: int,
     revision: str = _REVISION,
     default_revision: str = _REVISION,
+    application_revision: str | None = None,
     change: str = _CHANGE,
     issue_number: int = 229,
     performed_by_actions: bool = True,
@@ -42,7 +43,7 @@ def _comment(
         f"Default-Branch-Revision: {default_revision}",
         (
             f"Application-Correlation: application:{request_id}:{issue_number}:{change}:"
-            f"{role}:{action}:{result}:{default_revision}"
+            f"{role}:{action}:{result}:{application_revision or default_revision}"
         ),
     ]
     if successor is not None:
@@ -325,6 +326,36 @@ def test_aba_lifecycle_events_reject_unbound_route_replay() -> None:
         ).provenance
         is ObservationProvenance.INDETERMINATE
     )
+
+
+def test_pending_historical_result_accepts_newer_application_revision() -> None:
+    historical_revision = "b" * 40
+    application_revision = "c" * 40
+    comment = _comment(
+        5,
+        action="implement-change",
+        role="executor",
+        result="ready",
+        successor="Reviewer / review-implementation",
+        request_id=55,
+        revision=historical_revision,
+        default_revision=historical_revision,
+        application_revision=application_revision,
+    )
+    correlation = (
+        f"application:55:229:{_CHANGE}:executor:implement-change:ready:{application_revision}"
+    )
+    decision = _decision(
+        [comment],
+        current_routing=("executor", "implement-change"),
+        mode="pending",
+        expected_routing=("reviewer", "review-implementation"),
+        source_routing=("executor", "implement-change"),
+        expected_result_kind="ready",
+        expected_application_correlation=correlation,
+        authorization_ancestry=((historical_revision, _REVISION),),
+    )
+    assert decision.provenance is ObservationProvenance.QUALIFIED
 
 
 def test_pending_successor_uses_the_same_binding_decision_shape() -> None:
