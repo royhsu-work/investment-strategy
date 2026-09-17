@@ -1885,9 +1885,7 @@ class GitHubEffectAdapter:
                 ):
                     continue
                 historical_revisions.append(historical_revision)
-            ancestry: list[tuple[str, str]] = list(
-                qualification_input.authorization_ancestry
-            )
+            ancestry: list[tuple[str, str]] = list(qualification_input.authorization_ancestry)
             for historical_revision in dict.fromkeys(historical_revisions):
                 if (historical_revision, current_revision) in ancestry:
                     continue
