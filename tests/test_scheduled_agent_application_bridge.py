@@ -630,14 +630,14 @@ def test_plan_application_recovers_persisted_result_after_main_advances(
     recovery_comment = {
         "id": 899,
         "body": (
-            "APPLICATION_RECOVERY\\n"
-            "Workflow: #138\\n"
-            f"Change: {_CHANGE}\\n"
-            "Source: Lead / propose-change\\n"
-            "Target: Lead / resolve-question\\n"
-            f"Default-Branch-Revision: {recovery_revision}\\n"
-            f"Failed-Authorization-Revision: {'1' * 40}\\n"
-            "Request-Comment-ID: 901\\n"
+            "APPLICATION_RECOVERY\n"
+            "Workflow: #138\n"
+            f"Change: {_CHANGE}\n"
+            "Source: Lead / propose-change\n"
+            "Target: Lead / resolve-question\n"
+            f"Default-Branch-Revision: {recovery_revision}\n"
+            f"Failed-Authorization-Revision: {'1' * 40}\n"
+            "Request-Comment-ID: 901\n"
             "Reason: partial-first-activation"
         ),
         "user": {"login": "github-actions[bot]"},
