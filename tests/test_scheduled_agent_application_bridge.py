@@ -1068,6 +1068,52 @@ def test_live_main_preflight_diagnostic_for_issue233() -> None:
         )
     )
 
+@pytest.mark.skipif(not os.environ.get("GITHUB_TOKEN"), reason="live GitHub token is unavailable")
+def test_live_main_application_bridge_replays_issue233_request() -> None:
+    token = os.environ["GITHUB_TOKEN"]
+    current_revision = "b708129828e541227095ff801c2801907bae7d2e"
+    preflight = runtime.acquire_current_github_preflight(_REPOSITORY, token)
+    shard = bridge._github_json(_REPOSITORY, token, "issues/252")
+    assert isinstance(shard, dict)
+    request_comments = bridge._paged_github_list(
+        _REPOSITORY,
+        token,
+        "issues/252/comments?sort=created",
+    )
+    request_comment = next(
+        comment for comment in request_comments if comment.get("id") == 5711090028
+    )
+    body = request_comment.get("body")
+    assert isinstance(body, str)
+    request = parse_application_request(body)
+    assert request is not None
+    event = {"action": "created", "issue": shard, "comment": request_comment}
+    try:
+        plan = plan_application(
+            event=event,
+            request=request,
+            preflight=preflight,
+            repository=_REPOSITORY,
+            current_revision=current_revision,
+            token=token,
+        )
+    except ValueError as exc:
+        raise AssertionError(
+            "LIVE_APPLICATION_BRIDGE "
+            + json.dumps(
+                {
+                    "error": str(exc),
+                    "decision": runtime.classify_dispatch(preflight).reason,
+                    "formal_issue_ids": runtime.classify_dispatch(preflight).formal_issue_ids,
+                    "preactivation_candidate_ids": runtime.classify_dispatch(preflight).preactivation_candidate_ids,
+                },
+                sort_keys=True,
+            )
+        ) from exc
+    assert plan.should_apply
+    assert plan.pending_continuation
+    assert plan.pending_application_correlation is not None
+
 def test_application_boundary_does_not_replay_dispatch_artifacts() -> None:
     source = Path("src/investment_strategy/scheduled_agent_application_bridge.py").read_text(
         encoding="utf-8"
