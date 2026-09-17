@@ -1,0 +1,28 @@
+name: Decision
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: "Target symbol"
+        required: true
+        type: string
+      as_of:
+        description: "Optional ISO date; omit for the current formal Decision"
+        required: false
+        type: string
+  push:
+    paths:
+      - "requests/decision.json"
+
+jobs:
+  decision:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decision scaffold
+        run: |
+          echo "Formal Decision workflow scaffold."
+          echo "The application contract is symbol + optional as_of."
+          echo "Live provider/calendar/production-strategy composition is intentionally deferred."
+          echo "Generated analytical outputs belong in GitHub Actions Artifacts, not repository commits."

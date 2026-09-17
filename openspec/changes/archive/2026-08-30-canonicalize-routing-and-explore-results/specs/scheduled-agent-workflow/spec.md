@@ -1,0 +1,547 @@
+## MODIFIED Requirements
+
+### Requirement: One persistent coordination Issue represents the normal OpenSpec workflow lifecycle
+
+The workflow SHALL use one persistent coordination Issue for one routed work item through any optional pre-Propose Explore and, when a formal Change is authorized, through proposal, review, implementation, merge, archive review, archive merge, and final closure.
+
+Before the change id exists, `explore-change` and `propose-change` MAY operate with `Change: unset`. `explore-change` MUST keep `Change: unset` and MUST NOT create a formal OpenSpec change solely to represent research. The normal route into Propose SHALL be a same-Issue `Lead / explore-change` result of evidence-backed `PROPOSAL_READY` followed by the repository-owned routing effect to `Lead / propose-change`. Once Lead persists a change id during `propose-change`, that identity MUST remain immutable for that Issue.
+
+A coherently routed `Lead / propose-change + Change: unset` Issue MAY be selected operationally from current routing, including after an out-of-band routing mutation, but selection alone MUST NOT satisfy Propose's action-local semantic preconditions. Before persisting a Change identity, Propose MUST dereference the exact durable same-Issue Explore `ACTION_RESULT(PROPOSAL_READY)` and independently/reversely verify that each still-applicable material formalization claim is supported by the Explore claim's identified source/evidence and that feasibility evidence is sufficient for the meaning being formalized. `PROPOSAL_READY` MUST NOT be treated as permission to blindly trust unsupported Explore interpretation.
+
+If that pre-activation source/evidence/feasibility chain is missing, ambiguous, stale, contradictory, unsupported, or incomplete but the same bounded problem remains researchable without a new Human-reserved decision, no Change identity SHALL be persisted and the legal correction SHALL route the same Issue to `Lead / explore-change` with `Change: unset`. This correction preserves the same Issue identity and original queue position; it is not dispatcher fallback and MUST NOT cause dispatch to authorize a later pre-activation Issue merely because more research is required. If resolving the gap requires a genuinely new Human-reserved requirement, scope/risk/architecture commitment, Lead MUST use the existing Human decision boundary instead. Once `Change:` is non-`unset`, material semantic correction MUST use the formal `Lead / resolve-question` / independent review loop rather than the pre-Change Explore correction path.
+
+Normal clarification and review-correction transitions SHALL remain in the same coordination Issue unless a later repository contract explicitly introduces child workflow items.
+
+A terminal Explore result that concludes `NO_CHANGE_REQUIRED` or `NO_GO` MAY complete and close the coordination/research Issue without creating or archiving a fake OpenSpec Change.
+
+#### Scenario: Explore remains pre-Change
+
+- GIVEN an open coordination Issue is coherently routed to `Lead / explore-change`
+- AND `Change:` is unset
+- WHEN Lead investigates the problem
+- THEN the Issue remains `Change: unset`
+- AND no `openspec/changes/<id>/` artifact set is created by Explore
+- AND generic Human admission is not required solely to execute that bounded research action
+
+#### Scenario: Lead selects a change id only after Propose entry
+
+- GIVEN a coordination Issue has reached current `Lead / propose-change` routing
+- AND `Change:` is not yet set
+- AND the exact durable same-Issue Explore result is evidence-backed `PROPOSAL_READY`
+- AND Propose independently verifies the material source/evidence chain and feasibility support the current formalization direction
+- WHEN Lead creates or selects the OpenSpec change id
+- THEN Lead persists that change id on the coordination Issue
+- AND later scheduled runs treat the persisted change id as immutable workflow identity
+- AND no direct Human-to-Propose admission path is available as an alternative normal intake route
+
+#### Scenario: Researchable Propose evidence gap returns the same Issue to Explore
+
+- GIVEN an open coordination Issue is coherently routed to `Lead / propose-change + Change: unset`
+- AND dispatch selects it from current operational routing
+- AND Propose finds the material Explore source/evidence/feasibility chain incomplete, unsupported, stale, ambiguous, or contradictory
+- AND the same bounded problem remains researchable without a new Human-reserved decision
+- WHEN Lead evaluates formal activation
+- THEN no Change identity is persisted
+- AND repository-owned application routes the same Issue to `Lead / explore-change + Change: unset`
+- AND the Issue retains its original GitHub identity and `created_at` queue position
+- AND dispatch does not authorize a later queued Issue merely because this action-local evidence requires more research
+
+#### Scenario: Propose evidence gap requiring Human authority does not invent a correction
+
+- GIVEN a selected pre-activation Propose cannot complete its evidence/feasibility basis
+- AND resolving the gap requires a genuinely new Human-reserved requirement, scope, risk, or architecture decision
+- WHEN Lead evaluates the gap
+- THEN Lead uses the existing provenance-bound Human decision boundary
+- AND the model does not weaken the requirement or choose a new commitment merely to avoid Human escalation
+- AND a later queued Issue is not selected as semantic fallback
+
+#### Scenario: Activated Change does not return to pre-Change Explore
+
+- GIVEN the coordination Issue already has a non-`unset` immutable Change identity
+- AND a material semantic correction is required
+- WHEN the workflow resolves that correction
+- THEN it uses `Lead / resolve-question` and independent `Reviewer / review-openspec` as governed
+- AND it does not route backward to pre-Change Explore
+
+#### Scenario: Explore concludes without a repository change
+
+- GIVEN Lead has reached a decision-complete `NO_CHANGE_REQUIRED` or `NO_GO` Explore conclusion
+- AND no formal Change identity was created
+- WHEN Lead persists the bounded terminal research evidence
+- THEN Lead may close the coordination/research Issue as completed
+- AND the workflow does not create a fake OpenSpec Change only to obtain archive semantics
+
+### Requirement: Each scheduled run processes at most one actionable work item using a fixed stable order
+
+A scheduled invocation SHALL process at most one eligible actionable coordination Issue per run.
+
+In `fixed-role` mode, role-local lifecycle/blocker priority SHALL remain deterministic:
+
+- Lead: `resolve-question` > `finalize-archive` > `finalize-change` > pre-activation intake;
+- Reviewer: `review-archive` > `review-implementation` > `review-openspec`;
+- Executor: `merge-pr` > `implement-change`.
+
+For Reviewer, Executor, and the three higher-priority Lead actions above, selection within the same fixed-role role/action priority SHALL choose earliest GitHub `created_at`, then lower Issue number.
+
+If fixed-role Lead has no eligible `resolve-question`, `finalize-archive`, or `finalize-change` work, every coherently routed open `Lead / explore-change + Change: unset` entry and every coherently routed open `Lead / propose-change + Change: unset` entry SHALL form one combined pre-activation intake queue ordered by earliest GitHub `created_at`, then lower Issue number. Dispatcher queue eligibility SHALL use current structural Issue/routing facts and MUST NOT depend on origin, Human admission, prior `ACTION_RESULT` prose, or action-local semantic readiness. The selected Issue's current routing determines whether Lead executes Explore or Propose. Fixed-role mode MUST NOT apply an `explore-change > propose-change` priority inside this combined intake queue.
+
+In `workflow-dynamic` mode, an open formal active workflow SHALL be selected before pre-activation work; its valid routing tuple determines the role/action. A closed Issue retaining any repository-governed workflow routing label SHALL be current closed-routing debt rather than ordinary active workflow work and MUST enter the bounded recovery/terminal-retirement classification before pre-activation intake.
+
+If no open formal active workflow exists and current closed-routing debt is empty, every coherently routed open `Lead / explore-change + Change: unset` entry and every coherently routed open `Lead / propose-change + Change: unset` entry SHALL form the same deterministic pre-activation queue ordered by earliest GitHub `created_at`, then lower Issue number. Only that winner may proceed. Current routing SHALL remain operational truth for queue selection; dispatch MUST NOT re-read Issue comments/events to re-prove why a coherent Propose tuple exists. Action-local semantic evidence is reconstructed only after the mapped action is selected.
+
+The model MUST NOT substitute its own urgency or preference for either mode's deterministic selection rules.
+
+#### Scenario: Dynamic mode follows the formal active workflow
+
+- GIVEN dispatch mode is `workflow-dynamic`
+- AND exactly one formal active workflow routes to `Executor / implement-change`
+- AND queued Explore and Propose Issues also exist
+- WHEN a Scheduled Task selects work
+- THEN the formal active workflow is selected
+- AND Executor is the fixed invocation role
+- AND the queued pre-activation work remains queued
+
+#### Scenario: Dynamic mode selects earliest pre-activation entry across Explore and Propose
+
+- GIVEN dispatch mode is `workflow-dynamic`
+- AND no open formal active workflow exists
+- AND current closed-routing debt is empty
+- AND an older coherently routed `Lead / propose-change + Change: unset` Issue exists
+- AND a newer coherently routed `Lead / explore-change + Change: unset` Issue exists
+- WHEN Scheduled workflow selects pre-activation work
+- THEN the older Propose Issue is selected by GitHub creation order
+- AND the newer Explore Issue remains queued
+- AND dispatch does not read prior `ACTION_RESULT` prose or Human-admission evidence to decide whether the older current routing may participate
+
+#### Scenario: Irrelevant result prose cannot alter pre-activation selection
+
+- GIVEN the deterministic pre-activation winner is a coherently routed `Lead / propose-change + Change: unset` Issue
+- AND an earlier Issue comment contains additional prose fields such as another bullet beginning `- Workflow:`
+- WHEN dispatch reconstructs the current pre-activation queue
+- THEN that comment is not parsed for queue eligibility
+- AND the current Propose routing remains in the queue
+- AND FIFO selection is unchanged by the prose shape
+
+#### Scenario: Fixed-role Lead uses the same combined pre-activation winner
+
+- GIVEN dispatch mode is `fixed-role`
+- AND the scheduled role is Lead
+- AND no eligible `resolve-question`, `finalize-archive`, or `finalize-change` work exists
+- AND an older coherently routed Propose Issue and a newer coherently routed Explore Issue are both valid with `Change: unset`
+- WHEN Lead selects pre-activation intake
+- THEN the older Propose Issue is selected
+- AND the newer Explore Issue remains queued
+- AND action type does not override the combined queue's creation-order winner
+
+#### Scenario: Open Explore remains selected without an in-progress marker
+
+- GIVEN the oldest valid pre-activation entry is an open `Lead / explore-change` Issue
+- AND it has not reached a terminal result or transitioned to Propose
+- WHEN a later wake reconstructs the same queue
+- THEN that same Issue remains the deterministic winner by stable creation order
+- AND no `status:exploring`, lease, heartbeat, approval token, or hidden ownership state is required
+
+#### Scenario: Dynamic mode selects terminal reconstruction before queued work
+
+- GIVEN dispatch mode is `workflow-dynamic`
+- AND a closed coordination Issue retains repository-governed workflow routing
+- AND queued Explore or Propose work exists
+- WHEN a Scheduled Task reconstructs current work
+- THEN the closed Issue is treated as current closed-routing debt rather than ordinary active workflow work
+- AND only the bounded recovery/terminal-retirement classification may determine its legal disposition
+- AND queued pre-activation work remains unactivated until that debt is legally resolved or retired
+
+### Requirement: Persisted Change identity defines the single active workflow boundary
+
+An open coordination Issue with a valid routing tuple and a persisted non-`unset` `Change:` identity SHALL be an active workflow. The repository MUST allow at most one such active workflow at a time.
+
+Normal formal lifecycle work SHALL remain open through final Archive merge and `Lead / finalize-archive`. It remains active while open with a valid routing tuple and non-`unset` Change identity until terminal conditions are satisfied, `LIFECYCLE_COMPLETE` is durably persisted, and repository-owned terminal retirement completes the `closed + no workflow routing` postcondition.
+
+A closed coordination Issue retaining any repository-governed workflow routing label SHALL be current closed-routing debt rather than active workflow work. Its disposition MUST come only from bounded current debt classification: a qualifying unfinished premature closure MAY recover only under the existing recovery predicates, while proven terminal/retired routing residue MAY receive only narrow routing-retirement cleanup. Ambiguous, competing, contradictory, or incomplete debt MUST fail closed. A closed Issue with valid terminal completion and no workflow routing labels is terminal history and MUST NOT block later workflow admission.
+
+Open coherently routed `Lead / explore-change + Change: unset` and `Lead / propose-change + Change: unset` coordination Issues SHALL be queued pre-activation work based on current structural routing. Neither form counts as an active workflow before Propose persists an immutable Change identity. Dispatcher selection MUST NOT distinguish an unset Propose by origin, Human admission, comment provenance, or reconstructed semantic readiness.
+
+Lead MUST NOT activate a queued proposal while another open active workflow exists or current closed-routing debt is unresolved. If no open active workflow exists and current closed-routing debt is empty, deterministic pre-activation selection SHALL be evaluated across the single combined set of coherently routed open `Lead / explore-change + Change: unset` and `Lead / propose-change + Change: unset` candidates using earliest GitHub `created_at`, then lower Issue number. Only that combined-queue winner may proceed. A `propose-change` runner MUST re-check that its Issue is still that same winner immediately before persisting a non-`unset` Change identity.
+
+A proposal-ready Explore remains pre-activation until repository-owned application legally routes that same Issue to `Lead / propose-change`. The transition SHALL NOT require a generic Human proceed confirmation when the proposal-ready direction remains inside the bounded researched/canonical evidence and introduces no Human-reserved decision. After routing, the same Issue retains its original queue position. Propose SHALL reconstruct the exact durable same-Issue `PROPOSAL_READY` semantic baseline and independently validate its material source/evidence and feasibility basis before activation. An absent/invalid/incomplete but researchable basis routes the same Issue back to Explore without changing queue identity; it does not change dispatcher eligibility or authorize later work. If formalization would introduce a new Human-reserved product/project direction, material externally observable behavior or scope trade-off, explicit risk acceptance, or materially different security/privacy/cost/operational commitment, Lead MUST use the existing `HUMAN_DECISION_REQUIRED` boundary instead of treating routing or Explore execution as Human authority.
+
+#### Scenario: Queued pre-activation work exists while another workflow is active
+
+- GIVEN Change A is an active workflow
+- AND Issue B is an open routed `Lead / explore-change` or `Lead / propose-change` Issue with `Change: unset`
+- WHEN workflow-dynamic dispatch reconstructs work
+- THEN Change A remains the only active workflow
+- AND Issue B is not activated or globally arbitrated against Change A
+
+#### Scenario: Closed terminal handoff still blocks new activation
+
+- GIVEN Change A's coordination Issue is closed
+- AND it retains at least one repository-governed workflow routing label
+- AND queued Explore or Propose work exists with `Change: unset`
+- WHEN workflow-dynamic dispatch reconstructs work
+- THEN Change A is treated as current closed-routing debt rather than active workflow work
+- AND only bounded recovery/terminal-retirement handling may act on that debt
+- AND the queued pre-activation work is not activated until the debt is legally resolved or retired
+
+#### Scenario: Older Explore prevents later direct-Propose activation
+
+- GIVEN no open active workflow exists
+- AND current closed-routing debt is empty
+- AND an older coherently routed `Lead / explore-change + Change: unset` Issue exists
+- AND a newer coherently routed `Lead / propose-change + Change: unset` Issue exists
+- WHEN dispatch selects pre-activation work after direct-Propose admission has been removed
+- THEN the older Explore remains the deterministic combined-queue winner by creation order
+- AND the newer Propose remains queued because current routing participates in the same FIFO, not because a direct-Propose Human-admission predicate exists
+
+#### Scenario: Proposal-ready Explore keeps its queue position when Human authorizes Propose
+
+- GIVEN an Explore Issue is the deterministic combined-queue winner
+- AND Lead returns evidence-backed structured `PROPOSAL_READY` within the bounded current context
+- AND no new Human-reserved decision is introduced
+- WHEN repository-owned application routes the same Issue to `Lead / propose-change`
+- THEN no Human authorization is required for that normal transition under the new contract; the legacy scenario title is retained only as the canonical scenario identity
+- AND the same Issue retains its original GitHub `created_at` and queue position
+- AND Propose may persist the immutable Change identity only after re-checking queue ownership and independently validating its action-local source/evidence and feasibility basis
+
+#### Scenario: Oldest eligible Propose activates after older Explore terminates
+
+- GIVEN no open active workflow exists
+- AND current closed-routing debt is empty
+- AND an older Explore has legally reached terminal `NO_CHANGE_REQUIRED` or `NO_GO` and left pre-activation routing
+- AND at least one coherently routed `Lead / propose-change + Change: unset` Issue remains
+- WHEN dispatch selects pre-activation work
+- THEN the earliest remaining coherent candidate is selected by `created_at`, then Issue number
+- AND Propose may activate only after its action-local source/evidence, feasibility, and activation preconditions pass
+- AND no Human direct-Propose admission predicate is evaluated
+
+#### Scenario: Selected Propose evidence failure preserves Issue ownership without freezing the action
+
+- GIVEN the FIFO-selected pre-activation candidate is current `Lead / propose-change + Change: unset`
+- BUT the mapped Propose action cannot establish a sufficient material source/evidence/feasibility basis
+- WHEN Propose evaluates activation
+- THEN no Change identity is persisted
+- AND the current Issue remains the workflow/queue owner
+- AND, when the gap is researchable within the same bounded problem, the legal action changes to same-Issue `Lead / explore-change`
+- AND a later candidate is not silently authorized as fallback
+
+#### Scenario: Out-of-band coherent Propose routing is operational but not semantic authority
+
+- GIVEN an administrator or connector writes a structurally coherent `Lead / propose-change + Change: unset` tuple
+- WHEN dispatch reconstructs current pre-activation state
+- THEN the Issue participates in deterministic selection from current routing without label-writer provenance reconstruction
+- AND that routing does not manufacture a sufficient evidence-backed same-Issue Explore basis
+- AND consequential Propose activation still fails closed unless its action-local semantic preconditions are satisfied
+- AND a researchable pre-activation evidence gap may route the same Issue to Explore rather than disappearing from the queue
+
+### Requirement: Human-required authority is bound to the repository Human actor
+
+For workflow decisions that governance reserves to Human, durable GitHub actor identity alone MUST NOT satisfy Human authority. Activity from actors other than `royhsu-work` MAY be supporting evidence but MUST NOT satisfy Human-required answers, authorization, or resume conditions. Formal Explore execution and ordinary current pre-activation routing are not Human-reserved decisions and therefore do not consume this Human-authority predicate.
+
+Each Human-reserved consumer that uses the general provenance-bound decision predicate SHALL reconstruct exactly one expected durable `decision_ref` from the workflow boundary it is consuming. The Human decision comment SHALL explicitly declare that same reference using the canonical line:
+
+```text
+Human-Decision-For: <decision_ref>
+```
+
+Current consumers of the general predicate SHALL use only these exact forms:
+
+- Human-only advisory admission guarded by `intake:approved`: `issue:<issue-number>:advisory-admission`.
+- A Human answer, authorization, or resume decision produced from canonical `HUMAN_DECISION_REQUIRED`: `issuecomment:<escalation-comment-id>`.
+
+A later Human-reserved consumer MUST define its exact `decision_ref` form in canonical governance before using the predicate. Missing, inaccessible, ambiguous, contradictory, malformed, unorderable, or reference-mismatched evidence MUST fail closed rather than allowing model inference.
+
+For a valid Human-reserved decision, the selected decision comment MUST be on the same coordination Issue, declare the exact expected reference, be authored by `royhsu-work`, and have raw creation provenance `performed_via_github_app == null`. `human:approved` MUST currently be present and a qualifying Human-only labeled event MUST have `actor.login == royhsu-work` plus `performed_via_github_app == null`. Event-first binding SHALL select the latest qualifying Human-created decision comment preceding each approval event by GitHub `created_at`, then numeric comment id; only after binding may the declared reference be compared with the current expected boundary. One approval event authorizes at most one bound comment/reference. A later replacement comment requires a later qualifying approval event, and `decision_comment.updated_at > approval_event.created_at` invalidates that earlier approval for the edited revision.
+
+Where normalized connector reads omit `performed_via_github_app`, the workflow MUST inspect raw GitHub provenance or fail closed. `unlabeled` events MAY invalidate current label state but MUST NOT establish Human authority.
+
+`intake:approved` remains the distinct Human-only advisory-admission capability marker. Its snapshot alone is insufficient authority. Scheduled roles MUST NOT add, remove, restore, or manufacture `human:approved` or `intake:approved`.
+
+An Explore Issue, routing labels, creator identity, successful Explore execution, or current Propose routing MUST NOT be treated as Human authority for a later Human-reserved commitment. `human:notified` remains analytics-only metadata and MUST NOT grant authority, route work, create waiting semantics, participate in resume conditions, or prove that Human answered.
+
+This authority rule SHALL remain prospective at its default-branch activation boundary; previously terminal workflows and Human authority already legally consumed under an earlier authoritative contract remain historical evidence.
+
+#### Scenario: Non-Human actor answers a Human-required question
+
+- GIVEN workflow progress requires a Human decision
+- AND an actor other than `royhsu-work` posts an apparent answer
+- WHEN Lead reconstructs authorization evidence
+- THEN the answer may be considered evidence
+- BUT it does not satisfy the Human-required decision condition
+
+#### Scenario: Notification metadata exists
+
+- GIVEN `human:notified` metadata is present
+- WHEN any role evaluates routing or authorization
+- THEN that metadata does not change workflow ownership or authority
+- AND it is not treated as proof of a Human response
+
+#### Scenario: Connector-authored evidence cannot manufacture Human authority
+
+- GIVEN a decision comment or approval-label event is attributed to `royhsu-work`
+- AND raw GitHub provenance records a non-null GitHub App for that creation/event
+- WHEN a Human-reserved answer, authorization, or resume condition is evaluated
+- THEN actor identity alone is insufficient
+- AND the evidence does not satisfy Human authority
+
+#### Scenario: Human comment plus later Human approval is valid
+
+- GIVEN the current Human-reserved consumer reconstructs one expected canonical `decision_ref`
+- AND a qualifying Human-only `human:approved` event uniquely binds to one qualifying Human-created decision comment
+- AND that comment declares the expected reference and has raw `performed_via_github_app == null`
+- AND the comment has not been edited after the approval event
+- WHEN the workflow evaluates the intended Human-reserved decision
+- THEN the provenance-bound decision satisfies Human authority
+
+#### Scenario: One approval event cannot authorize two decision references
+
+- GIVEN Human-created comments for R1 and R2 both precede one qualifying Human-only approval event E
+- AND R2 is later by `created_at`, then comment id
+- WHEN E is evaluated
+- THEN E binds only to R2 before boundary comparison
+- AND E MUST NOT also authorize R1 by re-filtering candidates
+
+#### Scenario: Multiple Human comments do not require model disambiguation
+
+- GIVEN multiple qualifying Human-created decision comments precede approval event E
+- WHEN E is evaluated
+- THEN the latest qualifying comment is selected deterministically by `created_at`, then comment id
+- AND model inference does not choose the intended comment
+
+#### Scenario: Replacement decision for the same boundary requires reapproval
+
+- GIVEN an earlier decision comment for R was approved
+- AND a later Human-created replacement also declares R
+- WHEN R is evaluated before any qualifying later approval event
+- THEN the earlier event does not approve the replacement
+- AND the workflow fails closed until the replacement is later approved
+
+#### Scenario: Exact current admission anchors are deterministic
+
+- GIVEN a workflow boundary is currently reserved to Human and consumes the general predicate
+- WHEN its exact decision anchor is reconstructed
+- THEN advisory admission uses exactly `issue:<N>:advisory-admission`
+- AND an answer/resume from canonical `HUMAN_DECISION_REQUIRED` uses exactly `issuecomment:<C>`
+- AND no direct-Propose Human-admission anchor exists under the new contract
+- AND ordinary Explore/current pre-activation routing requires no Human-admission anchor
+
+#### Scenario: Escalation answer anchor is deterministic
+
+- GIVEN Lead persisted canonical `HUMAN_DECISION_REQUIRED` as comment id 12345
+- WHEN a later Human answer/resume is evaluated
+- THEN the expected reference is exactly `issuecomment:12345`
+- AND no PR/revision or generic Issue reference substitutes for it
+
+#### Scenario: Missing or unmapped decision reference fails closed
+
+- GIVEN a Human-reserved consumer has no exact canonical reference mapping
+- OR the available Human comment lacks or mismatches that reference
+- WHEN Human authority is evaluated
+- THEN the workflow does not invent an anchor or reinterpret prose
+- AND Human authority fails closed
+
+#### Scenario: Approved comment is edited afterward
+
+- GIVEN a Human decision comment was approved
+- AND it is later edited after the approval event
+- WHEN prior approval is evaluated
+- THEN prior approval is invalid for the edited revision
+- AND a later qualifying approval event is required
+
+#### Scenario: Normalized read lacks provenance
+
+- GIVEN a normalized connector read identifies actor `royhsu-work` but omits `performed_via_github_app`
+- WHEN Human authority is required
+- THEN actor identity alone is insufficient
+- AND raw provenance is obtained or evaluation fails closed
+
+#### Scenario: Advisory intake marker remains distinct
+
+- GIVEN advisory Issue N is being Human-admitted
+- AND `intake:approved` is currently present
+- WHEN Human authority is evaluated
+- THEN the snapshot alone is insufficient
+- AND the expected reference is exactly `issue:<N>:advisory-admission`
+- AND the intended decision must satisfy the full provenance-bound contract
+
+#### Scenario: Repository-authorized Explore does not impersonate Human admission
+
+- GIVEN an Explore candidate was created from independently reconstructable repository-authorized evidence
+- WHEN dispatch evaluates ordinary Explore execution
+- THEN it may be queue-eligible without manufacturing Human evidence
+- AND that repository evidence does not satisfy a later Human-reserved decision
+
+#### Scenario: Human-created Formal Explore Issue is sufficient admission
+
+- GIVEN Issue N was created directly by `royhsu-work`
+- AND it is coherently routed `Change: unset + agent:lead + action:explore-change`
+- WHEN dispatch evaluates ordinary Explore execution
+- THEN the Issue may be queue-eligible without a separate Human admission predicate
+- AND creation does not authorize a later Human-reserved commitment
+
+#### Scenario: Connector-created Human-looking Issue is not Human admission
+
+- GIVEN an Issue displays `user.login == royhsu-work`
+- AND raw creation provenance identifies a GitHub App
+- WHEN dispatch evaluates ordinary Explore/current routing and later Human-reserved boundaries
+- THEN coherent routing may still be operationally queue-eligible
+- AND connector/App provenance is not Human authority for a Human-reserved boundary
+
+#### Scenario: Later connector routing can route but not authorize
+
+- GIVEN repository tooling applies a structurally coherent workflow routing tuple to an open `Change: unset` Issue
+- WHEN dispatch evaluates ordinary pre-activation execution
+- THEN those labels may make the Issue queue-eligible under deterministic routing rules
+- AND that mutation does not establish Human authority for advisory admission, escalation answer/resume, or another Human-reserved boundary
+
+#### Scenario: Ambiguous or mutated creation declaration falls back to existing predicate
+
+- GIVEN a legacy creation-time Explore admission declaration is absent, mutated, ambiguous, or unreconstructable
+- WHEN dispatch evaluates ordinary Explore execution after activation
+- THEN it does not use that declaration as an Explore authorization predicate
+- AND coherent current routing controls ordinary Explore eligibility
+- AND later Human-reserved decisions still use the provenance-bound predicate
+
+#### Scenario: Routed Explore is not Human authority
+
+- GIVEN an open Issue has coherent `Change: unset + agent:lead + action:explore-change` routing
+- WHEN dispatch evaluates ordinary Explore execution
+- THEN generic Human approval is not required solely to execute Explore
+- AND the Issue/routing/execution is not Human authority for a later Human-reserved decision
+
+#### Scenario: Historical completion is not retroactively invalidated
+
+- GIVEN a workflow reached valid terminal completion before this authority contract became active
+- WHEN later reconstruction evaluates history
+- THEN the completed workflow remains historical terminal evidence
+- AND it is not reopened solely because older Human evidence used the then-authoritative contract
+
+#### Scenario: Pending pre-activation evidence is consumed after activation
+
+- GIVEN a Human-reserved advisory or escalation decision was recorded before this contract became authoritative
+- AND it has not yet been legally consumed
+- WHEN workflow attempts to consume it after activation
+- THEN the current applicable provenance rule applies
+- AND insufficient evidence fails closed for fresh qualifying Human evidence
+
+#### Scenario: Direct Propose keeps existing Human approval contract
+
+- GIVEN direct Human-to-Propose admission existed and was legally consumed under an earlier authoritative contract
+- WHEN the new contract is active for normal intake
+- THEN no new direct-Propose admission is accepted or reconstructed
+- AND the historical authority remains historical evidence rather than being retroactively invalidated
+- AND any current coherent unset Propose routing is selected only as operational state and still requires its action-local evidence-backed same-Issue Explore basis before activation
+
+## ADDED Requirements
+
+### Requirement: Explore material claims remain traceable to source evidence through Propose and independent review
+
+For `Lead / explore-change`, every material claim that can affect result disposition, scope, constraints, feasibility, selected direction, or a Human-reserved decision boundary MUST identify the supporting source/evidence and MUST distinguish source fact/evidence from Lead interpretation/inference and unresolved question/uncertainty. Unsupported material inference MUST NOT establish `PROPOSAL_READY`. A material feasibility assertion MUST use evidence appropriate to the claim, such as authoritative current repository observations, applicable authoritative documentation, or executable test/prototype evidence; model confidence alone MUST NOT count as feasibility evidence.
+
+For pre-activation `Lead / propose-change`, the exact durable same-Issue evidence-backed `PROPOSAL_READY` result SHALL be the semantic baseline, but Propose MUST independently/reversely validate the relevant material source/evidence and feasibility basis before formalizing Proposal/Specs/Design/Tasks or persisting a Change identity. A researchable evidence gap SHALL use the same-Issue Explore correction defined by this Change rather than mandatory Propose-action retention or dispatcher fallback.
+
+For `Reviewer / review-openspec`, the independent semantic gate MUST dereference the exact Explore result and its declared material source/evidence, verify that the material Explore conclusions are supported by those sources, and then verify the supported meaning is preserved through Proposal/Specs/Design/Tasks before the existing reverse-first and forward traceability checks can PASS. Reviewer MUST NOT re-run Explore, perform an unbounded new research exercise, reconstruct conversation history, or infer undocumented Human intent. Missing, ambiguous, contradictory, or insufficient durable source/evidence required to verify a material Explore conclusion SHALL be `FINDINGS` even when downstream OpenSpec artifacts are internally consistent.
+
+This traceability contract MUST NOT introduce a global citation registry, new `review-explore` action, fourth role/stage, or another model call. The durable claim/source chain MAY use the existing action-result/artifact evidence surfaces so long as it remains reconstructable by the governed consumers.
+
+#### Scenario: Unsupported material Explore inference cannot become proposal-ready
+
+- GIVEN Explore reaches a material conclusion that changes disposition, scope, constraints, feasibility, or selected direction
+- AND no identified source/evidence supports that material inference
+- WHEN Lead evaluates `PROPOSAL_READY`
+- THEN `PROPOSAL_READY` is not valid
+- AND the unsupported inference is not promoted into formal OpenSpec meaning
+
+#### Scenario: Explore distinguishes evidence from interpretation and unresolved questions
+
+- GIVEN Explore uses source material to reach a material conclusion
+- WHEN Lead persists the durable Explore evidence
+- THEN the supporting source fact/evidence is identifiable
+- AND Lead interpretation/inference is distinguishable from that source evidence
+- AND any unresolved material question remains identifiable rather than being silently completed by model guesswork
+
+#### Scenario: Propose independently rejects an insufficient Explore evidence chain
+
+- GIVEN the same-Issue Explore result says `PROPOSAL_READY`
+- BUT a material proposed requirement/direction cannot be traced through the Explore conclusion to sufficient supporting source/evidence or feasibility evidence
+- AND the gap remains researchable within the same bounded problem without a new Human-reserved decision
+- WHEN Propose performs its pre-activation semantic gate
+- THEN no Change identity is persisted
+- AND the same Issue routes to `Lead / explore-change + Change: unset`
+- AND later queued work does not leapfrog because of the evidence gap
+
+#### Scenario: Reviewer catches semantic expansion originating in Explore
+
+- GIVEN Explore contains a material conclusion
+- AND Proposal/Specs/Design/Tasks faithfully preserve that conclusion
+- BUT the identified source/evidence does not support the material conclusion
+- WHEN Reviewer performs `review-openspec`
+- THEN the result is `FINDINGS`
+- AND internal downstream consistency does not legitimize the unsupported Explore interpretation
+
+#### Scenario: Reviewer verifies declared evidence without re-running Explore
+
+- GIVEN an Explore-originated Change declares reconstructable material source/evidence references
+- WHEN Reviewer evaluates the semantic target
+- THEN Reviewer independently verifies those declared sources support the material Explore conclusions and downstream OpenSpec meaning
+- AND Reviewer does not reconstruct undocumented conversation intent or perform an unbounded replacement Explore
+
+### Requirement: Explore dispositions are structured bounded results with repository-derived effects
+
+`Lead / explore-change` SHALL return exactly one structured bounded disposition from `PROPOSAL_READY`, `HUMAN_DECISION_REQUIRED`, `NO_CHANGE_REQUIRED`, or `NO_GO`. Lead remains responsible for the semantic judgment. `PROPOSAL_READY` is valid only when the material evidence traceability contract above is satisfied. Narrative result content MAY remain durable audit/traceability evidence, including material source/evidence references, but repository application MUST consume the bounded disposition directly and MUST NOT re-extract machine control state from free-form Markdown, Issue comments, or another model call.
+
+After fresh source-action reauthorization, repository-owned application SHALL derive the legal Explore effect from source `Lead / explore-change` plus the bounded result: `PROPOSAL_READY` derives same-Issue `Lead / propose-change` with `Change: unset`; `HUMAN_DECISION_REQUIRED` retains Explore and uses the existing Human escalation path; `NO_CHANGE_REQUIRED` and `NO_GO` derive the existing pre-Change terminal research close/routing-retirement behavior.
+
+The worker MUST NOT independently choose an arbitrary successor routing tuple for Explore. Inconsistent/additional worker routing requests SHALL be rejected. Legal successor validation still consumes current default-branch `agents/workflow.md`. The same repository-owned application principle SHALL apply to the bounded pre-activation Propose correction defined by this Change: when the authorized Propose result means additional bounded research is required, application derives only the same-Issue `Lead / explore-change + Change: unset` correction and MUST NOT accept an arbitrary worker-chosen successor. These bounded mappings MUST NOT become a second workflow DAG, generic workflow engine, OpenAI/model-call classifier, hidden result state, or generalized result-derived mechanism for unrelated actions.
+
+#### Scenario: Structured proposal-ready result derives Propose routing
+
+- GIVEN current machine dispatch authorizes `Lead / explore-change` for Issue N
+- AND Lead returns valid evidence-backed structured `PROPOSAL_READY`
+- AND application freshly reauthorizes the same source action
+- WHEN the Explore effect is applied
+- THEN application derives same-Issue `Lead / propose-change`
+- AND `Change:` remains unset
+- AND fresh redispatch consumes the new current routing directly
+
+#### Scenario: Conflicting worker-chosen successor cannot override result
+
+- GIVEN current machine dispatch authorizes `Lead / explore-change`
+- AND the worker returns structured `PROPOSAL_READY`
+- BUT also requests an inconsistent successor
+- WHEN application validates effects
+- THEN the worker-chosen successor is rejected
+- AND only the result-derived legal Explore effect may be applied
+
+#### Scenario: Propose correction cannot choose an arbitrary successor
+
+- GIVEN current machine dispatch authorizes pre-activation `Lead / propose-change` for Issue N
+- AND Propose validly concludes that additional bounded research is required under the same-Issue correction contract
+- AND application freshly reauthorizes that same source action
+- WHEN the correction effect is applied
+- THEN application derives only same-Issue `Lead / explore-change + Change: unset`
+- AND a worker-supplied different Issue or successor action is rejected
+- AND the original Issue/queue identity is preserved
+
+#### Scenario: Human-decision result retains Explore ownership
+
+- GIVEN current machine dispatch authorizes `Lead / explore-change`
+- AND Lead returns structured `HUMAN_DECISION_REQUIRED`
+- WHEN application consumes the result
+- THEN routing remains `Lead / explore-change`
+- AND the existing provenance-bound Human escalation/response contract remains authoritative
+
+#### Scenario: Terminal research results derive terminal effects
+
+- GIVEN current machine dispatch authorizes `Lead / explore-change`
+- AND Lead returns structured `NO_CHANGE_REQUIRED` or `NO_GO`
+- WHEN application consumes the result
+- THEN it derives existing legal pre-Change terminal research close/routing retirement
+- AND no fake Change identity is created
+
+#### Scenario: Narrative Markdown cannot redefine the bounded result
+
+- GIVEN the structured worker disposition is one legal Explore result
+- AND narrative content contains another `Workflow:`, `Action:`, or `Result:`-looking field
+- WHEN application determines the workflow effect
+- THEN it uses only the validated structured disposition
+- AND it does not parse narrative Markdown to reconstruct machine control state
