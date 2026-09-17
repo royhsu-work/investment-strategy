@@ -301,6 +301,45 @@ def test_task_checkpoint_matches_only_first_incomplete_slice(
     )
 
 
+def test_task_checkpoint_accepts_standard_openspec_numbered_slices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task_path = f"openspec/changes/{_CHANGE}/tasks.md"
+    current = (
+        "# Tasks: example\n\n"
+        "## 1. first\n"
+        "- [ ] 1.1 first task\n"
+        "- [ ] 1.2 second task\n"
+        "## 2. later\n"
+        "- [ ] 2.1 later task\n"
+    )
+    valid = current.replace("- [ ] 1.1", "- [x] 1.1").replace("- [ ] 1.2", "- [x] 1.2")
+    multi_slice = valid.replace("- [ ] 2.1", "- [x] 2.1")
+    task_file = resource.WorkProductFile(task_path, "b" * 40, _REVISION)
+
+    monkeypatch.setattr(resource, "_content_sha_at", lambda *_args, **_kwargs: _REVISION)
+    monkeypatch.setattr(resource, "_content_text_at", lambda *_args, **_kwargs: current)
+    monkeypatch.setattr(resource, "_blob_text", lambda *_args, **_kwargs: valid)
+    assert resource.task_checkpoint_is_exact(
+        _REPOSITORY,
+        _FIXTURE_VALUE,
+        expected_change=_CHANGE,
+        base_sha=_REVISION,
+        file=task_file,
+        completed_task_ids=("1.1", "1.2"),
+    )
+
+    monkeypatch.setattr(resource, "_blob_text", lambda *_args, **_kwargs: multi_slice)
+    assert not resource.task_checkpoint_is_exact(
+        _REPOSITORY,
+        _FIXTURE_VALUE,
+        expected_change=_CHANGE,
+        base_sha=_REVISION,
+        file=task_file,
+        completed_task_ids=("1.1", "1.2"),
+    )
+
+
 def test_apply_work_product_rejects_non_monotonic_task_marker_before_tree(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
