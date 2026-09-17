@@ -1088,6 +1088,68 @@ def test_live_main_application_bridge_replays_issue233_request() -> None:
     request = parse_application_request(body)
     assert request is not None
     event = {"action": "created", "issue": shard, "comment": request_comment}
+    trace: list[str] = []
+    real_json = bridge._github_json
+    real_page = bridge._paged_github_list
+    real_parse = bridge.parse_formal_result
+    real_build = bridge.build_qualification_input
+    real_qualifier = bridge.qualify_current_formal_consequence
+
+    def traced_json(*args: object, **kwargs: object) -> object:
+        path = args[2] if len(args) > 2 else "missing-path"
+        value = real_json(*args, **kwargs)
+        trace.append(f"github:{path}")
+        return value
+
+    def traced_page(*args: object, **kwargs: object) -> tuple[object, ...]:
+        value = real_page(*args, **kwargs)
+        path = args[2] if len(args) > 2 else "missing-path"
+        ids = [
+            item.get("id")
+            for item in value
+            if isinstance(item, dict)
+            and isinstance(item.get("body"), str)
+            and item["body"].splitlines()
+            and item["body"].splitlines()[0]
+            in {"APPLICATION_RECOVERY", "ACTION_RESULT", "REVIEW_RESULT"}
+        ]
+        trace.append(f"page:{path}:{ids}")
+        return value
+
+    def traced_parse(*args: object, **kwargs: object) -> object:
+        value = real_parse(*args, **kwargs)
+        comment = args[0] if args else {}
+        if isinstance(comment, dict) and isinstance(comment.get("body"), str):
+            body = comment["body"]
+            if body.splitlines() and body.splitlines()[0] in {
+                "APPLICATION_RECOVERY",
+                "ACTION_RESULT",
+                "REVIEW_RESULT",
+            }:
+                trace.append(
+                    f"parse:{comment.get('id')}:{body.splitlines()[0]}:"
+                    f"{getattr(value, 'valid', None)}:{getattr(value, 'change', None)}"
+                )
+        return value
+
+    def traced_build(*args: object, **kwargs: object) -> object:
+        value = real_build(*args, **kwargs)
+        trace.append(
+            f"build:events={[(getattr(item, 'comment_id', None), getattr(item, 'valid', None), getattr(item, 'change', None)) for item in getattr(value, 'events', ())]}:"
+            f"recovery={[(getattr(item, 'comment_id', None), getattr(item, 'valid', None), getattr(item, 'change', None)) for item in getattr(value, 'recovery_events', ())]}"
+        )
+        return value
+
+    def traced_qualifier(*args: object, **kwargs: object) -> object:
+        value = real_qualifier(*args, **kwargs)
+        trace.append(f"qualify:{getattr(value, 'reason', None)}:{getattr(value, 'qualified', None)}")
+        return value
+
+    monkeypatch.setattr(bridge, "_github_json", traced_json)
+    monkeypatch.setattr(bridge, "_paged_github_list", traced_page)
+    monkeypatch.setattr(bridge, "parse_formal_result", traced_parse)
+    monkeypatch.setattr(bridge, "build_qualification_input", traced_build)
+    monkeypatch.setattr(bridge, "qualify_current_formal_consequence", traced_qualifier)
     try:
         plan = plan_application(
             event=event,
@@ -1106,6 +1168,7 @@ def test_live_main_application_bridge_replays_issue233_request() -> None:
                     "decision": runtime.classify_dispatch(preflight).reason,
                     "formal_issue_ids": runtime.classify_dispatch(preflight).formal_issue_ids,
                     "preactivation_candidate_ids": runtime.classify_dispatch(preflight).preactivation_candidate_ids,
+                    "trace": trace,
                 },
                 sort_keys=True,
             )
