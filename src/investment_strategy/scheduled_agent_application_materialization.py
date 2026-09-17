@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import cast
 from urllib.parse import quote, urlencode
 
+from investment_strategy.native_closing_preflight import has_native_closing_reference
 from investment_strategy.scheduled_agent_application_carrier import (
     ImplementationCarrierQualification,
     qualify_implementation_carrier,
@@ -59,6 +60,20 @@ _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
 _ISSUE_LINK = re.compile(r"(?mi)^\s*Refs\s+#([0-9]+)\s*$")
 _MATERIALIZATION_OPERATION = "application-materialize"
 _IMPLEMENTATION_ACTION = "implement-change"
+
+
+def materialization_message_is_safe(
+    message: str,
+    *,
+    repository: str,
+    issue_number: int,
+) -> bool:
+    """Return whether a producer commit message preserves the source Issue."""
+    return not has_native_closing_reference(
+        message,
+        repository_full_name=repository,
+        coordination_issue=issue_number,
+    )
 
 
 @dataclass(frozen=True)
@@ -1206,6 +1221,12 @@ def apply_materialization(
     """Freshly authorize and apply one generic carrier/materialization effect."""
 
     request = parse_materialization_payload(payload, source)
+    if not materialization_message_is_safe(
+        request.message,
+        repository=repository,
+        issue_number=source.issue_number,
+    ):
+        raise RuntimeError("application materialization commit message is not non-closing")
     if (
         not allow_pending_continuation and _current_authorized_request(repository, token) != source
     ) or (

@@ -27,6 +27,28 @@ class NativeClosingDisposition(StrEnum):
     FAIL_CLOSED = "FAIL_CLOSED"
 
 
+def explicit_merge_presentation(
+    commit_title: str | None,
+    commit_message: str | None,
+) -> tuple[str | None, bool]:
+    """Return one exact GitHub commit presentation when explicitly supplied."""
+    if commit_title is None and commit_message is None:
+        return None, True
+    if not isinstance(commit_title, str) or not isinstance(commit_message, str):
+        return None, False
+    if (
+        not commit_title
+        or commit_title != commit_title.strip()
+        or "\r" in commit_title
+        or "\n" in commit_title
+        or not commit_message
+        or commit_message != commit_message.strip()
+        or "\r" in commit_message
+    ):
+        return None, False
+    return f"{commit_title}\n\n{commit_message}".rstrip(), True
+
+
 @dataclass(frozen=True)
 class MergePresentationInput:
     """Provenance-bound effective presentation for one exact PR head."""
@@ -43,6 +65,8 @@ class MergePresentationInput:
     commit_enumeration_complete: bool
     presentation_complete: bool
     generated_message: str | None
+    commit_title: str | None = None
+    commit_message: str | None = None
 
 
 @dataclass(frozen=True)
@@ -96,11 +120,22 @@ def evaluate_native_closing_preflight(
     ):
         return NativeClosingPreflightResult(NativeClosingDisposition.FAIL_CLOSED)
 
+    explicit_message, explicit_complete = explicit_merge_presentation(
+        evidence.commit_title,
+        evidence.commit_message,
+    )
+    if not explicit_complete:
+        return NativeClosingPreflightResult(NativeClosingDisposition.FAIL_CLOSED)
+
     if evidence.merge_strategy in {MergeStrategy.MERGE, MergeStrategy.SQUASH}:
-        if evidence.generated_message is None:
+        if (
+            evidence.generated_message is None
+            or explicit_message is not None
+            and evidence.generated_message != explicit_message
+        ):
             return NativeClosingPreflightResult(NativeClosingDisposition.FAIL_CLOSED)
     elif evidence.merge_strategy is MergeStrategy.REBASE:
-        if evidence.generated_message is not None:
+        if evidence.generated_message is not None or explicit_message is not None:
             return NativeClosingPreflightResult(NativeClosingDisposition.FAIL_CLOSED)
     else:
         return NativeClosingPreflightResult(NativeClosingDisposition.FAIL_CLOSED)

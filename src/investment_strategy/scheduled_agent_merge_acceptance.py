@@ -21,6 +21,7 @@ from investment_strategy.native_closing_merge_application import (
 from investment_strategy.native_closing_preflight import (
     MergeStrategy,
     NativeClosingDisposition,
+    explicit_merge_presentation,
 )
 from investment_strategy.scheduled_agent_action_model import (
     ApplicationRejection,
@@ -431,6 +432,8 @@ def acquire_merge_acceptance_snapshot(
     required_review_action: str,
     current_revision: str | None = None,
     expected_branch: str | None = None,
+    commit_title: str | None = None,
+    commit_message: str | None = None,
 ) -> MergeAcceptanceSnapshot:
     """Acquire current GitHub evidence for one staged merge immediately before application."""
 
@@ -476,6 +479,8 @@ def acquire_merge_acceptance_snapshot(
         expected_head_sha=expected_head_sha,
         lifecycle_context=_lifecycle_context(review_action),
         merge_strategy=merge_strategy,
+        commit_title=commit_title,
+        commit_message=commit_message,
     )
     native_complete = native_result.disposition is not NativeClosingDisposition.FAIL_CLOSED
     historical_merged_carrier_allowed = False
@@ -545,6 +550,18 @@ def _merge_effect_allows(
         return False
     if not isinstance(expected_change, str) or not expected_change.strip():
         return False
+    presentation_keys = {"commit_title", "commit_message"} & set(payload)
+    if presentation_keys:
+        if presentation_keys != {"commit_title", "commit_message"} or (
+            merge_strategy is MergeStrategy.REBASE
+        ):
+            return False
+        _, presentation_complete = explicit_merge_presentation(
+            cast(str | None, payload.get("commit_title")),
+            cast(str | None, payload.get("commit_message")),
+        )
+        if not presentation_complete:
+            return False
     # Implementation carrier identity is already freshly qualified by the shared
     # GitHubEffectAdapter immediately before this mutation-adjacent guard. Keep
     # branch ownership there; merge acceptance owns review/check/linkage/freshness.
@@ -561,6 +578,12 @@ def _merge_effect_allows(
         required_review_action=required_review_action,
         current_revision=current_revision,
         expected_branch=expected_branch,
+        commit_title=cast(str | None, payload.get("commit_title"))
+        if "commit_title" in payload
+        else None,
+        commit_message=cast(str | None, payload.get("commit_message"))
+        if "commit_message" in payload
+        else None,
     )
     failed = _failed_merge_predicates(snapshot)
     if failed and on_rejection is not None:

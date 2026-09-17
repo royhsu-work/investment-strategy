@@ -450,6 +450,8 @@ def test_merge_effect_rechecks_acceptance_on_real_application_path(
         expected_head_sha: str,
         lifecycle_context: str,
         merge_strategy: MergeStrategy,
+        commit_title: str | None = None,
+        commit_message: str | None = None,
     ) -> NativeClosingPreflightResult:
         del token
         return evaluate_native_closing_preflight(
@@ -466,6 +468,8 @@ def test_merge_effect_rechecks_acceptance_on_real_application_path(
                 commit_enumeration_complete=True,
                 presentation_complete=True,
                 generated_message=next(generated_messages),
+                commit_title=commit_title,
+                commit_message=commit_message,
             )
         )
 
