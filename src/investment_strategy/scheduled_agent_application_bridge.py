@@ -255,16 +255,21 @@ def _pending_application_correlation(
         ):
             return None
         authorization_ancestry = ((worker_default_revision, current_revision),)
+    # A formal result may already be durable while its derived successor
+    # was not.  First-activation recovery still requires its exact validation
+    # materialization; ordinary formal results can resume from the persisted
+    # result itself and re-run the existing application-owned successor guard.
     materializations = _materialization_effects(raw_worker_result, source)
-    if len(materializations) != 1:
+    if len(materializations) > 1:
         return None
-    materialization = find_materialization_payload(materializations[0], source)
-    if (
-        materialization is None
-        or materialization.expected_change != worker_result.change
-        or not materialization_requires_validation(materialization, source)
-    ):
-        return None
+    if materializations:
+        materialization = find_materialization_payload(materializations[0], source)
+        if (
+            materialization is None
+            or materialization.expected_change != worker_result.change
+            or not materialization_requires_validation(materialization, source)
+        ):
+            return None
 
     typed = worker_result.typed_result
     expected_result_kind = typed.result.kind.value
