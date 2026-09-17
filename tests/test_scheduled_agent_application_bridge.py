@@ -930,10 +930,10 @@ def test_real_issue233_mixed_formal_history_recovers_persisted_review_result(
     event = {
         "action": "created",
         "issue": {
-            "number": 233,
+            "number": 252,
             "title": checkin_title(date(2026, 9, 17)),
             "state": "open",
-            "labels": [{"name": "action:review-openspec"}],
+            "labels": [],
         },
         "comment": _connector_comment(5711090028, request_body),
     }
