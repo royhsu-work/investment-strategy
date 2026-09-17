@@ -41,7 +41,7 @@ _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _TASK_LINE = re.compile(r"^- \[(?P<state>[ x])\] (?P<id>\d+(?:\.\d+)+)\b")
 _SLICE_HEADING = re.compile(
-    r"^(?:## Slice [1-9][0-9]*(?:\s+—|\s*$)|"
+    r"^(?:## Slice [1-9][0-9]*(?:\s+—.*|\s*$)|"
     r"## [1-9][0-9]*\.\s+\S.*)$"
 )
 _ACCEPTED_CHECK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
