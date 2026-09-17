@@ -388,7 +388,9 @@ def _pending_continuation_is_eligible(
 
     decision = classify_dispatch(preflight)
     enumeration = preflight.enumeration
-    matching = tuple(issue for issue in preflight.issues if issue.issue_number == source.issue_number)
+    matching = tuple(
+        issue for issue in preflight.issues if issue.issue_number == source.issue_number
+    )
     return (
         decision.disposition == "FAIL_CLOSED"
         and decision.reason == "observations-unqualified"
