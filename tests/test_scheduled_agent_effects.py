@@ -1985,6 +1985,160 @@ def test_github_adapter_binds_pr_and_ref_targets_to_authorized_change(
     assert not ref_adapter.guard(foreign_ref)
 
 
+@pytest.mark.parametrize(
+    ("action", "ref", "proof_method"),
+    (
+        (
+            "merge-implementation-pr",
+            f"refs/heads/agent/{_CHANGE}",
+            "_implementation_ref_matches_source",
+        ),
+        (
+            "merge-archive-pr",
+            f"refs/heads/agent/archive-{_CHANGE}",
+            "_archive_ref_matches_merged_source",
+        ),
+    ),
+)
+def test_ref_delete_accepts_proven_auto_deleted_merge_carrier(
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+    ref: str,
+    proof_method: str,
+) -> None:
+    repository = "owner/repo"
+    source = WorkerRequest(138, "executor", action)
+    issue = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "created_at": "2026-09-03T00:00:00Z",
+        "closed_at": None,
+        "labels": [
+            {"name": "agent:executor"},
+            {"name": f"action:{action}"},
+        ],
+    }
+    expected_sha = "b" * 40
+    effect = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "ref-delete",
+                "ref": ref,
+                "expected_sha": expected_sha,
+            }
+        ),
+    )
+    proof_calls: list[bool] = []
+
+    def merged_ref_proof(*_args: object, **kwargs: object) -> bool:
+        proof_calls.append(bool(kwargs.get("require_merged", False)))
+        return True
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        **_kwargs: object,
+    ) -> object:
+        if api_path == f"issues/{source.issue_number}":
+            return issue
+        if api_path == "":
+            return {"default_branch": "main"}
+        if api_path == "git/ref/heads/main":
+            return {"object": {"sha": _REVISION}}
+        if api_path == ref:
+            return None
+        if api_path == f"git/ref/heads/{ref.removeprefix('refs/heads/')}":
+            return None
+        raise AssertionError(f"unexpected GitHub read: {api_path}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        repository,
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+    )
+    monkeypatch.setattr(adapter, proof_method, merged_ref_proof)
+
+    assert adapter.guard(effect)
+    adapter.apply(effect)
+    assert adapter.observe_postcondition(effect)
+    assert proof_calls
+    if action == "merge-implementation-pr":
+        assert True in proof_calls
+
+
+def test_ref_delete_keeps_unproven_absent_carrier_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = "owner/repo"
+    source = WorkerRequest(138, "executor", "merge-implementation-pr")
+    issue = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "created_at": "2026-09-03T00:00:00Z",
+        "closed_at": None,
+        "labels": [
+            {"name": "agent:executor"},
+            {"name": "action:merge-implementation-pr"},
+        ],
+    }
+    expected_sha = "b" * 40
+    ref = f"refs/heads/agent/{_CHANGE}"
+    effect = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "ref-delete",
+                "ref": ref,
+                "expected_sha": expected_sha,
+            }
+        ),
+    )
+
+    def implementation_ref_proof(*_args: object, **kwargs: object) -> bool:
+        return not bool(kwargs.get("require_merged", False))
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        **_kwargs: object,
+    ) -> object:
+        if api_path == f"issues/{source.issue_number}":
+            return issue
+        if api_path == "":
+            return {"default_branch": "main"}
+        if api_path == "git/ref/heads/main":
+            return {"object": {"sha": _REVISION}}
+        if api_path == f"git/ref/heads/agent/{_CHANGE}":
+            return None
+        raise AssertionError(f"unexpected GitHub read: {api_path}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        repository,
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_implementation_ref_matches_source",
+        implementation_ref_proof,
+    )
+
+    assert not adapter.guard(effect)
+
+
 def test_stale_continuation_base_is_only_admissible_to_update_handoff(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

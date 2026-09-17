@@ -1205,6 +1205,8 @@ class GitHubEffectAdapter:
         expected_sha: str,
         observation: GitHubIssueObservation,
         default_branch: str,
+        *,
+        require_merged: bool = False,
     ) -> bool:
         branch = ref.removeprefix("refs/heads/")
         if ref != f"refs/heads/{branch}" or not _valid_branch(branch):
@@ -1238,13 +1240,109 @@ class GitHubEffectAdapter:
                 current_revision=latest_default,
                 read=_github_json,
             )
-            if (
-                (decision.qualified or decision.disposition == "HISTORICAL_MERGED")
-                and decision.branch == branch
-                and decision.head_sha == expected_sha
-            ):
+            decision_matches = (
+                decision.disposition == "HISTORICAL_MERGED"
+                if require_merged
+                else decision.qualified or decision.disposition == "HISTORICAL_MERGED"
+            )
+            if decision_matches and decision.branch == branch and decision.head_sha == expected_sha:
                 matches += 1
         return matches == 1
+
+    def _merge_commit_is_in_current_default(
+        self,
+        merge_commit_sha: str,
+        default_revision: str,
+    ) -> bool:
+        comparison = _github_json(
+            self.repository,
+            self.token,
+            f"compare/{merge_commit_sha}...{default_revision}",
+        )
+        base_commit = comparison.get("base_commit") if isinstance(comparison, Mapping) else None
+        return (
+            isinstance(comparison, Mapping)
+            and comparison.get("status") in {"ahead", "identical"}
+            and comparison.get("behind_by") == 0
+            and isinstance(base_commit, Mapping)
+            and base_commit.get("sha") == merge_commit_sha
+        )
+
+    def _archive_ref_matches_merged_source(
+        self,
+        ref: str,
+        expected_sha: str,
+        observation: GitHubIssueObservation,
+        default_branch: str,
+    ) -> bool:
+        if ref != _archive_ref(observation.change):
+            return False
+        latest_default = self._default_branch_revision(default_branch)
+        if latest_default is None:
+            return False
+        owner = self.repository.split("/", 1)[0]
+        branch = ref.removeprefix("refs/heads/")
+        head = quote(f"{owner}:{branch}", safe="")
+        base = quote(default_branch, safe="")
+        payload = _github_json(
+            self.repository,
+            self.token,
+            f"pulls?state=all&head={head}&base={base}&per_page=100",
+        )
+        if not isinstance(payload, list) or len(payload) >= 100:
+            return False
+        matches = 0
+        for item in payload:
+            if not isinstance(item, Mapping):
+                continue
+            number = item.get("number")
+            if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+                continue
+            pr = _github_json(self.repository, self.token, f"pulls/{number}")
+            if not isinstance(pr, Mapping):
+                continue
+            merge_sha = pr.get("merge_commit_sha")
+            if (
+                not self._pull_request_matches_source(
+                    pr,
+                    number,
+                    observation,
+                    default_branch,
+                )
+                or not self._historical_merged_pr(pr, expected_sha)
+                or not _valid_sha(merge_sha)
+                or not self._merge_commit_is_in_current_default(
+                    cast(str, merge_sha),
+                    latest_default,
+                )
+            ):
+                continue
+            matches += 1
+        return matches == 1
+
+    def _merged_ref_delete_is_proven(
+        self,
+        ref: str,
+        expected_sha: str,
+        observation: GitHubIssueObservation,
+        default_branch: str,
+    ) -> bool:
+        if self.source.action == "merge-implementation-pr":
+            return self._implementation_ref_matches_source(
+                ref,
+                expected_sha,
+                observation,
+                default_branch,
+                require_merged=True,
+            )
+        if self.source.action == "merge-archive-pr":
+            return self._archive_ref_matches_merged_source(
+                ref,
+                expected_sha,
+                observation,
+                default_branch,
+            )
+        return False
 
     def _pull_request_matches_create(
         self,
@@ -1684,16 +1782,21 @@ class GitHubEffectAdapter:
             expected_sha = payload.get("expected_sha")
             if not isinstance(ref, str) or not isinstance(expected_sha, str):
                 return False
+            default_branch = self._default_branch()
+            if default_branch is None:
+                return False
             if self.source.action == "merge-implementation-pr":
-                default_branch = self._default_branch()
-                if default_branch is None or not self._implementation_ref_matches_source(
+                if not self._implementation_ref_matches_source(
                     ref,
                     expected_sha,
                     observation,
                     default_branch,
                 ):
                     return False
-            elif expected_ref is None or ref != expected_ref:
+            elif self.source.action == "merge-archive-pr":
+                if expected_ref is None or ref != expected_ref:
+                    return False
+            else:
                 return False
             ref_state = _github_json(
                 self.repository,
@@ -1701,6 +1804,13 @@ class GitHubEffectAdapter:
                 _ref_api_path(ref),
                 allow_not_found=True,
             )
+            if ref_state is None:
+                return self._merged_ref_delete_is_proven(
+                    ref,
+                    expected_sha,
+                    observation,
+                    default_branch,
+                )
             if not isinstance(ref_state, Mapping):
                 return False
             obj = ref_state.get("object")
@@ -1949,7 +2059,7 @@ class GitHubEffectAdapter:
             effect.kind == GITHUB_MUTATION_KIND
             and payload is not None
             and payload.get("operation") == "ref-delete"
-            and self.source.action == "merge-implementation-pr"
+            and self.source.action in {"merge-implementation-pr", "merge-archive-pr"}
         )
         if (
             not supported_effect_guard(self.source, effect)
@@ -2078,10 +2188,36 @@ class GitHubEffectAdapter:
             )
             return
         if operation == "ref-delete":
+            ref = cast(str, payload["ref"])
+            expected_sha = cast(str, payload["expected_sha"])
+            ref_state = _github_json(
+                self.repository,
+                self.token,
+                _ref_api_path(ref),
+                allow_not_found=True,
+            )
+            if ref_state is None:
+                observation = self._authorized_issue_observation()
+                default_branch = self._default_branch()
+                if (
+                    observation is None
+                    or default_branch is None
+                    or not self._merged_ref_delete_is_proven(
+                        ref,
+                        expected_sha,
+                        observation,
+                        default_branch,
+                    )
+                ):
+                    raise RuntimeError("ref-delete absence is not proven as merged cleanup")
+                return
+            obj = ref_state.get("object") if isinstance(ref_state, Mapping) else None
+            if not isinstance(obj, Mapping) or obj.get("sha") != expected_sha:
+                raise RuntimeError("ref-delete target changed before mutation")
             _github_json(
                 self.repository,
                 self.token,
-                _ref_mutation_path(cast(str, payload["ref"])),
+                _ref_mutation_path(ref),
                 method="DELETE",
             )
             return
