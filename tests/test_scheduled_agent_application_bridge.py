@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -26,8 +25,6 @@ from investment_strategy.scheduled_agent_effects import (
     GitHubEffectAdapter,
     formal_application_correlation,
 )
-import investment_strategy.scheduled_agent_runtime as runtime
-
 from investment_strategy.scheduled_agent_runtime import (
     GitHubIssueObservation,
     WorkerRequest,
@@ -984,11 +981,26 @@ def test_real_issue233_mixed_formal_history_recovers_persisted_review_result(
         },
         {"id": 5710947012, "event": "commented", "created_at": "2026-09-17T07:53:07Z"},
     )
-    monkeypatch.setattr(bridge, "_github_json", lambda _repo, _token, path, **_kwargs: (
-        current_issue if path == "issues/233"
-        else {"status": "ahead"} if path.startswith("compare/")
-        else (_ for _ in ()).throw(AssertionError(path))
-    ))
+    compare_calls: list[str] = []
+
+    def fake_github_json(
+        _repo: str,
+        _token: str,
+        path: str,
+        **_kwargs: object,
+    ) -> object:
+        if path == "issues/233":
+            return current_issue
+        if path.startswith("compare/"):
+            compare_calls.append(path)
+            failed_revision, _separator, _current = path.removeprefix("compare/").partition("...")
+            return {
+                "status": "ahead",
+                "base_commit": {"sha": failed_revision},
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "_github_json", fake_github_json)
     monkeypatch.setattr(
         bridge,
         "_paged_github_list",
@@ -1000,17 +1012,6 @@ def test_real_issue233_mixed_formal_history_recovers_persisted_review_result(
     )
     decisions: list[object] = []
     real_qualifier = bridge.qualify_current_formal_consequence
-    real_normalize = bridge.normalize_github_issue
-
-    def traced_normalize(payload: object) -> object:
-        value = real_normalize(payload)
-        trace.append(
-            f"normalize:{getattr(value, 'issue_number', None)}:"
-            f"{getattr(value, 'authoritative', None)}:"
-            f"{getattr(value, 'state', None)}:"
-            f"{getattr(value, 'routing', None)}"
-        )
-        return value
 
     def capture_qualification(qualification: object) -> object:
         decision = real_qualifier(qualification)
@@ -1018,255 +1019,30 @@ def test_real_issue233_mixed_formal_history_recovers_persisted_review_result(
         return decision
 
     monkeypatch.setattr(bridge, "qualify_current_formal_consequence", capture_qualification)
-    with pytest.raises(ValueError, match="no current AUTHORIZE dispatch") as failure:
-        plan_application(
-            event=event,
-            request=request,
-            preflight=_preflight(
-                action="review-openspec",
-                issue_number=233,
-                change=change,
-                current_state_provenance=ObservationProvenance.INDETERMINATE,
-            ),
-            repository=_REPOSITORY,
-            current_revision=current_revision,
-        )
-    assert decisions, "pending recovery did not reach the formal qualifier"
-    decision = decisions[-1]
-    assert getattr(decision, "qualified", False), getattr(decision, "reason", "unknown")
-    raise AssertionError(f"unexpectedly remained blocked: {failure.value}")
-
-@pytest.mark.skipif(not os.environ.get("GITHUB_TOKEN"), reason="live GitHub token is unavailable")
-def test_live_main_preflight_diagnostic_for_issue233() -> None:
-    preflight = runtime.acquire_current_github_preflight(
-        _REPOSITORY,
-        os.environ["GITHUB_TOKEN"],
+    plan = plan_application(
+        event=event,
+        request=request,
+        preflight=_preflight(
+            action="review-openspec",
+            issue_number=233,
+            change=change,
+            current_state_provenance=ObservationProvenance.INDETERMINATE,
+        ),
+        repository=_REPOSITORY,
+        current_revision=current_revision,
     )
-    decision = runtime.classify_dispatch(preflight)
-    raise AssertionError(
-        "LIVE_MAIN_PREFLIGHT "
-        + json.dumps(
-            {
-                "decision": {
-                    "disposition": decision.disposition,
-                    "reason": decision.reason,
-                    "formal_issue_ids": decision.formal_issue_ids,
-                    "preactivation_candidate_ids": decision.preactivation_candidate_ids,
-                    "selected_issue_id": decision.selected_issue_id,
-                    "selected_routing": decision.selected_routing,
-                },
-                "issues": [
-                    {
-                        "issue_number": issue.issue_number,
-                        "change": issue.change,
-                        "routing": issue.routing,
-                        "state": issue.state,
-                        "current_state_provenance": issue.current_state_provenance,
-                        "routing_debt": issue.routing_debt,
-                    }
-                    for issue in preflight.issues
-                    if issue.issue_number in {218, 226, 233, 234, 238}
-                ],
-                "enumeration": {
-                    "observed_count": preflight.enumeration.observed_count,
-                    "source_total_count": preflight.enumeration.source_total_count,
-                    "incomplete_results": preflight.enumeration.incomplete_results,
-                    "exhausted": preflight.enumeration.exhausted,
-                    "observation_provenance": preflight.enumeration.observation_provenance,
-                },
-            },
-            sort_keys=True,
-        )
-    )
-
-@pytest.mark.skipif(not os.environ.get("GITHUB_TOKEN"), reason="live GitHub token is unavailable")
-def test_live_main_application_bridge_replays_issue233_request(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    token = os.environ["GITHUB_TOKEN"]
-    current_revision = "b708129828e541227095ff801c2801907bae7d2e"
-    preflight = runtime.acquire_current_github_preflight(_REPOSITORY, token)
-    shard = bridge._github_json(_REPOSITORY, token, "issues/252")
-    assert isinstance(shard, dict)
-    issue233_raw = bridge._github_json(_REPOSITORY, token, "issues/233")
-    issue233_observation = runtime.normalize_github_issue(issue233_raw)
-    request_comments = bridge._paged_github_list(
-        _REPOSITORY,
-        token,
-        "issues/252/comments?sort=created",
-    )
-    request_comment = next(
-        comment for comment in request_comments if comment.get("id") == 5711090028
-    )
-    body = request_comment.get("body")
-    assert isinstance(body, str)
-    request = parse_application_request(body)
-    assert request is not None
-    event = {"action": "created", "issue": shard, "comment": request_comment}
-    trace: list[str] = []
-    real_json = bridge._github_json
-    real_page = bridge._paged_github_list
-    real_parse = bridge.parse_formal_result
-    real_build = bridge.build_qualification_input
-    real_qualifier = bridge.qualify_current_formal_consequence
-    real_normalize = bridge.normalize_github_issue
-    real_worker = bridge.parse_worker_result
-
-    def traced_worker(*args: object, **kwargs: object) -> object:
-        try:
-            value = real_worker(*args, **kwargs)
-        except Exception as exc:
-            trace.append(f"worker:error:{type(exc).__name__}:{exc}")
-            raise
-        trace.append(
-            f"worker:ok:{getattr(value, 'change', None)}:"
-            f"{getattr(value, 'result_content', '')[:20]}"
-        )
-        return value
-
-    def traced_normalize(payload: object) -> object:
-        value = real_normalize(payload)
-        trace.append(
-            f"normalize:{getattr(value, 'issue_number', None)}:"
-            f"{getattr(value, 'authoritative', None)}:"
-            f"{getattr(value, 'state', None)}:"
-            f"{getattr(value, 'routing', None)}"
-        )
-        return value
-
-    def traced_json(*args: object, **kwargs: object) -> object:
-        path = args[2] if len(args) > 2 else "missing-path"
-        value = real_json(*args, **kwargs)
-        trace.append(f"github:{path}")
-        return value
-
-    def traced_page(*args: object, **kwargs: object) -> tuple[object, ...]:
-        value = real_page(*args, **kwargs)
-        path = args[2] if len(args) > 2 else "missing-path"
-        ids = [
-            item.get("id")
-            for item in value
-            if isinstance(item, dict)
-            and isinstance(item.get("body"), str)
-            and item["body"].splitlines()
-            and item["body"].splitlines()[0]
-            in {"APPLICATION_RECOVERY", "ACTION_RESULT", "REVIEW_RESULT"}
-        ]
-        trace.append(f"page:{path}:{ids}")
-        return value
-
-    def traced_parse(*args: object, **kwargs: object) -> object:
-        value = real_parse(*args, **kwargs)
-        comment = args[0] if args else {}
-        if isinstance(comment, dict) and isinstance(comment.get("body"), str):
-            body = comment["body"]
-            if body.splitlines() and body.splitlines()[0] in {
-                "APPLICATION_RECOVERY",
-                "ACTION_RESULT",
-                "REVIEW_RESULT",
-            }:
-                trace.append(
-                    f"parse:{comment.get('id')}:{body.splitlines()[0]}:"
-                    f"{getattr(value, 'valid', None)}:{getattr(value, 'change', None)}"
-                )
-        return value
-
-    def traced_build(*args: object, **kwargs: object) -> object:
-        value = real_build(*args, **kwargs)
-        trace.append(
-            f"build:events={[(getattr(item, 'comment_id', None), getattr(item, 'valid', None), getattr(item, 'change', None)) for item in getattr(value, 'events', ())]}:"
-            f"recovery={[(getattr(item, 'comment_id', None), getattr(item, 'valid', None), getattr(item, 'change', None)) for item in getattr(value, 'recovery_events', ())]}"
-        )
-        return value
-
-    def traced_qualifier(*args: object, **kwargs: object) -> object:
-        value = real_qualifier(*args, **kwargs)
-        trace.append(f"qualify:{getattr(value, 'reason', None)}:{getattr(value, 'qualified', None)}")
-        return value
-
-    monkeypatch.setattr(bridge, "_github_json", traced_json)
-    monkeypatch.setattr(bridge, "_paged_github_list", traced_page)
-    monkeypatch.setattr(bridge, "parse_formal_result", traced_parse)
-    monkeypatch.setattr(bridge, "build_qualification_input", traced_build)
-    monkeypatch.setattr(bridge, "qualify_current_formal_consequence", traced_qualifier)
-    monkeypatch.setattr(bridge, "normalize_github_issue", traced_normalize)
-    monkeypatch.setattr(bridge, "parse_worker_result", traced_worker)
-    try:
-        plan = plan_application(
-            event=event,
-            request=request,
-            preflight=preflight,
-            repository=_REPOSITORY,
-            current_revision=current_revision,
-            token=token,
-        )
-    except ValueError as exc:
-        raise AssertionError(
-            "LIVE_APPLICATION_BRIDGE "
-            + json.dumps(
-                {
-                    "error": str(exc),
-                    "decision": runtime.classify_dispatch(preflight).reason,
-                    "formal_issue_ids": runtime.classify_dispatch(preflight).formal_issue_ids,
-                    "preactivation_candidate_ids": runtime.classify_dispatch(preflight).preactivation_candidate_ids,
-                    "trace": trace,
-                    "human_authorized": preflight.human_authorized,
-                    "unique_count": len({issue.issue_number for issue in preflight.issues}),
-                    "issue_count": len(preflight.issues),
-                    "gates": {
-                        "decision_disposition": runtime.classify_dispatch(preflight).disposition,
-                        "decision_reason": runtime.classify_dispatch(preflight).reason,
-                        "human_is_true": preflight.human_authorized is True,
-                        "incomplete_is_false": preflight.enumeration.incomplete_results is False,
-                        "exhausted_is_true": preflight.enumeration.exhausted is True,
-                        "total_present": preflight.enumeration.source_total_count is not None,
-                        "count_equal": preflight.enumeration.observed_count == preflight.enumeration.source_total_count,
-                        "unique": len({issue.issue_number for issue in preflight.issues}) == len(preflight.issues),
-                        "matching_one": len([issue for issue in preflight.issues if issue.issue_number == 233]) == 1,
-                        "matching_indeterminate": len([issue for issue in preflight.issues if issue.issue_number == 233 and issue.current_state_provenance is runtime.ObservationProvenance.INDETERMINATE]) == 1,
-                        "matching_open": len([issue for issue in preflight.issues if issue.issue_number == 233 and issue.state == "open"]) == 1,
-                        "matching_route": len([issue for issue in preflight.issues if issue.issue_number == 233 and issue.routing == ("reviewer", "review-openspec")]) == 1,
-                    },
-                    "enumeration": {
-                        "observed": preflight.enumeration.observed_count,
-                        "total": preflight.enumeration.source_total_count,
-                        "incomplete": preflight.enumeration.incomplete_results,
-                        "exhausted": preflight.enumeration.exhausted,
-                    },
-                    "matching": [
-                        {
-                            "issue_number": issue.issue_number,
-                            "state": issue.state,
-                            "routing": issue.routing,
-                            "provenance": issue.current_state_provenance,
-                        }
-                        for issue in preflight.issues
-                        if issue.issue_number == 233
-                    ],
-                    "normalized_issue233": (
-                        None
-                        if issue233_observation is None
-                        else {
-                            "issue_number": issue233_observation.issue_number,
-                            "state": issue233_observation.state,
-                            "change": issue233_observation.change,
-                            "routing": issue233_observation.routing,
-                            "authoritative": issue233_observation.authoritative,
-                            "routing_debt": issue233_observation.routing_debt,
-                        }
-                    ),
-                    "claimed": {
-                        "issue_number": bridge._claimed_source(request.raw_worker_result).issue_number,
-                        "role": bridge._claimed_source(request.raw_worker_result).role,
-                        "action": bridge._claimed_source(request.raw_worker_result).action,
-                    },
-                },
-                sort_keys=True,
-            )
-        ) from exc
     assert plan.should_apply
+    assert plan.source == source
     assert plan.pending_continuation
-    assert plan.pending_application_correlation is not None
+    assert plan.pending_application_correlation == application_correlation
+    assert historical_review_revision != review_authorization_revision
+    assert any(
+        review_authorization_revision in path and current_revision in path
+        for path in compare_calls
+    )
+    assert decisions
+    assert getattr(decisions[-1], "qualified", False)
+
 
 def test_application_boundary_does_not_replay_dispatch_artifacts() -> None:
     source = Path("src/investment_strategy/scheduled_agent_application_bridge.py").read_text(

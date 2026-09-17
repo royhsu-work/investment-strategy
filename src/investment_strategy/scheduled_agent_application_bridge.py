@@ -193,29 +193,6 @@ def _pending_application_correlation(
         issue for issue in preflight.issues if issue.issue_number == source.issue_number
     )
     decision = classify_dispatch(preflight)
-    print(
-        "PENDING_INITIAL",
-        {
-            "disposition": decision.disposition,
-            "reason": decision.reason,
-            "human_authorized": preflight.human_authorized,
-            "incomplete_results": enumeration.incomplete_results,
-            "exhausted": enumeration.exhausted,
-            "observed_count": enumeration.observed_count,
-            "source_total_count": enumeration.source_total_count,
-            "unique_count": len({issue.issue_number for issue in preflight.issues}),
-            "matching": [
-                {
-                    "issue_number": issue.issue_number,
-                    "state": issue.state,
-                    "routing": issue.routing,
-                    "provenance": issue.current_state_provenance,
-                }
-                for issue in matching
-            ],
-            "source": (source.issue_number, source.role, source.action),
-        },
-    )
     if (
         decision.disposition != "FAIL_CLOSED"
         or decision.reason != "observations-unqualified"
@@ -240,18 +217,6 @@ def _pending_application_correlation(
 
     issue = _as_mapping(_github_json(repository, token, f"issues/{source.issue_number}"))
     observation = None if issue is None else normalize_github_issue(issue)
-    print(
-        "PENDING_OBSERVATION",
-        None
-        if observation is None
-        else {
-            "issue_number": observation.issue_number,
-            "authoritative": observation.authoritative,
-            "state": observation.state,
-            "routing": observation.routing,
-        },
-        {"source": (source.issue_number, source.role, source.action)},
-    )
     if (
         observation is None
         or not observation.authoritative
