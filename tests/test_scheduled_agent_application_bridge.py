@@ -1050,7 +1050,6 @@ def test_live_main_preflight_diagnostic_for_issue233() -> None:
                         "change": issue.change,
                         "routing": issue.routing,
                         "state": issue.state,
-                        "authoritative": issue.authoritative,
                         "current_state_provenance": issue.current_state_provenance,
                         "routing_debt": issue.routing_debt,
                     }
