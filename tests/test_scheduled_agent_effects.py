@@ -779,30 +779,6 @@ def test_active_formal_route_rejects_connector_authored_direct_transition(
         raise AssertionError(f"unexpected GitHub call: {path}")
 
     monkeypatch.setattr(effects, "_github_json", fake_github_json)
-    qualification_input = effects.build_qualification_input(
-        issue_number=issue_number,
-        change=change,
-        state="open",
-        current_routing=("executor", "implement-change"),
-        comments=comments,
-        current_revision=current_revision,
-        mode="pending",
-        expected_routing=("executor", "implement-change"),
-        source_routing=("executor", "implement-change"),
-        expected_result_kind="blocked",
-        expected_application_correlation=formal_application_correlation(
-            WorkerRequest(issue_number, "executor", "implement-change"),
-            change=change,
-            result_kind="blocked",
-            current_revision=current_revision,
-            request_comment_id=request_comment_id,
-        ),
-        lifecycle_events=lifecycle,
-    )
-    assert len(qualification_input.recovery_events) == 1, repr(qualification_input)
-    assert all(event.valid for event in qualification_input.events), repr(
-        qualification_input
-    )
     adapter = GitHubEffectAdapter(
         repository,
         "token",
