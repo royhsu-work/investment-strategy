@@ -20,10 +20,10 @@
 
 ## 2. Verify formal-activation/application closure on the current substrate
 
-- [ ] 2.1 **VERIFY — current-main recovery ancestry.** Fresh-lock the default branch after all prerequisite repairs and run the production-shaped #233 preflight with its durable `APPLICATION_RECOVERY` evidence. Verify a valid recovery at an ancestor revision qualifies only when the current main is its descendant and the current route/postcondition still match.
+- [x] 2.1 **VERIFY — current-main recovery ancestry.** Fresh-lock the default branch after all prerequisite repairs and run the production-shaped #233 preflight with its durable `APPLICATION_RECOVERY` evidence. Verify a valid recovery at an ancestor revision qualifies only when the current main is its descendant and the current route/postcondition still match.
 
-- [ ] 2.2 **VERIFY — inert-history boundary.** Run the existing closed-history regressions, including null-body/structurally inert records, and verify they remain excluded from qualification without suppressing or changing the active formal Issue.
+- [x] 2.2 **VERIFY — inert-history boundary.** Run the existing closed-history regressions, including null-body/structurally inert records, and verify they remain excluded from qualification without suppressing or changing the active formal Issue.
 
-- [ ] 2.3 **VERIFY — typed continuation postcondition.** After a fresh `AUTHORIZE` result for #233, apply one typed Lead result through the existing application bridge and observe the exact result comment, derived successor, and current Issue/Change/routing postcondition. Do not accept a label-only or actor-only observation as completion evidence.
+- [x] 2.3 **VERIFY — typed continuation postcondition.** After a fresh `AUTHORIZE` result for #233, apply one typed Lead result through the existing application bridge and observe the exact result comment, derived successor, and current Issue/Change/routing postcondition. Do not accept a label-only or actor-only observation as completion evidence.
 
-- [ ] 2.4 **VERIFY — preserve existing owner boundaries.** Confirm the transition remains owned by the current runtime qualification/application path and that no new state, registry, fallback acceptance path, duplicate workflow graph, or issue-specific exception is introduced.
+- [x] 2.4 **VERIFY — preserve existing owner boundaries.** Confirm the transition remains owned by the current runtime qualification/application path and that no new state, registry, fallback acceptance path, duplicate workflow graph, or issue-specific exception is introduced.
