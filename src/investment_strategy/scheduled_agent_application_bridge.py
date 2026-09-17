@@ -10,7 +10,7 @@ import os
 import re
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, cast
 from urllib.parse import quote
@@ -324,6 +324,29 @@ def _pending_application_correlation(
         lifecycle_events=lifecycle,
         authorization_ancestry=authorization_ancestry,
     )
+    if current_revision is not None:
+        ancestry = list(authorization_ancestry)
+        for recovery in qualification.recovery_events:
+            historical_revision = recovery.default_branch_revision
+            if (
+                not recovery.valid
+                or historical_revision is None
+                or historical_revision == current_revision
+                or (historical_revision, current_revision) in ancestry
+            ):
+                continue
+            if _authorization_revision_is_ancestor(
+                repository,
+                token,
+                historical_revision,
+                current_revision,
+            ):
+                ancestry.append((historical_revision, current_revision))
+        if tuple(ancestry) != authorization_ancestry:
+            qualification = replace(
+                qualification,
+                authorization_ancestry=tuple(ancestry),
+            )
     if not qualify_current_formal_consequence(qualification).qualified:
         return None
     return candidate.application_correlation

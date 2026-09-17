@@ -626,6 +626,23 @@ def test_plan_application_recovers_persisted_result_after_main_advances(
         "user": {"login": "github-actions[bot]"},
         "performed_via_github_app": {"slug": "github-actions"},
     }
+    recovery_revision = "2" * 40
+    recovery_comment = {
+        "id": 899,
+        "body": (
+            "APPLICATION_RECOVERY\n"
+            "Workflow: #138\n"
+            f"Change: {_CHANGE}\n"
+            "Source: Lead / propose-change\n"
+            "Target: Lead / resolve-question\n"
+            f"Default-Branch-Revision: {recovery_revision}\n"
+            f"Failed-Authorization-Revision: {'1' * 40}\n"
+            "Request-Comment-ID: 901\n"
+            "Reason: partial-first-activation"
+        ),
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
     monkeypatch.setattr(
         bridge,
         "_github_json",
@@ -642,13 +659,30 @@ def test_plan_application_recovers_persisted_result_after_main_advances(
         bridge,
         "_paged_github_list",
         lambda _repository, _token, path: (
-            (comment,)
+            (recovery_comment, comment)
             if "comments" in path
             else (
                 {
                     "event": "commented",
-                    "id": 900,
+                    "id": 899,
                     "created_at": "2026-09-17T00:00:00Z",
+                },
+                {
+                    "event": "unlabeled",
+                    "id": 901,
+                    "created_at": "2026-09-17T00:00:01Z",
+                    "label": {"name": "action:propose-change"},
+                },
+                {
+                    "event": "labeled",
+                    "id": 902,
+                    "created_at": "2026-09-17T00:00:01Z",
+                    "label": {"name": "action:resolve-question"},
+                },
+                {
+                    "event": "commented",
+                    "id": 900,
+                    "created_at": "2026-09-17T00:00:02Z",
                 },
             )
         ),
@@ -678,7 +712,7 @@ def test_plan_application_recovers_persisted_result_after_main_advances(
     assert plan.source == source
     assert plan.pending_continuation
     assert plan.pending_application_correlation == correlation
-    assert len(ancestry_calls) == 1
+    assert {call[2] for call in ancestry_calls} == {historical_revision, recovery_revision}
 
 
 def test_application_boundary_does_not_replay_dispatch_artifacts() -> None:
