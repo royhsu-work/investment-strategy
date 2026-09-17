@@ -32,7 +32,10 @@ from investment_strategy.scheduled_agent_formal_qualification import (
     build_qualification_input,
     qualify_current_formal_consequence,
 )
-from investment_strategy.scheduled_agent_formal_result import parse_formal_result
+from investment_strategy.scheduled_agent_formal_result import (
+    FormalLifecycleEvent,
+    parse_formal_result,
+)
 from investment_strategy.scheduled_agent_merge_acceptance import run_guarded_effect_application
 from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
@@ -259,7 +262,7 @@ def _pending_application_correlation(
         f"issues/{source.issue_number}/timeline",
     )
     worker_body = _without_application_correlation(worker_result.result_content)
-    candidates: list[tuple[Mapping[str, object], object]] = []
+    candidates: list[tuple[Mapping[str, object], FormalLifecycleEvent]] = []
     for comment in comments:
         event = parse_formal_result(comment, current_revision=current_revision)
         if (
