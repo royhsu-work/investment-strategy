@@ -869,7 +869,8 @@ def apply_effect_batch(
         if not (defer_issue_comments and effect.kind == "issue-comment")
     )
 
-    def rejected(reason: str) -> ApplyResult(
+    def rejected(reason: str) -> ApplyResult:
+        return ApplyResult(
             False,
             reason,
             rejection=None if effect_rejection is None else effect_rejection(),
