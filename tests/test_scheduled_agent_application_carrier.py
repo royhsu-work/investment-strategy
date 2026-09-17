@@ -476,6 +476,7 @@ def test_historical_carrier_with_competing_active_change_fails_closed(
     assert decision.disposition == "INDETERMINATE"
     assert decision.reason == "initial-carrier-branch-is-not-canonical"
 
+
 @pytest.mark.parametrize(
     ("default_advance_files", "qualified"),
     [
