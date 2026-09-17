@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -25,6 +26,8 @@ from investment_strategy.scheduled_agent_effects import (
     GitHubEffectAdapter,
     formal_application_correlation,
 )
+import investment_strategy.scheduled_agent_runtime as runtime
+
 from investment_strategy.scheduled_agent_runtime import (
     GitHubIssueObservation,
     WorkerRequest,
@@ -1021,6 +1024,50 @@ def test_real_issue233_mixed_formal_history_recovers_persisted_review_result(
     decision = decisions[-1]
     assert getattr(decision, "qualified", False), getattr(decision, "reason", "unknown")
     raise AssertionError(f"unexpectedly remained blocked: {failure.value}")
+
+@pytest.mark.skipif(not os.environ.get("GITHUB_TOKEN"), reason="live GitHub token is unavailable")
+def test_live_main_preflight_diagnostic_for_issue233() -> None:
+    preflight = runtime.acquire_current_github_preflight(
+        _REPOSITORY,
+        os.environ["GITHUB_TOKEN"],
+    )
+    decision = runtime.classify_dispatch(preflight)
+    print(
+        "LIVE_MAIN_PREFLIGHT "
+        + json.dumps(
+            {
+                "decision": {
+                    "disposition": decision.disposition,
+                    "reason": decision.reason,
+                    "formal_issue_ids": decision.formal_issue_ids,
+                    "preactivation_candidate_ids": decision.preactivation_candidate_ids,
+                    "selected_issue_id": decision.selected_issue_id,
+                    "selected_routing": decision.selected_routing,
+                },
+                "issues": [
+                    {
+                        "issue_number": issue.issue_number,
+                        "change": issue.change,
+                        "routing": issue.routing,
+                        "state": issue.state,
+                        "authoritative": issue.authoritative,
+                        "current_state_provenance": issue.current_state_provenance,
+                        "routing_debt": issue.routing_debt,
+                    }
+                    for issue in preflight.issues
+                    if issue.issue_number in {218, 226, 233, 234, 238}
+                ],
+                "enumeration": {
+                    "observed_count": preflight.enumeration.observed_count,
+                    "source_total_count": preflight.enumeration.source_total_count,
+                    "incomplete_results": preflight.enumeration.incomplete_results,
+                    "exhausted": preflight.enumeration.exhausted,
+                    "observation_provenance": preflight.enumeration.observation_provenance,
+                },
+            },
+            sort_keys=True,
+        )
+    )
 
 def test_application_boundary_does_not_replay_dispatch_artifacts() -> None:
     source = Path("src/investment_strategy/scheduled_agent_application_bridge.py").read_text(
