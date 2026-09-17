@@ -238,7 +238,6 @@ def test_production_preflight_qualifies_from_issue_timeline(
     assert classify_dispatch(preflight).selected_routing == ("executor", "implement-change")
 
 
-
 def test_production_preflight_qualifies_recovery_after_default_branch_advances(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
