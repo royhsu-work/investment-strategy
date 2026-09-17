@@ -663,6 +663,9 @@ def run_guarded_effect_application(
     materialization_promote_change: bool = False,
     validated_materialization_revision: str | None = None,
     request_comment_id: int | None = None,
+    defer_issue_comments: bool = False,
+    allow_pending_continuation: bool = False,
+    pending_application_correlation: str | None = None,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Reject stale merge acceptance before and immediately adjacent to merge application."""
 
