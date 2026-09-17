@@ -1171,6 +1171,28 @@ def test_live_main_application_bridge_replays_issue233_request(
                     "formal_issue_ids": runtime.classify_dispatch(preflight).formal_issue_ids,
                     "preactivation_candidate_ids": runtime.classify_dispatch(preflight).preactivation_candidate_ids,
                     "trace": trace,
+                    "human_authorized": preflight.human_authorized,
+                    "enumeration": {
+                        "observed": preflight.enumeration.observed_count,
+                        "total": preflight.enumeration.source_total_count,
+                        "incomplete": preflight.enumeration.incomplete_results,
+                        "exhausted": preflight.enumeration.exhausted,
+                    },
+                    "matching": [
+                        {
+                            "issue_number": issue.issue_number,
+                            "state": issue.state,
+                            "routing": issue.routing,
+                            "provenance": issue.current_state_provenance,
+                        }
+                        for issue in preflight.issues
+                        if issue.issue_number == 233
+                    ],
+                    "claimed": {
+                        "issue_number": bridge._claimed_source(request.raw_worker_result).issue_number,
+                        "role": bridge._claimed_source(request.raw_worker_result).role,
+                        "action": bridge._claimed_source(request.raw_worker_result).action,
+                    },
                 },
                 sort_keys=True,
             )
