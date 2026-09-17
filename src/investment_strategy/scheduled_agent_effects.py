@@ -388,11 +388,7 @@ def _pending_continuation_is_eligible(
 
     decision = classify_dispatch(preflight)
     enumeration = preflight.enumeration
-    matching = tuple(
-        issue
-        for issue in preflight.issues
-        if issue.issue_number == source.issue_number
-    )
+    matching = tuple(issue for issue in preflight.issues if issue.issue_number == source.issue_number)
     return (
         decision.disposition == "FAIL_CLOSED"
         and decision.reason == "observations-unqualified"
@@ -471,8 +467,7 @@ def _typed_application_plan(
         revision=current_revision,
         provenance=(
             ModelObservationProvenance.QUALIFIED
-            if pending_source
-            or issue.current_state_provenance is ObservationProvenance.QUALIFIED
+            if pending_source or issue.current_state_provenance is ObservationProvenance.QUALIFIED
             else ModelObservationProvenance.INDETERMINATE
         ),
         human_authorized=preflight.human_authorized,

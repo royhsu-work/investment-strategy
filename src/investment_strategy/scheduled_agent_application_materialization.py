@@ -1207,18 +1207,15 @@ def apply_materialization(
 
     request = parse_materialization_payload(payload, source)
     if (
-        (
-            not allow_pending_continuation
-            and _current_authorized_request(repository, token) != source
-        )
-        or (
-            allow_pending_continuation
-            and not _pending_source_is_current(
-                repository,
-                token,
-                source,
-                request.expected_change,
-            )
+        not allow_pending_continuation
+        and _current_authorized_request(repository, token) != source
+    ) or (
+        allow_pending_continuation
+        and not _pending_source_is_current(
+            repository,
+            token,
+            source,
+            request.expected_change,
         )
     ):
         raise RuntimeError("application materialization source dispatch is stale")
@@ -1399,7 +1396,18 @@ def observe_materialization_target(
     """Read-only reconstruction of the exact carrier after materialization."""
 
     request = parse_materialization_payload(payload, source)
-    if _current_authorized_request(repository, token) != source:
+    if (
+        not allow_pending_continuation
+        and _current_authorized_request(repository, token) != source
+    ) or (
+        allow_pending_continuation
+        and not _pending_source_is_current(
+            repository,
+            token,
+            source,
+            request.expected_change,
+        )
+    ):
         raise RuntimeError("application materialization source dispatch is stale")
     if _current_default_branch(repository, token) != default_branch:
         raise RuntimeError("application materialization default branch changed")

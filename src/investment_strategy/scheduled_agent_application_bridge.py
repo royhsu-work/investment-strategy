@@ -186,11 +186,7 @@ def _pending_application_correlation(
     """Find one already-persisted formal result that can finish this application."""
 
     enumeration = preflight.enumeration
-    matching = tuple(
-        issue
-        for issue in preflight.issues
-        if issue.issue_number == source.issue_number
-    )
+    matching = tuple(issue for issue in preflight.issues if issue.issue_number == source.issue_number)
     decision = classify_dispatch(preflight)
     if (
         decision.disposition != "FAIL_CLOSED"
@@ -249,11 +245,7 @@ def _pending_application_correlation(
     except (TypeError, ValueError):
         return None
     expected_terminal = successor is None
-    expected_routing = (
-        None
-        if successor is None
-        else (role_for(successor).value, successor.value)
-    )
+    expected_routing = None if successor is None else (role_for(successor).value, successor.value)
     comments = _paged_github_list(
         repository,
         token,
@@ -281,8 +273,7 @@ def _pending_application_correlation(
             or event.successor != expected_routing
             or event.terminal != expected_terminal
             or event.application_correlation is None
-            or _without_application_correlation(cast(str, comment.get("body", "")))
-            != worker_body
+            or _without_application_correlation(cast(str, comment.get("body", ""))) != worker_body
         ):
             continue
         candidates.append((comment, event))

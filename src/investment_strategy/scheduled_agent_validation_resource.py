@@ -701,18 +701,15 @@ def resolve_validation_resource_target(
     ):
         raise RuntimeError("validation resource plan is incomplete")
     if (
-        (
-            not allow_pending_continuation
-            and _current_authorized_request(repository, token) != plan.source
-        )
-        or (
-            allow_pending_continuation
-            and not _pending_source_is_current(
-                repository,
-                token,
-                plan.source,
-                plan.expected_change,
-            )
+        not allow_pending_continuation
+        and _current_authorized_request(repository, token) != plan.source
+    ) or (
+        allow_pending_continuation
+        and not _pending_source_is_current(
+            repository,
+            token,
+            plan.source,
+            plan.expected_change,
         )
     ):
         raise RuntimeError("validation resource source dispatch is stale")
@@ -1333,18 +1330,15 @@ def apply_work_product(
     if _ref_head_sha(repository, token, default_branch) != authorization_revision:
         raise RuntimeError("work-product default-branch authorization is stale")
     if (
-        (
-            not allow_pending_continuation
-            and _current_authorized_request(repository, token) != plan.source
-        )
-        or (
-            allow_pending_continuation
-            and not _pending_source_is_current(
-                repository,
-                token,
-                plan.source,
-                plan.expected_change,
-            )
+        not allow_pending_continuation
+        and _current_authorized_request(repository, token) != plan.source
+    ) or (
+        allow_pending_continuation
+        and not _pending_source_is_current(
+            repository,
+            token,
+            plan.source,
+            plan.expected_change,
         )
     ):
         raise RuntimeError("work-product source dispatch is stale")
@@ -1767,18 +1761,15 @@ def apply_work_product(
     if _ref_head_sha(repository, token, default_branch) != authorization_revision:
         raise RuntimeError("work-product default branch changed before carrier handoff")
     if (
-        (
-            not allow_pending_continuation
-            and _current_authorized_request(repository, token) != plan.source
-        )
-        or (
-            allow_pending_continuation
-            and not _pending_source_is_current(
-                repository,
-                token,
-                plan.source,
-                plan.expected_change,
-            )
+        not allow_pending_continuation
+        and _current_authorized_request(repository, token) != plan.source
+    ) or (
+        allow_pending_continuation
+        and not _pending_source_is_current(
+            repository,
+            token,
+            plan.source,
+            plan.expected_change,
         )
     ):
         raise RuntimeError("work-product source dispatch changed before carrier handoff")

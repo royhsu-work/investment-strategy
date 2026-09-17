@@ -519,14 +519,16 @@ def test_plan_application_recovers_a_persisted_validation_result(
     monkeypatch.setattr(
         bridge,
         "_paged_github_list",
-        lambda _repository, _token, path: (comment,)
-        if "comments" in path
-        else (
-            {
-                "event": "commented",
-                "id": 900,
-                "created_at": "2026-09-17T00:00:00Z",
-            },
+        lambda _repository, _token, path: (
+            (comment,)
+            if "comments" in path
+            else (
+                {
+                    "event": "commented",
+                    "id": 900,
+                    "created_at": "2026-09-17T00:00:00Z",
+                },
+            )
         ),
     )
 

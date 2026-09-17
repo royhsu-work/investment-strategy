@@ -130,9 +130,7 @@ def test_validation_gate_defers_formal_comments_until_validation() -> None:
             requested_effects=[
                 {
                     "kind": "issue-comment",
-                    "payload_json": json.dumps(
-                        {"issue_number": 138, "body": "ACTION_RESULT"}
-                    ),
+                    "payload_json": json.dumps({"issue_number": 138, "body": "ACTION_RESULT"}),
                 }
             ]
         ),
