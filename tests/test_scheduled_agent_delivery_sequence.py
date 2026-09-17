@@ -208,6 +208,8 @@ class GitHubSequence:
                 "total_count": 1,
                 "check_runs": [{"status": "completed", "conclusion": "success"}],
             }
+        if route.startswith("commits/"):
+            return {"parents": [{"sha": MAIN}]}
         if route.startswith("git/ref/heads/"):
             branch = route.removeprefix("git/ref/heads/")
             if branch == "main":

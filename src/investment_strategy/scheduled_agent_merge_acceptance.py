@@ -363,6 +363,137 @@ def _default_branch_contains_commit(
     return comparison.get("status") in {"ahead", "identical"} and comparison.get("behind_by") == 0
 
 
+def _file_paths(value: object) -> frozenset[str] | None:
+    if not isinstance(value, Mapping):
+        return None
+    filename = value.get("filename")
+    if not isinstance(filename, str) or not filename:
+        return None
+    paths = {filename}
+    if "previous_filename" in value:
+        previous_filename = value.get("previous_filename")
+        if previous_filename is not None:
+            if not isinstance(previous_filename, str) or not previous_filename:
+                return None
+            paths.add(previous_filename)
+    return frozenset(paths)
+
+
+def _changed_paths(
+    repository: str,
+    token: str,
+    *,
+    ancestor: str,
+    descendant: str,
+) -> frozenset[str] | None:
+    try:
+        comparison = _github_json(
+            repository,
+            token,
+            f"compare/{ancestor}...{descendant}",
+        )
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(comparison, Mapping):
+        return None
+    if comparison.get("status") not in {"ahead", "identical"} or comparison.get("behind_by") != 0:
+        return None
+    raw_files = comparison.get("files")
+    if not isinstance(raw_files, list) or len(raw_files) >= 300:
+        return None
+    paths: set[str] = set()
+    for raw_file in raw_files:
+        file_paths = _file_paths(raw_file)
+        if file_paths is None:
+            return None
+        paths.update(file_paths)
+    return frozenset(paths)
+
+
+def _first_parent_sha(
+    repository: str,
+    token: str,
+    *,
+    merge_commit_sha: str,
+) -> str | None:
+    try:
+        payload = _github_json(repository, token, f"commits/{merge_commit_sha}")
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    parents = payload.get("parents")
+    if not isinstance(parents, list) or not parents:
+        return None
+    first_parent = parents[0]
+    if not isinstance(first_parent, Mapping):
+        return None
+    sha = first_parent.get("sha")
+    return sha if _valid_sha(sha) else None
+
+
+def _pr_changed_paths(
+    repository: str,
+    token: str,
+    *,
+    pr_number: int,
+) -> frozenset[str] | None:
+    if pr_number <= 0:
+        return None
+    try:
+        files = _paged_github_list(repository, token, f"pulls/{pr_number}/files")
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return None
+    if not files:
+        return None
+    paths: set[str] = set()
+    for file in files:
+        file_paths = _file_paths(file)
+        if file_paths is None:
+            return None
+        paths.update(file_paths)
+    return frozenset(paths)
+
+
+def _historical_review_baseline_is_compatible(
+    payload: Mapping[str, object],
+    *,
+    repository: str,
+    token: str,
+    reviewer_pass_default_branch_revision: str | None,
+    current_revision: str,
+    merge_commit_sha: str,
+) -> bool:
+    if not _valid_sha(reviewer_pass_default_branch_revision):
+        return False
+    if reviewer_pass_default_branch_revision == current_revision:
+        return True
+    pr_number = payload.get("number")
+    if not isinstance(pr_number, int) or isinstance(pr_number, bool) or pr_number <= 0:
+        return False
+    parent_sha = _first_parent_sha(
+        repository,
+        token,
+        merge_commit_sha=merge_commit_sha,
+    )
+    if parent_sha is None:
+        return False
+    default_paths = _changed_paths(
+        repository,
+        token,
+        ancestor=cast(str, reviewer_pass_default_branch_revision),
+        descendant=parent_sha,
+    )
+    if default_paths is None:
+        return False
+    carrier_paths = _pr_changed_paths(
+        repository,
+        token,
+        pr_number=pr_number,
+    )
+    return carrier_paths is not None and default_paths.isdisjoint(carrier_paths)
+
+
 def _historical_merged_carrier_allowed(
     payload: Mapping[str, object],
     *,
@@ -408,8 +539,15 @@ def _historical_merged_carrier_allowed(
         default_branch=default_branch,
     ):
         return False
-    return reviewer_pass_default_branch_revision == current_revision and _valid_sha(
-        reviewer_pass_default_branch_revision
+    if not _valid_sha(merge_commit_sha):
+        return False
+    return _historical_review_baseline_is_compatible(
+        payload,
+        repository=repository,
+        token=token,
+        reviewer_pass_default_branch_revision=reviewer_pass_default_branch_revision,
+        current_revision=cast(str, current_revision),
+        merge_commit_sha=cast(str, merge_commit_sha),
     )
 
 
