@@ -2788,7 +2788,9 @@ def test_formal_transition_reconstructs_recovery_ancestry_on_current_path(
         successor: str,
         request_id: int,
     ) -> dict[str, object]:
-        action = "Reviewer / review-openspec" if source.action == "review-openspec" else source.action
+        action = source.action
+        if source.action == "review-openspec":
+            action = "Reviewer / review-openspec"
         result_name = result_kind.replace("-", "_").upper()
         correlation = formal_application_correlation(
             source,
