@@ -774,6 +774,7 @@ def test_plan_application_recovers_persisted_formal_result_without_materializati
         "number": 138,
         "title": checkin_title(date(2026, 9, 3)),
         "state": "open",
+        "created_at": "2026-09-17T00:00:00Z",
         "closed_at": None,
         "labels": [{"name": "action:review-openspec"}],
         "body": f"Change: {_CHANGE}",
