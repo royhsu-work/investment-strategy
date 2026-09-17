@@ -917,6 +917,7 @@ def test_real_issue233_mixed_formal_history_recovers_persisted_review_result(
         "application-owned materialization and strict OpenSpec validation.\n"
         "Repository-derived successor: Reviewer / review-openspec\n"
     )
+
     def bot_comment(comment_id: int, body: str) -> dict[str, object]:
         return {
             "id": comment_id,
@@ -1059,8 +1060,7 @@ def test_real_issue233_mixed_formal_history_recovers_persisted_review_result(
     assert plan.pending_application_correlation == application_correlation
     assert historical_review_revision != review_authorization_revision
     assert any(
-        review_authorization_revision in path and current_revision in path
-        for path in compare_calls
+        review_authorization_revision in path and current_revision in path for path in compare_calls
     )
     assert decisions
     assert getattr(decisions[-1], "qualified", False)
