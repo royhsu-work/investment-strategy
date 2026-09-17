@@ -186,7 +186,11 @@ def _pending_application_correlation(
     """Find one already-persisted formal result that can finish this application."""
 
     enumeration = preflight.enumeration
-    matching = tuple(issue for issue in preflight.issues if issue.issue_number == source.issue_number)
+    matching = tuple(
+        issue
+        for issue in preflight.issues
+        if issue.issue_number == source.issue_number
+    )
     decision = classify_dispatch(preflight)
     if (
         decision.disposition != "FAIL_CLOSED"
