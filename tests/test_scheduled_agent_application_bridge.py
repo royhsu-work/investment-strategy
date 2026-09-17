@@ -931,7 +931,7 @@ def test_real_issue233_mixed_formal_history_recovers_persisted_review_result(
         "action": "created",
         "issue": {
             "number": 233,
-            "title": "Explore review-openspec semantic gate consumption after #229 PASS",
+            "title": checkin_title(date(2026, 9, 17)),
             "state": "open",
             "labels": [{"name": "action:review-openspec"}],
         },
