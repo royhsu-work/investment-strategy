@@ -1207,8 +1207,7 @@ def apply_materialization(
 
     request = parse_materialization_payload(payload, source)
     if (
-        not allow_pending_continuation
-        and _current_authorized_request(repository, token) != source
+        not allow_pending_continuation and _current_authorized_request(repository, token) != source
     ) or (
         allow_pending_continuation
         and not _pending_source_is_current(
@@ -1397,8 +1396,7 @@ def observe_materialization_target(
 
     request = parse_materialization_payload(payload, source)
     if (
-        not allow_pending_continuation
-        and _current_authorized_request(repository, token) != source
+        not allow_pending_continuation and _current_authorized_request(repository, token) != source
     ) or (
         allow_pending_continuation
         and not _pending_source_is_current(
