@@ -25,6 +25,10 @@ from investment_strategy.scheduled_agent_effects import (
     GitHubEffectAdapter,
     formal_application_correlation,
 )
+from investment_strategy.scheduled_agent_formal_qualification import (
+    QualificationDecision,
+    QualificationInput,
+)
 from investment_strategy.scheduled_agent_runtime import (
     GitHubIssueObservation,
     WorkerRequest,
@@ -823,6 +827,247 @@ def test_plan_application_recovers_persisted_formal_result_without_materializati
     assert plan.source == source
     assert plan.pending_continuation
     assert plan.pending_application_correlation == correlation
+
+
+def test_real_issue233_mixed_formal_history_recovers_persisted_review_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(233, "reviewer", "review-openspec")
+    change = "operationalize-review-openspec-semantic-proof"
+    historical_review_revision = "7f7a376bb052d6b45307ee04587719dcc430cd39"
+    review_authorization_revision = "1991e31bf97b0286d5f4affb3dff5e9354b32c9a"
+    current_revision = "b708129828e541227095ff801c2801907bae7d2e"
+    result_body = (
+        "REVIEW_RESULT\n"
+        "Workflow: #233\n"
+        f"Change: {change}\n"
+        "Action: Reviewer / review-openspec\n"
+        "Role: reviewer\n"
+        "Result: PASS\n"
+        f"Revision: {historical_review_revision}\n"
+        f"Default-Branch-Revision: {review_authorization_revision}\n"
+        "Evidence-Ref: https://github.com/royhsu-work/investment-strategy/pull/247\n"
+        "Review-Mode: fresh exact-revision independent reverse-first and forward semantic review\n"
+        "Traceability: tasks -> design -> specs -> proposal and "
+        "proposal -> specs -> design -> tasks are complete for the "
+        "same exact zero-delta target.\n"
+        "Parent: Human-approved repository-wide semantic-consumption scope and the "
+        "#229 regression boundary are preserved; the active-formal case remains a "
+        "proof case, not a scope replacement.\n"
+        "Boundary: DERIVE -> CHALLENGE -> REALIZE -> CLOSE operationalizes the "
+        "existing review owner without adding an Action, Result, state, verifier, "
+        "registry, second workflow graph, or semantic authority.\n"
+        "Runtime-Evidence: The current-main closed-history and recovery-ancestry repairs "
+        "are reused; the proposal keeps the pre-activation -> durable producer/"
+        "application evidence -> descendant qualification -> typed continuation -> "
+        "application postcondition chain explicit.\n"
+        "Substrate: Strict OpenSpec validation passed 8/8 for the exact PR #247 head, "
+        "and the remaining Skill/test changes are bounded implementation work on the "
+        "existing repository Skill/test owners.\n"
+        "Safety: Current/default evidence is distinguished from candidate, staged, future, "
+        "or unavailable proof; application/carrier authority, fresh reauthorization, "
+        "lifecycle/ABA qualification, and fail-closed behavior remain intact.\n"
+        "Skill-Maintenance: The existing agents/skills/openspec-review/SKILL.md is the "
+        "sole declared procedure owner; validator/wiring coverage is planned on the "
+        "existing repository-Skill test surface.\n"
+        "Findings: None.\n"
+        "Repository-derived successor: Executor / implement-change"
+    )
+    application_correlation = formal_application_correlation(
+        source,
+        change=change,
+        result_kind="pass",
+        current_revision=review_authorization_revision,
+        request_comment_id=5710940292,
+    )
+    persisted_body = result_body.replace(
+        f"Default-Branch-Revision: {review_authorization_revision}\n",
+        (
+            f"Default-Branch-Revision: {review_authorization_revision}\n"
+            f"Application-Correlation: {application_correlation}\n"
+        ),
+    )
+    recovery_body = (
+        "APPLICATION_RECOVERY\n"
+        "Workflow: #233\n"
+        f"Change: {change}\n"
+        "Source: Lead / propose-change\n"
+        "Target: Lead / resolve-question\n"
+        "Default-Branch-Revision: cf953ef356bdbd05848cdaf74663f4281bbe8a25\n"
+        "Failed-Authorization-Revision: 24308310d6d65064ddd3a3d76e43cd3c9dd87cdc\n"
+        "Request-Comment-ID: 5693106011\n"
+        "Reason: partial-first-activation"
+    )
+    old_formal_body = (
+        "ACTION_RESULT\n"
+        "Workflow: #233\n"
+        f"Change: {change}\n"
+        "Action: resolve-question\n"
+        "Role: lead\n"
+        "Result: READY_FOR_OPENSPEC_REVIEW\n"
+        "Revision: 0923580f161408c2953700b7e07e1c34dd03b5b5\n"
+        "Default-Branch-Revision: 0923580f161408c2953700b7e07e1c34dd03b5b5\n"
+        "Application-Correlation: application:5709636345:233:"
+        "operationalize-review-openspec-semantic-proof:lead:"
+        "resolve-question:ready-for-openspec-review:"
+        "0923580f161408c2953700b7e07e1c34dd03b5b5\n"
+        "Evidence-Ref: https://github.com/royhsu-work/investment-strategy/pull/247\n"
+        "Decision: The proposal now includes the review-consumption repair and the "
+        "residual formal-activation/application closure.\n"
+        "Decision: Existing runtime/application owners and the current descendant/"
+        "recovery evidence remain authoritative; no new state, exception, or review "
+        "layer is introduced.\n"
+        "Verification: PR #247 is the exact carrier for fresh independent review after "
+        "application-owned materialization and strict OpenSpec validation.\n"
+        "Repository-derived successor: Reviewer / review-openspec\n"
+    )
+
+    def bot_comment(comment_id: int, body: str) -> dict[str, object]:
+        return {
+            "id": comment_id,
+            "body": body,
+            "user": {"login": "github-actions[bot]"},
+            "performed_via_github_app": {"slug": "github-actions"},
+        }
+
+    recovery_comment = bot_comment(5707223672, recovery_body)
+    old_formal_comment = bot_comment(5709649340, old_formal_body)
+    persisted_formal_comment = bot_comment(5710947012, persisted_body)
+    worker_result = {
+        "issue_number": 233,
+        "role": "reviewer",
+        "action": "review-openspec",
+        "change": change,
+        "result_kind": "pass",
+        "evidence_ref": "https://github.com/royhsu-work/investment-strategy/pull/247",
+        "result_content": result_body,
+        "requested_effects": [
+            {
+                "kind": "issue-comment",
+                "payload_json": json.dumps(
+                    {"issue_number": 233, "body": result_body},
+                    sort_keys=True,
+                ),
+            }
+        ],
+    }
+    request_body = _effect_request(worker_result, revision=current_revision)
+    request = parse_application_request(request_body)
+    assert request is not None
+    event = {
+        "action": "created",
+        "issue": {
+            "number": 252,
+            "title": checkin_title(date(2026, 9, 17)),
+            "state": "open",
+            "labels": [],
+        },
+        "comment": _connector_comment(5711090028, request_body),
+    }
+    current_issue = {
+        "number": 233,
+        "title": "Explore review-openspec semantic gate consumption after #229 PASS",
+        "state": "open",
+        "created_at": "2026-09-09T07:28:08Z",
+        "closed_at": None,
+        "labels": [{"name": "action:review-openspec"}],
+        "body": f"Change: {change}",
+    }
+    lifecycle = (
+        {
+            "id": 30822867782,
+            "event": "labeled",
+            "created_at": "2026-09-09T11:00:04Z",
+            "label": {"name": "action:explore-change"},
+        },
+        {"id": 5707223672, "event": "commented", "created_at": "2026-09-17T01:52:20Z"},
+        {
+            "id": 31287353469,
+            "event": "unlabeled",
+            "created_at": "2026-09-17T01:52:22Z",
+            "label": {"name": "action:propose-change"},
+        },
+        {
+            "id": 31287353519,
+            "event": "labeled",
+            "created_at": "2026-09-17T01:52:22Z",
+            "label": {"name": "action:resolve-question"},
+        },
+        {"id": 5709649340, "event": "commented", "created_at": "2026-09-17T05:56:39Z"},
+        {
+            "id": 31302117639,
+            "event": "unlabeled",
+            "created_at": "2026-09-17T07:40:31Z",
+            "label": {"name": "action:resolve-question"},
+        },
+        {
+            "id": 31302117669,
+            "event": "labeled",
+            "created_at": "2026-09-17T07:40:31Z",
+            "label": {"name": "action:review-openspec"},
+        },
+        {"id": 5710947012, "event": "commented", "created_at": "2026-09-17T07:53:07Z"},
+    )
+    compare_calls: list[str] = []
+
+    def fake_github_json(
+        _repo: str,
+        _token: str,
+        path: str,
+        **_kwargs: object,
+    ) -> object:
+        if path == "issues/233":
+            return current_issue
+        if path.startswith("compare/"):
+            compare_calls.append(path)
+            failed_revision, _separator, _current = path.removeprefix("compare/").partition("...")
+            return {
+                "status": "ahead",
+                "base_commit": {"sha": failed_revision},
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "_github_json", fake_github_json)
+    monkeypatch.setattr(
+        bridge,
+        "_paged_github_list",
+        lambda _repo, _token, path: (
+            (recovery_comment, old_formal_comment, persisted_formal_comment)
+            if "comments" in path
+            else lifecycle
+        ),
+    )
+    decisions: list[QualificationDecision] = []
+    real_qualifier = bridge.qualify_current_formal_consequence
+
+    def capture_qualification(qualification: QualificationInput) -> QualificationDecision:
+        decision = real_qualifier(qualification)
+        decisions.append(decision)
+        return decision
+
+    monkeypatch.setattr(bridge, "qualify_current_formal_consequence", capture_qualification)
+    plan = plan_application(
+        event=event,
+        request=request,
+        preflight=_preflight(
+            action="review-openspec",
+            issue_number=233,
+            change=change,
+            current_state_provenance=ObservationProvenance.INDETERMINATE,
+        ),
+        repository=_REPOSITORY,
+        current_revision=current_revision,
+    )
+    assert plan.should_apply
+    assert plan.source == source
+    assert plan.pending_continuation
+    assert plan.pending_application_correlation == application_correlation
+    assert historical_review_revision != review_authorization_revision
+    assert any(
+        review_authorization_revision in path and current_revision in path for path in compare_calls
+    )
+    assert decisions
+    assert getattr(decisions[-1], "qualified", False)
 
 
 def test_application_boundary_does_not_replay_dispatch_artifacts() -> None:
