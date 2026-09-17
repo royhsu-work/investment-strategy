@@ -1069,7 +1069,9 @@ def test_live_main_preflight_diagnostic_for_issue233() -> None:
     )
 
 @pytest.mark.skipif(not os.environ.get("GITHUB_TOKEN"), reason="live GitHub token is unavailable")
-def test_live_main_application_bridge_replays_issue233_request() -> None:
+def test_live_main_application_bridge_replays_issue233_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     token = os.environ["GITHUB_TOKEN"]
     current_revision = "b708129828e541227095ff801c2801907bae7d2e"
     preflight = runtime.acquire_current_github_preflight(_REPOSITORY, token)
