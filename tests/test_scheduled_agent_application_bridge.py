@@ -760,7 +760,9 @@ def test_plan_application_recovers_persisted_formal_result_without_materializati
         "change": _CHANGE,
         "result_kind": "pass",
         "evidence_ref": "issuecomment-worker-evidence",
-        "result_content": result_body,
+        "result_content": (
+            "worker summary; canonical formal body is in the requested issue-comment effect"
+        ),
         "requested_effects": [
             {
                 "kind": "issue-comment",

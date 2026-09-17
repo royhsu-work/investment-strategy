@@ -56,6 +56,7 @@ AUTHORIZATION_REVISION_PREFIX = "Authorization-Revision: "
 WORKER_RESULT_B64_PREFIX = "Worker-Result-B64: "
 _CHATGPT_CONNECTOR_APP_SLUG = "chatgpt-codex-connector"
 _SHA = re.compile(r"^[0-9a-f]{40}$")
+_FORMAL_RESULT_MARKERS = frozenset({"ACTION_RESULT", "REVIEW_RESULT", "MERGE_RESULT"})
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
 _ROUTING_LABEL_PREFIXES = ("agent:", "action:")
 _FIRST_ACTIVATION_RESULT = "ready-for-openspec-review"
@@ -232,11 +233,11 @@ def _pending_application_correlation(
         return None
     if worker_result.change in {"", "unset"}:
         return None
-    worker_revision = _field(worker_result.result_content, "Revision")
-    worker_default_revision = _field(
-        worker_result.result_content,
-        "Default-Branch-Revision",
-    )
+    formal_body = _formal_result_body(worker_result, source=source)
+    if formal_body is None:
+        return None
+    worker_revision = _field(formal_body, "Revision")
+    worker_default_revision = _field(formal_body, "Default-Branch-Revision")
     if (
         worker_revision is None
         or worker_default_revision is None
@@ -291,7 +292,7 @@ def _pending_application_correlation(
         token,
         f"issues/{source.issue_number}/timeline",
     )
-    worker_body = _without_application_correlation(worker_result.result_content)
+    worker_body = _without_application_correlation(formal_body)
     candidates: list[tuple[Mapping[str, object], FormalLifecycleEvent]] = []
     for comment in comments:
         event = parse_formal_result(comment, current_revision=current_revision)
@@ -564,6 +565,30 @@ def _marker(body: str) -> str | None:
         return None
     marker = first[0].strip()
     return marker[3:].strip() if marker.startswith("## ") else marker
+
+
+def _formal_result_body(
+    worker_result: WorkerActionResult,
+    *,
+    source: WorkerRequest,
+) -> str | None:
+    """Extract the one canonical formal body requested by this worker result."""
+
+    bodies: list[str] = []
+    for requested in worker_result.requested_effects:
+        if requested.kind != "issue-comment":
+            continue
+        try:
+            payload = json.loads(requested.payload_json)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, Mapping) or payload.get("issue_number") != source.issue_number:
+            continue
+        body = payload.get("body")
+        if not isinstance(body, str) or _marker(body) not in _FORMAL_RESULT_MARKERS:
+            continue
+        bodies.append(body)
+    return bodies[0] if len(bodies) == 1 else None
 
 
 def _activation_result_body(
