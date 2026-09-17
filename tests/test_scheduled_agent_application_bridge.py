@@ -1032,7 +1032,7 @@ def test_live_main_preflight_diagnostic_for_issue233() -> None:
         os.environ["GITHUB_TOKEN"],
     )
     decision = runtime.classify_dispatch(preflight)
-    print(
+    raise AssertionError(
         "LIVE_MAIN_PREFLIGHT "
         + json.dumps(
             {
