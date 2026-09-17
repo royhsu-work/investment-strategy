@@ -1875,9 +1875,7 @@ class GitHubEffectAdapter:
                     f"compare/{historical_revision}...{current_revision}",
                 )
                 base_commit = (
-                    comparison.get("base_commit")
-                    if isinstance(comparison, Mapping)
-                    else None
+                    comparison.get("base_commit") if isinstance(comparison, Mapping) else None
                 )
                 if (
                     isinstance(comparison, Mapping)

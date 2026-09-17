@@ -657,7 +657,7 @@ def test_plan_application_recovers_persisted_result_after_main_advances(
     monkeypatch.setattr(
         bridge,
         "_authorization_revision_is_ancestor",
-        lambda *args: (ancestry_calls.append(args) or True),
+        lambda *args: ancestry_calls.append(args) or True,
     )
 
     plan = plan_application(

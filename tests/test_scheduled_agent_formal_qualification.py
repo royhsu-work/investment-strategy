@@ -364,8 +364,7 @@ def test_pending_historical_result_requires_explicit_descendant_binding() -> Non
         default_revision=historical_revision,
     )
     correlation = (
-        f"application:55:229:{_CHANGE}:executor:implement-change:ready:"
-        f"{historical_revision}"
+        f"application:55:229:{_CHANGE}:executor:implement-change:ready:{historical_revision}"
     )
     lifecycle_events = _lifecycle_events([comment], pending=True)
     without_ancestry = _decision(
