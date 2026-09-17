@@ -1859,7 +1859,7 @@ class GitHubEffectAdapter:
         current_revision = self.current_revision
         if self.allow_pending_continuation and current_revision is not None:
             expected_correlation = self._expected_formal_correlation()
-            ancestry: list[tuple[str, str]] = []
+            historical_revisions: list[str] = []
             for event in qualification_input.events:
                 historical_revision = event.default_branch_revision
                 if (
@@ -1869,6 +1869,19 @@ class GitHubEffectAdapter:
                     or historical_revision == current_revision
                 ):
                     continue
+                historical_revisions.append(historical_revision)
+            for recovery in qualification_input.recovery_events:
+                historical_revision = recovery.default_branch_revision
+                if (
+                    not recovery.valid
+                    or recovery.change != self.authorized_change
+                    or historical_revision is None
+                    or historical_revision == current_revision
+                ):
+                    continue
+                historical_revisions.append(historical_revision)
+            ancestry: list[tuple[str, str]] = []
+            for historical_revision in dict.fromkeys(historical_revisions):
                 comparison = _github_json(
                     self.repository,
                     self.token,
