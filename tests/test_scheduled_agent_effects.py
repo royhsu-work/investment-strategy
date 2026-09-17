@@ -2763,3 +2763,216 @@ def test_merge_carrier_recovery_rejects_old_authorization_after_main_changes(
     assert not result.applied
     assert result.reason == "effect precondition rejected"
     assert not any(method != "GET" for _path, method in calls)
+
+
+@pytest.mark.parametrize("descendant", (True, False))
+def test_formal_transition_reconstructs_recovery_ancestry_on_current_path(
+    monkeypatch: pytest.MonkeyPatch,
+    descendant: bool,
+) -> None:
+    """A current transition uses the same descendant proof as pending recovery."""
+    repository = "owner/repo"
+    issue_number = 233
+    change = "operationalize-review-openspec-semantic-proof"
+    historical_revision = "b" * 40
+    current_revision = "a" * 40
+    request_comment_id = 900
+
+    def formal_comment(
+        comment_id: int,
+        source: WorkerRequest,
+        marker: str,
+        result_kind: str,
+        revision: str,
+        default_revision: str,
+        successor: str,
+        request_id: int,
+    ) -> dict[str, object]:
+        action = (
+            "Reviewer / review-openspec"
+            if source.action == "review-openspec"
+            else source.action
+        )
+        result_name = result_kind.replace("-", "_").upper()
+        correlation = formal_application_correlation(
+            source,
+            change=change,
+            result_kind=result_kind,
+            current_revision=default_revision,
+            request_comment_id=request_id,
+        )
+        body = "\n".join(
+            (
+                marker,
+                f"Workflow: #{issue_number}",
+                f"Change: {change}",
+                f"Action: {action}",
+                f"Role: {source.role}",
+                f"Result: {result_name}",
+                f"Revision: {revision}",
+                f"Default-Branch-Revision: {default_revision}",
+                f"Application-Correlation: {correlation}",
+                f"Repository-derived successor: {successor}",
+            )
+        )
+        return {
+            "id": comment_id,
+            "body": body,
+            "user": {"login": "github-actions[bot]"},
+            "performed_via_github_app": {"slug": "github-actions"},
+        }
+
+    recovery = {
+        "id": 1,
+        "body": "\n".join(
+            (
+                "APPLICATION_RECOVERY",
+                f"Workflow: #{issue_number}",
+                f"Change: {change}",
+                "Source: Lead / propose-change",
+                "Target: Lead / resolve-question",
+                f"Default-Branch-Revision: {historical_revision}",
+                f"Failed-Authorization-Revision: {'c' * 40}",
+                "Request-Comment-ID: 899",
+                "Reason: partial-first-activation",
+            )
+        ),
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    resolve = formal_comment(
+        4,
+        WorkerRequest(issue_number, "lead", "resolve-question"),
+        "ACTION_RESULT",
+        "ready-for-openspec-review",
+        historical_revision,
+        historical_revision,
+        "Reviewer / review-openspec",
+        901,
+    )
+    review = formal_comment(
+        7,
+        WorkerRequest(issue_number, "reviewer", "review-openspec"),
+        "REVIEW_RESULT",
+        "pass",
+        historical_revision,
+        historical_revision,
+        "Executor / implement-change",
+        902,
+    )
+    implement = formal_comment(
+        10,
+        WorkerRequest(issue_number, "executor", "implement-change"),
+        "ACTION_RESULT",
+        "blocked",
+        historical_revision,
+        current_revision,
+        "Executor / implement-change",
+        request_comment_id,
+    )
+    comments = (recovery, resolve, review, implement)
+    lifecycle = (
+        {"id": 1, "event": "commented", "created_at": "2026-09-17T01:00:01Z"},
+        {
+            "id": 2,
+            "event": "unlabeled",
+            "created_at": "2026-09-17T01:00:02Z",
+            "label": {"name": "action:propose-change"},
+        },
+        {
+            "id": 3,
+            "event": "labeled",
+            "created_at": "2026-09-17T01:00:02Z",
+            "label": {"name": "action:resolve-question"},
+        },
+        {"id": 4, "event": "commented", "created_at": "2026-09-17T01:00:03Z"},
+        {
+            "id": 5,
+            "event": "unlabeled",
+            "created_at": "2026-09-17T01:00:04Z",
+            "label": {"name": "action:resolve-question"},
+        },
+        {
+            "id": 6,
+            "event": "labeled",
+            "created_at": "2026-09-17T01:00:04Z",
+            "label": {"name": "action:review-openspec"},
+        },
+        {"id": 7, "event": "commented", "created_at": "2026-09-17T01:00:05Z"},
+        {
+            "id": 8,
+            "event": "unlabeled",
+            "created_at": "2026-09-17T01:00:06Z",
+            "label": {"name": "action:review-openspec"},
+        },
+        {
+            "id": 9,
+            "event": "labeled",
+            "created_at": "2026-09-17T01:00:06Z",
+            "label": {"name": "action:implement-change"},
+        },
+        {"id": 10, "event": "commented", "created_at": "2026-09-17T01:00:07Z"},
+    )
+    issue = {
+        "number": issue_number,
+        "state": "open",
+        "body": f"Change: {change}\n",
+        "created_at": "2026-09-09T07:28:08Z",
+        "closed_at": None,
+        "labels": [
+            {"name": "agent:executor"},
+            {"name": "action:implement-change"},
+        ],
+    }
+    compare_calls: list[str] = []
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        path: str,
+        **_kwargs: object,
+    ) -> object:
+        if path == "":
+            return {"default_branch": "main"}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": current_revision}}
+        if path == f"issues/{issue_number}":
+            return issue
+        if path == f"issues/{issue_number}/comments?per_page=100&sort=created&direction=desc":
+            return comments
+        if path == f"issues/{issue_number}/timeline?per_page=100&page=1":
+            return lifecycle
+        if path == f"compare/{historical_revision}...{current_revision}":
+            compare_calls.append(path)
+            if descendant:
+                return {
+                    "status": "ahead",
+                    "base_commit": {"sha": historical_revision},
+                }
+            return {
+                "status": "behind",
+                "base_commit": {"sha": current_revision},
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        repository,
+        "token",
+        WorkerRequest(issue_number, "executor", "implement-change"),
+        authorized_change=change,
+        current_revision=current_revision,
+        expected_result_kind="blocked",
+        request_comment_id=request_comment_id,
+    )
+    effect = StagedEffect(
+        kind="routing-transition",
+        payload_json=json.dumps(
+            {"issue_number": issue_number, "action": "implement-change"},
+            sort_keys=True,
+        ),
+        derived=True,
+    )
+
+    assert adapter.guard(effect) is descendant
+    assert compare_calls == [f"compare/{historical_revision}...{current_revision}"]
