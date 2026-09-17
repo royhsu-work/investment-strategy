@@ -99,6 +99,7 @@ def _fake_github(
     historical_files: list[dict[str, object]] | None = None,
     default_is_ancestor: bool = True,
     historical_is_ancestor: bool = True,
+    default_advance_files: list[dict[str, object]] | None = None,
     current_merge_is_ancestor: bool = True,
     branch_ref_sha: str | None = HEAD,
     default_revision: str = MAIN,
@@ -164,6 +165,18 @@ def _fake_github(
             return {
                 "status": "ahead" if default_is_ancestor else "diverged",
                 "behind_by": 0 if default_is_ancestor else 2,
+            }
+        base = cast(dict[str, object], current["base"])
+        base_sha = base.get("sha")
+        if (
+            default_advance_files is not None
+            and isinstance(base_sha, str)
+            and api_path == f"compare/{base_sha}...{default_revision}"
+        ):
+            return {
+                "status": "ahead",
+                "behind_by": 0,
+                "files": default_advance_files,
             }
         branch = cast(str, current_head["ref"])
         if api_path == f"git/ref/heads/{branch}":
@@ -458,3 +471,37 @@ def test_historical_carrier_with_competing_active_change_fails_closed(
     )
     assert decision.disposition == "INDETERMINATE"
     assert decision.reason == "initial-carrier-branch-is-not-canonical"
+
+@pytest.mark.parametrize(
+    ("default_advance_files", "qualified"),
+    [
+        ([{"filename": "src/investment_strategy/bootstrap.py"}], True),
+        ([{"filename": "src/investment_strategy/example.py"}], False),
+    ],
+)
+def test_initial_carrier_accepts_only_disjoint_ancestry_proven_default_advance(
+    monkeypatch: pytest.MonkeyPatch,
+    default_advance_files: list[dict[str, object]],
+    qualified: bool,
+) -> None:
+    old_base = "7" * 40
+    new_default = "9" * 40
+    current = _continuation_pr(branch=f"agent/{CHANGE}")
+    current["base"] = {"ref": "main", "sha": old_base, "repo": _repo()}
+    decision = _qualify(
+        monkeypatch,
+        _fake_github(
+            current_pr=current,
+            historical_pr=None,
+            open_prs=[current],
+            pr_files=[{"filename": "src/investment_strategy/example.py"}],
+            default_is_ancestor=False,
+            default_revision=new_default,
+            default_advance_files=default_advance_files,
+        ),
+    )
+    assert decision.qualified is qualified
+    if qualified:
+        assert decision.reason == "initial-carrier-qualified-after-disjoint-default-advance"
+    else:
+        assert decision.reason == "carrier-pr-base-is-stale"
