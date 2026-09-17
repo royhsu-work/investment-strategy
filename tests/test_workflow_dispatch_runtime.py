@@ -325,6 +325,7 @@ def test_production_preflight_qualifies_recovery_after_default_branch_advances(
     assert decision.selected_routing == ("lead", "resolve-question")
     assert any("compare/" in url for url in requested_urls) is False
 
+
 def test_production_preflight_ignores_closed_inert_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
