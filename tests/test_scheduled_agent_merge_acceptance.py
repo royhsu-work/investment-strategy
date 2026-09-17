@@ -333,6 +333,80 @@ def test_historical_merged_carrier_requires_current_main_ancestry(
     assert reads == ["", "git/ref/heads/main", f"compare/{merge_commit}...main"]
 
 
+@pytest.mark.parametrize(
+    ("default_files", "expected"),
+    [
+        ([{"filename": "src/bootstrap.py"}], True),
+        ([{"filename": "src/carrier.py"}], False),
+        (
+            [{"filename": "src/new.py", "previous_filename": "src/carrier.py"}],
+            False,
+        ),
+        (None, False),
+    ],
+)
+def test_historical_carrier_accepts_only_disjoint_ancestor_advance(
+    monkeypatch: pytest.MonkeyPatch,
+    default_files: list[dict[str, object]] | None,
+    expected: bool,
+) -> None:
+    repository = "owner/repo"
+    current_revision = "a" * 40
+    reviewer_revision = "c" * 40
+    merge_commit = "b" * 40
+    merge_parent = "d" * 40
+    payload = {
+        "number": 167,
+        "state": "closed",
+        "merged": True,
+        "merge_commit_sha": merge_commit,
+        "merged_at": "2026-08-27T06:00:00Z",
+        "head": {
+            "ref": "agent/prevent-native-closing-bypass",
+            "sha": HEAD,
+            "repo": {"full_name": repository},
+        },
+        "base": {
+            "ref": "main",
+            "sha": reviewer_revision,
+            "repo": {"full_name": repository},
+        },
+    }
+    reads: list[str] = []
+
+    def fake_github_json(_repository: str, _token: str, path: str) -> object:
+        reads.append(path)
+        if path == "":
+            return {"default_branch": "main"}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": current_revision}}
+        if path == f"compare/{merge_commit}...main":
+            return {"status": "ahead", "behind_by": 0}
+        if path == f"commits/{merge_commit}":
+            return {"parents": [{"sha": merge_parent}]}
+        if path == f"compare/{reviewer_revision}...{merge_parent}":
+            result: dict[str, object] = {"status": "ahead", "behind_by": 0}
+            if default_files is not None:
+                result["files"] = default_files
+            return result
+        if path.startswith(f"pulls/{payload['number']}/files?"):
+            return [{"filename": "src/carrier.py"}]
+        raise AssertionError(f"unexpected GitHub read: {path}")
+
+    monkeypatch.setattr(merge_acceptance, "_github_json", fake_github_json)
+    allowed = merge_acceptance._historical_merged_carrier_allowed(
+        payload,
+        repository=repository,
+        token="",
+        expected_head_sha=HEAD,
+        current_revision=current_revision,
+        expected_branch="agent/prevent-native-closing-bypass",
+        reviewer_pass_default_branch_revision=reviewer_revision,
+    )
+
+    assert allowed is expected
+
+
 def test_native_close_recurrence_is_rejected_before_durable_merge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
