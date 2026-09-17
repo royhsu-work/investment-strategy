@@ -1000,6 +1000,17 @@ def test_real_issue233_mixed_formal_history_recovers_persisted_review_result(
     )
     decisions: list[object] = []
     real_qualifier = bridge.qualify_current_formal_consequence
+    real_normalize = bridge.normalize_github_issue
+
+    def traced_normalize(payload: object) -> object:
+        value = real_normalize(payload)
+        trace.append(
+            f"normalize:{getattr(value, 'issue_number', None)}:"
+            f"{getattr(value, 'authoritative', None)}:"
+            f"{getattr(value, 'state', None)}:"
+            f"{getattr(value, 'routing', None)}"
+        )
+        return value
 
     def capture_qualification(qualification: object) -> object:
         decision = real_qualifier(qualification)
@@ -1154,6 +1165,7 @@ def test_live_main_application_bridge_replays_issue233_request(
     monkeypatch.setattr(bridge, "parse_formal_result", traced_parse)
     monkeypatch.setattr(bridge, "build_qualification_input", traced_build)
     monkeypatch.setattr(bridge, "qualify_current_formal_consequence", traced_qualifier)
+    monkeypatch.setattr(bridge, "normalize_github_issue", traced_normalize)
     try:
         plan = plan_application(
             event=event,
