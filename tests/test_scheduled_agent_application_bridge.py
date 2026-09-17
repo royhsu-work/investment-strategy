@@ -1110,6 +1110,19 @@ def test_live_main_application_bridge_replays_issue233_request(
     real_build = bridge.build_qualification_input
     real_qualifier = bridge.qualify_current_formal_consequence
     real_normalize = bridge.normalize_github_issue
+    real_worker = bridge.parse_worker_result
+
+    def traced_worker(*args: object, **kwargs: object) -> object:
+        try:
+            value = real_worker(*args, **kwargs)
+        except Exception as exc:
+            trace.append(f"worker:error:{type(exc).__name__}:{exc}")
+            raise
+        trace.append(
+            f"worker:ok:{getattr(value, 'change', None)}:"
+            f"{getattr(value, 'result_content', '')[:20]}"
+        )
+        return value
 
     def traced_normalize(payload: object) -> object:
         value = real_normalize(payload)
@@ -1177,6 +1190,7 @@ def test_live_main_application_bridge_replays_issue233_request(
     monkeypatch.setattr(bridge, "build_qualification_input", traced_build)
     monkeypatch.setattr(bridge, "qualify_current_formal_consequence", traced_qualifier)
     monkeypatch.setattr(bridge, "normalize_github_issue", traced_normalize)
+    monkeypatch.setattr(bridge, "parse_worker_result", traced_worker)
     try:
         plan = plan_application(
             event=event,
