@@ -33,6 +33,7 @@ from investment_strategy.scheduled_agent_carrier import (
 from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
     acquire_current_github_preflight,
+    normalize_github_issue,
 )
 from investment_strategy.workflow_dispatch import classify_dispatch
 
@@ -224,6 +225,24 @@ def _current_authorized_request(repository: str, token: str) -> WorkerRequest | 
         decision.selected_issue_id,
         role,
         action,
+    )
+
+
+def _pending_source_is_current(
+    repository: str,
+    token: str,
+    source: WorkerRequest,
+    expected_change: str,
+) -> bool:
+    issue = _as_mapping(_github_json(repository, token, f"issues/{source.issue_number}"))
+    observation = None if issue is None else normalize_github_issue(issue)
+    return bool(
+        observation is not None
+        and observation.authoritative
+        and observation.issue_number == source.issue_number
+        and observation.state == "open"
+        and observation.change == expected_change
+        and observation.routing == (source.role, source.action)
     )
 
 
@@ -670,6 +689,7 @@ def resolve_validation_resource_target(
     repository: str,
     token: str,
     default_branch: str,
+    allow_pending_continuation: bool = False,
 ) -> ValidationResourceTarget:
     """Fresh-reauthorize the source and derive exact R from the current PR."""
 
@@ -680,7 +700,21 @@ def resolve_validation_resource_target(
         or plan.expected_change is None
     ):
         raise RuntimeError("validation resource plan is incomplete")
-    if _current_authorized_request(repository, token) != plan.source:
+    if (
+        (
+            not allow_pending_continuation
+            and _current_authorized_request(repository, token) != plan.source
+        )
+        or (
+            allow_pending_continuation
+            and not _pending_source_is_current(
+                repository,
+                token,
+                plan.source,
+                plan.expected_change,
+            )
+        )
+    ):
         raise RuntimeError("validation resource source dispatch is stale")
     if plan.source.role == "reviewer" and plan.source.action == "review-implementation":
         decision = _implementation_carrier_decision(
@@ -1282,6 +1316,7 @@ def apply_work_product(
     token: str,
     default_branch: str,
     authorization_revision: str,
+    allow_pending_continuation: bool = False,
 ) -> ValidationResourceTarget:
     """Construct one exact commit and hand open-PR head movement to a carrier."""
 
@@ -1297,7 +1332,21 @@ def apply_work_product(
         raise RuntimeError("work-product authorization revision is incomplete")
     if _ref_head_sha(repository, token, default_branch) != authorization_revision:
         raise RuntimeError("work-product default-branch authorization is stale")
-    if _current_authorized_request(repository, token) != plan.source:
+    if (
+        (
+            not allow_pending_continuation
+            and _current_authorized_request(repository, token) != plan.source
+        )
+        or (
+            allow_pending_continuation
+            and not _pending_source_is_current(
+                repository,
+                token,
+                plan.source,
+                plan.expected_change,
+            )
+        )
+    ):
         raise RuntimeError("work-product source dispatch is stale")
     carrier_decision: ImplementationCarrierQualification | None = None
     expected_branch: str | None = None
@@ -1717,7 +1766,21 @@ def apply_work_product(
             )
     if _ref_head_sha(repository, token, default_branch) != authorization_revision:
         raise RuntimeError("work-product default branch changed before carrier handoff")
-    if _current_authorized_request(repository, token) != plan.source:
+    if (
+        (
+            not allow_pending_continuation
+            and _current_authorized_request(repository, token) != plan.source
+        )
+        or (
+            allow_pending_continuation
+            and not _pending_source_is_current(
+                repository,
+                token,
+                plan.source,
+                plan.expected_change,
+            )
+        )
+    ):
         raise RuntimeError("work-product source dispatch changed before carrier handoff")
 
     if (
