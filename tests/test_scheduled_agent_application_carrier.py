@@ -178,6 +178,8 @@ def _fake_github(
                 "behind_by": 0,
                 "files": default_advance_files,
             }
+        if api_path.startswith("compare/"):
+            return None
         branch = cast(str, current_head["ref"])
         if api_path == f"git/ref/heads/{branch}":
             if branch_ref_sha is None and allow_not_found:
@@ -195,6 +197,8 @@ def _source(action: str = "implement-change") -> WorkerRequest:
 def _qualify(
     monkeypatch: pytest.MonkeyPatch,
     fake: Callable[..., object | None],
+    *,
+    current_revision: str = MAIN,
 ) -> carrier.ImplementationCarrierQualification:
     monkeypatch.setattr(carrier, "_github_json", fake)
     return carrier.qualify_implementation_carrier(
@@ -203,7 +207,7 @@ def _qualify(
         source=_source(),
         change=CHANGE,
         pr_number=236,
-        current_revision=MAIN,
+        current_revision=current_revision,
     )
 
 
@@ -499,6 +503,7 @@ def test_initial_carrier_accepts_only_disjoint_ancestry_proven_default_advance(
             default_revision=new_default,
             default_advance_files=default_advance_files,
         ),
+        current_revision=new_default,
     )
     assert decision.qualified is qualified
     if qualified:
