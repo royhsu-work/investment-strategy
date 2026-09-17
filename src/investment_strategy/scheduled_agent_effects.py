@@ -15,6 +15,7 @@ from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from investment_strategy.native_closing_preflight import explicit_merge_presentation
 from investment_strategy.scheduled_agent_action_model import Action as ModelAction
 from investment_strategy.scheduled_agent_action_model import (
     ActionApplicationDecision,
@@ -53,7 +54,6 @@ from investment_strategy.scheduled_agent_formal_qualification import (
     build_qualification_input,
     qualify_current_formal_consequence,
 )
-from investment_strategy.native_closing_preflight import explicit_merge_presentation
 from investment_strategy.scheduled_agent_runtime import (
     GitHubIssueObservation,
     WorkerRequest,

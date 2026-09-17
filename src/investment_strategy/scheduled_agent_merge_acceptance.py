@@ -552,7 +552,9 @@ def _merge_effect_allows(
         return False
     presentation_keys = {"commit_title", "commit_message"} & set(payload)
     if presentation_keys:
-        if presentation_keys != {"commit_title", "commit_message"} or merge_strategy is MergeStrategy.REBASE:
+        if presentation_keys != {"commit_title", "commit_message"} or (
+            merge_strategy is MergeStrategy.REBASE
+        ):
             return False
         _, presentation_complete = explicit_merge_presentation(
             cast(str | None, payload.get("commit_title")),

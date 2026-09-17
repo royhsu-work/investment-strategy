@@ -55,7 +55,10 @@ def test_explicit_squash_plan_allows_safe_presentation_of_unsafe_history() -> No
     assert result.disposition is NativeClosingDisposition.ALLOW
 
     unsafe = evaluate_native_closing_preflight(
-        _presentation_input(commit_message="Resolves #159", generated_message=f"{TITLE}\n\nResolves #159")
+        _presentation_input(
+            commit_message="Resolves #159",
+            generated_message=f"{TITLE}\n\nResolves #159",
+        )
     )
     assert unsafe.disposition is NativeClosingDisposition.REJECT
 

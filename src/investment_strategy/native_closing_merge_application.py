@@ -12,10 +12,10 @@ from urllib.request import Request, urlopen
 from investment_strategy.native_closing_preflight import (
     MergePresentationInput,
     MergeStrategy,
-    explicit_merge_presentation,
     NativeClosingDisposition,
     NativeClosingPreflightResult,
     evaluate_native_closing_preflight,
+    explicit_merge_presentation,
 )
 
 
