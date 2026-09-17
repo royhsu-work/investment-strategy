@@ -716,7 +716,6 @@ def test_apply_work_product_builds_same_change_replacement_after_merged_carrier(
 def test_reconciliation_overlays_default_only_changes_on_a_stale_carrier(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = WorkerRequest(138, "lead", "resolve-question")
     path = f"openspec/changes/{_CHANGE}/design.md"
     manifest = resource.WorkProductManifest(
         branch=f"agent/{_CHANGE}",
