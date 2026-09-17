@@ -136,7 +136,7 @@ def test_semantic_adapter_remains_a_separate_follow_up_resource() -> None:
 
 
 def test_openspec_review_exposes_compact_semantic_proof_loop() -> None:
-    text = (Path("agents/skills/openspec-review/SKILL.md")).read_text(encoding="utf-8")
+    text = Path("agents/skills/openspec-review/SKILL.md").read_text(encoding="utf-8")
 
     markers = ("**DERIVE**", "**CHALLENGE**", "**REALIZE**", "**CLOSE**")
     positions = [text.index(marker) for marker in markers]
