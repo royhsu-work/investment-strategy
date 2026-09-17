@@ -515,18 +515,38 @@ def _qualify_current_observations(
         # never makes a current route eligible and cannot authorize new effects.
         authorization_ancestry: list[tuple[str, str]] = []
         if current_revision is not None:
-            from investment_strategy.scheduled_agent_formal_result import parse_formal_result
-
+            # Reuse the formal evidence parser for both ordinary results and
+            # application-owned recovery. A recovery is itself a durable
+            # authorization at its recorded default-branch revision; omitting
+            # that revision makes a valid recovery stale as soon as main
+            # advances through the repair it enabled.
+            qualification_input = build_qualification_input(
+                issue_number=observation.issue_number,
+                change=observation.change,
+                state=observation.state,
+                current_routing=observation.routing,
+                comments=comments,
+                current_revision=current_revision,
+                lifecycle_events=lifecycle_events,
+            )
             revisions = {
                 event.default_branch_revision
-                for comment in comments
-                if (event := parse_formal_result(comment, current_revision=None)) is not None
-                and event.valid
+                for event in qualification_input.events
+                if event.valid
                 and event.issue_number == observation.issue_number
                 and event.change == observation.change
                 and event.default_branch_revision is not None
                 and event.default_branch_revision != current_revision
             }
+            revisions.update(
+                event.default_branch_revision
+                for event in qualification_input.recovery_events
+                if event.valid
+                and event.issue_number == observation.issue_number
+                and event.change == observation.change
+                and event.default_branch_revision is not None
+                and event.default_branch_revision != current_revision
+            )
             for revision in sorted(revisions):
                 comparison = _github_get_object(
                     f"https://api.github.com/repos/{repository}/compare/{revision}...{current_revision}",
