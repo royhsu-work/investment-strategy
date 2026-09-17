@@ -903,27 +903,28 @@ def qualify_implementation_carrier(
                 )
             disposition = "QUALIFIED"
             reason = "initial-carrier-qualified-after-disjoint-default-advance"
-        elif not default_is_ancestor:
-            return ImplementationCarrierQualification(
-                disposition="RECONCILIATION_REQUIRED",
-                reason="carrier-pr-base-is-stale",
-                repository=repository,
-                issue_number=source.issue_number,
-                change=change,
-                action=source.action,
-                pr_number=pr_number,
-                branch=branch,
-                head_sha=head_sha,
-                default_branch=default_branch,
-                default_revision=default_revision,
-                historical_pr_number=historical_pr_number,
-            )
-        # GitHub keeps an open PR's recorded base SHA at the old base commit
-        # after the application creates the explicit reconciliation commit.
-        # The branch ancestry is the authoritative postcondition; retaining
-        # the stale base field must not cause a second reconciliation forever.
-        disposition = "QUALIFIED"
-        reason = "continuation-carrier-qualified-after-reconciliation"
+        else:
+            if not default_is_ancestor:
+                return ImplementationCarrierQualification(
+                    disposition="RECONCILIATION_REQUIRED",
+                    reason="carrier-pr-base-is-stale",
+                    repository=repository,
+                    issue_number=source.issue_number,
+                    change=change,
+                    action=source.action,
+                    pr_number=pr_number,
+                    branch=branch,
+                    head_sha=head_sha,
+                    default_branch=default_branch,
+                    default_revision=default_revision,
+                    historical_pr_number=historical_pr_number,
+                )
+            # GitHub keeps an open PR's recorded base SHA at the old base commit
+            # after the application creates the explicit reconciliation commit.
+            # The branch ancestry is the authoritative postcondition; retaining
+            # the stale base field must not cause a second reconciliation forever.
+            disposition = "QUALIFIED"
+            reason = "continuation-carrier-qualified-after-reconciliation"
     elif default_is_ancestor:
         disposition = "QUALIFIED"
         reason = (
