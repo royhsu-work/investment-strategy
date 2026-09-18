@@ -6,7 +6,7 @@ The workflow SHALL use one persistent coordination Issue for one routed work ite
 
 Before the change id exists, `explore-change` and `propose-change` MAY operate with `Change: unset`. `explore-change` MUST keep `Change: unset` and MUST NOT create a formal OpenSpec change solely to represent research. The normal route into Propose SHALL be a same-Issue `Lead / explore-change` result of evidence-backed `PROPOSAL_READY` followed by the repository-owned routing effect to `Lead / propose-change`. Once Lead persists a change id during `propose-change`, that identity MUST remain immutable for that Issue.
 
-For an explicit Human request, established by the interaction layer, to open one bounded Formal Explore, materialization authority SHALL follow that qualified source decision rather than the physical GitHub writer. The repository mutation consequence MUST materialize one open coordination Issue with `Change: unset` and exactly one `action:explore-change` routing label, and completion MUST require a fresh postcondition observation of that complete tuple. A connector or Agent MAY physically perform that already-authorized mutation without becoming the authority source. Physical writer identity MUST NOT remove the qualified Human materialization authority and MUST NOT by itself grant authority to an autonomous Agent recommendation. Issue prose alone MUST NOT be treated as the authority classifier for this boundary.
+For an explicit Human request, established by the interaction layer, to open one bounded Formal Explore, materialization authority SHALL follow that qualified source decision rather than the physical GitHub writer. The interaction-layer producer that owns the requested GitHub mutation MUST materialize one open coordination Issue with `Change: unset` and exactly one `action:explore-change` routing label, and MUST NOT report materialization complete until a fresh GitHub read observes that complete tuple. This requirement does not grant Issue-creation or routing mutation capability to a Scheduled-Agent worker or repository application that does not already own it. A connector or Agent MAY physically perform the interaction-layer mutation without becoming the authority source. Physical writer identity MUST NOT remove the qualified Human materialization authority and MUST NOT by itself grant authority to an autonomous Agent recommendation. Issue prose alone MUST NOT be treated as the authority classifier for this boundary.
 
 After coherent materialization, ordinary pre-activation queue eligibility SHALL be determined from current repository routing and existing formal-first, WIP=1, finish-first, and deterministic selection predicates without classifying the Issue by Human-versus-connector origin. The materialization event or connector writer identity MUST NOT satisfy a later Human-reserved decision; those decisions remain subject to the existing provenance-bound Human authority contract. An Agent-originated recommendation without an explicit Human request or another repository-qualified producer remains advisory and MUST NOT recursively authorize creation or routing of additional work.
 
@@ -21,16 +21,17 @@ A terminal Explore result that concludes `NO_CHANGE_REQUIRED` or `NO_GO` MAY com
 #### Scenario: Human-requested bounded Explore is atomically materialized
 
 - GIVEN the interaction layer has established an explicit Human request to open one bounded Formal Explore
-- WHEN the repository materializes that request through a connector or other mutation carrier
+- WHEN that interaction layer uses its available connector or other mutation capability to materialize the request
 - THEN the resulting coordination Issue is open
 - AND its body records `Change: unset`
 - AND it has exactly one `action:explore-change` routing label
-- AND materialization is not complete until a fresh read observes that complete tuple
+- AND the interaction layer does not report materialization complete until a fresh GitHub read observes that complete tuple
+- AND this does not grant Issue-creation capability to Scheduled-Agent repository application
 
 #### Scenario: Physical writer does not redefine materialization authority
 
 - GIVEN an explicit Human request has qualified one bounded Formal Explore for materialization
-- AND a connector or Agent is the physical GitHub writer
+- AND a connector or Agent is the physical GitHub writer for the interaction layer
 - WHEN the bounded tuple is materialized
 - THEN writer identity does not remove the qualified source-decision authority
 - AND writer identity does not become Human proof for any later Human-reserved decision
@@ -55,7 +56,7 @@ A terminal Explore result that concludes `NO_CHANGE_REQUIRED` or `NO_GO` MAY com
 
 - GIVEN an explicit Human request requires a bounded Formal Explore
 - AND an Issue exists but `Change: unset` or the required `action:explore-change` routing is absent or ambiguous
-- WHEN the repository observes the materialization postcondition
+- WHEN the interaction layer observes the materialization postcondition
 - THEN materialization is incomplete and fails closed
 - AND the incomplete Issue is not reported as successful Formal Explore materialization
 
