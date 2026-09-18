@@ -1229,7 +1229,7 @@ def test_rerun_reauthorizes_exact_request_on_descendant_main(
         preflight=_preflight(),
         repository=_REPOSITORY,
         current_revision=_REVISION,
-        token="token",
+        token=_CHANGE,
         allow_descendant_resume=True,
     )
 

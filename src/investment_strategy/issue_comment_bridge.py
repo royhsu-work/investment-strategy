@@ -231,8 +231,10 @@ def _completion_source(
         issue = min(routed, key=lambda item: (item.created_order, item.issue_number))
     else:
         return None
-    assert issue.routing is not None
-    role, action = issue.routing
+    routing = issue.routing
+    if routing is None:
+        return None
+    role, action = routing
     return WorkerRequest(issue.issue_number, role, action)
 
 

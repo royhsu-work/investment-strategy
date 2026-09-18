@@ -374,17 +374,16 @@ def plan_application(
 
     if "/" not in repository or _SHA.fullmatch(current_revision) is None:
         raise ValueError("repository and current revision are required")
-    if request.authorization_revision != current_revision:
-        if (
-            not allow_descendant_resume
-            or not _authorization_revision_is_ancestor(
-                repository,
-                os.environ.get("GITHUB_TOKEN", "") if token is None else token,
-                request.authorization_revision,
-                current_revision,
-            )
-        ):
-            raise ValueError("EFFECT_REQUEST authorization revision is stale")
+    if request.authorization_revision != current_revision and (
+        not allow_descendant_resume
+        or not _authorization_revision_is_ancestor(
+            repository,
+            os.environ.get("GITHUB_TOKEN", "") if token is None else token,
+            request.authorization_revision,
+            current_revision,
+        )
+    ):
+        raise ValueError("EFFECT_REQUEST authorization revision is stale")
 
     issue = _as_mapping(event.get("issue"))
     event_comment = _as_mapping(event.get("comment"))
