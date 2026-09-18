@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -170,6 +171,20 @@ def test_validation_passed_first_activation_does_not_promote_inside_materializat
         ]
     )
     raw = json.dumps(worker_payload)
+    accepted_intent = bridge.ApplicationDecisionRecord(
+        request_comment_id=901,
+        request_body_sha256=hashlib.sha256(b"EFFECT_REQUEST").hexdigest(),
+        authorization_revision=_REVISION,
+        issue_number=source.issue_number,
+        role=source.role,
+        action=source.action,
+        change="unset",
+        result_kind="ready-for-openspec-review",
+        disposition="ACCEPTED",
+        worker_result_sha256=hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+        raw_worker_result=raw,
+        reason="test",
+    )
     target = ValidationResourceTarget(
         repository="royhsu-work/investment-strategy",
         revision=_TARGET_REVISION,
@@ -209,6 +224,11 @@ def test_validation_passed_first_activation_does_not_promote_inside_materializat
             raw_worker_result=raw,
             request_comment_id=901,
         ),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_application_decision_for_request",
+        lambda **_kwargs: accepted_intent,
     )
     monkeypatch.setattr(
         bridge,

@@ -412,7 +412,7 @@ def test_merge_delivery_and_rereview_use_one_evolving_rest_sequence(
     first = github.apply("merged", 100, [merge_effect])
     assert first.carrier_plan is not None, first
     assert len(github.comments) == before + 1
-    assert github.writes == [("POST", "issues/229/comments")]
+    assert github.writes == [["POST", "issues/229/comments"]]
     assert github.comments[-1]["body"].startswith("APPLICATION_DECISION\\n")
     assert github.action == "merge-implementation-pr"
     # The external actuator observes this exact authorized identity before merge.
