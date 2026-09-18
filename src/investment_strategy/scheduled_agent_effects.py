@@ -25,6 +25,8 @@ from investment_strategy.scheduled_agent_action_model import (
     ApplicationRejectionKind,
     BoundedActionResult,
     ResultKind,
+    TypedResult,
+    next_action,
     plan_action_application,
     role_for,
 )
@@ -2325,6 +2327,45 @@ class GitHubEffectAdapter:
             ]
             insert_at = max(anchors) + 1 if anchors else min(1, len(lines))
             lines.insert(insert_at, f"Application-Correlation: {correlation}")
+
+        if marker in _FORMAL_RESULT_MARKERS:
+            if self.expected_result_kind is None:
+                raise RuntimeError("formal result has no application-owned result kind")
+            try:
+                action = ModelAction(self.source.action)
+                result = TypedResult(ResultKind(self.expected_result_kind))
+                successor = next_action(action, result)
+            except ValueError as exc:
+                raise RuntimeError("formal result transition is invalid") from exc
+            successor_text = "terminal"
+            if successor is not None:
+                role_name = {
+                    "lead": "Lead",
+                    "reviewer": "Reviewer",
+                    "executor": "Executor",
+                }[role_for(successor).value]
+                successor_text = f"{role_name} / {successor.value}"
+            successor_indexes = [
+                index
+                for index, line in enumerate(lines)
+                if line.startswith("Repository-derived successor:")
+            ]
+            if len(successor_indexes) > 1:
+                raise RuntimeError("formal result has duplicate successor fields")
+            if successor_indexes:
+                lines[successor_indexes[0]] = (
+                    f"Repository-derived successor: {successor_text}"
+                )
+            else:
+                correlation_index = next(
+                    index
+                    for index, line in enumerate(lines)
+                    if line.startswith("Application-Correlation:")
+                )
+                lines.insert(
+                    correlation_index + 1,
+                    f"Repository-derived successor: {successor_text}",
+                )
         suffix = "\n" if body.endswith("\n") else ""
         return "\n".join(lines) + suffix
 

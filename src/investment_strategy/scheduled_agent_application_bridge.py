@@ -368,13 +368,23 @@ def plan_application(
     repository: str,
     current_revision: str,
     token: str | None = None,
+    allow_descendant_resume: bool = False,
 ) -> ApplicationPlan:
     """Freshly derive the only legal source Issue/Action/Role from the repository."""
 
     if "/" not in repository or _SHA.fullmatch(current_revision) is None:
         raise ValueError("repository and current revision are required")
     if request.authorization_revision != current_revision:
-        raise ValueError("EFFECT_REQUEST authorization revision is stale")
+        if (
+            not allow_descendant_resume
+            or not _authorization_revision_is_ancestor(
+                repository,
+                os.environ.get("GITHUB_TOKEN", "") if token is None else token,
+                request.authorization_revision,
+                current_revision,
+            )
+        ):
+            raise ValueError("EFFECT_REQUEST authorization revision is stale")
 
     issue = _as_mapping(event.get("issue"))
     event_comment = _as_mapping(event.get("comment"))
@@ -589,6 +599,87 @@ def _formal_result_body(
             continue
         bodies.append(body)
     return bodies[0] if len(bodies) == 1 else None
+
+
+def _expected_formal_marker(source: WorkerRequest) -> str:
+    if source.role == "reviewer":
+        return "REVIEW_RESULT"
+    if source.action.startswith("merge-"):
+        return "MERGE_RESULT"
+    return "ACTION_RESULT"
+
+
+def _application_owned_worker_result(
+    raw_worker_result: str,
+    *,
+    source: WorkerRequest,
+    current_revision: str,
+) -> str:
+    """Require one application-owned formal result after worker effects."""
+
+    worker_result = parse_worker_result(raw_worker_result, source)
+    body = _formal_result_body(worker_result, source=source)
+    if body is None and _marker(worker_result.result_content) in _FORMAL_RESULT_MARKERS:
+        body = worker_result.result_content
+    if body is None:
+        evidence = " ".join(worker_result.result_content.split())
+        if not evidence:
+            evidence = worker_result.typed_result.result.evidence_ref or "bounded typed result"
+        expected_result = worker_result.typed_result.result.kind.value.upper().replace("-", "_")
+        body = "\n".join(
+            (
+                _expected_formal_marker(source),
+                f"Workflow: #{source.issue_number}",
+                f"Change: {worker_result.change}",
+                f"Role: {source.role}",
+                f"Action: {source.action}",
+                f"Result: {expected_result}",
+                f"Revision: {current_revision}",
+                f"Default-Branch-Revision: {current_revision}",
+                f"Evidence: {evidence}",
+            )
+        )
+    if _marker(body) != _expected_formal_marker(source):
+        raise RuntimeError("worker result formal marker does not match authorized Action")
+
+    decoded = json.loads(raw_worker_result)
+    if not isinstance(decoded, dict):
+        raise RuntimeError("worker result must be a JSON object")
+    requested = decoded.get("requested_effects")
+    if not isinstance(requested, list):
+        raise RuntimeError("worker result requested effects are invalid")
+
+    ordered: list[object] = []
+    for raw_effect in requested:
+        if not isinstance(raw_effect, Mapping) or raw_effect.get("kind") != "issue-comment":
+            ordered.append(raw_effect)
+            continue
+        payload_json = raw_effect.get("payload_json")
+        if not isinstance(payload_json, str):
+            ordered.append(raw_effect)
+            continue
+        try:
+            payload = json.loads(payload_json)
+        except json.JSONDecodeError:
+            ordered.append(raw_effect)
+            continue
+        effect_body = payload.get("body") if isinstance(payload, Mapping) else None
+        if isinstance(effect_body, str) and _marker(effect_body) in _FORMAL_RESULT_MARKERS:
+            continue
+        ordered.append(raw_effect)
+
+    ordered.append(
+        {
+            "kind": "issue-comment",
+            "payload_json": json.dumps(
+                {"issue_number": source.issue_number, "body": body},
+                sort_keys=True,
+            ),
+        }
+    )
+    decoded["result_content"] = body
+    decoded["requested_effects"] = ordered
+    return json.dumps(decoded, sort_keys=True, separators=(",", ":"))
 
 
 def _activation_result_body(
@@ -1393,7 +1484,10 @@ def main() -> int:
     parser.add_argument("--default-branch", required=True)
     parser.add_argument("--validation-passed", action="store_true")
     parser.add_argument("--validated-revision")
+    parser.add_argument("--run-attempt", type=int, default=1)
     args = parser.parse_args()
+    if args.run_attempt <= 0:
+        raise ValueError("run attempt must be positive")
 
     repository = os.environ.get("GITHUB_REPOSITORY")
     token = os.environ.get("GITHUB_TOKEN")
@@ -1412,7 +1506,7 @@ def main() -> int:
         return 0
 
     _fresh_event_observation(event, body, repository, token)
-    if request.authorization_revision != args.revision:
+    if request.authorization_revision != args.revision and args.run_attempt == 1:
         if args.validation_passed:
             raise ValueError("stale activation recovery cannot run as validation completion")
         if not _recover_partial_first_activation(
@@ -1451,6 +1545,7 @@ def main() -> int:
         repository=repository,
         current_revision=args.revision,
         token=token,
+        allow_descendant_resume=args.run_attempt > 1,
     )
     if not plan.should_apply:
         _write_validation_outputs(None)
@@ -1458,8 +1553,13 @@ def main() -> int:
     if plan.source is None or plan.raw_worker_result is None or plan.request_comment_id is None:
         raise RuntimeError("application plan is missing validated source/result/request identity")
 
-    worker_result = parse_worker_result(plan.raw_worker_result, plan.source)
-    materializations = _materialization_effects(plan.raw_worker_result, plan.source)
+    application_worker_result = _application_owned_worker_result(
+        plan.raw_worker_result,
+        source=plan.source,
+        current_revision=args.revision,
+    )
+    worker_result = parse_worker_result(application_worker_result, plan.source)
+    materializations = _materialization_effects(application_worker_result, plan.source)
     if len(materializations) > 1:
         raise RuntimeError("EFFECT_REQUEST contains ambiguous materialization effects")
     materialization = None if not materializations else materializations[0]
@@ -1501,7 +1601,7 @@ def main() -> int:
     try:
         if first_activation and args.validation_passed:
             batch, result = run_guarded_effect_application(
-                plan.raw_worker_result,
+                application_worker_result,
                 source=plan.source,
                 repository=repository,
                 token=token,
@@ -1518,7 +1618,7 @@ def main() -> int:
                 if materialization is None or target is None:
                     raise RuntimeError("first activation validation target is unavailable")
                 _complete_first_activation(
-                    raw_worker_result=plan.raw_worker_result,
+                    raw_worker_result=application_worker_result,
                     materialization=materialization,
                     target=target,
                     source=plan.source,
@@ -1530,7 +1630,7 @@ def main() -> int:
                 )
         else:
             batch, result = run_guarded_effect_application(
-                plan.raw_worker_result,
+                application_worker_result,
                 source=plan.source,
                 repository=repository,
                 token=token,
