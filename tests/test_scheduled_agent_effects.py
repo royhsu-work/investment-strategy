@@ -160,6 +160,14 @@ def test_application_acceptance_precedes_outcome_and_derived_successor() -> None
         events.append("derived" if effect.derived else "effect")
         applied.append(effect)
 
+    def persist_decision(_decision: object, _disposition: str, _reason: str) -> bool:
+        events.append("accepted")
+        return True
+
+    def persist_outcome(_decision: object, _outcome: str, _reason: str) -> bool:
+        events.append("outcome")
+        return True
+
     result = apply_effect_batch(
         batch,
         fresh_preflight=_preflight,
@@ -167,12 +175,8 @@ def test_application_acceptance_precedes_outcome_and_derived_successor() -> None
         apply_effect=apply,
         observe_postcondition=lambda _effect: True,
         current_revision=_REVISION,
-        persist_application_decision=lambda _decision, _disposition, _reason: (
-            events.append("accepted") or True
-        ),
-        persist_application_outcome=lambda _decision, _outcome, _reason: (
-            events.append("outcome") or True
-        ),
+        persist_application_decision=persist_decision,
+        persist_application_outcome=persist_outcome,
     )
 
     assert result.applied

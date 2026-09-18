@@ -36,7 +36,10 @@ from investment_strategy.scheduled_agent_runtime import (
     is_github_actions_comment,
     normalize_github_issue,
 )
-from investment_strategy.scheduled_agent_worker import parse_worker_result
+from investment_strategy.scheduled_agent_worker import (
+    WorkerActionResult,
+    parse_worker_result,
+)
 from investment_strategy.workflow_dispatch import (
     DispatchDecision,
     DispatchPreflight,
@@ -390,7 +393,7 @@ def _application_outcomes(
 def _application_worker_for_record(
     record: ApplicationDecisionRecord,
     source: WorkerRequest,
-):
+) -> WorkerActionResult | None:
     """Validate the immutable intent payload against its decision metadata."""
 
     if (
@@ -447,7 +450,7 @@ def _formal_consequence(
     token: str,
     source: WorkerRequest,
     record: ApplicationDecisionRecord,
-    worker,
+    worker: WorkerActionResult,
     issue_comments: tuple[Mapping[str, object], ...],
     lifecycle_events: tuple[Mapping[str, object], ...],
     current_issue: Mapping[str, object],
@@ -471,7 +474,7 @@ def _formal_consequence(
         return False
     expected_terminal = successor is None
     expected_routing = None if successor is None else (role_for(successor).value, successor.value)
-    effective_change = record.change
+    effective_change: str | None = record.change
     if effective_change == "unset" and observation.change != "unset":
         effective_change = observation.change
     prefix = f"application:{record.request_comment_id}:{source.issue_number}:"
@@ -721,9 +724,11 @@ def qualify_application_completion(
         and record.action == source.action
     ]
     grouped_outcomes: dict[int, list[ApplicationOutcomeRecord]] = {}
-    for record in outcomes:
-        if record.request_comment_id > 0:
-            grouped_outcomes.setdefault(record.request_comment_id, []).append(record)
+    for outcome_record in outcomes:
+        if outcome_record.request_comment_id > 0:
+            grouped_outcomes.setdefault(outcome_record.request_comment_id, []).append(
+                outcome_record
+            )
 
     malformed_request = False
     request_ids: set[int] = set()
