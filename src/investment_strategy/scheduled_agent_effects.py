@@ -471,7 +471,10 @@ def persist_application_outcome_record(
     if len(existing) > 1:
         raise RuntimeError("application outcome identity is ambiguous")
     if existing:
-        return any(is_github_actions_comment(item) and item.get("body") == body for item in comments)
+        for item in comments:
+            if is_github_actions_comment(item) and item.get("body") == body:
+                return True
+        return False
     response = _github_json(
         repository,
         token,
