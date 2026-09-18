@@ -18,6 +18,7 @@ from urllib.request import Request, urlopen
 from investment_strategy.scheduled_agent_action_model import Action as ModelAction
 from investment_strategy.scheduled_agent_action_model import next_action, role_for
 from investment_strategy.scheduled_agent_application_bridge import parse_application_request
+from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
 from investment_strategy.scheduled_agent_effects import (
     ApplicationDecisionRecord,
     ApplicationOutcomeRecord,
@@ -28,7 +29,7 @@ from investment_strategy.scheduled_agent_formal_qualification import (
     build_qualification_input,
     qualify_current_formal_consequence,
 )
-from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
+from investment_strategy.scheduled_agent_formal_result import parse_formal_result
 from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
     acquire_current_github_preflight,

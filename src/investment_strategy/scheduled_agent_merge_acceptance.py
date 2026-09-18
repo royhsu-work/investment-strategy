@@ -24,6 +24,7 @@ from investment_strategy.native_closing_preflight import (
     explicit_merge_presentation,
 )
 from investment_strategy.scheduled_agent_action_model import (
+    ActionApplicationDecision,
     ApplicationRejection,
     ApplicationRejectionKind,
 )
@@ -801,8 +802,12 @@ def run_effect_application(
         and application_request_body is not None
         and authorization_revision is not None
     ):
-        application_decision_persister = (
-            lambda decision, disposition, reason: adapter.persist_application_decision(
+        def application_decision_persister(
+            decision: ActionApplicationDecision,
+            disposition: str,
+            reason: str,
+        ) -> bool:
+            return adapter.persist_application_decision(
                 decision,
                 disposition=disposition,
                 reason=reason,
@@ -810,9 +815,13 @@ def run_effect_application(
                 authorization_revision=authorization_revision,
                 raw_worker_result=raw_worker_result,
             )
-        )
-        application_outcome_persister = (
-            lambda decision, outcome, reason: adapter.persist_application_outcome(
+
+        def application_outcome_persister(
+            decision: ActionApplicationDecision,
+            outcome: str,
+            reason: str,
+        ) -> bool:
+            return adapter.persist_application_outcome(
                 decision,
                 outcome=outcome,
                 reason=reason,
@@ -820,7 +829,6 @@ def run_effect_application(
                 authorization_revision=authorization_revision,
                 raw_worker_result=raw_worker_result,
             )
-        )
 
     try:
         result = apply_effect_batch(

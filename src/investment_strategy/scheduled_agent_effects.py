@@ -328,6 +328,7 @@ def render_application_decision_body(
         normalized_reason = "unspecified"
     if len(normalized_reason) > 240:
         normalized_reason = normalized_reason[:240].rstrip()
+    encoded_intent = base64.b64encode(raw_worker_result.encode("utf-8")).decode("ascii")
     source = decision.source
     return "\n".join(
         (
@@ -342,7 +343,7 @@ def render_application_decision_body(
             f"Result-Kind: {decision.result.result.kind.value}",
             f"Disposition: {disposition}",
             f"Worker-Result-SHA256: {_sha256_text(raw_worker_result)}",
-            f"Application-Intent-B64: {base64.b64encode(raw_worker_result.encode('utf-8')).decode('ascii')}",
+            f"Application-Intent-B64: {encoded_intent}",
             f"Reason: {normalized_reason}",
         )
     )
@@ -354,7 +355,10 @@ def parse_application_decision(body: object) -> ApplicationDecisionRecord | None
     if not isinstance(body, str):
         return None
     lines = body.splitlines()
-    if len(lines) != len(_APPLICATION_DECISION_FIELDS) + 1 or lines[0] != APPLICATION_DECISION_MARKER:
+    if (
+        len(lines) != len(_APPLICATION_DECISION_FIELDS) + 1
+        or lines[0] != APPLICATION_DECISION_MARKER
+    ):
         return None
     values: dict[str, str] = {}
     for line in lines[1:]:
@@ -477,7 +481,11 @@ def persist_application_outcome_record(
         method="POST",
         payload={"body": body},
     )
-    comment_id = None if not isinstance(response, Mapping) else _positive_comment_id(response.get("id"))
+    comment_id = (
+        None
+        if not isinstance(response, Mapping)
+        else _positive_comment_id(response.get("id"))
+    )
     if (
         not isinstance(response, Mapping)
         or comment_id is None
@@ -1208,8 +1216,12 @@ def apply_effect_batch(
     allow_pending_continuation: bool = False,
     carrier_plan_for_effect: CarrierPlanProvider | None = None,
     effect_rejection: EffectRejectionProvider | None = None,
-    persist_application_decision: Callable[[ActionApplicationDecision, str, str], bool] | None = None,
-    persist_application_outcome: Callable[[ActionApplicationDecision, str, str], bool] | None = None,
+    persist_application_decision: (
+        Callable[[ActionApplicationDecision, str, str], bool] | None
+    ) = None,
+    persist_application_outcome: (
+        Callable[[ActionApplicationDecision, str, str], bool] | None
+    ) = None,
 ) -> ApplyResult:
     """Apply one typed batch after fresh source reauthorization."""
 
@@ -2828,7 +2840,11 @@ class GitHubEffectAdapter:
             method="POST",
             payload={"body": body},
         )
-        comment_id = None if not isinstance(response, Mapping) else _positive_comment_id(response.get("id"))
+        comment_id = (
+            None
+            if not isinstance(response, Mapping)
+            else _positive_comment_id(response.get("id"))
+        )
         if (
             not isinstance(response, Mapping)
             or comment_id is None

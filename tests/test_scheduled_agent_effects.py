@@ -12,8 +12,8 @@ import investment_strategy.scheduled_agent_effects as effects
 from investment_strategy.scheduled_agent_action_model import (
     Action,
     ActionApplicationDecision,
-    ApplicationDisposition,
     ActionSource,
+    ApplicationDisposition,
     BoundedActionResult,
     ResultKind,
     TypedResult,
@@ -156,11 +156,15 @@ def test_application_acceptance_precedes_outcome_and_derived_successor() -> None
     events: list[str] = []
     applied: list[StagedEffect] = []
 
+    def apply(effect: StagedEffect) -> None:
+        events.append("derived" if effect.derived else "effect")
+        applied.append(effect)
+
     result = apply_effect_batch(
         batch,
         fresh_preflight=_preflight,
         effect_guard=lambda _effect: True,
-        apply_effect=lambda effect: (events.append("derived" if effect.derived else "effect"), applied.append(effect)),
+        apply_effect=apply,
         observe_postcondition=lambda _effect: True,
         current_revision=_REVISION,
         persist_application_decision=lambda _decision, _disposition, _reason: (
