@@ -505,6 +505,8 @@ def _formal_consequence(
         return False
     if effective_change in {None, "unset"}:
         effective_change = matching_events[0].change
+    if effective_change is None:
+        return False
 
     qualification = build_qualification_input(
         issue_number=source.issue_number,
