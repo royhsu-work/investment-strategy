@@ -658,11 +658,7 @@ def _accepted_application_state(
             "application-completion-result-transition-invalid",
             request_comment_id=record.request_comment_id,
         )
-    expected_routing = (
-        None
-        if successor is None
-        else (role_for(successor).value, successor.value)
-    )
+    expected_routing = None if successor is None else (role_for(successor).value, successor.value)
     if observation.state == "closed":
         return ApplicationCompletion(
             "INVALID",
