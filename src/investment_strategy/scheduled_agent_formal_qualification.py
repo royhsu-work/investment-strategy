@@ -505,16 +505,41 @@ def _interval_binds_successor(
         )
     if successor is None:
         return False
-    labels = tuple(item for item in relevant if item.event == "labeled")
-    if len(labels) != 1 or labels[0].label != f"{_ACTION_LABEL_PREFIX}{successor[1]}":
-        return False
-    label_index = next(index for index, item in enumerate(relevant) if item is labels[0])
-    return not any(
-        item.event in {"closed", "reopened"}
-        or (item.event == "labeled" and index != label_index)
-        or (item.event == "unlabeled" and index > label_index)
-        for index, item in enumerate(relevant)
+    expected_label = f"{_ACTION_LABEL_PREFIX}{successor[1]}"
+    label_indexes = tuple(
+        index for index, item in enumerate(relevant) if item.event == "labeled"
     )
+    if not label_indexes or any(relevant[index].label != expected_label for index in label_indexes):
+        return False
+    first_label_index = label_indexes[0]
+    if any(
+        item.event != "unlabeled"
+        for item in relevant[:first_label_index]
+    ):
+        return False
+
+    # Once a formal result has bound its derived successor, an exact
+    # administrative close+unroute followed by reopen+restore of that same
+    # route is idempotent lifecycle restoration, not semantic ABA replay.
+    # Any different route, partial restoration, or extra lifecycle mutation
+    # remains unqualified.
+    cursor = first_label_index + 1
+    while cursor < len(relevant):
+        cycle = relevant[cursor : cursor + 4]
+        if len(cycle) != 4:
+            return False
+        closed, unlabeled, reopened, relabeled = cycle
+        if (
+            closed.event != "closed"
+            or unlabeled.event != "unlabeled"
+            or unlabeled.label != expected_label
+            or reopened.event != "reopened"
+            or relabeled.event != "labeled"
+            or relabeled.label != expected_label
+        ):
+            return False
+        cursor += 4
+    return True
 
 
 def _lifecycle_integrity(events: tuple[IssueLifecycleEvent, ...]) -> bool:

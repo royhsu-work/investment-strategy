@@ -328,6 +328,102 @@ def test_aba_lifecycle_events_reject_unbound_route_replay() -> None:
     )
 
 
+
+def test_exact_close_unroute_reopen_restore_preserves_bound_route() -> None:
+    comment = _comment(
+        20,
+        action="propose-change",
+        role="lead",
+        result="ready-for-openspec-review",
+        successor="Reviewer / review-openspec",
+        request_id=20,
+    )
+    lifecycle_events = [
+        {"id": 20, "event": "commented", "created_at": "2026-09-18T06:14:36Z"},
+        {
+            "id": 21,
+            "event": "unlabeled",
+            "created_at": "2026-09-18T06:14:53Z",
+            "label": {"name": "action:propose-change"},
+        },
+        {
+            "id": 22,
+            "event": "labeled",
+            "created_at": "2026-09-18T06:14:53Z",
+            "label": {"name": "action:review-openspec"},
+        },
+        {"id": 23, "event": "closed", "created_at": "2026-09-18T07:36:58Z"},
+        {
+            "id": 24,
+            "event": "unlabeled",
+            "created_at": "2026-09-18T07:36:58Z",
+            "label": {"name": "action:review-openspec"},
+        },
+        {"id": 25, "event": "reopened", "created_at": "2026-09-18T07:58:06Z"},
+        {
+            "id": 26,
+            "event": "labeled",
+            "created_at": "2026-09-18T07:58:06Z",
+            "label": {"name": "action:review-openspec"},
+        },
+    ]
+    decision = _decision(
+        [comment],
+        current_routing=("reviewer", "review-openspec"),
+        lifecycle_events=lifecycle_events,
+    )
+    assert decision.provenance is ObservationProvenance.QUALIFIED
+    assert decision.reason == "current-formal-route-qualified"
+
+
+def test_restoration_to_a_different_route_remains_unqualified() -> None:
+    comment = _comment(
+        20,
+        action="propose-change",
+        role="lead",
+        result="ready-for-openspec-review",
+        successor="Reviewer / review-openspec",
+        request_id=20,
+    )
+    lifecycle_events = [
+        {"id": 20, "event": "commented", "created_at": "2026-09-18T06:14:36Z"},
+        {
+            "id": 21,
+            "event": "unlabeled",
+            "created_at": "2026-09-18T06:14:53Z",
+            "label": {"name": "action:propose-change"},
+        },
+        {
+            "id": 22,
+            "event": "labeled",
+            "created_at": "2026-09-18T06:14:53Z",
+            "label": {"name": "action:review-openspec"},
+        },
+        {"id": 23, "event": "closed", "created_at": "2026-09-18T07:36:58Z"},
+        {
+            "id": 24,
+            "event": "unlabeled",
+            "created_at": "2026-09-18T07:36:58Z",
+            "label": {"name": "action:review-openspec"},
+        },
+        {"id": 25, "event": "reopened", "created_at": "2026-09-18T07:58:06Z"},
+        {
+            "id": 26,
+            "event": "labeled",
+            "created_at": "2026-09-18T07:58:06Z",
+            "label": {"name": "action:implement-change"},
+        },
+    ]
+    assert (
+        _decision(
+            [comment],
+            current_routing=("reviewer", "review-openspec"),
+            lifecycle_events=lifecycle_events,
+        ).provenance
+        is ObservationProvenance.INDETERMINATE
+    )
+
+
 def test_pending_historical_result_accepts_newer_application_revision() -> None:
     historical_revision = "b" * 40
     application_revision = "c" * 40
