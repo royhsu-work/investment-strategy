@@ -506,16 +506,11 @@ def _interval_binds_successor(
     if successor is None:
         return False
     expected_label = f"{_ACTION_LABEL_PREFIX}{successor[1]}"
-    label_indexes = tuple(
-        index for index, item in enumerate(relevant) if item.event == "labeled"
-    )
+    label_indexes = tuple(index for index, item in enumerate(relevant) if item.event == "labeled")
     if not label_indexes or any(relevant[index].label != expected_label for index in label_indexes):
         return False
     first_label_index = label_indexes[0]
-    if any(
-        item.event != "unlabeled"
-        for item in relevant[:first_label_index]
-    ):
+    if any(item.event != "unlabeled" for item in relevant[:first_label_index]):
         return False
 
     # Once a formal result has bound its derived successor, an exact

@@ -328,7 +328,6 @@ def test_aba_lifecycle_events_reject_unbound_route_replay() -> None:
     )
 
 
-
 def test_exact_close_unroute_reopen_restore_preserves_bound_route() -> None:
     comment = _comment(
         20,
