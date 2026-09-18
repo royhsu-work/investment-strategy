@@ -802,6 +802,7 @@ def run_effect_application(
         and application_request_body is not None
         and authorization_revision is not None
     ):
+
         def application_decision_persister(
             decision: ActionApplicationDecision,
             disposition: str,

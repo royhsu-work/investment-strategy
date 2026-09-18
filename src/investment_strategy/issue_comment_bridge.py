@@ -470,11 +470,7 @@ def _formal_consequence(
     except (TypeError, ValueError):
         return False
     expected_terminal = successor is None
-    expected_routing = (
-        None
-        if successor is None
-        else (role_for(successor).value, successor.value)
-    )
+    expected_routing = None if successor is None else (role_for(successor).value, successor.value)
     effective_change = record.change
     if effective_change == "unset" and observation.change != "unset":
         effective_change = observation.change
@@ -520,9 +516,7 @@ def _formal_consequence(
         source_routing=(source.role, source.action),
         expected_result_kind=record.result_kind,
         expected_application_correlation=(
-            matching_events[0].application_correlation
-            if mode == "pending"
-            else None
+            matching_events[0].application_correlation if mode == "pending" else None
         ),
         lifecycle_events=lifecycle_events,
         authorization_ancestry=authorization_ancestry,
@@ -774,16 +768,8 @@ def qualify_application_completion(
     # Every accepted/rejected record is exact evidence. Multiple accepted
     # records for one current source are competing intents, even if payloads
     # compare equal.
-    accepted = [
-        record
-        for record in relevant_decisions
-        if record.disposition == "ACCEPTED"
-    ]
-    rejected = [
-        record
-        for record in relevant_decisions
-        if record.disposition == "REJECTED"
-    ]
+    accepted = [record for record in relevant_decisions if record.disposition == "ACCEPTED"]
+    rejected = [record for record in relevant_decisions if record.disposition == "REJECTED"]
     if len(accepted) > 1:
         return ApplicationCompletion("AMBIGUOUS", "application-completion-accepted-ambiguous")
     if len(accepted) == 0:
@@ -834,7 +820,6 @@ def qualify_application_completion(
         current_revision=current_revision,
         read=read,
     )
-
 
 
 def render_dispatch_result_document(

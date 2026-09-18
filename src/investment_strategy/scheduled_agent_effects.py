@@ -158,6 +158,7 @@ class ApplicationDecisionRecord:
     raw_worker_result: str
     reason: str
 
+
 APPLICATION_OUTCOME_MARKER = "APPLICATION_OUTCOME"
 _APPLICATION_OUTCOME_DISPOSITIONS = frozenset({"COMPLETED", "ABORTED"})
 _APPLICATION_OUTCOME_FIELDS = (
@@ -293,11 +294,11 @@ def parse_application_outcome(body: object) -> ApplicationOutcomeRecord | None:
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
+
 def _positive_comment_id(value: object) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         return None
     return value
-
 
 
 def render_application_decision_body(
@@ -470,10 +471,7 @@ def persist_application_outcome_record(
     if len(existing) > 1:
         raise RuntimeError("application outcome identity is ambiguous")
     if existing:
-        return any(
-            is_github_actions_comment(item) and item.get("body") == body
-            for item in comments
-        )
+        return any(is_github_actions_comment(item) and item.get("body") == body for item in comments)
     response = _github_json(
         repository,
         token,
@@ -482,9 +480,7 @@ def persist_application_outcome_record(
         payload={"body": body},
     )
     comment_id = (
-        None
-        if not isinstance(response, Mapping)
-        else _positive_comment_id(response.get("id"))
+        None if not isinstance(response, Mapping) else _positive_comment_id(response.get("id"))
     )
     if (
         not isinstance(response, Mapping)
@@ -2841,9 +2837,7 @@ class GitHubEffectAdapter:
             payload={"body": body},
         )
         comment_id = (
-            None
-            if not isinstance(response, Mapping)
-            else _positive_comment_id(response.get("id"))
+            None if not isinstance(response, Mapping) else _positive_comment_id(response.get("id"))
         )
         if (
             not isinstance(response, Mapping)
