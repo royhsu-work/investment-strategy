@@ -2353,9 +2353,7 @@ class GitHubEffectAdapter:
             if len(successor_indexes) > 1:
                 raise RuntimeError("formal result has duplicate successor fields")
             if successor_indexes:
-                lines[successor_indexes[0]] = (
-                    f"Repository-derived successor: {successor_text}"
-                )
+                lines[successor_indexes[0]] = f"Repository-derived successor: {successor_text}"
             else:
                 correlation_index = next(
                     index

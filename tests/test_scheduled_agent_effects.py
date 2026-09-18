@@ -3155,11 +3155,5 @@ def test_application_injects_repository_derived_successor_into_formal_result() -
 
     bound = adapter._application_bound_comment_body(body)
 
-    assert (
-        "Repository-derived successor: Lead / resolve-question"
-        in bound
-    )
-    assert (
-        f"Application-Correlation: application:{_REQUEST_COMMENT_ID}:"
-        in bound
-    )
+    assert "Repository-derived successor: Lead / resolve-question" in bound
+    assert f"Application-Correlation: application:{_REQUEST_COMMENT_ID}:" in bound
