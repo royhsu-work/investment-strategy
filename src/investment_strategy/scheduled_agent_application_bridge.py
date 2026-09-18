@@ -1069,7 +1069,7 @@ def _complete_first_activation(
     )
     if fresh_target != target:
         raise RuntimeError("first activation validation target changed before promotion")
-    if decision is None or not persist_application_outcome_record(
+    if decision is not None and not persist_application_outcome_record(
         repository=repository,
         token=token,
         source=source,
@@ -1668,6 +1668,8 @@ def main() -> int:
             if result.applied:
                 if materialization is None or target is None:
                     raise RuntimeError("first activation validation target is unavailable")
+                if accepted_intent is None:
+                    raise RuntimeError("first activation accepted application decision is missing")
                 _complete_first_activation(
                     raw_worker_result=application_worker_result,
                     materialization=materialization,

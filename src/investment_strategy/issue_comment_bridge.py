@@ -706,6 +706,7 @@ def qualify_application_completion(
     """Return one exhaustive consequence disposition from durable evidence."""
 
     current_time = datetime.now(UTC) if now is None else now.astimezone(UTC)
+    owner = repository.split("/", 1)[0]
     since = (current_time - timedelta(days=30)).isoformat(timespec="seconds").replace("+00:00", "Z")
     recent = _paged_list(
         repository,
@@ -736,7 +737,7 @@ def qualify_application_completion(
     malformed_request = False
     request_ids: set[int] = set()
     for comment in recent:
-        if not is_github_actions_comment(comment):
+        if not _trusted_connector_comment(comment, owner):
             continue
         body = comment.get("body")
         if not isinstance(body, str):
@@ -810,11 +811,15 @@ def qualify_application_completion(
             "application-completion-current-issue-unavailable",
             request_comment_id=record.request_comment_id,
         )
-    lifecycle = _paged_list(
-        repository,
-        token,
-        f"issues/{source.issue_number}/timeline",
-        read=read,
+    lifecycle = (
+        _paged_list(
+            repository,
+            token,
+            f"issues/{source.issue_number}/timeline",
+            read=read,
+        )
+        if outcome_matches
+        else ()
     )
     return _accepted_application_state(
         repository=repository,
