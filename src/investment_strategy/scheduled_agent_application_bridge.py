@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import hashlib
 import json
 import os
 import re
@@ -25,8 +26,11 @@ from investment_strategy.scheduled_agent_application_materialization import (
 from investment_strategy.scheduled_agent_carrier import CarrierRequired, carrier_plan_document
 from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
 from investment_strategy.scheduled_agent_effects import (
+    ApplicationDecisionRecord,
     ApplyResult,
     formal_application_correlation,
+    parse_application_decision,
+    persist_application_outcome_record,
 )
 from investment_strategy.scheduled_agent_formal_qualification import (
     build_qualification_input,
@@ -491,6 +495,38 @@ def _paged_github_list(
         page += 1
 
 
+def _application_decision_for_request(
+    *,
+    repository: str,
+    token: str,
+    issue_number: int,
+    request_comment_id: int,
+    request_body: str,
+) -> ApplicationDecisionRecord | None:
+    """Return the one intact accepted decision for an exact request identity."""
+
+    comments = _paged_github_list(
+        repository,
+        token,
+        f"issues/{issue_number}/comments?sort=created&direction=asc",
+    )
+    expected_hash = hashlib.sha256(request_body.encode("utf-8")).hexdigest()
+    matches: list[ApplicationDecisionRecord] = []
+    for comment in comments:
+        if not is_github_actions_comment(comment):
+            continue
+        record = parse_application_decision(comment.get("body"))
+        if (
+            record is not None
+            and record.request_comment_id == request_comment_id
+            and record.request_body_sha256 == expected_hash
+        ):
+            matches.append(record)
+    if len(matches) > 1:
+        raise ValueError("application decision identity is ambiguous")
+    return None if not matches else matches[0]
+
+
 def _fresh_event_observation(
     event: Mapping[str, object],
     body: str,
@@ -519,10 +555,19 @@ def _fresh_event_observation(
     if (
         observed_comment is None
         or observed_comment.get("id") != comment_id
-        or observed_comment.get("body") != body
         or not _trusted_connector_comment(observed_comment, owner)
     ):
         raise ValueError("application request current comment observation is incomplete")
+    if observed_comment.get("body") != body:
+        accepted = _application_decision_for_request(
+            repository=repository,
+            token=token,
+            issue_number=issue_number,
+            request_comment_id=comment_id,
+            request_body=body,
+        )
+        if accepted is None or accepted.disposition != "ACCEPTED":
+            raise ValueError("application request current comment observation is incomplete")
     observed_issue = _as_mapping(_github_json(repository, token, f"issues/{issue_number}"))
     if (
         observed_issue is None
@@ -966,6 +1011,7 @@ def _complete_first_activation(
     current_revision: str,
     default_branch: str,
     request_comment_id: int,
+    decision: ApplicationDecisionRecord | None = None,
 ) -> None:
     """Persist result first, then atomically promote Change and successor routing."""
 
@@ -1023,6 +1069,15 @@ def _complete_first_activation(
     )
     if fresh_target != target:
         raise RuntimeError("first activation validation target changed before promotion")
+    if decision is None or not persist_application_outcome_record(
+        repository=repository,
+        token=token,
+        source=source,
+        decision=decision,
+        outcome="COMPLETED",
+        reason="first activation consequence accepted and ready for promotion",
+    ):
+        raise RuntimeError("first activation application outcome was not persisted")
 
     issue = _as_mapping(_github_json(repository, token, f"issues/{source.issue_number}"))
     observation = None if issue is None else normalize_github_issue(issue)
@@ -1505,37 +1560,6 @@ def main() -> int:
         return 0
 
     _fresh_event_observation(event, body, repository, token)
-    if request.authorization_revision != args.revision and args.run_attempt == 1:
-        if args.validation_passed:
-            raise ValueError("stale activation recovery cannot run as validation completion")
-        if not _recover_partial_first_activation(
-            request=request,
-            event=event,
-            repository=repository,
-            token=token,
-            current_revision=args.revision,
-            default_branch=args.default_branch,
-        ):
-            raise ValueError("EFFECT_REQUEST authorization revision is stale")
-        recovery_result = ApplyResult(True, "administrative_recovery")
-        _write_carrier_outputs(recovery_result)
-        _write_validation_outputs(None)
-        print(
-            json.dumps(
-                {
-                    "applied": True,
-                    "reason": recovery_result.reason,
-                    "effects": 0,
-                    "validation_required": False,
-                    "validation_completed": False,
-                    "carrier_required": False,
-                    "carrier_plan_id": None,
-                },
-                sort_keys=True,
-            )
-        )
-        return 0
-
     preflight = acquire_current_github_preflight(repository, token)
     plan = plan_application(
         event=event,
@@ -1552,11 +1576,37 @@ def main() -> int:
     if plan.source is None or plan.raw_worker_result is None or plan.request_comment_id is None:
         raise RuntimeError("application plan is missing validated source/result/request identity")
 
-    application_worker_result = _application_owned_worker_result(
-        plan.raw_worker_result,
-        source=plan.source,
-        current_revision=args.revision,
+    accepted_intent = (
+        _application_decision_for_request(
+            repository=repository,
+            token=token,
+            issue_number=plan.source.issue_number,
+            request_comment_id=plan.request_comment_id,
+            request_body=body,
+        )
+        if args.run_attempt > 1 or args.validation_passed
+        else None
     )
+    if accepted_intent is not None:
+        if accepted_intent.disposition == "REJECTED":
+            _write_carrier_outputs(ApplyResult(False, "application-rejected"))
+            _write_validation_outputs(None)
+            return 0
+        if (
+            accepted_intent.issue_number != plan.source.issue_number
+            or accepted_intent.role != plan.source.role
+            or accepted_intent.action != plan.source.action
+            or accepted_intent.worker_result_sha256
+            != hashlib.sha256(accepted_intent.raw_worker_result.encode("utf-8")).hexdigest()
+        ):
+            raise RuntimeError("accepted application intent identity is invalid")
+        application_worker_result = accepted_intent.raw_worker_result
+    else:
+        application_worker_result = _application_owned_worker_result(
+            plan.raw_worker_result,
+            source=plan.source,
+            current_revision=args.revision,
+        )
     worker_result = parse_worker_result(application_worker_result, plan.source)
     materializations = _materialization_effects(application_worker_result, plan.source)
     if len(materializations) > 1:
@@ -1612,6 +1662,8 @@ def main() -> int:
                 defer_issue_comments=first_activation,
                 allow_pending_continuation=plan.pending_continuation,
                 pending_application_correlation=plan.pending_application_correlation,
+                application_request_body=body,
+                authorization_revision=request.authorization_revision,
             )
             if result.applied:
                 if materialization is None or target is None:
@@ -1626,6 +1678,7 @@ def main() -> int:
                     current_revision=args.revision,
                     default_branch=args.default_branch,
                     request_comment_id=plan.request_comment_id,
+                    decision=accepted_intent,
                 )
         else:
             batch, result = run_guarded_effect_application(
@@ -1641,6 +1694,8 @@ def main() -> int:
                 defer_issue_comments=requires_validation and not args.validation_passed,
                 allow_pending_continuation=plan.pending_continuation,
                 pending_application_correlation=plan.pending_application_correlation,
+                application_request_body=body,
+                authorization_revision=request.authorization_revision,
             )
     except CarrierRequired as exc:
         # CarrierRequired is the hard invocation-exit boundary. Persist only
