@@ -422,7 +422,7 @@ def test_merge_delivery_and_rereview_use_one_evolving_rest_sequence(
     # A new adapter and fresh current-main dispatch must survive activation.
     stale_review = github.apply("merged", 101, [merge_effect])
     assert not stale_review.applied and stale_review.carrier_plan is None
-    assert not github.writes
+    assert github.writes == [["POST", "issues/229/comments"]]
     # Existing lifecycle correction is the lawful route to current-default review.
     assert github.apply("lifecycle-violation", 102).applied
     assert github.action == "resolve-question"
