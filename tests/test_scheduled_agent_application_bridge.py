@@ -1182,3 +1182,57 @@ def test_main_exits_at_carrier_boundary_before_formal_continuation(
     assert '"effects": 0' in output
     assert "ACTION_RESULT" not in output
     assert "SLICE_CHECKPOINT" not in output
+
+
+def test_application_owns_formal_result_after_other_worker_effects() -> None:
+    source = WorkerRequest(138, "lead", "explore-change")
+    worker = _worker_result()
+    worker["result_content"] = "decision-complete explore"
+    worker["requested_effects"] = [
+        {
+            "kind": "issue-comment",
+            "payload_json": json.dumps(
+                {"issue_number": 138, "body": "diagnostic note"},
+                sort_keys=True,
+            ),
+        }
+    ]
+    raw = json.dumps(worker, sort_keys=True, separators=(",", ":"))
+
+    normalized = bridge._application_owned_worker_result(
+        raw,
+        source=source,
+        current_revision=_REVISION,
+    )
+    payload = json.loads(normalized)
+    effects = payload["requested_effects"]
+    assert [effect["kind"] for effect in effects] == ["issue-comment", "issue-comment"]
+    assert json.loads(effects[0]["payload_json"])["body"] == "diagnostic note"
+    formal = json.loads(effects[1]["payload_json"])["body"]
+    assert formal.startswith("ACTION_RESULT\n")
+    assert "Result: PROPOSAL_READY" in formal
+    assert f"Default-Branch-Revision: {_REVISION}" in formal
+
+
+def test_rerun_reauthorizes_exact_request_on_descendant_main(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_revision = "1" * 40
+    body = _effect_request(revision=old_revision)
+    request = parse_application_request(body)
+    assert request is not None
+    monkeypatch.setattr(bridge, "_authorization_revision_is_ancestor", lambda *_args: True)
+
+    plan = plan_application(
+        event=_event(body),
+        request=request,
+        preflight=_preflight(),
+        repository=_REPOSITORY,
+        current_revision=_REVISION,
+        token="token",
+        allow_descendant_resume=True,
+    )
+
+    assert plan.should_apply
+    assert plan.source == WorkerRequest(138, "lead", "explore-change")
+    assert plan.request_comment_id == 102

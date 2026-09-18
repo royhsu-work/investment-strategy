@@ -65,6 +65,8 @@ def test_bridge_is_run_scoped_transport_without_mailbox_semantics() -> None:
     assert "types: [created]" in workflow
     assert "run-name: Scheduled Agent Dispatch ${{ github.event.comment.id }}" in workflow
     assert "issues: read" in workflow
+    assert "actions: write" in workflow
+    assert "Resume exact incomplete application before semantic dispatch" in workflow
     assert "ref: ${{ github.event.repository.default_branch }}" in workflow
     assert "persist-credentials: false" in workflow
     assert "uv run python -m investment_strategy.issue_comment_bridge" in workflow
@@ -87,6 +89,9 @@ def test_request_and_run_name_parsers_require_exact_identity() -> None:
     assert bridge.render_dispatch_run_name(987) == "Scheduled Agent Dispatch 987"
     assert bridge.parse_dispatch_run_name("Scheduled Agent Dispatch 987") == 987
     assert bridge.parse_dispatch_run_name("Scheduled Agent Dispatch 0987") is None
+    assert bridge.render_application_run_name(654) == "Scheduled Agent Application 654"
+    assert bridge.parse_application_run_name("Scheduled Agent Application 654") == 654
+    assert bridge.parse_application_run_name("Scheduled Agent Application 0654") is None
 
     for body in (
         "DISPATCH_REQUEST",
@@ -234,3 +239,114 @@ def test_shard_date_is_timezone_bound_and_not_workflow_state() -> None:
     }
     assert parse_checkin_day(payload) == date(2026, 9, 3)
     assert parse_checkin_day({**payload, "labels": [{"name": "action:implement-change"}]}) is None
+
+
+def _effect_request_comment(
+    *,
+    comment_id: int,
+    created_at: str,
+    action: str = "explore-change",
+    role: str = "lead",
+    result_kind: str = "proposal-ready",
+) -> dict[str, object]:
+    import base64
+
+    worker_result = {
+        "issue_number": 138,
+        "role": role,
+        "action": action,
+        "change": "unset",
+        "result_kind": result_kind,
+        "evidence_ref": "same-evidence",
+        "result_content": "same semantic payload",
+        "requested_effects": [],
+    }
+    raw = json.dumps(worker_result, sort_keys=True, separators=(",", ":"))
+    encoded = base64.b64encode(raw.encode("utf-8")).decode("ascii")
+    return {
+        "id": comment_id,
+        "body": "\n".join(
+            (
+                "EFFECT_REQUEST",
+                f"Authorization-Revision: {REVISION}",
+                f"Worker-Result-B64: {encoded}",
+            )
+        ),
+        "created_at": created_at,
+        "user": {"login": "owner"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+
+
+def test_incomplete_exact_application_is_resumed_before_semantic_replay() -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    request = _effect_request_comment(
+        comment_id=654,
+        created_at="2026-09-18T01:00:00Z",
+    )
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [request]
+        if path.startswith("issues/138/comments?"):
+            return []
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 777,
+                        "display_title": "Scheduled Agent Application 654",
+                        "status": "completed",
+                        "run_attempt": 1,
+                    }
+                ]
+            }
+        if path == "actions/runs/777/jobs":
+            return {"jobs": [{"id": 888, "name": "apply"}]}
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+
+    assert completion.state == "RESUME"
+    assert completion.request_comment_id == 654
+    assert completion.job_id == 888
+
+
+def test_distinct_incomplete_requests_never_alias_by_equal_payload() -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    requests = [
+        _effect_request_comment(
+            comment_id=654,
+            created_at="2026-09-18T01:00:00Z",
+        ),
+        _effect_request_comment(
+            comment_id=655,
+            created_at="2026-09-18T01:01:00Z",
+        ),
+    ]
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return requests
+        if path.startswith("issues/138/comments?"):
+            return []
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+
+    assert completion.state == "BLOCKED"
+    assert completion.reason == "application-completion-ambiguous"

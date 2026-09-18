@@ -3128,3 +3128,38 @@ def test_formal_transition_reconstructs_recovery_ancestry_on_current_path(
 
     assert adapter.guard(effect) is descendant
     assert compare_calls == [f"compare/{historical_revision}...{current_revision}"]
+
+
+def test_application_injects_repository_derived_successor_into_formal_result() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    adapter = GitHubEffectAdapter(
+        "owner/repo",
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        request_comment_id=_REQUEST_COMMENT_ID,
+        expected_result_kind="spec-blocker",
+    )
+    body = (
+        "ACTION_RESULT\n"
+        "Workflow: #138\n"
+        f"Change: {_CHANGE}\n"
+        "Action: implement-change\n"
+        "Role: executor\n"
+        "Result: SPEC_BLOCKER\n"
+        f"Revision: {_REVISION}\n"
+        f"Default-Branch-Revision: {_REVISION}\n"
+        "Evidence: exact application result\n"
+    )
+
+    bound = adapter._application_bound_comment_body(body)
+
+    assert (
+        "Repository-derived successor: Lead / resolve-question"
+        in bound
+    )
+    assert (
+        f"Application-Correlation: application:{_REQUEST_COMMENT_ID}:"
+        in bound
+    )
