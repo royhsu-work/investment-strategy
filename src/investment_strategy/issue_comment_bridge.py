@@ -858,7 +858,7 @@ def qualify_application_completion(
             )
 
     source_request_invalid = False
-    requests: dict[int, tuple[str, object]] = {}
+    requests: dict[int, tuple[str, str]] = {}
     request_ids: set[int] = set()
     for comment in recent:
         if not _trusted_connector_comment(comment, owner):
@@ -887,7 +887,7 @@ def qualify_application_completion(
             source_request_invalid = True
             continue
         request_ids.add(comment_id)
-        requests[comment_id] = (body, request)
+        requests[comment_id] = (body, request.authorization_revision)
 
     if source_request_invalid:
         return ApplicationCompletion("INVALID", "application-completion-request-invalid")
@@ -909,11 +909,11 @@ def qualify_application_completion(
                     "application-completion-unaccepted-ambiguous",
                 )
             request_comment_id = next(iter(request_ids))
-            request_body, request = requests[request_comment_id]
+            request_body, authorization_revision = requests[request_comment_id]
             relation = _application_protocol_relation(
                 repository,
                 token,
-                authorization_revision=request.authorization_revision,
+                authorization_revision=authorization_revision,
                 read=read,
             )
             if relation == "PROTOCOL":
