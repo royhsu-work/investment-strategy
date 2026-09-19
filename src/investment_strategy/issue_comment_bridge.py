@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -52,6 +54,7 @@ RUN_NAME_PREFIX = "Scheduled Agent Dispatch "
 APPLICATION_RUN_NAME_PREFIX = "Scheduled Agent Application "
 DISPATCH_RESULT_SCHEMA = "scheduled-agent-dispatch-result/v1"
 _APPLICATION_WORKFLOW = "scheduled-agent-application.yml"
+_APPLICATION_DECISION_PROTOCOL_REVISION = "e874b4bdfc866649c0e7e61c151991d124d5c0c6"
 _CHATGPT_CONNECTOR_APP_SLUG = "chatgpt-codex-connector"
 _FORMAL_RESULT_MARKERS = frozenset({"ACTION_RESULT", "REVIEW_RESULT", "MERGE_RESULT"})
 _DECISION_DISPOSITIONS = {"AUTHORIZE", "NO_WORK", "FAIL_CLOSED"}
@@ -690,6 +693,128 @@ def _accepted_application_state(
     )
 
 
+def _effect_request_source_hint(body: str) -> WorkerRequest | None:
+    """Recover only source identity from current or legacy EFFECT_REQUEST shapes."""
+
+    lines = body.splitlines()
+    if lines[:1] != ["EFFECT_REQUEST"]:
+        return None
+    encoded = [
+        line.removeprefix("Worker-Result-B64: ")
+        for line in lines[1:]
+        if line.startswith("Worker-Result-B64: ")
+    ]
+    if len(encoded) != 1 or not encoded[0] or encoded[0] != encoded[0].strip():
+        return None
+    try:
+        raw = base64.b64decode(encoded[0].encode("ascii"), validate=True).decode("utf-8")
+        decoded = json.loads(raw)
+    except (UnicodeEncodeError, UnicodeDecodeError, binascii.Error, json.JSONDecodeError):
+        return None
+    if not isinstance(decoded, Mapping):
+        return None
+    try:
+        return WorkerRequest(
+            cast(int, decoded.get("issue_number")),
+            cast(str, decoded.get("role")),
+            cast(str, decoded.get("action")),
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _application_protocol_relation(
+    repository: str,
+    token: str,
+    *,
+    authorization_revision: str,
+    read: GitHubReader,
+) -> Literal["PRE_PROTOCOL", "PROTOCOL", "INDETERMINATE"]:
+    """Classify an exact request revision against the durable protocol activation."""
+
+    if authorization_revision == _APPLICATION_DECISION_PROTOCOL_REVISION:
+        return "PROTOCOL"
+    before = read(
+        repository,
+        token,
+        f"compare/{authorization_revision}...{_APPLICATION_DECISION_PROTOCOL_REVISION}",
+    )
+    if isinstance(before, Mapping):
+        base = before.get("base_commit")
+        if (
+            before.get("status") == "ahead"
+            and isinstance(base, Mapping)
+            and base.get("sha") == authorization_revision
+        ):
+            return "PRE_PROTOCOL"
+    after = read(
+        repository,
+        token,
+        f"compare/{_APPLICATION_DECISION_PROTOCOL_REVISION}...{authorization_revision}",
+    )
+    if isinstance(after, Mapping):
+        base = after.get("base_commit")
+        if (
+            after.get("status") in {"ahead", "identical"}
+            and isinstance(base, Mapping)
+            and base.get("sha") == _APPLICATION_DECISION_PROTOCOL_REVISION
+        ):
+            return "PROTOCOL"
+    return "INDETERMINATE"
+
+
+def _legacy_unaccepted_request_is_inert(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    request_comment_id: int,
+    request_body: str,
+    issue_comments: tuple[Mapping[str, object], ...],
+    current_revision: str,
+    read: GitHubReader,
+) -> bool:
+    """Prove a pre-protocol request left no request-owned durable consequence."""
+
+    try:
+        request = parse_application_request(request_body)
+        if request is None:
+            return False
+        worker = parse_worker_result(request.raw_worker_result, source)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    if worker.requested_effects:
+        return False
+
+    issue = read(repository, token, f"issues/{source.issue_number}")
+    observation = normalize_github_issue(issue) if isinstance(issue, Mapping) else None
+    if (
+        observation is None
+        or not observation.authoritative
+        or observation.state != "open"
+        or observation.routing != (source.role, source.action)
+        or observation.change != worker.change
+    ):
+        return False
+
+    expected_kind = worker.typed_result.result.kind.value
+    for comment in issue_comments:
+        event = parse_formal_result(comment, current_revision=current_revision)
+        if (
+            event is not None
+            and event.issue_number == source.issue_number
+            and event.change == worker.change
+            and event.role == source.role
+            and event.action == source.action
+            and event.result_kind == expected_kind
+        ):
+            return False
+
+    # The request id is part of the proof boundary even though a pre-protocol
+    # request has no APPLICATION_DECISION record to bind it.
+    return request_comment_id > 0
+
+
 def qualify_application_completion(
     repository: str,
     token: str,
@@ -732,40 +857,39 @@ def qualify_application_completion(
                 outcome_record
             )
 
-    malformed_request = False
+    source_request_invalid = False
+    requests: dict[int, tuple[str, object]] = {}
     request_ids: set[int] = set()
     for comment in recent:
         if not _trusted_connector_comment(comment, owner):
             continue
         body = comment.get("body")
-        if not isinstance(body, str):
+        if not isinstance(body, str) or body.splitlines()[:1] != ["EFFECT_REQUEST"]:
             continue
-        if body.splitlines()[:1] != ["EFFECT_REQUEST"]:
+
+        # Transport history is repository-wide, but application completion is
+        # exact-source-local.  A legacy or malformed request for another source
+        # must not poison the currently selected Action.
+        source_hint = _effect_request_source_hint(body)
+        if source_hint != source:
             continue
+
         comment_id = _positive_int(comment.get("id"))
         if comment_id is None:
-            malformed_request = True
+            source_request_invalid = True
             continue
         try:
             request = parse_application_request(body)
-            if request is None:
-                malformed_request = True
-                continue
-            decoded = json.loads(request.raw_worker_result)
-            if not isinstance(decoded, Mapping):
-                malformed_request = True
-                continue
-            candidate = WorkerRequest(
-                cast(int, decoded.get("issue_number")),
-                cast(str, decoded.get("role")),
-                cast(str, decoded.get("action")),
-            )
-            if candidate == source:
-                request_ids.add(comment_id)
-        except (TypeError, ValueError, json.JSONDecodeError):
-            malformed_request = True
+        except ValueError:
+            source_request_invalid = True
+            continue
+        if request is None:
+            source_request_invalid = True
+            continue
+        request_ids.add(comment_id)
+        requests[comment_id] = (body, request)
 
-    if malformed_request:
+    if source_request_invalid:
         return ApplicationCompletion("INVALID", "application-completion-request-invalid")
 
     # Every accepted/rejected record is exact evidence. Multiple accepted
@@ -779,9 +903,47 @@ def qualify_application_completion(
         if rejected:
             return ApplicationCompletion("REJECTED", "application-completion-rejected")
         if request_ids:
-            # A valid exact request with no durable Phase-A decision never crossed
-            # the acceptance linearization point. It is invalid to resume it.
-            return ApplicationCompletion("INVALID", "application-completion-acceptance-missing")
+            if len(request_ids) != 1:
+                return ApplicationCompletion(
+                    "AMBIGUOUS",
+                    "application-completion-unaccepted-ambiguous",
+                )
+            request_comment_id = next(iter(request_ids))
+            request_body, request = requests[request_comment_id]
+            relation = _application_protocol_relation(
+                repository,
+                token,
+                authorization_revision=request.authorization_revision,
+                read=read,
+            )
+            if relation == "PROTOCOL":
+                # After protocol activation, absence of the durable Phase-A
+                # decision proves that no consequential mutation was authorized.
+                return ApplicationCompletion(
+                    "REJECTED",
+                    "application-completion-preaccept-rejected",
+                    request_comment_id=request_comment_id,
+                )
+            if relation == "PRE_PROTOCOL" and _legacy_unaccepted_request_is_inert(
+                repository,
+                token,
+                source=source,
+                request_comment_id=request_comment_id,
+                request_body=request_body,
+                issue_comments=issue_comments,
+                current_revision=current_revision,
+                read=read,
+            ):
+                return ApplicationCompletion(
+                    "REJECTED",
+                    "application-completion-legacy-inert-rejected",
+                    request_comment_id=request_comment_id,
+                )
+            return ApplicationCompletion(
+                "INVALID",
+                "application-completion-acceptance-missing",
+                request_comment_id=request_comment_id,
+            )
         return ApplicationCompletion("NONE", "application-completion-none")
 
     record = accepted[0]
