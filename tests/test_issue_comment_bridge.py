@@ -250,14 +250,17 @@ def _effect_request_comment(
     action: str = "explore-change",
     role: str = "lead",
     result_kind: str = "proposal-ready",
+    issue_number: int = 138,
+    change: str = "unset",
+    authorization_revision: str = REVISION,
 ) -> dict[str, object]:
     import base64
 
     worker_result = {
-        "issue_number": 138,
+        "issue_number": issue_number,
         "role": role,
         "action": action,
-        "change": "unset",
+        "change": change,
         "result_kind": result_kind,
         "evidence_ref": "same-evidence",
         "result_content": "same semantic payload",
@@ -270,7 +273,7 @@ def _effect_request_comment(
         "body": "\n".join(
             (
                 "EFFECT_REQUEST",
-                f"Authorization-Revision: {REVISION}",
+                f"Authorization-Revision: {authorization_revision}",
                 f"Worker-Result-B64: {encoded}",
             )
         ),
@@ -342,6 +345,8 @@ def test_missing_acceptance_is_not_resumed_before_semantic_replay() -> None:
             return [request]
         if path.startswith("issues/138/comments?"):
             return []
+        if path.startswith("compare/"):
+            return {}
         raise AssertionError(path)
 
     completion = bridge.qualify_application_completion(
@@ -355,6 +360,159 @@ def test_missing_acceptance_is_not_resumed_before_semantic_replay() -> None:
 
     assert completion.state == "INVALID"
     assert completion.reason == "application-completion-acceptance-missing"
+
+
+def test_unrelated_legacy_request_does_not_poison_current_source() -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    unrelated = _effect_request_comment(
+        comment_id=653,
+        created_at="2026-09-18T00:59:00Z",
+        issue_number=999,
+    )
+    body = unrelated["body"]
+    assert isinstance(body, str)
+    encoded = body.splitlines()[2].removeprefix("Worker-Result-B64: ")
+    unrelated["body"] = "\n".join(
+        (
+            "EFFECT_REQUEST",
+            "Dispatch-Request-Comment-ID: 100",
+            "Dispatch-Run-ID: 200",
+            f"Worker-Result-B64: {encoded}",
+        )
+    )
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [unrelated]
+        if path.startswith("issues/138/comments?"):
+            return []
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+
+    assert completion.state == "NONE"
+    assert completion.reason == "application-completion-none"
+
+
+def test_same_source_malformed_legacy_request_still_fails_closed() -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    malformed = _effect_request_comment(
+        comment_id=653,
+        created_at="2026-09-18T00:59:00Z",
+    )
+    body = malformed["body"]
+    assert isinstance(body, str)
+    encoded = body.splitlines()[2].removeprefix("Worker-Result-B64: ")
+    malformed["body"] = "\n".join(
+        (
+            "EFFECT_REQUEST",
+            "Dispatch-Request-Comment-ID: 100",
+            "Dispatch-Run-ID: 200",
+            f"Worker-Result-B64: {encoded}",
+        )
+    )
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [malformed]
+        if path.startswith("issues/138/comments?"):
+            return []
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+
+    assert completion.state == "INVALID"
+    assert completion.reason == "application-completion-request-invalid"
+
+
+def test_protocol_request_without_acceptance_returns_source_ownership() -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    request = _effect_request_comment(
+        comment_id=654,
+        created_at="2026-09-19T06:08:00Z",
+        authorization_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
+    )
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [request]
+        if path.startswith("issues/138/comments?"):
+            return []
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 19, 7, 0, tzinfo=UTC),
+    )
+
+    assert completion.state == "REJECTED"
+    assert completion.reason == "application-completion-preaccept-rejected"
+
+
+def test_preprotocol_inert_request_is_retired_without_semantic_replay() -> None:
+    source = bridge.WorkerRequest(234, "lead", "resolve-question")
+    legacy_revision = "6ffd99baee9289090b5c2178a5ce6801d8f1f335"
+    change = "source-decision-explore-materialization"
+    request = _effect_request_comment(
+        comment_id=5729806158,
+        created_at="2026-09-18T12:09:34Z",
+        action="resolve-question",
+        role="lead",
+        result_kind="ready-for-openspec-review",
+        issue_number=234,
+        change=change,
+        authorization_revision=legacy_revision,
+    )
+    issue = {
+        "number": 234,
+        "state": "open",
+        "created_at": "2026-09-09T10:59:41Z",
+        "closed_at": None,
+        "labels": [{"name": "action:resolve-question"}],
+        "body": f"Change: {change}",
+    }
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [request]
+        if path.startswith("issues/234/comments?"):
+            return []
+        if path == f"compare/{legacy_revision}...{bridge._APPLICATION_DECISION_PROTOCOL_REVISION}":
+            return {"status": "ahead", "base_commit": {"sha": legacy_revision}}
+        if path == "issues/234":
+            return issue
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 19, 7, 0, tzinfo=UTC),
+    )
+
+    assert completion.state == "REJECTED"
+    assert completion.reason == "application-completion-legacy-inert-rejected"
+    assert completion.request_comment_id == 5729806158
 
 
 def test_one_accepted_intent_is_resumed_before_semantic_replay() -> None:
