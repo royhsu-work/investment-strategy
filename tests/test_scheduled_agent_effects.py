@@ -9,7 +9,16 @@ from collections.abc import Callable
 import pytest
 
 import investment_strategy.scheduled_agent_effects as effects
-from investment_strategy.scheduled_agent_action_model import ResultKind
+from investment_strategy.scheduled_agent_action_model import (
+    Action,
+    ActionApplicationDecision,
+    ActionSource,
+    ApplicationDisposition,
+    BoundedActionResult,
+    ResultKind,
+    TypedResult,
+    role_for,
+)
 from investment_strategy.scheduled_agent_carrier import CarrierRequired, make_carrier_plan
 from investment_strategy.scheduled_agent_effect_contract import (
     allowed_github_mutation_operations,
@@ -88,6 +97,91 @@ def _raw(
             "requested_effects": requested_effects or [],
         }
     )
+
+
+def _protocol_decision() -> ActionApplicationDecision:
+    source = ActionSource(138, _CHANGE, Action.IMPLEMENT_CHANGE, _REVISION)
+    result = BoundedActionResult(
+        138,
+        _CHANGE,
+        Action.IMPLEMENT_CHANGE,
+        TypedResult(ResultKind.SPEC_BLOCKER, "issuecomment-typed-result"),
+    )
+    successor = Action.RESOLVE_QUESTION
+    return ActionApplicationDecision(
+        ApplicationDisposition.ACCEPT,
+        source,
+        result,
+        successor,
+        role_for(successor),
+    )
+
+
+def test_application_decision_and_terminal_outcome_are_exactly_bound() -> None:
+    request_body = "EFFECT_REQUEST\nAuthorization-Revision: " + _REVISION
+    raw = _raw()
+    decision = _protocol_decision()
+    rendered = effects.render_application_decision_body(
+        request_comment_id=_REQUEST_COMMENT_ID,
+        request_body=request_body,
+        authorization_revision=_REVISION,
+        decision=decision,
+        disposition="ACCEPTED",
+        raw_worker_result=raw,
+        reason="accepted",
+    )
+    parsed = effects.parse_application_decision(rendered)
+    assert parsed is not None
+    assert parsed.request_comment_id == _REQUEST_COMMENT_ID
+    assert parsed.raw_worker_result == raw
+    assert parsed.disposition == "ACCEPTED"
+
+    outcome_body = effects.render_application_outcome_body(
+        request_comment_id=_REQUEST_COMMENT_ID,
+        request_body_sha256=parsed.request_body_sha256,
+        authorization_revision=_REVISION,
+        decision=parsed,
+        outcome="COMPLETED",
+        reason="complete",
+    )
+    outcome = effects.parse_application_outcome(outcome_body)
+    assert outcome is not None
+    assert outcome.request_comment_id == _REQUEST_COMMENT_ID
+    assert outcome.worker_result_sha256 == parsed.worker_result_sha256
+
+
+def test_application_acceptance_precedes_outcome_and_derived_successor() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    batch = parse_effect_batch(_raw(), source)
+    events: list[str] = []
+    applied: list[StagedEffect] = []
+
+    def apply(effect: StagedEffect) -> None:
+        events.append("derived" if effect.derived else "effect")
+        applied.append(effect)
+
+    def persist_decision(_decision: object, _disposition: str, _reason: str) -> bool:
+        events.append("accepted")
+        return True
+
+    def persist_outcome(_decision: object, _outcome: str, _reason: str) -> bool:
+        events.append("outcome")
+        return True
+
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: True,
+        apply_effect=apply,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        persist_application_decision=persist_decision,
+        persist_application_outcome=persist_outcome,
+    )
+
+    assert result.applied
+    assert events == ["accepted", "outcome", "derived"]
+    assert applied[-1].derived
 
 
 def test_parse_effect_batch_binds_typed_result_and_effects() -> None:

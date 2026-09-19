@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -278,7 +280,57 @@ def _effect_request_comment(
     }
 
 
-def test_incomplete_exact_application_is_resumed_before_semantic_replay() -> None:
+def _application_decision_comment(
+    request: dict[str, object],
+    *,
+    disposition: str = "ACCEPTED",
+    comment_id: int = 700,
+) -> dict[str, object]:
+    body = request["body"]
+    assert isinstance(body, str)
+    lines = body.splitlines()
+    authorization_revision = lines[1].removeprefix("Authorization-Revision: ")
+    encoded = lines[2].removeprefix("Worker-Result-B64: ")
+    raw = base64.b64decode(encoded.encode("ascii"), validate=True).decode("utf-8")
+    worker = json.loads(raw)
+    return {
+        "id": comment_id,
+        "body": "\n".join(
+            (
+                "APPLICATION_DECISION",
+                f"Request-Comment: {request['id']}",
+                f"Request-Body-SHA256: {hashlib.sha256(body.encode('utf-8')).hexdigest()}",
+                f"Authorization-Revision: {authorization_revision}",
+                f"Issue: {worker['issue_number']}",
+                f"Role: {worker['role']}",
+                f"Action: {worker['action']}",
+                f"Change: {worker['change']}",
+                f"Result-Kind: {worker['result_kind']}",
+                f"Disposition: {disposition}",
+                f"Worker-Result-SHA256: {hashlib.sha256(raw.encode('utf-8')).hexdigest()}",
+                f"Application-Intent-B64: {encoded}",
+                "Reason: test",
+            )
+        ),
+        "created_at": "2026-09-18T01:30:00Z",
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+
+
+def _current_source_issue() -> dict[str, object]:
+    return {
+        "number": 138,
+        "title": checkin_title(date(2026, 9, 3)),
+        "state": "open",
+        "created_at": "2026-09-17T00:00:00Z",
+        "closed_at": None,
+        "labels": [{"name": "action:explore-change"}],
+        "body": "Change: unset",
+    }
+
+
+def test_missing_acceptance_is_not_resumed_before_semantic_replay() -> None:
     source = bridge.WorkerRequest(138, "lead", "explore-change")
     request = _effect_request_comment(
         comment_id=654,
@@ -290,6 +342,36 @@ def test_incomplete_exact_application_is_resumed_before_semantic_replay() -> Non
             return [request]
         if path.startswith("issues/138/comments?"):
             return []
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+
+    assert completion.state == "INVALID"
+    assert completion.reason == "application-completion-acceptance-missing"
+
+
+def test_one_accepted_intent_is_resumed_before_semantic_replay() -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    request = _effect_request_comment(
+        comment_id=654,
+        created_at="2026-09-18T01:00:00Z",
+    )
+    decision = _application_decision_comment(request)
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [request]
+        if path.startswith("issues/138/comments?"):
+            return [decision]
+        if path == "issues/138":
+            return _current_source_issue()
         if path.startswith("actions/workflows/"):
             return {
                 "workflow_runs": [
@@ -314,29 +396,24 @@ def test_incomplete_exact_application_is_resumed_before_semantic_replay() -> Non
         now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
     )
 
-    assert completion.state == "RESUME"
+    assert completion.state == "RESUMABLE"
     assert completion.request_comment_id == 654
     assert completion.job_id == 888
 
 
-def test_distinct_incomplete_requests_never_alias_by_equal_payload() -> None:
+def test_rejected_intent_returns_ownership_to_later_semantic_dispatch() -> None:
     source = bridge.WorkerRequest(138, "lead", "explore-change")
-    requests = [
-        _effect_request_comment(
-            comment_id=654,
-            created_at="2026-09-18T01:00:00Z",
-        ),
-        _effect_request_comment(
-            comment_id=655,
-            created_at="2026-09-18T01:01:00Z",
-        ),
-    ]
+    request = _effect_request_comment(
+        comment_id=654,
+        created_at="2026-09-18T01:00:00Z",
+    )
+    decision = _application_decision_comment(request, disposition="REJECTED")
 
     def fake_read(_repository: str, _token: str, path: str) -> object:
         if path.startswith("issues/comments?"):
-            return requests
+            return [request]
         if path.startswith("issues/138/comments?"):
-            return []
+            return [decision]
         raise AssertionError(path)
 
     completion = bridge.qualify_application_completion(
@@ -348,5 +425,42 @@ def test_distinct_incomplete_requests_never_alias_by_equal_payload() -> None:
         now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
     )
 
-    assert completion.state == "BLOCKED"
-    assert completion.reason == "application-completion-ambiguous"
+    assert completion.state == "REJECTED"
+    assert completion.reason == "application-completion-rejected"
+
+
+def test_distinct_accepted_requests_never_alias_by_equal_payload() -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    requests = [
+        _effect_request_comment(
+            comment_id=654,
+            created_at="2026-09-18T01:00:00Z",
+        ),
+        _effect_request_comment(
+            comment_id=655,
+            created_at="2026-09-18T01:01:00Z",
+        ),
+    ]
+    decisions = [
+        _application_decision_comment(requests[0], comment_id=700),
+        _application_decision_comment(requests[1], comment_id=701),
+    ]
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return requests
+        if path.startswith("issues/138/comments?"):
+            return decisions
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+
+    assert completion.state == "AMBIGUOUS"
+    assert completion.reason == "application-completion-accepted-ambiguous"

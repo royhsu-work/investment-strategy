@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -18,12 +19,27 @@ from investment_strategy.scheduled_agent_action_model import Action as ModelActi
 from investment_strategy.scheduled_agent_action_model import next_action, role_for
 from investment_strategy.scheduled_agent_application_bridge import parse_application_request
 from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
+from investment_strategy.scheduled_agent_effects import (
+    ApplicationDecisionRecord,
+    ApplicationOutcomeRecord,
+    parse_application_decision,
+    parse_application_outcome,
+)
+from investment_strategy.scheduled_agent_formal_qualification import (
+    build_qualification_input,
+    qualify_current_formal_consequence,
+)
+from investment_strategy.scheduled_agent_formal_result import parse_formal_result
 from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
     acquire_current_github_preflight,
     is_github_actions_comment,
+    normalize_github_issue,
 )
-from investment_strategy.scheduled_agent_worker import parse_worker_result
+from investment_strategy.scheduled_agent_worker import (
+    WorkerActionResult,
+    parse_worker_result,
+)
 from investment_strategy.workflow_dispatch import (
     DispatchDecision,
     DispatchPreflight,
@@ -71,7 +87,7 @@ class BridgePlan:
 
 @dataclass(frozen=True)
 class ApplicationCompletion:
-    state: Literal["NONE", "RESUME", "WAIT", "BLOCKED"]
+    state: Literal["NONE", "REJECTED", "RESUMABLE", "COMPLETE", "ABORTED", "INVALID", "AMBIGUOUS"]
     reason: str
     request_comment_id: int | None = None
     job_id: int | None = None
@@ -263,6 +279,8 @@ def _application_job(
     *,
     read: GitHubReader,
 ) -> ApplicationCompletion:
+    """Locate the one exact application run for an accepted intent."""
+
     title = render_application_run_name(request_comment_id)
     page = 1
     matches: list[Mapping[str, object]] = []
@@ -274,10 +292,10 @@ def _application_job(
             f"actions/workflows/{quote(_APPLICATION_WORKFLOW, safe='')}/runs?{query}",
         )
         if not isinstance(payload, Mapping):
-            return ApplicationCompletion("BLOCKED", "application-completion-run-list-incomplete")
+            return ApplicationCompletion("INVALID", "application-completion-run-list-incomplete")
         raw_runs = payload.get("workflow_runs")
         if not isinstance(raw_runs, list):
-            return ApplicationCompletion("BLOCKED", "application-completion-run-list-incomplete")
+            return ApplicationCompletion("INVALID", "application-completion-run-list-incomplete")
         for raw in raw_runs:
             if isinstance(raw, Mapping) and raw.get("display_title") == title:
                 matches.append(cast(Mapping[str, object], raw))
@@ -291,26 +309,26 @@ def _application_job(
             if not matches
             else "application-completion-run-ambiguous"
         )
-        return ApplicationCompletion("BLOCKED", reason, request_comment_id=request_comment_id)
+        return ApplicationCompletion("INVALID", reason, request_comment_id=request_comment_id)
 
     run = matches[0]
     run_id = _positive_int(run.get("id"))
     run_attempt = _positive_int(run.get("run_attempt"))
     if run_id is None or run_attempt is None:
         return ApplicationCompletion(
-            "BLOCKED",
+            "INVALID",
             "application-completion-run-identity-incomplete",
             request_comment_id=request_comment_id,
         )
     if run.get("status") != "completed":
         return ApplicationCompletion(
-            "WAIT",
+            "RESUMABLE",
             "application-completion-in-progress",
             request_comment_id=request_comment_id,
         )
     if run_attempt >= 50:
         return ApplicationCompletion(
-            "BLOCKED",
+            "INVALID",
             "application-completion-rerun-limit",
             request_comment_id=request_comment_id,
         )
@@ -318,7 +336,7 @@ def _application_job(
     jobs_payload = read(repository, token, f"actions/runs/{run_id}/jobs")
     if not isinstance(jobs_payload, Mapping) or not isinstance(jobs_payload.get("jobs"), list):
         return ApplicationCompletion(
-            "BLOCKED",
+            "INVALID",
             "application-completion-job-list-incomplete",
             request_comment_id=request_comment_id,
         )
@@ -329,22 +347,346 @@ def _application_job(
     ]
     if len(jobs) != 1:
         return ApplicationCompletion(
-            "BLOCKED",
+            "INVALID",
             "application-completion-job-identity-ambiguous",
             request_comment_id=request_comment_id,
         )
     job_id = _positive_int(cast(Mapping[str, object], jobs[0]).get("id"))
     if job_id is None:
         return ApplicationCompletion(
-            "BLOCKED",
+            "INVALID",
             "application-completion-job-identity-incomplete",
             request_comment_id=request_comment_id,
         )
     return ApplicationCompletion(
-        "RESUME",
+        "RESUMABLE",
         "application-completion-resuming",
         request_comment_id=request_comment_id,
         job_id=job_id,
+    )
+
+
+def _application_decisions(
+    comments: tuple[Mapping[str, object], ...],
+) -> tuple[ApplicationDecisionRecord, ...]:
+    return tuple(
+        record
+        for comment in comments
+        if is_github_actions_comment(comment)
+        for record in (parse_application_decision(comment.get("body")),)
+        if record is not None
+    )
+
+
+def _application_outcomes(
+    comments: tuple[Mapping[str, object], ...],
+) -> tuple[ApplicationOutcomeRecord, ...]:
+    return tuple(
+        record
+        for comment in comments
+        if is_github_actions_comment(comment)
+        for record in (parse_application_outcome(comment.get("body")),)
+        if record is not None
+    )
+
+
+def _application_worker_for_record(
+    record: ApplicationDecisionRecord,
+    source: WorkerRequest,
+) -> WorkerActionResult | None:
+    """Validate the immutable intent payload against its decision metadata."""
+
+    if (
+        record.issue_number != source.issue_number
+        or record.role != source.role
+        or record.action != source.action
+        or record.disposition not in {"ACCEPTED", "REJECTED"}
+    ):
+        return None
+    try:
+        worker = parse_worker_result(record.raw_worker_result, source)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if (
+        record.worker_result_sha256
+        != hashlib.sha256(record.raw_worker_result.encode("utf-8")).hexdigest()
+        or worker.change != record.change
+        or worker.typed_result.result.kind.value != record.result_kind
+        or worker.typed_result.action.value != source.action
+    ):
+        return None
+    return worker
+
+
+def _authorization_ancestry(
+    repository: str,
+    token: str,
+    *,
+    authorization_revision: str,
+    current_revision: str,
+    read: GitHubReader,
+) -> tuple[tuple[str, str], ...] | None:
+    if authorization_revision == current_revision:
+        return ()
+    comparison = read(
+        repository,
+        token,
+        f"compare/{authorization_revision}...{current_revision}",
+    )
+    base_commit = comparison.get("base_commit") if isinstance(comparison, Mapping) else None
+    if (
+        not isinstance(comparison, Mapping)
+        or comparison.get("status") != "ahead"
+        or not isinstance(base_commit, Mapping)
+        or base_commit.get("sha") != authorization_revision
+    ):
+        return None
+    return ((authorization_revision, current_revision),)
+
+
+def _formal_consequence(
+    *,
+    repository: str,
+    token: str,
+    source: WorkerRequest,
+    record: ApplicationDecisionRecord,
+    worker: WorkerActionResult,
+    issue_comments: tuple[Mapping[str, object], ...],
+    lifecycle_events: tuple[Mapping[str, object], ...],
+    current_issue: Mapping[str, object],
+    current_revision: str,
+    read: GitHubReader,
+    mode: Literal["current", "pending"],
+    authorization_ancestry: tuple[tuple[str, str], ...],
+) -> bool:
+    observation = normalize_github_issue(current_issue)
+    if (
+        observation is None
+        or not observation.authoritative
+        or observation.issue_number != source.issue_number
+        or observation.state not in {"open", "closed"}
+        or observation.change == ""
+    ):
+        return False
+    try:
+        successor = next_action(worker.typed_result.action, worker.typed_result.result)
+    except (TypeError, ValueError):
+        return False
+    expected_terminal = successor is None
+    expected_routing = None if successor is None else (role_for(successor).value, successor.value)
+    effective_change: str | None = record.change
+    if effective_change == "unset" and observation.change != "unset":
+        effective_change = observation.change
+    prefix = f"application:{record.request_comment_id}:{source.issue_number}:"
+    matching_comments: list[Mapping[str, object]] = []
+    matching_events = []
+    for comment in issue_comments:
+        event = parse_formal_result(comment, current_revision=current_revision)
+        if (
+            event is not None
+            and event.valid
+            and event.issue_number == source.issue_number
+            and event.role == source.role
+            and event.action == source.action
+            and event.result_kind == record.result_kind
+            and (
+                (effective_change is None or effective_change == "unset")
+                and event.change not in {"", "unset"}
+                or event.change == effective_change
+            )
+            and event.application_correlation is not None
+            and event.application_correlation.startswith(prefix)
+        ):
+            matching_comments.append(comment)
+            matching_events.append(event)
+    if len(matching_comments) > 1:
+        return False
+    if not matching_comments or len(matching_events) != 1:
+        return False
+    if effective_change in {None, "unset"}:
+        effective_change = matching_events[0].change
+    if effective_change is None:
+        return False
+
+    qualification = build_qualification_input(
+        issue_number=source.issue_number,
+        change=effective_change,
+        state=observation.state,
+        current_routing=observation.routing,
+        comments=matching_comments,
+        current_revision=current_revision,
+        mode=mode,
+        expected_routing=expected_routing,
+        expected_terminal=expected_terminal,
+        source_routing=(source.role, source.action),
+        expected_result_kind=record.result_kind,
+        expected_application_correlation=(
+            matching_events[0].application_correlation if mode == "pending" else None
+        ),
+        lifecycle_events=lifecycle_events,
+        authorization_ancestry=authorization_ancestry,
+    )
+    return qualify_current_formal_consequence(qualification).qualified
+
+
+def _accepted_application_state(
+    *,
+    repository: str,
+    token: str,
+    source: WorkerRequest,
+    record: ApplicationDecisionRecord,
+    outcome: ApplicationOutcomeRecord | None,
+    issue_comments: tuple[Mapping[str, object], ...],
+    lifecycle_events: tuple[Mapping[str, object], ...],
+    current_issue: Mapping[str, object],
+    current_revision: str,
+    read: GitHubReader,
+) -> ApplicationCompletion:
+    worker = _application_worker_for_record(record, source)
+    if worker is None or record.disposition != "ACCEPTED":
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-accepted-intent-invalid",
+            request_comment_id=record.request_comment_id,
+        )
+    if outcome is not None:
+        if (
+            outcome.request_comment_id != record.request_comment_id
+            or outcome.request_body_sha256 != record.request_body_sha256
+            or outcome.authorization_revision != record.authorization_revision
+            or outcome.issue_number != record.issue_number
+            or outcome.role != record.role
+            or outcome.action != record.action
+            or outcome.change != record.change
+            or outcome.result_kind != record.result_kind
+            or outcome.worker_result_sha256 != record.worker_result_sha256
+        ):
+            return ApplicationCompletion(
+                "INVALID",
+                "application-completion-outcome-identity-invalid",
+                request_comment_id=record.request_comment_id,
+            )
+        if outcome.outcome == "ABORTED":
+            return ApplicationCompletion(
+                "ABORTED",
+                "application-completion-aborted",
+                request_comment_id=record.request_comment_id,
+            )
+        ancestry = _authorization_ancestry(
+            repository,
+            token,
+            authorization_revision=record.authorization_revision,
+            current_revision=current_revision,
+            read=read,
+        )
+        if ancestry is None:
+            return ApplicationCompletion(
+                "INVALID",
+                "application-completion-stale",
+                request_comment_id=record.request_comment_id,
+            )
+        if not _formal_consequence(
+            repository=repository,
+            token=token,
+            source=source,
+            record=record,
+            worker=worker,
+            issue_comments=issue_comments,
+            lifecycle_events=lifecycle_events,
+            current_issue=current_issue,
+            current_revision=current_revision,
+            read=read,
+            mode="current",
+            authorization_ancestry=ancestry,
+        ):
+            if _formal_consequence(
+                repository=repository,
+                token=token,
+                source=source,
+                record=record,
+                worker=worker,
+                issue_comments=issue_comments,
+                lifecycle_events=lifecycle_events,
+                current_issue=current_issue,
+                current_revision=current_revision,
+                read=read,
+                mode="pending",
+                authorization_ancestry=ancestry,
+            ):
+                return ApplicationCompletion(
+                    "RESUMABLE",
+                    "application-completion-outcome-pending",
+                    request_comment_id=record.request_comment_id,
+                )
+            return ApplicationCompletion(
+                "INVALID",
+                "application-completion-complete-postcondition-invalid",
+                request_comment_id=record.request_comment_id,
+            )
+        return ApplicationCompletion(
+            "COMPLETE",
+            "application-completion-complete",
+            request_comment_id=record.request_comment_id,
+        )
+
+    ancestry = _authorization_ancestry(
+        repository,
+        token,
+        authorization_revision=record.authorization_revision,
+        current_revision=current_revision,
+        read=read,
+    )
+    if ancestry is None:
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-stale",
+            request_comment_id=record.request_comment_id,
+        )
+    observation = normalize_github_issue(current_issue)
+    if (
+        observation is None
+        or not observation.authoritative
+        or observation.issue_number != source.issue_number
+        or observation.change not in {record.change, "unset"}
+        or observation.state not in {"open", "closed"}
+    ):
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-current-issue-invalid",
+            request_comment_id=record.request_comment_id,
+        )
+    try:
+        successor = next_action(worker.typed_result.action, worker.typed_result.result)
+    except (TypeError, ValueError):
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-result-transition-invalid",
+            request_comment_id=record.request_comment_id,
+        )
+    expected_routing = None if successor is None else (role_for(successor).value, successor.value)
+    if observation.state == "closed":
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-routing-without-formal",
+            request_comment_id=record.request_comment_id,
+        )
+    if observation.routing == (source.role, source.action):
+        return _application_job(
+            repository,
+            token,
+            record.request_comment_id,
+            read=read,
+        )
+    if successor is not None and observation.routing == expected_routing:
+        return ApplicationCompletion(
+            "RESUMABLE",
+            "application-completion-outcome-pending",
+            request_comment_id=record.request_comment_id,
+        )
+    return ApplicationCompletion(
+        "INVALID",
+        "application-completion-current-routing-invalid",
+        request_comment_id=record.request_comment_id,
     )
 
 
@@ -357,9 +699,10 @@ def qualify_application_completion(
     read: GitHubReader = _github_json,
     now: datetime | None = None,
 ) -> ApplicationCompletion:
-    """Finish one exact accepted application before semantic replay."""
+    """Return one exhaustive consequence disposition from durable evidence."""
 
     current_time = datetime.now(UTC) if now is None else now.astimezone(UTC)
+    owner = repository.split("/", 1)[0]
     since = (current_time - timedelta(days=30)).isoformat(timespec="seconds").replace("+00:00", "Z")
     recent = _paged_list(
         repository,
@@ -373,78 +716,113 @@ def qualify_application_completion(
         f"issues/{source.issue_number}/comments?sort=created&direction=asc",
         read=read,
     )
-    formal = _formal_result_records(issue_comments)
-    owner = repository.split("/", 1)[0]
-    pending: list[tuple[int, str]] = []
+    decisions = _application_decisions(issue_comments)
+    outcomes = _application_outcomes(issue_comments)
+    relevant_decisions = [
+        record
+        for record in decisions
+        if record.issue_number == source.issue_number
+        and record.role == source.role
+        and record.action == source.action
+    ]
+    grouped_outcomes: dict[int, list[ApplicationOutcomeRecord]] = {}
+    for outcome_record in outcomes:
+        if outcome_record.request_comment_id > 0:
+            grouped_outcomes.setdefault(outcome_record.request_comment_id, []).append(
+                outcome_record
+            )
 
+    malformed_request = False
+    request_ids: set[int] = set()
     for comment in recent:
-        comment_id = _positive_int(comment.get("id"))
+        if not _trusted_connector_comment(comment, owner):
+            continue
         body = comment.get("body")
-        created_at = _comment_time(comment)
-        if (
-            comment_id is None
-            or not isinstance(body, str)
-            or created_at is None
-            or not _trusted_connector_comment(comment, owner)
-        ):
+        if not isinstance(body, str):
+            continue
+        if body.splitlines()[:1] != ["EFFECT_REQUEST"]:
+            continue
+        comment_id = _positive_int(comment.get("id"))
+        if comment_id is None:
+            malformed_request = True
             continue
         try:
             request = parse_application_request(body)
-        except ValueError:
-            continue
-        if request is None:
-            continue
-        try:
+            if request is None:
+                malformed_request = True
+                continue
             decoded = json.loads(request.raw_worker_result)
             if not isinstance(decoded, Mapping):
+                malformed_request = True
                 continue
-            candidate_source = WorkerRequest(
+            candidate = WorkerRequest(
                 cast(int, decoded.get("issue_number")),
                 cast(str, decoded.get("role")),
                 cast(str, decoded.get("action")),
             )
-            worker = parse_worker_result(request.raw_worker_result, candidate_source)
+            if candidate == source:
+                request_ids.add(comment_id)
         except (TypeError, ValueError, json.JSONDecodeError):
-            continue
-        if candidate_source != source:
-            continue
+            malformed_request = True
 
-        correlation_prefix = f"Application-Correlation: application:{comment_id}:"
-        exact_results = tuple(
-            (timestamp, formal_body)
-            for timestamp, formal_body in formal
-            if correlation_prefix in formal_body
-        )
-        later_results = tuple(
-            (timestamp, formal_body)
-            for timestamp, formal_body in formal
-            if timestamp > created_at and correlation_prefix not in formal_body
-        )
-        try:
-            successor = next_action(worker.typed_result.action, worker.typed_result.result)
-        except (TypeError, ValueError):
-            continue
+    if malformed_request:
+        return ApplicationCompletion("INVALID", "application-completion-request-invalid")
 
-        if exact_results:
-            if successor == worker.typed_result.action or later_results:
-                continue
-        elif later_results:
-            continue
-        pending.append((comment_id, request.authorization_revision))
-
-    if not pending:
+    # Every accepted/rejected record is exact evidence. Multiple accepted
+    # records for one current source are competing intents, even if payloads
+    # compare equal.
+    accepted = [record for record in relevant_decisions if record.disposition == "ACCEPTED"]
+    rejected = [record for record in relevant_decisions if record.disposition == "REJECTED"]
+    if len(accepted) > 1:
+        return ApplicationCompletion("AMBIGUOUS", "application-completion-accepted-ambiguous")
+    if len(accepted) == 0:
+        if rejected:
+            return ApplicationCompletion("REJECTED", "application-completion-rejected")
+        if request_ids:
+            # A valid exact request with no durable Phase-A decision never crossed
+            # the acceptance linearization point. It is invalid to resume it.
+            return ApplicationCompletion("INVALID", "application-completion-acceptance-missing")
         return ApplicationCompletion("NONE", "application-completion-none")
-    if len(pending) != 1:
-        return ApplicationCompletion("BLOCKED", "application-completion-ambiguous")
 
-    request_comment_id, authorization_revision = pending[0]
-    if authorization_revision != current_revision and not source.action.startswith("merge-"):
+    record = accepted[0]
+    if request_ids and any(request_id != record.request_comment_id for request_id in request_ids):
         return ApplicationCompletion(
-            "BLOCKED",
-            "application-completion-stale",
-            request_comment_id=request_comment_id,
+            "AMBIGUOUS",
+            "application-completion-request-binding-ambiguous",
         )
-    return _application_job(repository, token, request_comment_id, read=read)
+    outcome_matches = grouped_outcomes.get(record.request_comment_id, [])
+    if len(outcome_matches) > 1:
+        return ApplicationCompletion("AMBIGUOUS", "application-completion-outcome-ambiguous")
+
+    issue = read(repository, token, f"issues/{source.issue_number}")
+    if not isinstance(issue, Mapping):
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-current-issue-unavailable",
+            request_comment_id=record.request_comment_id,
+        )
+    lifecycle = (
+        _paged_list(
+            repository,
+            token,
+            f"issues/{source.issue_number}/timeline",
+            read=read,
+        )
+        if outcome_matches
+        else ()
+    )
+    return _accepted_application_state(
+        repository=repository,
+        token=token,
+        source=source,
+        record=record,
+        outcome=outcome_matches[0] if outcome_matches else None,
+        issue_comments=issue_comments,
+        lifecycle_events=lifecycle,
+        current_issue=cast(Mapping[str, object], issue),
+        current_revision=current_revision,
+        read=read,
+    )
 
 
 def render_dispatch_result_document(
@@ -683,7 +1061,7 @@ def main() -> int:
             )
         )
         resume_job_id = None
-        if completion.state != "NONE":
+        if completion.state in {"RESUMABLE", "INVALID", "AMBIGUOUS"}:
             decision = replace(
                 decision,
                 selected_issue_id=None,

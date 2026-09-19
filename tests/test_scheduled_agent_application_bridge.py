@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import sys
 from datetime import date
@@ -21,6 +22,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
 from investment_strategy.scheduled_agent_carrier import CarrierRequired, make_carrier_plan
 from investment_strategy.scheduled_agent_checkin import checkin_title
 from investment_strategy.scheduled_agent_effects import (
+    ApplicationDecisionRecord,
     EffectBatch,
     GitHubEffectAdapter,
     formal_application_correlation,
@@ -254,6 +256,21 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
         },
     ]
     body = _effect_request(worker_result, revision=_REVISION)
+    accepted_raw = json.dumps(worker_result, sort_keys=True, separators=(",", ":"))
+    accepted_intent = ApplicationDecisionRecord(
+        request_comment_id=102,
+        request_body_sha256=hashlib.sha256(body.encode("utf-8")).hexdigest(),
+        authorization_revision=_REVISION,
+        issue_number=138,
+        role="lead",
+        action="resolve-question",
+        change=_CHANGE,
+        result_kind="ready",
+        disposition="ACCEPTED",
+        worker_result_sha256=hashlib.sha256(accepted_raw.encode("utf-8")).hexdigest(),
+        raw_worker_result=accepted_raw,
+        reason="test",
+    )
     event = _event(body)
     event_path = tmp_path / "event.json"
     event_path.write_text(json.dumps(event), encoding="utf-8")
@@ -304,11 +321,15 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
         defer_issue_comments: bool = False,
         allow_pending_continuation: bool = False,
         pending_application_correlation: str | None = None,
+        application_request_body: str | None = None,
+        authorization_revision: str | None = None,
     ) -> tuple[EffectBatch, bridge.ApplyResult]:
         assert source == expected_source
         assert request_comment_id == 102
         assert allow_pending_continuation is False
         assert pending_application_correlation is None
+        assert application_request_body == body
+        assert authorization_revision == _REVISION
         adapter = GitHubEffectAdapter(
             repository,
             token,
@@ -328,6 +349,8 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
                 "defer_issue_comments": defer_issue_comments,
                 "allow_pending_continuation": allow_pending_continuation,
                 "pending_application_correlation": pending_application_correlation,
+                "application_request_body": application_request_body,
+                "authorization_revision": authorization_revision,
             }
         )
         correlation = formal_application_correlation(
@@ -357,6 +380,11 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
         return EffectBatch(source=source, effects=()), bridge.ApplyResult(True, "applied")
 
     monkeypatch.setattr(bridge, "run_guarded_effect_application", fake_run)
+    monkeypatch.setattr(
+        bridge,
+        "_application_decision_for_request",
+        lambda **_kwargs: accepted_intent,
+    )
 
     monkeypatch.setattr(
         sys,
@@ -400,6 +428,8 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
             "defer_issue_comments": True,
             "allow_pending_continuation": False,
             "pending_application_correlation": None,
+            "application_request_body": body,
+            "authorization_revision": _REVISION,
         },
         {
             "request_comment_id": 102,
@@ -409,6 +439,8 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
             "defer_issue_comments": False,
             "allow_pending_continuation": False,
             "pending_application_correlation": None,
+            "application_request_body": body,
+            "authorization_revision": _REVISION,
         },
     ]
     assert len(applications) == 2
