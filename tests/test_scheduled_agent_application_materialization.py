@@ -283,6 +283,7 @@ def test_executor_cannot_materialize_noncanonical_repository_level_openspec_sema
             authorization_revision=_BASE,
         )
 
+
 def test_executor_can_checkpoint_tasks_with_non_openspec_implementation_files() -> None:
     source = WorkerRequest(234, "executor", "implement-change")
     task_file = WorkProductFile(
