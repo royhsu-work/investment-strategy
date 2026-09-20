@@ -21,6 +21,13 @@ manifest. Executor does not create the tree/commit/ref through worker prose; rep
 does so after fresh reauthorization and observes all postconditions. A material semantic change is a
 Lead correction and requires a new independent review-openspec gate.
 
+The semantic Executor has no mutable checkout or shell. Its positive path is exact carrier head,
+RED-test overlay/focused intended failure, reset to that exact base, complete candidate source/test
+blobs, repository-owned focused GREEN plus full `uv run pytest`, `uv run ruff check .`,
+`uv run ruff format --check .`, and `uv run mypy src tests`, then fresh reauthorization and ACCEPT.
+Only the already-verified content is materialized after ACCEPT; a pre-ACCEPT verifier failure has
+zero authoritative repository consequence.
+
 Before READY or review handoff, verify the exact current implementation PR head is non-Draft and
 all required checks are current. The implementation-review Action is the next model-derived Action.
 

@@ -538,13 +538,23 @@ The normal validated `agent/archive-<change>` branch is a lifecycle artifact and
 ### Requirement: Application consequence completion is reconstructable across interruption
 
 The application bridge SHALL treat an `EFFECT_REQUEST` as an ingress candidate,
-not as an accepted application.  Before any consequential effect, the fresh
-application authorization SHALL durably persist one exact
-`APPLICATION_DECISION: ACCEPTED` bound to the request comment, source Issue,
-Role/Action, Change, authorization revision, result, and immutable worker
-intent.  If no acceptance exists, an active application run SHALL not be
-redispatched; a terminal run without acceptance MAY return ownership only
-after fresh evidence proves that no authoritative consequence was committed.
+not as an accepted application. Each current-frontier candidate SHALL be
+classified independently as exactly one of `ACCEPTED`, `LIVE_PREACCEPT`,
+`TERMINAL_NO_ACCEPT`, `REJECTED`, or `INVALID/UNKNOWN` before reduction. A
+missing or not-yet-visible Actions run is asynchronous observation evidence,
+not terminal or rejected evidence; `TERMINAL_NO_ACCEPT` requires authoritative
+terminal/non-mutation evidence from the exact application execution. The
+reducer SHALL apply these rules: more than one `ACCEPTED` is ambiguous; one
+`ACCEPTED` exclusively owns continuation and terminal/rejected noise does not
+compete; zero accepted plus more than one live candidate is ambiguous; zero
+accepted plus exactly one live candidate waits without semantic redispatch;
+zero accepted plus only proven terminal-no-accept/rejected candidates returns
+ownership to the semantic Action; and unknown or contradictory evidence fails
+closed. N terminal or rejected candidates SHALL never become ambiguous merely
+from raw count. Before any consequential effect, fresh application
+authorization SHALL durably persist one exact `APPLICATION_DECISION: ACCEPTED`
+bound to the request comment, source Issue, Role/Action, Change, authorization
+revision, result, and immutable worker intent.
 
 After durable acceptance, interruption recovery SHALL use only that exact
 accepted intent and idempotently reconcile missing effects.  It SHALL never
@@ -563,6 +573,23 @@ derivation SHALL preserve legal same-Action recurrence and alternating
 recurrence (including `A -> A` and `A -> B -> A`) without persisting an epoch,
 generation, retry counter, lease, mailbox, or second lifecycle/state system.
 
+Phase A SHALL resolve the exact machine dispatch, derive authoritative source
+and Change, normalize the semantic worker payload, validate it, fresh-
+reauthorize the current repository, derive the exact effect plan, perform any
+required executable verification, and persist `APPLICATION_DECISION:
+ACCEPTED` or `REJECTED`. No consequential repository mutation may precede
+`ACCEPTED`. The semantic worker MAY omit `requested_effects` and `evidence_ref`,
+which normalize to `[]` and `null`; it SHALL not be required to recreate
+Issue/Role/Action/Change/Authorization-Revision/routing/successor/formal
+headers. The application-owned envelope SHALL carry those machine facts from
+fresh dispatch evidence, preferably through one opaque exact dispatch
+correlation. Phase B SHALL accept only the immutable accepted intent, fresh-
+observe the repository, reconcile exact missing idempotent effects, use a
+carrier only when required, validate postconditions, persist the canonical
+formal result, and derive routing/terminal projection. Failure before ACCEPT
+has zero authoritative repository consequence; failure after ACCEPT resumes
+the same intent and semantic replay count remains zero.
+
 #### Scenario: Accepted application resumes without semantic replay
 
 - GIVEN an `APPLICATION_DECISION: ACCEPTED` is durable for one exact request
@@ -579,6 +606,29 @@ generation, retry counter, lease, mailbox, or second lifecycle/state system.
 - WHEN application completion is qualified
 - THEN the earlier occurrence remains historical
 - AND it does not block the current frontier
+
+#### Scenario: Terminal pre-accept noise does not compete by count
+
+- GIVEN the current frontier has N independently observed terminal-no-accept or rejected ingress candidates
+- AND no candidate has durable `APPLICATION_DECISION: ACCEPTED`
+- WHEN application completion is qualified
+- THEN the candidates are inert evidence rather than competing application owners
+- AND N does not by itself produce ambiguity
+
+#### Scenario: One live candidate wins over terminal noise
+
+- GIVEN the current frontier has one live pre-accept candidate and any number of terminal-no-accept or rejected candidates
+- WHEN application completion is qualified
+- THEN application waits for that one live ingress
+- AND it does not redispatch the semantic Action
+
+#### Scenario: Accepted intent wins over terminal or rejected noise
+
+- GIVEN one current-frontier candidate has durable `APPLICATION_DECISION: ACCEPTED`
+- AND other candidates are terminal-no-accept or rejected
+- WHEN application completion is qualified
+- THEN only the immutable accepted intent owns continuation
+- AND the noise does not create ambiguity or replay
 
 ### Requirement: Coordination Issue closure is the durable final lifecycle transition
 
@@ -3207,6 +3257,15 @@ Connector ingress remains limited to the bounded untrusted
 `EFFECT_REQUEST` transport needed by the current application bridge. Ingress
 does not grant routing, successor, retry, merge, terminal, or success
 authority; those effects remain application-derived and postcondition-bound.
+The semantic payload is limited to `result_kind`, `evidence_ref`,
+`result_content`, and `requested_effects`; missing optional fields normalize to
+`null`/`[]`. Machine-owned Issue, Role, Action, Change, authorization
+revision, routing, successor, and formal-result headers are carried by the
+application-owned envelope from exact dispatch evidence. A single opaque
+dispatch correlation MAY bind the envelope; it is transport identity, not a
+parallel workflow authority. Legacy worker identity fields remain only at an
+explicit migration boundary and cannot affect the normal post-protocol
+algorithm.
 
 This contract activates prospectively on default-branch merge. Workflows terminal before activation remain terminal. Existing `Change: unset` pre-activation admission does not require the active-formal qualification input.
 

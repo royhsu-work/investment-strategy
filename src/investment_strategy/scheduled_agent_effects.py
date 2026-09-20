@@ -430,10 +430,15 @@ CarrierPlanProvider = Callable[[StagedEffect], CarrierPlan | None]
 ImplementationCheckpointValidator = Callable[[MaterializationRequest, tuple[str, ...]], bool]
 
 
-def parse_effect_batch(raw: str, source: WorkerRequest) -> EffectBatch:
+def parse_effect_batch(
+    raw: str,
+    source: WorkerRequest,
+    *,
+    authorized_change: str | None = None,
+) -> EffectBatch:
     """Parse one structured worker result and bind its requested effects."""
 
-    result = parse_worker_result(raw, source)
+    result = parse_worker_result(raw, source, authorized_change=authorized_change)
     return EffectBatch(
         source=source,
         effects=tuple(
@@ -3092,10 +3097,15 @@ def run_effect_application(
     defer_issue_comments: bool = False,
     allow_pending_continuation: bool = False,
     pending_application_correlation: str | None = None,
+    authorized_change: str | None = None,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Freshly reauthorize and apply one typed invocation-local effect batch."""
 
-    batch = parse_effect_batch(raw_worker_result, source)
+    batch = parse_effect_batch(
+        raw_worker_result,
+        source,
+        authorized_change=authorized_change,
+    )
     if batch.typed_result is None:
         return batch, ApplyResult(False, "typed application rejected:result-missing")
     adapter = GitHubEffectAdapter(

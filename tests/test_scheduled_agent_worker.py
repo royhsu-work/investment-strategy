@@ -94,6 +94,29 @@ def test_parser_accepts_one_exact_typed_result() -> None:
     assert result.requested_effects == ()
 
 
+def test_parser_normalizes_semantic_only_result_with_machine_source() -> None:
+    request = WorkerRequest(138, "executor", "implement-change")
+    raw = json.dumps(
+        {
+            "result_kind": "blocked",
+            "evidence_ref": None,
+            "result_content": "runner capability evidence",
+        }
+    )
+
+    result = parse_worker_result(
+        raw,
+        request,
+        authorized_change="machine-derived-change",
+    )
+
+    assert result.issue_number == request.issue_number
+    assert result.role == request.role
+    assert result.action == request.action
+    assert result.change == "machine-derived-change"
+    assert result.requested_effects == ()
+
+
 @pytest.mark.parametrize(
     "overrides",
     [

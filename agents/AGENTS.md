@@ -73,10 +73,15 @@ bounded legal result and is reconstructed from current state on the next wake.
 
 Semantic work and repository mutation are distinct.
 
-A worker result contains the exact Issue/Change/Action identity, finite result kind, evidence
-reference/content, and untrusted requested effects. It cannot carry successor or target authority.
-The application fresh-reads the Issue, routing, Change, branch/ref/PR state, required Human/review/gate
-evidence, and current default-branch revision before authorizing effects.
+A semantic worker result contains only the bounded result kind, evidence reference/content, and
+untrusted requested effects. The worker does not own Issue, Role, Action, Change, authorization
+revision, routing, successor, or formal-result headers. During migration, legacy identity fields
+may be carried and are checked for consistency, but they are not authoritative. The repository
+application fresh-resolves one exact machine dispatch and carries its identity forward in the
+application-owned envelope (prefer one opaque dispatch correlation rather than duplicated control
+fields); absent optional `requested_effects` and `evidence_ref` normalize to `[]` and `null`.
+The application then fresh-reads the Issue, routing, Change, branch/ref/PR state, required
+Human/review/gate evidence, and current default-branch revision before authorizing effects.
 
 Before retaining or adding a check, guard, qualification, lifecycle rule, gate, carrier rule, or
 state, identify the affected consequence and its existing executable owner. Classify the delta as
@@ -157,6 +162,15 @@ without force and verifies parent, tree, ref, PR head, and file postconditions. 
 not passed through Issue comments. The normal worker effect capability does not include Issue creation
 or direct ref creation/update. Any PR/ref effect is application-bound to the authorized Change,
 repository, default branch, and exact current target before mutation.
+
+The real Executor environment has no mutable semantic-worker checkout or shell. It supplies complete
+candidate file/test content through the content-addressed ingress; repository-owned Actions own the
+executable RED/GREEN/REFACTOR/VERIFY runs. The positive implementation path is exact current carrier
+head -> RED overlay and intended focused failure -> reset to that exact base -> complete candidate
+overlay and focused GREEN -> full `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`,
+and `uv run mypy src tests` -> fresh reauthorization -> `APPLICATION_DECISION: ACCEPTED` -> exact
+verified blob materialization. A failed pre-ACCEPT verifier produces no authoritative repository
+consequence and never requires pushing a broken candidate for cleanup.
 
 Exact-R validation checks the target repository/revision, validator checkout HEAD == R, the qualified
 pinned OpenSpec baseline, and strict validation PASS. Eligibility is derived from the governed

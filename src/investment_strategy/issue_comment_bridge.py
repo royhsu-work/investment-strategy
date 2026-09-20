@@ -19,7 +19,11 @@ from urllib.request import Request, urlopen
 
 from investment_strategy.scheduled_agent_action_model import Action as ModelAction
 from investment_strategy.scheduled_agent_action_model import next_action, role_for
-from investment_strategy.scheduled_agent_application_bridge import parse_application_request
+from investment_strategy.scheduled_agent_application_bridge import (
+    ApplicationRequest,
+    dispatch_correlation_for,
+    parse_application_request,
+)
 from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
 from investment_strategy.scheduled_agent_effects import (
     ApplicationDecisionRecord,
@@ -60,6 +64,9 @@ _APPLICATION_DECISION_PROTOCOL_REVISION = "e874b4bdfc866649c0e7e61c151991d124d5c
 _CHATGPT_CONNECTOR_APP_SLUG = "chatgpt-codex-connector"
 _FORMAL_RESULT_MARKERS = frozenset({"ACTION_RESULT", "REVIEW_RESULT", "MERGE_RESULT"})
 _DECISION_DISPOSITIONS = {"AUTHORIZE", "NO_WORK", "FAIL_CLOSED"}
+_TERMINAL_NO_ACCEPT_CONCLUSIONS = frozenset(
+    {"failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale", "skipped"}
+)
 _MAX_REASON_LENGTH = 240
 _MAX_RESULT_BYTES = 16_384
 _SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -96,6 +103,24 @@ class ApplicationCompletion:
     reason: str
     request_comment_id: int | None = None
     job_id: int | None = None
+
+
+PreacceptClassification = Literal[
+    "ACCEPTED",
+    "LIVE_PREACCEPT",
+    "TERMINAL_NO_ACCEPT",
+    "REJECTED",
+    "INVALID",
+    "UNKNOWN",
+]
+
+
+@dataclass(frozen=True)
+class _IngressCandidate:
+    request_comment_id: int
+    body: str | None
+    authorization_revision: str | None
+    request: ApplicationRequest | None
 
 
 GitHubReader = Callable[[str, str, str], object | None]
@@ -402,13 +427,20 @@ def _preaccept_application_state(
     *,
     read: GitHubReader,
 ) -> ApplicationCompletion | None:
-    """Distinguish a live ingress from a terminal run with no ACCEPT."""
+    """Classify one ingress from fresh run/job terminal evidence.
+
+    A request comment without an observable application run is not a terminal
+    rejection: GitHub event and workflow-run visibility are asynchronous.  A
+    completed run is terminal-no-accept only when its exact ``apply`` job also
+    has a known non-success terminal conclusion, which is the repository-owned
+    pre-ACCEPT non-mutation boundary.
+    """
 
     runs = _application_runs(repository, token, request_comment_id, read=read)
     if runs is None:
         return ApplicationCompletion(
             "INVALID",
-            "application-completion-run-unavailable",
+            "application-completion-run-observation-incomplete",
             request_comment_id=request_comment_id,
         )
     if len(runs) > 1:
@@ -418,7 +450,11 @@ def _preaccept_application_state(
             request_comment_id=request_comment_id,
         )
     if not runs:
-        return None
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-run-not-yet-observable",
+            request_comment_id=request_comment_id,
+        )
     run = runs[0]
     status = run.get("status")
     if status != "completed":
@@ -427,9 +463,51 @@ def _preaccept_application_state(
             "application-completion-preaccept-in-progress",
             request_comment_id=request_comment_id,
         )
+    conclusion = run.get("conclusion")
+    if conclusion not in _TERMINAL_NO_ACCEPT_CONCLUSIONS:
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-terminal-evidence-unknown",
+            request_comment_id=request_comment_id,
+        )
+    run_id = _positive_int(run.get("id"))
+    if run_id is None:
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-run-identity-incomplete",
+            request_comment_id=request_comment_id,
+        )
+    jobs_payload = read(repository, token, f"actions/runs/{run_id}/jobs")
+    if not isinstance(jobs_payload, Mapping) or not isinstance(jobs_payload.get("jobs"), list):
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-terminal-job-evidence-incomplete",
+            request_comment_id=request_comment_id,
+        )
+    jobs = [
+        item
+        for item in cast(list[object], jobs_payload["jobs"])
+        if isinstance(item, Mapping) and item.get("name") == "apply"
+    ]
+    if len(jobs) != 1:
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-terminal-job-identity-ambiguous",
+            request_comment_id=request_comment_id,
+        )
+    apply_job = jobs[0]
+    if (
+        apply_job.get("status") != "completed"
+        or apply_job.get("conclusion") not in _TERMINAL_NO_ACCEPT_CONCLUSIONS
+    ):
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-terminal-job-evidence-contradictory",
+            request_comment_id=request_comment_id,
+        )
     return ApplicationCompletion(
         "REJECTED",
-        "application-completion-preaccept-terminal",
+        "application-completion-preaccept-terminal-no-accept",
         request_comment_id=request_comment_id,
     )
 
@@ -472,7 +550,11 @@ def _application_worker_for_record(
     ):
         return None
     try:
-        worker = parse_worker_result(record.raw_worker_result, source)
+        worker = parse_worker_result(
+            record.raw_worker_result,
+            source,
+            authorized_change=record.change,
+        )
     except (TypeError, ValueError, json.JSONDecodeError):
         return None
     if (
@@ -775,14 +857,106 @@ def _effect_request_source_hint(body: str) -> WorkerRequest | None:
         return None
     if not isinstance(decoded, Mapping):
         return None
+    issue_number = decoded.get("issue_number")
+    role = decoded.get("role")
+    action = decoded.get("action")
+    if (
+        isinstance(issue_number, bool)
+        or not isinstance(issue_number, int)
+        or issue_number <= 0
+        or not isinstance(role, str)
+        or not isinstance(action, str)
+    ):
+        return None
     try:
-        return WorkerRequest(
-            cast(int, decoded.get("issue_number")),
-            cast(str, decoded.get("role")),
-            cast(str, decoded.get("action")),
-        )
+        return WorkerRequest(issue_number, role, action)
     except (TypeError, ValueError):
         return None
+
+
+def _effect_request_matches_source(
+    *,
+    repository: str,
+    source: WorkerRequest,
+    body: str,
+    request: ApplicationRequest | None,
+) -> bool:
+    """Resolve legacy identity or the one opaque machine correlation."""
+
+    claimed = _effect_request_source_hint(body)
+    if claimed is not None:
+        return claimed == source
+    if request is None or request.dispatch_correlation is None:
+        return False
+    return request.dispatch_correlation == dispatch_correlation_for(
+        repository,
+        source,
+        request.authorization_revision,
+    )
+
+
+def _classify_ingress_candidate(
+    *,
+    repository: str,
+    token: str,
+    source: WorkerRequest,
+    candidate: _IngressCandidate,
+    decisions_by_request: Mapping[int, tuple[ApplicationDecisionRecord, ...]],
+    issue_comments: tuple[Mapping[str, object], ...],
+    current_revision: str,
+    read: GitHubReader,
+) -> PreacceptClassification:
+    """Classify one current-frontier ingress before reducing the set."""
+
+    decisions = decisions_by_request.get(candidate.request_comment_id, ())
+    if len(decisions) > 1:
+        return "INVALID"
+    if decisions:
+        disposition = decisions[0].disposition
+        if disposition == "ACCEPTED":
+            return "ACCEPTED"
+        if disposition == "REJECTED":
+            return "REJECTED"
+        return "INVALID"
+
+    state = _preaccept_application_state(
+        repository,
+        token,
+        candidate.request_comment_id,
+        read=read,
+    )
+    if state is None:
+        return "UNKNOWN"
+    if state.state == "RESUMABLE":
+        return "LIVE_PREACCEPT"
+    if state.state != "REJECTED":
+        return "UNKNOWN" if "not-yet-observable" in state.reason else "INVALID"
+
+    # Historical pre-protocol requests require an independent inertness proof;
+    # current protocol terminal failures already carry the application-owned
+    # no-mutation boundary from the failed apply job.
+    request = candidate.request
+    if request is not None:
+        relation = _application_protocol_relation(
+            repository,
+            token,
+            authorization_revision=request.authorization_revision,
+            read=read,
+        )
+        if relation == "PRE_PROTOCOL":
+            if candidate.body is None or not _legacy_unaccepted_request_is_inert(
+                repository,
+                token,
+                source=source,
+                request_comment_id=candidate.request_comment_id,
+                request_body=candidate.body,
+                issue_comments=issue_comments,
+                current_revision=current_revision,
+                read=read,
+            ):
+                return "INVALID"
+            return "REJECTED"
+    return "TERMINAL_NO_ACCEPT"
 
 
 def _application_protocol_relation(
@@ -862,6 +1036,11 @@ def _legacy_unaccepted_request_is_inert(
     expected_kind = worker.typed_result.result.kind.value
     for comment in issue_comments:
         event = parse_formal_result(comment, current_revision=current_revision)
+        correlation_fields = (
+            None
+            if event is None or not isinstance(event.application_correlation, str)
+            else _application_correlation_fields(event.application_correlation)
+        )
         if (
             event is not None
             and event.issue_number == source.issue_number
@@ -869,6 +1048,8 @@ def _legacy_unaccepted_request_is_inert(
             and event.role == source.role
             and event.action == source.action
             and event.result_kind == expected_kind
+            and correlation_fields is not None
+            and correlation_fields[1] == str(request_comment_id)
         ):
             return False
 
@@ -1018,7 +1199,7 @@ def qualify_application_completion(
         and record.role == source.role
         and record.action == source.action
     ]
-    requests: dict[int, tuple[str, str]] = {}
+    candidates: dict[int, _IngressCandidate] = {}
     invalid_request_ids: set[int] = set()
     for comment in (*recent, *issue_comments):
         if not _trusted_connector_comment(comment, owner):
@@ -1028,12 +1209,11 @@ def qualify_application_completion(
             continue
 
         # Transport history is repository-wide, but application completion is
-        # exact-source-local.  A legacy or malformed request for another source
-        # must not poison the currently selected Action.
+        # exact-source-local.  Legacy envelopes use their carried source; the
+        # post-protocol semantic envelope uses one opaque dispatch correlation.
+        # A semantic envelope with neither is unresolved evidence and therefore
+        # fails closed instead of being guessed into the current Action.
         source_hint = _effect_request_source_hint(body)
-        if source_hint != source:
-            continue
-
         comment_id = _positive_int(comment.get("id"))
         if comment_id is None:
             invalid_request_ids.add(-1)
@@ -1041,20 +1221,46 @@ def qualify_application_completion(
         try:
             request = parse_application_request(body)
         except ValueError:
+            request = None
+        if source_hint is not None:
+            if source_hint != source:
+                continue
+        elif request is not None and request.dispatch_correlation is not None:
+            if not _effect_request_matches_source(
+                repository=repository,
+                source=source,
+                body=body,
+                request=request,
+            ):
+                continue
+        elif request is not None:
+            # A semantic-only payload is safe only when the machine-owned
+            # envelope carries the one opaque dispatch correlation.  Without
+            # that binding, the application cannot prove which exact ingress
+            # selected the current frontier and must not guess.
             invalid_request_ids.add(comment_id)
             continue
-        if request is None:
+        elif request is None:
             invalid_request_ids.add(comment_id)
             continue
-        previous = requests.get(comment_id)
-        candidate = (body, request.authorization_revision)
+        try:
+            authorization_revision = None if request is None else request.authorization_revision
+        except AttributeError:
+            authorization_revision = None
+        previous = candidates.get(comment_id)
+        candidate = _IngressCandidate(
+            request_comment_id=comment_id,
+            body=body,
+            authorization_revision=authorization_revision,
+            request=request,
+        )
         if previous is not None and previous != candidate:
             invalid_request_ids.add(comment_id)
-            requests.pop(comment_id, None)
+            candidates.pop(comment_id, None)
         elif comment_id not in invalid_request_ids:
-            requests[comment_id] = candidate
+            candidates[comment_id] = candidate
 
-    if not relevant_decisions and not requests and not invalid_request_ids:
+    if not relevant_decisions and not candidates and not invalid_request_ids:
         return ApplicationCompletion("NONE", "application-completion-none")
 
     issue = read(repository, token, f"issues/{source.issue_number}")
@@ -1093,7 +1299,9 @@ def qualify_application_completion(
     # same Role/Action as the current route.  This is the recurrence boundary
     # for both A -> A and A -> B -> A.
     current_request_ids = {
-        request_id for request_id in requests if _belongs_to_current_frontier(request_id, frontier)
+        request_id
+        for request_id in candidates
+        if _belongs_to_current_frontier(request_id, frontier)
     }
     current_invalid_request_ids = {
         request_id
@@ -1107,7 +1315,7 @@ def qualify_application_completion(
         or _accepted_intent_owns_frontier(record, frontier, source=source)
     ]
     accepted = [record for record in relevant_decisions if record.disposition == "ACCEPTED"]
-    rejected = [record for record in relevant_decisions if record.disposition == "REJECTED"]
+    accepted_request_ids = {record.request_comment_id for record in accepted}
     frontier_correlation = (
         None
         if frontier is None or frontier.event is None
@@ -1123,7 +1331,7 @@ def qualify_application_completion(
         if frontier_correlation_fields is None
         else _positive_int_string(frontier_correlation_fields[1])
     )
-    current_ingress_ids = set(requests) | {
+    current_ingress_ids = set(candidates) | {
         request_id for request_id in invalid_request_ids if request_id > 0
     }
     if (
@@ -1140,74 +1348,91 @@ def qualify_application_completion(
         )
     if len(accepted) > 1:
         return ApplicationCompletion("AMBIGUOUS", "application-completion-accepted-ambiguous")
-    if len(accepted) == 0:
-        if current_invalid_request_ids:
-            return ApplicationCompletion("INVALID", "application-completion-request-invalid")
-        if rejected:
-            return ApplicationCompletion("REJECTED", "application-completion-rejected")
-        if current_request_ids:
-            if len(current_request_ids) != 1:
-                return ApplicationCompletion(
-                    "AMBIGUOUS",
-                    "application-completion-unaccepted-ambiguous",
-                )
-            request_comment_id = next(iter(current_request_ids))
-            request_body, authorization_revision = requests[request_comment_id]
-            live = _preaccept_application_state(
-                repository,
-                token,
-                request_comment_id,
-                read=read,
-            )
-            if live is not None:
-                return live
-            relation = _application_protocol_relation(
-                repository,
-                token,
-                authorization_revision=authorization_revision,
-                read=read,
-            )
-            if relation == "PROTOCOL":
-                # After protocol activation, absence of the durable Phase-A
-                # decision proves that no consequential mutation was authorized.
-                return ApplicationCompletion(
-                    "REJECTED",
-                    "application-completion-preaccept-rejected",
-                    request_comment_id=request_comment_id,
-                )
-            if relation == "PRE_PROTOCOL" and _legacy_unaccepted_request_is_inert(
-                repository,
-                token,
-                source=source,
-                request_comment_id=request_comment_id,
-                request_body=request_body,
-                issue_comments=issue_comments,
-                current_revision=current_revision,
-                read=read,
-            ):
-                return ApplicationCompletion(
-                    "REJECTED",
-                    "application-completion-legacy-inert-rejected",
-                    request_comment_id=request_comment_id,
-                )
+    decisions_by_request: dict[int, tuple[ApplicationDecisionRecord, ...]] = {}
+    for record in relevant_decisions:
+        decisions_by_request.setdefault(record.request_comment_id, ())
+        decisions_by_request[record.request_comment_id] = (
+            *decisions_by_request[record.request_comment_id],
+            record,
+        )
+
+    classifications: dict[int, PreacceptClassification] = {}
+    for request_id in current_request_ids - accepted_request_ids:
+        candidate = candidates[request_id]
+        classifications[request_id] = _classify_ingress_candidate(
+            repository=repository,
+            token=token,
+            source=source,
+            candidate=candidate,
+            decisions_by_request=decisions_by_request,
+            issue_comments=issue_comments,
+            current_revision=current_revision,
+            read=read,
+        )
+    for request_id in current_invalid_request_ids:
+        if request_id > 0 and request_id not in accepted_request_ids:
+            classifications[request_id] = "INVALID"
+
+    if (
+        any(state in {"INVALID", "UNKNOWN"} for state in classifications.values())
+        or -1 in current_invalid_request_ids
+    ):
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-preaccept-evidence-unknown",
+        )
+
+    live_request_ids = {
+        request_id for request_id, state in classifications.items() if state == "LIVE_PREACCEPT"
+    }
+    terminal_request_ids = {
+        request_id for request_id, state in classifications.items() if state == "TERMINAL_NO_ACCEPT"
+    }
+    rejected_request_ids = {
+        request_id for request_id, state in classifications.items() if state == "REJECTED"
+    }
+    rejected_request_ids.update(
+        record.request_comment_id
+        for record in relevant_decisions
+        if record.disposition == "REJECTED"
+    )
+
+    if not accepted:
+        if len(live_request_ids) > 1:
             return ApplicationCompletion(
-                "INVALID",
-                "application-completion-acceptance-missing",
+                "AMBIGUOUS",
+                "application-completion-live-preaccept-ambiguous",
+            )
+        if len(live_request_ids) == 1:
+            request_comment_id = next(iter(live_request_ids))
+            return ApplicationCompletion(
+                "RESUMABLE",
+                "application-completion-preaccept-in-progress",
                 request_comment_id=request_comment_id,
+            )
+        if terminal_request_ids or rejected_request_ids:
+            terminal_comment_id = (
+                next(iter(terminal_request_ids or rejected_request_ids))
+                if len(terminal_request_ids) + len(rejected_request_ids) == 1
+                else None
+            )
+            return ApplicationCompletion(
+                "REJECTED",
+                "application-completion-terminal-no-accept"
+                if terminal_request_ids
+                else "application-completion-rejected",
+                request_comment_id=terminal_comment_id,
             )
         return ApplicationCompletion("NONE", "application-completion-none")
 
     record = accepted[0]
-    if current_request_ids and any(
-        request_id != record.request_comment_id for request_id in current_request_ids
-    ):
-        return ApplicationCompletion(
-            "AMBIGUOUS",
-            "application-completion-request-binding-ambiguous",
-        )
-    if current_invalid_request_ids and any(
-        request_id != record.request_comment_id for request_id in current_invalid_request_ids
-    ):
+    competing_live = any(request_id != record.request_comment_id for request_id in live_request_ids)
+    competing_unknown = any(
+        request_id != record.request_comment_id
+        and classifications.get(request_id) in {"INVALID", "UNKNOWN"}
+        for request_id in classifications
+    )
+    if competing_live or competing_unknown:
         return ApplicationCompletion(
             "AMBIGUOUS",
             "application-completion-request-binding-ambiguous",
