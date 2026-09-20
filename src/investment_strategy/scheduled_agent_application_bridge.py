@@ -785,6 +785,18 @@ def _materialization_effects(
     return tuple(effects)
 
 
+_DEFAULT_BRANCH_RESULT_ACTIONS = frozenset(
+    {
+        "explore-change",
+        "propose-change",
+        "resolve-question",
+        "finalize-change",
+        "finalize-archive",
+        "review-openspec",
+    }
+)
+
+
 def _machine_result_revision(
     raw_worker_result: str,
     source: WorkerRequest,
@@ -828,6 +840,12 @@ def _machine_result_revision(
     if len(materializations) > 1:
         raise RuntimeError("EFFECT_REQUEST contains ambiguous materialization effects")
     if not materializations:
+        if source.action in _DEFAULT_BRANCH_RESULT_ACTIONS:
+            # Semantic and lifecycle Actions read the current default branch;
+            # they have no implementation PR carrier to resolve. Applying the
+            # implementation-carrier fallback here made finalize-change fail
+            # after a successful implementation merge.
+            return current_revision
         return _machine_carrier_head(
             repository=repository,
             token=token,
