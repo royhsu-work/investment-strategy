@@ -223,7 +223,8 @@ def test_durable_prefix_recovery_matches_uninterrupted_consequence(terminal: boo
         def persist_decision(_decision: object, _disposition: str, _reason: str) -> bool:
             if not state["accepted"]:
                 state["accepted"] = True
-                state["accepted_writes"] = int(state["accepted_writes"]) + 1
+                accepted_writes = cast(int, state["accepted_writes"])
+                state["accepted_writes"] = accepted_writes + 1
             if stop_after == "after-accept":
                 raise _InterruptedWake
             return True
