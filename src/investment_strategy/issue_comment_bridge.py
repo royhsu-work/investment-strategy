@@ -31,6 +31,7 @@ from investment_strategy.scheduled_agent_effects import (
     ApplicationOutcomeRecord,
     parse_application_decision,
     parse_application_outcome,
+    requested_effect_postconditions_complete,
 )
 from investment_strategy.scheduled_agent_formal_qualification import (
     CurrentFrontier,
@@ -684,6 +685,15 @@ def _formal_consequence(
     if not decision.qualified or decision.event is None:
         return False
     candidate = matching_events[0]
+    if mode == "current" and not requested_effect_postconditions_complete(
+        record.raw_worker_result,
+        source=source,
+        repository=repository,
+        token=token,
+        current_revision=current_revision,
+        authorized_change=record.change,
+    ):
+        return False
     return (
         getattr(decision.event, "comment_id", None) == candidate.comment_id
         and getattr(decision.event, "application_correlation", None)
@@ -771,6 +781,15 @@ def _accepted_application_state(
             "application-completion-complete",
             request_comment_id=record.request_comment_id,
         )
+    if worker.requested_effects:
+        resumed = _application_job(
+            repository,
+            token,
+            record.request_comment_id,
+            read=read,
+        )
+        if resumed.state == "RESUMABLE":
+            return resumed
     if _formal_consequence(
         repository=repository,
         token=token,
@@ -1174,6 +1193,35 @@ def _accepted_intent_owns_frontier(
     )
 
 
+def _frontier_application_decisions(
+    decisions: tuple[ApplicationDecisionRecord, ...],
+    frontier: CurrentFrontier | None,
+) -> tuple[ApplicationDecisionRecord, ...]:
+    """Resolve the ACCEPTED intent that owns the qualified formal frontier."""
+
+    if frontier is None or frontier.event is None:
+        return ()
+    correlation = getattr(frontier.event, "application_correlation", None)
+    if not isinstance(correlation, str):
+        return ()
+    fields = _application_correlation_fields(correlation)
+    if fields is None:
+        return ()
+    request_comment_id = _positive_int_string(fields[1])
+    if request_comment_id is None:
+        return ()
+    return tuple(
+        record
+        for record in decisions
+        if record.request_comment_id == request_comment_id
+        and record.issue_number == frontier.issue_number
+        and record.change == frontier.change
+        and record.role == fields[4]
+        and record.action == fields[5]
+        and record.result_kind == fields[6]
+    )
+
+
 def _application_correlation_fields(correlation: str) -> tuple[str, ...] | None:
     fields = tuple(correlation.split(":"))
     return fields if len(fields) == 8 and fields[0] == "application" else None
@@ -1275,7 +1323,15 @@ def qualify_application_completion(
         elif comment_id not in invalid_request_ids:
             candidates[comment_id] = candidate
 
-    if not relevant_decisions and not candidates and not invalid_request_ids:
+    if (
+        not relevant_decisions
+        and not candidates
+        and not invalid_request_ids
+        and not any(
+            parse_formal_result(comment, current_revision=current_revision) is not None
+            for comment in issue_comments
+        )
+    ):
         return ApplicationCompletion("NONE", "application-completion-none")
 
     issue = read(repository, token, f"issues/{source.issue_number}")
@@ -1308,6 +1364,57 @@ def qualify_application_completion(
     )
     if not frontier_qualified:
         return ApplicationCompletion("INVALID", "application-completion-current-frontier-invalid")
+
+    # A successor wake observes the frontier's canonical correlation, not the
+    # predecessor's old Role/Action labels.  Reconcile that exact accepted
+    # intent before allowing the successor ingress to compete.
+    frontier_owner_decisions = _frontier_application_decisions(decisions, frontier)
+    if len(frontier_owner_decisions) > 1:
+        return ApplicationCompletion(
+            "AMBIGUOUS",
+            "application-completion-frontier-owner-ambiguous",
+        )
+    if frontier_owner_decisions:
+        frontier_owner = frontier_owner_decisions[0]
+        if frontier_owner.disposition != "ACCEPTED":
+            return ApplicationCompletion(
+                "INVALID",
+                "application-completion-consequence-without-acceptance",
+                request_comment_id=frontier_owner.request_comment_id,
+            )
+        try:
+            frontier_source = WorkerRequest(
+                frontier_owner.issue_number,
+                frontier_owner.role,
+                frontier_owner.action,
+            )
+        except (TypeError, ValueError):
+            return ApplicationCompletion(
+                "INVALID",
+                "application-completion-frontier-owner-invalid",
+                request_comment_id=frontier_owner.request_comment_id,
+            )
+        owner_outcomes = grouped_outcomes.get(frontier_owner.request_comment_id, [])
+        if len(owner_outcomes) > 1:
+            return ApplicationCompletion(
+                "AMBIGUOUS",
+                "application-completion-outcome-ambiguous",
+                request_comment_id=frontier_owner.request_comment_id,
+            )
+        frontier_completion = _accepted_application_state(
+            repository=repository,
+            token=token,
+            source=frontier_source,
+            record=frontier_owner,
+            outcome=owner_outcomes[0] if owner_outcomes else None,
+            issue_comments=issue_comments,
+            lifecycle_events=lifecycle,
+            current_issue=cast(Mapping[str, object], issue),
+            current_revision=current_revision,
+            read=read,
+        )
+        if frontier_completion.state != "COMPLETE":
+            return frontier_completion
 
     # The formal qualifier owns the current frontier.  Decisions before its
     # latest qualified predecessor are historical, even when they have the
