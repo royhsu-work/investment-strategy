@@ -184,6 +184,19 @@ def test_merge_acceptance_allows_explicit_historical_merged_carrier() -> None:
     )
 
 
+def test_historical_merged_carrier_is_not_invalidated_by_later_check_runs() -> None:
+    # Recovery proves the exact merge already landed; a later unrelated
+    # workflow failure must not reopen or replay that accepted consequence.
+    assert merge_acceptance_allows(
+        _accepted(
+            pr_open=False,
+            historical_merged_carrier_allowed=True,
+            required_checks_pass=False,
+        )
+    )
+    assert not merge_acceptance_allows(_accepted(required_checks_pass=False))
+
+
 def test_merge_action_requires_its_matching_review_action() -> None:
     comments = (
         {
