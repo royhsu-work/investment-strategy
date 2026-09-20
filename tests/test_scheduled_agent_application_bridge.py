@@ -82,6 +82,60 @@ def _effect_request(
     )
 
 
+def test_semantic_finalize_result_revision_uses_default_branch_without_carrier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(234, "lead", "finalize-change")
+    raw = json.dumps(
+        {
+            "result_kind": "archive-ready",
+            "evidence_ref": "archive-ready-evidence",
+            "result_content": "fresh archive evidence",
+            "requested_effects": [
+                {
+                    "kind": "github-mutation",
+                    "payload_json": json.dumps(
+                        {
+                            "issue_number": 234,
+                            "operation": "workflow-dispatch",
+                            "workflow_id": "openspec-archive.yml",
+                            "ref": "main",
+                            "inputs": {
+                                "change": "source-decision-explore-materialization",
+                                "issue": "234",
+                                "revision": _REVISION,
+                                "request_key": (
+                                    "archive-234-4e3241d7d84a64012bf3b6218442128a4cb48d7a"
+                                ),
+                            },
+                        },
+                        sort_keys=True,
+                    ),
+                }
+            ],
+        },
+        sort_keys=True,
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_machine_carrier_head",
+        lambda **_kwargs: pytest.fail("finalize-change must not resolve an implementation carrier"),
+    )
+
+    assert (
+        bridge._machine_result_revision(
+            raw,
+            source,
+            change="source-decision-explore-materialization",
+            repository=_REPOSITORY,
+            token=_REPOSITORY,
+            current_revision=_REVISION,
+            default_branch="main",
+        )
+        == _REVISION
+    )
+
+
 def _preflight(
     *,
     action: str = "explore-change",
