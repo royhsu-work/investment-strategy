@@ -38,6 +38,7 @@ from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
     acquire_dispatch_preflight,
 )
+from investment_strategy.scheduled_agent_validation_resource import ValidationResourceTarget
 from investment_strategy.workflow_dispatch import (
     Action as WorkflowAction,
 )
@@ -3405,3 +3406,48 @@ def test_application_injects_repository_derived_successor_into_formal_result() -
 
     assert "Repository-derived successor: Lead / resolve-question" in bound
     assert f"Application-Correlation: application:{_REQUEST_COMMENT_ID}:" in bound
+
+
+def test_application_binds_formal_revision_to_materialization_postcondition() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    adapter = GitHubEffectAdapter(
+        "owner/repo",
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        request_comment_id=_REQUEST_COMMENT_ID,
+        expected_result_kind="more-implementation-required",
+    )
+    materialization = StagedEffect(
+        kind=effects.GITHUB_MUTATION_KIND,
+        payload_json=json.dumps(
+            {"issue_number": 138, "operation": "application-materialize"},
+            sort_keys=True,
+        ),
+    )
+    target_revision = "b" * 40
+    adapter._materialization_targets[materialization] = ValidationResourceTarget(
+        repository="owner/repo",
+        revision=target_revision,
+        correlation="materialization",
+        pr_number=271,
+        change=_CHANGE,
+        validation_required=False,
+    )
+    body = (
+        "ACTION_RESULT\n"
+        "Workflow: #138\n"
+        f"Change: {_CHANGE}\n"
+        "Action: implement-change\n"
+        "Role: executor\n"
+        "Result: MORE_IMPLEMENTATION_REQUIRED\n"
+        f"Revision: {_REVISION}\n"
+        f"Default-Branch-Revision: {_REVISION}\n"
+        "Evidence: exact application result\n"
+    )
+
+    bound = adapter._application_bound_comment_body(body)
+
+    assert f"Revision: {target_revision}" in bound
+    assert f"Default-Branch-Revision: {_REVISION}" in bound

@@ -2704,6 +2704,24 @@ class GitHubEffectAdapter:
                     correlation_index + 1,
                     f"Repository-derived successor: {successor_text}",
                 )
+
+            # A materialization is an application effect, not merely an input
+            # to the effect batch.  Once its exact target has been freshly
+            # observed, the following canonical formal result must carry that
+            # work-product postcondition.  This is especially important after
+            # CarrierRequired: the immutable accepted intent still contains
+            # the pre-carrier revision, while the resumed application must
+            # record the exact carrier head it reconciled.
+            targets = tuple(self._materialization_targets.values())
+            if targets:
+                if len(targets) != 1:
+                    raise RuntimeError("formal result materialization target is ambiguous")
+                revision_indexes = [
+                    index for index, line in enumerate(lines) if line.startswith("Revision:")
+                ]
+                if len(revision_indexes) != 1:
+                    raise RuntimeError("formal result revision is ambiguous")
+                lines[revision_indexes[0]] = f"Revision: {targets[0].revision}"
         suffix = "\n" if body.endswith("\n") else ""
         return "\n".join(lines) + suffix
 
