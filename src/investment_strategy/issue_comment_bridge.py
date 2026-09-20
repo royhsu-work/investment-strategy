@@ -1201,7 +1201,7 @@ def _frontier_application_decisions(
 
     if frontier is None or frontier.event is None:
         return ()
-    correlation = frontier.event.application_correlation
+    correlation = getattr(frontier.event, "application_correlation", None)
     if not isinstance(correlation, str):
         return ()
     fields = _application_correlation_fields(correlation)
