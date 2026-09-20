@@ -204,13 +204,18 @@ and associated-conversation configuration are product configuration, not reposit
 
 A canonical MUST/SHALL requirement, a required deferred follow-up, a project-direction commitment, or
 behavior-preserving maintenance/friction is considered only from current qualified evidence. Any one
-such candidate is bounded to at most one target. Agent-authored advisory text and an Agent-created
-ticket cannot self-authorize additional work.
+such candidate is bounded to at most one target. Materialization authority follows the qualified source
+decision, not the physical writer. A connector or Agent may actuate an already-authorized
+interaction-layer mutation, but writer identity neither grants autonomous authority nor removes
+explicit Human source authority. Agent-authored advisory text or a ticket alone cannot self-authorize
+additional work.
 
-A proposal-ready authority envelope may select Lead / propose-change without a second generic Human
-proceed step when the same Issue and current Action remain coherent. A new product/project direction,
-material scope, risk acceptance, or security/privacy/cost/operational decision requires
-HUMAN_DECISION_REQUIRED.
+Ordinary queue eligibility remains a projection of current routing and existing formal-first,
+WIP=1, finish-first, and deterministic predicates. Connector activity and Issue prose alone do not
+satisfy a later Human-reserved decision; those decisions remain provenance-bound. A proposal-ready
+authority envelope may select Lead / propose-change without a second generic Human proceed step when the
+same Issue and current Action remain coherent. A new product/project direction, material scope, risk
+acceptance, or security/privacy/cost/operational decision requires HUMAN_DECISION_REQUIRED.
 
 Idle discovery may observe already eligible pre-activation work, deduplicate it, and produce at most
 one candidate with no repository noise. The Rule-of-Three and a single-instance structural hazard
@@ -270,12 +275,6 @@ fresh independent review-openspec gate. A run head_sha is association metadata, 
 validator checkout `HEAD` is the exact target identity, and synthetic merge validation is
 not exact-head validation for another PR head.
 
-A canonical MUST/SHALL requirement, required deferred follow-up, project-direction commitment, or
-behavior-preserving maintenance/friction is considered only from qualified evidence. Any one candidate
-is bounded to at most one target. Agent-authored advisory text and an Agent-created ticket cannot
-self-authorize additional work. A proposal-ready authority envelope can select the next Action on the
-same Issue without a second generic Human proceed step. New product/project direction, material scope,
-risk acceptance, or security/privacy/cost/operational decisions require HUMAN_DECISION_REQUIRED.
 
 ## Exact retained authority wording
 

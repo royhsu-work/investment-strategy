@@ -8,9 +8,9 @@
 
 ## 2. Source-decision authority and origin-neutral dispatch
 
-- [ ] 2.1 RED: add regressions proving connector writer identity does not change later current-state dispatch eligibility, while connector/Issue provenance alone does not manufacture Human-reserved authority or autonomous queue authority.
-- [ ] 2.2 GREEN: update the canonical scheduled-agent workflow requirement and shared governance projection so source-decision authority, queue eligibility, reserved Human authority, physical mutation carrier, and external interaction-layer materialization responsibility remain distinct.
-- [ ] 2.3 REFACTOR: keep `agents/AGENTS.md` concise and defer normative behavior to the canonical capability instead of creating a second rule surface.
+- [x] 2.1 RED: add regressions proving connector writer identity does not change later current-state dispatch eligibility, while connector/Issue provenance alone does not manufacture Human-reserved authority or autonomous queue authority.
+- [x] 2.2 GREEN: update the canonical scheduled-agent workflow requirement and shared governance projection so source-decision authority, queue eligibility, reserved Human authority, physical mutation carrier, and external interaction-layer materialization responsibility remain distinct.
+- [x] 2.3 REFACTOR: keep `agents/AGENTS.md` concise and defer normative behavior to the canonical capability instead of creating a second rule surface.
 
 ## 3. Preserve Human-reserved provenance and existing scheduling invariants
 
