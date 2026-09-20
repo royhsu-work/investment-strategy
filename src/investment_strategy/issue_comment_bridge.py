@@ -14,6 +14,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal, cast
+from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
@@ -956,6 +957,14 @@ def _classify_ingress_candidate(
             ):
                 return "INVALID"
             return "REJECTED"
+        if relation == "INDETERMINATE":
+            # The exact completed application run already supplies the
+            # authoritative terminal/no-accept boundary.  Historical
+            # protocol lineage is compatibility evidence only; an old
+            # authorization SHA may legitimately have disappeared from the
+            # current commit graph and must not crash dispatch or become a
+            # second competing classifier.
+            return "TERMINAL_NO_ACCEPT"
     return "TERMINAL_NO_ACCEPT"
 
 
@@ -970,11 +979,14 @@ def _application_protocol_relation(
 
     if authorization_revision == _APPLICATION_DECISION_PROTOCOL_REVISION:
         return "PROTOCOL"
-    before = read(
-        repository,
-        token,
-        f"compare/{authorization_revision}...{_APPLICATION_DECISION_PROTOCOL_REVISION}",
-    )
+    try:
+        before = read(
+            repository,
+            token,
+            f"compare/{authorization_revision}...{_APPLICATION_DECISION_PROTOCOL_REVISION}",
+        )
+    except (HTTPError, OSError, ValueError, json.JSONDecodeError):
+        return "INDETERMINATE"
     if isinstance(before, Mapping):
         base = before.get("base_commit")
         if (
@@ -983,11 +995,14 @@ def _application_protocol_relation(
             and base.get("sha") == authorization_revision
         ):
             return "PRE_PROTOCOL"
-    after = read(
-        repository,
-        token,
-        f"compare/{_APPLICATION_DECISION_PROTOCOL_REVISION}...{authorization_revision}",
-    )
+    try:
+        after = read(
+            repository,
+            token,
+            f"compare/{_APPLICATION_DECISION_PROTOCOL_REVISION}...{authorization_revision}",
+        )
+    except (HTTPError, OSError, ValueError, json.JSONDecodeError):
+        return "INDETERMINATE"
     if isinstance(after, Mapping):
         base = after.get("base_commit")
         if (
