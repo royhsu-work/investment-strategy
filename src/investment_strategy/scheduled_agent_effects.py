@@ -596,8 +596,15 @@ def _implementation_checkpoint_effects_complete(
     batch: EffectBatch,
     decision: ActionApplicationDecision,
     validate_implementation_checkpoint: ImplementationCheckpointValidator | None,
+    accepted_intent: bool,
 ) -> bool:
-    """Require exact task/checkpoint effects before implementation advances."""
+    """Require exact task/checkpoint effects before a new intent advances.
+
+    Executable candidate verification is a Phase-A gate.  A durable ACCEPTED
+    intent is already past that linearization point, so Phase B must reconcile
+    its immutable effects and postconditions without requalifying or
+    semantically downgrading the intent.
+    """
 
     if (
         batch.source.role != "executor"
@@ -674,8 +681,11 @@ def _implementation_checkpoint_effects_complete(
         or completed_task_ids is None
         or task_index >= checkpoint_indexes[0]
         or checkpoint_indexes[0] >= formal_result_indexes[0]
-        or validate_implementation_checkpoint is None
     ):
+        return False
+    if accepted_intent:
+        return True
+    if validate_implementation_checkpoint is None:
         return False
     return validate_implementation_checkpoint(request, completed_task_ids)
 
@@ -720,6 +730,7 @@ def _typed_application_plan(
     current_revision: str | None,
     validate_implementation_checkpoint: ImplementationCheckpointValidator | None,
     allow_pending_continuation: bool,
+    accepted_intent: bool,
 ) -> tuple[ActionApplicationDecision | None, StagedEffect | None, ApplyResult | None]:
     typed_result = batch.typed_result
     if typed_result is None:
@@ -796,6 +807,7 @@ def _typed_application_plan(
         batch,
         decision,
         validate_implementation_checkpoint,
+        accepted_intent,
     ):
         return (
             decision,
@@ -1148,6 +1160,7 @@ def apply_effect_batch(
     allow_pending_continuation: bool = False,
     carrier_plan_for_effect: CarrierPlanProvider | None = None,
     effect_rejection: EffectRejectionProvider | None = None,
+    accepted_intent: bool = False,
     persist_application_decision: (
         Callable[[ActionApplicationDecision, str, str], bool] | None
     ) = None,
@@ -1161,9 +1174,14 @@ def apply_effect_batch(
         current_revision,
         validate_implementation_checkpoint,
         allow_pending_continuation,
+        accepted_intent,
     )
     if typed_rejection is not None:
-        if typed_decision is not None and persist_application_decision is not None:
+        if (
+            not accepted_intent
+            and typed_decision is not None
+            and persist_application_decision is not None
+        ):
             reason = typed_rejection.reason
             if not persist_application_decision(typed_decision, "REJECTED", reason):
                 return ApplyResult(False, "application decision postcondition not observed")

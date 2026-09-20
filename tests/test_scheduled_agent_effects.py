@@ -237,6 +237,61 @@ def test_application_acceptance_precedes_outcome_and_derived_successor() -> None
     assert events == ["accepted", "derived"]
     assert applied[-1].derived
 
+def test_accepted_intent_does_not_reverify_candidate_during_phase_b() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    batch = parse_effect_batch(
+        _raw(
+            result_kind="more-implementation-required",
+            requested_effects=_implementation_checkpoint_effects(),
+        ),
+        source,
+    )
+    applied: list[StagedEffect] = []
+
+    def forbidden_verification(
+        _request: effects.MaterializationRequest,
+        _task_ids: tuple[str, ...],
+    ) -> bool:
+        raise AssertionError("Phase B must not re-run the Phase-A candidate gate")
+
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: True,
+        apply_effect=applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        validate_implementation_checkpoint=forbidden_verification,
+        accepted_intent=True,
+    )
+
+    assert result.applied
+    assert applied[-1].derived
+
+
+def test_accepted_intent_never_persists_a_rejection_downgrade() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    batch = parse_effect_batch(_raw(), source)
+    dispositions: list[str] = []
+
+    def persist_decision(_decision: object, disposition: str, _reason: str) -> bool:
+        dispositions.append(disposition)
+        return True
+
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=lambda: _preflight(change="different-current-change"),
+        effect_guard=lambda _effect: pytest.fail("rejected intent reached effect guard"),
+        apply_effect=lambda _effect: pytest.fail("rejected intent reached mutation"),
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        accepted_intent=True,
+        persist_application_decision=persist_decision,
+    )
+
+    assert not result.applied
+    assert dispositions == []
+
 
 class _InterruptedWake(RuntimeError):
     pass
