@@ -37,13 +37,18 @@ def _flatten_issues(payload: object) -> list[dict[str, object]]:
 
 
 def _has_change_identity(body: str, change: str) -> bool:
+    """Match only the first machine-owned Change field in an Issue body."""
+
     pattern = re.compile(rf"^Change:\s*`?{re.escape(change)}`?$")
     for raw_line in body.splitlines():
         line = raw_line.strip()
         if len(line) >= 2 and line.startswith("`") and line.endswith("`"):
             line = line[1:-1].strip()
-        if pattern.fullmatch(line):
-            return True
+        if not line.startswith("Change:"):
+            continue
+        # Later Change-shaped prose is evidence, not a second workflow
+        # identity.  The first field is the only canonical body identity.
+        return pattern.fullmatch(line) is not None
     return False
 
 

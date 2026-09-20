@@ -90,7 +90,14 @@ def _failed_merge_predicates(snapshot: MergeAcceptanceSnapshot) -> tuple[str, ..
         "current_carrier": snapshot.pr_open or snapshot.historical_merged_carrier_allowed,
         "exact_head": snapshot.current_head_sha == snapshot.expected_head_sha,
         "exact_review": snapshot.reviewer_pass_head_sha == snapshot.expected_head_sha,
-        "required_checks": snapshot.required_checks_pass,
+        # A proven historical carrier has already produced the exact merge
+        # consequence.  Later check runs belong to a later workflow boundary
+        # (for example archive evaluation) and cannot invalidate this
+        # idempotent recovery path.  Open carriers still require current
+        # checks before mutation.
+        "required_checks": (
+            snapshot.required_checks_pass or snapshot.historical_merged_carrier_allowed
+        ),
         "non_closing_linkage": snapshot.non_closing_linkage,
         "native_closing_preflight": snapshot.native_closing_preflight_allowed,
         "no_contradiction": not snapshot.contradictory_evidence,
