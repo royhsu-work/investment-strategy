@@ -879,11 +879,14 @@ def _legacy_unaccepted_request_is_inert(
 
 def _derive_frontier(
     *,
+    repository: str,
+    token: str,
     source: WorkerRequest,
     current_issue: Mapping[str, object],
     issue_comments: tuple[Mapping[str, object], ...],
     lifecycle_events: tuple[Mapping[str, object], ...],
     current_revision: str,
+    read: GitHubReader,
 ) -> tuple[CurrentFrontier | None, bool]:
     """Read the current frontier through the canonical formal qualifier."""
 
@@ -906,6 +909,20 @@ def _derive_frontier(
         current_revision=current_revision,
         lifecycle_events=lifecycle_events,
     )
+    if qualification.events:
+        latest_revision = qualification.events[-1].default_branch_revision
+        if latest_revision is None:
+            return None, False
+        ancestry = _authorization_ancestry(
+            repository,
+            token,
+            authorization_revision=latest_revision,
+            current_revision=current_revision,
+            read=read,
+        )
+        if ancestry is None:
+            return None, False
+        qualification = replace(qualification, authorization_ancestry=ancestry)
     frontier = derive_current_frontier(qualification)
     return frontier, frontier is not None
 
@@ -1059,11 +1076,14 @@ def qualify_application_completion(
                 outcome_record
             )
     frontier, frontier_qualified = _derive_frontier(
+        repository=repository,
+        token=token,
         source=source,
         current_issue=cast(Mapping[str, object], issue),
         issue_comments=issue_comments,
         lifecycle_events=lifecycle,
         current_revision=current_revision,
+        read=read,
     )
     if not frontier_qualified:
         return ApplicationCompletion("INVALID", "application-completion-current-frontier-invalid")
