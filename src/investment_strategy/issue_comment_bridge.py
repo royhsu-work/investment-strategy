@@ -1323,12 +1323,27 @@ def qualify_application_completion(
         for request_id in invalid_request_ids
         if request_id < 0 or _belongs_to_current_frontier(request_id, frontier)
     }
-    relevant_decisions = [
+    current_frontier_decisions = [
         record
         for record in relevant_decisions
         if _belongs_to_current_frontier(record.request_comment_id, frontier)
-        or _accepted_intent_owns_frontier(record, frontier, source=source)
     ]
+    predecessor_decisions = [
+        record
+        for record in relevant_decisions
+        if _accepted_intent_owns_frontier(record, frontier, source=source)
+    ]
+    # A predecessor accepted intent is a recovery fallback only while there is
+    # no later ingress or decision for this frontier.  Once a new occurrence
+    # is observable, the completed predecessor is historical and must not
+    # compete with the new current-frontier reducer input.  This is the
+    # causal boundary for A -> A as well as A -> B -> A; it is not a request
+    # count, retry, or generation mechanism.
+    relevant_decisions = (
+        current_frontier_decisions
+        if current_request_ids or current_invalid_request_ids or current_frontier_decisions
+        else predecessor_decisions
+    )
     accepted = [record for record in relevant_decisions if record.disposition == "ACCEPTED"]
     accepted_request_ids = {record.request_comment_id for record in accepted}
     frontier_correlation = (

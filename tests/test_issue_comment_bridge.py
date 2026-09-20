@@ -578,6 +578,87 @@ def test_same_action_frontier_acceptance_binds_its_own_formal_result() -> None:
     assert completion.request_comment_id == 90
 
 
+def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier() -> None:
+    source = bridge.WorkerRequest(138, "executor", "implement-change")
+    change = "recurrence-a-a-new-occurrence"
+    predecessor_request = _effect_request_comment(
+        comment_id=70,
+        created_at="2026-09-18T01:00:00Z",
+        action="implement-change",
+        role="executor",
+        result_kind="more-implementation-required",
+        issue_number=138,
+        change=change,
+    )
+    predecessor_decision = _application_decision_comment(predecessor_request, comment_id=71)
+    predecessor_frontier = _formal_frontier_comment(
+        80,
+        action="implement-change",
+        role="executor",
+        result="more-implementation-required",
+        successor="Executor / implement-change",
+        request_id=70,
+        change=change,
+    )
+    current_request = _effect_request_comment(
+        comment_id=90,
+        created_at="2026-09-18T03:00:00Z",
+        action="implement-change",
+        role="executor",
+        result_kind="more-implementation-required",
+        issue_number=138,
+        change=change,
+    )
+    current_decision = _application_decision_comment(current_request, comment_id=91)
+    issue = {
+        **_current_source_issue(),
+        "labels": [{"name": "action:implement-change"}],
+        "body": f"Change: {change}",
+    }
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [predecessor_request, current_request]
+        if path.startswith("issues/138/comments?"):
+            return [predecessor_decision, predecessor_frontier, current_decision]
+        if path == "issues/138":
+            return issue
+        if path.startswith("issues/138/timeline?"):
+            return _frontier_lifecycle([(80, "review-implementation", "implement-change")])
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 777,
+                        "display_title": "Scheduled Agent Application 90",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "run_attempt": 1,
+                    }
+                ]
+            }
+        if path == "actions/runs/777/jobs":
+            return {"jobs": [{"id": 888, "name": "apply"}]}
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 4, 0, tzinfo=UTC),
+    )
+
+    assert completion.state == "RESUMABLE"
+    assert completion.reason == "application-completion-resuming"
+    assert completion.request_comment_id == 90
+    assert completion.job_id == 888
+
+
+def test_current_frontier_reuses_formal_ancestry_after_main_advances() -> None:
+    source = bridge.WorkerRequest(138, "executor", "implement-change")
+
 def test_current_frontier_reuses_formal_ancestry_after_main_advances() -> None:
     source = bridge.WorkerRequest(138, "executor", "implement-change")
     advanced_revision = "a" * 40
