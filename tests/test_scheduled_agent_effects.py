@@ -2707,6 +2707,7 @@ def test_failed_archive_workflow_run_is_not_dispatch_postcondition(
 
     assert not adapter.observe_postcondition(effect)
 
+
 def test_issue_comment_reuses_existing_bot_comment_on_later_page(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
