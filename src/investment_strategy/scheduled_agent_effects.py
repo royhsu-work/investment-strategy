@@ -2821,8 +2821,28 @@ class GitHubEffectAdapter:
         if len(existing_decisions) > 1:
             raise RuntimeError("application decision identity is ambiguous")
         if existing_decisions:
-            if self._existing_issue_comment(body) is None:
+            existing = existing_decisions[0]
+            expected_source = decision.source
+            expected_result_kind = decision.result.result.kind.value
+            if (
+                existing.disposition != disposition
+                or existing.authorization_revision != authorization_revision
+                or existing.issue_number != expected_source.issue_number
+                or existing.role != role_for(expected_source.action).value
+                or existing.action != expected_source.action.value
+                or existing.change != expected_source.change
+                or existing.result_kind != expected_result_kind
+                or existing.worker_result_sha256 != _sha256_text(raw_worker_result)
+            ):
                 raise RuntimeError("application decision identity changed")
+
+            # The accepted decision is the durable linearization point.  The
+            # ingress comment is only transport and may be reconstructed from
+            # the immutable accepted intent after a carrier interruption (or
+            # may have been edited after ACCEPT).  Its original body hash is
+            # retained as evidence in the decision record, but it must not be
+            # replayed as an authority check or the accepted intent becomes
+            # unable to resume once the original transport envelope is gone.
             return True
         return self._persist_application_evidence_comment(
             body=body,
