@@ -578,6 +578,49 @@ def test_same_action_frontier_acceptance_binds_its_own_formal_result() -> None:
     assert completion.request_comment_id == 90
 
 
+def test_current_frontier_reuses_formal_ancestry_after_main_advances() -> None:
+    source = bridge.WorkerRequest(138, "executor", "implement-change")
+    advanced_revision = "a" * 40
+    formal = _formal_frontier_comment(
+        100,
+        action="implement-change",
+        role="executor",
+        result="more-implementation-required",
+        successor="Executor / implement-change",
+        request_id=90,
+        change="frontier-main-advance",
+    )
+    issue = {
+        **_current_source_issue(),
+        "labels": [{"name": "action:implement-change"}],
+        "body": "Change: frontier-main-advance",
+    }
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return []
+        if path.startswith("issues/138/comments?"):
+            return [formal]
+        if path == "issues/138":
+            return issue
+        if path.startswith("issues/138/timeline?"):
+            return _frontier_lifecycle([(100, "implement-change", "implement-change")])
+        if path == f"compare/{REVISION}...{advanced_revision}":
+            return {"status": "ahead", "base_commit": {"sha": REVISION}}
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=advanced_revision,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 3, 0, tzinfo=UTC),
+    )
+
+    assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
+
+
 def test_preaccept_live_application_run_is_not_redispatched() -> None:
     source = bridge.WorkerRequest(138, "lead", "explore-change")
     request = _effect_request_comment(
