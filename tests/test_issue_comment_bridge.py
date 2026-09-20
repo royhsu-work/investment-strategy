@@ -655,10 +655,6 @@ def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier() -
     assert completion.request_comment_id == 90
     assert completion.job_id == 888
 
-
-def test_current_frontier_reuses_formal_ancestry_after_main_advances() -> None:
-    source = bridge.WorkerRequest(138, "executor", "implement-change")
-
 def test_current_frontier_reuses_formal_ancestry_after_main_advances() -> None:
     source = bridge.WorkerRequest(138, "executor", "implement-change")
     advanced_revision = "a" * 40
