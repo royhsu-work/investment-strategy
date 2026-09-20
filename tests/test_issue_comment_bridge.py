@@ -708,7 +708,7 @@ def test_accepted_formal_result_waits_for_requested_effect_postconditions(
         now=datetime(2026, 9, 18, 3, 0, tzinfo=UTC),
     )
 
-    assert completion.state == "RESUMABLE"
+    assert completion.state == "RESUMABLE", completion
     assert completion.reason == "application-completion-resuming"
     assert completion.request_comment_id == 90
     assert completion.job_id == 888
