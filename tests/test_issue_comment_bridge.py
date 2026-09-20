@@ -699,6 +699,18 @@ def test_accepted_formal_result_waits_for_requested_effect_postconditions(
             }
         raise AssertionError(path)
 
+    qualification = bridge.build_qualification_input(
+        issue_number=138,
+        change=change,
+        state="open",
+        current_routing=("reviewer", "review-archive"),
+        comments=(decision, formal),
+        current_revision=REVISION,
+        lifecycle_events=_frontier_lifecycle([(100, "finalize-change", "review-archive")]),
+    )
+    qualification_decision = bridge.qualify_current_formal_consequence(qualification)
+    assert qualification_decision.qualified, qualification_decision
+
     completion = bridge.qualify_application_completion(
         "owner/repo",
         "token",
