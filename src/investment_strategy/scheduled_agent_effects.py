@@ -430,79 +430,6 @@ CarrierPlanProvider = Callable[[StagedEffect], CarrierPlan | None]
 ImplementationCheckpointValidator = Callable[[MaterializationRequest, tuple[str, ...]], bool]
 
 
-def persist_application_outcome_record(
-    *,
-    repository: str,
-    token: str,
-    source: WorkerRequest,
-    decision: ApplicationDecisionRecord,
-    outcome: str,
-    reason: str,
-) -> bool:
-    """Persist terminal application evidence from a previously accepted intent."""
-
-    if (
-        decision.disposition != "ACCEPTED"
-        or decision.issue_number != source.issue_number
-        or decision.role != source.role
-        or decision.action != source.action
-    ):
-        raise ValueError("application outcome source is invalid")
-    body = render_application_outcome_body(
-        request_comment_id=decision.request_comment_id,
-        request_body_sha256=decision.request_body_sha256,
-        authorization_revision=decision.authorization_revision,
-        decision=decision,
-        outcome=outcome,
-        reason=reason,
-    )
-    comments = _paged_github_list(
-        repository,
-        token,
-        f"issues/{source.issue_number}/comments?sort=created&direction=asc",
-    )
-    existing = [
-        record
-        for item in comments
-        if is_github_actions_comment(item)
-        for record in (parse_application_outcome(item.get("body")),)
-        if record is not None and record.request_comment_id == decision.request_comment_id
-    ]
-    if len(existing) > 1:
-        raise RuntimeError("application outcome identity is ambiguous")
-    if existing:
-        for item in comments:
-            if is_github_actions_comment(item) and item.get("body") == body:
-                return True
-        return False
-    response = _github_json(
-        repository,
-        token,
-        f"issues/{source.issue_number}/comments",
-        method="POST",
-        payload={"body": body},
-    )
-    comment_id = (
-        None if not isinstance(response, Mapping) else _positive_comment_id(response.get("id"))
-    )
-    if (
-        not isinstance(response, Mapping)
-        or comment_id is None
-        or response.get("body") != body
-        or not is_github_actions_comment(response)
-    ):
-        raise RuntimeError("application outcome postcondition was not observed")
-    observed = _as_mapping(_github_json(repository, token, f"issues/comments/{comment_id}"))
-    if (
-        observed is None
-        or observed.get("id") != comment_id
-        or observed.get("body") != body
-        or not is_github_actions_comment(observed)
-    ):
-        raise RuntimeError("application outcome fresh postcondition was not observed")
-    return True
-
-
 def parse_effect_batch(raw: str, source: WorkerRequest) -> EffectBatch:
     """Parse one structured worker result and bind its requested effects."""
 
@@ -1218,9 +1145,6 @@ def apply_effect_batch(
     persist_application_decision: (
         Callable[[ActionApplicationDecision, str, str], bool] | None
     ) = None,
-    persist_application_outcome: (
-        Callable[[ActionApplicationDecision, str, str], bool] | None
-    ) = None,
 ) -> ApplyResult:
     """Apply one typed batch after fresh source reauthorization."""
 
@@ -1286,13 +1210,6 @@ def apply_effect_batch(
             raise
         if not observe_postcondition(effect):
             return ApplyResult(False, "durable postcondition not observed")
-
-    if persist_application_outcome is not None and not persist_application_outcome(
-        typed_decision,
-        "COMPLETED",
-        "application consequence complete",
-    ):
-        return ApplyResult(False, "application outcome postcondition not observed")
 
     if apply_derived:
         if not effect_guard(derived_effect):
@@ -2905,65 +2822,6 @@ class GitHubEffectAdapter:
         return self._persist_application_evidence_comment(
             body=body,
             marker=APPLICATION_DECISION_MARKER,
-        )
-
-    def persist_application_outcome(
-        self,
-        decision: ActionApplicationDecision,
-        *,
-        outcome: str,
-        reason: str,
-        request_body: str,
-        authorization_revision: str,
-        raw_worker_result: str,
-    ) -> bool:
-        """Persist and fresh-verify one terminal application disposition."""
-
-        if self.request_comment_id is None:
-            return False
-        decision_record = ApplicationDecisionRecord(
-            request_comment_id=self.request_comment_id,
-            request_body_sha256=_sha256_text(request_body),
-            authorization_revision=authorization_revision,
-            issue_number=decision.source.issue_number,
-            role=role_for(decision.source.action).value,
-            action=decision.source.action.value,
-            change=decision.source.change,
-            result_kind=decision.result.result.kind.value,
-            disposition="ACCEPTED",
-            worker_result_sha256=_sha256_text(raw_worker_result),
-            raw_worker_result=raw_worker_result,
-            reason="application accepted",
-        )
-        body = render_application_outcome_body(
-            request_comment_id=self.request_comment_id,
-            request_body_sha256=decision_record.request_body_sha256,
-            authorization_revision=authorization_revision,
-            decision=decision_record,
-            outcome=outcome,
-            reason=reason,
-        )
-        comments = _paged_github_list(
-            self.repository,
-            self.token,
-            f"issues/{self.source.issue_number}/comments?sort=created&direction=asc",
-        )
-        existing_outcomes = [
-            record
-            for item in comments
-            if is_github_actions_comment(item)
-            for record in (parse_application_outcome(item.get("body")),)
-            if record is not None and record.request_comment_id == self.request_comment_id
-        ]
-        if len(existing_outcomes) > 1:
-            raise RuntimeError("application outcome identity is ambiguous")
-        if existing_outcomes:
-            if self._existing_issue_comment(body) is None:
-                raise RuntimeError("application outcome identity changed")
-            return True
-        return self._persist_application_evidence_comment(
-            body=body,
-            marker=APPLICATION_OUTCOME_MARKER,
         )
 
     def apply(self, effect: StagedEffect) -> None:

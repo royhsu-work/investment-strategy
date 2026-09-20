@@ -535,6 +535,51 @@ The normal validated `agent/archive-<change>` branch is a lifecycle artifact and
 - WHEN later lifecycle gates evaluate that PR
 - THEN the linkage does not substitute for independent archive Reviewer PASS, Executor exact-head/current-check merge preconditions, or terminal lifecycle reconstruction
 
+### Requirement: Application consequence completion is reconstructable across interruption
+
+The application bridge SHALL treat an `EFFECT_REQUEST` as an ingress candidate,
+not as an accepted application.  Before any consequential effect, the fresh
+application authorization SHALL durably persist one exact
+`APPLICATION_DECISION: ACCEPTED` bound to the request comment, source Issue,
+Role/Action, Change, authorization revision, result, and immutable worker
+intent.  If no acceptance exists, an active application run SHALL not be
+redispatched; a terminal run without acceptance MAY return ownership only
+after fresh evidence proves that no authoritative consequence was committed.
+
+After durable acceptance, interruption recovery SHALL use only that exact
+accepted intent and idempotently reconcile missing effects.  It SHALL never
+re-execute the semantic Action because mutable ingress was edited, deleted, or
+re-observed after acceptance.  The one canonical `ACTION_RESULT`,
+`REVIEW_RESULT`, or `MERGE_RESULT`, exact-bound by `Application-Correlation`
+and qualified against repository postconditions, SHALL be the normal logical
+application-consequence commit boundary.  Routing or terminal state is a
+projection of that committed consequence; `APPLICATION_OUTCOME: COMPLETED`
+MUST NOT be an independent normal completion authority.
+
+Current application ownership SHALL be derived from the existing formal
+lifecycle qualifier: current routing is owned by the latest qualified formal
+predecessor whose repository-derived successor equals that routing.  The
+derivation SHALL preserve legal same-Action recurrence and alternating
+recurrence (including `A -> A` and `A -> B -> A`) without persisting an epoch,
+generation, retry counter, lease, mailbox, or second lifecycle/state system.
+
+#### Scenario: Accepted application resumes without semantic replay
+
+- GIVEN an `APPLICATION_DECISION: ACCEPTED` is durable for one exact request
+- AND an interruption occurs after any requested effect, carrier, validation, formal-result, routing, terminal, or final-postcondition prefix
+- WHEN a later process reconstructs the application
+- THEN it uses the immutable accepted intent
+- AND applies only missing idempotent effects
+- AND persists no second semantic Action execution or independent completion truth
+
+#### Scenario: Historical same-Action evidence does not poison the current frontier
+
+- GIVEN the current formal qualifier reconstructs a later `A -> A` or `A -> B -> A` frontier
+- AND an earlier accepted/rejected/aborted application has the same Role/Action
+- WHEN application completion is qualified
+- THEN the earlier occurrence remains historical
+- AND it does not block the current frontier
+
 ### Requirement: Coordination Issue closure is the durable final lifecycle transition
 
 A completion comment, Reviewer PASS, Archive merge, Lead terminal-verification decision, or statement that an Issue may be closed MUST NOT constitute completed coordination lifecycle by itself.

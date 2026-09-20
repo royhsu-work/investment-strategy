@@ -796,7 +796,6 @@ def run_effect_application(
     if not callable(effect_rejection_provider):
         effect_rejection_provider = None
     application_decision_persister = None
-    application_outcome_persister = None
     if (
         request_comment_id is not None
         and application_request_body is not None
@@ -811,20 +810,6 @@ def run_effect_application(
             return adapter.persist_application_decision(
                 decision,
                 disposition=disposition,
-                reason=reason,
-                request_body=application_request_body,
-                authorization_revision=authorization_revision,
-                raw_worker_result=raw_worker_result,
-            )
-
-        def application_outcome_persister(
-            decision: ActionApplicationDecision,
-            outcome: str,
-            reason: str,
-        ) -> bool:
-            return adapter.persist_application_outcome(
-                decision,
-                outcome=outcome,
                 reason=reason,
                 request_body=application_request_body,
                 authorization_revision=authorization_revision,
@@ -846,7 +831,6 @@ def run_effect_application(
             carrier_plan_for_effect=carrier_plan_provider,
             effect_rejection=effect_rejection_provider,
             persist_application_decision=application_decision_persister,
-            persist_application_outcome=application_outcome_persister,
         )
     except _EffectPreconditionStale:
         result = ApplyResult(False, "effect precondition became stale")

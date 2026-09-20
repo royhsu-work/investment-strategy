@@ -333,6 +333,339 @@ def _current_source_issue() -> dict[str, object]:
     }
 
 
+def _formal_frontier_comment(
+    comment_id: int,
+    *,
+    action: str,
+    role: str,
+    result: str,
+    successor: str,
+    request_id: int,
+    change: str,
+) -> dict[str, object]:
+    body = "\n".join(
+        (
+            "ACTION_RESULT",
+            "Workflow: #138",
+            f"Change: {change}",
+            f"Action: {action}",
+            f"Role: {role}",
+            f"Result: {result.upper().replace('-', '_')}",
+            f"Revision: {REVISION}",
+            f"Default-Branch-Revision: {REVISION}",
+            "Application-Correlation: "
+            f"application:{request_id}:138:{change}:{role}:{action}:{result}:{REVISION}",
+            f"Repository-derived successor: {successor}",
+        )
+    )
+    return {
+        "id": comment_id,
+        "body": body,
+        "created_at": f"2026-09-18T02:00:{comment_id // 10:02d}Z",
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+
+
+def _frontier_lifecycle(
+    transitions: list[tuple[int, str, str | None]],
+) -> list[dict[str, object]]:
+    events: list[dict[str, object]] = []
+    for index, (comment_id, current_action, successor_action) in enumerate(transitions):
+        second = index + 1
+        events.append(
+            {
+                "id": comment_id,
+                "event": "commented",
+                "created_at": f"2026-09-18T02:00:{comment_id // 10:02d}Z",
+            }
+        )
+        if successor_action is None:
+            continue
+        # A -> A has no label write at the second occurrence.  The formal
+        # qualifier proves that recurrence from the preceding bound result.
+        if second > 1 and successor_action == current_action:
+            continue
+        events.extend(
+            (
+                {
+                    "id": 1000 + index * 2,
+                    "event": "unlabeled",
+                    "created_at": f"2026-09-18T02:00:{comment_id // 10 + 1:02d}Z",
+                    "label": {"name": f"action:{current_action}"},
+                },
+                {
+                    "id": 1001 + index * 2,
+                    "event": "labeled",
+                    "created_at": f"2026-09-18T02:00:{comment_id // 10 + 1:02d}Z",
+                    "label": {"name": f"action:{successor_action}"},
+                },
+            )
+        )
+    return events
+
+
+@pytest.mark.parametrize(
+    ("topology", "formal_comments", "transitions"),
+    (
+        (
+            "A->A",
+            (
+                _formal_frontier_comment(
+                    80,
+                    action="implement-change",
+                    role="executor",
+                    result="more-implementation-required",
+                    successor="Executor / implement-change",
+                    request_id=80,
+                    change="recurrence-a-a",
+                ),
+                _formal_frontier_comment(
+                    100,
+                    action="implement-change",
+                    role="executor",
+                    result="more-implementation-required",
+                    successor="Executor / implement-change",
+                    request_id=100,
+                    change="recurrence-a-a",
+                ),
+            ),
+            [
+                (80, "review-implementation", "implement-change"),
+                (100, "implement-change", "implement-change"),
+            ],
+        ),
+        (
+            "A->B->A",
+            (
+                _formal_frontier_comment(
+                    80,
+                    action="implement-change",
+                    role="executor",
+                    result="spec-blocker",
+                    successor="Lead / resolve-question",
+                    request_id=80,
+                    change="recurrence-a-b-a",
+                ),
+                _formal_frontier_comment(
+                    100,
+                    action="resolve-question",
+                    role="lead",
+                    result="ready",
+                    successor="Executor / implement-change",
+                    request_id=100,
+                    change="recurrence-a-b-a",
+                ),
+            ),
+            [
+                (80, "implement-change", "resolve-question"),
+                (100, "resolve-question", "implement-change"),
+            ],
+        ),
+    ),
+)
+def test_historical_same_action_application_does_not_block_current_frontier(
+    topology: str,
+    formal_comments: tuple[dict[str, object], ...],
+    transitions: list[tuple[int, str, str | None]],
+) -> None:
+    del topology
+    source = bridge.WorkerRequest(138, "executor", "implement-change")
+    change = str(formal_comments[-1]["body"]).split("Change: ", 1)[1].splitlines()[0]
+    historical_request = _effect_request_comment(
+        comment_id=50,
+        created_at="2026-09-18T01:00:00Z",
+        action="implement-change",
+        role="executor",
+        result_kind="more-implementation-required",
+        issue_number=138,
+        change=change,
+    )
+    historical_decision = _application_decision_comment(historical_request, comment_id=60)
+    issue = {
+        **_current_source_issue(),
+        "labels": [{"name": "action:implement-change"}],
+        "body": f"Change: {change}",
+    }
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [historical_request]
+        if path.startswith("issues/138/comments?"):
+            return [historical_decision, *formal_comments]
+        if path == "issues/138":
+            return issue
+        if path.startswith("issues/138/timeline?"):
+            return _frontier_lifecycle(transitions)
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 3, 0, tzinfo=UTC),
+    )
+
+    assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
+
+
+def test_same_action_frontier_acceptance_binds_its_own_formal_result() -> None:
+    source = bridge.WorkerRequest(138, "executor", "implement-change")
+    change = "recurrence-a-a-current"
+    current_request = _effect_request_comment(
+        comment_id=90,
+        created_at="2026-09-18T02:00:00Z",
+        action="implement-change",
+        role="executor",
+        result_kind="more-implementation-required",
+        issue_number=138,
+        change=change,
+    )
+    decision = _application_decision_comment(current_request, comment_id=91)
+    predecessor = _formal_frontier_comment(
+        80,
+        action="implement-change",
+        role="executor",
+        result="more-implementation-required",
+        successor="Executor / implement-change",
+        request_id=70,
+        change=change,
+    )
+    current = _formal_frontier_comment(
+        100,
+        action="implement-change",
+        role="executor",
+        result="more-implementation-required",
+        successor="Executor / implement-change",
+        request_id=90,
+        change=change,
+    )
+    issue = {
+        **_current_source_issue(),
+        "labels": [{"name": "action:implement-change"}],
+        "body": f"Change: {change}",
+    }
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [current_request]
+        if path.startswith("issues/138/comments?"):
+            return [decision, predecessor, current]
+        if path == "issues/138":
+            return issue
+        if path.startswith("issues/138/timeline?"):
+            return _frontier_lifecycle(
+                [
+                    (80, "review-implementation", "implement-change"),
+                    (100, "implement-change", "implement-change"),
+                ]
+            )
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 3, 0, tzinfo=UTC),
+    )
+
+    assert completion.state == "COMPLETE"
+    assert completion.reason == "application-completion-complete"
+    assert completion.request_comment_id == 90
+
+
+def test_preaccept_live_application_run_is_not_redispatched() -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    request = _effect_request_comment(
+        comment_id=654,
+        created_at="2026-09-18T01:00:00Z",
+        authorization_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
+    )
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [request]
+        if path.startswith("issues/138/comments?"):
+            return []
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return []
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 777,
+                        "display_title": "Scheduled Agent Application 654",
+                        "status": "in_progress",
+                        "run_attempt": 1,
+                    }
+                ]
+            }
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+
+    assert completion.state == "RESUMABLE"
+    assert completion.reason == "application-completion-preaccept-in-progress"
+    assert completion.job_id is None
+
+
+def test_deleted_ingress_after_accept_uses_immutable_intent() -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    request = _effect_request_comment(
+        comment_id=654,
+        created_at="2026-09-18T01:00:00Z",
+    )
+    decision = _application_decision_comment(request)
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return []
+        if path.startswith("issues/138/comments?"):
+            return [decision]
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return []
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 777,
+                        "display_title": "Scheduled Agent Application 654",
+                        "status": "in_progress",
+                        "run_attempt": 1,
+                    }
+                ]
+            }
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+
+    assert completion.state == "RESUMABLE"
+    assert completion.request_comment_id == 654
+    assert completion.reason == "application-completion-in-progress"
+
+
 def test_missing_acceptance_is_not_resumed_before_semantic_replay() -> None:
     source = bridge.WorkerRequest(138, "lead", "explore-change")
     request = _effect_request_comment(
@@ -345,6 +678,12 @@ def test_missing_acceptance_is_not_resumed_before_semantic_replay() -> None:
             return [request]
         if path.startswith("issues/138/comments?"):
             return []
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return []
+        if path.startswith("actions/workflows/"):
+            return {"workflow_runs": []}
         if path.startswith("compare/"):
             return {}
         raise AssertionError(path)
@@ -424,6 +763,12 @@ def test_same_source_malformed_legacy_request_still_fails_closed() -> None:
             return [malformed]
         if path.startswith("issues/138/comments?"):
             return []
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return []
+        if path.startswith("actions/workflows/"):
+            return {"workflow_runs": []}
         raise AssertionError(path)
 
     completion = bridge.qualify_application_completion(
@@ -452,6 +797,12 @@ def test_protocol_request_without_acceptance_returns_source_ownership() -> None:
             return [request]
         if path.startswith("issues/138/comments?"):
             return []
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return []
+        if path.startswith("actions/workflows/"):
+            return {"workflow_runs": []}
         raise AssertionError(path)
 
     completion = bridge.qualify_application_completion(
@@ -489,12 +840,52 @@ def test_preprotocol_inert_request_is_retired_without_semantic_replay() -> None:
         "labels": [{"name": "action:resolve-question"}],
         "body": f"Change: {change}",
     }
+    predecessor = {
+        "id": 10,
+        "body": "\n".join(
+            (
+                "ACTION_RESULT",
+                "Workflow: #234",
+                f"Change: {change}",
+                "Role: executor",
+                "Action: implement-change",
+                "Result: SPEC_BLOCKER",
+                f"Revision: {bridge._APPLICATION_DECISION_PROTOCOL_REVISION}",
+                f"Default-Branch-Revision: {bridge._APPLICATION_DECISION_PROTOCOL_REVISION}",
+                "Application-Correlation: "
+                f"application:1:234:{change}:executor:implement-change:spec-blocker:"
+                f"{bridge._APPLICATION_DECISION_PROTOCOL_REVISION}",
+                "Repository-derived successor: Lead / resolve-question",
+            )
+        ),
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    predecessor_timeline = [
+        {"id": 10, "event": "commented", "created_at": "2026-09-18T12:00:00Z"},
+        {
+            "id": 11,
+            "event": "unlabeled",
+            "created_at": "2026-09-18T12:00:01Z",
+            "label": {"name": "action:implement-change"},
+        },
+        {
+            "id": 12,
+            "event": "labeled",
+            "created_at": "2026-09-18T12:00:01Z",
+            "label": {"name": "action:resolve-question"},
+        },
+    ]
 
     def fake_read(_repository: str, _token: str, path: str) -> object:
         if path.startswith("issues/comments?"):
             return [request]
         if path.startswith("issues/234/comments?"):
-            return []
+            return [predecessor]
+        if path.startswith("issues/234/timeline?"):
+            return predecessor_timeline
+        if path.startswith("actions/workflows/"):
+            return {"workflow_runs": []}
         if path == f"compare/{legacy_revision}...{bridge._APPLICATION_DECISION_PROTOCOL_REVISION}":
             return {"status": "ahead", "base_commit": {"sha": legacy_revision}}
         if path == "issues/234":
@@ -530,6 +921,8 @@ def test_one_accepted_intent_is_resumed_before_semantic_replay() -> None:
             return [decision]
         if path == "issues/138":
             return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return []
         if path.startswith("actions/workflows/"):
             return {
                 "workflow_runs": [
@@ -572,6 +965,10 @@ def test_rejected_intent_returns_ownership_to_later_semantic_dispatch() -> None:
             return [request]
         if path.startswith("issues/138/comments?"):
             return [decision]
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return []
         raise AssertionError(path)
 
     completion = bridge.qualify_application_completion(
@@ -609,6 +1006,10 @@ def test_distinct_accepted_requests_never_alias_by_equal_payload() -> None:
             return requests
         if path.startswith("issues/138/comments?"):
             return decisions
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return []
         raise AssertionError(path)
 
     completion = bridge.qualify_application_completion(

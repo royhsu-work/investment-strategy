@@ -103,6 +103,24 @@ class QualificationDecision:
         return self.provenance is ObservationProvenance.QUALIFIED
 
 
+@dataclass(frozen=True, slots=True)
+class CurrentFrontier:
+    """The repository-derived owner of the currently routed frontier.
+
+    This is only a view of the existing formal qualification decision.  It is
+    deliberately not persisted and does not introduce an occurrence counter
+    or another workflow state.  ``event`` is the latest qualified formal
+    consequence (or administrative recovery); a pre-activation frontier has
+    no predecessor event.
+    """
+
+    issue_number: int
+    change: str
+    current_routing: tuple[str, str] | None
+    event: FormalLifecycleEvent | AdministrativeRecoveryEvent | None
+    decision: QualificationDecision
+
+
 def _positive_decimal(value: str | None) -> int | None:
     if value is None or not value.isdigit() or value.startswith("0"):
         return None
@@ -804,12 +822,36 @@ def qualify_current_formal_consequence(
     return _qualified("pending-successor-qualified", latest)
 
 
+def derive_current_frontier(qualification: QualificationInput) -> CurrentFrontier | None:
+    """Derive the current frontier from the existing formal qualifier.
+
+    Consumers must use the returned predecessor event to scope an application
+    occurrence.  A historical result is never a current occurrence merely
+    because its Role/Action equals the current route.
+    """
+
+    if qualification.mode != "current":
+        return None
+    decision = qualify_current_formal_consequence(qualification)
+    if not decision.qualified:
+        return None
+    return CurrentFrontier(
+        issue_number=qualification.issue_number,
+        change=qualification.change,
+        current_routing=qualification.current_routing,
+        event=decision.event,
+        decision=decision,
+    )
+
+
 __all__ = [
     "AdministrativeRecoveryEvent",
+    "CurrentFrontier",
     "FormalLifecycleEvent",
     "IssueLifecycleEvent",
     "QualificationDecision",
     "QualificationInput",
     "build_qualification_input",
+    "derive_current_frontier",
     "qualify_current_formal_consequence",
 ]
