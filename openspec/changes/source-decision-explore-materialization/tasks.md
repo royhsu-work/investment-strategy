@@ -14,9 +14,9 @@
 
 ## 3. Preserve Human-reserved provenance and existing scheduling invariants
 
-- [ ] 3.1 RED: add/extend regressions showing connector-created materialization evidence cannot satisfy a later Human-reserved decision and that a coherently materialized Explore remains queued behind existing formal WIP/finish-first ordering.
-- [ ] 3.2 GREEN: make only the minimum repository changes needed for those existing invariants to remain true under the clarified ingress contract.
-- [ ] 3.3 REFACTOR: confirm no new Action, result kind, label class, approval/delegation token, origin registry, connector whitelist, queue state, workflow graph, repository Issue-creation surface, or worker effect capability was introduced.
+- [x] 3.1 RED: add/extend regressions showing connector-created materialization evidence cannot satisfy a later Human-reserved decision and that a coherently materialized Explore remains queued behind existing formal WIP/finish-first ordering.
+- [x] 3.2 GREEN: make only the minimum repository changes needed for those existing invariants to remain true under the clarified ingress contract.
+- [x] 3.3 REFACTOR: confirm no new Action, result kind, label class, approval/delegation token, origin registry, connector whitelist, queue state, workflow graph, repository Issue-creation surface, or worker effect capability was introduced.
 
 ## 4. Verification
 

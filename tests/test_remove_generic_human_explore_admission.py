@@ -79,6 +79,7 @@ def test_human_boundaries_are_not_replaced_by_connector_activity() -> None:
     assert "Connector activity alone is insufficient" in shared
     assert "Reserved Human decisions require" in shared
 
+
 def test_shared_projection_names_source_decision_not_physical_writer() -> None:
     shared = _governance()
 
@@ -185,3 +186,12 @@ def test_connector_materialization_cannot_satisfy_human_reserved_authority() -> 
         comments=(connector_comment,),
         label_events=(connector_event,),
     )
+
+
+def test_slice_three_and_verification_markers_are_durable_before_handoff() -> None:
+    tasks = (
+        ROOT / "openspec" / "changes" / "source-decision-explore-materialization" / "tasks.md"
+    ).read_text(encoding="utf-8")
+
+    for task_id in ("3.1", "3.2", "3.3"):
+        assert any(line.startswith(f"- [x] {task_id}") for line in tasks.splitlines())
