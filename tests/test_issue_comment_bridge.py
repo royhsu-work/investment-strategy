@@ -581,7 +581,7 @@ def test_same_action_frontier_acceptance_binds_its_own_formal_result() -> None:
 def test_accepted_formal_result_waits_for_requested_effect_postconditions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = bridge.WorkerRequest(138, "lead", "finalize-change")
+    source = bridge.WorkerRequest(138, "reviewer", "review-archive")
     change = "archive-postcondition-recovery"
     requested_effects = [
         {
