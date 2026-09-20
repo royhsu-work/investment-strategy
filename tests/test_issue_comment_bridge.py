@@ -5,7 +5,7 @@ import hashlib
 import json
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import pytest
 
@@ -665,6 +665,171 @@ def test_preaccept_live_application_run_is_not_redispatched() -> None:
     assert completion.job_id is None
 
 
+def _completion_matrix_reader(
+    requests: list[dict[str, object]],
+    *,
+    live_ids: set[int] | None = None,
+    accepted_ids: set[int] | None = None,
+    rejected_ids: set[int] | None = None,
+) -> bridge.GitHubReader:
+    live_ids = set() if live_ids is None else live_ids
+    accepted_ids = set() if accepted_ids is None else accepted_ids
+    rejected_ids = set() if rejected_ids is None else rejected_ids
+    request_ids = [int(cast(int, request["id"])) for request in requests]
+    decisions = [
+        _application_decision_comment(
+            request,
+            disposition="ACCEPTED" if int(cast(int, request["id"])) in accepted_ids else "REJECTED",
+            comment_id=700 + index,
+        )
+        for index, request in enumerate(requests)
+        if int(cast(int, request["id"])) in accepted_ids
+        or int(cast(int, request["id"])) in rejected_ids
+    ]
+    run_by_request = {request_id: 9000 + index for index, request_id in enumerate(request_ids)}
+    runs = [
+        {
+            "id": run_by_request[cast(int, request["id"])],
+            "display_title": f"Scheduled Agent Application {request['id']}",
+            "status": "in_progress" if request["id"] in live_ids else "completed",
+            "conclusion": None if request["id"] in live_ids else "failure",
+            "run_attempt": 1,
+        }
+        for request in requests
+    ]
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return requests
+        if path.startswith("issues/138/comments?"):
+            return decisions
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return []
+        if path.startswith("actions/workflows/"):
+            return {"workflow_runs": runs}
+        if path.startswith("actions/runs/") and path.endswith("/jobs"):
+            run_id = int(path.split("/")[2])
+            return {
+                "jobs": [
+                    {
+                        "id": run_id + 100,
+                        "name": "apply",
+                        "status": "completed",
+                        "conclusion": "failure",
+                    }
+                ]
+            }
+        raise AssertionError(path)
+
+    return fake_read
+
+
+@pytest.mark.parametrize("count", (1, 2, 3))
+def test_terminal_preactcept_candidates_do_not_compete_by_raw_cardinality(count: int) -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    requests = [
+        _effect_request_comment(
+            comment_id=654 + index,
+            created_at=f"2026-09-18T01:0{index}:00Z",
+            authorization_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
+        )
+        for index in range(count)
+    ]
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
+        read=_completion_matrix_reader(requests),
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+
+    assert completion.state == "REJECTED"
+    assert completion.reason == "application-completion-terminal-no-accept"
+    assert completion.state != "AMBIGUOUS"
+
+
+def test_terminal_noise_plus_one_live_candidate_waits_for_live_ingress() -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    requests = [
+        _effect_request_comment(
+            comment_id=654 + index,
+            created_at=f"2026-09-18T01:0{index}:00Z",
+            authorization_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
+        )
+        for index in range(3)
+    ]
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
+        read=_completion_matrix_reader(requests, live_ids={656}),
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+
+    assert completion.state == "RESUMABLE"
+    assert completion.reason == "application-completion-preaccept-in-progress"
+    assert completion.request_comment_id == 656
+
+
+def test_rejected_noise_plus_one_live_candidate_does_not_release_ownership() -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    requests = [
+        _effect_request_comment(
+            comment_id=654 + index,
+            created_at=f"2026-09-18T01:0{index}:00Z",
+            authorization_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
+        )
+        for index in range(3)
+    ]
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
+        read=_completion_matrix_reader(
+            requests,
+            live_ids={656},
+            rejected_ids={654, 655},
+        ),
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+
+    assert completion.state == "RESUMABLE"
+    assert completion.request_comment_id == 656
+
+
+def test_terminal_noise_plus_one_accepted_intent_owns_continuation() -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    requests = [
+        _effect_request_comment(
+            comment_id=654 + index,
+            created_at=f"2026-09-18T01:0{index}:00Z",
+            authorization_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
+        )
+        for index in range(3)
+    ]
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
+        read=_completion_matrix_reader(requests, accepted_ids={654}),
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+
+    assert completion.state == "RESUMABLE"
+    assert completion.reason == "application-completion-resuming"
+    assert completion.request_comment_id == 654
+
+
 def test_deleted_ingress_after_accept_uses_immutable_intent() -> None:
     source = bridge.WorkerRequest(138, "lead", "explore-change")
     request = _effect_request_comment(
@@ -676,6 +841,51 @@ def test_deleted_ingress_after_accept_uses_immutable_intent() -> None:
     def fake_read(_repository: str, _token: str, path: str) -> object:
         if path.startswith("issues/comments?"):
             return []
+        if path.startswith("issues/138/comments?"):
+            return [decision]
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return []
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 777,
+                        "display_title": "Scheduled Agent Application 654",
+                        "status": "in_progress",
+                        "run_attempt": 1,
+                    }
+                ]
+            }
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+
+    assert completion.state == "RESUMABLE"
+    assert completion.request_comment_id == 654
+    assert completion.reason == "application-completion-in-progress"
+
+
+def test_edited_ingress_after_accept_cannot_block_immutable_intent() -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    original = _effect_request_comment(
+        comment_id=654,
+        created_at="2026-09-18T01:00:00Z",
+    )
+    edited = {**original, "body": "EFFECT_REQUEST\nmalformed-after-accept"}
+    decision = _application_decision_comment(original)
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [edited]
         if path.startswith("issues/138/comments?"):
             return [decision]
         if path == "issues/138":
@@ -741,7 +951,7 @@ def test_missing_acceptance_is_not_resumed_before_semantic_replay() -> None:
     )
 
     assert completion.state == "INVALID"
-    assert completion.reason == "application-completion-acceptance-missing"
+    assert completion.reason == "application-completion-preaccept-evidence-unknown"
 
 
 def test_unrelated_legacy_request_does_not_poison_current_source() -> None:
@@ -824,7 +1034,7 @@ def test_same_source_malformed_legacy_request_still_fails_closed() -> None:
     )
 
     assert completion.state == "INVALID"
-    assert completion.reason == "application-completion-request-invalid"
+    assert completion.reason == "application-completion-preaccept-evidence-unknown"
 
 
 def test_protocol_request_without_acceptance_returns_source_ownership() -> None:
@@ -857,8 +1067,8 @@ def test_protocol_request_without_acceptance_returns_source_ownership() -> None:
         now=datetime(2026, 9, 19, 7, 0, tzinfo=UTC),
     )
 
-    assert completion.state == "REJECTED"
-    assert completion.reason == "application-completion-preaccept-rejected"
+    assert completion.state == "INVALID"
+    assert completion.reason == "application-completion-preaccept-evidence-unknown"
 
 
 def test_preprotocol_inert_request_is_retired_without_semantic_replay() -> None:
@@ -928,7 +1138,28 @@ def test_preprotocol_inert_request_is_retired_without_semantic_replay() -> None:
         if path.startswith("issues/234/timeline?"):
             return predecessor_timeline
         if path.startswith("actions/workflows/"):
-            return {"workflow_runs": []}
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 777,
+                        "display_title": "Scheduled Agent Application 5729806158",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "run_attempt": 1,
+                    }
+                ]
+            }
+        if path == "actions/runs/777/jobs":
+            return {
+                "jobs": [
+                    {
+                        "id": 888,
+                        "name": "apply",
+                        "status": "completed",
+                        "conclusion": "failure",
+                    }
+                ]
+            }
         if path == f"compare/{legacy_revision}...{bridge._APPLICATION_DECISION_PROTOCOL_REVISION}":
             return {"status": "ahead", "base_commit": {"sha": legacy_revision}}
         if path == "issues/234":
@@ -945,7 +1176,7 @@ def test_preprotocol_inert_request_is_retired_without_semantic_replay() -> None:
     )
 
     assert completion.state == "REJECTED"
-    assert completion.reason == "application-completion-legacy-inert-rejected"
+    assert completion.reason == "application-completion-rejected"
     assert completion.request_comment_id == 5729806158
 
 

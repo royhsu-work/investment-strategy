@@ -14,10 +14,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, cast
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from investment_strategy.scheduled_agent_action_model import next_action, role_for
+from investment_strategy.scheduled_agent_application_carrier import (
+    canonical_implementation_branch,
+    qualify_implementation_carrier,
+)
 from investment_strategy.scheduled_agent_application_materialization import (
     find_materialization_payload,
     materialization_requires_validation,
@@ -56,6 +60,7 @@ from investment_strategy.workflow_dispatch import (
 
 APPLICATION_REQUEST_MARKER = "EFFECT_REQUEST"
 AUTHORIZATION_REVISION_PREFIX = "Authorization-Revision: "
+DISPATCH_CORRELATION_PREFIX = "Dispatch-Correlation: "
 WORKER_RESULT_B64_PREFIX = "Worker-Result-B64: "
 _CHATGPT_CONNECTOR_APP_SLUG = "chatgpt-codex-connector"
 _SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -77,6 +82,7 @@ class ApplicationRequest:
 
     authorization_revision: str
     raw_worker_result: str
+    dispatch_correlation: str | None = None
 
 
 @dataclass(frozen=True)
@@ -86,6 +92,7 @@ class ApplicationPlan:
     should_apply: bool
     source: WorkerRequest | None = None
     raw_worker_result: str | None = None
+    change: str | None = None
     request_comment_id: int | None = None
     pending_continuation: bool = False
     pending_application_correlation: str | None = None
@@ -121,20 +128,37 @@ def _trusted_connector_comment(comment: Mapping[str, object], repository_owner: 
 
 
 def parse_application_request(body: str) -> ApplicationRequest | None:
-    """Parse the bounded effect ingress without any dispatch Artifact identity."""
+    """Parse the bounded effect ingress and optional machine correlation."""
 
     lines = body.split("\n")
     if not lines or lines[0] != APPLICATION_REQUEST_MARKER:
         return None
-    if len(lines) != 3:
-        raise ValueError("EFFECT_REQUEST must contain exactly three lines")
-    if not lines[1].startswith(AUTHORIZATION_REVISION_PREFIX) or not lines[2].startswith(
-        WORKER_RESULT_B64_PREFIX
-    ):
+    if len(lines) not in {3, 4}:
+        raise ValueError(
+            "EFFECT_REQUEST must contain exactly three lines or the four-line machine form"
+        )
+    if not lines[1].startswith(AUTHORIZATION_REVISION_PREFIX):
+        if len(lines) == 4:
+            raise ValueError(
+                "EFFECT_REQUEST must contain exactly three lines or the four-line machine form"
+            )
         raise ValueError("EFFECT_REQUEST field order is invalid")
 
     authorization_revision = lines[1][len(AUTHORIZATION_REVISION_PREFIX) :]
-    encoded_result = lines[2][len(WORKER_RESULT_B64_PREFIX) :]
+    dispatch_correlation: str | None = None
+    worker_line = lines[2]
+    if len(lines) == 4:
+        if not lines[2].startswith(DISPATCH_CORRELATION_PREFIX):
+            raise ValueError(
+                "EFFECT_REQUEST must contain exactly three lines or the four-line machine form"
+            )
+        dispatch_correlation = lines[2][len(DISPATCH_CORRELATION_PREFIX) :]
+        if not re.fullmatch(r"[0-9a-f]{64}", dispatch_correlation):
+            raise ValueError("EFFECT_REQUEST dispatch correlation is invalid")
+        worker_line = lines[3]
+    if not worker_line.startswith(WORKER_RESULT_B64_PREFIX):
+        raise ValueError("EFFECT_REQUEST field order is invalid")
+    encoded_result = worker_line[len(WORKER_RESULT_B64_PREFIX) :]
     if _SHA.fullmatch(authorization_revision) is None or not encoded_result:
         raise ValueError("EFFECT_REQUEST authorization identity is invalid")
     if encoded_result != encoded_result.strip():
@@ -151,6 +175,7 @@ def parse_application_request(body: str) -> ApplicationRequest | None:
     return ApplicationRequest(
         authorization_revision=authorization_revision,
         raw_worker_result=raw_worker_result,
+        dispatch_correlation=dispatch_correlation,
     )
 
 
@@ -158,25 +183,50 @@ def render_application_request(request: ApplicationRequest) -> str:
     """Reconstruct the immutable transport envelope for an accepted intent."""
 
     encoded = base64.b64encode(request.raw_worker_result.encode("utf-8")).decode("ascii")
-    return "\n".join(
+    lines = [
+        APPLICATION_REQUEST_MARKER,
+        f"{AUTHORIZATION_REVISION_PREFIX}{request.authorization_revision}",
+    ]
+    if request.dispatch_correlation is not None:
+        if not re.fullmatch(r"[0-9a-f]{64}", request.dispatch_correlation):
+            raise ValueError("application request dispatch correlation is invalid")
+        lines.append(f"{DISPATCH_CORRELATION_PREFIX}{request.dispatch_correlation}")
+    lines.append(f"{WORKER_RESULT_B64_PREFIX}{encoded}")
+    return "\n".join(lines)
+
+
+def dispatch_correlation_for(
+    repository: str,
+    source: WorkerRequest,
+    authorization_revision: str,
+) -> str:
+    """Derive the opaque carry-forward for one exact machine dispatch."""
+
+    if "/" not in repository or _SHA.fullmatch(authorization_revision) is None:
+        raise ValueError("dispatch correlation identity is invalid")
+    canonical = "\x00".join(
         (
-            APPLICATION_REQUEST_MARKER,
-            f"{AUTHORIZATION_REVISION_PREFIX}{request.authorization_revision}",
-            f"{WORKER_RESULT_B64_PREFIX}{encoded}",
+            repository,
+            authorization_revision,
+            str(source.issue_number),
+            source.role,
+            source.action,
         )
     )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _claimed_source(raw_worker_result: str) -> WorkerRequest:
+def _claimed_source(raw_worker_result: str) -> WorkerRequest | None:
     try:
         decoded = json.loads(raw_worker_result)
     except json.JSONDecodeError as exc:
         raise ValueError("EFFECT_REQUEST worker result is not valid JSON") from exc
     if not isinstance(decoded, Mapping):
         raise ValueError("EFFECT_REQUEST worker result must be a JSON object")
-    issue_number = decoded.get("issue_number")
-    role = decoded.get("role")
-    action = decoded.get("action")
+    identity = (decoded.get("issue_number"), decoded.get("role"), decoded.get("action"))
+    if all(value is None for value in identity):
+        return None
+    issue_number, role, action = identity
     if (
         _positive_int(issue_number) is None
         or not isinstance(role, str)
@@ -184,6 +234,15 @@ def _claimed_source(raw_worker_result: str) -> WorkerRequest:
     ):
         raise ValueError("EFFECT_REQUEST worker source identity is invalid")
     return WorkerRequest(cast(int, issue_number), role, action)
+
+
+def _preflight_change(preflight: DispatchPreflight, source: WorkerRequest) -> str | None:
+    matching = tuple(
+        issue for issue in preflight.issues if issue.issue_number == source.issue_number
+    )
+    if len(matching) != 1 or matching[0].routing != (source.role, source.action):
+        return None
+    return matching[0].change
 
 
 def _without_application_correlation(body: str) -> str:
@@ -197,13 +256,16 @@ def _without_application_correlation(body: str) -> str:
 def _pending_application_correlation(
     *,
     raw_worker_result: str,
-    source: WorkerRequest,
+    source: WorkerRequest | None,
     preflight: DispatchPreflight,
     repository: str,
     token: str,
     current_revision: str,
 ) -> str | None:
     """Find one already-persisted formal result that can finish this application."""
+
+    if source is None:
+        return None
 
     enumeration = preflight.enumeration
     matching = tuple(
@@ -244,7 +306,11 @@ def _pending_application_correlation(
         return None
 
     try:
-        worker_result = parse_worker_result(raw_worker_result, source)
+        worker_result = parse_worker_result(
+            raw_worker_result,
+            source,
+            authorized_change=matching[0].change,
+        )
     except (TypeError, ValueError, json.JSONDecodeError):
         return None
     if worker_result.change in {"", "unset"}:
@@ -278,7 +344,11 @@ def _pending_application_correlation(
     # was not.  First-activation recovery still requires its exact validation
     # materialization; ordinary formal results can resume from the persisted
     # result itself and re-run the existing application-owned successor guard.
-    materializations = _materialization_effects(raw_worker_result, source)
+    materializations = _materialization_effects(
+        raw_worker_result,
+        source,
+        change=matching[0].change,
+    )
     if len(materializations) > 1:
         return None
     if materializations:
@@ -386,6 +456,7 @@ def plan_application(
     token: str | None = None,
     allow_descendant_resume: bool = False,
     allow_accepted_request_mutation: bool = False,
+    accepted_intent: ApplicationDecisionRecord | None = None,
 ) -> ApplicationPlan:
     """Freshly derive the only legal source Issue/Action/Role from the repository."""
 
@@ -428,9 +499,21 @@ def plan_application(
         or decision.selected_issue_id is None
         or decision.selected_routing is None
     ):
+        continuation_source = claimed
+        if continuation_source is None and accepted_intent is not None:
+            continuation_source = WorkerRequest(
+                accepted_intent.issue_number,
+                accepted_intent.role,
+                accepted_intent.action,
+            )
+        continuation_change = (
+            accepted_intent.change
+            if accepted_intent is not None and continuation_source is not None
+            else None
+        )
         pending_correlation = _pending_application_correlation(
             raw_worker_result=request.raw_worker_result,
-            source=claimed,
+            source=continuation_source,
             preflight=preflight,
             repository=repository,
             token=os.environ.get("GITHUB_TOKEN", "") if token is None else token,
@@ -438,22 +521,49 @@ def plan_application(
         )
         if pending_correlation is None:
             raise ValueError("EFFECT_REQUEST has no current AUTHORIZE dispatch")
+        if continuation_source is None:
+            raise ValueError("EFFECT_REQUEST machine source is unavailable")
+        if continuation_change is None:
+            continuation_change = _preflight_change(preflight, continuation_source)
+        if continuation_change is None:
+            raise ValueError("EFFECT_REQUEST current Change is unavailable")
         return ApplicationPlan(
             should_apply=True,
-            source=claimed,
+            source=continuation_source,
             raw_worker_result=request.raw_worker_result,
+            change=continuation_change,
             request_comment_id=request_comment_id,
             pending_continuation=True,
             pending_application_correlation=pending_correlation,
         )
     selected_role, selected_action = decision.selected_routing
     source = WorkerRequest(decision.selected_issue_id, selected_role, selected_action)
-    if claimed != source:
+    if claimed is not None and claimed != source:
         raise ValueError("EFFECT_REQUEST worker source does not match fresh repository Action")
+    change = _preflight_change(preflight, source)
+    if change is None:
+        raise ValueError("EFFECT_REQUEST current Change is unavailable")
+    if request.dispatch_correlation is not None:
+        expected_correlation = dispatch_correlation_for(
+            repository,
+            source,
+            request.authorization_revision,
+        )
+        if request.dispatch_correlation != expected_correlation:
+            raise ValueError(
+                "EFFECT_REQUEST dispatch correlation does not match fresh repository Action"
+            )
+    if accepted_intent is not None and (
+        accepted_intent.issue_number != source.issue_number
+        or accepted_intent.role != source.role
+        or accepted_intent.action != source.action
+    ):
+        raise ValueError("accepted application intent does not match fresh repository Action")
     return ApplicationPlan(
         should_apply=True,
         source=source,
         raw_worker_result=request.raw_worker_result,
+        change=change,
         request_comment_id=request_comment_id,
     )
 
@@ -658,8 +768,10 @@ def _load_json(path: str) -> object:
 def _materialization_effects(
     raw_worker_result: str,
     source: WorkerRequest,
+    *,
+    change: str | None = None,
 ) -> tuple[Mapping[str, object], ...]:
-    result = parse_worker_result(raw_worker_result, source)
+    result = parse_worker_result(raw_worker_result, source, authorized_change=change)
     effects: list[Mapping[str, object]] = []
     for requested in result.requested_effects:
         if requested.kind != "github-mutation":
@@ -671,6 +783,124 @@ def _materialization_effects(
         if isinstance(payload, Mapping) and payload.get("operation") == "application-materialize":
             effects.append(cast(Mapping[str, object], payload))
     return tuple(effects)
+
+
+def _machine_result_revision(
+    raw_worker_result: str,
+    source: WorkerRequest,
+    *,
+    change: str,
+    repository: str,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+) -> str:
+    """Derive a work-product revision from fresh carrier evidence.
+
+    A semantic worker may still carry a legacy ``Revision`` line in narrative
+    evidence, but normal application never needs it.  For a materialization
+    request the current PR head is the only acceptable pre-commit machine
+    observation; the post-materialization validation target is rebound later.
+    """
+
+    try:
+        decoded = json.loads(raw_worker_result)
+    except json.JSONDecodeError:
+        decoded = None
+    legacy_identity = isinstance(decoded, Mapping) and all(
+        key in decoded for key in ("issue_number", "role", "action", "change")
+    )
+    try:
+        worker = parse_worker_result(raw_worker_result, source, authorized_change=change)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        worker = None
+    if worker is not None and legacy_identity:
+        legacy_body = _formal_result_body(worker, source=source)
+        legacy_revision = None if legacy_body is None else _field(legacy_body, "Revision")
+        if _SHA.fullmatch(legacy_revision or "") is not None:
+            # Explicit migration boundary: historical workers already carried
+            # a formal work-product identity. New semantic-only ingress never
+            # enters this branch and is resolved from the exact repository
+            # carrier below.
+            return cast(str, legacy_revision)
+
+    materializations = _materialization_effects(raw_worker_result, source, change=change)
+    if len(materializations) > 1:
+        raise RuntimeError("EFFECT_REQUEST contains ambiguous materialization effects")
+    if not materializations:
+        return _machine_carrier_head(
+            repository=repository,
+            token=token,
+            source=source,
+            change=change,
+            default_branch=default_branch,
+            current_revision=current_revision,
+        )
+    parsed = find_materialization_payload(materializations[0], source)
+    if parsed is None or parsed.change != change or parsed.pr_number is None:
+        raise RuntimeError("application materialization carrier identity is incomplete")
+    qualification = qualify_implementation_carrier(
+        repository=repository,
+        token=token,
+        source=source,
+        change=change,
+        pr_number=parsed.pr_number,
+        current_revision=current_revision,
+    )
+    if (
+        not qualification.recognized
+        or qualification.default_branch != default_branch
+        or not isinstance(qualification.head_sha, str)
+    ):
+        raise RuntimeError(
+            f"application work-product carrier is not freshly recognized: {qualification.reason}"
+        )
+    return qualification.head_sha
+
+
+def _machine_carrier_head(
+    *,
+    repository: str,
+    token: str,
+    source: WorkerRequest,
+    change: str,
+    default_branch: str,
+    current_revision: str,
+) -> str:
+    """Resolve one exact open carrier when semantic ingress omitted a header."""
+
+    if canonical_implementation_branch(change) is None:
+        return current_revision
+    candidates = _paged_github_list(
+        repository,
+        token,
+        f"pulls?{urlencode({'state': 'open', 'base': default_branch})}",
+    )
+    heads: list[str] = []
+    for summary in candidates:
+        number = _positive_int(summary.get("number"))
+        if number is None:
+            continue
+        qualification = qualify_implementation_carrier(
+            repository=repository,
+            token=token,
+            source=source,
+            change=change,
+            pr_number=number,
+            current_revision=current_revision,
+        )
+        if (
+            not qualification.recognized
+            or qualification.default_branch != default_branch
+            or not isinstance(qualification.head_sha, str)
+        ):
+            continue
+        heads.append(qualification.head_sha)
+    if len(heads) > 1:
+        raise RuntimeError("application carrier head is ambiguous")
+    if not heads:
+        raise RuntimeError("application implementation carrier is not freshly recognized")
+    return heads[0]
 
 
 def _field_values(body: str, key: str) -> tuple[str, ...]:
@@ -731,39 +961,87 @@ def _application_owned_worker_result(
     raw_worker_result: str,
     *,
     source: WorkerRequest,
+    change: str | None = None,
     current_revision: str,
+    result_revision: str | None = None,
+    request_comment_id: int | None = None,
 ) -> str:
     """Require one application-owned formal result after worker effects."""
 
-    worker_result = parse_worker_result(raw_worker_result, source)
-    body = _formal_result_body(worker_result, source=source)
-    if body is None and _marker(worker_result.result_content) in _FORMAL_RESULT_MARKERS:
-        body = worker_result.result_content
-    if body is None:
-        evidence = " ".join(worker_result.result_content.split())
-        if not evidence:
-            evidence = worker_result.typed_result.result.evidence_ref or "bounded typed result"
-        expected_result = worker_result.typed_result.result.kind.value.upper().replace("-", "_")
-        body = "\n".join(
-            (
-                _expected_formal_marker(source),
-                f"Workflow: #{source.issue_number}",
-                f"Change: {worker_result.change}",
-                f"Role: {source.role}",
-                f"Action: {source.action}",
-                f"Result: {expected_result}",
-                f"Revision: {current_revision}",
-                f"Default-Branch-Revision: {current_revision}",
-                f"Evidence: {evidence}",
+    if change is None:
+        # Compatibility-only path for callers that predate the machine-owned
+        # envelope.  Production application planning always supplies a fresh
+        # Change from the repository preflight.
+        change = parse_worker_result(raw_worker_result, source).change
+    worker_result = parse_worker_result(
+        raw_worker_result,
+        source,
+        authorized_change=change,
+    )
+    # Formal headers, routing, revisions, and successor text are application
+    # protocol, not semantic-worker output.  Preserve only bounded semantic
+    # evidence and rebuild the canonical result from fresh machine identity.
+    semantic_content = worker_result.result_content
+    if result_revision is None:
+        candidate_revision = _field(semantic_content, "Revision")
+        # Compatibility-only callers that predate machine-owned result
+        # revision derivation may still supply a legacy formal body. Normal
+        # application passes an explicitly fresh-derived revision below.
+        result_revision = (
+            candidate_revision
+            if _SHA.fullmatch(candidate_revision or "") is not None
+            else current_revision
+        )
+    elif _SHA.fullmatch(result_revision) is None:
+        raise ValueError("application result revision is invalid")
+    candidate_evidence = _field(semantic_content, "Evidence")
+    evidence = " ".join((candidate_evidence or semantic_content).split())
+    if not evidence:
+        evidence = worker_result.typed_result.result.evidence_ref or "bounded typed result"
+    expected_result = worker_result.typed_result.result.kind.value.upper().replace("-", "_")
+    body_lines = [
+        _expected_formal_marker(source),
+        f"Workflow: #{source.issue_number}",
+        f"Change: {change}",
+        f"Role: {source.role}",
+        f"Action: {source.action}",
+        f"Result: {expected_result}",
+        f"Revision: {result_revision}",
+        f"Default-Branch-Revision: {current_revision}",
+    ]
+    first_activation = (
+        source.role == "lead" and source.action == "propose-change" and change == "unset"
+    )
+    if request_comment_id is not None and not first_activation:
+        body_lines.append(
+            "Application-Correlation: "
+            + formal_application_correlation(
+                source,
+                change=change,
+                result_kind=worker_result.typed_result.result.kind.value,
+                current_revision=current_revision,
+                request_comment_id=request_comment_id,
             )
         )
-    if _marker(body) != _expected_formal_marker(source):
-        raise RuntimeError("worker result formal marker does not match authorized Action")
+    if not first_activation:
+        try:
+            successor = next_action(
+                worker_result.typed_result.action,
+                worker_result.typed_result.result,
+            )
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("worker result transition is invalid") from exc
+        successor_text = "terminal"
+        if successor is not None:
+            successor_text = f"{role_for(successor).value} / {successor.value}"
+        body_lines.append(f"Repository-derived successor: {successor_text}")
+    body_lines.append(f"Evidence: {evidence}")
+    body = "\n".join(body_lines)
 
     decoded = json.loads(raw_worker_result)
     if not isinstance(decoded, dict):
         raise RuntimeError("worker result must be a JSON object")
-    requested = decoded.get("requested_effects")
+    requested = decoded.get("requested_effects", [])
     if not isinstance(requested, list):
         raise RuntimeError("worker result requested effects are invalid")
 
@@ -795,8 +1073,64 @@ def _application_owned_worker_result(
             ),
         }
     )
+    # Carry the exact machine envelope forward once, after fresh application
+    # authorization.  These fields are never sourced from the semantic worker.
+    decoded["issue_number"] = source.issue_number
+    decoded["role"] = source.role
+    decoded["action"] = source.action
+    decoded["change"] = change
     decoded["result_content"] = body
     decoded["requested_effects"] = ordered
+    return json.dumps(decoded, sort_keys=True, separators=(",", ":"))
+
+
+def _rebind_application_result_revision(raw_worker_result: str, revision: str) -> str:
+    """Bind a deferred formal result to its fresh materialization postcondition."""
+
+    if _SHA.fullmatch(revision) is None:
+        raise ValueError("application result revision is invalid")
+    decoded = json.loads(raw_worker_result)
+    if not isinstance(decoded, dict):
+        raise ValueError("application worker result must be a JSON object")
+    requested = decoded.get("requested_effects", [])
+    if not isinstance(requested, list):
+        raise ValueError("application worker result requested effects are invalid")
+    rebound = False
+    updated_requested: list[object] = []
+    for raw_effect in requested:
+        if not isinstance(raw_effect, Mapping) or raw_effect.get("kind") != "issue-comment":
+            updated_requested.append(raw_effect)
+            continue
+        payload_json = raw_effect.get("payload_json")
+        if not isinstance(payload_json, str):
+            updated_requested.append(raw_effect)
+            continue
+        try:
+            payload = json.loads(payload_json)
+        except json.JSONDecodeError:
+            updated_requested.append(raw_effect)
+            continue
+        body = payload.get("body") if isinstance(payload, Mapping) else None
+        if not isinstance(body, str) or _marker(body) not in _FORMAL_RESULT_MARKERS:
+            updated_requested.append(raw_effect)
+            continue
+        lines = body.splitlines()
+        revision_indexes = [
+            index for index, line in enumerate(lines) if line.startswith("Revision:")
+        ]
+        if len(revision_indexes) != 1:
+            raise ValueError("application formal result revision is ambiguous")
+        lines[revision_indexes[0]] = f"Revision: {revision}"
+        updated_body = "\n".join(lines) + ("\n" if body.endswith("\n") else "")
+        updated_payload = dict(payload)
+        updated_payload["body"] = updated_body
+        updated_effect = dict(raw_effect)
+        updated_effect["payload_json"] = json.dumps(updated_payload, sort_keys=True)
+        updated_requested.append(updated_effect)
+        decoded["result_content"] = updated_body
+        rebound = True
+    if rebound:
+        decoded["requested_effects"] = updated_requested
     return json.dumps(decoded, sort_keys=True, separators=(",", ":"))
 
 
@@ -1402,6 +1736,8 @@ def _recover_partial_first_activation(
     if request.authorization_revision == current_revision:
         return False
     source = _claimed_source(request.raw_worker_result)
+    if source is None:
+        return False
     if (source.role, source.action) != _RECOVERY_SOURCE:
         return False
     worker_result = parse_worker_result(request.raw_worker_result, source)
@@ -1662,6 +1998,7 @@ def main() -> int:
         token=token,
         allow_descendant_resume=args.run_attempt > 1 or accepted_intent is not None,
         allow_accepted_request_mutation=accepted_intent is not None,
+        accepted_intent=accepted_intent,
     )
     if not plan.should_apply:
         _write_validation_outputs(None)
@@ -1694,10 +2031,24 @@ def main() -> int:
             raise RuntimeError("accepted application intent identity is invalid")
         application_worker_result = accepted_intent.raw_worker_result
     else:
+        effective_change = plan.change or _preflight_change(preflight, plan.source)
+        if effective_change is None:
+            raise RuntimeError("application plan has no fresh machine-owned Change")
         application_worker_result = _application_owned_worker_result(
             plan.raw_worker_result,
             source=plan.source,
+            change=effective_change,
             current_revision=args.revision,
+            result_revision=_machine_result_revision(
+                plan.raw_worker_result,
+                plan.source,
+                change=effective_change,
+                repository=repository,
+                token=token,
+                current_revision=args.revision,
+                default_branch=args.default_branch,
+            ),
+            request_comment_id=plan.request_comment_id,
         )
     application_request_body = (
         body
@@ -1709,8 +2060,16 @@ def main() -> int:
             )
         )
     )
-    worker_result = parse_worker_result(application_worker_result, plan.source)
-    materializations = _materialization_effects(application_worker_result, plan.source)
+    worker_result = parse_worker_result(
+        application_worker_result,
+        plan.source,
+        authorized_change=plan.change,
+    )
+    materializations = _materialization_effects(
+        application_worker_result,
+        plan.source,
+        change=plan.change,
+    )
     if len(materializations) > 1:
         raise RuntimeError("EFFECT_REQUEST contains ambiguous materialization effects")
     materialization = None if not materializations else materializations[0]
@@ -1749,6 +2108,17 @@ def main() -> int:
     elif args.validation_passed:
         raise RuntimeError("EFFECT_REQUEST validation completion has no materialization")
 
+    if target is not None:
+        application_worker_result = _rebind_application_result_revision(
+            application_worker_result,
+            target.revision,
+        )
+        worker_result = parse_worker_result(
+            application_worker_result,
+            plan.source,
+            authorized_change=plan.change,
+        )
+
     try:
         if first_activation and args.validation_passed:
             batch, result = run_guarded_effect_application(
@@ -1766,6 +2136,7 @@ def main() -> int:
                 pending_application_correlation=plan.pending_application_correlation,
                 application_request_body=application_request_body,
                 authorization_revision=request.authorization_revision,
+                authorized_change=plan.change,
             )
             if result.applied:
                 if materialization is None or target is None:
@@ -1799,6 +2170,7 @@ def main() -> int:
                 pending_application_correlation=plan.pending_application_correlation,
                 application_request_body=application_request_body,
                 authorization_revision=request.authorization_revision,
+                authorized_change=plan.change,
             )
     except CarrierRequired as exc:
         # CarrierRequired is the hard invocation-exit boundary. Persist only

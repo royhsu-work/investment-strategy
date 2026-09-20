@@ -170,6 +170,54 @@ def test_plan_application_derives_source_from_fresh_repository_preflight() -> No
     assert json.loads(plan.raw_worker_result or "") == _worker_result()
 
 
+def test_plan_application_accepts_semantic_only_ingress_and_derives_machine_envelope() -> None:
+    semantic: dict[str, object] = {
+        "result_kind": "blocked",
+        "evidence_ref": None,
+        "result_content": "runner capability evidence",
+    }
+    body = _effect_request(semantic)
+    request = parse_application_request(body)
+    assert request is not None
+
+    plan = plan_application(
+        event=_event(body),
+        request=request,
+        preflight=_preflight(),
+        repository=_REPOSITORY,
+        current_revision=_REVISION,
+    )
+
+    assert plan.should_apply
+    assert plan.source == WorkerRequest(138, "lead", "explore-change")
+    assert plan.change == "unset"
+    normalized = bridge._application_owned_worker_result(
+        plan.raw_worker_result or "",
+        source=plan.source,
+        change=plan.change,
+        current_revision=_REVISION,
+        request_comment_id=plan.request_comment_id,
+    )
+    payload = json.loads(normalized)
+    assert payload["issue_number"] == 138
+    assert payload["role"] == "lead"
+    assert payload["action"] == "explore-change"
+    assert payload["change"] == "unset"
+    assert payload["requested_effects"]
+    assert payload["requested_effects"][-1]["kind"] == "issue-comment"
+
+
+def test_application_request_round_trips_one_opaque_dispatch_correlation() -> None:
+    source = WorkerRequest(138, "lead", "explore-change")
+    correlation = bridge.dispatch_correlation_for(_REPOSITORY, source, _REVISION)
+    raw = json.dumps({"result_kind": "blocked", "result_content": "evidence"})
+    request = bridge.ApplicationRequest(_REVISION, raw, correlation)
+
+    parsed = parse_application_request(bridge.render_application_request(request))
+
+    assert parsed == request
+
+
 def test_plan_application_rejects_untrusted_or_stale_ingress() -> None:
     body = _effect_request()
     request = parse_application_request(body)
@@ -323,6 +371,7 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
         pending_application_correlation: str | None = None,
         application_request_body: str | None = None,
         authorization_revision: str | None = None,
+        authorized_change: str | None = None,
     ) -> tuple[EffectBatch, bridge.ApplyResult]:
         assert source == expected_source
         assert request_comment_id == 102
@@ -330,6 +379,7 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
         assert pending_application_correlation is None
         assert application_request_body == body
         assert authorization_revision == _REVISION
+        assert authorized_change == _CHANGE
         adapter = GitHubEffectAdapter(
             repository,
             token,
@@ -1189,6 +1239,7 @@ def test_main_exits_at_carrier_boundary_before_formal_continuation(
             request_comment_id=102,
         ),
     )
+    monkeypatch.setattr(bridge, "_machine_result_revision", lambda *_args, **_kwargs: _REVISION)
 
     def raise_carrier(*_args: object, **_kwargs: object) -> object:
         events.append("application")

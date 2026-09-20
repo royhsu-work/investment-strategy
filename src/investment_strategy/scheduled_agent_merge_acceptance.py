@@ -764,10 +764,15 @@ def run_effect_application(
     pending_application_correlation: str | None = None,
     application_request_body: str | None = None,
     authorization_revision: str | None = None,
+    authorized_change: str | None = None,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Apply through shared effect guards plus an optional mutation-adjacent guard."""
 
-    batch = parse_effect_batch(raw_worker_result, source)
+    batch = parse_effect_batch(
+        raw_worker_result,
+        source,
+        authorized_change=authorized_change,
+    )
     if batch.typed_result is None:
         return batch, ApplyResult(False, "typed application rejected:result-missing")
     adapter = GitHubEffectAdapter(
@@ -853,10 +858,15 @@ def run_guarded_effect_application(
     pending_application_correlation: str | None = None,
     application_request_body: str | None = None,
     authorization_revision: str | None = None,
+    authorized_change: str | None = None,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Reject stale merge acceptance before and immediately adjacent to merge application."""
 
-    batch = parse_effect_batch(raw_worker_result, source)
+    batch = parse_effect_batch(
+        raw_worker_result,
+        source,
+        authorized_change=authorized_change,
+    )
     expected_change = None if batch.typed_result is None else batch.typed_result.change
     rejections: list[ApplicationRejection] = []
     for effect in batch.effects:
@@ -892,6 +902,7 @@ def run_guarded_effect_application(
         pending_application_correlation=pending_application_correlation,
         application_request_body=application_request_body,
         authorization_revision=authorization_revision,
+        authorized_change=authorized_change,
         pre_apply_guard=lambda effect: _merge_effect_allows(
             effect,
             source=source,

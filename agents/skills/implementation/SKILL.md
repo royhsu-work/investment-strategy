@@ -22,6 +22,15 @@ For one bounded slice:
    uv run ruff format --check .
    uv run mypy src tests
 
+The semantic Executor does not assume a mutable checkout or shell. For a real implementation slice,
+start from the exact current implementation-carrier head, overlay RED tests only, run the focused test
+and prove the intended failure, then reset to that exact base. Submit complete candidate source/tests
+as content-addressed blobs; repository-owned Actions perform focused GREEN and the full four-gate
+verification above. Only after those exact checks and fresh Issue/Change/routing/PR/head/main,
+review, and Human reauthorization observations may application persist `APPLICATION_DECISION:
+ACCEPTED` and materialize the already-verified blobs. A verifier failure before ACCEPT leaves zero
+authoritative repository consequence; it is not repaired by pushing a broken candidate.
+
 Persist task markers and one bounded SLICE_CHECKPOINT/result only after VERIFY succeeds. Results identify
 the exact Action, revision, tests, and remaining approved work; they do not carry routing authority.
 A later wake fresh-dispatches any successor, including a same-Role successor.
