@@ -41,6 +41,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _current_default_branch,
     _github_json,
     _is_executor_config_authoring,
+    _is_executor_task_and_implementation_materialization,
     _is_executor_task_bookkeeping,
     _open_pr_payload,
     _pending_source_is_current,
@@ -582,14 +583,22 @@ def _implementation_manifest_capability_allowed(
         return False
     if not any(file.path.startswith("openspec/") for file in request.files):
         return True
-    return _is_executor_task_bookkeeping(
-        source,
-        request.expected_change,
-        request.files,
-    ) or _is_executor_config_authoring(
-        source,
-        request.expected_change,
-        request.files,
+    return (
+        _is_executor_task_bookkeeping(
+            source,
+            request.expected_change,
+            request.files,
+        )
+        or _is_executor_task_and_implementation_materialization(
+            source,
+            request.expected_change,
+            request.files,
+        )
+        or _is_executor_config_authoring(
+            source,
+            request.expected_change,
+            request.files,
+        )
     )
 
 

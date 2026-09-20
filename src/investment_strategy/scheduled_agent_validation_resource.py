@@ -501,6 +501,22 @@ def _is_executor_task_bookkeeping(
     )
 
 
+def _is_executor_task_and_implementation_materialization(
+    source: WorkerRequest,
+    expected_change: str,
+    files: tuple[WorkProductFile, ...],
+) -> bool:
+    """Allow one task checkpoint together with non-OpenSpec implementation files."""
+
+    if source.role != "executor" or source.action != "implement-change":
+        return False
+    task_path = f"openspec/changes/{expected_change}/tasks.md"
+    task_files = tuple(file for file in files if file.path == task_path)
+    return len(task_files) == 1 and all(
+        not file.path.startswith("openspec/") for file in files if file.path != task_path
+    )
+
+
 def _executor_task_file(
     source: WorkerRequest,
     expected_change: str,

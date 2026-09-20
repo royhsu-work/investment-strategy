@@ -282,3 +282,52 @@ def test_executor_cannot_materialize_noncanonical_repository_level_openspec_sema
             default_branch="main",
             authorization_revision=_BASE,
         )
+
+
+def test_executor_can_checkpoint_tasks_with_non_openspec_implementation_files() -> None:
+    source = WorkerRequest(234, "executor", "implement-change")
+    task_file = WorkProductFile(
+        f"openspec/changes/{_CHANGE}/tasks.md",
+        _BLOB,
+        _BLOB,
+    )
+    implementation_file = WorkProductFile(
+        "agents/AGENTS.md",
+        _BLOB,
+        _BLOB,
+    )
+    request = MaterializationRequest(
+        issue_number=234,
+        expected_change=_CHANGE,
+        change=_CHANGE,
+        branch=f"agent/{_CHANGE}",
+        base_sha=_BASE,
+        message="checkpoint verified implementation work",
+        files=(task_file, implementation_file),
+        pr_number=271,
+    )
+
+    assert materialization._implementation_manifest_capability_allowed(request, source)
+
+    noncanonical_request = MaterializationRequest(
+        issue_number=234,
+        expected_change=_CHANGE,
+        change=_CHANGE,
+        branch=f"agent/{_CHANGE}",
+        base_sha=_BASE,
+        message="checkpoint with unrelated OpenSpec semantics",
+        files=(
+            task_file,
+            WorkProductFile(
+                f"openspec/changes/{_CHANGE}/design.md",
+                _BLOB,
+                _BLOB,
+            ),
+        ),
+        pr_number=271,
+    )
+
+    assert not materialization._implementation_manifest_capability_allowed(
+        noncanonical_request,
+        source,
+    )
