@@ -2137,6 +2137,7 @@ def main() -> int:
                 application_request_body=application_request_body,
                 authorization_revision=request.authorization_revision,
                 authorized_change=plan.change,
+                **({"accepted_intent": True} if accepted_intent is not None else {}),
             )
             if result.applied:
                 if materialization is None or target is None:
@@ -2171,6 +2172,7 @@ def main() -> int:
                 application_request_body=application_request_body,
                 authorization_revision=request.authorization_revision,
                 authorized_change=plan.change,
+                **({"accepted_intent": True} if accepted_intent is not None else {}),
             )
     except CarrierRequired as exc:
         # CarrierRequired is the hard invocation-exit boundary. Persist only

@@ -765,6 +765,7 @@ def run_effect_application(
     application_request_body: str | None = None,
     authorization_revision: str | None = None,
     authorized_change: str | None = None,
+    accepted_intent: bool = False,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Apply through shared effect guards plus an optional mutation-adjacent guard."""
 
@@ -835,6 +836,7 @@ def run_effect_application(
             allow_pending_continuation=allow_pending_continuation,
             carrier_plan_for_effect=carrier_plan_provider,
             effect_rejection=effect_rejection_provider,
+            accepted_intent=accepted_intent,
             persist_application_decision=application_decision_persister,
         )
     except _EffectPreconditionStale:
@@ -859,6 +861,7 @@ def run_guarded_effect_application(
     application_request_body: str | None = None,
     authorization_revision: str | None = None,
     authorized_change: str | None = None,
+    accepted_intent: bool = False,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Reject stale merge acceptance before and immediately adjacent to merge application."""
 
@@ -903,6 +906,7 @@ def run_guarded_effect_application(
         application_request_body=application_request_body,
         authorization_revision=authorization_revision,
         authorized_change=authorized_change,
+        accepted_intent=accepted_intent,
         pre_apply_guard=lambda effect: _merge_effect_allows(
             effect,
             source=source,

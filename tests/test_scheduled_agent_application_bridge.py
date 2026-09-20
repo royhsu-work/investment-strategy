@@ -372,6 +372,7 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
         application_request_body: str | None = None,
         authorization_revision: str | None = None,
         authorized_change: str | None = None,
+        accepted_intent: bool = False,
     ) -> tuple[EffectBatch, bridge.ApplyResult]:
         assert source == expected_source
         assert request_comment_id == 102
@@ -380,6 +381,7 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
         assert application_request_body == body
         assert authorization_revision == _REVISION
         assert authorized_change == _CHANGE
+        assert accepted_intent is (len(calls) > 0)
         adapter = GitHubEffectAdapter(
             repository,
             token,
@@ -401,6 +403,7 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
                 "pending_application_correlation": pending_application_correlation,
                 "application_request_body": application_request_body,
                 "authorization_revision": authorization_revision,
+                "accepted_intent": accepted_intent,
             }
         )
         correlation = formal_application_correlation(
@@ -480,6 +483,7 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
             "pending_application_correlation": None,
             "application_request_body": body,
             "authorization_revision": _REVISION,
+            "accepted_intent": False,
         },
         {
             "request_comment_id": 102,
@@ -491,6 +495,7 @@ def test_main_validation_boundary_preserves_exact_binding_for_fresh_successor(
             "pending_application_correlation": None,
             "application_request_body": body,
             "authorization_revision": _REVISION,
+            "accepted_intent": True,
         },
     ]
     assert len(applications) == 2
