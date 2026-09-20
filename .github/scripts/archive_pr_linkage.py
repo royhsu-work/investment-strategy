@@ -59,6 +59,10 @@ def _resolve(args: argparse.Namespace) -> None:
     except (OSError, json.JSONDecodeError) as exc:
         _fail(f"Unable to read GitHub Issue payload: {exc}")
 
+    requested_issue_number = args.issue_number
+    if requested_issue_number is not None and requested_issue_number <= 0:
+        _fail("Issue number must be positive")
+
     matches: list[int] = []
     for issue in _flatten_issues(payload):
         if issue.get("pull_request") is not None:
@@ -66,6 +70,8 @@ def _resolve(args: argparse.Namespace) -> None:
         number = issue.get("number")
         body = issue.get("body")
         if not isinstance(number, int) or isinstance(number, bool):
+            continue
+        if requested_issue_number is not None and number != requested_issue_number:
             continue
         if not isinstance(body, str) or not _has_change_identity(body, change):
             continue
@@ -105,6 +111,7 @@ def _parser() -> argparse.ArgumentParser:
     resolve = subparsers.add_parser("resolve")
     resolve.add_argument("--change", required=True)
     resolve.add_argument("--issues-file", required=True)
+    resolve.add_argument("--issue-number", type=int)
     resolve.set_defaults(handler=_resolve)
 
     render = subparsers.add_parser("render")

@@ -92,6 +92,52 @@ def test_resolve_uses_first_change_field_only(tmp_path: Path) -> None:
     assert "issue_number=21" in result.stdout
 
 
+def test_resolve_uses_exact_request_issue_identity(tmp_path: Path) -> None:
+    issues = tmp_path / "issues.json"
+    _write_issues(
+        issues,
+        [
+            {
+                "number": 234,
+                "body": "Change: source-decision-explore-materialization\nHistorical Change: unset",
+                "state": "open",
+                "pull_request": None,
+            },
+            {
+                "number": 272,
+                "body": (
+                    "Change: unset\n\n"
+                    "Historical evidence: Change: source-decision-explore-materialization"
+                ),
+                "state": "open",
+                "pull_request": None,
+            },
+        ],
+    )
+    result = _run(
+        "resolve",
+        "--change",
+        "source-decision-explore-materialization",
+        "--issue-number",
+        "234",
+        "--issues-file",
+        str(issues),
+    )
+    assert result.returncode == 0
+    assert "issue_number=234" in result.stdout
+
+    result = _run(
+        "resolve",
+        "--change",
+        "source-decision-explore-materialization",
+        "--issue-number",
+        "272",
+        "--issues-file",
+        str(issues),
+    )
+    assert result.returncode != 0
+    assert "found: none" in result.stderr
+
 def test_resolve_fails_closed_on_ambiguous_coordination_issue(tmp_path: Path) -> None:
     issues = tmp_path / "issues.json"
     _write_issues(
