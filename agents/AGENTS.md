@@ -73,15 +73,10 @@ bounded legal result and is reconstructed from current state on the next wake.
 
 Semantic work and repository mutation are distinct.
 
-A semantic worker result contains only the bounded result kind, evidence reference/content, and
-untrusted requested effects. The worker does not own Issue, Role, Action, Change, authorization
-revision, routing, successor, or formal-result headers. During migration, legacy identity fields
-may be carried and are checked for consistency, but they are not authoritative. The repository
-application fresh-resolves one exact machine dispatch and carries its identity forward in the
-application-owned envelope (prefer one opaque dispatch correlation rather than duplicated control
-fields); absent optional `requested_effects` and `evidence_ref` normalize to `[]` and `null`.
-The application then fresh-reads the Issue, routing, Change, branch/ref/PR state, required
-Human/review/gate evidence, and current default-branch revision before authorizing effects.
+A worker result contains the exact Issue/Change/Action identity, finite result kind, evidence
+reference/content, and untrusted requested effects. It cannot carry successor or target authority.
+The application fresh-reads the Issue, routing, Change, branch/ref/PR state, required Human/review/gate
+evidence, and current default-branch revision before authorizing effects.
 
 Before retaining or adding a check, guard, qualification, lifecycle rule, gate, carrier rule, or
 state, identify the affected consequence and its existing executable owner. Classify the delta as
@@ -163,15 +158,6 @@ not passed through Issue comments. The normal worker effect capability does not 
 or direct ref creation/update. Any PR/ref effect is application-bound to the authorized Change,
 repository, default branch, and exact current target before mutation.
 
-The real Executor environment has no mutable semantic-worker checkout or shell. It supplies complete
-candidate file/test content through the content-addressed ingress; repository-owned Actions own the
-executable RED/GREEN/REFACTOR/VERIFY runs. The positive implementation path is exact current carrier
-head -> RED overlay and intended focused failure -> reset to that exact base -> complete candidate
-overlay and focused GREEN -> full `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`,
-and `uv run mypy src tests` -> fresh reauthorization -> `APPLICATION_DECISION: ACCEPTED` -> exact
-verified blob materialization. A failed pre-ACCEPT verifier produces no authoritative repository
-consequence and never requires pushing a broken candidate for cleanup.
-
 Exact-R validation checks the target repository/revision, validator checkout HEAD == R, the qualified
 pinned OpenSpec baseline, and strict validation PASS. Eligibility is derived from the governed
 required gate rather than a source-role/action whitelist.
@@ -218,13 +204,18 @@ and associated-conversation configuration are product configuration, not reposit
 
 A canonical MUST/SHALL requirement, a required deferred follow-up, a project-direction commitment, or
 behavior-preserving maintenance/friction is considered only from current qualified evidence. Any one
-such candidate is bounded to at most one target. Agent-authored advisory text and an Agent-created
-ticket cannot self-authorize additional work.
+such candidate is bounded to at most one target. Materialization authority follows the qualified source
+decision, not the physical writer. A connector or Agent may actuate an already-authorized
+interaction-layer mutation, but writer identity neither grants autonomous authority nor removes
+explicit Human source authority. Agent-authored advisory text or a ticket alone cannot self-authorize
+additional work.
 
-A proposal-ready authority envelope may select Lead / propose-change without a second generic Human
-proceed step when the same Issue and current Action remain coherent. A new product/project direction,
-material scope, risk acceptance, or security/privacy/cost/operational decision requires
-HUMAN_DECISION_REQUIRED.
+Ordinary queue eligibility remains a projection of current routing and existing formal-first,
+WIP=1, finish-first, and deterministic predicates. Connector activity and Issue prose alone do not
+satisfy a later Human-reserved decision; those decisions remain provenance-bound. A proposal-ready
+authority envelope may select Lead / propose-change without a second generic Human proceed step when the
+same Issue and current Action remain coherent. A new product/project direction, material scope, risk
+acceptance, or security/privacy/cost/operational decision requires HUMAN_DECISION_REQUIRED.
 
 Idle discovery may observe already eligible pre-activation work, deduplicate it, and produce at most
 one candidate with no repository noise. The Rule-of-Three and a single-instance structural hazard
@@ -284,12 +275,6 @@ fresh independent review-openspec gate. A run head_sha is association metadata, 
 validator checkout `HEAD` is the exact target identity, and synthetic merge validation is
 not exact-head validation for another PR head.
 
-A canonical MUST/SHALL requirement, required deferred follow-up, project-direction commitment, or
-behavior-preserving maintenance/friction is considered only from qualified evidence. Any one candidate
-is bounded to at most one target. Agent-authored advisory text and an Agent-created ticket cannot
-self-authorize additional work. A proposal-ready authority envelope can select the next Action on the
-same Issue without a second generic Human proceed step. New product/project direction, material scope,
-risk acceptance, or security/privacy/cost/operational decisions require HUMAN_DECISION_REQUIRED.
 
 ## Exact retained authority wording
 
