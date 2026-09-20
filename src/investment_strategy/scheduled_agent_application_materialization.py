@@ -723,7 +723,22 @@ def _verify_implementation_manifest_freshness(
     carrier_head: str,
 ) -> None:
     if request.base_sha not in {current_revision, carrier_head}:
-        raise RuntimeError("implementation manifest base is not a current write base")
+        comparison = _as_mapping(
+            cast(
+                object,
+                _github_json(
+                    repository,
+                    token,
+                    f"compare/{request.base_sha}...{carrier_head}",
+                ),
+            )
+        )
+        if (
+            comparison is None
+            or comparison.get("status") != "ahead"
+            or comparison.get("behind_by") != 0
+        ):
+            raise RuntimeError("implementation manifest base is not an ancestor of carrier")
     for file in request.files:
         if (
             _content_sha_at(
