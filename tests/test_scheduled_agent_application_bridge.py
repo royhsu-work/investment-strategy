@@ -105,8 +105,7 @@ def test_semantic_finalize_result_revision_uses_default_branch_without_carrier(
                                 "issue": "234",
                                 "revision": _REVISION,
                                 "request_key": (
-                                    "archive-234-"
-                                    "4e3241d7d84a64012bf3b6218442128a4cb48d7a"
+                                    "archive-234-4e3241d7d84a64012bf3b6218442128a4cb48d7a"
                                 ),
                             },
                         },
