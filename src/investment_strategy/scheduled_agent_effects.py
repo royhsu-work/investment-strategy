@@ -70,6 +70,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     ValidationResourceTarget,
     completed_task_bookkeeping_is_current,
     task_checkpoint_is_exact,
+    verify_implementation_candidate,
 )
 from investment_strategy.scheduled_agent_worker import parse_worker_result
 from investment_strategy.workflow_dispatch import (
@@ -1394,13 +1395,21 @@ class GitHubEffectAdapter:
         )
         if len(task_files) != 1:
             return False
-        return task_checkpoint_is_exact(
+        if not task_checkpoint_is_exact(
             self.repository,
             self.token,
             expected_change=request.change,
             base_sha=request.base_sha,
             file=task_files[0],
             completed_task_ids=completed_task_ids,
+        ):
+            return False
+        return verify_implementation_candidate(
+            self.repository,
+            self.token,
+            base_sha=request.base_sha,
+            current_revision=cast(str, self.current_revision),
+            files=request.files,
         )
 
     def effect_rejection(self) -> ApplicationRejection | None:

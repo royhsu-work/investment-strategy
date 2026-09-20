@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
@@ -47,6 +48,101 @@ def test_github_json_uses_repository_endpoint_for_empty_api_path(
 
     assert resource._github_json(_REPOSITORY, _FIXTURE_VALUE, "") == {"default_branch": "main"}
     assert requested_urls == [f"https://api.github.com/repos/{_REPOSITORY}"]
+
+
+def test_blob_text_requires_exact_response_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        resource,
+        "_github_json",
+        lambda *_args, **_kwargs: {
+            "sha": "b" * 40,
+            "encoding": "base64",
+            "content": "Y2FuZGlkYXRl",
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="work-product blob text is incomplete"):
+        resource._blob_text(_REPOSITORY, _FIXTURE_VALUE, "a" * 40)
+
+
+def test_implementation_candidate_runs_quality_on_exact_overlaid_blobs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = "tests/test_candidate.py"
+    candidate = "def test_candidate() -> None:\n    assert True\n"
+    commands: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(resource, "_blob_text", lambda *_args, **_kwargs: candidate)
+
+    def fake_run(
+        command: tuple[str, ...],
+        *,
+        cwd: Path,
+        env: Mapping[str, str],
+        check: bool,
+        capture_output: bool,
+        text: bool,
+        timeout: int,
+    ) -> subprocess.CompletedProcess[str]:
+        del check, capture_output, text, timeout
+        commands.append(command)
+        if command[0] == "uv" or command == ("git", "rev-parse", "HEAD"):
+            assert "GIT_CONFIG_VALUE_0" not in env
+        if command == ("git", "rev-parse", "HEAD"):
+            return subprocess.CompletedProcess(command, 0, stdout=f"{_REVISION}\n", stderr="")
+        if command == ("uv", "run", "pytest"):
+            assert (cwd / path).read_text(encoding="utf-8") == candidate
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(resource.subprocess, "run", fake_run)
+    file = resource.WorkProductFile(path, "b" * 40, "a" * 40)
+
+    assert resource.verify_implementation_candidate(
+        _REPOSITORY,
+        _FIXTURE_VALUE,
+        base_sha=_REVISION,
+        current_revision=_REVISION,
+        files=(file,),
+    )
+    assert commands[:4] == [
+        ("git", "init", "--quiet"),
+        ("git", "remote", "add", "origin", f"https://github.com/{_REPOSITORY}.git"),
+        ("git", "fetch", "--quiet", "--depth=1", "origin", _REVISION),
+        ("git", "checkout", "--quiet", "--detach", "FETCH_HEAD"),
+    ]
+    assert commands[4:] == [
+        ("git", "rev-parse", "HEAD"),
+        *resource._IMPLEMENTATION_VERIFICATION_COMMANDS,
+    ]
+
+
+def test_implementation_candidate_failure_is_not_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(resource, "_blob_text", lambda *_args, **_kwargs: "candidate\n")
+
+    def fake_run(
+        command: tuple[str, ...],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        del kwargs
+        return subprocess.CompletedProcess(
+            command,
+            1 if command == ("uv", "run", "ruff", "format", "--check", ".") else 0,
+            stdout=f"{_REVISION}\n" if command == ("git", "rev-parse", "HEAD") else "",
+            stderr="",
+        )
+
+    monkeypatch.setattr(resource.subprocess, "run", fake_run)
+    file = resource.WorkProductFile("src/candidate.py", "b" * 40, "a" * 40)
+
+    assert not resource.verify_implementation_candidate(
+        _REPOSITORY,
+        _FIXTURE_VALUE,
+        base_sha=_REVISION,
+        current_revision=_REVISION,
+        files=(file,),
+    )
 
 
 def test_validation_plan_has_no_transport_or_comment_correlation() -> None:
