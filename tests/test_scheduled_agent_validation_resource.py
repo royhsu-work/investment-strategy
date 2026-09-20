@@ -145,8 +145,6 @@ def test_implementation_candidate_failure_is_not_accepted(
     )
 
 
-
-
 def test_validation_plan_has_no_transport_or_comment_correlation() -> None:
     source = WorkerRequest(138, "lead", "resolve-question")
     plan = resource.ValidationResourcePlan(
