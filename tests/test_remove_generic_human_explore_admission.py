@@ -193,5 +193,5 @@ def test_slice_three_and_verification_markers_are_durable_before_handoff() -> No
         ROOT / "openspec" / "changes" / "source-decision-explore-materialization" / "tasks.md"
     ).read_text(encoding="utf-8")
 
-    for task_id in ("3.1", "3.2", "3.3"):
+    for task_id in ("3.1", "3.2", "3.3", "4.1", "4.2", "4.3"):
         assert any(line.startswith(f"- [x] {task_id}") for line in tasks.splitlines())

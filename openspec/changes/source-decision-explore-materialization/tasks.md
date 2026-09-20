@@ -20,6 +20,6 @@
 
 ## 4. Verification
 
-- [ ] 4.1 Run focused dispatch/Human-authority and materialization-contract tests.
-- [ ] 4.2 Run the full regression suite, type checks, and lint checks required by repository quality governance.
-- [ ] 4.3 Run strict OpenSpec validation and resolve all reported issues.
+- [x] 4.1 Run focused dispatch/Human-authority and materialization-contract tests.
+- [x] 4.2 Run the full regression suite, type checks, and lint checks required by repository quality governance.
+- [x] 4.3 Run strict OpenSpec validation and resolve all reported issues.
