@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import json
 from collections.abc import Callable
+from typing import cast
 
 import pytest
 
@@ -24,6 +25,7 @@ from investment_strategy.scheduled_agent_effect_contract import (
     allowed_github_mutation_operations,
 )
 from investment_strategy.scheduled_agent_effects import (
+    EffectBatch,
     GitHubEffectAdapter,
     StagedEffect,
     apply_effect_batch,
@@ -164,10 +166,6 @@ def test_application_acceptance_precedes_outcome_and_derived_successor() -> None
         events.append("accepted")
         return True
 
-    def persist_outcome(_decision: object, _outcome: str, _reason: str) -> bool:
-        events.append("outcome")
-        return True
-
     result = apply_effect_batch(
         batch,
         fresh_preflight=_preflight,
@@ -176,12 +174,111 @@ def test_application_acceptance_precedes_outcome_and_derived_successor() -> None
         observe_postcondition=lambda _effect: True,
         current_revision=_REVISION,
         persist_application_decision=persist_decision,
-        persist_application_outcome=persist_outcome,
     )
 
     assert result.applied
-    assert events == ["accepted", "outcome", "derived"]
+    assert events == ["accepted", "derived"]
     assert applied[-1].derived
+
+
+class _InterruptedWake(RuntimeError):
+    pass
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+def test_durable_prefix_recovery_matches_uninterrupted_consequence(terminal: bool) -> None:
+    """Every durable prefix is recoverable by a fresh invocation.
+
+    The dictionary is the emulated remote repository.  Each ``wake`` creates
+    new callbacks, so no process-local receipt or cache can make the recovery
+    pass.  The accepted-intent bit and each effect key are the only durable
+    facts retained between wakes.
+    """
+
+    action = Action.FINALIZE_CHANGE if terminal else Action.IMPLEMENT_CHANGE
+    role = role_for(action)
+    result_kind = ResultKind.NO_GO if terminal else ResultKind.SPEC_BLOCKER
+    source = WorkerRequest(138, role.value, action.value)
+    derived_key = "terminal" if terminal else "routing"
+    requested_kinds = (
+        "blob/tree/commit",
+        "branch/ref",
+        "PR/carrier",
+        "carrier-execution",
+        "validation",
+        "checkpoint/formal-result",
+    )
+    batch = EffectBatch(
+        source=source,
+        effects=tuple(StagedEffect(kind=kind, payload_json="{}") for kind in requested_kinds),
+        typed_result=BoundedActionResult(
+            138,
+            _CHANGE,
+            action,
+            TypedResult(result_kind),
+        ),
+    )
+
+    def run_wake(state: dict[str, object], stop_after: str | None) -> None:
+        def persist_decision(_decision: object, _disposition: str, _reason: str) -> bool:
+            if not state["accepted"]:
+                state["accepted"] = True
+                state["accepted_writes"] = int(state["accepted_writes"]) + 1
+            if stop_after == "after-accept":
+                raise _InterruptedWake
+            return True
+
+        def apply_effect(effect: StagedEffect) -> None:
+            key = derived_key if effect.derived else effect.kind
+            applied = cast(set[str], state["effects"])
+            applied.add(key)
+            if stop_after == f"after-{key}":
+                raise _InterruptedWake
+
+        def observe_postcondition(effect: StagedEffect) -> bool:
+            key = derived_key if effect.derived else effect.kind
+            if stop_after == f"after-{key}-postcondition":
+                raise _InterruptedWake
+            return True
+
+        apply_effect_batch(
+            batch,
+            fresh_preflight=lambda: _preflight(
+                action=cast(WorkflowAction, action.value),
+                change=_CHANGE,
+            ),
+            effect_guard=lambda _effect: True,
+            apply_effect=apply_effect,
+            observe_postcondition=observe_postcondition,
+            current_revision=_REVISION,
+            persist_application_decision=persist_decision,
+        )
+
+    def fresh_state() -> dict[str, object]:
+        return {"accepted": False, "accepted_writes": 0, "effects": set()}
+
+    expected = fresh_state()
+    run_wake(expected, None)
+
+    prefixes = ["before-accept", "after-accept"]
+    prefixes.extend(
+        stage
+        for kind in requested_kinds
+        for stage in (f"after-{kind}", f"after-{kind}-postcondition")
+    )
+    prefixes.extend((f"after-{derived_key}", f"after-{derived_key}-postcondition"))
+
+    for prefix in prefixes:
+        recovered = fresh_state()
+        if prefix == "before-accept":
+            with pytest.raises(_InterruptedWake):
+                raise _InterruptedWake
+        else:
+            with pytest.raises(_InterruptedWake):
+                run_wake(recovered, prefix)
+        run_wake(recovered, None)
+        assert recovered == expected
+        assert recovered["accepted_writes"] == 1
 
 
 def test_parse_effect_batch_binds_typed_result_and_effects() -> None:

@@ -28,7 +28,9 @@ from investment_strategy.scheduled_agent_effects import (
     parse_application_outcome,
 )
 from investment_strategy.scheduled_agent_formal_qualification import (
+    CurrentFrontier,
     build_qualification_input,
+    derive_current_frontier,
     qualify_current_formal_consequence,
 )
 from investment_strategy.scheduled_agent_formal_result import parse_formal_result
@@ -103,6 +105,13 @@ def _positive_int(value: object) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         return None
     return value
+
+
+def _positive_int_string(value: str) -> int | None:
+    if not value.isdigit() or value.startswith("0"):
+        return None
+    parsed = int(value)
+    return parsed if parsed > 0 else None
 
 
 def _valid_reason(value: object) -> bool:
@@ -284,37 +293,21 @@ def _application_job(
 ) -> ApplicationCompletion:
     """Locate the one exact application run for an accepted intent."""
 
-    title = render_application_run_name(request_comment_id)
-    page = 1
-    matches: list[Mapping[str, object]] = []
-    while True:
-        query = urlencode({"event": "issue_comment", "per_page": 100, "page": page})
-        payload = read(
-            repository,
-            token,
-            f"actions/workflows/{quote(_APPLICATION_WORKFLOW, safe='')}/runs?{query}",
+    runs = _application_runs(repository, token, request_comment_id, read=read)
+    if runs is None or not runs:
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-run-unavailable",
+            request_comment_id=request_comment_id,
         )
-        if not isinstance(payload, Mapping):
-            return ApplicationCompletion("INVALID", "application-completion-run-list-incomplete")
-        raw_runs = payload.get("workflow_runs")
-        if not isinstance(raw_runs, list):
-            return ApplicationCompletion("INVALID", "application-completion-run-list-incomplete")
-        for raw in raw_runs:
-            if isinstance(raw, Mapping) and raw.get("display_title") == title:
-                matches.append(cast(Mapping[str, object], raw))
-        if matches or len(raw_runs) < 100:
-            break
-        page += 1
-
-    if len(matches) != 1:
-        reason = (
-            "application-completion-run-unavailable"
-            if not matches
-            else "application-completion-run-ambiguous"
+    if len(runs) > 1:
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-run-identity-ambiguous",
+            request_comment_id=request_comment_id,
         )
-        return ApplicationCompletion("INVALID", reason, request_comment_id=request_comment_id)
+    run = runs[0]
 
-    run = matches[0]
     run_id = _positive_int(run.get("id"))
     run_attempt = _positive_int(run.get("run_attempt"))
     if run_id is None or run_attempt is None:
@@ -366,6 +359,78 @@ def _application_job(
         "application-completion-resuming",
         request_comment_id=request_comment_id,
         job_id=job_id,
+    )
+
+
+def _application_runs(
+    repository: str,
+    token: str,
+    request_comment_id: int,
+    *,
+    read: GitHubReader,
+) -> tuple[Mapping[str, object], ...] | None:
+    """Read every transport run bound to an exact request, if observable."""
+
+    title = render_application_run_name(request_comment_id)
+    page = 1
+    matches: list[Mapping[str, object]] = []
+    while True:
+        query = urlencode({"event": "issue_comment", "per_page": 100, "page": page})
+        payload = read(
+            repository,
+            token,
+            f"actions/workflows/{quote(_APPLICATION_WORKFLOW, safe='')}/runs?{query}",
+        )
+        if not isinstance(payload, Mapping):
+            return None
+        raw_runs = payload.get("workflow_runs")
+        if not isinstance(raw_runs, list):
+            return None
+        for raw in raw_runs:
+            if isinstance(raw, Mapping) and raw.get("display_title") == title:
+                matches.append(cast(Mapping[str, object], raw))
+        if len(raw_runs) < 100:
+            break
+        page += 1
+    return tuple(matches)
+
+
+def _preaccept_application_state(
+    repository: str,
+    token: str,
+    request_comment_id: int,
+    *,
+    read: GitHubReader,
+) -> ApplicationCompletion | None:
+    """Distinguish a live ingress from a terminal run with no ACCEPT."""
+
+    runs = _application_runs(repository, token, request_comment_id, read=read)
+    if runs is None:
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-run-unavailable",
+            request_comment_id=request_comment_id,
+        )
+    if len(runs) > 1:
+        return ApplicationCompletion(
+            "AMBIGUOUS",
+            "application-completion-run-identity-ambiguous",
+            request_comment_id=request_comment_id,
+        )
+    if not runs:
+        return None
+    run = runs[0]
+    status = run.get("status")
+    if status != "completed":
+        return ApplicationCompletion(
+            "RESUMABLE",
+            "application-completion-preaccept-in-progress",
+            request_comment_id=request_comment_id,
+        )
+    return ApplicationCompletion(
+        "REJECTED",
+        "application-completion-preaccept-terminal",
+        request_comment_id=request_comment_id,
     )
 
 
@@ -516,7 +581,10 @@ def _formal_consequence(
         change=effective_change,
         state=observation.state,
         current_routing=observation.routing,
-        comments=matching_comments,
+        # The formal qualifier owns the complete causal suffix.  Supplying
+        # only the candidate result makes a historical same-Action occurrence
+        # look like the current frontier and breaks A -> A / A -> B -> A.
+        comments=issue_comments,
         current_revision=current_revision,
         mode=mode,
         expected_routing=expected_routing,
@@ -529,7 +597,15 @@ def _formal_consequence(
         lifecycle_events=lifecycle_events,
         authorization_ancestry=authorization_ancestry,
     )
-    return qualify_current_formal_consequence(qualification).qualified
+    decision = qualify_current_formal_consequence(qualification)
+    if not decision.qualified or decision.event is None:
+        return False
+    candidate = matching_events[0]
+    return (
+        getattr(decision.event, "comment_id", None) == candidate.comment_id
+        and getattr(decision.event, "application_correlation", None)
+        == candidate.application_correlation
+    )
 
 
 def _accepted_application_state(
@@ -569,68 +645,16 @@ def _accepted_application_state(
                 "application-completion-outcome-identity-invalid",
                 request_comment_id=record.request_comment_id,
             )
+        # ABORTED is retained only as a bounded migration disposition.  A
+        # COMPLETED outcome is not consulted for normal completion; the
+        # canonical formal result and its repository postconditions own that
+        # truth.
         if outcome.outcome == "ABORTED":
             return ApplicationCompletion(
                 "ABORTED",
                 "application-completion-aborted",
                 request_comment_id=record.request_comment_id,
             )
-        ancestry = _authorization_ancestry(
-            repository,
-            token,
-            authorization_revision=record.authorization_revision,
-            current_revision=current_revision,
-            read=read,
-        )
-        if ancestry is None:
-            return ApplicationCompletion(
-                "INVALID",
-                "application-completion-stale",
-                request_comment_id=record.request_comment_id,
-            )
-        if not _formal_consequence(
-            repository=repository,
-            token=token,
-            source=source,
-            record=record,
-            worker=worker,
-            issue_comments=issue_comments,
-            lifecycle_events=lifecycle_events,
-            current_issue=current_issue,
-            current_revision=current_revision,
-            read=read,
-            mode="current",
-            authorization_ancestry=ancestry,
-        ):
-            if _formal_consequence(
-                repository=repository,
-                token=token,
-                source=source,
-                record=record,
-                worker=worker,
-                issue_comments=issue_comments,
-                lifecycle_events=lifecycle_events,
-                current_issue=current_issue,
-                current_revision=current_revision,
-                read=read,
-                mode="pending",
-                authorization_ancestry=ancestry,
-            ):
-                return ApplicationCompletion(
-                    "RESUMABLE",
-                    "application-completion-outcome-pending",
-                    request_comment_id=record.request_comment_id,
-                )
-            return ApplicationCompletion(
-                "INVALID",
-                "application-completion-complete-postcondition-invalid",
-                request_comment_id=record.request_comment_id,
-            )
-        return ApplicationCompletion(
-            "COMPLETE",
-            "application-completion-complete",
-            request_comment_id=record.request_comment_id,
-        )
 
     ancestry = _authorization_ancestry(
         repository,
@@ -643,6 +667,44 @@ def _accepted_application_state(
         return ApplicationCompletion(
             "INVALID",
             "application-completion-stale",
+            request_comment_id=record.request_comment_id,
+        )
+    if _formal_consequence(
+        repository=repository,
+        token=token,
+        source=source,
+        record=record,
+        worker=worker,
+        issue_comments=issue_comments,
+        lifecycle_events=lifecycle_events,
+        current_issue=current_issue,
+        current_revision=current_revision,
+        read=read,
+        mode="current",
+        authorization_ancestry=ancestry,
+    ):
+        return ApplicationCompletion(
+            "COMPLETE",
+            "application-completion-complete",
+            request_comment_id=record.request_comment_id,
+        )
+    if _formal_consequence(
+        repository=repository,
+        token=token,
+        source=source,
+        record=record,
+        worker=worker,
+        issue_comments=issue_comments,
+        lifecycle_events=lifecycle_events,
+        current_issue=current_issue,
+        current_revision=current_revision,
+        read=read,
+        mode="pending",
+        authorization_ancestry=ancestry,
+    ):
+        return ApplicationCompletion(
+            "RESUMABLE",
+            "application-completion-formal-result-pending",
             request_comment_id=record.request_comment_id,
         )
     observation = normalize_github_issue(current_issue)
@@ -815,6 +877,95 @@ def _legacy_unaccepted_request_is_inert(
     return request_comment_id > 0
 
 
+def _derive_frontier(
+    *,
+    source: WorkerRequest,
+    current_issue: Mapping[str, object],
+    issue_comments: tuple[Mapping[str, object], ...],
+    lifecycle_events: tuple[Mapping[str, object], ...],
+    current_revision: str,
+) -> tuple[CurrentFrontier | None, bool]:
+    """Read the current frontier through the canonical formal qualifier."""
+
+    observation = normalize_github_issue(current_issue)
+    if (
+        observation is None
+        or not observation.authoritative
+        or observation.issue_number != source.issue_number
+        or observation.state not in {"open", "closed"}
+        or observation.routing != (source.role, source.action)
+        or observation.change == ""
+    ):
+        return None, False
+    qualification = build_qualification_input(
+        issue_number=source.issue_number,
+        change=observation.change,
+        state=observation.state,
+        current_routing=observation.routing,
+        comments=issue_comments,
+        current_revision=current_revision,
+        lifecycle_events=lifecycle_events,
+    )
+    frontier = derive_current_frontier(qualification)
+    return frontier, frontier is not None
+
+
+def _frontier_comment_id(frontier: CurrentFrontier | None) -> int | None:
+    if frontier is None or frontier.event is None:
+        return None
+    comment_id = getattr(frontier.event, "comment_id", None)
+    return _positive_int(comment_id)
+
+
+def _belongs_to_current_frontier(
+    request_comment_id: int,
+    frontier: CurrentFrontier | None,
+) -> bool:
+    """Bind a request to the route after the latest qualified consequence."""
+
+    boundary = _frontier_comment_id(frontier)
+    # A pre-activation route has no formal predecessor.  For an active route,
+    # the qualifier cannot produce a frontier without a comment identity.
+    return boundary is None or request_comment_id > boundary
+
+
+def _accepted_intent_owns_frontier(
+    record: ApplicationDecisionRecord,
+    frontier: CurrentFrontier | None,
+    *,
+    source: WorkerRequest,
+) -> bool:
+    """Allow a same-Action result to bind its own recurrence frontier.
+
+    For ``A -> A`` the accepted request necessarily precedes its formal result,
+    while the repository route remains ``A``.  The existing
+    ``Application-Correlation`` is the causal binding that distinguishes this
+    current occurrence from an earlier accepted request; it is not a new
+    persisted generation or epoch.
+    """
+
+    if frontier is None or frontier.event is None:
+        return False
+    correlation = getattr(frontier.event, "application_correlation", None)
+    if not isinstance(correlation, str):
+        return False
+    fields = _application_correlation_fields(correlation)
+    if fields is None:
+        return False
+    return (
+        fields[1] == str(record.request_comment_id)
+        and fields[2] == str(source.issue_number)
+        and fields[4] == source.role
+        and fields[5] == source.action
+        and fields[6] == record.result_kind.lower().replace("_", "-")
+    )
+
+
+def _application_correlation_fields(correlation: str) -> tuple[str, ...] | None:
+    fields = tuple(correlation.split(":"))
+    return fields if len(fields) == 8 and fields[0] == "application" else None
+
+
 def qualify_application_completion(
     repository: str,
     token: str,
@@ -850,17 +1001,9 @@ def qualify_application_completion(
         and record.role == source.role
         and record.action == source.action
     ]
-    grouped_outcomes: dict[int, list[ApplicationOutcomeRecord]] = {}
-    for outcome_record in outcomes:
-        if outcome_record.request_comment_id > 0:
-            grouped_outcomes.setdefault(outcome_record.request_comment_id, []).append(
-                outcome_record
-            )
-
-    source_request_invalid = False
     requests: dict[int, tuple[str, str]] = {}
-    request_ids: set[int] = set()
-    for comment in recent:
+    invalid_request_ids: set[int] = set()
+    for comment in (*recent, *issue_comments):
         if not _trusted_connector_comment(comment, owner):
             continue
         body = comment.get("body")
@@ -876,40 +1019,128 @@ def qualify_application_completion(
 
         comment_id = _positive_int(comment.get("id"))
         if comment_id is None:
-            source_request_invalid = True
+            invalid_request_ids.add(-1)
             continue
         try:
             request = parse_application_request(body)
         except ValueError:
-            source_request_invalid = True
+            invalid_request_ids.add(comment_id)
             continue
         if request is None:
-            source_request_invalid = True
+            invalid_request_ids.add(comment_id)
             continue
-        request_ids.add(comment_id)
-        requests[comment_id] = (body, request.authorization_revision)
+        previous = requests.get(comment_id)
+        candidate = (body, request.authorization_revision)
+        if previous is not None and previous != candidate:
+            invalid_request_ids.add(comment_id)
+            requests.pop(comment_id, None)
+        elif comment_id not in invalid_request_ids:
+            requests[comment_id] = candidate
 
-    if source_request_invalid:
-        return ApplicationCompletion("INVALID", "application-completion-request-invalid")
+    if not relevant_decisions and not requests and not invalid_request_ids:
+        return ApplicationCompletion("NONE", "application-completion-none")
 
-    # Every accepted/rejected record is exact evidence. Multiple accepted
-    # records for one current source are competing intents, even if payloads
-    # compare equal.
+    issue = read(repository, token, f"issues/{source.issue_number}")
+    if not isinstance(issue, Mapping):
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-current-issue-unavailable",
+        )
+    lifecycle = _paged_list(
+        repository,
+        token,
+        f"issues/{source.issue_number}/timeline",
+        read=read,
+    )
+    grouped_outcomes: dict[int, list[ApplicationOutcomeRecord]] = {}
+    for outcome_record in outcomes:
+        if outcome_record.request_comment_id > 0:
+            grouped_outcomes.setdefault(outcome_record.request_comment_id, []).append(
+                outcome_record
+            )
+    frontier, frontier_qualified = _derive_frontier(
+        source=source,
+        current_issue=cast(Mapping[str, object], issue),
+        issue_comments=issue_comments,
+        lifecycle_events=lifecycle,
+        current_revision=current_revision,
+    )
+    if not frontier_qualified:
+        return ApplicationCompletion("INVALID", "application-completion-current-frontier-invalid")
+
+    # The formal qualifier owns the current frontier.  Decisions before its
+    # latest qualified predecessor are historical, even when they have the
+    # same Role/Action as the current route.  This is the recurrence boundary
+    # for both A -> A and A -> B -> A.
+    current_request_ids = {
+        request_id for request_id in requests if _belongs_to_current_frontier(request_id, frontier)
+    }
+    current_invalid_request_ids = {
+        request_id
+        for request_id in invalid_request_ids
+        if request_id < 0 or _belongs_to_current_frontier(request_id, frontier)
+    }
+    relevant_decisions = [
+        record
+        for record in relevant_decisions
+        if _belongs_to_current_frontier(record.request_comment_id, frontier)
+        or _accepted_intent_owns_frontier(record, frontier, source=source)
+    ]
     accepted = [record for record in relevant_decisions if record.disposition == "ACCEPTED"]
     rejected = [record for record in relevant_decisions if record.disposition == "REJECTED"]
+    frontier_correlation = (
+        None
+        if frontier is None or frontier.event is None
+        else getattr(frontier.event, "application_correlation", None)
+    )
+    frontier_correlation_fields = (
+        None
+        if not isinstance(frontier_correlation, str)
+        else _application_correlation_fields(frontier_correlation)
+    )
+    frontier_request_id = (
+        None
+        if frontier_correlation_fields is None
+        else _positive_int_string(frontier_correlation_fields[1])
+    )
+    current_ingress_ids = set(requests) | {
+        request_id for request_id in invalid_request_ids if request_id > 0
+    }
+    if (
+        not accepted
+        and frontier_request_id is not None
+        and frontier_request_id in current_ingress_ids
+    ):
+        # A formal consequence tied to this ingress without Phase-A ACCEPT is
+        # contradictory evidence, not proof that source ownership is free.
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-consequence-without-acceptance",
+            request_comment_id=frontier_request_id,
+        )
     if len(accepted) > 1:
         return ApplicationCompletion("AMBIGUOUS", "application-completion-accepted-ambiguous")
     if len(accepted) == 0:
+        if current_invalid_request_ids:
+            return ApplicationCompletion("INVALID", "application-completion-request-invalid")
         if rejected:
             return ApplicationCompletion("REJECTED", "application-completion-rejected")
-        if request_ids:
-            if len(request_ids) != 1:
+        if current_request_ids:
+            if len(current_request_ids) != 1:
                 return ApplicationCompletion(
                     "AMBIGUOUS",
                     "application-completion-unaccepted-ambiguous",
                 )
-            request_comment_id = next(iter(request_ids))
+            request_comment_id = next(iter(current_request_ids))
             request_body, authorization_revision = requests[request_comment_id]
+            live = _preaccept_application_state(
+                repository,
+                token,
+                request_comment_id,
+                read=read,
+            )
+            if live is not None:
+                return live
             relation = _application_protocol_relation(
                 repository,
                 token,
@@ -947,32 +1178,27 @@ def qualify_application_completion(
         return ApplicationCompletion("NONE", "application-completion-none")
 
     record = accepted[0]
-    if request_ids and any(request_id != record.request_comment_id for request_id in request_ids):
+    if current_request_ids and any(
+        request_id != record.request_comment_id for request_id in current_request_ids
+    ):
         return ApplicationCompletion(
             "AMBIGUOUS",
             "application-completion-request-binding-ambiguous",
         )
+    if current_invalid_request_ids and any(
+        request_id != record.request_comment_id for request_id in current_invalid_request_ids
+    ):
+        return ApplicationCompletion(
+            "AMBIGUOUS",
+            "application-completion-request-binding-ambiguous",
+        )
+    # An accepted decision is immutable intent.  If the ingress comment was
+    # edited or deleted after ACCEPT, do not parse its new text and do not
+    # replay worker semantics; the exact accepted record remains the only
+    # resumable payload.
     outcome_matches = grouped_outcomes.get(record.request_comment_id, [])
     if len(outcome_matches) > 1:
         return ApplicationCompletion("AMBIGUOUS", "application-completion-outcome-ambiguous")
-
-    issue = read(repository, token, f"issues/{source.issue_number}")
-    if not isinstance(issue, Mapping):
-        return ApplicationCompletion(
-            "INVALID",
-            "application-completion-current-issue-unavailable",
-            request_comment_id=record.request_comment_id,
-        )
-    lifecycle = (
-        _paged_list(
-            repository,
-            token,
-            f"issues/{source.issue_number}/timeline",
-            read=read,
-        )
-        if outcome_matches
-        else ()
-    )
     return _accepted_application_state(
         repository=repository,
         token=token,
