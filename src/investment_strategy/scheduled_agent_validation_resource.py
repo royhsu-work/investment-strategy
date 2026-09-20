@@ -863,6 +863,7 @@ _VERIFICATION_SECRET_ENVIRONMENT_KEYS = frozenset(
 def _candidate_subprocess_environment(token: str) -> dict[str, str]:
     """Give Git fetch credentials only to the checkout, never to candidate code."""
 
+    authorization = base64.b64encode(f"x-access-token:{token}".encode()).decode("ascii")
     environment = {
         key: value
         for key, value in os.environ.items()
@@ -872,7 +873,7 @@ def _candidate_subprocess_environment(token: str) -> dict[str, str]:
         {
             "GIT_CONFIG_COUNT": "1",
             "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
-            "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: bearer {token}",
+            "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {authorization}",
             "GIT_TERMINAL_PROMPT": "0",
         }
     )

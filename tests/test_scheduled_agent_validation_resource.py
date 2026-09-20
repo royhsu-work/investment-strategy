@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
@@ -22,6 +23,16 @@ _REVISION = "013510b12c5d3cde869308a319a1e2fb12cdfa60"
 _PR_HEAD = "05e1e84523651c6a9bc4ebbe4b275b12dae74dbf"
 _CHANGE = "simplify-scheduled-agent-control-plane"
 _FIXTURE_VALUE = "fixture-value"
+
+
+def test_candidate_checkout_uses_actions_compatible_basic_auth() -> None:
+    environment = resource._candidate_subprocess_environment(_FIXTURE_VALUE)
+
+    assert environment["GIT_CONFIG_VALUE_0"] == (
+        "AUTHORIZATION: basic "
+        + base64.b64encode(f"x-access-token:{_FIXTURE_VALUE}".encode()).decode()
+    )
+    assert "GITHUB_TOKEN" not in environment
 
 
 def test_github_json_uses_repository_endpoint_for_empty_api_path(
