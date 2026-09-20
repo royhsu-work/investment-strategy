@@ -152,6 +152,62 @@ def test_application_decision_and_terminal_outcome_are_exactly_bound() -> None:
     assert outcome.worker_result_sha256 == parsed.worker_result_sha256
 
 
+def test_accepted_decision_resumes_when_transport_envelope_is_reconstructed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    decision = _protocol_decision()
+    raw = _raw()
+    original_body = "EFFECT_REQUEST\nAuthorization-Revision: " + _REVISION
+    persisted_body = effects.render_application_decision_body(
+        request_comment_id=_REQUEST_COMMENT_ID,
+        request_body=original_body,
+        authorization_revision=_REVISION,
+        decision=decision,
+        disposition="ACCEPTED",
+        raw_worker_result=raw,
+        reason="accepted",
+    )
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        path: str,
+        **_kwargs: object,
+    ) -> object:
+        if path == "issues/138/comments?sort=created&direction=asc&per_page=100&page=1":
+            return [
+                {
+                    "id": 2001,
+                    "body": persisted_body,
+                    "user": {"login": "github-actions[bot]"},
+                    "performed_via_github_app": {"slug": "github-actions"},
+                }
+            ]
+        raise AssertionError(path)
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        "owner/repo",
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        request_comment_id=_REQUEST_COMMENT_ID,
+        expected_result_kind="spec-blocker",
+    )
+
+    reconstructed_body = original_body + "\nDispatch-Correlation: reconstructed"
+    assert adapter.persist_application_decision(
+        decision,
+        disposition="ACCEPTED",
+        reason="application accepted",
+        request_body=reconstructed_body,
+        authorization_revision=_REVISION,
+        raw_worker_result=raw,
+    )
+
+
 def test_application_acceptance_precedes_outcome_and_derived_successor() -> None:
     source = WorkerRequest(138, "executor", "implement-change")
     batch = parse_effect_batch(_raw(), source)
