@@ -237,6 +237,7 @@ def test_application_acceptance_precedes_outcome_and_derived_successor() -> None
     assert events == ["accepted", "derived"]
     assert applied[-1].derived
 
+
 def test_accepted_intent_does_not_reverify_candidate_during_phase_b() -> None:
     source = WorkerRequest(138, "executor", "implement-change")
     batch = parse_effect_batch(
