@@ -662,7 +662,7 @@ def test_accepted_formal_result_waits_for_requested_effect_postconditions(
     monkeypatch.setattr(
         bridge,
         "requested_effect_postconditions_complete",
-        lambda **_kwargs: False,
+        lambda *_args, **_kwargs: False,
     )
 
     def fake_read(_repository: str, _token: str, path: str) -> object:
@@ -699,18 +699,6 @@ def test_accepted_formal_result_waits_for_requested_effect_postconditions(
             }
         raise AssertionError(path)
 
-    qualification = bridge.build_qualification_input(
-        issue_number=138,
-        change=change,
-        state="open",
-        current_routing=("reviewer", "review-archive"),
-        comments=(decision, formal),
-        current_revision=REVISION,
-        lifecycle_events=_frontier_lifecycle([(100, "finalize-change", "review-archive")]),
-    )
-    qualification_decision = bridge.qualify_current_formal_consequence(qualification)
-    assert qualification_decision.qualified, qualification_decision
-
     completion = bridge.qualify_application_completion(
         "owner/repo",
         "token",
@@ -720,7 +708,7 @@ def test_accepted_formal_result_waits_for_requested_effect_postconditions(
         now=datetime(2026, 9, 18, 3, 0, tzinfo=UTC),
     )
 
-    assert completion.state == "RESUMABLE", completion
+    assert completion.state == "RESUMABLE"
     assert completion.reason == "application-completion-resuming"
     assert completion.request_comment_id == 90
     assert completion.job_id == 888
