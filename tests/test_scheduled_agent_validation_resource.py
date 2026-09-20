@@ -101,14 +101,15 @@ def test_implementation_candidate_runs_quality_on_exact_overlaid_blobs(
         _REPOSITORY,
         _FIXTURE_VALUE,
         base_sha=_REVISION,
+        base_ref="agent/example",
         current_revision=_REVISION,
         files=(file,),
     )
     assert commands[:4] == [
         ("git", "init", "--quiet"),
         ("git", "remote", "add", "origin", f"https://github.com/{_REPOSITORY}.git"),
-        ("git", "fetch", "--quiet", "--depth=1", "origin", _REVISION),
-        ("git", "checkout", "--quiet", "--detach", "FETCH_HEAD"),
+        ("git", "fetch", "--quiet", "--depth=1", "origin", "refs/heads/agent/example"),
+        ("git", "checkout", "--quiet", "--detach", _REVISION),
     ]
     assert commands[4:] == [
         ("git", "rev-parse", "HEAD"),

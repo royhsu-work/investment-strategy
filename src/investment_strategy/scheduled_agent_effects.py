@@ -1393,6 +1393,7 @@ class GitHubEffectAdapter:
             not in {"QUALIFIED", "RECONCILIATION_REQUIRED", "HISTORICAL_MERGED"}
             or decision.branch != request.branch
             or decision.head_sha is None
+            or request.base_sha != decision.head_sha
         ):
             return False
         if decision.disposition == "HISTORICAL_MERGED" and (
@@ -1426,6 +1427,7 @@ class GitHubEffectAdapter:
             self.repository,
             self.token,
             base_sha=request.base_sha,
+            base_ref=request.branch,
             current_revision=cast(str, self.current_revision),
             files=request.files,
         )
