@@ -2795,6 +2795,7 @@ def test_accepted_archive_dispatch_reconciles_after_safe_main_advance(
     assert adapter.observe_postcondition(effect)
     assert "actions/workflows/openspec-archive.yml/dispatches" not in calls
 
+
 def test_issue_comment_reuses_existing_bot_comment_on_later_page(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

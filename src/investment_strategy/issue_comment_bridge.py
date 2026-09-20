@@ -1193,7 +1193,6 @@ def _accepted_intent_owns_frontier(
     )
 
 
-
 def _frontier_application_decisions(
     decisions: tuple[ApplicationDecisionRecord, ...],
     frontier: CurrentFrontier | None,
