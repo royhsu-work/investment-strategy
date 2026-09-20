@@ -2,9 +2,9 @@
 
 ## 1. Atomic Human-requested Explore materialization contract
 
-- [ ] 1.1 RED: add focused contract/regression coverage showing that Human-requested bounded Formal Explore materialization is not complete unless the externally observed GitHub state is one open Issue with `Change: unset` and exactly one `action:explore-change` routing label.
-- [ ] 1.2 GREEN: encode the minimum canonical/shared contract that assigns the Human-request interpretation and atomic create/update + fresh-read postcondition to the interaction-layer producer that already owns that requested GitHub mutation; do not add Issue creation to Scheduled-Agent worker/application capability.
-- [ ] 1.3 REFACTOR: keep repository application, mutation carriers, dispatcher, and worker effect capability unchanged unless a concrete repository consumer regression requires a correction; remove duplicated actor-centric decision wording if encountered.
+- [x] 1.1 RED: add focused contract/regression coverage showing that Human-requested bounded Formal Explore materialization is not complete unless the externally observed GitHub state is one open Issue with `Change: unset` and exactly one `action:explore-change` routing label.
+- [x] 1.2 GREEN: encode the minimum canonical/shared contract that assigns the Human-request interpretation and atomic create/update + fresh-read postcondition to the interaction-layer producer that already owns that requested GitHub mutation; do not add Issue creation to Scheduled-Agent worker/application capability.
+- [x] 1.3 REFACTOR: keep repository application, mutation carriers, dispatcher, and worker effect capability unchanged unless a concrete repository consumer regression requires a correction; remove duplicated actor-centric decision wording if encountered.
 
 ## 2. Source-decision authority and origin-neutral dispatch
 
