@@ -752,6 +752,62 @@ def test_terminal_preactcept_candidates_do_not_compete_by_raw_cardinality(count:
     assert completion.state != "AMBIGUOUS"
 
 
+def test_terminal_preactcept_candidate_survives_archived_authorization_revision() -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    request = _effect_request_comment(
+        comment_id=654,
+        created_at="2026-09-18T01:00:00Z",
+        authorization_revision="5ef5fd95e57c563a03a96df85248cdb4f3c5f502",
+    )
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [request]
+        if path.startswith("issues/138/comments?"):
+            return []
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return []
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 9000,
+                        "display_title": "Scheduled Agent Application 654",
+                        "status": "completed",
+                        "conclusion": "failure",
+                    }
+                ]
+            }
+        if path == "actions/runs/9000/jobs":
+            return {
+                "jobs": [
+                    {
+                        "id": 9100,
+                        "name": "apply",
+                        "status": "completed",
+                        "conclusion": "failure",
+                    }
+                ]
+            }
+        if path.startswith("compare/"):
+            raise OSError("archived commit is no longer observable")
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+
+    assert completion.state == "REJECTED"
+    assert completion.reason == "application-completion-terminal-no-accept"
+
+
 def test_terminal_noise_plus_one_live_candidate_waits_for_live_ingress() -> None:
     source = bridge.WorkerRequest(138, "lead", "explore-change")
     requests = [
