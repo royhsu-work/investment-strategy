@@ -891,15 +891,12 @@ def qualify_implementation_carrier(
             ):
                 base = _as_mapping(pr.get("base"))
                 base_sha = None if base is None else base.get("sha")
-                if (
-                    not _valid_sha(base_sha)
-                    or not _compare_is_ancestor(
-                        repository,
-                        token,
-                        ancestor=cast(str, base_sha),
-                        descendant=default_revision,
-                        read=reader,
-                    )
+                if not _valid_sha(base_sha) or not _compare_is_ancestor(
+                    repository,
+                    token,
+                    ancestor=cast(str, base_sha),
+                    descendant=default_revision,
+                    read=reader,
                 ):
                     return _indeterminate(
                         repository=repository,
