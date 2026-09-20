@@ -138,6 +138,7 @@ def test_resolve_uses_exact_request_issue_identity(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "found: none" in result.stderr
 
+
 def test_resolve_fails_closed_on_ambiguous_coordination_issue(tmp_path: Path) -> None:
     issues = tmp_path / "issues.json"
     _write_issues(
