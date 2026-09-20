@@ -516,6 +516,7 @@ def _is_executor_task_and_implementation_materialization(
         not file.path.startswith("openspec/") for file in files if file.path != task_path
     )
 
+
 def _executor_task_file(
     source: WorkerRequest,
     expected_change: str,
