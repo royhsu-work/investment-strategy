@@ -368,7 +368,7 @@ def test_reconciled_continuation_branch_qualifies_even_if_pr_base_sha_is_old(
     assert decision.reason == "continuation-carrier-qualified-after-reconciliation"
 
 
-def test_stale_open_initial_carrier_remains_strict(
+def test_stale_open_initial_carrier_enters_reconciliation_only_with_ancestral_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     current = _continuation_pr(branch=f"agent/{CHANGE}")
@@ -380,10 +380,13 @@ def test_stale_open_initial_carrier_remains_strict(
             historical_pr=None,
             open_prs=[current],
             pr_files=[{"filename": f"openspec/changes/{CHANGE}/proposal.md"}],
+            default_advance_files=[
+                {"filename": f"openspec/changes/{CHANGE}/proposal.md"},
+            ],
         ),
     )
-    assert decision.disposition == "INDETERMINATE"
-    assert decision.reason == "carrier-pr-base-is-stale"
+    assert decision.disposition == "RECONCILIATION_REQUIRED"
+    assert decision.reason == "initial-carrier-requires-default-reconciliation"
 
 
 def test_wrong_issue_link_fails_closed(
@@ -513,4 +516,5 @@ def test_initial_carrier_accepts_only_disjoint_ancestry_proven_default_advance(
     if qualified:
         assert decision.reason == "initial-carrier-qualified-after-disjoint-default-advance"
     else:
-        assert decision.reason == "carrier-pr-base-is-stale"
+        assert decision.disposition == "RECONCILIATION_REQUIRED"
+        assert decision.reason == "initial-carrier-requires-default-reconciliation"
