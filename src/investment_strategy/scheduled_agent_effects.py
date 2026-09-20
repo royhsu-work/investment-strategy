@@ -1846,6 +1846,8 @@ class GitHubEffectAdapter:
                 and run.get("path") == _ARCHIVE_WORKFLOW_PATH
                 and run.get("head_branch") == ref
                 and run.get("head_sha") == revision
+                and run.get("status") == "completed"
+                and run.get("conclusion") == "success"
             ):
                 return run
         return None

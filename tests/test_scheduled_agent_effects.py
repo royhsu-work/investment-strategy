@@ -2592,6 +2592,8 @@ def test_application_archive_workflow_dispatch_is_exact_revision_and_idempotent(
                     "path": ".github/workflows/openspec-archive.yml",
                     "head_branch": "main",
                     "head_sha": revision,
+                    "status": "completed",
+                    "conclusion": "success",
                 }
             )
             return None
@@ -2641,6 +2643,69 @@ def test_application_archive_workflow_dispatch_is_exact_revision_and_idempotent(
         }
     ]
 
+
+def test_failed_archive_workflow_run_is_not_dispatch_postcondition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = "royhsu-work/investment-strategy"
+    source = WorkerRequest(138, "lead", "finalize-change")
+    revision = "d" * 40
+    request_key = f"archive-138-{revision}"
+    failed_run = {
+        "id": 1201,
+        "display_title": f"OpenSpec Archive {request_key}",
+        "event": "workflow_dispatch",
+        "path": ".github/workflows/openspec-archive.yml",
+        "head_branch": "main",
+        "head_sha": revision,
+        "status": "completed",
+        "conclusion": "failure",
+    }
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+        **_kwargs: object,
+    ) -> object:
+        del method, payload
+        if api_path == (
+            "actions/workflows/openspec-archive.yml/runs"
+            "?event=workflow_dispatch&branch=main&per_page=100"
+        ):
+            return {"workflow_runs": [failed_run]}
+        raise AssertionError(f"unexpected GitHub call: {api_path}")
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        repository,
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        current_revision=revision,
+    )
+    effect = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "workflow-dispatch",
+                "workflow_id": "openspec-archive.yml",
+                "ref": "main",
+                "inputs": {
+                    "change": _CHANGE,
+                    "issue": "138",
+                    "revision": revision,
+                    "request_key": request_key,
+                },
+            }
+        ),
+    )
+
+    assert not adapter.observe_postcondition(effect)
 
 def test_issue_comment_reuses_existing_bot_comment_on_later_page(
     monkeypatch: pytest.MonkeyPatch,
