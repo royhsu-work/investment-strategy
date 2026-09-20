@@ -578,6 +578,142 @@ def test_same_action_frontier_acceptance_binds_its_own_formal_result() -> None:
     assert completion.request_comment_id == 90
 
 
+def test_accepted_formal_result_waits_for_requested_effect_postconditions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = bridge.WorkerRequest(138, "lead", "finalize-change")
+    change = "archive-postcondition-recovery"
+    requested_effects = [
+        {
+            "kind": "issue-comment",
+            "payload_json": json.dumps(
+                {
+                    "issue_number": 138,
+                    "body": (
+                        "ARCHIVE_REQUEST\n"
+                        "Workflow: #138\n"
+                        f"Change: {change}\n"
+                        "Action: finalize-change\n"
+                        f"Revision: {REVISION}"
+                    ),
+                },
+                sort_keys=True,
+            ),
+        },
+        {
+            "kind": "github-mutation",
+            "payload_json": json.dumps(
+                {
+                    "issue_number": 138,
+                    "operation": "workflow-dispatch",
+                    "workflow_id": "openspec-archive.yml",
+                    "ref": "main",
+                    "inputs": {
+                        "change": change,
+                        "issue": "138",
+                        "revision": REVISION,
+                        "request_key": f"archive-138-{REVISION}",
+                    },
+                },
+                sort_keys=True,
+            ),
+        },
+    ]
+    worker = {
+        "issue_number": 138,
+        "role": "lead",
+        "action": "finalize-change",
+        "change": change,
+        "result_kind": "archive-ready",
+        "evidence_ref": "archive-evidence",
+        "result_content": "archive evidence",
+        "requested_effects": requested_effects,
+    }
+    raw = json.dumps(worker, sort_keys=True, separators=(",", ":"))
+    encoded = base64.b64encode(raw.encode("utf-8")).decode("ascii")
+    request = {
+        "id": 90,
+        "body": "\n".join(
+            (
+                "EFFECT_REQUEST",
+                f"Authorization-Revision: {REVISION}",
+                f"Worker-Result-B64: {encoded}",
+            )
+        ),
+        "created_at": "2026-09-18T02:00:00Z",
+        "user": {"login": "owner"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+    decision = _application_decision_comment(request, comment_id=91)
+    formal = _formal_frontier_comment(
+        100,
+        action="finalize-change",
+        role="lead",
+        result="archive-ready",
+        successor="Reviewer / review-archive",
+        request_id=90,
+        change=change,
+    )
+    issue = {
+        **_current_source_issue(),
+        "labels": [{"name": "action:review-archive"}],
+        "body": f"Change: {change}",
+    }
+    monkeypatch.setattr(
+        bridge,
+        "requested_effect_postconditions_complete",
+        lambda **_kwargs: False,
+    )
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [request]
+        if path.startswith("issues/138/comments?"):
+            return [decision, formal]
+        if path == "issues/138":
+            return issue
+        if path.startswith("issues/138/timeline?"):
+            return _frontier_lifecycle([(100, "finalize-change", "review-archive")])
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 777,
+                        "display_title": "Scheduled Agent Application 90",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "run_attempt": 1,
+                    }
+                ]
+            }
+        if path == "actions/runs/777/jobs":
+            return {
+                "jobs": [
+                    {
+                        "id": 888,
+                        "name": "apply",
+                        "status": "completed",
+                        "conclusion": "success",
+                    }
+                ]
+            }
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 3, 0, tzinfo=UTC),
+    )
+
+    assert completion.state == "RESUMABLE"
+    assert completion.reason == "application-completion-resuming"
+    assert completion.request_comment_id == 90
+    assert completion.job_id == 888
+
+
 def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier() -> None:
     source = bridge.WorkerRequest(138, "executor", "implement-change")
     change = "recurrence-a-a-new-occurrence"

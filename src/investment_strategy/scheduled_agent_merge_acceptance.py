@@ -795,6 +795,8 @@ def run_effect_application(
         validated_materialization_revision=validated_materialization_revision,
         allow_pending_continuation=allow_pending_continuation,
         pending_application_correlation=pending_application_correlation,
+        authorization_revision=authorization_revision,
+        accepted_intent=accepted_intent,
     )
 
     def apply_with_fresh_guard(effect: StagedEffect) -> None:

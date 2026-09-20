@@ -1332,6 +1332,55 @@ def _ref_mutation_path(ref: str) -> str:
     return f"git/refs/{quote(ref.removeprefix('refs/'), safe='/')}"
 
 
+def _revision_is_ancestor(
+    repository: str,
+    token: str,
+    ancestor: str,
+    descendant: str,
+) -> bool:
+    if ancestor == descendant:
+        return True
+    try:
+        comparison = _github_json(
+            repository,
+            token,
+            f"compare/{ancestor}...{descendant}",
+        )
+    except (HTTPError, OSError, TypeError, ValueError):
+        return False
+    base_commit = comparison.get("base_commit") if isinstance(comparison, Mapping) else None
+    return bool(
+        isinstance(comparison, Mapping)
+        and comparison.get("status") == "ahead"
+        and isinstance(base_commit, Mapping)
+        and base_commit.get("sha") == ancestor
+    )
+
+
+def _workflow_run_head_matches_request(
+    repository: str,
+    token: str,
+    *,
+    run_head_sha: object,
+    request_revision: str,
+    current_revision: str | None,
+) -> bool:
+    if not _valid_sha(run_head_sha) or not _valid_sha(request_revision):
+        return False
+    if run_head_sha == request_revision:
+        return True
+    if not _valid_sha(current_revision):
+        return False
+    run_head = cast(str, run_head_sha)
+    current = cast(str, current_revision)
+    return _revision_is_ancestor(
+        repository,
+        token,
+        request_revision,
+        run_head,
+    ) and _revision_is_ancestor(repository, token, run_head, current)
+
+
 class GitHubEffectAdapter:
     """Production adapter for bounded durable effects requested by mapped workers."""
 
@@ -1349,6 +1398,8 @@ class GitHubEffectAdapter:
         validated_materialization_revision: str | None = None,
         allow_pending_continuation: bool = False,
         pending_application_correlation: str | None = None,
+        authorization_revision: str | None = None,
+        accepted_intent: bool = False,
     ) -> None:
         self.repository = repository
         self.token = token
@@ -1361,6 +1412,8 @@ class GitHubEffectAdapter:
         self.validated_materialization_revision = validated_materialization_revision
         self.allow_pending_continuation = allow_pending_continuation
         self.pending_application_correlation = pending_application_correlation
+        self.authorization_revision = authorization_revision
+        self.accepted_intent = accepted_intent
         self._last_rejection: ApplicationRejection | None = None
         self._comment_ids: dict[StagedEffect, int] = {}
         self._routing_targets: dict[StagedEffect, str] = {}
@@ -1845,7 +1898,13 @@ class GitHubEffectAdapter:
                 and run.get("event") == "workflow_dispatch"
                 and run.get("path") == _ARCHIVE_WORKFLOW_PATH
                 and run.get("head_branch") == ref
-                and run.get("head_sha") == revision
+                and _workflow_run_head_matches_request(
+                    self.repository,
+                    self.token,
+                    run_head_sha=run.get("head_sha"),
+                    request_revision=revision,
+                    current_revision=self.current_revision,
+                )
                 and run.get("status") == "completed"
                 and run.get("conclusion") == "success"
             ):
@@ -2096,6 +2155,19 @@ class GitHubEffectAdapter:
                 return None
         return self._carrier_plan_for_github_mutation(payload)
 
+    def _workflow_revision_is_authorized(self, revision: str) -> bool:
+        if not _valid_sha(self.current_revision):
+            return False
+        current = cast(str, self.current_revision)
+        if revision == current:
+            return True
+        return bool(
+            self.accepted_intent
+            and self.authorization_revision == revision
+            and _valid_sha(self.authorization_revision)
+            and _revision_is_ancestor(self.repository, self.token, revision, current)
+        )
+
     def _guard_github_mutation(self, payload: Mapping[str, object]) -> bool:
         observation = self._authorized_issue_observation()
         if observation is None:
@@ -2129,7 +2201,7 @@ class GitHubEffectAdapter:
                 and self._default_branch_revision(default_branch) == self.current_revision
                 and inputs.get("change") == self.authorized_change
                 and issue == str(self.source.issue_number)
-                and revision == self.current_revision
+                and self._workflow_revision_is_authorized(revision)
                 and request_key == f"archive-{issue}-{revision}"
             )
         if operation == "issue-update":
@@ -3153,6 +3225,50 @@ class GitHubEffectAdapter:
         return False
 
 
+def requested_effect_postconditions_complete(
+    raw_worker_result: str,
+    *,
+    source: WorkerRequest,
+    repository: str,
+    token: str,
+    current_revision: str,
+    authorized_change: str | None = None,
+) -> bool:
+    """Freshly prove every requested effect before claiming formal completion."""
+
+    try:
+        batch = parse_effect_batch(
+            raw_worker_result,
+            source,
+            authorized_change=authorized_change,
+        )
+        if batch.typed_result is None:
+            return False
+        adapter = GitHubEffectAdapter(
+            repository,
+            token,
+            source,
+            authorized_change=batch.typed_result.change,
+            current_revision=current_revision,
+            expected_result_kind=batch.typed_result.result.kind.value,
+        )
+        for effect in batch.effects:
+            payload = _effect_payload(effect)
+            if effect.kind == "issue-comment":
+                if payload is None or not isinstance(payload.get("body"), str):
+                    return False
+                if adapter._existing_issue_comment(cast(str, payload["body"])) is None:
+                    return False
+            elif effect.kind == GITHUB_MUTATION_KIND:
+                if payload is None or not adapter._observe_github_mutation(effect, payload):
+                    return False
+            else:
+                return False
+        return True
+    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+
+
 def run_effect_application(
     raw_worker_result: str,
     *,
@@ -3167,6 +3283,8 @@ def run_effect_application(
     allow_pending_continuation: bool = False,
     pending_application_correlation: str | None = None,
     authorized_change: str | None = None,
+    authorization_revision: str | None = None,
+    accepted_intent: bool = False,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Freshly reauthorize and apply one typed invocation-local effect batch."""
 
@@ -3188,6 +3306,8 @@ def run_effect_application(
         validated_materialization_revision=validated_materialization_revision,
         allow_pending_continuation=allow_pending_continuation,
         pending_application_correlation=pending_application_correlation,
+        authorization_revision=authorization_revision,
+        accepted_intent=accepted_intent,
     )
     result = apply_effect_batch(
         batch,

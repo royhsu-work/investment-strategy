@@ -31,6 +31,7 @@ from investment_strategy.scheduled_agent_effects import (
     ApplicationOutcomeRecord,
     parse_application_decision,
     parse_application_outcome,
+    requested_effect_postconditions_complete,
 )
 from investment_strategy.scheduled_agent_formal_qualification import (
     CurrentFrontier,
@@ -684,6 +685,15 @@ def _formal_consequence(
     if not decision.qualified or decision.event is None:
         return False
     candidate = matching_events[0]
+    if mode == "current" and not requested_effect_postconditions_complete(
+        record.raw_worker_result,
+        source=source,
+        repository=repository,
+        token=token,
+        current_revision=current_revision,
+        authorized_change=record.change,
+    ):
+        return False
     return (
         getattr(decision.event, "comment_id", None) == candidate.comment_id
         and getattr(decision.event, "application_correlation", None)
@@ -771,6 +781,15 @@ def _accepted_application_state(
             "application-completion-complete",
             request_comment_id=record.request_comment_id,
         )
+    if worker.requested_effects:
+        resumed = _application_job(
+            repository,
+            token,
+            record.request_comment_id,
+            read=read,
+        )
+        if resumed.state == "RESUMABLE":
+            return resumed
     if _formal_consequence(
         repository=repository,
         token=token,
