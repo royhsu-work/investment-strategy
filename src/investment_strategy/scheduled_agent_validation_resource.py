@@ -921,6 +921,7 @@ def verify_implementation_candidate(
     token: str,
     *,
     base_sha: str,
+    base_ref: str | None = None,
     current_revision: str,
     files: tuple[WorkProductFile, ...],
 ) -> bool:
@@ -935,7 +936,11 @@ def verify_implementation_candidate(
 
     if not files or all(file.path.startswith("openspec/") for file in files):
         return True
-    if not _valid_sha(base_sha) or not _valid_sha(current_revision):
+    if (
+        not _valid_sha(base_sha)
+        or not _valid_sha(current_revision)
+        or (base_ref is not None and not _valid_branch(base_ref))
+    ):
         return False
 
     try:
@@ -949,8 +954,15 @@ def verify_implementation_candidate(
         setup_commands: tuple[tuple[str, ...], ...] = (
             ("git", "init", "--quiet"),
             ("git", "remote", "add", "origin", f"https://github.com/{repository}.git"),
-            ("git", "fetch", "--quiet", "--depth=1", "origin", base_sha),
-            ("git", "checkout", "--quiet", "--detach", "FETCH_HEAD"),
+            (
+                "git",
+                "fetch",
+                "--quiet",
+                "--depth=1",
+                "origin",
+                base_sha if base_ref is None else f"refs/heads/{base_ref}",
+            ),
+            ("git", "checkout", "--quiet", "--detach", base_sha),
         )
         for setup_command in setup_commands:
             result = _run_candidate_command(
