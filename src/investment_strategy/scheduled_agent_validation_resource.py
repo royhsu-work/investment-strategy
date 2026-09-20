@@ -8,6 +8,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -898,6 +899,28 @@ def _run_candidate_command(
         return None
 
 
+def _report_candidate_verification_failure(
+    stage: str,
+    *,
+    path: str | None = None,
+    command: tuple[str, ...] | None = None,
+    returncode: int | None = None,
+) -> None:
+    """Emit non-authoritative diagnostics for a fail-closed verifier result."""
+
+    payload: dict[str, object] = {
+        "implementation_candidate_verification": "failed",
+        "stage": stage,
+    }
+    if path is not None:
+        payload["path"] = path
+    if command is not None:
+        payload["command"] = list(command)
+    if returncode is not None:
+        payload["returncode"] = returncode
+    print(json.dumps(payload, sort_keys=True), file=sys.stderr)
+
+
 def _candidate_path(checkout: Path, path: str) -> Path | None:
     """Resolve one manifest path without following a carrier symlink."""
 
@@ -943,10 +966,13 @@ def verify_implementation_candidate(
     ):
         return False
 
-    try:
-        blob_contents = {file.path: _blob_text(repository, token, file.blob_sha) for file in files}
-    except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
-        return False
+    blob_contents: dict[str, str] = {}
+    for file in files:
+        try:
+            blob_contents[file.path] = _blob_text(repository, token, file.blob_sha)
+        except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
+            _report_candidate_verification_failure("blob", path=file.path)
+            return False
 
     with TemporaryDirectory(prefix="scheduled-agent-candidate-") as temporary_directory:
         checkout = Path(temporary_directory)
@@ -971,6 +997,11 @@ def verify_implementation_candidate(
                 environment=fetch_environment,
             )
             if result is None or result.returncode != 0:
+                _report_candidate_verification_failure(
+                    "checkout",
+                    command=setup_command,
+                    returncode=None if result is None else result.returncode,
+                )
                 return False
 
         verification_environment = {
@@ -984,6 +1015,11 @@ def verify_implementation_candidate(
             environment=verification_environment,
         )
         if observed is None or observed.returncode != 0 or observed.stdout.strip() != base_sha:
+            _report_candidate_verification_failure(
+                "head-identity",
+                command=("git", "rev-parse", "HEAD"),
+                returncode=None if observed is None else observed.returncode,
+            )
             return False
 
         try:
@@ -994,6 +1030,7 @@ def verify_implementation_candidate(
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(content, encoding="utf-8")
         except (OSError, UnicodeError):
+            _report_candidate_verification_failure("overlay")
             return False
 
         for command in _IMPLEMENTATION_VERIFICATION_COMMANDS:
@@ -1003,6 +1040,11 @@ def verify_implementation_candidate(
                 environment=verification_environment,
             )
             if result is None or result.returncode != 0:
+                _report_candidate_verification_failure(
+                    "quality",
+                    command=command,
+                    returncode=None if result is None else result.returncode,
+                )
                 return False
     return True
 
