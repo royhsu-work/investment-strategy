@@ -411,7 +411,9 @@ def test_merge_delivery_and_rereview_use_one_evolving_rest_sequence(
     before = len(github.comments)
     first = github.apply("merged", 100, [merge_effect])
     assert first.carrier_plan is not None, first
-    assert len(github.comments) == before and not github.writes
+    assert len(github.comments) == before + 1
+    assert github.writes == [["POST", "issues/229/comments"]]
+    assert github.comments[-1]["body"].splitlines()[0] == "APPLICATION_DECISION"
     assert github.action == "merge-implementation-pr"
     # The external actuator observes this exact authorized identity before merge.
     assert first.carrier_plan.requested["expected_head_sha"] == HEAD
@@ -420,7 +422,7 @@ def test_merge_delivery_and_rereview_use_one_evolving_rest_sequence(
     # A new adapter and fresh current-main dispatch must survive activation.
     stale_review = github.apply("merged", 101, [merge_effect])
     assert not stale_review.applied and stale_review.carrier_plan is None
-    assert not github.writes
+    assert github.writes == [["POST", "issues/229/comments"]]
     # Existing lifecycle correction is the lawful route to current-default review.
     assert github.apply("lifecycle-violation", 102).applied
     assert github.action == "resolve-question"

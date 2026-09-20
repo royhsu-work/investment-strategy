@@ -665,11 +665,11 @@ def qualify_implementation_carrier(
         )
     branch, head_sha = identity
 
-    # An open continuation carrier with an old PR base is still an
-    # application-recognizable carrier.  The application owner must be able
-    # to observe that identity before it can construct the base-reconciliation
-    # handoff that repairs the PR.  Keep the initial carrier strict below:
-    # only a continuation with verified history may enter reconciliation.
+    # An open carrier with an old PR base remains recognizable.  The
+    # application owner may construct a reconciliation when the old base is a
+    # proven ancestor of current default; unresolved ancestry or content
+    # conflicts still fail closed at the application-owned reconciliation
+    # boundary.
     base_is_current = _pr_base_is_current(
         pr,
         default_revision=default_revision,
@@ -889,20 +889,32 @@ def qualify_implementation_carrier(
                 default_revision=default_revision,
                 read=reader,
             ):
-                return _indeterminate(
-                    repository=repository,
-                    source=source,
-                    change=change,
-                    pr_number=pr_number,
-                    reason="carrier-pr-base-is-stale",
-                    branch=branch,
-                    head_sha=head_sha,
-                    default_branch=default_branch,
-                    default_revision=default_revision,
-                    historical_pr_number=historical_pr_number,
-                )
-            disposition = "QUALIFIED"
-            reason = "initial-carrier-qualified-after-disjoint-default-advance"
+                base = _as_mapping(pr.get("base"))
+                base_sha = None if base is None else base.get("sha")
+                if not _valid_sha(base_sha) or not _compare_is_ancestor(
+                    repository,
+                    token,
+                    ancestor=cast(str, base_sha),
+                    descendant=default_revision,
+                    read=reader,
+                ):
+                    return _indeterminate(
+                        repository=repository,
+                        source=source,
+                        change=change,
+                        pr_number=pr_number,
+                        reason="carrier-pr-base-is-stale",
+                        branch=branch,
+                        head_sha=head_sha,
+                        default_branch=default_branch,
+                        default_revision=default_revision,
+                        historical_pr_number=historical_pr_number,
+                    )
+                disposition = "RECONCILIATION_REQUIRED"
+                reason = "initial-carrier-requires-default-reconciliation"
+            else:
+                disposition = "QUALIFIED"
+                reason = "initial-carrier-qualified-after-disjoint-default-advance"
         else:
             if not default_is_ancestor:
                 return ImplementationCarrierQualification(

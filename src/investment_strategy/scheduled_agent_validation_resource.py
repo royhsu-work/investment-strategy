@@ -5,11 +5,14 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import os
 import re
+import subprocess
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
+from tempfile import TemporaryDirectory
 from typing import Literal, cast, overload
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
@@ -501,6 +504,22 @@ def _is_executor_task_bookkeeping(
     )
 
 
+def _is_executor_task_and_implementation_materialization(
+    source: WorkerRequest,
+    expected_change: str,
+    files: tuple[WorkProductFile, ...],
+) -> bool:
+    """Allow one task checkpoint together with non-OpenSpec implementation files."""
+
+    if source.role != "executor" or source.action != "implement-change":
+        return False
+    task_path = f"openspec/changes/{expected_change}/tasks.md"
+    task_files = tuple(file for file in files if file.path == task_path)
+    return len(task_files) == 1 and all(
+        not file.path.startswith("openspec/") for file in files if file.path != task_path
+    )
+
+
 def _executor_task_file(
     source: WorkerRequest,
     expected_change: str,
@@ -812,14 +831,168 @@ def _content_text_at(
 
 def _blob_text(repository: str, token: str, blob_sha: str) -> str:
     payload = _as_mapping(cast(object, _github_json(repository, token, f"git/blobs/{blob_sha}")))
+    observed_sha = None if payload is None else payload.get("sha")
     content = None if payload is None else payload.get("content")
     encoding = None if payload is None else payload.get("encoding")
-    if not isinstance(content, str) or encoding != "base64":
+    if observed_sha != blob_sha or not isinstance(content, str) or encoding != "base64":
         raise RuntimeError("work-product blob text is incomplete")
     try:
         return base64.b64decode("".join(content.split()), validate=True).decode("utf-8")
     except (binascii.Error, UnicodeDecodeError) as exc:
         raise RuntimeError("work-product blob is not valid UTF-8") from exc
+
+
+_IMPLEMENTATION_VERIFICATION_COMMANDS: tuple[tuple[str, ...], ...] = (
+    ("uv", "run", "pytest"),
+    ("uv", "run", "ruff", "check", "."),
+    ("uv", "run", "ruff", "format", "--check", "."),
+    ("uv", "run", "mypy", "src", "tests"),
+)
+_VERIFICATION_SECRET_ENVIRONMENT_KEYS = frozenset(
+    {
+        "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+        "ACTIONS_ID_TOKEN_REQUEST_URL",
+        "ACTIONS_RUNTIME_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+    }
+)
+
+
+def _candidate_subprocess_environment(token: str) -> dict[str, str]:
+    """Give Git fetch credentials only to the checkout, never to candidate code."""
+
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in _VERIFICATION_SECRET_ENVIRONMENT_KEYS
+    }
+    environment.update(
+        {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+            "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: bearer {token}",
+            "GIT_TERMINAL_PROMPT": "0",
+        }
+    )
+    return environment
+
+
+def _run_candidate_command(
+    command: tuple[str, ...],
+    *,
+    cwd: Path,
+    environment: Mapping[str, str],
+) -> subprocess.CompletedProcess[str] | None:
+    try:
+        return subprocess.run(  # noqa: S603 - fixed repository-owned commands
+            command,
+            cwd=cwd,
+            env=dict(environment),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _candidate_path(checkout: Path, path: str) -> Path | None:
+    """Resolve one manifest path without following a carrier symlink."""
+
+    if not _valid_repo_path(path):
+        return None
+    target = checkout.joinpath(*PurePosixPath(path).parts)
+    try:
+        relative = target.relative_to(checkout)
+    except ValueError:
+        return None
+    current = checkout
+    for part in relative.parts:
+        current /= part
+        if current.is_symlink():
+            return None
+    return target
+
+
+def verify_implementation_candidate(
+    repository: str,
+    token: str,
+    *,
+    base_sha: str,
+    current_revision: str,
+    files: tuple[WorkProductFile, ...],
+) -> bool:
+    """Run repository quality against the exact candidate before ACCEPT.
+
+    The candidate is reconstructed in an invocation-local checkout of its
+    exact carrier base.  Only the referenced blobs are overlaid, so the
+    commands observe the same bytes that the later content-addressed
+    materialization will apply.  The checkout and all quality commands are
+    ephemeral; they never create a repository ref or GitHub object.
+    """
+
+    if not files or all(file.path.startswith("openspec/") for file in files):
+        return True
+    if not _valid_sha(base_sha) or not _valid_sha(current_revision):
+        return False
+
+    try:
+        blob_contents = {file.path: _blob_text(repository, token, file.blob_sha) for file in files}
+    except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
+        return False
+
+    with TemporaryDirectory(prefix="scheduled-agent-candidate-") as temporary_directory:
+        checkout = Path(temporary_directory)
+        fetch_environment = _candidate_subprocess_environment(token)
+        setup_commands: tuple[tuple[str, ...], ...] = (
+            ("git", "init", "--quiet"),
+            ("git", "remote", "add", "origin", f"https://github.com/{repository}.git"),
+            ("git", "fetch", "--quiet", "--depth=1", "origin", base_sha),
+            ("git", "checkout", "--quiet", "--detach", "FETCH_HEAD"),
+        )
+        for setup_command in setup_commands:
+            result = _run_candidate_command(
+                setup_command,
+                cwd=checkout,
+                environment=fetch_environment,
+            )
+            if result is None or result.returncode != 0:
+                return False
+
+        verification_environment = {
+            key: value
+            for key, value in fetch_environment.items()
+            if not key.startswith("GIT_CONFIG_")
+        }
+        observed = _run_candidate_command(
+            ("git", "rev-parse", "HEAD"),
+            cwd=checkout,
+            environment=verification_environment,
+        )
+        if observed is None or observed.returncode != 0 or observed.stdout.strip() != base_sha:
+            return False
+
+        try:
+            for path, content in blob_contents.items():
+                target = _candidate_path(checkout, path)
+                if target is None:
+                    return False
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+        except (OSError, UnicodeError):
+            return False
+
+        for command in _IMPLEMENTATION_VERIFICATION_COMMANDS:
+            result = _run_candidate_command(
+                command,
+                cwd=checkout,
+                environment=verification_environment,
+            )
+            if result is None or result.returncode != 0:
+                return False
+    return True
 
 
 @overload

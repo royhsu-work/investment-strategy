@@ -5,16 +5,27 @@ from __future__ import annotations
 import inspect
 import json
 from collections.abc import Callable
+from typing import cast
 
 import pytest
 
 import investment_strategy.scheduled_agent_effects as effects
-from investment_strategy.scheduled_agent_action_model import ResultKind
+from investment_strategy.scheduled_agent_action_model import (
+    Action,
+    ActionApplicationDecision,
+    ActionSource,
+    ApplicationDisposition,
+    BoundedActionResult,
+    ResultKind,
+    TypedResult,
+    role_for,
+)
 from investment_strategy.scheduled_agent_carrier import CarrierRequired, make_carrier_plan
 from investment_strategy.scheduled_agent_effect_contract import (
     allowed_github_mutation_operations,
 )
 from investment_strategy.scheduled_agent_effects import (
+    EffectBatch,
     GitHubEffectAdapter,
     StagedEffect,
     apply_effect_batch,
@@ -27,6 +38,7 @@ from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
     acquire_dispatch_preflight,
 )
+from investment_strategy.scheduled_agent_validation_resource import ValidationResourceTarget
 from investment_strategy.workflow_dispatch import (
     Action as WorkflowAction,
 )
@@ -88,6 +100,299 @@ def _raw(
             "requested_effects": requested_effects or [],
         }
     )
+
+
+def _protocol_decision() -> ActionApplicationDecision:
+    source = ActionSource(138, _CHANGE, Action.IMPLEMENT_CHANGE, _REVISION)
+    result = BoundedActionResult(
+        138,
+        _CHANGE,
+        Action.IMPLEMENT_CHANGE,
+        TypedResult(ResultKind.SPEC_BLOCKER, "issuecomment-typed-result"),
+    )
+    successor = Action.RESOLVE_QUESTION
+    return ActionApplicationDecision(
+        ApplicationDisposition.ACCEPT,
+        source,
+        result,
+        successor,
+        role_for(successor),
+    )
+
+
+def test_application_decision_and_terminal_outcome_are_exactly_bound() -> None:
+    request_body = "EFFECT_REQUEST\nAuthorization-Revision: " + _REVISION
+    raw = _raw()
+    decision = _protocol_decision()
+    rendered = effects.render_application_decision_body(
+        request_comment_id=_REQUEST_COMMENT_ID,
+        request_body=request_body,
+        authorization_revision=_REVISION,
+        decision=decision,
+        disposition="ACCEPTED",
+        raw_worker_result=raw,
+        reason="accepted",
+    )
+    parsed = effects.parse_application_decision(rendered)
+    assert parsed is not None
+    assert parsed.request_comment_id == _REQUEST_COMMENT_ID
+    assert parsed.raw_worker_result == raw
+    assert parsed.disposition == "ACCEPTED"
+
+    outcome_body = effects.render_application_outcome_body(
+        request_comment_id=_REQUEST_COMMENT_ID,
+        request_body_sha256=parsed.request_body_sha256,
+        authorization_revision=_REVISION,
+        decision=parsed,
+        outcome="COMPLETED",
+        reason="complete",
+    )
+    outcome = effects.parse_application_outcome(outcome_body)
+    assert outcome is not None
+    assert outcome.request_comment_id == _REQUEST_COMMENT_ID
+    assert outcome.worker_result_sha256 == parsed.worker_result_sha256
+
+
+def test_accepted_decision_resumes_when_transport_envelope_is_reconstructed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    decision = _protocol_decision()
+    raw = _raw()
+    original_body = "EFFECT_REQUEST\nAuthorization-Revision: " + _REVISION
+    persisted_body = effects.render_application_decision_body(
+        request_comment_id=_REQUEST_COMMENT_ID,
+        request_body=original_body,
+        authorization_revision=_REVISION,
+        decision=decision,
+        disposition="ACCEPTED",
+        raw_worker_result=raw,
+        reason="accepted",
+    )
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        path: str,
+        **_kwargs: object,
+    ) -> object:
+        if path == "issues/138/comments?sort=created&direction=asc&per_page=100&page=1":
+            return [
+                {
+                    "id": 2001,
+                    "body": persisted_body,
+                    "user": {"login": "github-actions[bot]"},
+                    "performed_via_github_app": {"slug": "github-actions"},
+                }
+            ]
+        raise AssertionError(path)
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    adapter = GitHubEffectAdapter(
+        "owner/repo",
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        request_comment_id=_REQUEST_COMMENT_ID,
+        expected_result_kind="spec-blocker",
+    )
+
+    reconstructed_body = original_body + "\nDispatch-Correlation: reconstructed"
+    assert adapter.persist_application_decision(
+        decision,
+        disposition="ACCEPTED",
+        reason="application accepted",
+        request_body=reconstructed_body,
+        authorization_revision=_REVISION,
+        raw_worker_result=raw,
+    )
+
+
+def test_application_acceptance_precedes_outcome_and_derived_successor() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    batch = parse_effect_batch(_raw(), source)
+    events: list[str] = []
+    applied: list[StagedEffect] = []
+
+    def apply(effect: StagedEffect) -> None:
+        events.append("derived" if effect.derived else "effect")
+        applied.append(effect)
+
+    def persist_decision(_decision: object, _disposition: str, _reason: str) -> bool:
+        events.append("accepted")
+        return True
+
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: True,
+        apply_effect=apply,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        persist_application_decision=persist_decision,
+    )
+
+    assert result.applied
+    assert events == ["accepted", "derived"]
+    assert applied[-1].derived
+
+
+def test_accepted_intent_does_not_reverify_candidate_during_phase_b() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    batch = parse_effect_batch(
+        _raw(
+            result_kind="more-implementation-required",
+            requested_effects=_implementation_checkpoint_effects(),
+        ),
+        source,
+    )
+    applied: list[StagedEffect] = []
+
+    def forbidden_verification(
+        _request: effects.MaterializationRequest,
+        _task_ids: tuple[str, ...],
+    ) -> bool:
+        raise AssertionError("Phase B must not re-run the Phase-A candidate gate")
+
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: True,
+        apply_effect=applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        validate_implementation_checkpoint=forbidden_verification,
+        accepted_intent=True,
+    )
+
+    assert result.applied
+    assert applied[-1].derived
+
+
+def test_accepted_intent_never_persists_a_rejection_downgrade() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    batch = parse_effect_batch(_raw(), source)
+    dispositions: list[str] = []
+
+    def persist_decision(_decision: object, disposition: str, _reason: str) -> bool:
+        dispositions.append(disposition)
+        return True
+
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=lambda: _preflight(change="different-current-change"),
+        effect_guard=lambda _effect: pytest.fail("rejected intent reached effect guard"),
+        apply_effect=lambda _effect: pytest.fail("rejected intent reached mutation"),
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        accepted_intent=True,
+        persist_application_decision=persist_decision,
+    )
+
+    assert not result.applied
+    assert dispositions == []
+
+
+class _InterruptedWake(RuntimeError):
+    pass
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+def test_durable_prefix_recovery_matches_uninterrupted_consequence(terminal: bool) -> None:
+    """Every durable prefix is recoverable by a fresh invocation.
+
+    The dictionary is the emulated remote repository.  Each ``wake`` creates
+    new callbacks, so no process-local receipt or cache can make the recovery
+    pass.  The accepted-intent bit and each effect key are the only durable
+    facts retained between wakes.
+    """
+
+    action = Action.FINALIZE_CHANGE if terminal else Action.IMPLEMENT_CHANGE
+    role = role_for(action)
+    result_kind = ResultKind.NO_GO if terminal else ResultKind.SPEC_BLOCKER
+    source = WorkerRequest(138, role.value, action.value)
+    derived_key = "terminal" if terminal else "routing"
+    requested_kinds = (
+        "blob/tree/commit",
+        "branch/ref",
+        "PR/carrier",
+        "carrier-execution",
+        "validation",
+        "checkpoint/formal-result",
+    )
+    batch = EffectBatch(
+        source=source,
+        effects=tuple(StagedEffect(kind=kind, payload_json="{}") for kind in requested_kinds),
+        typed_result=BoundedActionResult(
+            138,
+            _CHANGE,
+            action,
+            TypedResult(result_kind),
+        ),
+    )
+
+    def run_wake(state: dict[str, object], stop_after: str | None) -> None:
+        def persist_decision(_decision: object, _disposition: str, _reason: str) -> bool:
+            if not state["accepted"]:
+                state["accepted"] = True
+                accepted_writes = cast(int, state["accepted_writes"])
+                state["accepted_writes"] = accepted_writes + 1
+            if stop_after == "after-accept":
+                raise _InterruptedWake
+            return True
+
+        def apply_effect(effect: StagedEffect) -> None:
+            key = derived_key if effect.derived else effect.kind
+            applied = cast(set[str], state["effects"])
+            applied.add(key)
+            if stop_after == f"after-{key}":
+                raise _InterruptedWake
+
+        def observe_postcondition(effect: StagedEffect) -> bool:
+            key = derived_key if effect.derived else effect.kind
+            if stop_after == f"after-{key}-postcondition":
+                raise _InterruptedWake
+            return True
+
+        apply_effect_batch(
+            batch,
+            fresh_preflight=lambda: _preflight(
+                action=cast(WorkflowAction, action.value),
+                change=_CHANGE,
+            ),
+            effect_guard=lambda _effect: True,
+            apply_effect=apply_effect,
+            observe_postcondition=observe_postcondition,
+            current_revision=_REVISION,
+            persist_application_decision=persist_decision,
+        )
+
+    def fresh_state() -> dict[str, object]:
+        return {"accepted": False, "accepted_writes": 0, "effects": set()}
+
+    expected = fresh_state()
+    run_wake(expected, None)
+
+    prefixes = ["before-accept", "after-accept"]
+    prefixes.extend(
+        stage
+        for kind in requested_kinds
+        for stage in (f"after-{kind}", f"after-{kind}-postcondition")
+    )
+    prefixes.extend((f"after-{derived_key}", f"after-{derived_key}-postcondition"))
+
+    for prefix in prefixes:
+        recovered = fresh_state()
+        if prefix == "before-accept":
+            with pytest.raises(_InterruptedWake):
+                raise _InterruptedWake
+        else:
+            with pytest.raises(_InterruptedWake):
+                run_wake(recovered, prefix)
+        run_wake(recovered, None)
+        assert recovered == expected
+        assert recovered["accepted_writes"] == 1
 
 
 def test_parse_effect_batch_binds_typed_result_and_effects() -> None:
@@ -3128,3 +3433,77 @@ def test_formal_transition_reconstructs_recovery_ancestry_on_current_path(
 
     assert adapter.guard(effect) is descendant
     assert compare_calls == [f"compare/{historical_revision}...{current_revision}"]
+
+
+def test_application_injects_repository_derived_successor_into_formal_result() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    adapter = GitHubEffectAdapter(
+        "owner/repo",
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        request_comment_id=_REQUEST_COMMENT_ID,
+        expected_result_kind="spec-blocker",
+    )
+    body = (
+        "ACTION_RESULT\n"
+        "Workflow: #138\n"
+        f"Change: {_CHANGE}\n"
+        "Action: implement-change\n"
+        "Role: executor\n"
+        "Result: SPEC_BLOCKER\n"
+        f"Revision: {_REVISION}\n"
+        f"Default-Branch-Revision: {_REVISION}\n"
+        "Evidence: exact application result\n"
+    )
+
+    bound = adapter._application_bound_comment_body(body)
+
+    assert "Repository-derived successor: Lead / resolve-question" in bound
+    assert f"Application-Correlation: application:{_REQUEST_COMMENT_ID}:" in bound
+
+
+def test_application_binds_formal_revision_to_materialization_postcondition() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    adapter = GitHubEffectAdapter(
+        "owner/repo",
+        "token",
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        request_comment_id=_REQUEST_COMMENT_ID,
+        expected_result_kind="more-implementation-required",
+    )
+    materialization = StagedEffect(
+        kind=effects.GITHUB_MUTATION_KIND,
+        payload_json=json.dumps(
+            {"issue_number": 138, "operation": "application-materialize"},
+            sort_keys=True,
+        ),
+    )
+    target_revision = "b" * 40
+    adapter._materialization_targets[materialization] = ValidationResourceTarget(
+        repository="owner/repo",
+        revision=target_revision,
+        correlation="materialization",
+        pr_number=271,
+        change=_CHANGE,
+        validation_required=False,
+    )
+    body = (
+        "ACTION_RESULT\n"
+        "Workflow: #138\n"
+        f"Change: {_CHANGE}\n"
+        "Action: implement-change\n"
+        "Role: executor\n"
+        "Result: MORE_IMPLEMENTATION_REQUIRED\n"
+        f"Revision: {_REVISION}\n"
+        f"Default-Branch-Revision: {_REVISION}\n"
+        "Evidence: exact application result\n"
+    )
+
+    bound = adapter._application_bound_comment_body(body)
+
+    assert f"Revision: {target_revision}" in bound
+    assert f"Default-Branch-Revision: {_REVISION}" in bound

@@ -103,6 +103,24 @@ class QualificationDecision:
         return self.provenance is ObservationProvenance.QUALIFIED
 
 
+@dataclass(frozen=True, slots=True)
+class CurrentFrontier:
+    """The repository-derived owner of the currently routed frontier.
+
+    This is only a view of the existing formal qualification decision.  It is
+    deliberately not persisted and does not introduce an occurrence counter
+    or another workflow state.  ``event`` is the latest qualified formal
+    consequence (or administrative recovery); a pre-activation frontier has
+    no predecessor event.
+    """
+
+    issue_number: int
+    change: str
+    current_routing: tuple[str, str] | None
+    event: FormalLifecycleEvent | AdministrativeRecoveryEvent | None
+    decision: QualificationDecision
+
+
 def _positive_decimal(value: str | None) -> int | None:
     if value is None or not value.isdigit() or value.startswith("0"):
         return None
@@ -505,16 +523,36 @@ def _interval_binds_successor(
         )
     if successor is None:
         return False
-    labels = tuple(item for item in relevant if item.event == "labeled")
-    if len(labels) != 1 or labels[0].label != f"{_ACTION_LABEL_PREFIX}{successor[1]}":
+    expected_label = f"{_ACTION_LABEL_PREFIX}{successor[1]}"
+    label_indexes = tuple(index for index, item in enumerate(relevant) if item.event == "labeled")
+    if not label_indexes or any(relevant[index].label != expected_label for index in label_indexes):
         return False
-    label_index = next(index for index, item in enumerate(relevant) if item is labels[0])
-    return not any(
-        item.event in {"closed", "reopened"}
-        or (item.event == "labeled" and index != label_index)
-        or (item.event == "unlabeled" and index > label_index)
-        for index, item in enumerate(relevant)
-    )
+    first_label_index = label_indexes[0]
+    if any(item.event != "unlabeled" for item in relevant[:first_label_index]):
+        return False
+
+    # Once a formal result has bound its derived successor, an exact
+    # administrative close+unroute followed by reopen+restore of that same
+    # route is idempotent lifecycle restoration, not semantic ABA replay.
+    # Any different route, partial restoration, or extra lifecycle mutation
+    # remains unqualified.
+    cursor = first_label_index + 1
+    while cursor < len(relevant):
+        cycle = relevant[cursor : cursor + 4]
+        if len(cycle) != 4:
+            return False
+        closed, unlabeled, reopened, relabeled = cycle
+        if (
+            closed.event != "closed"
+            or unlabeled.event != "unlabeled"
+            or unlabeled.label != expected_label
+            or reopened.event != "reopened"
+            or relabeled.event != "labeled"
+            or relabeled.label != expected_label
+        ):
+            return False
+        cursor += 4
+    return True
 
 
 def _lifecycle_integrity(events: tuple[IssueLifecycleEvent, ...]) -> bool:
@@ -784,12 +822,36 @@ def qualify_current_formal_consequence(
     return _qualified("pending-successor-qualified", latest)
 
 
+def derive_current_frontier(qualification: QualificationInput) -> CurrentFrontier | None:
+    """Derive the current frontier from the existing formal qualifier.
+
+    Consumers must use the returned predecessor event to scope an application
+    occurrence.  A historical result is never a current occurrence merely
+    because its Role/Action equals the current route.
+    """
+
+    if qualification.mode != "current":
+        return None
+    decision = qualify_current_formal_consequence(qualification)
+    if not decision.qualified:
+        return None
+    return CurrentFrontier(
+        issue_number=qualification.issue_number,
+        change=qualification.change,
+        current_routing=qualification.current_routing,
+        event=decision.event,
+        decision=decision,
+    )
+
+
 __all__ = [
     "AdministrativeRecoveryEvent",
+    "CurrentFrontier",
     "FormalLifecycleEvent",
     "IssueLifecycleEvent",
     "QualificationDecision",
     "QualificationInput",
     "build_qualification_input",
+    "derive_current_frontier",
     "qualify_current_formal_consequence",
 ]

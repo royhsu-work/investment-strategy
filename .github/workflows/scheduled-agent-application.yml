@@ -1,5 +1,7 @@
 name: Scheduled Agent Application Bridge
 
+run-name: Scheduled Agent Application ${{ github.event.comment.id }}
+
 on:
   issue_comment:
     types: [created]
@@ -49,6 +51,7 @@ jobs:
           --event-path "$GITHUB_EVENT_PATH"
           --revision "${{ steps.revision.outputs.sha }}"
           --default-branch "${{ github.event.repository.default_branch }}"
+          --run-attempt "${{ github.run_attempt }}"
 
       - name: Persist exact external carrier plan
         id: carrier
@@ -76,6 +79,7 @@ jobs:
           archive: false
           if-no-files-found: error
           retention-days: 7
+          overwrite: true
 
       - name: End invocation at CarrierRequired boundary
         if: steps.apply.outputs.carrier_required == 'true'
@@ -177,5 +181,6 @@ jobs:
           --event-path "$GITHUB_EVENT_PATH"
           --revision "${{ steps.revision.outputs.sha }}"
           --default-branch "${{ github.event.repository.default_branch }}"
+          --run-attempt "${{ github.run_attempt }}"
           --validation-passed
           --validated-revision "${{ steps.validation.outputs.validation_target_revision }}"

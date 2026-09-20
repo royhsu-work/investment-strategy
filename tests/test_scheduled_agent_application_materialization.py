@@ -7,8 +7,11 @@ from pathlib import Path
 
 import pytest
 
+import investment_strategy.scheduled_agent_application_materialization as materialization
 import investment_strategy.scheduled_agent_validation_resource as validation_resource
 from investment_strategy.scheduled_agent_application_materialization import (
+    MaterializationRequest,
+    _verify_implementation_manifest_freshness,
     materialization_requires_validation,
     parse_materialization_payload,
 )
@@ -83,6 +86,87 @@ def test_existing_change_materialization_requires_current_pr_and_preserves_expec
     assert request.pr_number == 201
     assert request.files[0].expected_sha is None
     assert materialization_requires_validation(request, source)
+
+
+def test_interrupted_carrier_resume_accepts_its_ancestor_base_after_default_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_base = "a" * 40
+    current_default = "b" * 40
+    carrier_head = "c" * 40
+    expected_sha = "d" * 40
+    blob_sha = "e" * 40
+    path = f"openspec/changes/{_CHANGE}/tasks.md"
+    request = MaterializationRequest(
+        issue_number=234,
+        expected_change=_CHANGE,
+        change=_CHANGE,
+        branch=f"agent/{_CHANGE}",
+        base_sha=old_base,
+        message="Resume the accepted implementation intent",
+        files=(WorkProductFile(path, blob_sha, expected_sha),),
+        pr_number=271,
+    )
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        **_kwargs: object,
+    ) -> object:
+        if api_path == f"compare/{old_base}...{carrier_head}":
+            return {"status": "ahead", "behind_by": 0}
+        if api_path == f"contents/{path}?ref={old_base}":
+            return {"sha": expected_sha}
+        if api_path == f"contents/{path}?ref={carrier_head}":
+            return {"sha": blob_sha}
+        raise AssertionError(api_path)
+
+    monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    monkeypatch.setattr(validation_resource, "_github_json", fake_github_json)
+    _verify_implementation_manifest_freshness(
+        request,
+        repository="royhsu-work/investment-strategy",
+        token=_BASE,
+        current_revision=current_default,
+        carrier_head=carrier_head,
+    )
+
+
+def test_interrupted_carrier_resume_rejects_a_nonancestor_base(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_base = "a" * 40
+    carrier_head = "c" * 40
+    request = MaterializationRequest(
+        issue_number=234,
+        expected_change=_CHANGE,
+        change=_CHANGE,
+        branch=f"agent/{_CHANGE}",
+        base_sha=old_base,
+        message="Reject an unrelated implementation intent",
+        files=(),
+        pr_number=271,
+    )
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        **_kwargs: object,
+    ) -> object:
+        assert api_path == f"compare/{old_base}...{carrier_head}"
+        return {"status": "diverged", "behind_by": 1}
+
+    monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    with pytest.raises(RuntimeError, match="not an ancestor of carrier"):
+        _verify_implementation_manifest_freshness(
+            request,
+            repository="royhsu-work/investment-strategy",
+            token=_BASE,
+            current_revision="b" * 40,
+            carrier_head=carrier_head,
+        )
 
 
 def test_first_change_materialization_rejects_worker_role_or_existing_identity() -> None:
@@ -198,3 +282,52 @@ def test_executor_cannot_materialize_noncanonical_repository_level_openspec_sema
             default_branch="main",
             authorization_revision=_BASE,
         )
+
+
+def test_executor_can_checkpoint_tasks_with_non_openspec_implementation_files() -> None:
+    source = WorkerRequest(234, "executor", "implement-change")
+    task_file = WorkProductFile(
+        f"openspec/changes/{_CHANGE}/tasks.md",
+        _BLOB,
+        _BLOB,
+    )
+    implementation_file = WorkProductFile(
+        "agents/AGENTS.md",
+        _BLOB,
+        _BLOB,
+    )
+    request = MaterializationRequest(
+        issue_number=234,
+        expected_change=_CHANGE,
+        change=_CHANGE,
+        branch=f"agent/{_CHANGE}",
+        base_sha=_BASE,
+        message="checkpoint verified implementation work",
+        files=(task_file, implementation_file),
+        pr_number=271,
+    )
+
+    assert materialization._implementation_manifest_capability_allowed(request, source)
+
+    noncanonical_request = MaterializationRequest(
+        issue_number=234,
+        expected_change=_CHANGE,
+        change=_CHANGE,
+        branch=f"agent/{_CHANGE}",
+        base_sha=_BASE,
+        message="checkpoint with unrelated OpenSpec semantics",
+        files=(
+            task_file,
+            WorkProductFile(
+                f"openspec/changes/{_CHANGE}/design.md",
+                _BLOB,
+                _BLOB,
+            ),
+        ),
+        pr_number=271,
+    )
+
+    assert not materialization._implementation_manifest_capability_allowed(
+        noncanonical_request,
+        source,
+    )

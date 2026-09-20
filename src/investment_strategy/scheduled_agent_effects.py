@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
 import json
 import os
 import re
@@ -25,6 +28,8 @@ from investment_strategy.scheduled_agent_action_model import (
     ApplicationRejectionKind,
     BoundedActionResult,
     ResultKind,
+    TypedResult,
+    next_action,
     plan_action_application,
     role_for,
 )
@@ -65,6 +70,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     ValidationResourceTarget,
     completed_task_bookkeeping_is_current,
     task_checkpoint_is_exact,
+    verify_implementation_candidate,
 )
 from investment_strategy.scheduled_agent_worker import parse_worker_result
 from investment_strategy.workflow_dispatch import (
@@ -117,6 +123,295 @@ class EffectBatch:
     typed_result: BoundedActionResult | None = None
 
 
+APPLICATION_DECISION_MARKER = "APPLICATION_DECISION"
+_APPLICATION_DECISION_DISPOSITIONS = frozenset({"ACCEPTED", "REJECTED"})
+_APPLICATION_DECISION_FIELDS = (
+    "Request-Comment",
+    "Request-Body-SHA256",
+    "Authorization-Revision",
+    "Issue",
+    "Role",
+    "Action",
+    "Change",
+    "Result-Kind",
+    "Disposition",
+    "Worker-Result-SHA256",
+    "Application-Intent-B64",
+    "Reason",
+)
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+@dataclass(frozen=True)
+class ApplicationDecisionRecord:
+    """Immutable application acceptance/rejection evidence for one exact request."""
+
+    request_comment_id: int
+    request_body_sha256: str
+    authorization_revision: str
+    issue_number: int
+    role: str
+    action: str
+    change: str
+    result_kind: str
+    disposition: str
+    worker_result_sha256: str
+    raw_worker_result: str
+    reason: str
+
+
+APPLICATION_OUTCOME_MARKER = "APPLICATION_OUTCOME"
+_APPLICATION_OUTCOME_DISPOSITIONS = frozenset({"COMPLETED", "ABORTED"})
+_APPLICATION_OUTCOME_FIELDS = (
+    "Request-Comment",
+    "Request-Body-SHA256",
+    "Authorization-Revision",
+    "Issue",
+    "Role",
+    "Action",
+    "Change",
+    "Result-Kind",
+    "Outcome",
+    "Worker-Result-SHA256",
+    "Reason",
+)
+
+
+@dataclass(frozen=True)
+class ApplicationOutcomeRecord:
+    """Terminal application disposition bound to one accepted intent."""
+
+    request_comment_id: int
+    request_body_sha256: str
+    authorization_revision: str
+    issue_number: int
+    role: str
+    action: str
+    change: str
+    result_kind: str
+    outcome: str
+    worker_result_sha256: str
+    reason: str
+
+
+def render_application_outcome_body(
+    *,
+    request_comment_id: int,
+    request_body_sha256: str,
+    authorization_revision: str,
+    decision: ApplicationDecisionRecord,
+    outcome: str,
+    reason: str,
+) -> str:
+    """Render one terminal application disposition for an accepted intent."""
+
+    if (
+        isinstance(request_comment_id, bool)
+        or not isinstance(request_comment_id, int)
+        or request_comment_id <= 0
+        or not _SHA256.fullmatch(request_body_sha256)
+        or not isinstance(authorization_revision, str)
+        or not re.fullmatch(r"[0-9a-f]{40}", authorization_revision)
+        or outcome not in _APPLICATION_OUTCOME_DISPOSITIONS
+        or decision.request_comment_id != request_comment_id
+        or decision.request_body_sha256 != request_body_sha256
+        or decision.authorization_revision != authorization_revision
+        or decision.disposition != "ACCEPTED"
+    ):
+        raise ValueError("application outcome identity is invalid")
+    normalized_reason = " ".join(reason.split()) or "unspecified"
+    if len(normalized_reason) > 240:
+        normalized_reason = normalized_reason[:240].rstrip()
+    return "\n".join(
+        (
+            APPLICATION_OUTCOME_MARKER,
+            f"Request-Comment: {request_comment_id}",
+            f"Request-Body-SHA256: {request_body_sha256}",
+            f"Authorization-Revision: {authorization_revision}",
+            f"Issue: {decision.issue_number}",
+            f"Role: {decision.role}",
+            f"Action: {decision.action}",
+            f"Change: {decision.change}",
+            f"Result-Kind: {decision.result_kind}",
+            f"Outcome: {outcome}",
+            f"Worker-Result-SHA256: {decision.worker_result_sha256}",
+            f"Reason: {normalized_reason}",
+        )
+    )
+
+
+def parse_application_outcome(body: object) -> ApplicationOutcomeRecord | None:
+    """Parse one terminal application disposition comment."""
+
+    if not isinstance(body, str):
+        return None
+    lines = body.splitlines()
+    if len(lines) != len(_APPLICATION_OUTCOME_FIELDS) + 1 or lines[0] != APPLICATION_OUTCOME_MARKER:
+        return None
+    values: dict[str, str] = {}
+    for line in lines[1:]:
+        key, separator, value = line.partition(": ")
+        if not separator or key in values or key not in _APPLICATION_OUTCOME_FIELDS:
+            return None
+        if not value or value != value.strip():
+            return None
+        values[key] = value
+    if tuple(values) != _APPLICATION_OUTCOME_FIELDS:
+        return None
+    try:
+        request_comment_id = int(values["Request-Comment"])
+        issue_number = int(values["Issue"])
+    except ValueError:
+        return None
+    if (
+        request_comment_id <= 0
+        or issue_number <= 0
+        or not _SHA256.fullmatch(values["Request-Body-SHA256"])
+        or not re.fullmatch(r"[0-9a-f]{40}", values["Authorization-Revision"])
+        or values["Outcome"] not in _APPLICATION_OUTCOME_DISPOSITIONS
+        or not values["Role"]
+        or not values["Action"]
+        or not values["Change"]
+        or not values["Result-Kind"]
+        or not _SHA256.fullmatch(values["Worker-Result-SHA256"])
+        or not values["Reason"]
+    ):
+        return None
+    return ApplicationOutcomeRecord(
+        request_comment_id=request_comment_id,
+        request_body_sha256=values["Request-Body-SHA256"],
+        authorization_revision=values["Authorization-Revision"],
+        issue_number=issue_number,
+        role=values["Role"],
+        action=values["Action"],
+        change=values["Change"],
+        result_kind=values["Result-Kind"],
+        outcome=values["Outcome"],
+        worker_result_sha256=values["Worker-Result-SHA256"],
+        reason=values["Reason"],
+    )
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _positive_comment_id(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
+def render_application_decision_body(
+    *,
+    request_comment_id: int,
+    request_body: str,
+    authorization_revision: str,
+    decision: ActionApplicationDecision,
+    disposition: str,
+    raw_worker_result: str,
+    reason: str,
+) -> str:
+    """Render one immutable application decision before consequential effects."""
+
+    if (
+        isinstance(request_comment_id, bool)
+        or not isinstance(request_comment_id, int)
+        or request_comment_id <= 0
+        or not isinstance(request_body, str)
+        or not isinstance(authorization_revision, str)
+        or not re.fullmatch(r"[0-9a-f]{40}", authorization_revision)
+        or disposition not in _APPLICATION_DECISION_DISPOSITIONS
+        or not isinstance(raw_worker_result, str)
+    ):
+        raise ValueError("application decision identity is invalid")
+    normalized_reason = " ".join(reason.split())
+    if not normalized_reason:
+        normalized_reason = "unspecified"
+    if len(normalized_reason) > 240:
+        normalized_reason = normalized_reason[:240].rstrip()
+    encoded_intent = base64.b64encode(raw_worker_result.encode("utf-8")).decode("ascii")
+    source = decision.source
+    return "\n".join(
+        (
+            APPLICATION_DECISION_MARKER,
+            f"Request-Comment: {request_comment_id}",
+            f"Request-Body-SHA256: {_sha256_text(request_body)}",
+            f"Authorization-Revision: {authorization_revision}",
+            f"Issue: {source.issue_number}",
+            f"Role: {role_for(source.action).value}",
+            f"Action: {source.action.value}",
+            f"Change: {source.change}",
+            f"Result-Kind: {decision.result.result.kind.value}",
+            f"Disposition: {disposition}",
+            f"Worker-Result-SHA256: {_sha256_text(raw_worker_result)}",
+            f"Application-Intent-B64: {encoded_intent}",
+            f"Reason: {normalized_reason}",
+        )
+    )
+
+
+def parse_application_decision(body: object) -> ApplicationDecisionRecord | None:
+    """Parse and verify one application decision comment."""
+
+    if not isinstance(body, str):
+        return None
+    lines = body.splitlines()
+    if (
+        len(lines) != len(_APPLICATION_DECISION_FIELDS) + 1
+        or lines[0] != APPLICATION_DECISION_MARKER
+    ):
+        return None
+    values: dict[str, str] = {}
+    for line in lines[1:]:
+        key, separator, value = line.partition(": ")
+        if not separator or key in values or key not in _APPLICATION_DECISION_FIELDS:
+            return None
+        if not value or value != value.strip():
+            return None
+        values[key] = value
+    if tuple(values) != _APPLICATION_DECISION_FIELDS:
+        return None
+    try:
+        request_comment_id = int(values["Request-Comment"])
+        issue_number = int(values["Issue"])
+    except ValueError:
+        return None
+    encoded = values["Application-Intent-B64"]
+    try:
+        raw_worker_result = base64.b64decode(encoded.encode("ascii"), validate=True).decode("utf-8")
+    except (UnicodeDecodeError, ValueError, binascii.Error):
+        return None
+    if (
+        request_comment_id <= 0
+        or issue_number <= 0
+        or not re.fullmatch(r"[0-9a-f]{64}", values["Request-Body-SHA256"])
+        or not re.fullmatch(r"[0-9a-f]{40}", values["Authorization-Revision"])
+        or values["Disposition"] not in _APPLICATION_DECISION_DISPOSITIONS
+        or not values["Role"]
+        or not values["Action"]
+        or not values["Change"]
+        or not values["Result-Kind"]
+        or not re.fullmatch(r"[0-9a-f]{64}", values["Worker-Result-SHA256"])
+        or _sha256_text(raw_worker_result) != values["Worker-Result-SHA256"]
+    ):
+        return None
+    return ApplicationDecisionRecord(
+        request_comment_id=request_comment_id,
+        request_body_sha256=values["Request-Body-SHA256"],
+        authorization_revision=values["Authorization-Revision"],
+        issue_number=issue_number,
+        role=values["Role"],
+        action=values["Action"],
+        change=values["Change"],
+        result_kind=values["Result-Kind"],
+        disposition=values["Disposition"],
+        worker_result_sha256=values["Worker-Result-SHA256"],
+        raw_worker_result=raw_worker_result,
+        reason=values["Reason"],
+    )
+
+
 @dataclass(frozen=True)
 class ApplyResult:
     """Application outcome for one wake; successors are persisted, never executed here."""
@@ -136,10 +431,15 @@ CarrierPlanProvider = Callable[[StagedEffect], CarrierPlan | None]
 ImplementationCheckpointValidator = Callable[[MaterializationRequest, tuple[str, ...]], bool]
 
 
-def parse_effect_batch(raw: str, source: WorkerRequest) -> EffectBatch:
+def parse_effect_batch(
+    raw: str,
+    source: WorkerRequest,
+    *,
+    authorized_change: str | None = None,
+) -> EffectBatch:
     """Parse one structured worker result and bind its requested effects."""
 
-    result = parse_worker_result(raw, source)
+    result = parse_worker_result(raw, source, authorized_change=authorized_change)
     return EffectBatch(
         source=source,
         effects=tuple(
@@ -296,8 +596,15 @@ def _implementation_checkpoint_effects_complete(
     batch: EffectBatch,
     decision: ActionApplicationDecision,
     validate_implementation_checkpoint: ImplementationCheckpointValidator | None,
+    accepted_intent: bool,
 ) -> bool:
-    """Require exact task/checkpoint effects before implementation advances."""
+    """Require exact task/checkpoint effects before a new intent advances.
+
+    Executable candidate verification is a Phase-A gate.  A durable ACCEPTED
+    intent is already past that linearization point, so Phase B must reconcile
+    its immutable effects and postconditions without requalifying or
+    semantically downgrading the intent.
+    """
 
     if (
         batch.source.role != "executor"
@@ -374,8 +681,11 @@ def _implementation_checkpoint_effects_complete(
         or completed_task_ids is None
         or task_index >= checkpoint_indexes[0]
         or checkpoint_indexes[0] >= formal_result_indexes[0]
-        or validate_implementation_checkpoint is None
     ):
+        return False
+    if accepted_intent:
+        return True
+    if validate_implementation_checkpoint is None:
         return False
     return validate_implementation_checkpoint(request, completed_task_ids)
 
@@ -420,6 +730,7 @@ def _typed_application_plan(
     current_revision: str | None,
     validate_implementation_checkpoint: ImplementationCheckpointValidator | None,
     allow_pending_continuation: bool,
+    accepted_intent: bool,
 ) -> tuple[ActionApplicationDecision | None, StagedEffect | None, ApplyResult | None]:
     typed_result = batch.typed_result
     if typed_result is None:
@@ -496,6 +807,7 @@ def _typed_application_plan(
         batch,
         decision,
         validate_implementation_checkpoint,
+        accepted_intent,
     ):
         return (
             decision,
@@ -848,6 +1160,10 @@ def apply_effect_batch(
     allow_pending_continuation: bool = False,
     carrier_plan_for_effect: CarrierPlanProvider | None = None,
     effect_rejection: EffectRejectionProvider | None = None,
+    accepted_intent: bool = False,
+    persist_application_decision: (
+        Callable[[ActionApplicationDecision, str, str], bool] | None
+    ) = None,
 ) -> ApplyResult:
     """Apply one typed batch after fresh source reauthorization."""
 
@@ -858,8 +1174,17 @@ def apply_effect_batch(
         current_revision,
         validate_implementation_checkpoint,
         allow_pending_continuation,
+        accepted_intent,
     )
     if typed_rejection is not None:
+        if (
+            not accepted_intent
+            and typed_decision is not None
+            and persist_application_decision is not None
+        ):
+            reason = typed_rejection.reason
+            if not persist_application_decision(typed_decision, "REJECTED", reason):
+                return ApplyResult(False, "application decision postcondition not observed")
         return typed_rejection
     if typed_decision is None or derived_effect is None:
         return ApplyResult(False, "typed application rejected:plan-missing")
@@ -893,6 +1218,13 @@ def apply_effect_batch(
         if not effect_guard(effect):
             return rejected("effect precondition rejected")
 
+    if persist_application_decision is not None and not persist_application_decision(
+        typed_decision,
+        "ACCEPTED",
+        "application accepted",
+    ):
+        return ApplyResult(False, "application decision postcondition not observed")
+
     for effect in effects_to_apply:
         if not effect_guard(effect):
             return rejected("effect precondition rejected")
@@ -914,6 +1246,35 @@ def apply_effect_batch(
             return ApplyResult(False, "durable postcondition not observed")
 
     return ApplyResult(True, "applied")
+
+
+def _as_mapping(value: object) -> Mapping[str, object] | None:
+    return cast(Mapping[str, object], value) if isinstance(value, Mapping) else None
+
+
+def _paged_github_list(
+    repository: str,
+    token: str,
+    api_path: str,
+) -> tuple[Mapping[str, object], ...]:
+    items: list[Mapping[str, object]] = []
+    page = 1
+    while True:
+        separator = "&" if "?" in api_path else "?"
+        payload = _github_json(
+            repository,
+            token,
+            f"{api_path}{separator}per_page=100&page={page}",
+        )
+        if not isinstance(payload, list):
+            raise RuntimeError("application evidence comment list is incomplete")
+        for item in payload:
+            if not isinstance(item, Mapping):
+                raise RuntimeError("application evidence comment list is malformed")
+            items.append(cast(Mapping[str, object], item))
+        if len(payload) < 100:
+            return tuple(items)
+        page += 1
 
 
 def _github_json(
@@ -1052,13 +1413,21 @@ class GitHubEffectAdapter:
         )
         if len(task_files) != 1:
             return False
-        return task_checkpoint_is_exact(
+        if not task_checkpoint_is_exact(
             self.repository,
             self.token,
             expected_change=request.change,
             base_sha=request.base_sha,
             file=task_files[0],
             completed_task_ids=completed_task_ids,
+        ):
+            return False
+        return verify_implementation_candidate(
+            self.repository,
+            self.token,
+            base_sha=request.base_sha,
+            current_revision=cast(str, self.current_revision),
+            files=request.files,
         )
 
     def effect_rejection(self) -> ApplicationRejection | None:
@@ -2325,6 +2694,61 @@ class GitHubEffectAdapter:
             ]
             insert_at = max(anchors) + 1 if anchors else min(1, len(lines))
             lines.insert(insert_at, f"Application-Correlation: {correlation}")
+
+        if marker in _FORMAL_RESULT_MARKERS:
+            if self.expected_result_kind is None:
+                raise RuntimeError("formal result has no application-owned result kind")
+            try:
+                action = ModelAction(self.source.action)
+                result = TypedResult(ResultKind(self.expected_result_kind))
+                successor = next_action(action, result)
+            except ValueError as exc:
+                raise RuntimeError("formal result transition is invalid") from exc
+            successor_text = "terminal"
+            if successor is not None:
+                role_name = {
+                    "lead": "Lead",
+                    "reviewer": "Reviewer",
+                    "executor": "Executor",
+                }[role_for(successor).value]
+                successor_text = f"{role_name} / {successor.value}"
+            successor_indexes = [
+                index
+                for index, line in enumerate(lines)
+                if line.startswith("Repository-derived successor:")
+            ]
+            if len(successor_indexes) > 1:
+                raise RuntimeError("formal result has duplicate successor fields")
+            if successor_indexes:
+                lines[successor_indexes[0]] = f"Repository-derived successor: {successor_text}"
+            else:
+                correlation_index = next(
+                    index
+                    for index, line in enumerate(lines)
+                    if line.startswith("Application-Correlation:")
+                )
+                lines.insert(
+                    correlation_index + 1,
+                    f"Repository-derived successor: {successor_text}",
+                )
+
+            # A materialization is an application effect, not merely an input
+            # to the effect batch.  Once its exact target has been freshly
+            # observed, the following canonical formal result must carry that
+            # work-product postcondition.  This is especially important after
+            # CarrierRequired: the immutable accepted intent still contains
+            # the pre-carrier revision, while the resumed application must
+            # record the exact carrier head it reconciled.
+            targets = tuple(self._materialization_targets.values())
+            if targets:
+                if len(targets) != 1:
+                    raise RuntimeError("formal result materialization target is ambiguous")
+                revision_indexes = [
+                    index for index, line in enumerate(lines) if line.startswith("Revision:")
+                ]
+                if len(revision_indexes) != 1:
+                    raise RuntimeError("formal result revision is ambiguous")
+                lines[revision_indexes[0]] = f"Revision: {targets[0].revision}"
         suffix = "\n" if body.endswith("\n") else ""
         return "\n".join(lines) + suffix
 
@@ -2352,6 +2776,123 @@ class GitHubEffectAdapter:
             if len(payload) < 100:
                 return None
             page += 1
+
+    def _persist_application_evidence_comment(
+        self,
+        *,
+        body: str,
+        marker: str,
+    ) -> bool:
+        """Create one immutable application evidence comment and fresh-verify it."""
+
+        comments = _paged_github_list(
+            self.repository,
+            self.token,
+            f"issues/{self.source.issue_number}/comments?sort=created&direction=asc",
+        )
+        existing = [
+            item
+            for item in comments
+            if is_github_actions_comment(item) and item.get("body") == body
+        ]
+        if len(existing) > 1:
+            raise RuntimeError(f"{marker} evidence is duplicated")
+        if existing:
+            return True
+        response = _github_json(
+            self.repository,
+            self.token,
+            f"issues/{self.source.issue_number}/comments",
+            method="POST",
+            payload={"body": body},
+        )
+        comment_id = (
+            None if not isinstance(response, Mapping) else _positive_comment_id(response.get("id"))
+        )
+        if (
+            not isinstance(response, Mapping)
+            or comment_id is None
+            or response.get("body") != body
+            or not is_github_actions_comment(response)
+        ):
+            raise RuntimeError(f"{marker} evidence postcondition was not observed")
+        observed = _as_mapping(
+            _github_json(self.repository, self.token, f"issues/comments/{comment_id}")
+        )
+        if (
+            observed is None
+            or observed.get("id") != comment_id
+            or observed.get("body") != body
+            or not is_github_actions_comment(observed)
+        ):
+            raise RuntimeError(f"{marker} evidence fresh postcondition was not observed")
+        return True
+
+    def persist_application_decision(
+        self,
+        decision: ActionApplicationDecision,
+        *,
+        disposition: str,
+        reason: str,
+        request_body: str,
+        authorization_revision: str,
+        raw_worker_result: str,
+    ) -> bool:
+        """Persist and fresh-verify the application acceptance linearization point."""
+
+        if self.request_comment_id is None:
+            return False
+        body = render_application_decision_body(
+            request_comment_id=self.request_comment_id,
+            request_body=request_body,
+            authorization_revision=authorization_revision,
+            decision=decision,
+            disposition=disposition,
+            raw_worker_result=raw_worker_result,
+            reason=reason,
+        )
+        comments = _paged_github_list(
+            self.repository,
+            self.token,
+            f"issues/{self.source.issue_number}/comments?sort=created&direction=asc",
+        )
+        existing_decisions = [
+            record
+            for item in comments
+            if is_github_actions_comment(item)
+            for record in (parse_application_decision(item.get("body")),)
+            if record is not None and record.request_comment_id == self.request_comment_id
+        ]
+        if len(existing_decisions) > 1:
+            raise RuntimeError("application decision identity is ambiguous")
+        if existing_decisions:
+            existing = existing_decisions[0]
+            expected_source = decision.source
+            expected_result_kind = decision.result.result.kind.value
+            if (
+                existing.disposition != disposition
+                or existing.authorization_revision != authorization_revision
+                or existing.issue_number != expected_source.issue_number
+                or existing.role != role_for(expected_source.action).value
+                or existing.action != expected_source.action.value
+                or existing.change != expected_source.change
+                or existing.result_kind != expected_result_kind
+                or existing.worker_result_sha256 != _sha256_text(raw_worker_result)
+            ):
+                raise RuntimeError("application decision identity changed")
+
+            # The accepted decision is the durable linearization point.  The
+            # ingress comment is only transport and may be reconstructed from
+            # the immutable accepted intent after a carrier interruption (or
+            # may have been edited after ACCEPT).  Its original body hash is
+            # retained as evidence in the decision record, but it must not be
+            # replayed as an authority check or the accepted intent becomes
+            # unable to resume once the original transport envelope is gone.
+            return True
+        return self._persist_application_evidence_comment(
+            body=body,
+            marker=APPLICATION_DECISION_MARKER,
+        )
 
     def apply(self, effect: StagedEffect) -> None:
         payload = _effect_payload(effect)
@@ -2621,10 +3162,15 @@ def run_effect_application(
     defer_issue_comments: bool = False,
     allow_pending_continuation: bool = False,
     pending_application_correlation: str | None = None,
+    authorized_change: str | None = None,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Freshly reauthorize and apply one typed invocation-local effect batch."""
 
-    batch = parse_effect_batch(raw_worker_result, source)
+    batch = parse_effect_batch(
+        raw_worker_result,
+        source,
+        authorized_change=authorized_change,
+    )
     if batch.typed_result is None:
         return batch, ApplyResult(False, "typed application rejected:result-missing")
     adapter = GitHubEffectAdapter(

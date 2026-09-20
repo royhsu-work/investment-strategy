@@ -41,6 +41,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _current_default_branch,
     _github_json,
     _is_executor_config_authoring,
+    _is_executor_task_and_implementation_materialization,
     _is_executor_task_bookkeeping,
     _open_pr_payload,
     _pending_source_is_current,
@@ -582,14 +583,22 @@ def _implementation_manifest_capability_allowed(
         return False
     if not any(file.path.startswith("openspec/") for file in request.files):
         return True
-    return _is_executor_task_bookkeeping(
-        source,
-        request.expected_change,
-        request.files,
-    ) or _is_executor_config_authoring(
-        source,
-        request.expected_change,
-        request.files,
+    return (
+        _is_executor_task_bookkeeping(
+            source,
+            request.expected_change,
+            request.files,
+        )
+        or _is_executor_task_and_implementation_materialization(
+            source,
+            request.expected_change,
+            request.files,
+        )
+        or _is_executor_config_authoring(
+            source,
+            request.expected_change,
+            request.files,
+        )
     )
 
 
@@ -723,7 +732,22 @@ def _verify_implementation_manifest_freshness(
     carrier_head: str,
 ) -> None:
     if request.base_sha not in {current_revision, carrier_head}:
-        raise RuntimeError("implementation manifest base is not a current write base")
+        comparison = _as_mapping(
+            cast(
+                object,
+                _github_json(
+                    repository,
+                    token,
+                    f"compare/{request.base_sha}...{carrier_head}",
+                ),
+            )
+        )
+        if (
+            comparison is None
+            or comparison.get("status") != "ahead"
+            or comparison.get("behind_by") != 0
+        ):
+            raise RuntimeError("implementation manifest base is not an ancestor of carrier")
     for file in request.files:
         if (
             _content_sha_at(

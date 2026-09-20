@@ -24,6 +24,7 @@ from investment_strategy.native_closing_preflight import (
     explicit_merge_presentation,
 )
 from investment_strategy.scheduled_agent_action_model import (
+    ActionApplicationDecision,
     ApplicationRejection,
     ApplicationRejectionKind,
 )
@@ -761,10 +762,18 @@ def run_effect_application(
     defer_issue_comments: bool = False,
     allow_pending_continuation: bool = False,
     pending_application_correlation: str | None = None,
+    application_request_body: str | None = None,
+    authorization_revision: str | None = None,
+    authorized_change: str | None = None,
+    accepted_intent: bool = False,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Apply through shared effect guards plus an optional mutation-adjacent guard."""
 
-    batch = parse_effect_batch(raw_worker_result, source)
+    batch = parse_effect_batch(
+        raw_worker_result,
+        source,
+        authorized_change=authorized_change,
+    )
     if batch.typed_result is None:
         return batch, ApplyResult(False, "typed application rejected:result-missing")
     adapter = GitHubEffectAdapter(
@@ -792,6 +801,26 @@ def run_effect_application(
     effect_rejection_provider = getattr(adapter, "effect_rejection", None)
     if not callable(effect_rejection_provider):
         effect_rejection_provider = None
+    application_decision_persister = None
+    if (
+        request_comment_id is not None
+        and application_request_body is not None
+        and authorization_revision is not None
+    ):
+
+        def application_decision_persister(
+            decision: ActionApplicationDecision,
+            disposition: str,
+            reason: str,
+        ) -> bool:
+            return adapter.persist_application_decision(
+                decision,
+                disposition=disposition,
+                reason=reason,
+                request_body=application_request_body,
+                authorization_revision=authorization_revision,
+                raw_worker_result=raw_worker_result,
+            )
 
     try:
         result = apply_effect_batch(
@@ -807,6 +836,8 @@ def run_effect_application(
             allow_pending_continuation=allow_pending_continuation,
             carrier_plan_for_effect=carrier_plan_provider,
             effect_rejection=effect_rejection_provider,
+            accepted_intent=accepted_intent,
+            persist_application_decision=application_decision_persister,
         )
     except _EffectPreconditionStale:
         result = ApplyResult(False, "effect precondition became stale")
@@ -827,10 +858,18 @@ def run_guarded_effect_application(
     defer_issue_comments: bool = False,
     allow_pending_continuation: bool = False,
     pending_application_correlation: str | None = None,
+    application_request_body: str | None = None,
+    authorization_revision: str | None = None,
+    authorized_change: str | None = None,
+    accepted_intent: bool = False,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Reject stale merge acceptance before and immediately adjacent to merge application."""
 
-    batch = parse_effect_batch(raw_worker_result, source)
+    batch = parse_effect_batch(
+        raw_worker_result,
+        source,
+        authorized_change=authorized_change,
+    )
     expected_change = None if batch.typed_result is None else batch.typed_result.change
     rejections: list[ApplicationRejection] = []
     for effect in batch.effects:
@@ -864,6 +903,10 @@ def run_guarded_effect_application(
         defer_issue_comments=defer_issue_comments,
         allow_pending_continuation=allow_pending_continuation,
         pending_application_correlation=pending_application_correlation,
+        application_request_body=application_request_body,
+        authorization_revision=authorization_revision,
+        authorized_change=authorized_change,
+        accepted_intent=accepted_intent,
         pre_apply_guard=lambda effect: _merge_effect_allows(
             effect,
             source=source,
