@@ -129,7 +129,7 @@ def test_semantic_finalize_result_revision_uses_default_branch_without_carrier(
             source,
             change="source-decision-explore-materialization",
             repository=_REPOSITORY,
-            token="token",
+            token=_REPOSITORY,
             current_revision=_REVISION,
             default_branch="main",
         )
