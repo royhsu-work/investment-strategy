@@ -35,6 +35,25 @@ class EvidenceTarget(StrEnum):
     MATERIALIZED_REVISION = "MATERIALIZED_REVISION"
 
 
+class DurablePrefix(StrEnum):
+    """Repository-visible interruption boundaries used by verification."""
+
+    BEFORE_ACCEPT = "before-accept"
+    AFTER_ACCEPT = "after-accept"
+    CONTENT = "content-blob-tree-commit"
+    BRANCH_REF = "branch-ref"
+    PR_CARRIER = "pr-carrier"
+    CARRIER_RETURN = "carrier-return"
+    ASYNC_WORKFLOW = "async-workflow"
+    VALIDATION = "validation"
+    FORMAL_RESULT = "canonical-formal-result"
+    ROUTING = "routing-projection"
+    TERMINAL = "terminal-close"
+
+
+DURABLE_PREFIXES: Final[tuple[DurablePrefix, ...]] = tuple(DurablePrefix)
+
+
 @dataclass(frozen=True, slots=True)
 class ConsequenceSpec:
     """Executable contract for one legal Action/Result transition.
@@ -53,50 +72,73 @@ class ConsequenceSpec:
     successor_required: bool
 
 
-def _evidence_target(action: Action, result: ResultKind) -> EvidenceTarget:
-    """Map every legal transition to a positive evidence target."""
+_EVIDENCE_TARGET_OVERRIDES: Final[dict[tuple[Action, ResultKind], EvidenceTarget]] = {
+    (Action.FINALIZE_CHANGE, ResultKind.ARCHIVE_READY): EvidenceTarget.ARCHIVE_PR_HEAD,
+    (Action.REVIEW_ARCHIVE, ResultKind.PASS): EvidenceTarget.ARCHIVE_PR_HEAD,
+    (Action.MERGE_ARCHIVE_PR, ResultKind.MERGED): EvidenceTarget.MERGED_PR_HEAD,
+    (Action.MERGE_IMPLEMENTATION_PR, ResultKind.MERGED): EvidenceTarget.MERGED_PR_HEAD,
+    (Action.FINALIZE_ARCHIVE, ResultKind.LIFECYCLE_COMPLETE): EvidenceTarget.MERGED_PR_HEAD,
+    (Action.IMPLEMENT_CHANGE, ResultKind.READY): EvidenceTarget.IMPLEMENTATION_PR_HEAD,
+    (
+        Action.IMPLEMENT_CHANGE,
+        ResultKind.MORE_IMPLEMENTATION_REQUIRED,
+    ): EvidenceTarget.IMPLEMENTATION_PR_HEAD,
+    (Action.REVIEW_IMPLEMENTATION, ResultKind.PASS): EvidenceTarget.IMPLEMENTATION_PR_HEAD,
+    (Action.REVIEW_IMPLEMENTATION, ResultKind.FINDINGS): EvidenceTarget.IMPLEMENTATION_PR_HEAD,
+}
 
-    if result in {
-        ResultKind.BLOCKED,
-        ResultKind.HUMAN_DECISION_REQUIRED,
-        ResultKind.NO_GO,
-        ResultKind.RESEARCH_REQUIRED,
-        ResultKind.SPEC_BLOCKER,
-    }:
-        return EvidenceTarget.DEFAULT_BRANCH
-    if action is Action.FINALIZE_CHANGE and result is ResultKind.ARCHIVE_READY:
-        return EvidenceTarget.ARCHIVE_PR_HEAD
-    if action is Action.REVIEW_ARCHIVE and result is ResultKind.PASS:
-        return EvidenceTarget.ARCHIVE_PR_HEAD
-    if action is Action.MERGE_ARCHIVE_PR and result is ResultKind.MERGED:
-        return EvidenceTarget.MERGED_PR_HEAD
-    if action is Action.MERGE_IMPLEMENTATION_PR and result is ResultKind.MERGED:
-        return EvidenceTarget.MERGED_PR_HEAD
-    if action is Action.FINALIZE_ARCHIVE and result is ResultKind.LIFECYCLE_COMPLETE:
-        # Terminal completion is a projection of the already merged Archive
-        # consequence.  The Lead result must not become the predecessor of
-        # close while that merge is only transport evidence.
-        return EvidenceTarget.MERGED_PR_HEAD
-    if action in {Action.IMPLEMENT_CHANGE, Action.REVIEW_IMPLEMENTATION}:
-        return EvidenceTarget.IMPLEMENTATION_PR_HEAD
-    if action is Action.MERGE_IMPLEMENTATION_PR:
-        return EvidenceTarget.DEFAULT_BRANCH
-    return EvidenceTarget.DEFAULT_BRANCH
+
+_MISSING_EFFECT_OVERRIDES: Final[dict[tuple[Action, ResultKind], str]] = {
+    (Action.FINALIZE_CHANGE, ResultKind.ARCHIVE_READY): "archive-pr-create-or-reuse",
+}
+
+
+def _build_evidence_targets() -> dict[tuple[Action, ResultKind], EvidenceTarget]:
+    targets = {
+        (action, result): EvidenceTarget.DEFAULT_BRANCH
+        for action, results in TRANSITIONS.items()
+        for result in results
+    }
+    targets.update(_EVIDENCE_TARGET_OVERRIDES)
+    return targets
+
+
+def _build_missing_effects() -> dict[tuple[Action, ResultKind], str]:
+    effects = {
+        (action, result): "formal-result"
+        for action, results in TRANSITIONS.items()
+        for result in results
+    }
+    for action in {Action.IMPLEMENT_CHANGE, Action.RESOLVE_QUESTION}:
+        for result in TRANSITIONS[action]:
+            effects[(action, result)] = "application-materialize-or-formal-result"
+    for action in {Action.MERGE_IMPLEMENTATION_PR, Action.MERGE_ARCHIVE_PR}:
+        for result in TRANSITIONS[action]:
+            effects[(action, result)] = "merge-carrier-or-formal-result"
+    effects.update(_MISSING_EFFECT_OVERRIDES)
+    return effects
+
+
+_EVIDENCE_TARGETS: Final = _build_evidence_targets()
+_MISSING_EFFECTS: Final = _build_missing_effects()
+
+
+def _evidence_target(action: Action, result: ResultKind) -> EvidenceTarget:
+    """Return the positive evidence target for one legal transition."""
+
+    try:
+        return _EVIDENCE_TARGETS[(action, result)]
+    except KeyError as exc:
+        raise AssertionError("legal transition has no evidence target") from exc
 
 
 def _missing_effect(action: Action, result: ResultKind) -> str:
-    """Name the next repository consequence derived from fresh state."""
+    """Return the fresh-state missing-effect owner for one legal transition."""
 
-    if action is Action.FINALIZE_CHANGE and result is ResultKind.ARCHIVE_READY:
-        return "archive-pr-create-or-reuse"
-    if action in {Action.IMPLEMENT_CHANGE, Action.RESOLVE_QUESTION}:
-        return "application-materialize-or-formal-result"
-    if action in {
-        Action.MERGE_IMPLEMENTATION_PR,
-        Action.MERGE_ARCHIVE_PR,
-    }:
-        return "merge-carrier-or-formal-result"
-    return "formal-result"
+    try:
+        return _MISSING_EFFECTS[(action, result)]
+    except KeyError as exc:
+        raise AssertionError("legal transition has no consequence planner") from exc
 
 
 def _build_consequence_specs() -> Mapping[tuple[Action, ResultKind], ConsequenceSpec]:
@@ -111,7 +153,9 @@ def _build_consequence_specs() -> Mapping[tuple[Action, ResultKind], Consequence
                 completion_predicate=(
                     "archive-pr-successor-ready"
                     if target is EvidenceTarget.ARCHIVE_PR_HEAD
-                    else "formal-result-and-evidence"
+                    else "formal-result-and-successor-ready"
+                    if results[result] is not None
+                    else "formal-result-and-terminal-ready"
                 ),
                 missing_effect=_missing_effect(action, result),
                 successor_required=results[result] is not None,
@@ -127,6 +171,18 @@ def legal_transition_keys() -> frozenset[tuple[Action, ResultKind]]:
 
     return frozenset(
         (action, result) for action, results in TRANSITIONS.items() for result in results
+    )
+
+
+def verification_matrix() -> tuple[tuple[Action, ResultKind, DurablePrefix], ...]:
+    """Generate the topology × durable-prefix fresh-process matrix."""
+
+    return tuple(
+        (action, result, prefix)
+        for action, result in sorted(
+            legal_transition_keys(), key=lambda item: (item[0].value, item[1].value)
+        )
+        for prefix in DURABLE_PREFIXES
     )
 
 
@@ -157,6 +213,11 @@ def assert_consequence_specs_complete() -> None:
         missing = sorted((a.value, r.value) for a, r in legal - actual)
         extra = sorted((a.value, r.value) for a, r in actual - legal)
         raise AssertionError(f"consequence topology mismatch: missing={missing}, extra={extra}")
+    if any(
+        not spec.evidence_target.value or not spec.completion_predicate or not spec.missing_effect
+        for spec in CONSEQUENCE_SPECS.values()
+    ):
+        raise AssertionError("consequence specification contains an empty executable field")
 
 
 assert_consequence_specs_complete()

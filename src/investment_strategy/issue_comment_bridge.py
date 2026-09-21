@@ -28,12 +28,9 @@ from investment_strategy.scheduled_agent_application_bridge import (
 from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
 from investment_strategy.scheduled_agent_effects import (
     ApplicationDecisionRecord,
-    ApplicationOutcomeRecord,
     consequence_postconditions_complete,
     merged_pr_readiness_complete,
     parse_application_decision,
-    parse_application_outcome,
-    requested_effect_postconditions_complete,
 )
 from investment_strategy.scheduled_agent_formal_qualification import (
     CurrentFrontier,
@@ -74,7 +71,6 @@ _TERMINAL_NO_ACCEPT_CONCLUSIONS = frozenset(
 _MAX_REASON_LENGTH = 240
 _MAX_RESULT_BYTES = 16_384
 _SHA = re.compile(r"^[0-9a-f]{40}$")
-_DEFAULT_COMPLETION_POSTCONDITION_HOOK = requested_effect_postconditions_complete
 
 
 @dataclass(frozen=True)
@@ -529,18 +525,6 @@ def _application_decisions(
     )
 
 
-def _application_outcomes(
-    comments: tuple[Mapping[str, object], ...],
-) -> tuple[ApplicationOutcomeRecord, ...]:
-    return tuple(
-        record
-        for comment in comments
-        if is_github_actions_comment(comment)
-        for record in (parse_application_outcome(comment.get("body")),)
-        if record is not None
-    )
-
-
 def _application_worker_for_record(
     record: ApplicationDecisionRecord,
     source: WorkerRequest,
@@ -603,35 +587,21 @@ def _fresh_completion_postconditions(
     raw_worker_result: str,
     *,
     source: WorkerRequest,
-    record: ApplicationDecisionRecord,
     repository: str,
     token: str,
     current_revision: str,
-    legacy_revision: str,
+    authorized_change: str,
     request_comment_id: int,
 ) -> bool:
-    """Use the positive consequence owner, retaining an old-test hook only."""
+    """Use the single positive consequence owner for logical commit."""
 
-    # Older callers patched the legacy helper directly.  Keep that injection
-    # seam for compatibility, while the default production path always uses
-    # the fresh Action/Result consequence contract.
-    if requested_effect_postconditions_complete is not _DEFAULT_COMPLETION_POSTCONDITION_HOOK:
-        return requested_effect_postconditions_complete(
-            raw_worker_result,
-            source=source,
-            repository=repository,
-            token=token,
-            current_revision=legacy_revision,
-            authorized_change=record.change,
-            request_comment_id=request_comment_id,
-        )
     return consequence_postconditions_complete(
         raw_worker_result,
         source=source,
         repository=repository,
         token=token,
         current_revision=current_revision,
-        authorized_change=record.change,
+        authorized_change=authorized_change,
         request_comment_id=request_comment_id,
     )
 
@@ -769,7 +739,6 @@ def _formal_consequence(
     if mode == "current" and not _fresh_completion_postconditions(
         record.raw_worker_result,
         source=source,
-        record=record,
         repository=repository,
         token=token,
         # Formal correlation remains bound to the accepted observation, but
@@ -777,7 +746,7 @@ def _formal_consequence(
         # particular an Archive PR must target the current default branch,
         # not merely the historical application revision.
         current_revision=current_revision,
-        legacy_revision=application_observation_revision,
+        authorized_change=record.change,
         request_comment_id=record.request_comment_id,
     ):
         return False
@@ -827,7 +796,6 @@ def _accepted_application_state(
     token: str,
     source: WorkerRequest,
     record: ApplicationDecisionRecord,
-    outcome: ApplicationOutcomeRecord | None,
     issue_comments: tuple[Mapping[str, object], ...],
     lifecycle_events: tuple[Mapping[str, object], ...],
     current_issue: Mapping[str, object],
@@ -841,34 +809,6 @@ def _accepted_application_state(
             "application-completion-accepted-intent-invalid",
             request_comment_id=record.request_comment_id,
         )
-    if outcome is not None:
-        if (
-            outcome.request_comment_id != record.request_comment_id
-            or outcome.request_body_sha256 != record.request_body_sha256
-            or outcome.authorization_revision != record.authorization_revision
-            or outcome.issue_number != record.issue_number
-            or outcome.role != record.role
-            or outcome.action != record.action
-            or outcome.change != record.change
-            or outcome.result_kind != record.result_kind
-            or outcome.worker_result_sha256 != record.worker_result_sha256
-        ):
-            return ApplicationCompletion(
-                "INVALID",
-                "application-completion-outcome-identity-invalid",
-                request_comment_id=record.request_comment_id,
-            )
-        # ABORTED is retained only as a bounded migration disposition.  A
-        # COMPLETED outcome is not consulted for normal completion; the
-        # canonical formal result and its repository postconditions own that
-        # truth.
-        if outcome.outcome == "ABORTED":
-            return ApplicationCompletion(
-                "ABORTED",
-                "application-completion-aborted",
-                request_comment_id=record.request_comment_id,
-            )
-
     ancestry = _authorization_ancestry(
         repository,
         token,
@@ -1009,7 +949,7 @@ def _accepted_application_state(
     if successor is not None and observation.routing == expected_routing:
         return ApplicationCompletion(
             "RESUMABLE",
-            "application-completion-outcome-pending",
+            "application-completion-successor-pending",
             request_comment_id=record.request_comment_id,
         )
     return ApplicationCompletion(
@@ -1416,7 +1356,6 @@ def qualify_application_completion(
         read=read,
     )
     decisions = _application_decisions(issue_comments)
-    outcomes = _application_outcomes(issue_comments)
     relevant_decisions = [
         record
         for record in decisions
@@ -1508,12 +1447,6 @@ def qualify_application_completion(
         f"issues/{source.issue_number}/timeline",
         read=read,
     )
-    grouped_outcomes: dict[int, list[ApplicationOutcomeRecord]] = {}
-    for outcome_record in outcomes:
-        if outcome_record.request_comment_id > 0:
-            grouped_outcomes.setdefault(outcome_record.request_comment_id, []).append(
-                outcome_record
-            )
     frontier, frontier_qualified = _derive_frontier(
         repository=repository,
         token=token,
@@ -1556,19 +1489,11 @@ def qualify_application_completion(
                 "application-completion-frontier-owner-invalid",
                 request_comment_id=frontier_owner.request_comment_id,
             )
-        owner_outcomes = grouped_outcomes.get(frontier_owner.request_comment_id, [])
-        if len(owner_outcomes) > 1:
-            return ApplicationCompletion(
-                "AMBIGUOUS",
-                "application-completion-outcome-ambiguous",
-                request_comment_id=frontier_owner.request_comment_id,
-            )
         frontier_completion = _accepted_application_state(
             repository=repository,
             token=token,
             source=frontier_source,
             record=frontier_owner,
-            outcome=owner_outcomes[0] if owner_outcomes else None,
             issue_comments=issue_comments,
             lifecycle_events=lifecycle,
             current_issue=cast(Mapping[str, object], issue),
@@ -1740,15 +1665,11 @@ def qualify_application_completion(
     # edited or deleted after ACCEPT, do not parse its new text and do not
     # replay worker semantics; the exact accepted record remains the only
     # resumable payload.
-    outcome_matches = grouped_outcomes.get(record.request_comment_id, [])
-    if len(outcome_matches) > 1:
-        return ApplicationCompletion("AMBIGUOUS", "application-completion-outcome-ambiguous")
     return _accepted_application_state(
         repository=repository,
         token=token,
         source=source,
         record=record,
-        outcome=outcome_matches[0] if outcome_matches else None,
         issue_comments=issue_comments,
         lifecycle_events=lifecycle,
         current_issue=cast(Mapping[str, object], issue),

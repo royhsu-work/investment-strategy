@@ -716,7 +716,7 @@ def test_accepted_intent_qualifies_formal_result_after_safe_main_advance() -> No
     assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
 
 
-def test_accepted_formal_result_waits_for_requested_effect_postconditions(
+def test_accepted_formal_result_waits_for_consequence_postconditions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = bridge.WorkerRequest(138, "reviewer", "review-archive")
@@ -799,7 +799,7 @@ def test_accepted_formal_result_waits_for_requested_effect_postconditions(
     }
     monkeypatch.setattr(
         bridge,
-        "requested_effect_postconditions_complete",
+        "consequence_postconditions_complete",
         lambda *_args, **_kwargs: False,
     )
 
@@ -903,11 +903,7 @@ def test_completed_formal_result_at_safe_ancestor_is_not_resumed(
         observed_revisions.append(revision)
         return revision == formal_revision
 
-    monkeypatch.setattr(
-        bridge,
-        "requested_effect_postconditions_complete",
-        fake_postconditions,
-    )
+    monkeypatch.setattr(bridge, "consequence_postconditions_complete", fake_postconditions)
 
     def fake_read(_repository: str, _token: str, path: str) -> object:
         if path.startswith("issues/comments?"):
@@ -939,7 +935,7 @@ def test_completed_formal_result_at_safe_ancestor_is_not_resumed(
         "NONE",
         "application-completion-none",
     )
-    assert observed_revisions == [formal_revision]
+    assert observed_revisions == [advanced_revision]
 
 
 def test_predecessor_is_not_resumed_after_merged_successor_consumes_carrier(
@@ -1839,7 +1835,7 @@ def test_distinct_accepted_requests_never_alias_by_equal_payload() -> None:
     assert completion.reason == "application-completion-accepted-ambiguous"
 
 
-def test_completed_formal_result_uses_application_observation_revision_for_postconditions(
+def test_completed_formal_result_uses_fresh_revision_for_postconditions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = bridge.WorkerRequest(138, "reviewer", "review-archive")
@@ -1891,11 +1887,7 @@ def test_completed_formal_result_uses_application_observation_revision_for_postc
         observed_revisions.append(revision)
         return revision == application_observation_revision
 
-    monkeypatch.setattr(
-        bridge,
-        "requested_effect_postconditions_complete",
-        fake_postconditions,
-    )
+    monkeypatch.setattr(bridge, "consequence_postconditions_complete", fake_postconditions)
 
     def fake_read(_repository: str, _token: str, path: str) -> object:
         if path.startswith("issues/comments?"):
@@ -1928,4 +1920,4 @@ def test_completed_formal_result_uses_application_observation_revision_for_postc
         "NONE",
         "application-completion-none",
     )
-    assert observed_revisions == [application_observation_revision]
+    assert observed_revisions == [advanced_revision]
