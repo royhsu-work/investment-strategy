@@ -651,12 +651,17 @@ def _formal_consequence(
         ):
             matching_comments.append(comment)
             matching_events.append(event)
-    if len(matching_comments) > 1:
+    if not matching_comments:
         return False
-    if not matching_comments or len(matching_events) != 1:
-        return False
+    # One accepted request is one immutable intent.  A recovery run may
+    # re-emit the same canonical consequence after the default branch moves;
+    # those transport-level duplicates are not competing application owners.
+    canonical_event = max(
+        matching_events,
+        key=lambda event: -1 if event.comment_id is None else event.comment_id,
+    )
     if effective_change in {None, "unset"}:
-        effective_change = matching_events[0].change
+        effective_change = canonical_event.change
     if effective_change is None:
         return False
 
@@ -676,7 +681,7 @@ def _formal_consequence(
         source_routing=(source.role, source.action),
         expected_result_kind=record.result_kind,
         expected_application_correlation=(
-            matching_events[0].application_correlation if mode == "pending" else None
+            canonical_event.application_correlation if mode == "pending" else None
         ),
         lifecycle_events=lifecycle_events,
         authorization_ancestry=authorization_ancestry,
@@ -684,7 +689,7 @@ def _formal_consequence(
     decision = qualify_current_formal_consequence(qualification)
     if not decision.qualified or decision.event is None:
         return False
-    candidate = matching_events[0]
+    candidate = canonical_event
     if mode == "current" and not requested_effect_postconditions_complete(
         record.raw_worker_result,
         source=source,

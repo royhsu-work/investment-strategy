@@ -578,6 +578,72 @@ def test_same_action_frontier_acceptance_binds_its_own_formal_result() -> None:
     assert completion.request_comment_id == 90
 
 
+
+@pytest.mark.parametrize("duplicate_count", (1, 2, 3))
+def test_duplicate_formal_reemission_of_one_accepted_intent_releases_successor(
+    duplicate_count: int,
+) -> None:
+    source = bridge.WorkerRequest(138, "reviewer", "review-archive")
+    change = f"duplicate-formal-intent-{duplicate_count}"
+    request = _effect_request_comment(
+        comment_id=90,
+        created_at="2026-09-18T02:00:00Z",
+        action="finalize-change",
+        role="lead",
+        result_kind="archive-ready",
+        issue_number=138,
+        change=change,
+    )
+    decision = _application_decision_comment(request, comment_id=91)
+    formal_comments = [
+        _formal_frontier_comment(
+            100 + index * 10,
+            action="finalize-change",
+            role="lead",
+            result="archive-ready",
+            successor="Reviewer / review-archive",
+            request_id=90,
+            change=change,
+        )
+        for index in range(duplicate_count)
+    ]
+    lifecycle = _frontier_lifecycle([(100, "finalize-change", "review-archive")])
+    lifecycle.extend(
+        {
+            "id": 100 + index * 10,
+            "event": "commented",
+            "created_at": f"2026-09-18T02:00:{10 + index:02d}Z",
+        }
+        for index in range(1, duplicate_count)
+    )
+    issue = {
+        **_current_source_issue(),
+        "labels": [{"name": "action:review-archive"}],
+        "body": f"Change: {change}",
+    }
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [request]
+        if path.startswith("issues/138/comments?"):
+            return [decision, *formal_comments]
+        if path == "issues/138":
+            return issue
+        if path.startswith("issues/138/timeline?"):
+            return lifecycle
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 3, 0, tzinfo=UTC),
+    )
+
+    assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
+
 def test_accepted_formal_result_waits_for_requested_effect_postconditions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
