@@ -344,7 +344,7 @@ def test_accepted_intent_recovery_keeps_original_source_across_successor_frontie
         ),
         repository=_REPOSITORY,
         current_revision=_REVISION,
-        token="token",
+        token=_CHANGE,
         allow_descendant_resume=True,
         allow_accepted_request_mutation=True,
         accepted_intent=accepted_intent,
