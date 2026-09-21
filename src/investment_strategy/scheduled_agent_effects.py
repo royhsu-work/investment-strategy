@@ -3311,7 +3311,10 @@ def requested_effect_postconditions_complete(
             if effect.kind == "issue-comment":
                 if payload is None or not isinstance(payload.get("body"), str):
                     return False
-                if adapter._existing_issue_comment(cast(str, payload["body"])) is None:
+                expected_body = adapter._application_bound_comment_body(
+                    cast(str, payload["body"])
+                )
+                if adapter._existing_issue_comment(expected_body) is None:
                     return False
             elif effect.kind == GITHUB_MUTATION_KIND:
                 if payload is None or not adapter._observe_github_mutation(effect, payload):
