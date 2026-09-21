@@ -931,6 +931,20 @@ def test_completed_formal_result_at_safe_ancestor_is_not_resumed(
         current_revision=advanced_revision,
     )
     print("DEBUG_SAFE_ANCESTOR", parsed_formal)
+    print("DEBUG_DECISIONS", bridge._application_decisions((decision, formal)))
+    print(
+        "DEBUG_FRONTIER",
+        bridge._derive_frontier(
+            repository="owner/repo",
+            token="token",
+            source=source,
+            current_issue=issue,
+            issue_comments=(decision, formal),
+            lifecycle_events=tuple(_frontier_lifecycle([(100, "finalize-change", "review-archive")])),
+            current_revision=advanced_revision,
+            read=fake_read,
+        ),
+    )
     completion = bridge.qualify_application_completion(
         "owner/repo",
         "token",
