@@ -664,15 +664,33 @@ def _formal_consequence(
         effective_change = canonical_event.change
     if effective_change is None:
         return False
-    formal_authorization_ancestry = authorization_ancestry
-    formal_revision = canonical_event.default_branch_revision
-    if formal_revision is None:
+    # The formal result carries two different revisions:
+    # Default-Branch-Revision is the worker/formal evidence revision, while
+    # the final correlation field is the exact application observation
+    # revision used to bind repository effects.  Both must be safe ancestors
+    # of this fresh wake, but postcondition observation must use the latter.
+    formal_evidence_revision = canonical_event.default_branch_revision
+    correlation_fields = _application_correlation_fields(
+        canonical_event.application_correlation or ""
+    )
+    if (
+        formal_evidence_revision is None
+        or correlation_fields is None
+        or _SHA.fullmatch(correlation_fields[7]) is None
+    ):
         return False
-    if formal_revision != current_revision:
+    application_observation_revision = correlation_fields[7]
+    formal_authorization_ancestry = authorization_ancestry
+    for evidence_revision in (
+        formal_evidence_revision,
+        application_observation_revision,
+    ):
+        if evidence_revision == current_revision:
+            continue
         descendant_ancestry = _authorization_ancestry(
             repository,
             token,
-            authorization_revision=formal_revision,
+            authorization_revision=evidence_revision,
             current_revision=current_revision,
             read=read,
         )
@@ -714,10 +732,10 @@ def _formal_consequence(
         repository=repository,
         token=token,
         # The canonical formal result is already the logical commit. Its
-        # recorded default-branch revision may be a safe ancestor of the
-        # fresh wake's revision; do not turn that immutable completion into a
-        # replay merely to rewrite transport-bound correlation text.
-        current_revision=formal_revision,
+        # application observation revision may be a safe ancestor of the
+        # fresh wake's revision; observe the exact accepted consequence at
+        # that revision instead of rewriting transport-bound correlation text.
+        current_revision=application_observation_revision,
         authorized_change=record.change,
         request_comment_id=record.request_comment_id,
     ):
