@@ -569,6 +569,44 @@ def _lifecycle_integrity(events: tuple[IssueLifecycleEvent, ...]) -> bool:
     )
 
 
+def _same_application_intent(
+    left: FormalLifecycleEvent,
+    right: FormalLifecycleEvent,
+) -> bool:
+    """Recognize a re-emission of one accepted application intent.
+
+    The final correlation revision may change when recovery observes a newer
+    default branch. The request prefix plus the complete semantic consequence
+    remains the immutable intent identity. A different request id is therefore
+    never collapsed merely because it uses the same Action.
+    """
+
+    return (
+        left.valid
+        and right.valid
+        and left.issue_number == right.issue_number
+        and left.change == right.change
+        and (
+            left.role,
+            left.action,
+            left.result_kind,
+            left.successor,
+            left.terminal,
+        )
+        == (
+            right.role,
+            right.action,
+            right.result_kind,
+            right.successor,
+            right.terminal,
+        )
+        and left.application_correlation is not None
+        and right.application_correlation is not None
+        and left.application_correlation.rsplit(":", 1)[0]
+        == right.application_correlation.rsplit(":", 1)[0]
+    )
+
+
 def _formal_interval_is_bound(
     events: tuple[FormalLifecycleEvent, ...],
     index: int,
@@ -585,11 +623,23 @@ def _formal_interval_is_bound(
         # the same decision, so an intervening ABA cannot be hidden here.
         current = events[index]
         source = (current.role, current.action)
-        return (
-            index > 0
-            and not current.terminal
+        if index == 0:
+            return False
+        previous = events[index - 1]
+        if (
+            not current.terminal
             and current.successor == source
-            and events[index - 1].successor == source
+            and previous.successor == source
+        ):
+            return True
+        # Recovery may re-emit the same canonical result after its successor
+        # routing was already durably bound. Reuse that exact prior binding
+        # only for the same accepted intent; a different request remains a
+        # separate occurrence.
+        return (
+            _same_application_intent(previous, current)
+            and previous.successor == current.successor
+            and _formal_interval_is_bound(events, index - 1, lifecycle_events)
         )
     return interval is not None and _interval_binds_successor(
         interval,
@@ -765,7 +815,10 @@ def qualify_current_formal_consequence(
     for index in range(len(suffix) - 1):
         previous = suffix[index]
         current = suffix[index + 1]
-        if previous.successor != (current.role, current.action):
+        if previous.successor != (current.role, current.action) and not (
+            _same_application_intent(previous, current)
+            and previous.successor == current.successor
+        ):
             return _indeterminate("lifecycle-ordering-incomplete", current)
 
     if qualification.mode == "current":
@@ -823,7 +876,22 @@ def qualify_current_formal_consequence(
         qualification.expected_routing,
         False,
     ):
-        return _indeterminate("accepted-successor-lifecycle-binding-incomplete", latest)
+        duplicate_reuses_bound_successor = (
+            len(suffix) > 1
+            and _same_application_intent(suffix[-2], latest)
+            and suffix[-2].successor == latest.successor
+            and not any(
+                item.event in {"closed", "labeled", "reopened", "unlabeled"}
+                for item in latest_interval
+            )
+            and _formal_interval_is_bound(
+                suffix,
+                len(suffix) - 2,
+                qualification.lifecycle_events,
+            )
+        )
+        if not duplicate_reuses_bound_successor:
+            return _indeterminate("accepted-successor-lifecycle-binding-incomplete", latest)
     for index in range(len(suffix) - 1):
         if not _formal_interval_is_bound(suffix, index, qualification.lifecycle_events):
             return _indeterminate("issue-lifecycle-binding-incomplete", suffix[index])
