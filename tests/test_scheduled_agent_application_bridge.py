@@ -192,6 +192,152 @@ def _event(body: str, *, trusted: bool = True) -> dict[str, object]:
     }
 
 
+def _accepted_record(
+    raw_worker_result: str,
+    request_body: str,
+    *,
+    source: WorkerRequest,
+    change: str,
+    result_kind: str,
+    request_comment_id: int = 102,
+) -> ApplicationDecisionRecord:
+    return ApplicationDecisionRecord(
+        request_comment_id=request_comment_id,
+        request_body_sha256=hashlib.sha256(request_body.encode("utf-8")).hexdigest(),
+        authorization_revision=_REVISION,
+        issue_number=source.issue_number,
+        role=source.role,
+        action=source.action,
+        change=change,
+        result_kind=result_kind,
+        disposition="ACCEPTED",
+        worker_result_sha256=hashlib.sha256(raw_worker_result.encode("utf-8")).hexdigest(),
+        raw_worker_result=raw_worker_result,
+        reason="accepted",
+    )
+
+
+def test_accepted_intent_lookup_includes_indeterminate_current_issue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "lead", "explore-change")
+    raw = json.dumps(_worker_result(), sort_keys=True, separators=(",", ":"))
+    body = _effect_request()
+    record = _accepted_record(
+        raw,
+        body,
+        source=source,
+        change="unset",
+        result_kind="proposal-ready",
+    )
+    lookups: list[int] = []
+
+    def fake_lookup(**kwargs: object) -> tuple[ApplicationDecisionRecord, ...]:
+        issue_number = cast(int, kwargs["issue_number"])
+        lookups.append(issue_number)
+        return (record,) if issue_number == source.issue_number else ()
+
+    monkeypatch.setattr(bridge, "_application_decisions_for_request_id", fake_lookup)
+
+    found = bridge._find_application_decision_from_current_frontier(
+        repository=_REPOSITORY,
+        token=_REPOSITORY,
+        request_comment_id=record.request_comment_id,
+        preflight=_preflight(
+            current_state_provenance=ObservationProvenance.INDETERMINATE,
+        ),
+    )
+
+    assert found == record
+    assert lookups == [source.issue_number]
+
+
+def test_main_rehydrates_accepted_intent_before_transport_observation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = WorkerRequest(138, "lead", "finalize-change")
+    worker = _worker_result(
+        action=source.action,
+        role=source.role,
+        result_kind="archive-ready",
+    )
+    worker["change"] = _CHANGE
+    raw = json.dumps(worker, sort_keys=True, separators=(",", ":"))
+    body = _effect_request(worker)
+    record = _accepted_record(
+        raw,
+        body,
+        source=source,
+        change=_CHANGE,
+        result_kind="archive-ready",
+    )
+    event_path = tmp_path / "event.json"
+    event_path.write_text(json.dumps(_event(body)), encoding="utf-8")
+    output_path = tmp_path / "github-output.txt"
+    seen: dict[str, object] = {}
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", _REPOSITORY)
+    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output_path))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "scheduled_agent_application_bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            _REVISION,
+            "--default-branch",
+            "main",
+            "--run-attempt",
+            "2",
+        ],
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_application_decision_for_request",
+        lambda **kwargs: (
+            record
+            if kwargs["issue_number"] == source.issue_number
+            and kwargs["request_comment_id"] == record.request_comment_id
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_fresh_event_observation",
+        lambda *_args: pytest.fail("accepted recovery must not consult mutable transport"),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "acquire_current_github_preflight",
+        lambda *_args: _preflight(
+            issue_number=source.issue_number,
+            action="review-archive",
+            change=_CHANGE,
+        ),
+    )
+
+    def fake_apply(raw_result: str, **kwargs: object) -> tuple[EffectBatch, object]:
+        seen["raw"] = raw_result
+        seen["source"] = kwargs["source"]
+        return (
+            EffectBatch(
+                source=cast(WorkerRequest, kwargs["source"]),
+                effects=(),
+                typed_result=None,
+            ),
+            bridge.ApplyResult(True, "reconciled"),
+        )
+
+    monkeypatch.setattr(bridge, "run_guarded_effect_application", fake_apply)
+
+    assert bridge.main() == 0
+    assert seen == {"raw": raw, "source": source}
+
+
 def test_parse_application_request_decodes_revision_bound_worker_result() -> None:
     body = _effect_request()
     request = parse_application_request(body)
