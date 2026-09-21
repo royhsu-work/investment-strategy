@@ -282,7 +282,6 @@ jobs:
             }
             python .github/scripts/archive_pr_linkage.py resolve \
               --change "$CHANGE" \
-              --issue-number "$REQUEST_ISSUE" \
               --issues-file "$issues_file" \
               > "$RUNNER_TEMP/archive-linkage.env"
           else
@@ -296,6 +295,10 @@ jobs:
             echo "::error::Archive linkage did not resolve one Issue"
             exit 1
           }
+          if [[ "$REQUEST_MODE" == "request" && "$issue_number" != "$REQUEST_ISSUE" ]]; then
+            echo "::error::Archive linkage resolved Issue #$issue_number, expected exact requested Issue #$REQUEST_ISSUE"
+            exit 1
+          fi
           body_file="$RUNNER_TEMP/archive-pr-body.md"
           python .github/scripts/archive_pr_linkage.py render \
             --change "$CHANGE" \
