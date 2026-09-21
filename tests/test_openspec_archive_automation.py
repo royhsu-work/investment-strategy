@@ -468,6 +468,7 @@ def test_archive_workflow_keeps_reviewed_lifecycle_guards() -> None:
     assert "pull_request_target:" not in workflow
     assert '--issue-number "$REQUEST_ISSUE"' not in workflow
     assert '"$issue_number" != "$REQUEST_ISSUE"' in workflow
+    assert "printf 'issue_number=%s\\n' \"$REQUEST_ISSUE\"" in workflow
 
 
 def test_readme_documents_state_driven_archive_contract() -> None:
