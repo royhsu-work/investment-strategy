@@ -30,6 +30,7 @@ from investment_strategy.scheduled_agent_effects import (
     ApplicationDecisionRecord,
     ApplicationOutcomeRecord,
     consequence_postconditions_complete,
+    merged_pr_readiness_complete,
     parse_application_decision,
     parse_application_outcome,
     requested_effect_postconditions_complete,
@@ -787,6 +788,39 @@ def _formal_consequence(
     )
 
 
+def _successor_consequence_supersedes(
+    *,
+    repository: str,
+    token: str,
+    source: WorkerRequest,
+    worker: WorkerActionResult,
+    current_issue: Mapping[str, object],
+    change: str,
+    current_revision: str,
+) -> bool:
+    """Recognize a committed predecessor consumed by a merged successor."""
+
+    try:
+        successor = next_action(worker.typed_result.action, worker.typed_result.result)
+    except (TypeError, ValueError):
+        return False
+    observation = normalize_github_issue(current_issue)
+    if (
+        successor not in {ModelAction.MERGE_ARCHIVE_PR, ModelAction.MERGE_IMPLEMENTATION_PR}
+        or observation is None
+        or observation.routing != (role_for(successor).value, successor.value)
+    ):
+        return False
+    return merged_pr_readiness_complete(
+        repository=repository,
+        token=token,
+        issue_number=source.issue_number,
+        action=successor.value,
+        change=change,
+        current_revision=current_revision,
+    )
+
+
 def _accepted_application_state(
     *,
     repository: str,
@@ -872,6 +906,27 @@ def _accepted_application_state(
         return ApplicationCompletion(
             "COMPLETE",
             "application-completion-complete",
+            request_comment_id=record.request_comment_id,
+        )
+    # A predecessor's open-carrier predicate is intentionally monotonic at
+    # the causal boundary: once its successor merge consequence is observed
+    # in the current default branch, the predecessor must not be resumed as
+    # though its former open carrier were still missing.  This is derived
+    # from the same successor consequence owner; it does not accept a formal
+    # result without a prior commit-time readiness proof, and it does not
+    # apply to a missing archive carrier on the review route.
+    if _successor_consequence_supersedes(
+        repository=repository,
+        token=token,
+        source=source,
+        worker=worker,
+        current_issue=current_issue,
+        change=record.change,
+        current_revision=current_revision,
+    ):
+        return ApplicationCompletion(
+            "COMPLETE",
+            "application-completion-successor-advanced",
             request_comment_id=record.request_comment_id,
         )
     # An accepted semantic intent may intentionally have no worker-owned

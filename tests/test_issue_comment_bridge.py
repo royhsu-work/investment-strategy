@@ -942,6 +942,48 @@ def test_completed_formal_result_at_safe_ancestor_is_not_resumed(
     assert observed_revisions == [formal_revision]
 
 
+def test_predecessor_is_not_resumed_after_merged_successor_consumes_carrier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = bridge.WorkerRequest(234, "reviewer", "review-archive")
+    worker = bridge.parse_worker_result(
+        json.dumps(
+            {
+                "issue_number": 234,
+                "role": "reviewer",
+                "action": "review-archive",
+                "change": "archive-change",
+                "result_kind": "pass",
+                "evidence_ref": "pr#313@head",
+                "result_content": "review pass",
+                "requested_effects": [],
+            }
+        ),
+        source,
+        authorized_change="archive-change",
+    )
+
+    class Observation:
+        routing = ("executor", "merge-archive-pr")
+
+    monkeypatch.setattr(bridge, "normalize_github_issue", lambda _issue: Observation())
+    monkeypatch.setattr(
+        bridge,
+        "merged_pr_readiness_complete",
+        lambda **kwargs: kwargs["action"] == "merge-archive-pr",
+    )
+
+    assert bridge._successor_consequence_supersedes(
+        repository="owner/repo",
+        token=str(REVISION),
+        source=source,
+        worker=worker,
+        current_issue={},
+        change="archive-change",
+        current_revision=REVISION,
+    )
+
+
 def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier() -> None:
     source = bridge.WorkerRequest(138, "executor", "implement-change")
     change = "recurrence-a-a-new-occurrence"

@@ -189,9 +189,16 @@ def test_connector_materialization_cannot_satisfy_human_reserved_authority() -> 
 
 
 def test_slice_three_and_verification_markers_are_durable_before_handoff() -> None:
-    tasks = (
+    active_tasks = (
         ROOT / "openspec" / "changes" / "source-decision-explore-materialization" / "tasks.md"
-    ).read_text(encoding="utf-8")
+    )
+    archived_tasks = sorted(
+        (ROOT / "openspec" / "changes" / "archive").glob(
+            "*-source-decision-explore-materialization/tasks.md"
+        )
+    )
+    task_path = active_tasks if active_tasks.is_file() else archived_tasks[0]
+    tasks = task_path.read_text(encoding="utf-8")
 
     for task_id in ("3.1", "3.2", "3.3", "4.1", "4.2", "4.3"):
         assert any(line.startswith(f"- [x] {task_id}") for line in tasks.splitlines())
