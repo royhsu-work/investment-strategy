@@ -578,7 +578,6 @@ def test_same_action_frontier_acceptance_binds_its_own_formal_result() -> None:
     assert completion.request_comment_id == 90
 
 
-
 @pytest.mark.parametrize("duplicate_count", (1, 2, 3))
 def test_duplicate_formal_reemission_of_one_accepted_intent_releases_successor(
     duplicate_count: int,
@@ -643,6 +642,7 @@ def test_duplicate_formal_reemission_of_one_accepted_intent_releases_successor(
     )
 
     assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
+
 
 def test_accepted_formal_result_waits_for_requested_effect_postconditions(
     monkeypatch: pytest.MonkeyPatch,
