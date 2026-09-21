@@ -3717,6 +3717,7 @@ def test_postcondition_verifier_uses_application_owned_formal_envelope(
         request_comment_id=_REQUEST_COMMENT_ID,
     )
 
+
 def test_application_binds_formal_revision_to_materialization_postcondition() -> None:
     source = WorkerRequest(138, "executor", "implement-change")
     adapter = GitHubEffectAdapter(
