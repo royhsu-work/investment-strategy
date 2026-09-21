@@ -492,6 +492,28 @@ def plan_application(
     if request_comment_id is None:
         raise ValueError("EFFECT_REQUEST event comment id is invalid")
 
+    if accepted_intent is not None and accepted_intent.disposition == "ACCEPTED":
+        # After ACCEPT, the immutable intent—not the current semantic
+        # frontier—owns continuation.  The current frontier may already be
+        # the derived successor and therefore has a different correlation.
+        if accepted_intent.request_comment_id != request_comment_id:
+            raise ValueError("accepted application intent request identity is invalid")
+        accepted_source = WorkerRequest(
+            accepted_intent.issue_number,
+            accepted_intent.role,
+            accepted_intent.action,
+        )
+        claimed = _claimed_source(accepted_intent.raw_worker_result)
+        if claimed is not None and claimed != accepted_source:
+            raise ValueError("accepted application intent worker source is invalid")
+        return ApplicationPlan(
+            should_apply=True,
+            source=accepted_source,
+            raw_worker_result=accepted_intent.raw_worker_result,
+            change=accepted_intent.change,
+            request_comment_id=request_comment_id,
+        )
+
     claimed = _claimed_source(request.raw_worker_result)
     decision = classify_dispatch(preflight)
     if (
@@ -1984,7 +2006,10 @@ def main() -> int:
     # parseable, use only the fresh workflow preflight to locate an exact
     # already-accepted intent and reconstruct its immutable payload.
     preflight: DispatchPreflight | None = None
-    if request is None and event_comment_id is not None:
+    if event_comment_id is not None and (request is None or args.run_attempt > 1):
+        # A rerun is a Phase-B continuation boundary.  Resolve the immutable
+        # decision before planning so a successor frontier cannot rebind the
+        # old request to a new semantic Action/correlation.
         preflight = acquire_current_github_preflight(repository, token)
         accepted_intent = _find_application_decision_from_current_frontier(
             repository=repository,

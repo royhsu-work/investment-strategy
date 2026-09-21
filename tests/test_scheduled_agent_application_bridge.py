@@ -298,6 +298,65 @@ def test_plan_application_rejects_untrusted_or_stale_ingress() -> None:
         )
 
 
+def test_accepted_intent_recovery_keeps_original_source_across_successor_frontier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_source = WorkerRequest(142, "lead", "finalize-change")
+    current_source = WorkerRequest(142, "reviewer", "review-archive")
+    worker = _worker_result(
+        action=old_source.action,
+        role=old_source.role,
+        result_kind="archive-ready",
+    )
+    worker["issue_number"] = old_source.issue_number
+    worker["change"] = _CHANGE
+    raw_worker_result = json.dumps(worker, sort_keys=True, separators=(",", ":"))
+    old_correlation = bridge.dispatch_correlation_for(_REPOSITORY, old_source, _REVISION)
+    current_correlation = bridge.dispatch_correlation_for(_REPOSITORY, current_source, _REVISION)
+    assert old_correlation != current_correlation
+    request = bridge.ApplicationRequest(_REVISION, raw_worker_result, old_correlation)
+    body = bridge.render_application_request(request)
+    parsed = parse_application_request(body)
+    assert parsed == request
+    accepted_intent = ApplicationDecisionRecord(
+        request_comment_id=102,
+        request_body_sha256=hashlib.sha256(body.encode("utf-8")).hexdigest(),
+        authorization_revision=_REVISION,
+        issue_number=old_source.issue_number,
+        role=old_source.role,
+        action=old_source.action,
+        change=_CHANGE,
+        result_kind="archive-ready",
+        disposition="ACCEPTED",
+        worker_result_sha256=hashlib.sha256(raw_worker_result.encode("utf-8")).hexdigest(),
+        raw_worker_result=raw_worker_result,
+        reason="test",
+    )
+
+    monkeypatch.setattr(bridge, "_authorization_revision_is_ancestor", lambda *_args: True)
+    plan = plan_application(
+        event=_event(body),
+        request=request,
+        preflight=_preflight(
+            issue_number=current_source.issue_number,
+            action=current_source.action,
+            change=_CHANGE,
+        ),
+        repository=_REPOSITORY,
+        current_revision=_REVISION,
+        token=_CHANGE,
+        allow_descendant_resume=True,
+        allow_accepted_request_mutation=True,
+        accepted_intent=accepted_intent,
+    )
+
+    assert plan.should_apply
+    assert plan.source == old_source
+    assert plan.change == _CHANGE
+    assert plan.request_comment_id == 102
+    assert plan.raw_worker_result == raw_worker_result
+
+
 def test_plan_application_rejects_worker_claim_that_differs_from_fresh_selection() -> None:
     body = _effect_request(
         _worker_result(action="resolve-question", result_kind="human-decision-required")
