@@ -1469,7 +1469,8 @@ def _fresh_archive_state(
         and head.get("ref") == branch
         and head.get("sha") == branch_sha
         and base.get("ref") == default_branch
-        and base.get("sha") == current_revision
+        and isinstance(base.get("sha"), str)
+        and _SHA.fullmatch(cast(str, base.get("sha"))) is not None
         and isinstance(head_repo, Mapping)
         and head_repo.get("full_name") == repository
     )

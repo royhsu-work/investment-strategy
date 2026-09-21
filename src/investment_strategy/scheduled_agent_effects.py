@@ -979,8 +979,11 @@ def archive_pr_readiness_complete(
 
     Archive workflow success and branch existence are necessary inputs, not
     the predecessor commit.  The commit predicate includes one exact open,
-    non-Draft, non-closing Archive PR with the current branch head and current
-    default-branch base.
+    non-Draft, non-closing Archive PR with the current branch head and the
+    current default-branch base identity. The base ref's observed SHA is
+    captured and guarded at each mutation boundary; it need not equal the
+    authorization revision because a main-branch repair may land while the
+    already-created archive carrier remains the same exact, mergeable PR.
     """
 
     if (
@@ -1046,7 +1049,7 @@ def archive_pr_readiness_complete(
         and head.get("ref") == branch
         and head.get("sha") == branch_sha
         and base.get("ref") == default_branch
-        and base.get("sha") == current_revision
+        and _valid_sha(base.get("sha"))
         and _repository_full_name(head.get("repo")) == repository
         and _repository_full_name(base.get("repo")) == repository
     )

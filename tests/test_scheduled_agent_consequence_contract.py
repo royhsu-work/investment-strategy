@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import cast
 
 import pytest
 
@@ -259,6 +260,17 @@ def test_archive_ready_requires_current_non_draft_exact_pr(
         raise AssertionError(path)
 
     monkeypatch.setattr(effects, "_github_json", fake_read)
+    assert effects.archive_pr_readiness_complete(
+        repository=_REPOSITORY,
+        token=_TOKEN,
+        issue_number=234,
+        change=_CHANGE,
+        current_revision=_MAIN,
+    )
+    # A main-branch repair may land after the archive carrier is created. The
+    # exact current PR/base identity remains a complete predecessor
+    # consequence; mutation-time guards still capture the observed base SHA.
+    cast(dict[str, object], full_pr["base"])["sha"] = "f" * 40
     assert effects.archive_pr_readiness_complete(
         repository=_REPOSITORY,
         token=_TOKEN,
