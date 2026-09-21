@@ -681,25 +681,30 @@ def _find_application_decision_from_current_frontier(
     request_comment_id: int,
     preflight: DispatchPreflight,
 ) -> ApplicationDecisionRecord | None:
-    """Find one exact decision among fresh current workflow Issues.
+    """Find one exact decision on the complete fresh workflow-Issue surface.
 
-    This fallback is used only when mutable ingress can no longer be parsed,
-    so its source cannot be trusted from the request body.  Candidate Issues
-    come from the fresh repository preflight; no Issue number is guessed or
-    created from the malformed transport.  Multiple matches fail closed.
+    The source Issue may be temporarily ``INDETERMINATE`` while an accepted
+    formal result is already durable but its derived routing projection is not.
+    That observation cannot authorize new semantic work, but it must not hide
+    the immutable accepted owner from Phase-B recovery.  The preflight must
+    still be a complete, duplicate-free enumeration; every source candidate is
+    read by the exact request comment id and multiple matches fail closed.
     """
 
-    issue_numbers = tuple(
-        dict.fromkeys(
-            issue.issue_number
-            for issue in preflight.issues
-            if (
-                issue.current_state_provenance is ObservationProvenance.QUALIFIED
-                and not issue.routing_debt
-                and issue.state in {"open", "closed"}
-            )
-        )
-    )
+    enumeration = preflight.enumeration
+    if (
+        enumeration.incomplete_results
+        or not enumeration.exhausted
+        or enumeration.source_total_count is None
+        or enumeration.observed_count != enumeration.source_total_count
+    ):
+        raise ValueError("application decision source enumeration is incomplete")
+    if preflight.human_authorized is not True:
+        raise ValueError("application decision source lacks Human authority")
+    issue_numbers = tuple(issue.issue_number for issue in preflight.issues)
+    if len(issue_numbers) != len(set(issue_numbers)):
+        raise ValueError("application decision source enumeration is ambiguous")
+
     matches: list[ApplicationDecisionRecord] = []
     for issue_number in issue_numbers:
         matches.extend(
@@ -2001,12 +2006,26 @@ def main() -> int:
     except ValueError:
         request = None
 
-    # A normal first invocation can authorize from the parsed ingress without
-    # reading a decision record.  If the mutable ingress is no longer
-    # parseable, use only the fresh workflow preflight to locate an exact
-    # already-accepted intent and reconstruct its immutable payload.
+    # A request can be re-entered as a fresh process even when its current
+    # formal frontier is temporarily indeterminate.  If the parsed worker
+    # payload carries a source identity, use that exact source Issue plus the
+    # immutable request comment id before consulting frontier qualification.
+    # Semantic-only payloads, edited envelopes, and deleted envelopes use the
+    # complete fresh-Issue fallback below.
     preflight: DispatchPreflight | None = None
-    if event_comment_id is not None and (request is None or args.run_attempt > 1):
+    if event_comment_id is not None and request is not None:
+        claimed_source = _claimed_source(request.raw_worker_result)
+        if claimed_source is not None:
+            accepted_intent = _application_decision_for_request(
+                repository=repository,
+                token=token,
+                issue_number=claimed_source.issue_number,
+                request_comment_id=event_comment_id,
+                request_body=body,
+            )
+    if event_comment_id is not None and accepted_intent is None and (
+        request is None or args.run_attempt > 1
+    ):
         # A rerun is a Phase-B continuation boundary.  Resolve the immutable
         # decision before planning so a successor frontier cannot rebind the
         # old request to a new semantic Action/correlation.
@@ -2022,14 +2041,23 @@ def main() -> int:
             authorization_revision=accepted_intent.authorization_revision,
             raw_worker_result=accepted_intent.raw_worker_result,
         )
+    if accepted_intent is not None and accepted_intent.disposition == "REJECTED":
+        _write_carrier_outputs(ApplyResult(False, "application-rejected"))
+        _write_validation_outputs(None)
+        return 0
     if request is None:
         if accepted_intent is None:
             return 0
-        if accepted_intent.disposition == "REJECTED":
-            return 0
         raise RuntimeError("accepted application intent could not reconstruct its request")
 
-    body_mutated = _fresh_event_observation(event, body, repository, token)
+    # After ACCEPT the current comment is transport only.  Its fresh
+    # observation is required for Phase A, but an immutable accepted intent
+    # must survive an edit/delete boundary without consulting that transport.
+    body_mutated = (
+        False
+        if accepted_intent is not None
+        else _fresh_event_observation(event, body, repository, token)
+    )
     if preflight is None:
         preflight = acquire_current_github_preflight(repository, token)
     plan = plan_application(
