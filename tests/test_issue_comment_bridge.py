@@ -926,6 +926,11 @@ def test_completed_formal_result_at_safe_ancestor_is_not_resumed(
             return {"status": "ahead", "base_commit": {"sha": base_sha}}
         raise AssertionError(path)
 
+    parsed_formal = bridge.parse_formal_result(
+        formal,
+        current_revision=advanced_revision,
+    )
+    print("DEBUG_SAFE_ANCESTOR", parsed_formal)
     completion = bridge.qualify_application_completion(
         "owner/repo",
         "token",
