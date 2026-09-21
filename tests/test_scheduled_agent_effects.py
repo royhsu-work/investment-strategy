@@ -3703,17 +3703,21 @@ def test_postcondition_verifier_uses_application_owned_formal_envelope(
         raise AssertionError(path)
 
     monkeypatch.setattr(effects, "_github_json", fake_github_json)
-    kwargs = {
-        "raw_worker_result": raw,
-        "source": source,
-        "repository": "owner/repo",
-        "token": "token",
-        "current_revision": _REVISION,
-        "authorized_change": _CHANGE,
-    }
-    assert not effects.requested_effect_postconditions_complete(**kwargs)
+    assert not effects.requested_effect_postconditions_complete(
+        raw_worker_result=raw,
+        source=source,
+        repository="owner/repo",
+        token="token",
+        current_revision=_REVISION,
+        authorized_change=_CHANGE,
+    )
     assert effects.requested_effect_postconditions_complete(
-        **kwargs,
+        raw_worker_result=raw,
+        source=source,
+        repository="owner/repo",
+        token="token",
+        current_revision=_REVISION,
+        authorized_change=_CHANGE,
         request_comment_id=_REQUEST_COMMENT_ID,
     )
 
