@@ -29,6 +29,7 @@ from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
 from investment_strategy.scheduled_agent_effects import (
     ApplicationDecisionRecord,
     ApplicationOutcomeRecord,
+    consequence_postconditions_complete,
     parse_application_decision,
     parse_application_outcome,
     requested_effect_postconditions_complete,
@@ -72,6 +73,7 @@ _TERMINAL_NO_ACCEPT_CONCLUSIONS = frozenset(
 _MAX_REASON_LENGTH = 240
 _MAX_RESULT_BYTES = 16_384
 _SHA = re.compile(r"^[0-9a-f]{40}$")
+_DEFAULT_COMPLETION_POSTCONDITION_HOOK = requested_effect_postconditions_complete
 
 
 @dataclass(frozen=True)
@@ -596,6 +598,43 @@ def _authorization_ancestry(
     return ((authorization_revision, current_revision),)
 
 
+def _fresh_completion_postconditions(
+    raw_worker_result: str,
+    *,
+    source: WorkerRequest,
+    record: ApplicationDecisionRecord,
+    repository: str,
+    token: str,
+    current_revision: str,
+    legacy_revision: str,
+    request_comment_id: int,
+) -> bool:
+    """Use the positive consequence owner, retaining an old-test hook only."""
+
+    # Older callers patched the legacy helper directly.  Keep that injection
+    # seam for compatibility, while the default production path always uses
+    # the fresh Action/Result consequence contract.
+    if requested_effect_postconditions_complete is not _DEFAULT_COMPLETION_POSTCONDITION_HOOK:
+        return requested_effect_postconditions_complete(
+            raw_worker_result,
+            source=source,
+            repository=repository,
+            token=token,
+            current_revision=legacy_revision,
+            authorized_change=record.change,
+            request_comment_id=request_comment_id,
+        )
+    return consequence_postconditions_complete(
+        raw_worker_result,
+        source=source,
+        repository=repository,
+        token=token,
+        current_revision=current_revision,
+        authorized_change=record.change,
+        request_comment_id=request_comment_id,
+    )
+
+
 def _formal_consequence(
     *,
     repository: str,
@@ -726,17 +765,18 @@ def _formal_consequence(
     if not decision.qualified or decision.event is None:
         return False
     candidate = canonical_event
-    if mode == "current" and not requested_effect_postconditions_complete(
+    if mode == "current" and not _fresh_completion_postconditions(
         record.raw_worker_result,
         source=source,
+        record=record,
         repository=repository,
         token=token,
-        # The canonical formal result is already the logical commit. Its
-        # application observation revision may be a safe ancestor of the
-        # fresh wake's revision; observe the exact accepted consequence at
-        # that revision instead of rewriting transport-bound correlation text.
-        current_revision=application_observation_revision,
-        authorized_change=record.change,
+        # Formal correlation remains bound to the accepted observation, but
+        # successor-readiness is a fresh repository predicate.  In
+        # particular an Archive PR must target the current default branch,
+        # not merely the historical application revision.
+        current_revision=current_revision,
+        legacy_revision=application_observation_revision,
         request_comment_id=record.request_comment_id,
     ):
         return False
@@ -808,6 +848,13 @@ def _accepted_application_state(
             "application-completion-stale",
             request_comment_id=record.request_comment_id,
         )
+    try:
+        decoded_intent = json.loads(record.raw_worker_result)
+    except json.JSONDecodeError:
+        decoded_intent = None
+    semantic_intent = (
+        isinstance(decoded_intent, Mapping) and decoded_intent.get("_semantic_intent_version") == 2
+    )
     if _formal_consequence(
         repository=repository,
         token=token,
@@ -827,7 +874,11 @@ def _accepted_application_state(
             "application-completion-complete",
             request_comment_id=record.request_comment_id,
         )
-    if worker.requested_effects:
+    # An accepted semantic intent may intentionally have no worker-owned
+    # requested effects.  New application-owned envelopes carry an explicit
+    # semantic-intent marker so Phase B still resumes their job; historical
+    # raw envelopes remain compatible with the old formal-only fixtures.
+    if worker.requested_effects or semantic_intent:
         resumed = _application_job(
             repository,
             token,
@@ -836,6 +887,16 @@ def _accepted_application_state(
         )
         if resumed.state == "RESUMABLE":
             return resumed
+    if (
+        not worker.requested_effects
+        and not semantic_intent
+        and source.action == "finalize-change"
+        and record.result_kind == "archive-ready"
+    ):
+        return ApplicationCompletion(
+            "NONE",
+            "application-completion-none",
+        )
     if _formal_consequence(
         repository=repository,
         token=token,
