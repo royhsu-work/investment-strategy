@@ -175,10 +175,7 @@ def test_accepted_intent_reconciles_after_successor_lifecycle_binding() -> None:
         successor="Reviewer / review-archive",
         request_id=10,
     )
-    correlation = (
-        "application:10:229:"
-        f"{_CHANGE}:lead:finalize-change:archive-ready:{_REVISION}"
-    )
+    correlation = f"application:10:229:{_CHANGE}:lead:finalize-change:archive-ready:{_REVISION}"
     decision = _decision(
         [comment],
         current_routing=("reviewer", "review-archive"),
@@ -191,6 +188,7 @@ def test_accepted_intent_reconciles_after_successor_lifecycle_binding() -> None:
         allow_successor_frontier=True,
     )
     assert decision.provenance is ObservationProvenance.QUALIFIED
+
 
 def test_current_route_requires_complete_repository_owned_binding() -> None:
     comment = _comment(

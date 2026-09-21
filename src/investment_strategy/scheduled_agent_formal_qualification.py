@@ -815,8 +815,7 @@ def qualify_current_formal_consequence(
         return _indeterminate("pending-comment-lifecycle-missing", latest)
     if at_source_frontier:
         if any(
-            item.event in {"closed", "labeled", "reopened", "unlabeled"}
-            for item in latest_interval
+            item.event in {"closed", "labeled", "reopened", "unlabeled"} for item in latest_interval
         ):
             return _indeterminate("pending-lifecycle-superseded", latest)
     elif not _interval_binds_successor(

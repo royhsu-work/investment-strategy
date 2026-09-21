@@ -1548,11 +1548,7 @@ class GitHubEffectAdapter:
             )
         except (TypeError, ValueError):
             return None
-        return (
-            None
-            if successor is None
-            else (role_for(successor).value, successor.value)
-        )
+        return None if successor is None else (role_for(successor).value, successor.value)
 
     def _routing_is_current_or_accepted_successor(
         self,

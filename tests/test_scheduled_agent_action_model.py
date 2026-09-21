@@ -177,6 +177,7 @@ def test_accepted_intent_reconciles_only_its_derived_successor_frontier() -> Non
     assert rejected.rejection is not None
     assert rejected.rejection.classification is ApplicationRejectionKind.CURRENT_ACTION_MISMATCH
 
+
 def test_select_work_uses_deterministic_preactivation_order() -> None:
     decision = select_work(
         AuthoritativeObservations(

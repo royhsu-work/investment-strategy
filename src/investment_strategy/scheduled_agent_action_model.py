@@ -765,9 +765,7 @@ def plan_action_application(
             "legal-transition",
             result.result.kind,
         )
-    if current_action != source.action and (
-        successor is None or current_action is not successor
-    ):
+    if current_action != source.action and (successor is None or current_action is not successor):
         return _application_rejection(
             source,
             result,
