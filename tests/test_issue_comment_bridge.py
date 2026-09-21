@@ -644,7 +644,6 @@ def test_duplicate_formal_reemission_of_one_accepted_intent_releases_successor(
     assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
 
 
-
 def test_accepted_intent_qualifies_formal_result_after_safe_main_advance() -> None:
     source = bridge.WorkerRequest(138, "reviewer", "review-archive")
     formal_revision = "b" * 40
@@ -701,7 +700,7 @@ def test_accepted_intent_qualifies_formal_result_after_safe_main_advance() -> No
             f"compare/{REVISION}...{advanced_revision}",
             f"compare/{formal_revision}...{advanced_revision}",
         }:
-            return {"status": "ahead", "base_commit": {"sha": path.split("...")[0]}}
+            return {"status": "ahead", "base_commit": {"sha": path.removeprefix("compare/").split("...")[0]}}
         raise AssertionError(path)
 
     completion = bridge.qualify_application_completion(
@@ -714,6 +713,7 @@ def test_accepted_intent_qualifies_formal_result_after_safe_main_advance() -> No
     )
 
     assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
+
 
 def test_accepted_formal_result_waits_for_requested_effect_postconditions(
     monkeypatch: pytest.MonkeyPatch,
