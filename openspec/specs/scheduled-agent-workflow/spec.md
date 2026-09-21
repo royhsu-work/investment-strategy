@@ -50,6 +50,10 @@ The workflow SHALL use one persistent coordination Issue for one routed work ite
 
 Before the change id exists, `explore-change` and `propose-change` MAY operate with `Change: unset`. `explore-change` MUST keep `Change: unset` and MUST NOT create a formal OpenSpec change solely to represent research. The normal route into Propose SHALL be a same-Issue `Lead / explore-change` result of evidence-backed `PROPOSAL_READY` followed by the repository-owned routing effect to `Lead / propose-change`. Once Lead persists a change id during `propose-change`, that identity MUST remain immutable for that Issue.
 
+For an explicit Human request, established by the interaction layer, to open one bounded Formal Explore, materialization authority SHALL follow that qualified source decision rather than the physical GitHub writer. The interaction-layer producer that owns the requested GitHub mutation MUST materialize one open coordination Issue with `Change: unset` and exactly one `action:explore-change` routing label, and MUST NOT report materialization complete until a fresh GitHub read observes that complete tuple. This requirement does not grant Issue-creation or routing mutation capability to a Scheduled-Agent worker or repository application that does not already own it. A connector or Agent MAY physically perform the interaction-layer mutation without becoming the authority source. Physical writer identity MUST NOT remove the qualified Human materialization authority and MUST NOT by itself grant authority to an autonomous Agent recommendation. Issue prose alone MUST NOT be treated as the authority classifier for this boundary.
+
+After coherent materialization, ordinary pre-activation queue eligibility SHALL be determined from current repository routing and existing formal-first, WIP=1, finish-first, and deterministic selection predicates without classifying the Issue by Human-versus-connector origin. The materialization event or connector writer identity MUST NOT satisfy a later Human-reserved decision; those decisions remain subject to the existing provenance-bound Human authority contract. An Agent-originated recommendation without an explicit Human request or another repository-qualified producer remains advisory and MUST NOT recursively authorize creation or routing of additional work.
+
 A coherently routed `Lead / propose-change + Change: unset` Issue MAY be selected operationally from current routing, including after an out-of-band routing mutation, but selection alone MUST NOT satisfy Propose's action-local semantic preconditions. Before persisting a Change identity, Propose MUST dereference the exact durable same-Issue Explore `ACTION_RESULT(PROPOSAL_READY)` and independently/reversely verify that each still-applicable material formalization claim is supported by the Explore claim's identified source/evidence and that feasibility evidence is sufficient for the meaning being formalized. `PROPOSAL_READY` MUST NOT be treated as permission to blindly trust unsupported Explore interpretation.
 
 If that pre-activation source/evidence/feasibility chain is missing, ambiguous, stale, contradictory, unsupported, or incomplete but the same bounded problem remains researchable without a new Human-reserved decision, no Change identity SHALL be persisted and the legal correction SHALL route the same Issue to `Lead / explore-change` with `Change: unset`. This correction preserves the same Issue identity and original queue position; it is not dispatcher fallback and MUST NOT cause dispatch to authorize a later pre-activation Issue merely because more research is required. If resolving the gap requires a genuinely new Human-reserved requirement, scope/risk/architecture commitment, Lead MUST use the existing Human decision boundary instead. Once `Change:` is non-`unset`, material semantic correction MUST use the formal `Lead / resolve-question` / independent review loop rather than the pre-Change Explore correction path.
@@ -57,6 +61,48 @@ If that pre-activation source/evidence/feasibility chain is missing, ambiguous, 
 Normal clarification and review-correction transitions SHALL remain in the same coordination Issue unless a later repository contract explicitly introduces child workflow items.
 
 A terminal Explore result that concludes `NO_CHANGE_REQUIRED` or `NO_GO` MAY complete and close the coordination/research Issue without creating or archiving a fake OpenSpec Change.
+
+#### Scenario: Human-requested bounded Explore is atomically materialized
+
+- GIVEN the interaction layer has established an explicit Human request to open one bounded Formal Explore
+- WHEN that interaction layer uses its available connector or other mutation capability to materialize the request
+- THEN the resulting coordination Issue is open
+- AND its body records `Change: unset`
+- AND it has exactly one `action:explore-change` routing label
+- AND the interaction layer does not report materialization complete until a fresh GitHub read observes that complete tuple
+- AND this does not grant Issue-creation capability to Scheduled-Agent repository application
+
+#### Scenario: Physical writer does not redefine materialization authority
+
+- GIVEN an explicit Human request has qualified one bounded Formal Explore for materialization
+- AND a connector or Agent is the physical GitHub writer for the interaction layer
+- WHEN the bounded tuple is materialized
+- THEN writer identity does not remove the qualified source-decision authority
+- AND writer identity does not become Human proof for any later Human-reserved decision
+
+#### Scenario: Autonomous recommendation remains advisory
+
+- GIVEN an Agent recommends a new Explore
+- AND there is no explicit Human materialization request or other repository-qualified producer
+- WHEN materialization authority is evaluated
+- THEN the recommendation alone does not authorize Issue creation or routing
+- AND it cannot recursively create additional queue work
+
+#### Scenario: Materialized Explore remains subject to ordinary queue ordering
+
+- GIVEN a connector-materialized bounded Explore has the coherent `Change: unset + action:explore-change` tuple
+- AND another formal workflow currently occupies WIP
+- WHEN dispatch evaluates current repository state
+- THEN the Explore remains queued under existing formal-first and finish-first semantics
+- AND its physical writer or origin does not bypass those predicates
+
+#### Scenario: Incomplete materialization is not success
+
+- GIVEN an explicit Human request requires a bounded Formal Explore
+- AND an Issue exists but `Change: unset` or the required `action:explore-change` routing is absent or ambiguous
+- WHEN the interaction layer observes the materialization postcondition
+- THEN materialization is incomplete and fails closed
+- AND the incomplete Issue is not reported as successful Formal Explore materialization
 
 #### Scenario: Explore remains pre-Change
 
