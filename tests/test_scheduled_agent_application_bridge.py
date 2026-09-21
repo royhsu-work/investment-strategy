@@ -291,6 +291,8 @@ def test_main_rehydrates_accepted_intent_before_transport_observation(
             _REVISION,
             "--default-branch",
             "main",
+            "--run-attempt",
+            "2",
         ],
     )
     monkeypatch.setattr(

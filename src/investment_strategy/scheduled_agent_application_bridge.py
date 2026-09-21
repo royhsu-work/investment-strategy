@@ -2013,7 +2013,7 @@ def main() -> int:
     # Semantic-only payloads, edited envelopes, and deleted envelopes use the
     # complete fresh-Issue fallback below.
     preflight: DispatchPreflight | None = None
-    if event_comment_id is not None and request is not None:
+    if event_comment_id is not None and request is not None and args.run_attempt > 1:
         claimed_source = _claimed_source(request.raw_worker_result)
         if claimed_source is not None:
             accepted_intent = _application_decision_for_request(
