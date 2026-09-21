@@ -270,7 +270,6 @@ def test_accepted_intent_does_not_reverify_candidate_during_phase_b() -> None:
     assert applied[-1].derived
 
 
-
 def test_accepted_intent_reconciles_after_derived_successor_frontier() -> None:
     source = WorkerRequest(138, "lead", "finalize-change")
     batch = parse_effect_batch(

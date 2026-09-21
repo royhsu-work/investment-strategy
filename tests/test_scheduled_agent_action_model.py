@@ -8,10 +8,10 @@ from investment_strategy.scheduled_agent_action_model import (
     Action,
     ActionObservation,
     ActionSource,
+    ApplicationDisposition,
+    ApplicationRejectionKind,
     AuthoritativeObservations,
     BoundedActionResult,
-    ApplicationRejectionKind,
-    ApplicationDisposition,
     EffectObservation,
     InvalidTransition,
     InvalidTypedResult,
@@ -135,7 +135,6 @@ def test_select_work_derives_role_from_one_formal_action() -> None:
     assert decision.issue_number == 138
     assert decision.action is Action.REVIEW_OPENSPEC
     assert decision.role is Role.REVIEWER
-
 
 
 def test_accepted_intent_reconciles_only_its_derived_successor_frontier() -> None:

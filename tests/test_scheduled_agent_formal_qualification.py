@@ -166,7 +166,6 @@ def _decision(
     return qualify_current_formal_consequence(qualification_input)
 
 
-
 def test_accepted_intent_reconciles_after_successor_lifecycle_binding() -> None:
     comment = _comment(
         1,
