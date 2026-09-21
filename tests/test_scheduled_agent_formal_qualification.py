@@ -188,6 +188,7 @@ def test_accepted_intent_reconciles_after_successor_lifecycle_binding() -> None:
         source_routing=("lead", "finalize-change"),
         expected_result_kind="archive-ready",
         expected_application_correlation=correlation,
+        lifecycle_events=_lifecycle_events([comment], pending=False),
         allow_successor_frontier=True,
     )
     assert decision.provenance is ObservationProvenance.QUALIFIED
