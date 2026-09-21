@@ -214,9 +214,7 @@ def test_accepted_intent_reconciles_duplicate_formal_result_without_new_label() 
         default_revision=historical_revision,
         application_revision=_REVISION,
     )
-    correlation = (
-        f"application:10:229:{_CHANGE}:lead:finalize-change:archive-ready:{_REVISION}"
-    )
+    correlation = f"application:10:229:{_CHANGE}:lead:finalize-change:archive-ready:{_REVISION}"
     decision = _decision(
         [first, retry],
         current_routing=("reviewer", "review-archive"),

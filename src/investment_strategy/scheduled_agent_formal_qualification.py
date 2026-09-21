@@ -626,11 +626,7 @@ def _formal_interval_is_bound(
         if index == 0:
             return False
         previous = events[index - 1]
-        if (
-            not current.terminal
-            and current.successor == source
-            and previous.successor == source
-        ):
+        if not current.terminal and current.successor == source and previous.successor == source:
             return True
         # Recovery may re-emit the same canonical result after its successor
         # routing was already durably bound. Reuse that exact prior binding
@@ -816,8 +812,7 @@ def qualify_current_formal_consequence(
         previous = suffix[index]
         current = suffix[index + 1]
         if previous.successor != (current.role, current.action) and not (
-            _same_application_intent(previous, current)
-            and previous.successor == current.successor
+            _same_application_intent(previous, current) and previous.successor == current.successor
         ):
             return _indeterminate("lifecycle-ordering-incomplete", current)
 
