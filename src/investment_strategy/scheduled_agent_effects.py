@@ -764,7 +764,19 @@ def _typed_application_plan(
         and selected.selected_routing is not None
         and selected.selected_routing[1] == source.action.value
     )
-    if not selected_source and not pending_source:
+    try:
+        derived_successor = next_action(action, typed_result.result)
+    except ValueError:
+        derived_successor = None
+    accepted_successor_frontier = (
+        accepted_intent
+        and derived_successor is not None
+        and selected.disposition == "AUTHORIZE"
+        and selected.selected_issue_id == source.issue_number
+        and selected.selected_routing
+        == (role_for(derived_successor).value, derived_successor.value)
+    )
+    if not selected_source and not pending_source and not accepted_successor_frontier:
         return None, None, ApplyResult(False, "typed application rejected:model-selection")
 
     matching_issues = tuple(
@@ -781,13 +793,22 @@ def _typed_application_plan(
         revision=current_revision,
         provenance=(
             ModelObservationProvenance.QUALIFIED
-            if pending_source or issue.current_state_provenance is ObservationProvenance.QUALIFIED
+            if (
+                pending_source
+                or accepted_successor_frontier
+                or issue.current_state_provenance is ObservationProvenance.QUALIFIED
+            )
             else ModelObservationProvenance.INDETERMINATE
         ),
         human_authorized=preflight.human_authorized,
         state=issue.state,
     )
-    decision = plan_action_application(source, typed_result, current)
+    decision = plan_action_application(
+        source,
+        typed_result,
+        current,
+        allow_successor_frontier=accepted_successor_frontier,
+    )
     if not decision.accepted:
         rejection = decision.rejection
         classification = "unknown"
@@ -1509,11 +1530,33 @@ class GitHubEffectAdapter:
             or not observation.authoritative
             or observation.issue_number != self.source.issue_number
             or observation.state != "open"
-            or observation.routing != _routing_identity(self.source)
+            or not self._routing_is_current_or_accepted_successor(observation.routing)
             or observation.change != self.authorized_change
         ):
             return None
         return observation
+
+    def _accepted_successor_routing(self) -> tuple[str, str] | None:
+        """Derive the only frontier an immutable accepted intent may resume on."""
+
+        if not self.accepted_intent or not isinstance(self.expected_result_kind, str):
+            return None
+        try:
+            successor = next_action(
+                ModelAction(self.source.action),
+                TypedResult(ResultKind(self.expected_result_kind)),
+            )
+        except (TypeError, ValueError):
+            return None
+        return None if successor is None else (role_for(successor).value, successor.value)
+
+    def _routing_is_current_or_accepted_successor(
+        self,
+        routing: tuple[str, str] | None,
+    ) -> bool:
+        return routing == _routing_identity(self.source) or (
+            self.accepted_intent and routing == self._accepted_successor_routing()
+        )
 
     def _source_still_current(self) -> bool:
         return self._authorized_issue_observation() is not None
@@ -2410,7 +2453,6 @@ class GitHubEffectAdapter:
             or observation.issue_number != self.source.issue_number
             or observation.state != "open"
             or observation.change != self.authorized_change
-            or observation.routing != (self.source.role, self.source.action)
             or self.current_revision is None
         ):
             return False
@@ -2425,6 +2467,15 @@ class GitHubEffectAdapter:
             except ValueError:
                 return False
             expected_routing = (role_for(target).value, target.value)
+        at_source_frontier = observation.routing == (self.source.role, self.source.action)
+        at_accepted_successor_frontier = (
+            self.accepted_intent
+            and expected_routing is not None
+            and observation.routing == expected_routing
+            and expected_routing == self._accepted_successor_routing()
+        )
+        if not at_source_frontier and not at_accepted_successor_frontier:
+            return False
         formal_comments = self._formal_comments()
         lifecycle_events = self._formal_lifecycle_events() if formal_comments else ()
         qualification_input = build_qualification_input(
@@ -2441,6 +2492,7 @@ class GitHubEffectAdapter:
             expected_result_kind=self.expected_result_kind,
             expected_application_correlation=self._expected_formal_correlation(),
             lifecycle_events=lifecycle_events,
+            allow_successor_frontier=at_accepted_successor_frontier,
         )
         current_revision = self.current_revision
         if current_revision is not None:

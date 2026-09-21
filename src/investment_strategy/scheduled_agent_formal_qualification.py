@@ -88,6 +88,7 @@ class QualificationInput:
     recovery_events: tuple[AdministrativeRecoveryEvent, ...]
     lifecycle_events: tuple[IssueLifecycleEvent, ...]
     authorization_ancestry: tuple[tuple[str, str], ...] = ()
+    allow_successor_frontier: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -379,6 +380,7 @@ def build_qualification_input(
     expected_application_correlation: str | None = None,
     lifecycle_events: Iterable[Mapping[str, object]] = (),
     authorization_ancestry: tuple[tuple[str, str], ...] = (),
+    allow_successor_frontier: bool = False,
 ) -> QualificationInput:
     """Reconstruct one complete current/pending qualification input."""
 
@@ -438,6 +440,7 @@ def build_qualification_input(
         recovery_events=tuple(recovery_events),
         lifecycle_events=lifecycle_tuple,
         authorization_ancestry=authorization_ancestry,
+        allow_successor_frontier=allow_successor_frontier,
     )
 
 
@@ -708,6 +711,7 @@ def qualify_current_formal_consequence(
         or qualification.issue_number <= 0
         or qualification.state not in {"open", "closed"}
         or qualification.mode not in {"current", "pending"}
+        or not isinstance(qualification.allow_successor_frontier, bool)
         or not _valid_sha(qualification.current_revision)
     ):
         return _indeterminate("qualification-input-incomplete")
@@ -784,9 +788,17 @@ def qualify_current_formal_consequence(
         return _indeterminate("pending-source-is-not-open", latest)
     if (
         qualification.source_routing is None
-        or qualification.current_routing != qualification.source_routing
         or (latest.role, latest.action) != qualification.source_routing
     ):
+        return _indeterminate("pending-source-routing-not-qualified", latest)
+    at_source_frontier = qualification.current_routing == qualification.source_routing
+    at_accepted_successor_frontier = (
+        qualification.allow_successor_frontier
+        and qualification.expected_routing is not None
+        and qualification.current_routing == qualification.expected_routing
+        and qualification.current_routing != qualification.source_routing
+    )
+    if not at_source_frontier and not at_accepted_successor_frontier:
         return _indeterminate("pending-source-routing-not-qualified", latest)
     if qualification.expected_result_kind is None or latest.result_kind != _normalized_kind(
         qualification.expected_result_kind
@@ -801,10 +813,17 @@ def qualify_current_formal_consequence(
     latest_interval = _event_interval(latest, None, qualification.lifecycle_events)
     if latest_interval is None:
         return _indeterminate("pending-comment-lifecycle-missing", latest)
-    if any(
-        item.event in {"closed", "labeled", "reopened", "unlabeled"} for item in latest_interval
+    if at_source_frontier:
+        if any(
+            item.event in {"closed", "labeled", "reopened", "unlabeled"} for item in latest_interval
+        ):
+            return _indeterminate("pending-lifecycle-superseded", latest)
+    elif not _interval_binds_successor(
+        latest_interval,
+        qualification.expected_routing,
+        False,
     ):
-        return _indeterminate("pending-lifecycle-superseded", latest)
+        return _indeterminate("accepted-successor-lifecycle-binding-incomplete", latest)
     for index in range(len(suffix) - 1):
         if not _formal_interval_is_bound(suffix, index, qualification.lifecycle_events):
             return _indeterminate("issue-lifecycle-binding-incomplete", suffix[index])
@@ -819,6 +838,8 @@ def qualify_current_formal_consequence(
         or latest.successor != qualification.expected_routing
     ):
         return _indeterminate("pending-successor-not-qualified", latest)
+    if at_accepted_successor_frontier:
+        return _qualified("accepted-successor-postcondition-qualified", latest)
     return _qualified("pending-successor-qualified", latest)
 
 

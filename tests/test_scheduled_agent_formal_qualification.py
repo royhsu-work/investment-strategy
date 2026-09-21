@@ -141,6 +141,7 @@ def _decision(
     expected_application_correlation: str | None = None,
     lifecycle_events: list[dict[str, object]] | None = None,
     authorization_ancestry: tuple[tuple[str, str], ...] = (),
+    allow_successor_frontier: bool = False,
 ) -> QualificationDecision:
     qualification_input = build_qualification_input(
         issue_number=229,
@@ -160,8 +161,33 @@ def _decision(
             else lifecycle_events
         ),
         authorization_ancestry=authorization_ancestry,
+        allow_successor_frontier=allow_successor_frontier,
     )
     return qualify_current_formal_consequence(qualification_input)
+
+
+def test_accepted_intent_reconciles_after_successor_lifecycle_binding() -> None:
+    comment = _comment(
+        1,
+        action="finalize-change",
+        role="lead",
+        result="archive-ready",
+        successor="Reviewer / review-archive",
+        request_id=10,
+    )
+    correlation = f"application:10:229:{_CHANGE}:lead:finalize-change:archive-ready:{_REVISION}"
+    decision = _decision(
+        [comment],
+        current_routing=("reviewer", "review-archive"),
+        mode="pending",
+        expected_routing=("reviewer", "review-archive"),
+        source_routing=("lead", "finalize-change"),
+        expected_result_kind="archive-ready",
+        expected_application_correlation=correlation,
+        lifecycle_events=_lifecycle_events([comment], pending=False),
+        allow_successor_frontier=True,
+    )
+    assert decision.provenance is ObservationProvenance.QUALIFIED
 
 
 def test_current_route_requires_complete_repository_owned_binding() -> None:
