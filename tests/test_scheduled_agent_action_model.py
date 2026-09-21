@@ -6,7 +6,12 @@ import pytest
 from investment_strategy.scheduled_agent_action_model import (
     ACTION_ROLE,
     Action,
+    ActionObservation,
+    ActionSource,
     AuthoritativeObservations,
+    BoundedActionResult,
+    ApplicationRejectionKind,
+    ApplicationDisposition,
     EffectObservation,
     InvalidTransition,
     InvalidTypedResult,
@@ -20,6 +25,7 @@ from investment_strategy.scheduled_agent_action_model import (
     TypedResult,
     effect_is_current,
     next_action,
+    plan_action_application,
     render_workflow_presentation,
     role_for,
     select_work,
@@ -130,6 +136,47 @@ def test_select_work_derives_role_from_one_formal_action() -> None:
     assert decision.action is Action.REVIEW_OPENSPEC
     assert decision.role is Role.REVIEWER
 
+
+
+def test_accepted_intent_reconciles_only_its_derived_successor_frontier() -> None:
+    revision = "a" * 40
+    source = ActionSource(
+        138,
+        "simplify-scheduled-agent-control-plane",
+        Action.FINALIZE_CHANGE,
+        revision,
+    )
+    result = BoundedActionResult(
+        138,
+        "simplify-scheduled-agent-control-plane",
+        Action.FINALIZE_CHANGE,
+        TypedResult(ResultKind.ARCHIVE_READY),
+    )
+    successor_frontier = ActionObservation(
+        138,
+        "simplify-scheduled-agent-control-plane",
+        Action.REVIEW_ARCHIVE,
+        revision,
+    )
+    accepted = plan_action_application(
+        source,
+        result,
+        successor_frontier,
+        allow_successor_frontier=True,
+    )
+    assert accepted.disposition is ApplicationDisposition.ACCEPT
+    assert accepted.successor is Action.REVIEW_ARCHIVE
+
+    unrelated_frontier = replace(successor_frontier, action=Action.REVIEW_OPENSPEC)
+    rejected = plan_action_application(
+        source,
+        result,
+        unrelated_frontier,
+        allow_successor_frontier=True,
+    )
+    assert rejected.disposition is ApplicationDisposition.REJECT
+    assert rejected.rejection is not None
+    assert rejected.rejection.classification is ApplicationRejectionKind.CURRENT_ACTION_MISMATCH
 
 def test_select_work_uses_deterministic_preactivation_order() -> None:
     decision = select_work(

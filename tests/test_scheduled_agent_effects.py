@@ -270,6 +270,32 @@ def test_accepted_intent_does_not_reverify_candidate_during_phase_b() -> None:
     assert applied[-1].derived
 
 
+
+def test_accepted_intent_reconciles_after_derived_successor_frontier() -> None:
+    source = WorkerRequest(138, "lead", "finalize-change")
+    batch = parse_effect_batch(
+        _raw(
+            action="finalize-change",
+            role="lead",
+            result_kind="archive-ready",
+        ),
+        source,
+    )
+    applied: list[StagedEffect] = []
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=lambda: _preflight(action="review-archive"),
+        effect_guard=lambda _effect: True,
+        apply_effect=applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        accepted_intent=True,
+    )
+    assert result.applied
+    assert [effect.kind for effect in applied] == ["routing-transition"]
+    assert json.loads(applied[0].payload_json)["action"] == "review-archive"
+
+
 def test_accepted_intent_never_persists_a_rejection_downgrade() -> None:
     source = WorkerRequest(138, "executor", "implement-change")
     batch = parse_effect_batch(_raw(), source)

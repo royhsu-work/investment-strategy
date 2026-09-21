@@ -652,6 +652,8 @@ def plan_action_application(
     source: ActionSource,
     result: BoundedActionResult,
     current: ActionObservation,
+    *,
+    allow_successor_frontier: bool = False,
 ) -> ActionApplicationDecision:
     """Freshly reauthorize one typed result and derive at most one successor."""
 
@@ -737,7 +739,7 @@ def plan_action_application(
             source.action,
             current.action,
         )
-    if current_action != source.action:
+    if current_action != source.action and not allow_successor_frontier:
         return _application_rejection(
             source,
             result,
@@ -762,6 +764,16 @@ def plan_action_application(
             ApplicationRejectionKind.ILLEGAL_TRANSITION,
             "legal-transition",
             result.result.kind,
+        )
+    if current_action != source.action and (
+        successor is None or current_action is not successor
+    ):
+        return _application_rejection(
+            source,
+            result,
+            ApplicationRejectionKind.CURRENT_ACTION_MISMATCH,
+            source.action,
+            current_action,
         )
     return ActionApplicationDecision(
         disposition=ApplicationDisposition.ACCEPT,
