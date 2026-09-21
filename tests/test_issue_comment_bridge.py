@@ -612,7 +612,7 @@ def test_duplicate_formal_reemission_of_one_accepted_intent_releases_successor(
         {
             "id": 100 + index * 10,
             "event": "commented",
-            "created_at": f"2026-09-18T02:00:{10 + index:02d}Z",
+            "created_at": f"2026-09-18T02:00:{12 + index:02d}Z",
         }
         for index in range(1, duplicate_count)
     )
