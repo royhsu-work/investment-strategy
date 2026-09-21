@@ -53,7 +53,9 @@ from investment_strategy.scheduled_agent_carrier import (
 )
 from investment_strategy.scheduled_agent_effect_contract import (
     GITHUB_MUTATION_KIND,
+    EvidenceTarget,
     allowed_github_mutation_operations,
+    consequence_spec_for,
 )
 from investment_strategy.scheduled_agent_formal_qualification import (
     build_qualification_input,
@@ -140,6 +142,7 @@ _APPLICATION_DECISION_FIELDS = (
     "Reason",
 )
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_SEMANTIC_INTENT_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -294,6 +297,22 @@ def parse_application_outcome(body: object) -> ApplicationOutcomeRecord | None:
 
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def semantic_intent_payload(raw_worker_result: str) -> str:
+    """Strip invocation-local repository controls from a new accepted intent."""
+
+    try:
+        decoded = json.loads(raw_worker_result)
+    except json.JSONDecodeError:
+        return raw_worker_result
+    if (
+        not isinstance(decoded, dict)
+        or decoded.get("_semantic_intent_version") != _SEMANTIC_INTENT_VERSION
+    ):
+        return raw_worker_result
+    decoded["requested_effects"] = []
+    return json.dumps(decoded, sort_keys=True, separators=(",", ":"))
 
 
 def _positive_comment_id(value: object) -> int | None:
@@ -948,6 +967,91 @@ def _references_issue(body: object, issue_number: int) -> bool:
     )
 
 
+def archive_pr_readiness_complete(
+    *,
+    repository: str,
+    token: str,
+    issue_number: int,
+    change: str,
+    current_revision: str,
+) -> bool:
+    """Prove the complete repository consequence for archive-ready.
+
+    Archive workflow success and branch existence are necessary inputs, not
+    the predecessor commit.  The commit predicate includes one exact open,
+    non-Draft, non-closing Archive PR with the current branch head and current
+    default-branch base.
+    """
+
+    if (
+        not _valid_sha(current_revision)
+        or not isinstance(change, str)
+        or change in {"", "unset"}
+        or not isinstance(issue_number, int)
+        or isinstance(issue_number, bool)
+        or issue_number <= 0
+    ):
+        return False
+    repository_payload = _github_json(repository, token, "")
+    default_branch = (
+        repository_payload.get("default_branch")
+        if isinstance(repository_payload, Mapping)
+        else None
+    )
+    if not _valid_branch(default_branch):
+        return False
+    branch = _archive_branch(change)
+    if branch is None:
+        return False
+    branch_ref = _github_json(
+        repository,
+        token,
+        _ref_api_path(f"refs/heads/{branch}"),
+        allow_not_found=True,
+    )
+    branch_object = branch_ref.get("object") if isinstance(branch_ref, Mapping) else None
+    branch_sha = branch_object.get("sha") if isinstance(branch_object, Mapping) else None
+    if not _valid_sha(branch_sha):
+        return False
+    owner = repository.split("/", 1)[0] if "/" in repository else ""
+    query = (
+        "pulls?state=all&head="
+        + quote(f"{owner}:{branch}", safe="")
+        + "&base="
+        + quote(cast(str, default_branch), safe="")
+        + "&per_page=100"
+    )
+    candidates = _github_json(repository, token, query)
+    if not isinstance(candidates, list) or len(candidates) != 1:
+        return False
+    summary = candidates[0]
+    if not isinstance(summary, Mapping):
+        return False
+    number = summary.get("number")
+    if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+        return False
+    pull_request = _github_json(repository, token, f"pulls/{number}")
+    if not isinstance(pull_request, Mapping):
+        return False
+    head = pull_request.get("head")
+    base = pull_request.get("base")
+    if not isinstance(head, Mapping) or not isinstance(base, Mapping):
+        return False
+    return (
+        pull_request.get("state") == "open"
+        and pull_request.get("merged") is not True
+        and pull_request.get("draft") is False
+        and pull_request.get("title") == f"Archive OpenSpec change {change}"
+        and _references_issue(pull_request.get("body"), issue_number)
+        and head.get("ref") == branch
+        and head.get("sha") == branch_sha
+        and base.get("ref") == default_branch
+        and base.get("sha") == current_revision
+        and _repository_full_name(head.get("repo")) == repository
+        and _repository_full_name(base.get("repo")) == repository
+    )
+
+
 def _repository_full_name(value: object) -> str | None:
     if not isinstance(value, Mapping):
         return None
@@ -1239,10 +1343,14 @@ def apply_effect_batch(
         if not effect_guard(effect):
             return rejected("effect precondition rejected")
 
-    if persist_application_decision is not None and not persist_application_decision(
-        typed_decision,
-        "ACCEPTED",
-        "application accepted",
+    if (
+        not accepted_intent
+        and persist_application_decision is not None
+        and not persist_application_decision(
+            typed_decision,
+            "ACCEPTED",
+            "application accepted",
+        )
     ):
         return ApplyResult(False, "application decision postcondition not observed")
 
@@ -1607,6 +1715,25 @@ class GitHubEffectAdapter:
 
     def _expected_formal_correlation(self) -> str | None:
         return self.pending_application_correlation or self._formal_correlation()
+
+    def _formal_consequence_ready(self) -> bool:
+        """Require successor-ready repository evidence before formal commit."""
+
+        if self.authorized_change == "unset" or self.expected_result_kind is None:
+            return True
+        try:
+            spec = consequence_spec_for(self.source.action, self.expected_result_kind)
+        except ValueError:
+            return False
+        if spec.evidence_target is EvidenceTarget.ARCHIVE_PR_HEAD:
+            return archive_pr_readiness_complete(
+                repository=self.repository,
+                token=self.token,
+                issue_number=self.source.issue_number,
+                change=self.authorized_change,
+                current_revision=cast(str, self.current_revision),
+            )
+        return True
 
     def _pull_request_matches_source(
         self,
@@ -2970,13 +3097,14 @@ class GitHubEffectAdapter:
 
         if self.request_comment_id is None:
             return False
+        stored_worker_result = semantic_intent_payload(raw_worker_result)
         body = render_application_decision_body(
             request_comment_id=self.request_comment_id,
             request_body=request_body,
             authorization_revision=authorization_revision,
             decision=decision,
             disposition=disposition,
-            raw_worker_result=raw_worker_result,
+            raw_worker_result=stored_worker_result,
             reason=reason,
         )
         comments = _paged_github_list(
@@ -3005,7 +3133,8 @@ class GitHubEffectAdapter:
                 or existing.action != expected_source.action.value
                 or existing.change != expected_source.change
                 or existing.result_kind != expected_result_kind
-                or existing.worker_result_sha256 != _sha256_text(raw_worker_result)
+                or existing.worker_result_sha256
+                not in {_sha256_text(raw_worker_result), _sha256_text(stored_worker_result)}
             ):
                 raise RuntimeError("application decision identity changed")
 
@@ -3028,7 +3157,11 @@ class GitHubEffectAdapter:
             raise RuntimeError("validated effect payload became unavailable")
 
         if effect.kind == "issue-comment":
-            body = self._application_bound_comment_body(cast(str, payload["body"]))
+            body = cast(str, payload["body"])
+            marker = body.splitlines()[0].removeprefix("## ").strip() if body else ""
+            if marker in _FORMAL_RESULT_MARKERS and not self._formal_consequence_ready():
+                raise RuntimeError("formal result consequence is not successor-ready")
+            body = self._application_bound_comment_body(body)
             existing = self._existing_issue_comment(body)
             if existing is not None:
                 self._comment_ids[effect] = existing
@@ -3046,6 +3179,8 @@ class GitHubEffectAdapter:
             return
 
         if effect.kind == "routing-transition":
+            if not self._formal_consequence_ready():
+                raise RuntimeError("formal consequence is not successor-ready")
             if not _routing_transition_structurally_valid(
                 self.source,
                 payload,
@@ -3248,6 +3383,7 @@ class GitHubEffectAdapter:
             return bool(
                 target_action is not None
                 and target_role is not None
+                and self._formal_consequence_ready()
                 and observation is not None
                 and observation.authoritative
                 and observation.state == "open"
@@ -3274,6 +3410,105 @@ class GitHubEffectAdapter:
             payload = _effect_payload(effect)
             return payload is not None and self._observe_github_mutation(effect, payload)
 
+        return False
+
+
+def consequence_postconditions_complete(
+    raw_worker_result: str,
+    *,
+    source: WorkerRequest,
+    repository: str,
+    token: str,
+    current_revision: str,
+    authorized_change: str | None = None,
+    request_comment_id: int | None = None,
+) -> bool:
+    """Prove the affirmative consequence contract from fresh repository state.
+
+    The accepted worker envelope is only the immutable semantic input.  This
+    function deliberately does not require its historical repository-control
+    effect list to be replayable.  A legacy envelope remains readable as
+    migration evidence, while the legal transition's consequence spec owns
+    the current commit predicate.
+    """
+
+    try:
+        batch = parse_effect_batch(
+            raw_worker_result,
+            source,
+            authorized_change=authorized_change,
+        )
+        if batch.typed_result is None:
+            return False
+        spec = consequence_spec_for(
+            batch.typed_result.action,
+            batch.typed_result.result.kind,
+        )
+        change = batch.typed_result.change
+        if spec.evidence_target is EvidenceTarget.ARCHIVE_PR_HEAD:
+            return archive_pr_readiness_complete(
+                repository=repository,
+                token=token,
+                issue_number=source.issue_number,
+                change=change,
+                current_revision=current_revision,
+            )
+        if spec.evidence_target is EvidenceTarget.DEFAULT_BRANCH:
+            # The canonical formal-result observer and derived routing are
+            # separate callers.  Once the formal event is qualified, the
+            # default branch itself is the affirmative evidence target.
+            return _valid_sha(current_revision)
+        if spec.evidence_target is EvidenceTarget.MATERIALIZED_REVISION:
+            materializations = tuple(
+                effect
+                for effect in batch.effects
+                if effect.kind == GITHUB_MUTATION_KIND
+                and (_effect_payload(effect) or {}).get("operation") == "application-materialize"
+            )
+            if len(materializations) != 1:
+                return False
+            adapter = GitHubEffectAdapter(
+                repository,
+                token,
+                source,
+                authorized_change=change,
+                current_revision=current_revision,
+                expected_result_kind=batch.typed_result.result.kind.value,
+                request_comment_id=request_comment_id,
+            )
+            payload = _effect_payload(materializations[0])
+            return payload is not None and adapter._observe_github_mutation(
+                materializations[0],
+                payload,
+            )
+
+        # Implementation and merged-carrier transitions are qualified by the
+        # existing carrier owner.  The result target is positive; no
+        # action-specific default-branch fallback is used here.
+        adapter = GitHubEffectAdapter(
+            repository,
+            token,
+            source,
+            authorized_change=change,
+            current_revision=current_revision,
+            expected_result_kind=batch.typed_result.result.kind.value,
+            request_comment_id=request_comment_id,
+        )
+        for effect in batch.effects:
+            payload = _effect_payload(effect)
+            if effect.kind == GITHUB_MUTATION_KIND and payload is not None:
+                if payload.get("operation") == "application-materialize":
+                    if not adapter._observe_github_mutation(effect, payload):
+                        return False
+                elif payload.get("operation") in {
+                    "pull-request-create",
+                    "pull-request-update",
+                    "pull-request-ready",
+                    "pull-request-merge",
+                } and not adapter._observe_github_mutation(effect, payload):
+                    return False
+        return True
+    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return False
 
 
@@ -3377,6 +3612,7 @@ def run_effect_application(
         allow_pending_continuation=allow_pending_continuation,
         carrier_plan_for_effect=adapter.carrier_plan_if_required,
         effect_rejection=adapter.effect_rejection,
+        accepted_intent=accepted_intent,
     )
     return batch, result
 

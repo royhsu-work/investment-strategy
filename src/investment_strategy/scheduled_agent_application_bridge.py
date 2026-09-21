@@ -10,10 +10,11 @@ import json
 import os
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, cast
+from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
@@ -29,9 +30,18 @@ from investment_strategy.scheduled_agent_application_materialization import (
 )
 from investment_strategy.scheduled_agent_carrier import CarrierRequired, carrier_plan_document
 from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
+from investment_strategy.scheduled_agent_effect_contract import (
+    EvidenceTarget,
+    consequence_spec_for,
+)
 from investment_strategy.scheduled_agent_effects import (
+    GITHUB_MUTATION_KIND,
     ApplicationDecisionRecord,
     ApplyResult,
+    GitHubEffectAdapter,
+    _archive_branch,
+    _archive_ref,
+    _source_branch,
     formal_application_correlation,
     parse_application_decision,
 )
@@ -812,16 +822,20 @@ def _materialization_effects(
     return tuple(effects)
 
 
-_DEFAULT_BRANCH_RESULT_ACTIONS = frozenset(
-    {
-        "explore-change",
-        "propose-change",
-        "resolve-question",
-        "finalize-change",
-        "finalize-archive",
-        "review-openspec",
-    }
-)
+def _fresh_branch_head(
+    repository: str,
+    token: str,
+    branch: str,
+) -> str | None:
+    """Read one branch head as current evidence, never as worker authority."""
+
+    try:
+        payload = _github_json(repository, token, f"git/ref/heads/{quote(branch, safe='/')}")
+    except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return None
+    obj = payload.get("object") if isinstance(payload, Mapping) else None
+    sha = obj.get("sha") if isinstance(obj, Mapping) else None
+    return sha if _SHA.fullmatch(sha or "") is not None else None
 
 
 def _machine_result_revision(
@@ -843,35 +857,44 @@ def _machine_result_revision(
     """
 
     try:
-        decoded = json.loads(raw_worker_result)
-    except json.JSONDecodeError:
-        decoded = None
-    legacy_identity = isinstance(decoded, Mapping) and all(
-        key in decoded for key in ("issue_number", "role", "action", "change")
-    )
-    try:
         worker = parse_worker_result(raw_worker_result, source, authorized_change=change)
     except (TypeError, ValueError, json.JSONDecodeError):
         worker = None
-    if worker is not None and legacy_identity:
+    try:
+        decoded = json.loads(raw_worker_result)
+    except json.JSONDecodeError:
+        decoded = None
+    if (
+        worker is not None
+        and isinstance(decoded, Mapping)
+        and decoded.get("_semantic_intent_version") != 2
+    ):
+        # Historical envelopes carried a formal work-product revision.  It is
+        # retained as migration evidence only; all repository controls still
+        # pass through the fresh planner below.  New semantic intents never
+        # enter this compatibility branch.
         legacy_body = _formal_result_body(worker, source=source)
         legacy_revision = None if legacy_body is None else _field(legacy_body, "Revision")
         if _SHA.fullmatch(legacy_revision or "") is not None:
-            # Explicit migration boundary: historical workers already carried
-            # a formal work-product identity. New semantic-only ingress never
-            # enters this branch and is resolved from the exact repository
-            # carrier below.
             return cast(str, legacy_revision)
 
     materializations = _materialization_effects(raw_worker_result, source, change=change)
     if len(materializations) > 1:
         raise RuntimeError("EFFECT_REQUEST contains ambiguous materialization effects")
     if not materializations:
-        if source.action in _DEFAULT_BRANCH_RESULT_ACTIONS:
-            # Semantic and lifecycle Actions read the current default branch;
-            # they have no implementation PR carrier to resolve. Applying the
-            # implementation-carrier fallback here made finalize-change fail
-            # after a successful implementation merge.
+        if worker is None:
+            return current_revision
+        spec = consequence_spec_for(source.action, worker.typed_result.result.kind)
+        if spec.evidence_target is EvidenceTarget.DEFAULT_BRANCH:
+            return current_revision
+        if spec.evidence_target is EvidenceTarget.ARCHIVE_PR_HEAD:
+            branch = _archive_branch(change)
+            return (
+                current_revision
+                if branch is None
+                else (_fresh_branch_head(repository, token, branch) or current_revision)
+            )
+        if spec.evidence_target is EvidenceTarget.MERGED_PR_HEAD:
             return current_revision
         return _machine_carrier_head(
             repository=repository,
@@ -992,6 +1015,23 @@ def _formal_result_body(
             continue
         bodies.append(body)
     return bodies[0] if len(bodies) == 1 else None
+
+
+def _formal_body_for_worker(
+    worker_result: WorkerActionResult,
+    *,
+    source: WorkerRequest,
+) -> str | None:
+    """Read a formal projection from effects or the rebuilt intent envelope."""
+
+    body = _formal_result_body(worker_result, source=source)
+    if body is not None:
+        return body
+    return (
+        worker_result.result_content
+        if _marker(worker_result.result_content) in _FORMAL_RESULT_MARKERS
+        else None
+    )
 
 
 def _expected_formal_marker(source: WorkerRequest) -> str:
@@ -1127,6 +1167,603 @@ def _application_owned_worker_result(
     decoded["result_content"] = body
     decoded["requested_effects"] = ordered
     return json.dumps(decoded, sort_keys=True, separators=(",", ":"))
+
+
+def _effect_payload(effect: Mapping[str, object]) -> Mapping[str, object] | None:
+    payload = effect.get("payload_json")
+    if not isinstance(payload, str):
+        return None
+    try:
+        decoded = json.loads(payload)
+    except json.JSONDecodeError:
+        return None
+    return cast(Mapping[str, object], decoded) if isinstance(decoded, Mapping) else None
+
+
+def _effect_document(kind: str, payload: Mapping[str, object]) -> dict[str, str]:
+    return {
+        "kind": kind,
+        "payload_json": json.dumps(dict(payload), sort_keys=True),
+    }
+
+
+def _fresh_issue(repository: str, token: str, issue_number: int) -> Mapping[str, object]:
+    issue = _github_json(repository, token, f"issues/{issue_number}")
+    if not isinstance(issue, Mapping):
+        raise RuntimeError("fresh application Issue observation is unavailable")
+    return issue
+
+
+def _fresh_default_branch(repository: str, token: str) -> str:
+    payload = _github_json(repository, token, "")
+    branch = payload.get("default_branch") if isinstance(payload, Mapping) else None
+    if not isinstance(branch, str) or not branch:
+        raise RuntimeError("fresh application default branch is unavailable")
+    return branch
+
+
+def _fresh_pull_requests(
+    repository: str,
+    token: str,
+    *,
+    branch: str,
+    default_branch: str,
+) -> tuple[Mapping[str, object], ...]:
+    owner = repository.split("/", 1)[0]
+    query = (
+        "pulls?state=all&head="
+        + quote(f"{owner}:{branch}", safe="")
+        + "&base="
+        + quote(default_branch, safe="")
+        + "&per_page=100"
+    )
+    payload = _github_json(repository, token, query)
+    if not isinstance(payload, list):
+        raise RuntimeError("fresh application pull-request enumeration is unavailable")
+    candidates: list[Mapping[str, object]] = []
+    for item in payload:
+        if not isinstance(item, Mapping):
+            raise RuntimeError("fresh application pull-request enumeration is malformed")
+        number = item.get("number")
+        if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+            continue
+        detail = _github_json(repository, token, f"pulls/{number}")
+        if not isinstance(detail, Mapping):
+            raise RuntimeError("fresh application pull-request observation is unavailable")
+        candidates.append(detail)
+    if len(candidates) > 1:
+        raise RuntimeError("fresh application pull-request carrier is ambiguous")
+    return tuple(candidates)
+
+
+def _fresh_archive_state(
+    repository: str,
+    token: str,
+    *,
+    issue_number: int,
+    change: str,
+    current_revision: str,
+    default_branch: str,
+) -> tuple[str, str | None, str | None]:
+    """Return ``missing-branch``, ``missing-pr``, ``ready`` or ``conflict``."""
+
+    branch = _archive_branch(change)
+    if branch is None:
+        raise RuntimeError("archive consequence branch identity is invalid")
+    branch_sha = _fresh_branch_head(repository, token, branch)
+    if branch_sha is None:
+        return "missing-branch", branch, None
+    candidates = _fresh_pull_requests(
+        repository,
+        token,
+        branch=branch,
+        default_branch=default_branch,
+    )
+    if not candidates:
+        return "missing-pr", branch, branch_sha
+    pull_request = candidates[0]
+    head = pull_request.get("head")
+    base = pull_request.get("base")
+    head_repo = head.get("repo") if isinstance(head, Mapping) else None
+    base_repo = base.get("repo") if isinstance(base, Mapping) else None
+    ready = (
+        pull_request.get("state") == "open"
+        and pull_request.get("merged") is not True
+        and pull_request.get("draft") is False
+        and isinstance(head, Mapping)
+        and isinstance(base, Mapping)
+        and head.get("ref") == branch
+        and head.get("sha") == branch_sha
+        and base.get("ref") == default_branch
+        and base.get("sha") == current_revision
+        and isinstance(head_repo, Mapping)
+        and head_repo.get("full_name") == repository
+    )
+    if ready:
+        ready = (
+            isinstance(base, Mapping)
+            and isinstance(base_repo, Mapping)
+            and base_repo.get("full_name") == repository
+            and pull_request.get("title") == f"Archive OpenSpec change {change}"
+            and isinstance(pull_request.get("body"), str)
+            and re.search(
+                rf"(?mi)^\s*Refs\s+#{issue_number}\s*$",
+                cast(str, pull_request["body"]),
+            )
+            is not None
+        )
+    return ("ready" if ready else "conflict"), branch, branch_sha
+
+
+def _archive_pr_body(change: str, issue_number: int) -> str:
+    return (
+        f"Archive OpenSpec change `{change}`.\n\n"
+        "This pull request is the repository-owned final archive snapshot. "
+        "Its non-closing linkage preserves traceability while the coordination Issue remains open; "
+        "independent Reviewer PASS, unchanged-head verification, current gates, and Lead terminal "
+        "finalization remain required.\n\n"
+        f"Refs #{issue_number}\n"
+    )
+
+
+def _archive_pr_create_payload(
+    *,
+    issue_number: int,
+    change: str,
+    branch: str,
+    branch_sha: str,
+    default_branch: str,
+) -> dict[str, object]:
+    return {
+        "issue_number": issue_number,
+        "operation": "pull-request-create",
+        "title": f"Archive OpenSpec change {change}",
+        "body": _archive_pr_body(change, issue_number),
+        "head": branch,
+        "base": default_branch,
+        "draft": False,
+        "expected_head_sha": branch_sha,
+    }
+
+
+def _fresh_workflow_dispatch_payload(
+    *,
+    issue_number: int,
+    change: str,
+    current_revision: str,
+    default_branch: str,
+) -> dict[str, object]:
+    return {
+        "issue_number": issue_number,
+        "operation": "workflow-dispatch",
+        "workflow_id": "openspec-archive.yml",
+        "ref": default_branch,
+        "inputs": {
+            "change": change,
+            "issue": str(issue_number),
+            "revision": current_revision,
+            "request_key": f"archive-{issue_number}-{current_revision}",
+        },
+    }
+
+
+def _fresh_control_effect(
+    *,
+    raw_effect: Mapping[str, object],
+    source: WorkerRequest,
+    change: str,
+    repository: str,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+) -> Mapping[str, object] | None:
+    """Rebind one control operation to current repository identity/state."""
+
+    payload = _effect_payload(raw_effect)
+    if payload is None or payload.get("issue_number") != source.issue_number:
+        raise RuntimeError("application control effect payload is invalid")
+    operation = payload.get("operation")
+    if not isinstance(operation, str):
+        raise RuntimeError("application control effect operation is invalid")
+    if operation == "workflow-dispatch":
+        derived = _fresh_workflow_dispatch_payload(
+            issue_number=source.issue_number,
+            change=change,
+            current_revision=current_revision,
+            default_branch=default_branch,
+        )
+        adapter = GitHubEffectAdapter(
+            repository,
+            token,
+            source,
+            authorized_change=change,
+            current_revision=current_revision,
+            expected_result_kind=None,
+        )
+        return None if adapter._existing_workflow_dispatch(derived) is not None else derived
+    if operation == "application-materialize":
+        # Materialization content/files are immutable semantic inputs.  The
+        # current effect guard still rechecks repository identity and base
+        # revision before the mutation.
+        return payload
+    if operation == "issue-label-add":
+        issue = _fresh_issue(repository, token, source.issue_number)
+        labels = issue.get("labels")
+        names = (
+            {
+                item.get("name")
+                for item in labels
+                if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+            }
+            if isinstance(labels, list)
+            else set()
+        )
+        return (
+            None
+            if payload.get("label") in names
+            else {
+                "issue_number": source.issue_number,
+                "operation": operation,
+                "label": payload.get("label"),
+            }
+        )
+    if operation == "issue-update":
+        issue = _fresh_issue(repository, token, source.issue_number)
+        fields = payload.get("fields")
+        if not isinstance(fields, Mapping):
+            raise RuntimeError("application issue-update fields are invalid")
+        if all(issue.get(key) == value for key, value in fields.items()):
+            return None
+        return {
+            "issue_number": source.issue_number,
+            "operation": operation,
+            "expected": {key: issue.get(key) for key in fields},
+            "fields": dict(fields),
+        }
+    if operation == "pull-request-create":
+        requested_head = payload.get("head")
+        archive = source.action == "finalize-change" and (
+            requested_head == _archive_branch(change) or requested_head is None
+        )
+        branch = _archive_branch(change) if archive else _source_branch(change)
+        if branch is None:
+            raise RuntimeError("application pull-request branch identity is invalid")
+        branch_sha = _fresh_branch_head(repository, token, branch)
+        if branch_sha is None:
+            return None
+        existing = _fresh_pull_requests(
+            repository,
+            token,
+            branch=branch,
+            default_branch=default_branch,
+        )
+        if existing:
+            current = existing[0]
+            current_head = current.get("head")
+            current_base = current.get("base")
+            if (
+                current.get("state") == "open"
+                and current.get("merged") is not True
+                and current.get("draft") is False
+                and isinstance(current_head, Mapping)
+                and isinstance(current_base, Mapping)
+                and current_head.get("sha") == branch_sha
+                and current_base.get("sha") == current_revision
+            ):
+                return None
+            raise RuntimeError("existing pull-request carrier is a material conflict")
+        if archive:
+            return _archive_pr_create_payload(
+                issue_number=source.issue_number,
+                change=change,
+                branch=branch,
+                branch_sha=branch_sha,
+                default_branch=default_branch,
+            )
+        title = payload.get("title")
+        body = payload.get("body", f"Refs #{source.issue_number}")
+        if not isinstance(title, str) or not title.strip() or not isinstance(body, str):
+            raise RuntimeError("application pull-request content is invalid")
+        return {
+            "issue_number": source.issue_number,
+            "operation": operation,
+            "title": title,
+            "body": body,
+            "head": branch,
+            "base": default_branch,
+            "draft": payload.get("draft", False),
+        }
+    if operation in {
+        "pull-request-update",
+        "pull-request-ready",
+        "pull-request-merge",
+        "ref-delete",
+    }:
+        branch = (
+            _archive_branch(change)
+            if source.action in {"review-archive", "merge-archive-pr"}
+            else _source_branch(change)
+        )
+        if branch is None:
+            raise RuntimeError("application carrier branch identity is invalid")
+        candidates: tuple[Mapping[str, object], ...]
+        requested_number = payload.get("number")
+        if (
+            operation != "ref-delete"
+            and isinstance(requested_number, int)
+            and not isinstance(requested_number, bool)
+            and requested_number > 0
+        ):
+            detail = _github_json(repository, token, f"pulls/{requested_number}")
+            candidates = (detail,) if isinstance(detail, Mapping) else ()
+        else:
+            candidates = _fresh_pull_requests(
+                repository,
+                token,
+                branch=branch,
+                default_branch=default_branch,
+            )
+        if operation == "ref-delete":
+            ref = (
+                _archive_ref(change)
+                if source.action == "merge-archive-pr"
+                else f"refs/heads/{branch}"
+            )
+            head_sha = _fresh_branch_head(repository, token, branch)
+            return (
+                None
+                if head_sha is None
+                else {
+                    "issue_number": source.issue_number,
+                    "operation": operation,
+                    "ref": ref,
+                    "expected_sha": head_sha,
+                }
+            )
+        if len(candidates) != 1:
+            raise RuntimeError("application carrier is missing or ambiguous")
+        current = candidates[0]
+        number = current.get("number")
+        head = current.get("head")
+        if not isinstance(number, int) or not isinstance(head, Mapping):
+            raise RuntimeError("application carrier identity is incomplete")
+        head_sha = head.get("sha")
+        if not isinstance(head_sha, str) or _SHA.fullmatch(head_sha) is None:
+            raise RuntimeError("application carrier head is incomplete")
+        if operation == "pull-request-update":
+            fields = payload.get("fields")
+            if not isinstance(fields, Mapping):
+                raise RuntimeError("application pull-request-update fields are invalid")
+            return {
+                "issue_number": source.issue_number,
+                "operation": operation,
+                "number": number,
+                "expected_head_sha": head_sha,
+                "fields": dict(fields),
+            }
+        if operation == "pull-request-ready":
+            if current.get("draft") is False:
+                return None
+            return {
+                "issue_number": source.issue_number,
+                "operation": operation,
+                "number": number,
+                "expected_head_sha": head_sha,
+            }
+        return {
+            "issue_number": source.issue_number,
+            "operation": operation,
+            "number": number,
+            "expected_head_sha": head_sha,
+            "merge_method": payload.get("merge_method", "merge"),
+            **(
+                {
+                    "commit_title": payload["commit_title"],
+                    "commit_message": payload["commit_message"],
+                }
+                if "commit_title" in payload and "commit_message" in payload
+                else {}
+            ),
+        }
+    raise RuntimeError(f"unsupported application control operation: {operation}")
+
+
+def _fresh_application_worker_result(
+    raw_worker_result: str,
+    *,
+    source: WorkerRequest,
+    change: str,
+    repository: str,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+    request_comment_id: int,
+) -> str:
+    """Reconcile fresh repository consequences from immutable semantic input."""
+
+    try:
+        result_revision = _machine_result_revision(
+            raw_worker_result,
+            source,
+            change=change,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+        )
+    except RuntimeError:
+        # Materialization is an interruptible repository consequence.  Before
+        # its exact validation target is observed, the formal result remains
+        # pending and is not eligible for commit; keep the fresh default
+        # revision as a temporary envelope binding.
+        if not _materialization_effects(raw_worker_result, source, change=change):
+            raise
+        result_revision = current_revision
+    semantic_worker = parse_worker_result(
+        raw_worker_result,
+        source,
+        authorized_change=change,
+    )
+    application_raw = _application_owned_worker_result(
+        raw_worker_result,
+        source=source,
+        change=change,
+        current_revision=current_revision,
+        result_revision=result_revision,
+        request_comment_id=request_comment_id,
+    )
+    decoded = json.loads(application_raw)
+    if not isinstance(decoded, dict):
+        raise RuntimeError("application worker result is not an object")
+    worker = parse_worker_result(application_raw, source, authorized_change=change)
+    semantic_effects: list[dict[str, str]] = []
+    control_candidates = [
+        {
+            "kind": requested.kind,
+            "payload_json": requested.payload_json,
+        }
+        for requested in worker.requested_effects
+    ]
+    is_archive_completion = (
+        source.action == "finalize-change"
+        and worker.typed_result.result.kind.value == "archive-ready"
+    )
+    if is_archive_completion:
+        state, branch, branch_sha = _fresh_archive_state(
+            repository,
+            token,
+            issue_number=source.issue_number,
+            change=change,
+            current_revision=current_revision,
+            default_branch=default_branch,
+        )
+        if state == "missing-branch":
+            semantic_effects.append(
+                _effect_document(
+                    GITHUB_MUTATION_KIND,
+                    _fresh_workflow_dispatch_payload(
+                        issue_number=source.issue_number,
+                        change=change,
+                        current_revision=current_revision,
+                        default_branch=default_branch,
+                    ),
+                )
+            )
+        elif state == "missing-pr":
+            if branch is None or branch_sha is None:
+                raise RuntimeError("archive consequence branch observation is incomplete")
+            semantic_effects.append(
+                _effect_document(
+                    GITHUB_MUTATION_KIND,
+                    _archive_pr_create_payload(
+                        issue_number=source.issue_number,
+                        change=change,
+                        branch=branch,
+                        branch_sha=branch_sha,
+                        default_branch=default_branch,
+                    ),
+                )
+            )
+        elif state == "conflict":
+            raise RuntimeError("archive pull-request consequence is contradictory")
+        else:
+            semantic_effects.extend(
+                _fresh_non_control_effects(
+                    control_candidates,
+                    source=source,
+                    change=change,
+                    repository=repository,
+                    token=token,
+                    current_revision=current_revision,
+                    default_branch=default_branch,
+                    skip_operations={"workflow-dispatch", "pull-request-create"},
+                )
+            )
+            formal = _formal_body_for_worker(
+                worker,
+                source=source,
+            )
+            if formal is None:
+                raise RuntimeError("application formal result evidence is missing")
+            semantic_effects.append(
+                _effect_document(
+                    "issue-comment",
+                    {"issue_number": source.issue_number, "body": formal},
+                )
+            )
+    else:
+        semantic_effects.extend(
+            _fresh_non_control_effects(
+                control_candidates,
+                source=source,
+                change=change,
+                repository=repository,
+                token=token,
+                current_revision=current_revision,
+                default_branch=default_branch,
+                skip_operations=set(),
+            )
+        )
+        formal = _formal_body_for_worker(worker, source=source)
+        if formal is None:
+            raise RuntimeError("application formal result evidence is missing")
+        semantic_effects.append(
+            _effect_document("issue-comment", {"issue_number": source.issue_number, "body": formal})
+        )
+    decoded["requested_effects"] = semantic_effects
+    # The accepted intent retains semantic evidence.  The formal body built
+    # above is an invocation-local projection and is rebuilt on every wake.
+    decoded["result_content"] = semantic_worker.result_content
+    decoded["_semantic_intent_version"] = 2
+    return json.dumps(decoded, sort_keys=True, separators=(",", ":"))
+
+
+def _fresh_non_control_effects(
+    candidates: Sequence[Mapping[str, object]],
+    *,
+    source: WorkerRequest,
+    change: str,
+    repository: str,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+    skip_operations: set[str],
+) -> list[dict[str, str]]:
+    effects: list[dict[str, str]] = []
+    for candidate in candidates:
+        kind = candidate.get("kind")
+        if kind == "issue-comment":
+            payload = _effect_payload(candidate)
+            if payload is None:
+                raise RuntimeError("application evidence comment payload is invalid")
+            body = payload.get("body")
+            if not isinstance(body, str):
+                raise RuntimeError("application evidence comment body is invalid")
+            marker = _marker(body)
+            if marker in _FORMAL_RESULT_MARKERS:
+                continue
+            effects.append(_effect_document("issue-comment", payload))
+            continue
+        if kind != GITHUB_MUTATION_KIND:
+            raise RuntimeError("application consequence effect kind is invalid")
+        payload = _effect_payload(candidate)
+        if payload is None:
+            raise RuntimeError("application consequence control payload is invalid")
+        operation = payload.get("operation")
+        if operation in skip_operations:
+            continue
+        fresh = _fresh_control_effect(
+            raw_effect=candidate,
+            source=source,
+            change=change,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+        )
+        if fresh is not None:
+            effects.append(_effect_document(GITHUB_MUTATION_KIND, fresh))
+    return effects
 
 
 def _rebind_application_result_revision(raw_worker_result: str, revision: str) -> str:
@@ -2089,6 +2726,13 @@ def main() -> int:
         )
     if body_mutated and accepted_intent is None:
         raise ValueError("application request current comment was mutated before ACCEPT")
+    effective_change = plan.change or (
+        accepted_intent.change
+        if accepted_intent is not None
+        else _preflight_change(preflight, plan.source)
+    )
+    if effective_change is None:
+        raise RuntimeError("application plan has no fresh machine-owned Change")
     if accepted_intent is not None:
         if accepted_intent.disposition == "REJECTED":
             _write_carrier_outputs(ApplyResult(False, "application-rejected"))
@@ -2102,27 +2746,33 @@ def main() -> int:
             != hashlib.sha256(accepted_intent.raw_worker_result.encode("utf-8")).hexdigest()
         ):
             raise RuntimeError("accepted application intent identity is invalid")
-        application_worker_result = accepted_intent.raw_worker_result
+        semantic_worker_result = accepted_intent.raw_worker_result
     else:
-        effective_change = plan.change or _preflight_change(preflight, plan.source)
-        if effective_change is None:
-            raise RuntimeError("application plan has no fresh machine-owned Change")
-        application_worker_result = _application_owned_worker_result(
-            plan.raw_worker_result,
+        semantic_worker_result = plan.raw_worker_result
+    try:
+        semantic_decoded = json.loads(semantic_worker_result)
+    except json.JSONDecodeError:
+        semantic_decoded = None
+    legacy_empty_intent = (
+        accepted_intent is not None
+        and isinstance(semantic_decoded, Mapping)
+        and semantic_decoded.get("_semantic_intent_version") != 2
+        and semantic_decoded.get("requested_effects") == []
+    )
+    application_worker_result = (
+        semantic_worker_result
+        if legacy_empty_intent
+        else _fresh_application_worker_result(
+            semantic_worker_result,
             source=plan.source,
             change=effective_change,
+            repository=repository,
+            token=token,
             current_revision=args.revision,
-            result_revision=_machine_result_revision(
-                plan.raw_worker_result,
-                plan.source,
-                change=effective_change,
-                repository=repository,
-                token=token,
-                current_revision=args.revision,
-                default_branch=args.default_branch,
-            ),
+            default_branch=args.default_branch,
             request_comment_id=plan.request_comment_id,
         )
+    )
     application_request_body = (
         body
         if accepted_intent is None
