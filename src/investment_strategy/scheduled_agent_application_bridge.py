@@ -2023,8 +2023,10 @@ def main() -> int:
                 request_comment_id=event_comment_id,
                 request_body=body,
             )
-    if event_comment_id is not None and accepted_intent is None and (
-        request is None or args.run_attempt > 1
+    if (
+        event_comment_id is not None
+        and accepted_intent is None
+        and (request is None or args.run_attempt > 1)
     ):
         # A rerun is a Phase-B continuation boundary.  Resolve the immutable
         # decision before planning so a successor frontier cannot rebind the
