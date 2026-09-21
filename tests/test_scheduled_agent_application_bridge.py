@@ -241,7 +241,7 @@ def test_accepted_intent_lookup_includes_indeterminate_current_issue(
 
     found = bridge._find_application_decision_from_current_frontier(
         repository=_REPOSITORY,
-        token="token",
+        token=_REPOSITORY,
         request_comment_id=record.request_comment_id,
         preflight=_preflight(
             current_state_provenance=ObservationProvenance.INDETERMINATE,
