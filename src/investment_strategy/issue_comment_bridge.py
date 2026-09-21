@@ -664,6 +664,24 @@ def _formal_consequence(
         effective_change = canonical_event.change
     if effective_change is None:
         return False
+    formal_authorization_ancestry = authorization_ancestry
+    formal_revision = canonical_event.default_branch_revision
+    if formal_revision is None:
+        return False
+    if formal_revision != current_revision:
+        descendant_ancestry = _authorization_ancestry(
+            repository,
+            token,
+            authorization_revision=formal_revision,
+            current_revision=current_revision,
+            read=read,
+        )
+        if descendant_ancestry is None:
+            return False
+        formal_authorization_ancestry = (
+            *formal_authorization_ancestry,
+            *descendant_ancestry,
+        )
 
     qualification = build_qualification_input(
         issue_number=source.issue_number,
@@ -684,7 +702,7 @@ def _formal_consequence(
             canonical_event.application_correlation if mode == "pending" else None
         ),
         lifecycle_events=lifecycle_events,
-        authorization_ancestry=authorization_ancestry,
+        authorization_ancestry=formal_authorization_ancestry,
     )
     decision = qualify_current_formal_consequence(qualification)
     if not decision.qualified or decision.event is None:
