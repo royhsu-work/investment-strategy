@@ -41,8 +41,10 @@ from investment_strategy.scheduled_agent_effects import (
     GitHubEffectAdapter,
     _archive_branch,
     _archive_ref,
+    _references_issue,
     _source_branch,
     formal_application_correlation,
+    merged_pr_readiness_complete,
     parse_application_decision,
 )
 from investment_strategy.scheduled_agent_formal_qualification import (
@@ -607,6 +609,7 @@ def _github_json(
     *,
     method: str = "GET",
     payload: Mapping[str, object] | None = None,
+    allow_not_found: bool = False,
 ) -> object:
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     request = Request(
@@ -620,8 +623,13 @@ def _github_json(
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
-        raw = response.read()
+    try:
+        with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
+            raw = response.read()
+    except HTTPError as exc:
+        if allow_not_found and exc.code == 404:
+            return None
+        raise
     return None if not raw else json.loads(raw.decode("utf-8"))
 
 
@@ -830,7 +838,12 @@ def _fresh_branch_head(
     """Read one branch head as current evidence, never as worker authority."""
 
     try:
-        payload = _github_json(repository, token, f"git/ref/heads/{quote(branch, safe='/')}")
+        payload = _github_json(
+            repository,
+            token,
+            f"git/ref/heads/{quote(branch, safe='/')}",
+            allow_not_found=True,
+        )
     except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
         return None
     obj = payload.get("object") if isinstance(payload, Mapping) else None
@@ -895,7 +908,15 @@ def _machine_result_revision(
                 else (_fresh_branch_head(repository, token, branch) or current_revision)
             )
         if spec.evidence_target is EvidenceTarget.MERGED_PR_HEAD:
-            return current_revision
+            merged_revision = _fresh_merged_carrier_revision(
+                repository=repository,
+                token=token,
+                source=source,
+                change=change,
+                current_revision=current_revision,
+                default_branch=default_branch,
+            )
+            return merged_revision or current_revision
         return _machine_carrier_head(
             repository=repository,
             token=token,
@@ -1236,6 +1257,179 @@ def _fresh_pull_requests(
     return tuple(candidates)
 
 
+def _merge_carrier_action(source: WorkerRequest) -> str:
+    """Map a consequence owner to the exact carrier lifecycle it observes."""
+
+    if source.action == "finalize-archive":
+        return "merge-archive-pr"
+    if source.action in {"merge-implementation-pr", "merge-archive-pr"}:
+        return source.action
+    raise RuntimeError("fresh merge consequence has no legal carrier action")
+
+
+def _merge_carrier_branch(source: WorkerRequest, change: str) -> str:
+    action = _merge_carrier_action(source)
+    branch = _archive_branch(change) if action == "merge-archive-pr" else _source_branch(change)
+    if branch is None:
+        raise RuntimeError("fresh merge consequence branch identity is invalid")
+    return branch
+
+
+def _fresh_merge_carrier(
+    *,
+    repository: str,
+    token: str,
+    source: WorkerRequest,
+    change: str,
+    current_revision: str,
+    default_branch: str,
+    requested_number: int | None = None,
+) -> Mapping[str, object]:
+    """Read the one exact merge carrier from current repository state."""
+
+    branch = _merge_carrier_branch(source, change)
+    candidates: tuple[Mapping[str, object], ...]
+    if source.action == "merge-implementation-pr" and requested_number is not None:
+        detail = _github_json(repository, token, f"pulls/{requested_number}")
+        candidates = (detail,) if isinstance(detail, Mapping) else ()
+    elif source.action == "merge-implementation-pr":
+        # Continuation carriers use a deterministic branch derived from the
+        # already merged implementation history.  That branch is repository
+        # state, not an immutable worker plan, so qualify every current
+        # implementation carrier and retain exactly one open candidate (or
+        # one historical merged candidate during recovery).
+        summaries = _paged_github_list(
+            repository,
+            token,
+            "pulls?state=all&base=" + quote(default_branch, safe=""),
+        )
+        qualified_open: list[Mapping[str, object]] = []
+        qualified_merged: list[Mapping[str, object]] = []
+        carrier_source = WorkerRequest(source.issue_number, "executor", source.action)
+        for summary in summaries:
+            number = summary.get("number")
+            if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+                continue
+            detail = _github_json(repository, token, f"pulls/{number}")
+            if not isinstance(detail, Mapping):
+                raise RuntimeError("fresh implementation merge carrier is incomplete")
+            decision = qualify_implementation_carrier(
+                repository=repository,
+                token=token,
+                source=carrier_source,
+                change=change,
+                pr_number=number,
+                current_revision=current_revision,
+                read=_github_json,
+            )
+            if detail.get("state") == "open" and detail.get("merged") is not True:
+                if decision.disposition == "QUALIFIED":
+                    qualified_open.append(detail)
+            elif decision.disposition == "HISTORICAL_MERGED":
+                qualified_merged.append(detail)
+        if len(qualified_open) > 1 or (qualified_open and qualified_merged):
+            raise RuntimeError("fresh implementation merge carrier is ambiguous")
+        candidates = tuple(qualified_open or qualified_merged)
+    else:
+        candidates = _fresh_pull_requests(
+            repository,
+            token,
+            branch=branch,
+            default_branch=default_branch,
+        )
+    if len(candidates) != 1:
+        raise RuntimeError("fresh merge consequence carrier is missing or ambiguous")
+    current = candidates[0]
+    number = current.get("number")
+    head = current.get("head")
+    base = current.get("base")
+    head_repo = head.get("repo") if isinstance(head, Mapping) else None
+    base_repo = base.get("repo") if isinstance(base, Mapping) else None
+    actual_branch = head.get("ref") if isinstance(head, Mapping) else None
+    if (
+        not isinstance(number, int)
+        or isinstance(number, bool)
+        or number <= 0
+        or not isinstance(head, Mapping)
+        or not isinstance(base, Mapping)
+        or not isinstance(actual_branch, str)
+        or (_merge_carrier_action(source) == "merge-archive-pr" and actual_branch != branch)
+        or base.get("ref") != default_branch
+        or not isinstance(head_repo, Mapping)
+        or not isinstance(base_repo, Mapping)
+        or head_repo.get("full_name") != repository
+        or base_repo.get("full_name") != repository
+        or not _references_issue(current.get("body"), source.issue_number)
+    ):
+        raise RuntimeError("fresh merge consequence carrier identity is invalid")
+    if (
+        _merge_carrier_action(source) == "merge-archive-pr"
+        and current.get("title") != f"Archive OpenSpec change {change}"
+    ):
+        raise RuntimeError("fresh archive merge carrier title is invalid")
+    return current
+
+
+def _merged_carrier_is_in_current_default(
+    repository: str,
+    token: str,
+    pull_request: Mapping[str, object],
+    current_revision: str,
+) -> bool:
+    merge_commit = pull_request.get("merge_commit_sha")
+    if not isinstance(merge_commit, str) or _SHA.fullmatch(merge_commit) is None:
+        return False
+    comparison = _github_json(
+        repository,
+        token,
+        f"compare/{merge_commit}...{current_revision}",
+    )
+    base_commit = comparison.get("base_commit") if isinstance(comparison, Mapping) else None
+    return bool(
+        isinstance(comparison, Mapping)
+        and comparison.get("status") in {"ahead", "identical"}
+        and comparison.get("behind_by") == 0
+        and isinstance(base_commit, Mapping)
+        and base_commit.get("sha") == merge_commit
+    )
+
+
+def _fresh_merged_carrier_revision(
+    *,
+    repository: str,
+    token: str,
+    source: WorkerRequest,
+    change: str,
+    current_revision: str,
+    default_branch: str,
+) -> str | None:
+    """Return the fresh merge commit when the carrier has already merged."""
+
+    try:
+        current = _fresh_merge_carrier(
+            repository=repository,
+            token=token,
+            source=source,
+            change=change,
+            current_revision=current_revision,
+            default_branch=default_branch,
+        )
+    except RuntimeError:
+        return None
+    if current.get("merged") is not True or current.get("state") != "closed":
+        return None
+    merged_at = current.get("merged_at")
+    merge_commit = current.get("merge_commit_sha")
+    if (
+        not isinstance(merged_at, str)
+        or not merged_at.strip()
+        or not isinstance(merge_commit, str)
+        or _SHA.fullmatch(merge_commit) is None
+    ):
+        return None
+    return merge_commit
+
+
 def _fresh_archive_state(
     repository: str,
     token: str,
@@ -1568,6 +1762,138 @@ def _fresh_control_effect(
     raise RuntimeError(f"unsupported application control operation: {operation}")
 
 
+def _fresh_merge_consequence_effect(
+    *,
+    source: WorkerRequest,
+    change: str,
+    repository: str,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+    requested_number: int | None = None,
+) -> dict[str, str] | None:
+    """Derive the next missing merge consequence from fresh carrier state."""
+
+    current = _fresh_merge_carrier(
+        repository=repository,
+        token=token,
+        source=source,
+        change=change,
+        current_revision=current_revision,
+        default_branch=default_branch,
+        requested_number=requested_number,
+    )
+    head = current.get("head")
+    expected_head_sha = head.get("sha") if isinstance(head, Mapping) else None
+    if not isinstance(expected_head_sha, str) or _SHA.fullmatch(expected_head_sha) is None:
+        raise RuntimeError("fresh merge consequence carrier head is invalid")
+
+    if current.get("state") == "open" and current.get("merged") is not True:
+        candidate = _effect_document(
+            GITHUB_MUTATION_KIND,
+            {
+                "issue_number": source.issue_number,
+                "operation": "pull-request-merge",
+                "number": current["number"],
+                "merge_method": "merge",
+            },
+        )
+        fresh = _fresh_control_effect(
+            raw_effect=candidate,
+            source=source,
+            change=change,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+        )
+        return None if fresh is None else _effect_document(GITHUB_MUTATION_KIND, fresh)
+
+    if current.get("state") != "closed" or current.get("merged") is not True:
+        raise RuntimeError("fresh merge consequence carrier is closed without a merge")
+    merged_at = current.get("merged_at")
+    merge_commit = current.get("merge_commit_sha")
+    merged_in_default = _merged_carrier_is_in_current_default(
+        repository,
+        token,
+        current,
+        current_revision,
+    )
+    if (
+        not isinstance(merged_at, str)
+        or not merged_at.strip()
+        or not isinstance(merge_commit, str)
+        or _SHA.fullmatch(merge_commit) is None
+        or not merged_in_default
+    ):
+        if requested_number is not None:
+            # A legacy envelope may still carry the old carrier identity as
+            # migration evidence.  Let the existing merge-acceptance gate
+            # reject a stale historical proof; never turn that evidence into
+            # a formal result here.
+            candidate = _effect_document(
+                GITHUB_MUTATION_KIND,
+                {
+                    "issue_number": source.issue_number,
+                    "operation": "pull-request-merge",
+                    "number": current["number"],
+                    "merge_method": "merge",
+                },
+            )
+            fresh = _fresh_control_effect(
+                raw_effect=candidate,
+                source=source,
+                change=change,
+                repository=repository,
+                token=token,
+                current_revision=current_revision,
+                default_branch=default_branch,
+            )
+            return None if fresh is None else _effect_document(GITHUB_MUTATION_KIND, fresh)
+        raise RuntimeError("merged carrier is not yet in the current default branch")
+
+    # A merged carrier's ref is a separate repository consequence.  Derive
+    # only that cleanup when it is still present, after proving the merge
+    # itself.  The carrier guard re-proves the same historical merge before
+    # deleting the exact ref.
+    actual_head = current.get("head")
+    actual_branch = actual_head.get("ref") if isinstance(actual_head, Mapping) else None
+    if not isinstance(actual_branch, str) or not actual_branch:
+        raise RuntimeError("merged carrier branch identity is incomplete")
+    branch = actual_branch
+    branch_sha = _fresh_branch_head(repository, token, branch)
+    if branch_sha is not None:
+        if branch_sha != expected_head_sha:
+            raise RuntimeError("merged carrier ref changed after merge")
+        candidate = _effect_document(
+            GITHUB_MUTATION_KIND,
+            {
+                "issue_number": source.issue_number,
+                "operation": "ref-delete",
+                "ref": f"refs/heads/{branch}",
+            },
+        )
+        if source.action == "merge-implementation-pr" and branch != _source_branch(change):
+            fresh = {
+                "issue_number": source.issue_number,
+                "operation": "ref-delete",
+                "ref": f"refs/heads/{branch}",
+                "expected_sha": branch_sha,
+            }
+        else:
+            fresh = _fresh_control_effect(
+                raw_effect=candidate,
+                source=source,
+                change=change,
+                repository=repository,
+                token=token,
+                current_revision=current_revision,
+                default_branch=default_branch,
+            )
+        return None if fresh is None else _effect_document(GITHUB_MUTATION_KIND, fresh)
+    return None
+
+
 def _fresh_application_worker_result(
     raw_worker_result: str,
     *,
@@ -1624,6 +1950,19 @@ def _fresh_application_worker_result(
         }
         for requested in worker.requested_effects
     ]
+    legacy_merge_number: int | None = None
+    for candidate in control_candidates:
+        payload = _effect_payload(candidate)
+        candidate_number = None if payload is None else payload.get("number")
+        if (
+            payload is not None
+            and payload.get("operation") == "pull-request-merge"
+            and isinstance(candidate_number, int)
+            and not isinstance(candidate_number, bool)
+            and candidate_number > 0
+        ):
+            legacy_merge_number = candidate_number
+            break
     is_archive_completion = (
         source.action == "finalize-change"
         and worker.typed_result.result.kind.value == "archive-ready"
@@ -1691,6 +2030,68 @@ def _fresh_application_worker_result(
                     {"issue_number": source.issue_number, "body": formal},
                 )
             )
+    elif (
+        source.action in {"merge-implementation-pr", "merge-archive-pr"}
+        and worker.typed_result.result.kind.value == "merged"
+    ):
+        semantic_effects.extend(
+            _fresh_non_control_effects(
+                control_candidates,
+                source=source,
+                change=change,
+                repository=repository,
+                token=token,
+                current_revision=current_revision,
+                default_branch=default_branch,
+                skip_operations={"pull-request-merge", "ref-delete"},
+            )
+        )
+        merge_effect = _fresh_merge_consequence_effect(
+            source=source,
+            change=change,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            requested_number=cast(int | None, legacy_merge_number),
+        )
+        if merge_effect is not None:
+            semantic_effects.append(merge_effect)
+            # During cutover, a legacy envelope may still carry the old PR
+            # number.  Keep its idempotent merge effect in the batch so the
+            # existing mutation-adjacent merge gate decides whether the
+            # historical carrier is currently acceptable.  Only after that
+            # gate can its legacy formal projection be applied.
+            if legacy_merge_number is not None:
+                legacy_carrier = _github_json(
+                    repository,
+                    token,
+                    f"pulls/{legacy_merge_number}",
+                )
+                if (
+                    isinstance(legacy_carrier, Mapping)
+                    and legacy_carrier.get("state") == "closed"
+                    and legacy_carrier.get("merged") is True
+                ):
+                    formal = _formal_body_for_worker(worker, source=source)
+                    if formal is None:
+                        raise RuntimeError("application formal result evidence is missing")
+                    semantic_effects.append(
+                        _effect_document(
+                            "issue-comment",
+                            {"issue_number": source.issue_number, "body": formal},
+                        )
+                    )
+        else:
+            formal = _formal_body_for_worker(worker, source=source)
+            if formal is None:
+                raise RuntimeError("application formal result evidence is missing")
+            semantic_effects.append(
+                _effect_document(
+                    "issue-comment",
+                    {"issue_number": source.issue_number, "body": formal},
+                )
+            )
     else:
         semantic_effects.extend(
             _fresh_non_control_effects(
@@ -1704,6 +2105,19 @@ def _fresh_application_worker_result(
                 skip_operations=set(),
             )
         )
+        if (
+            source.action == "finalize-archive"
+            and worker.typed_result.result.kind.value == "lifecycle-complete"
+            and not merged_pr_readiness_complete(
+                repository=repository,
+                token=token,
+                issue_number=source.issue_number,
+                action=source.action,
+                change=change,
+                current_revision=current_revision,
+            )
+        ):
+            raise RuntimeError("final archive consequence is not successor-ready")
         formal = _formal_body_for_worker(worker, source=source)
         if formal is None:
             raise RuntimeError("application formal result evidence is missing")

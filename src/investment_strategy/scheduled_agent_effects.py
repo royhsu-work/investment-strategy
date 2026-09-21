@@ -1725,11 +1725,27 @@ class GitHubEffectAdapter:
             spec = consequence_spec_for(self.source.action, self.expected_result_kind)
         except ValueError:
             return False
+        if spec.evidence_target is EvidenceTarget.MERGED_PR_HEAD and not self.accepted_intent:
+            # Legacy raw-result callers may still carry a historical formal
+            # projection.  Normal semantic intents never reach this branch:
+            # the fresh planner withholds MERGE_RESULT until the merged
+            # carrier predicate below is proven.  Keep this bounded reader
+            # compatibility while migration envelopes drain.
+            return True
         if spec.evidence_target is EvidenceTarget.ARCHIVE_PR_HEAD:
             return archive_pr_readiness_complete(
                 repository=self.repository,
                 token=self.token,
                 issue_number=self.source.issue_number,
+                change=self.authorized_change,
+                current_revision=cast(str, self.current_revision),
+            )
+        if spec.evidence_target is EvidenceTarget.MERGED_PR_HEAD:
+            return merged_pr_readiness_complete(
+                repository=self.repository,
+                token=self.token,
+                issue_number=self.source.issue_number,
+                action=self.source.action,
                 change=self.authorized_change,
                 current_revision=cast(str, self.current_revision),
             )
@@ -3413,6 +3429,121 @@ class GitHubEffectAdapter:
         return False
 
 
+def merged_pr_readiness_complete(
+    *,
+    repository: str,
+    token: str,
+    issue_number: int,
+    action: str,
+    change: str,
+    current_revision: str,
+) -> bool:
+    """Prove one exact merged carrier and its current-main consequence."""
+
+    if (
+        not _valid_sha(current_revision)
+        or not isinstance(change, str)
+        or change in {"", "unset"}
+        or not isinstance(issue_number, int)
+        or isinstance(issue_number, bool)
+        or issue_number <= 0
+    ):
+        return False
+    merge_action = "merge-archive-pr" if action == "finalize-archive" else action
+    if merge_action not in {"merge-implementation-pr", "merge-archive-pr"}:
+        return False
+    branch = (
+        _archive_branch(change) if merge_action == "merge-archive-pr" else _source_branch(change)
+    )
+    if branch is None:
+        return False
+    repository_payload = _github_json(repository, token, "")
+    default_branch = (
+        repository_payload.get("default_branch")
+        if isinstance(repository_payload, Mapping)
+        else None
+    )
+    if not _valid_branch(default_branch):
+        return False
+    owner = repository.split("/", 1)[0] if "/" in repository else ""
+    candidates = _github_json(
+        repository,
+        token,
+        "pulls?state=all&head="
+        + quote(f"{owner}:{branch}", safe="")
+        + "&base="
+        + quote(cast(str, default_branch), safe="")
+        + "&per_page=100",
+    )
+    if not isinstance(candidates, list) or len(candidates) != 1:
+        return False
+    summary = candidates[0]
+    number = summary.get("number") if isinstance(summary, Mapping) else None
+    if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+        return False
+    pull_request = _github_json(repository, token, f"pulls/{number}")
+    if not isinstance(pull_request, Mapping):
+        return False
+    head = pull_request.get("head")
+    base = pull_request.get("base")
+    head_repo = head.get("repo") if isinstance(head, Mapping) else None
+    base_repo = base.get("repo") if isinstance(base, Mapping) else None
+    if (
+        pull_request.get("number") != number
+        or not isinstance(head, Mapping)
+        or not isinstance(base, Mapping)
+        or head.get("ref") != branch
+        or base.get("ref") != default_branch
+        or not isinstance(head_repo, Mapping)
+        or not isinstance(base_repo, Mapping)
+        or head_repo.get("full_name") != repository
+        or base_repo.get("full_name") != repository
+        or pull_request.get("state") != "closed"
+        or pull_request.get("merged") is not True
+        or not isinstance(pull_request.get("merged_at"), str)
+        or not cast(str, pull_request["merged_at"]).strip()
+        or not _valid_sha(pull_request.get("merge_commit_sha"))
+        or not _valid_sha(head.get("sha"))
+    ):
+        return False
+    if merge_action == "merge-archive-pr":
+        if (
+            pull_request.get("title") != f"Archive OpenSpec change {change}"
+            or not _references_issue(pull_request.get("body"), issue_number)
+            or re.search(
+                rf"(?mi)^\s*(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s+#{issue_number}\s*$",
+                cast(str, pull_request.get("body", "")),
+            )
+            is not None
+        ):
+            return False
+    else:
+        decision = qualify_implementation_carrier(
+            repository=repository,
+            token=token,
+            source=WorkerRequest(issue_number, "executor", "merge-implementation-pr"),
+            change=change,
+            pr_number=number,
+            current_revision=current_revision,
+            read=_github_json,
+        )
+        if decision.disposition != "HISTORICAL_MERGED":
+            return False
+    comparison = _github_json(
+        repository,
+        token,
+        f"compare/{cast(str, pull_request['merge_commit_sha'])}...{current_revision}",
+    )
+    base_commit = comparison.get("base_commit") if isinstance(comparison, Mapping) else None
+    return bool(
+        isinstance(comparison, Mapping)
+        and comparison.get("status") in {"ahead", "identical"}
+        and comparison.get("behind_by") == 0
+        and isinstance(base_commit, Mapping)
+        and base_commit.get("sha") == pull_request.get("merge_commit_sha")
+    )
+
+
 def consequence_postconditions_complete(
     raw_worker_result: str,
     *,
@@ -3480,6 +3611,15 @@ def consequence_postconditions_complete(
             return payload is not None and adapter._observe_github_mutation(
                 materializations[0],
                 payload,
+            )
+        if spec.evidence_target is EvidenceTarget.MERGED_PR_HEAD:
+            return merged_pr_readiness_complete(
+                repository=repository,
+                token=token,
+                issue_number=source.issue_number,
+                action=source.action,
+                change=change,
+                current_revision=current_revision,
             )
 
         # Implementation and merged-carrier transitions are qualified by the

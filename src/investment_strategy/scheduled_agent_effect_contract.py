@@ -72,6 +72,11 @@ def _evidence_target(action: Action, result: ResultKind) -> EvidenceTarget:
         return EvidenceTarget.MERGED_PR_HEAD
     if action is Action.MERGE_IMPLEMENTATION_PR and result is ResultKind.MERGED:
         return EvidenceTarget.MERGED_PR_HEAD
+    if action is Action.FINALIZE_ARCHIVE and result is ResultKind.LIFECYCLE_COMPLETE:
+        # Terminal completion is a projection of the already merged Archive
+        # consequence.  The Lead result must not become the predecessor of
+        # close while that merge is only transport evidence.
+        return EvidenceTarget.MERGED_PR_HEAD
     if action in {Action.IMPLEMENT_CHANGE, Action.REVIEW_IMPLEMENTATION}:
         return EvidenceTarget.IMPLEMENTATION_PR_HEAD
     if action is Action.MERGE_IMPLEMENTATION_PR:
