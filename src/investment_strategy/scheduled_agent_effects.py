@@ -3285,6 +3285,7 @@ def requested_effect_postconditions_complete(
     token: str,
     current_revision: str,
     authorized_change: str | None = None,
+    request_comment_id: int | None = None,
 ) -> bool:
     """Freshly prove every requested effect before claiming formal completion."""
 
@@ -3303,13 +3304,15 @@ def requested_effect_postconditions_complete(
             authorized_change=batch.typed_result.change,
             current_revision=current_revision,
             expected_result_kind=batch.typed_result.result.kind.value,
+            request_comment_id=request_comment_id,
         )
         for effect in batch.effects:
             payload = _effect_payload(effect)
             if effect.kind == "issue-comment":
                 if payload is None or not isinstance(payload.get("body"), str):
                     return False
-                if adapter._existing_issue_comment(cast(str, payload["body"])) is None:
+                expected_body = adapter._application_bound_comment_body(cast(str, payload["body"]))
+                if adapter._existing_issue_comment(expected_body) is None:
                     return False
             elif effect.kind == GITHUB_MUTATION_KIND:
                 if payload is None or not adapter._observe_github_mutation(effect, payload):

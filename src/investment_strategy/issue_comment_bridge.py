@@ -715,6 +715,7 @@ def _formal_consequence(
         token=token,
         current_revision=current_revision,
         authorized_change=record.change,
+        request_comment_id=record.request_comment_id,
     ):
         return False
     return (
