@@ -852,6 +852,97 @@ def test_accepted_formal_result_waits_for_requested_effect_postconditions(
     assert completion.job_id == 888
 
 
+def test_completed_formal_result_at_safe_ancestor_is_not_resumed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = bridge.WorkerRequest(138, "reviewer", "review-archive")
+    formal_revision = "b" * 40
+    advanced_revision = "a" * 40
+    change = "formal-result-safe-ancestor"
+    request = _effect_request_comment(
+        comment_id=90,
+        created_at="2026-09-18T02:00:00Z",
+        action="finalize-change",
+        role="lead",
+        result_kind="archive-ready",
+        issue_number=138,
+        change=change,
+        authorization_revision=REVISION,
+    )
+    decision = _application_decision_comment(request, comment_id=91)
+    formal = _formal_frontier_comment(
+        100,
+        action="finalize-change",
+        role="lead",
+        result="archive-ready",
+        successor="Reviewer / review-archive",
+        request_id=90,
+        change=change,
+    )
+    body = str(formal["body"])
+    formal["body"] = (
+        body.replace(f"Revision: {REVISION}", f"Revision: {formal_revision}")
+        .replace(
+            f"Default-Branch-Revision: {REVISION}",
+            f"Default-Branch-Revision: {formal_revision}",
+        )
+        .replace(
+            f":{REVISION}\nRepository-derived successor:",
+            f":{formal_revision}\nRepository-derived successor:",
+        )
+    )
+    issue = {
+        **_current_source_issue(),
+        "labels": [{"name": "action:review-archive"}],
+        "body": f"Change: {change}",
+    }
+    observed_revisions: list[str] = []
+
+    def fake_postconditions(*_args: object, **kwargs: object) -> bool:
+        revision = cast(str, kwargs["current_revision"])
+        observed_revisions.append(revision)
+        return revision == formal_revision
+
+    monkeypatch.setattr(
+        bridge,
+        "requested_effect_postconditions_complete",
+        fake_postconditions,
+    )
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [request]
+        if path.startswith("issues/138/comments?"):
+            return [decision, formal]
+        if path == "issues/138":
+            return issue
+        if path.startswith("issues/138/timeline?"):
+            return _frontier_lifecycle([(100, "finalize-change", "review-archive")])
+        if path in {
+            f"compare/{REVISION}...{advanced_revision}",
+            f"compare/{formal_revision}...{advanced_revision}",
+        }:
+            base_sha = path.removeprefix("compare/").split("...")[0]
+            return {"status": "ahead", "base_commit": {"sha": base_sha}}
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=advanced_revision,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 3, 0, tzinfo=UTC),
+    )
+
+    assert completion == bridge.ApplicationCompletion(
+        "COMPLETE",
+        "application-completion-complete",
+        request_comment_id=90,
+    )
+    assert observed_revisions == [formal_revision]
+
+
 def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier() -> None:
     source = bridge.WorkerRequest(138, "executor", "implement-change")
     change = "recurrence-a-a-new-occurrence"

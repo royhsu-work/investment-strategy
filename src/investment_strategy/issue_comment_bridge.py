@@ -713,7 +713,11 @@ def _formal_consequence(
         source=source,
         repository=repository,
         token=token,
-        current_revision=current_revision,
+        # The canonical formal result is already the logical commit. Its
+        # recorded default-branch revision may be a safe ancestor of the
+        # fresh wake's revision; do not turn that immutable completion into a
+        # replay merely to rewrite transport-bound correlation text.
+        current_revision=formal_revision,
         authorized_change=record.change,
         request_comment_id=record.request_comment_id,
     ):
