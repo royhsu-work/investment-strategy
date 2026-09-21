@@ -190,6 +190,47 @@ def test_accepted_intent_reconciles_after_successor_lifecycle_binding() -> None:
     assert decision.provenance is ObservationProvenance.QUALIFIED
 
 
+def test_accepted_intent_reconciles_duplicate_formal_result_without_new_label() -> None:
+    historical_revision = "b" * 40
+    first = _comment(
+        1,
+        action="finalize-change",
+        role="lead",
+        result="archive-ready",
+        successor="Reviewer / review-archive",
+        request_id=10,
+        revision=historical_revision,
+        default_revision=historical_revision,
+        application_revision=historical_revision,
+    )
+    retry = _comment(
+        2,
+        action="finalize-change",
+        role="lead",
+        result="archive-ready",
+        successor="Reviewer / review-archive",
+        request_id=10,
+        revision=historical_revision,
+        default_revision=historical_revision,
+        application_revision=_REVISION,
+    )
+    correlation = f"application:10:229:{_CHANGE}:lead:finalize-change:archive-ready:{_REVISION}"
+    decision = _decision(
+        [first, retry],
+        current_routing=("reviewer", "review-archive"),
+        mode="pending",
+        expected_routing=("reviewer", "review-archive"),
+        source_routing=("lead", "finalize-change"),
+        expected_result_kind="archive-ready",
+        expected_application_correlation=correlation,
+        lifecycle_events=_lifecycle_events([first, retry], pending=True),
+        authorization_ancestry=((historical_revision, _REVISION),),
+        allow_successor_frontier=True,
+    )
+    assert decision.provenance is ObservationProvenance.QUALIFIED
+    assert decision.reason == "accepted-successor-postcondition-qualified"
+
+
 def test_current_route_requires_complete_repository_owned_binding() -> None:
     comment = _comment(
         1,
