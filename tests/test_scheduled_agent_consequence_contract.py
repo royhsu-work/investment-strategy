@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -11,9 +15,12 @@ import investment_strategy.scheduled_agent_application_bridge as bridge
 import investment_strategy.scheduled_agent_effects as effects
 from investment_strategy.scheduled_agent_action_model import TRANSITIONS, Action, ResultKind
 from investment_strategy.scheduled_agent_effect_contract import (
+    DURABLE_PREFIXES,
+    DurablePrefix,
     EvidenceTarget,
     consequence_spec_for,
     legal_transition_keys,
+    verification_matrix,
 )
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 
@@ -97,6 +104,140 @@ def test_every_legal_transition_has_exactly_one_consequence_spec() -> None:
         (spec.action, spec.result)
         for spec in (consequence_spec_for(action, result) for action, result in expected)
     } == expected
+
+
+def _matrix_intent(action: Action, result: ResultKind) -> str:
+    role = (
+        "reviewer"
+        if action.value.startswith("review-")
+        else ("executor" if action.value.startswith(("implement-", "merge-")) else "lead")
+    )
+    return json.dumps(
+        {
+            "_semantic_intent_version": 2,
+            "issue_number": 272,
+            "role": role,
+            "action": action.value,
+            "change": "matrix-change",
+            "result_kind": result.value,
+            "evidence_ref": f"matrix-{action.value}-{result.value}",
+            "result_content": "immutable semantic evidence",
+            "requested_effects": [
+                {
+                    "kind": "github-mutation",
+                    "payload_json": json.dumps(
+                        {
+                            "operation": "workflow-dispatch",
+                            "issue_number": 272,
+                            "ref": "main",
+                        },
+                        sort_keys=True,
+                    ),
+                }
+            ],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _projection(action: Action, result: ResultKind) -> tuple[str, str, str, str]:
+    spec = consequence_spec_for(action, result)
+    successor = TRANSITIONS[action][result]
+    return (
+        spec.evidence_target.value,
+        spec.completion_predicate,
+        spec.missing_effect,
+        "terminal" if successor is None else successor.value,
+    )
+
+
+def test_verification_matrix_covers_every_prefix_without_duplicate_owner() -> None:
+    matrix = verification_matrix()
+    expected_count = len(legal_transition_keys()) * len(DURABLE_PREFIXES)
+    assert len(matrix) == expected_count
+    assert len(set(matrix)) == expected_count
+    assert {prefix for _, _, prefix in matrix} == set(DurablePrefix)
+    assert {(action, result) for action, result, _ in matrix} == legal_transition_keys()
+    for action, result, _prefix in matrix:
+        spec = consequence_spec_for(action, result)
+        assert spec.action is action
+        assert spec.result is result
+        assert spec.evidence_target.value
+        assert spec.completion_predicate
+        assert spec.missing_effect
+
+
+def test_fresh_process_matrix_preserves_intent_and_commit_projection() -> None:
+    """Every durable prefix re-enters the same intent and consequence owner."""
+
+    matrix = verification_matrix()
+    expected_by_prefix: dict[DurablePrefix, dict[str, tuple[str, str, str, str]]] = {}
+    for prefix in DURABLE_PREFIXES:
+        payload = [
+            {
+                "prefix": prefix.value,
+                "action": action.value,
+                "result": result.value,
+                "raw": _matrix_intent(action, result),
+            }
+            for action, result, _matrix_prefix in matrix
+            if _matrix_prefix is prefix
+        ]
+        script = """
+import json
+import sys
+from investment_strategy.scheduled_agent_action_model import Action, ResultKind, TRANSITIONS
+from investment_strategy.scheduled_agent_effect_contract import consequence_spec_for
+from investment_strategy.scheduled_agent_effects import semantic_intent_payload
+
+items = json.load(sys.stdin)
+out = []
+for item in items:
+    action = Action(item["action"])
+    result = ResultKind(item["result"])
+    accepted = semantic_intent_payload(item["raw"])
+    decoded = json.loads(accepted)
+    spec = consequence_spec_for(action, result)
+    successor = TRANSITIONS[action][result]
+    out.append({
+        "prefix": item["prefix"],
+        "action": item["action"],
+        "result": item["result"],
+        "accepted": accepted,
+        "requested_effects": decoded["requested_effects"],
+        "projection": [
+            spec.evidence_target.value,
+            spec.completion_predicate,
+            spec.missing_effect,
+            "terminal" if successor is None else successor.value,
+        ],
+    })
+json.dump(out, sys.stdout, sort_keys=True)
+"""
+        result = subprocess.run(  # noqa: S603 - fixed interpreter and inline verification script
+            [sys.executable, "-c", script],
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            check=False,
+            env={**os.environ, "PYTHONPATH": str(Path.cwd() / "src")},
+        )
+        assert result.returncode == 0, result.stderr
+        recovered = json.loads(result.stdout)
+        for item in recovered:
+            assert tuple(item["projection"]) == _projection(
+                Action(item["action"]),
+                ResultKind(item["result"]),
+            )
+        expected_by_prefix[prefix] = {
+            item["accepted"]: tuple(item["projection"]) for item in recovered
+        }
+        assert all(item["requested_effects"] == [] for item in recovered)
+
+    baseline = expected_by_prefix[DURABLE_PREFIXES[0]]
+    for prefix, projections in expected_by_prefix.items():
+        assert projections == baseline, prefix
 
 
 def test_archive_snapshot_derives_only_missing_archive_pr(

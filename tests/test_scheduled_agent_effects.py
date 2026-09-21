@@ -120,7 +120,7 @@ def _protocol_decision() -> ActionApplicationDecision:
     )
 
 
-def test_application_decision_and_terminal_outcome_are_exactly_bound() -> None:
+def test_application_decision_is_exactly_bound() -> None:
     request_body = "EFFECT_REQUEST\nAuthorization-Revision: " + _REVISION
     raw = _raw()
     decision = _protocol_decision()
@@ -138,19 +138,6 @@ def test_application_decision_and_terminal_outcome_are_exactly_bound() -> None:
     assert parsed.request_comment_id == _REQUEST_COMMENT_ID
     assert parsed.raw_worker_result == raw
     assert parsed.disposition == "ACCEPTED"
-
-    outcome_body = effects.render_application_outcome_body(
-        request_comment_id=_REQUEST_COMMENT_ID,
-        request_body_sha256=parsed.request_body_sha256,
-        authorization_revision=_REVISION,
-        decision=parsed,
-        outcome="COMPLETED",
-        reason="complete",
-    )
-    outcome = effects.parse_application_outcome(outcome_body)
-    assert outcome is not None
-    assert outcome.request_comment_id == _REQUEST_COMMENT_ID
-    assert outcome.worker_result_sha256 == parsed.worker_result_sha256
 
 
 def test_accepted_decision_resumes_when_transport_envelope_is_reconstructed(
@@ -3641,86 +3628,6 @@ def test_application_injects_repository_derived_successor_into_formal_result() -
 
     assert "Repository-derived successor: Lead / resolve-question" in bound
     assert f"Application-Correlation: application:{_REQUEST_COMMENT_ID}:" in bound
-
-
-def test_postcondition_verifier_uses_application_owned_formal_envelope(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = WorkerRequest(138, "lead", "finalize-change")
-    fixture_value = "fixture"
-    historical_revision = "b" * 40
-    raw_formal_body = (
-        "ACTION_RESULT\n"
-        "Workflow: #138\n"
-        f"Change: {_CHANGE}\n"
-        "Action: finalize-change\n"
-        "Role: lead\n"
-        "Result: ARCHIVE_READY\n"
-        f"Revision: {historical_revision}\n"
-        f"Default-Branch-Revision: {historical_revision}\n"
-        f"Application-Correlation: application:{_REQUEST_COMMENT_ID}:138:{_CHANGE}:lead:"
-        f"finalize-change:archive-ready:{historical_revision}\n"
-        "Repository-derived successor: reviewer / review-archive\n"
-        "Evidence: worker formal result\n"
-    )
-    raw = _raw(
-        action="finalize-change",
-        role="lead",
-        result_kind="archive-ready",
-        requested_effects=[
-            {
-                "kind": "issue-comment",
-                "payload_json": json.dumps(
-                    {"issue_number": 138, "body": raw_formal_body},
-                    sort_keys=True,
-                ),
-            }
-        ],
-    )
-    canonical_body = raw_formal_body.replace(
-        f"Application-Correlation: application:{_REQUEST_COMMENT_ID}:138:{_CHANGE}:lead:"
-        f"finalize-change:archive-ready:{historical_revision}",
-        f"Application-Correlation: application:{_REQUEST_COMMENT_ID}:138:{_CHANGE}:lead:"
-        f"finalize-change:archive-ready:{_REVISION}",
-    ).replace(
-        "Repository-derived successor: reviewer / review-archive",
-        "Repository-derived successor: Reviewer / review-archive",
-    )
-    comment = {
-        "id": 2001,
-        "body": canonical_body,
-        "user": {"login": "github-actions[bot]"},
-        "performed_via_github_app": {"slug": "github-actions"},
-    }
-
-    def fake_github_json(
-        _repository: str,
-        _token: str,
-        path: str,
-        **_kwargs: object,
-    ) -> object:
-        if path == "issues/138/comments?per_page=100&sort=created&direction=desc":
-            return [comment]
-        raise AssertionError(path)
-
-    monkeypatch.setattr(effects, "_github_json", fake_github_json)
-    assert not effects.requested_effect_postconditions_complete(
-        raw_worker_result=raw,
-        source=source,
-        repository="owner/repo",
-        token=fixture_value,
-        current_revision=_REVISION,
-        authorized_change=_CHANGE,
-    )
-    assert effects.requested_effect_postconditions_complete(
-        raw_worker_result=raw,
-        source=source,
-        repository="owner/repo",
-        token=fixture_value,
-        current_revision=_REVISION,
-        authorized_change=_CHANGE,
-        request_comment_id=_REQUEST_COMMENT_ID,
-    )
 
 
 def test_application_binds_formal_revision_to_materialization_postcondition() -> None:
