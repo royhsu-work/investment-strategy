@@ -932,17 +932,22 @@ def test_completed_formal_result_at_safe_ancestor_is_not_resumed(
     )
     print("DEBUG_SAFE_ANCESTOR", parsed_formal)
     print("DEBUG_DECISIONS", bridge._application_decisions((decision, formal)))
+    debug_frontier = bridge._derive_frontier(
+        repository="owner/repo",
+        token="token",
+        source=source,
+        current_issue=issue,
+        issue_comments=(decision, formal),
+        lifecycle_events=tuple(_frontier_lifecycle([(100, "finalize-change", "review-archive")])),
+        current_revision=advanced_revision,
+        read=fake_read,
+    )
+    print("DEBUG_FRONTIER", debug_frontier)
     print(
-        "DEBUG_FRONTIER",
-        bridge._derive_frontier(
-            repository="owner/repo",
-            token="token",
-            source=source,
-            current_issue=issue,
-            issue_comments=(decision, formal),
-            lifecycle_events=tuple(_frontier_lifecycle([(100, "finalize-change", "review-archive")])),
-            current_revision=advanced_revision,
-            read=fake_read,
+        "DEBUG_OWNER",
+        bridge._frontier_application_decisions(
+            bridge._application_decisions((decision, formal)),
+            debug_frontier[0],
         ),
     )
     completion = bridge.qualify_application_completion(
