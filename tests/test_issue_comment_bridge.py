@@ -700,7 +700,8 @@ def test_accepted_intent_qualifies_formal_result_after_safe_main_advance() -> No
             f"compare/{REVISION}...{advanced_revision}",
             f"compare/{formal_revision}...{advanced_revision}",
         }:
-            return {"status": "ahead", "base_commit": {"sha": path.removeprefix("compare/").split("...")[0]}}
+            base_sha = path.removeprefix("compare/").split("...")[0]
+            return {"status": "ahead", "base_commit": {"sha": base_sha}}
         raise AssertionError(path)
 
     completion = bridge.qualify_application_completion(
