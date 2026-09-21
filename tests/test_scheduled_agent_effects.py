@@ -3647,6 +3647,7 @@ def test_postcondition_verifier_uses_application_owned_formal_envelope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = WorkerRequest(138, "lead", "finalize-change")
+    test_token = "test-token"
     historical_revision = "b" * 40
     raw_formal_body = (
         "ACTION_RESULT\n"
@@ -3707,7 +3708,7 @@ def test_postcondition_verifier_uses_application_owned_formal_envelope(
         raw_worker_result=raw,
         source=source,
         repository="owner/repo",
-        token="token",
+        token=test_token,
         current_revision=_REVISION,
         authorized_change=_CHANGE,
     )
@@ -3715,7 +3716,7 @@ def test_postcondition_verifier_uses_application_owned_formal_envelope(
         raw_worker_result=raw,
         source=source,
         repository="owner/repo",
-        token="token",
+        token=test_token,
         current_revision=_REVISION,
         authorized_change=_CHANGE,
         request_comment_id=_REQUEST_COMMENT_ID,
