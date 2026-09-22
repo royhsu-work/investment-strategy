@@ -803,9 +803,7 @@ def _accepted_worker_result_for_continuation(
     ):
         return accepted_intent.raw_worker_result
 
-    comment = _as_mapping(
-        _github_json(repository, token, f"issues/comments/{request_comment_id}")
-    )
+    comment = _as_mapping(_github_json(repository, token, f"issues/comments/{request_comment_id}"))
     owner = repository.split("/", 1)[0]
     body = None if comment is None else comment.get("body")
     if (
@@ -813,8 +811,7 @@ def _accepted_worker_result_for_continuation(
         or comment.get("id") != request_comment_id
         or not isinstance(body, str)
         or not _trusted_connector_comment(comment, owner)
-        or hashlib.sha256(body.encode("utf-8")).hexdigest()
-        != accepted_intent.request_body_sha256
+        or hashlib.sha256(body.encode("utf-8")).hexdigest() != accepted_intent.request_body_sha256
     ):
         raise RuntimeError("accepted first activation mechanical request is unavailable")
 
@@ -3019,9 +3016,7 @@ def _repair_partial_first_activation_route(
         changed_paths = {
             filename
             for raw_file in raw_files
-            for filename in (
-                (raw_file.get("filename") if isinstance(raw_file, Mapping) else None),
-            )
+            for filename in ((raw_file.get("filename") if isinstance(raw_file, Mapping) else None),)
             if isinstance(filename, str)
         }
         if changed_paths.intersection(file.path for file in parsed.files):
