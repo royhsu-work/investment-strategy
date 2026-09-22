@@ -3554,19 +3554,19 @@ def main() -> int:
         plan = replace(plan, pending_continuation=True)
 
     if requires_validation and args.validation_passed:
-            target = observe_materialization_target(
-                materialization,
-                plan.source,
-                repository=repository,
-                token=token,
-                current_revision=args.revision,
-                default_branch=args.default_branch,
-                allow_pending_continuation=pending_continuation,
-            )
-            if args.validated_revision is None or target.revision != args.validated_revision:
-                raise RuntimeError("EFFECT_REQUEST validation proof is stale")
-        elif not requires_validation and args.validation_passed:
-            raise RuntimeError("EFFECT_REQUEST has no validation gate to complete")
+        target = observe_materialization_target(
+            materialization,
+            plan.source,
+            repository=repository,
+            token=token,
+            current_revision=args.revision,
+            default_branch=args.default_branch,
+            allow_pending_continuation=pending_continuation,
+        )
+        if args.validated_revision is None or target.revision != args.validated_revision:
+            raise RuntimeError("EFFECT_REQUEST validation proof is stale")
+    elif not requires_validation and args.validation_passed:
+        raise RuntimeError("EFFECT_REQUEST has no validation gate to complete")
     elif args.validation_passed:
         raise RuntimeError("EFFECT_REQUEST validation completion has no materialization")
 
