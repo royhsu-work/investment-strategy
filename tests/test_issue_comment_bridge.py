@@ -1635,6 +1635,54 @@ def test_malformed_legacy_encoded_source_is_filtered_before_frontier_read() -> N
     assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
 
 
+def test_truncated_legacy_encoded_source_is_filtered_before_frontier_read() -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    raw_worker_result = json.dumps(
+        {
+            "issue_number": 999,
+            "role": "lead",
+            "action": "explore-change",
+            "result_content": "historical payload " + ("x" * 7000),
+            "requested_effects": [],
+        },
+        separators=(",", ":"),
+    )
+    encoded = base64.b64encode(raw_worker_result.encode("utf-8")).decode("ascii")
+    truncated = encoded[:160] + "..."
+    unrelated = {
+        "id": 659,
+        "body": "\n".join(
+            (
+                "EFFECT_REQUEST",
+                "Dispatch-Request-Comment-ID: 100",
+                "Dispatch-Decision-Comment-ID: 200",
+                f"Worker-Result-B64: {truncated}",
+            )
+        ),
+        "created_at": "2026-09-17T12:00:00Z",
+        "user": {"login": "owner"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [unrelated]
+        if path.startswith("issues/138/comments?"):
+            return []
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+
+    assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
+
+
 def test_preactivation_ingress_before_routing_admission_is_historical() -> None:
     source = bridge.WorkerRequest(138, "lead", "explore-change")
     historical = _effect_request_comment(

@@ -70,6 +70,7 @@ _TERMINAL_NO_ACCEPT_CONCLUSIONS = frozenset(
 )
 _MAX_REASON_LENGTH = 240
 _MAX_RESULT_BYTES = 16_384
+_LEGACY_SOURCE_B64_PREFIX_CHARS = 8_192
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -1016,10 +1017,22 @@ def _legacy_encoded_source_identity(body: str) -> tuple[int, str] | None:
         for line in lines[1:]
         if line.startswith("Worker-Result-B64: ")
     ]
-    if len(encoded) != 1 or not encoded[0] or encoded[0] != encoded[0].strip():
+    if len(encoded) != 1 or not encoded[0]:
+        return None
+    # Older connector transports can be truncated after the source prefix,
+    # and a rendered copy may contain whitespace or a non-base64 ellipsis at
+    # the cut.  Only recover a bounded valid base64 prefix; this helper is a
+    # source filter for historical transport, never an application parser.
+    normalized = "".join(encoded[0].split())[:_LEGACY_SOURCE_B64_PREFIX_CHARS]
+    match = re.match(r"[A-Za-z0-9+/=]+", normalized)
+    if match is None:
+        return None
+    usable = match.group(0)
+    usable = usable[: len(usable) - (len(usable) % 4)]
+    if not usable:
         return None
     try:
-        raw = base64.b64decode(encoded[0].encode("ascii"), validate=True).decode("utf-8")
+        raw = base64.b64decode(usable.encode("ascii"), validate=True).decode("utf-8", "ignore")
     except (UnicodeEncodeError, UnicodeDecodeError, binascii.Error):
         return None
 
@@ -1027,7 +1040,12 @@ def _legacy_encoded_source_identity(body: str) -> tuple[int, str] | None:
     # Restrict extraction to that prefix so nested effect payloads cannot
     # become a second source of authority.  Duplicate or absent fields fail
     # closed instead of being guessed.
-    prefix = raw.split('"requested_effects"', 1)[0]
+    boundaries = [
+        index
+        for marker in ('"result_content"', '"requested_effects"')
+        if (index := raw.find(marker)) >= 0
+    ]
+    prefix = raw[: min(boundaries)] if boundaries else raw
 
     def unique_match(pattern: str) -> str | None:
         matches = re.findall(pattern, prefix)
