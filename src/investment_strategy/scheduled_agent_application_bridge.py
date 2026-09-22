@@ -1139,7 +1139,7 @@ def _application_owned_worker_result(
             raise RuntimeError("worker result transition is invalid") from exc
         successor_text = "terminal"
         if successor is not None:
-            successor_text = f"{role_for(successor).value} / {successor.value}"
+            successor_text = f"{role_for(successor).value.capitalize()} / {successor.value}"
         body_lines.append(f"Repository-derived successor: {successor_text}")
     body_lines.append(f"Evidence: {evidence}")
     body = "\n".join(body_lines)

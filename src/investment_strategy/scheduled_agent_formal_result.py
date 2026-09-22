@@ -135,7 +135,11 @@ def _successor_value(body: str) -> tuple[tuple[str, str] | None, bool]:
     value = values[0]
     if value.lower() in {"terminal", "none"}:
         return None, True
-    match = _SUCCESSOR.fullmatch(value)
+    raw_role, separator, raw_action = value.partition("/")
+    normalized_value = value
+    if separator and raw_role.strip() in {"lead", "reviewer", "executor"}:
+        normalized_value = f"{raw_role.strip().capitalize()} / {raw_action.strip()}"
+    match = _SUCCESSOR.fullmatch(normalized_value)
     if match is None:
         return None, False
     role = {"Lead": "lead", "Reviewer": "reviewer", "Executor": "executor"}[match.group(1)]

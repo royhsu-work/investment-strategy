@@ -5,6 +5,7 @@ from investment_strategy.scheduled_agent_formal_qualification import (
     build_qualification_input,
     qualify_current_formal_consequence,
 )
+from investment_strategy.scheduled_agent_formal_result import parse_formal_result
 from investment_strategy.workflow_dispatch import ObservationProvenance
 
 _CHANGE = "qualify-active-formal-consequences"
@@ -989,3 +990,33 @@ def test_administrative_recovery_rejects_unbound_current_change_formal_shape() -
     decision = qualify_current_formal_consequence(qualification_input)
     assert decision.provenance is ObservationProvenance.INDETERMINATE
     assert decision.reason == "administrative-recovery-competing-formal-evidence"
+
+
+def test_application_owned_lowercase_successor_is_reconciled() -> None:
+    revision = _REVISION
+    correlation = f"application:7:229:unset:lead:explore-change:proposal-ready:{revision}"
+    payload = {
+        "id": 701,
+        "body": "\n".join(
+            (
+                "ACTION_RESULT",
+                "Workflow: #229",
+                "Change: unset",
+                "Role: lead",
+                "Action: explore-change",
+                "Result: PROPOSAL_READY",
+                f"Revision: {revision}",
+                f"Default-Branch-Revision: {revision}",
+                f"Application-Correlation: {correlation}",
+                "Repository-derived successor: lead / propose-change",
+            )
+        ),
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+
+    event = parse_formal_result(payload, current_revision=revision)
+
+    assert event is not None
+    assert event.valid
+    assert event.successor == ("lead", "propose-change")
