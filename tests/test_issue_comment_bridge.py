@@ -333,6 +333,19 @@ def _current_source_issue() -> dict[str, object]:
     }
 
 
+def _preactivation_admission() -> list[dict[str, object]]:
+    """Authoritative current-route admission for first pre-activation tests."""
+
+    return [
+        {
+            "id": 42,
+            "event": "labeled",
+            "created_at": "2026-09-18T00:00:00Z",
+            "label": {"name": "action:explore-change"},
+        }
+    ]
+
+
 def _formal_frontier_comment(
     comment_id: int,
     *,
@@ -1117,7 +1130,7 @@ def test_preaccept_live_application_run_is_not_redispatched() -> None:
         if path == "issues/138":
             return _current_source_issue()
         if path.startswith("issues/138/timeline?"):
-            return []
+            return _preactivation_admission()
         if path.startswith("actions/workflows/"):
             return {
                 "workflow_runs": [
@@ -1186,7 +1199,7 @@ def _completion_matrix_reader(
         if path == "issues/138":
             return _current_source_issue()
         if path.startswith("issues/138/timeline?"):
-            return []
+            return _preactivation_admission()
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": runs}
         if path.startswith("actions/runs/") and path.endswith("/jobs"):
@@ -1248,7 +1261,7 @@ def test_terminal_preactcept_candidate_survives_archived_authorization_revision(
         if path == "issues/138":
             return _current_source_issue()
         if path.startswith("issues/138/timeline?"):
-            return []
+            return _preactivation_admission()
         if path.startswith("actions/workflows/"):
             return {
                 "workflow_runs": [
@@ -1382,7 +1395,7 @@ def test_deleted_ingress_after_accept_uses_immutable_intent() -> None:
         if path == "issues/138":
             return _current_source_issue()
         if path.startswith("issues/138/timeline?"):
-            return []
+            return _preactivation_admission()
         if path.startswith("actions/workflows/"):
             return {
                 "workflow_runs": [
@@ -1427,7 +1440,7 @@ def test_edited_ingress_after_accept_cannot_block_immutable_intent() -> None:
         if path == "issues/138":
             return _current_source_issue()
         if path.startswith("issues/138/timeline?"):
-            return []
+            return _preactivation_admission()
         if path.startswith("actions/workflows/"):
             return {
                 "workflow_runs": [
@@ -1470,7 +1483,7 @@ def test_missing_acceptance_is_not_resumed_before_semantic_replay() -> None:
         if path == "issues/138":
             return _current_source_issue()
         if path.startswith("issues/138/timeline?"):
-            return []
+            return _preactivation_admission()
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": []}
         if path.startswith("compare/"):
@@ -1529,6 +1542,242 @@ def test_unrelated_legacy_request_does_not_poison_current_source() -> None:
     assert completion.reason == "application-completion-none"
 
 
+def test_historical_raw_request_is_source_filtered_before_frontier_read() -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    unrelated = {
+        "id": 652,
+        "body": "\n".join(
+            (
+                "EFFECT_REQUEST",
+                "Workflow: #234",
+                "Action: resolve-question",
+                "Worker-Result: legacy raw payload",
+            )
+        ),
+        "created_at": "2026-09-17T12:00:00Z",
+        "user": {"login": "owner"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [unrelated]
+        if path.startswith("issues/138/comments?"):
+            return []
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+
+    assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
+
+
+def test_preactivation_ingress_before_routing_admission_is_historical() -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    historical = _effect_request_comment(
+        comment_id=653,
+        created_at="2026-09-17T23:59:59Z",
+    )
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [historical]
+        if path.startswith("issues/138/comments?"):
+            return []
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return _preactivation_admission()
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+
+    assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
+
+
+def test_unbound_terminal_transport_is_inert_history() -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    unbound = {
+        "id": 654,
+        "body": "EFFECT_REQUEST\nlegacy malformed transport",
+        "created_at": "2026-09-18T01:00:00Z",
+        "user": {"login": "owner"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [unbound]
+        if path.startswith("issues/138/comments?"):
+            return []
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return _preactivation_admission()
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 9654,
+                        "display_title": "Scheduled Agent Application 654",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "run_attempt": 1,
+                    }
+                ]
+            }
+        if path == "actions/runs/9654/jobs":
+            return {
+                "jobs": [
+                    {
+                        "id": 9754,
+                        "name": "apply",
+                        "status": "completed",
+                        "conclusion": "failure",
+                    }
+                ]
+            }
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+
+    assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
+
+
+def test_unbound_live_transport_blocks_without_source_ownership() -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    unbound = {
+        "id": 655,
+        "body": "EFFECT_REQUEST\nlegacy malformed transport",
+        "created_at": "2026-09-18T01:00:00Z",
+        "user": {"login": "owner"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [unbound]
+        if path.startswith("issues/138/comments?"):
+            return []
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return _preactivation_admission()
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 9655,
+                        "display_title": "Scheduled Agent Application 655",
+                        "status": "in_progress",
+                        "run_attempt": 1,
+                    }
+                ]
+            }
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+
+    assert completion == bridge.ApplicationCompletion(
+        "INVALID",
+        "application-completion-unbound-transport-unresolved",
+    )
+
+
+def test_raw_current_source_request_is_classified_after_source_binding() -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    request = {
+        "id": 656,
+        "body": "\n".join(
+            (
+                "EFFECT_REQUEST",
+                "Workflow: #138",
+                "Action: explore-change",
+                "Worker-Result: legacy raw payload",
+            )
+        ),
+        "created_at": "2026-09-18T01:00:00Z",
+        "user": {"login": "owner"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [request]
+        if path.startswith("issues/138/comments?"):
+            return []
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return _preactivation_admission()
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 9656,
+                        "display_title": "Scheduled Agent Application 656",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "run_attempt": 1,
+                    }
+                ]
+            }
+        if path == "actions/runs/9656/jobs":
+            return {
+                "jobs": [
+                    {
+                        "id": 9756,
+                        "name": "apply",
+                        "status": "completed",
+                        "conclusion": "failure",
+                    }
+                ]
+            }
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+
+    assert completion == bridge.ApplicationCompletion(
+        "REJECTED",
+        "application-completion-terminal-no-accept",
+        request_comment_id=656,
+    )
+
+
 def test_same_source_malformed_legacy_request_still_fails_closed() -> None:
     source = bridge.WorkerRequest(138, "lead", "explore-change")
     malformed = _effect_request_comment(
@@ -1555,7 +1804,7 @@ def test_same_source_malformed_legacy_request_still_fails_closed() -> None:
         if path == "issues/138":
             return _current_source_issue()
         if path.startswith("issues/138/timeline?"):
-            return []
+            return _preactivation_admission()
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": []}
         raise AssertionError(path)
@@ -1589,7 +1838,7 @@ def test_protocol_request_without_acceptance_returns_source_ownership() -> None:
         if path == "issues/138":
             return _current_source_issue()
         if path.startswith("issues/138/timeline?"):
-            return []
+            return _preactivation_admission()
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": []}
         raise AssertionError(path)
@@ -1732,7 +1981,7 @@ def test_one_accepted_intent_is_resumed_before_semantic_replay() -> None:
         if path == "issues/138":
             return _current_source_issue()
         if path.startswith("issues/138/timeline?"):
-            return []
+            return _preactivation_admission()
         if path.startswith("actions/workflows/"):
             return {
                 "workflow_runs": [
@@ -1778,7 +2027,7 @@ def test_rejected_intent_returns_ownership_to_later_semantic_dispatch() -> None:
         if path == "issues/138":
             return _current_source_issue()
         if path.startswith("issues/138/timeline?"):
-            return []
+            return _preactivation_admission()
         raise AssertionError(path)
 
     completion = bridge.qualify_application_completion(
@@ -1819,7 +2068,7 @@ def test_distinct_accepted_requests_never_alias_by_equal_payload() -> None:
         if path == "issues/138":
             return _current_source_issue()
         if path.startswith("issues/138/timeline?"):
-            return []
+            return _preactivation_admission()
         raise AssertionError(path)
 
     completion = bridge.qualify_application_completion(

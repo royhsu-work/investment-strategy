@@ -120,6 +120,7 @@ class CurrentFrontier:
     current_routing: tuple[str, str] | None
     event: FormalLifecycleEvent | AdministrativeRecoveryEvent | None
     decision: QualificationDecision
+    occurrence_anchor: IssueLifecycleEvent | None = None
 
 
 def _positive_decimal(value: str | None) -> int | None:
@@ -569,6 +570,67 @@ def _lifecycle_integrity(events: tuple[IssueLifecycleEvent, ...]) -> bool:
     )
 
 
+def _current_routing_admission_event(
+    qualification: QualificationInput,
+) -> IssueLifecycleEvent | None:
+    """Return the latest active label admission for a pre-activation route.
+
+    A pre-activation route has no formal predecessor.  Its first occurrence is
+    therefore bounded by the durable Issue-timeline event that admitted the
+    currently active action label.  This is a derived view only; it is not a
+    persisted occurrence token.
+    """
+
+    routing = qualification.current_routing
+    if routing is None:
+        return None
+    expected_label = f"{_ACTION_LABEL_PREFIX}{routing[1]}"
+    admission: IssueLifecycleEvent | None = None
+    for event in qualification.lifecycle_events:
+        if not event.valid:
+            continue
+        if event.event == "labeled" and event.label == expected_label:
+            admission = event
+        elif event.event == "unlabeled" and event.label == expected_label:
+            admission = None
+    return admission
+
+
+def _qualify_preactivation_consequence(
+    qualification: QualificationInput,
+) -> QualificationDecision:
+    """Qualify the latest Change=unset consequence, when one exists."""
+
+    if not qualification.events:
+        # The first pre-activation occurrence is still valid, but its
+        # occurrence anchor is derived later from the active routing admission.
+        return QualificationDecision(
+            ObservationProvenance.QUALIFIED,
+            "preactivation-change-unset",
+        )
+    if not _valid_sha(qualification.current_revision) or not _lifecycle_integrity(
+        qualification.lifecycle_events
+    ):
+        return _indeterminate("preactivation-lifecycle-evidence-incomplete")
+    latest = qualification.events[-1]
+    if (
+        not latest.valid
+        or latest.issue_number != qualification.issue_number
+        or latest.change != "unset"
+        or qualification.state != "open"
+        or qualification.current_routing is None
+        or latest.terminal
+        or latest.successor != qualification.current_routing
+    ):
+        return _indeterminate("current-preactivation-postcondition-not-qualified", latest)
+    if any(
+        not _formal_interval_is_bound(qualification.events, index, qualification.lifecycle_events)
+        for index in range(len(qualification.events))
+    ):
+        return _indeterminate("preactivation-lifecycle-binding-incomplete", latest)
+    return _qualified("current-preactivation-route-qualified", latest)
+
+
 def _same_application_intent(
     left: FormalLifecycleEvent,
     right: FormalLifecycleEvent,
@@ -748,10 +810,7 @@ def qualify_current_formal_consequence(
     """Evaluate exactly once whether one current formal consequence is qualified."""
 
     if qualification.change == "unset":
-        return QualificationDecision(
-            ObservationProvenance.QUALIFIED,
-            "preactivation-change-unset",
-        )
+        return _qualify_preactivation_consequence(qualification)
     if (
         not isinstance(qualification.issue_number, int)
         or qualification.issue_number <= 0
@@ -919,12 +978,16 @@ def derive_current_frontier(qualification: QualificationInput) -> CurrentFrontie
     decision = qualify_current_formal_consequence(qualification)
     if not decision.qualified:
         return None
+    occurrence_anchor = (
+        None if decision.event is not None else _current_routing_admission_event(qualification)
+    )
     return CurrentFrontier(
         issue_number=qualification.issue_number,
         change=qualification.change,
         current_routing=qualification.current_routing,
         event=decision.event,
         decision=decision,
+        occurrence_anchor=occurrence_anchor,
     )
 
 
