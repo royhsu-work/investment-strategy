@@ -994,9 +994,7 @@ def test_administrative_recovery_rejects_unbound_current_change_formal_shape() -
 
 def test_application_owned_lowercase_successor_is_reconciled() -> None:
     revision = _REVISION
-    correlation = (
-        f"application:7:229:unset:lead:explore-change:proposal-ready:{revision}"
-    )
+    correlation = f"application:7:229:unset:lead:explore-change:proposal-ready:{revision}"
     payload = {
         "id": 701,
         "body": "\n".join(
