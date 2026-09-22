@@ -371,7 +371,6 @@ def test_accepted_first_activation_recovers_legacy_mechanical_manifest(
             "payload_json": json.dumps(materialization, sort_keys=True),
         }
     ]
-    original_raw = json.dumps(original, sort_keys=True, separators=(",", ":"))
     semantic = dict(original)
     semantic["requested_effects"] = []
     semantic["_semantic_intent_version"] = 2
@@ -405,7 +404,10 @@ def test_accepted_first_activation_recovers_legacy_mechanical_manifest(
     recovered_decoded = json.loads(recovered)
     recovered_decoded["requested_effects"] = []
     assert recovered_decoded == semantic
-    assert json.loads(json.loads(recovered)["requested_effects"][0]["payload_json"]) == materialization
+    assert (
+        json.loads(json.loads(recovered)["requested_effects"][0]["payload_json"])
+        == materialization
+    )
 
 
 def test_parse_application_request_decodes_revision_bound_worker_result() -> None:
