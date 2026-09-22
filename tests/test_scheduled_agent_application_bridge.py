@@ -405,8 +405,7 @@ def test_accepted_first_activation_recovers_legacy_mechanical_manifest(
     recovered_decoded["requested_effects"] = []
     assert recovered_decoded == semantic
     assert (
-        json.loads(json.loads(recovered)["requested_effects"][0]["payload_json"])
-        == materialization
+        json.loads(json.loads(recovered)["requested_effects"][0]["payload_json"]) == materialization
     )
 
 
