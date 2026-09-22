@@ -402,7 +402,10 @@ def test_accepted_first_activation_recovers_legacy_mechanical_manifest(
         request_comment_id=102,
     )
 
-    assert recovered == original_raw
+    recovered_decoded = json.loads(recovered)
+    recovered_decoded["requested_effects"] = []
+    assert recovered_decoded == semantic
+    assert json.loads(json.loads(recovered)["requested_effects"][0]["payload_json"]) == materialization
 
 
 def test_parse_application_request_decodes_revision_bound_worker_result() -> None:

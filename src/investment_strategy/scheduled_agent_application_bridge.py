@@ -852,7 +852,16 @@ def _accepted_worker_result_for_continuation(
     parsed = find_materialization_payload(materializations[0], source)
     if parsed is None or parsed.expected_change != "unset" or parsed.change in {"", "unset"}:
         raise RuntimeError("accepted first activation mechanical manifest is invalid")
-    return original.raw_worker_result
+    recovered = json.loads(accepted_intent.raw_worker_result)
+    if not isinstance(recovered, dict):
+        raise RuntimeError("accepted first activation semantic intent is invalid")
+    recovered["requested_effects"] = [
+        {
+            "kind": GITHUB_MUTATION_KIND,
+            "payload_json": json.dumps(dict(materializations[0]), sort_keys=True),
+        }
+    ]
+    return json.dumps(recovered, sort_keys=True, separators=(",", ":"))
 
 
 def _fresh_event_observation(
