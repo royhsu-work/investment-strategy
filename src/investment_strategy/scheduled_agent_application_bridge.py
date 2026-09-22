@@ -3024,7 +3024,7 @@ def _repair_partial_first_activation_route(
         if changed_paths.intersection(file.path for file in parsed.files):
             return False
     if _fresh_branch_head(repository, token, default_branch) != current_revision:
-        raise RuntimeError("partial first activation default branch changed before repair")
+        return False
     if not _partial_activation_carrier_matches(
         materialization,
         source,
