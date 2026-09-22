@@ -179,7 +179,34 @@ def semantic_intent_payload(raw_worker_result: str) -> str:
         or decoded.get("_semantic_intent_version") != _SEMANTIC_INTENT_VERSION
     ):
         return raw_worker_result
-    decoded["requested_effects"] = []
+    retained_effects: list[dict[str, str]] = []
+    requested_effects = decoded.get("requested_effects")
+    if isinstance(requested_effects, list):
+        # Materialization is the one application-owned mechanical consequence
+        # that must survive an ACCEPT/retry boundary.  Keep its immutable
+        # content-addressed manifest while discarding invocation-local formal
+        # projections and every other requested effect.
+        for effect in requested_effects:
+            if not isinstance(effect, Mapping) or effect.get("kind") != GITHUB_MUTATION_KIND:
+                continue
+            payload_json = effect.get("payload_json")
+            if not isinstance(payload_json, str):
+                continue
+            try:
+                payload = json.loads(payload_json)
+            except json.JSONDecodeError:
+                continue
+            if (
+                isinstance(payload, Mapping)
+                and payload.get("operation") == "application-materialize"
+            ):
+                retained_effects.append(
+                    {
+                        "kind": GITHUB_MUTATION_KIND,
+                        "payload_json": payload_json,
+                    }
+                )
+    decoded["requested_effects"] = retained_effects
     return json.dumps(decoded, sort_keys=True, separators=(",", ":"))
 
 

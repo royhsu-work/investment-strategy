@@ -514,6 +514,70 @@ def _ensure_new_carrier(
     return revision, cast(int, number)
 
 
+def _pending_new_carrier(
+    request: MaterializationRequest,
+    source: WorkerRequest,
+    *,
+    repository: str,
+    token: str,
+    default_branch: str,
+    current_revision: str,
+) -> tuple[str, int]:
+    """Reconcile an existing first carrier after a disjoint default-branch advance."""
+
+    comparison = _as_mapping(
+        cast(
+            object,
+            _github_json(
+                repository,
+                token,
+                f"compare/{request.base_sha}...{current_revision}",
+            ),
+        )
+    )
+    base_commit = None if comparison is None else _as_mapping(comparison.get("base_commit"))
+    if (
+        comparison is None
+        or comparison.get("status") != "ahead"
+        or base_commit is None
+        or base_commit.get("sha") != request.base_sha
+    ):
+        raise RuntimeError("application materialization first-carrier base is not an ancestor")
+    default_paths = _comparison_file_paths(
+        repository,
+        token,
+        base_sha=request.base_sha,
+        revision=current_revision,
+    )
+    carrier_paths = {file.path for file in request.files}
+    if default_paths.intersection(carrier_paths):
+        raise RuntimeError(
+            "application materialization first-carrier base overlaps default-branch changes"
+        )
+
+    revision = _branch_head(repository, token, request.branch)
+    if revision is None:
+        raise RuntimeError("application materialization pending carrier branch is unavailable")
+    _verify_revision(repository, token, request, revision)
+    prs = _matching_prs(repository, token, request.branch, default_branch)
+    if len(prs) != 1:
+        raise RuntimeError("application materialization pending carrier count is not exactly one")
+    pr = prs[0]
+    number = pr.get("number")
+    if _positive_int(number) is None or not _pr_matches(
+        pr,
+        repository=repository,
+        branch=request.branch,
+        default_branch=default_branch,
+        revision=revision,
+        issue_number=source.issue_number,
+        change=request.change,
+        base_revision=request.base_sha,
+    ):
+        raise RuntimeError("application materialization pending carrier identity is invalid")
+    return revision, cast(int, number)
+
+
 def _persist_change(
     request: MaterializationRequest,
     *,
@@ -1280,15 +1344,25 @@ def apply_materialization(
 
     if request.expected_change == "unset":
         if request.base_sha != current_revision:
-            raise RuntimeError("application materialization first-carrier base is stale")
-        revision, pr_number = _ensure_new_carrier(
-            request,
-            source,
-            repository=repository,
-            token=token,
-            default_branch=default_branch,
-            authorization_revision=current_revision,
-        )
+            if not allow_pending_continuation:
+                raise RuntimeError("application materialization first-carrier base is stale")
+            revision, pr_number = _pending_new_carrier(
+                request,
+                source,
+                repository=repository,
+                token=token,
+                default_branch=default_branch,
+                current_revision=current_revision,
+            )
+        else:
+            revision, pr_number = _ensure_new_carrier(
+                request,
+                source,
+                repository=repository,
+                token=token,
+                default_branch=default_branch,
+                authorization_revision=current_revision,
+            )
         target = _target(
             request,
             repository=repository,
@@ -1458,32 +1532,44 @@ def observe_materialization_target(
         raise RuntimeError("application materialization default-branch revision is stale")
     if request.expected_change == "unset":
         if request.base_sha != current_revision:
-            raise RuntimeError("application materialization first-carrier base is stale")
-        revision = _branch_head(repository, token, request.branch)
-        if revision is None:
-            raise RuntimeError("application materialization branch is unavailable")
-        prs = _matching_prs(repository, token, request.branch, default_branch)
-        if len(prs) != 1:
-            raise RuntimeError("application materialization carrier count is not exactly one")
-        pr = prs[0]
-        number = pr.get("number")
-        if _positive_int(number) is None or not _pr_matches(
-            pr,
-            repository=repository,
-            branch=request.branch,
-            default_branch=default_branch,
-            revision=revision,
-            issue_number=source.issue_number,
-            change=request.change,
-            base_revision=current_revision,
-        ):
-            raise RuntimeError("application materialization carrier postcondition is invalid")
-        _verify_revision(repository, token, request, revision)
+            if not allow_pending_continuation:
+                raise RuntimeError("application materialization first-carrier base is stale")
+            revision, number = _pending_new_carrier(
+                request,
+                source,
+                repository=repository,
+                token=token,
+                default_branch=default_branch,
+                current_revision=current_revision,
+            )
+        else:
+            observed_revision = _branch_head(repository, token, request.branch)
+            if observed_revision is None:
+                raise RuntimeError("application materialization branch is unavailable")
+            revision = observed_revision
+            prs = _matching_prs(repository, token, request.branch, default_branch)
+            if len(prs) != 1:
+                raise RuntimeError("application materialization carrier count is not exactly one")
+            pr = prs[0]
+            observed_number = pr.get("number")
+            if _positive_int(observed_number) is None or not _pr_matches(
+                pr,
+                repository=repository,
+                branch=request.branch,
+                default_branch=default_branch,
+                revision=revision,
+                issue_number=source.issue_number,
+                change=request.change,
+                base_revision=current_revision,
+            ):
+                raise RuntimeError("application materialization carrier postcondition is invalid")
+            number = cast(int, observed_number)
+            _verify_revision(repository, token, request, revision)
         return _target(
             request,
             repository=repository,
             revision=revision,
-            pr_number=cast(int, number),
+            pr_number=number,
             validation_required=True,
         )
 

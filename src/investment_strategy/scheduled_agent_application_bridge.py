@@ -764,6 +764,106 @@ def _application_decisions_for_request_id(
     return () if not matches else (matches[0],)
 
 
+def _worker_semantic_projection(raw_worker_result: str) -> str:
+    try:
+        decoded = json.loads(raw_worker_result)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("accepted worker result is not valid JSON") from exc
+    if not isinstance(decoded, dict):
+        raise RuntimeError("accepted worker result is not an object")
+    decoded.pop("requested_effects", None)
+    decoded.pop("_semantic_intent_version", None)
+    return json.dumps(decoded, sort_keys=True, separators=(",", ":"))
+
+
+def _accepted_worker_result_for_continuation(
+    *,
+    accepted_intent: ApplicationDecisionRecord,
+    source: WorkerRequest,
+    repository: str,
+    token: str,
+    request_comment_id: int,
+) -> str:
+    """Recover one old mechanical manifest when an older decision stripped it."""
+
+    try:
+        existing = _materialization_effects(
+            accepted_intent.raw_worker_result,
+            source,
+            change=accepted_intent.change,
+        )
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError("accepted application intent is not parseable") from exc
+    if existing:
+        return accepted_intent.raw_worker_result
+    if (
+        source != WorkerRequest(source.issue_number, "lead", "propose-change")
+        or accepted_intent.change != "unset"
+        or accepted_intent.result_kind != _FIRST_ACTIVATION_RESULT
+    ):
+        return accepted_intent.raw_worker_result
+
+    comment = _as_mapping(_github_json(repository, token, f"issues/comments/{request_comment_id}"))
+    owner = repository.split("/", 1)[0]
+    body = None if comment is None else comment.get("body")
+    if (
+        comment is None
+        or comment.get("id") != request_comment_id
+        or not isinstance(body, str)
+        or not _trusted_connector_comment(comment, owner)
+        or hashlib.sha256(body.encode("utf-8")).hexdigest() != accepted_intent.request_body_sha256
+    ):
+        raise RuntimeError("accepted first activation mechanical request is unavailable")
+
+    original = parse_application_request(body)
+    if (
+        original is None
+        or original.authorization_revision != accepted_intent.authorization_revision
+    ):
+        raise RuntimeError("accepted first activation mechanical request identity is invalid")
+    if original.dispatch_correlation is not None and original.dispatch_correlation != (
+        dispatch_correlation_for(repository, source, original.authorization_revision)
+    ):
+        raise RuntimeError("accepted first activation dispatch correlation is invalid")
+    if _claimed_source(original.raw_worker_result) != source:
+        raise RuntimeError("accepted first activation worker source changed")
+    try:
+        original_worker = parse_worker_result(
+            original.raw_worker_result,
+            source,
+            authorized_change="unset",
+        )
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError("accepted first activation worker result is invalid") from exc
+    if (
+        original_worker.change != "unset"
+        or original_worker.typed_result.result.kind.value != _FIRST_ACTIVATION_RESULT
+        or _worker_semantic_projection(original.raw_worker_result)
+        != _worker_semantic_projection(accepted_intent.raw_worker_result)
+    ):
+        raise RuntimeError("accepted first activation semantic intent does not match")
+    materializations = _materialization_effects(
+        original.raw_worker_result,
+        source,
+        change="unset",
+    )
+    if len(materializations) != 1:
+        raise RuntimeError("accepted first activation mechanical manifest is unavailable")
+    parsed = find_materialization_payload(materializations[0], source)
+    if parsed is None or parsed.expected_change != "unset" or parsed.change in {"", "unset"}:
+        raise RuntimeError("accepted first activation mechanical manifest is invalid")
+    recovered = json.loads(accepted_intent.raw_worker_result)
+    if not isinstance(recovered, dict):
+        raise RuntimeError("accepted first activation semantic intent is invalid")
+    recovered["requested_effects"] = [
+        {
+            "kind": GITHUB_MUTATION_KIND,
+            "payload_json": json.dumps(dict(materializations[0]), sort_keys=True),
+        }
+    ]
+    return json.dumps(recovered, sort_keys=True, separators=(",", ":"))
+
+
 def _fresh_event_observation(
     event: Mapping[str, object],
     body: str,
@@ -2516,6 +2616,7 @@ def _complete_first_activation(
     current_revision: str,
     default_branch: str,
     request_comment_id: int,
+    allow_pending_continuation: bool = False,
 ) -> None:
     """Persist result first, then atomically promote Change and successor routing."""
 
@@ -2570,6 +2671,7 @@ def _complete_first_activation(
         token=token,
         current_revision=current_revision,
         default_branch=default_branch,
+        allow_pending_continuation=allow_pending_continuation,
     )
     if fresh_target != target:
         raise RuntimeError("first activation validation target changed before promotion")
@@ -2819,6 +2921,188 @@ def _persist_recovery_comment(
     ):
         raise RuntimeError("partial activation recovery fresh comment was not observed")
     return comment_id
+
+
+def _unbound_first_activation_result_matches(
+    *,
+    worker_result: WorkerActionResult,
+    source: WorkerRequest,
+    repository: str,
+    token: str,
+) -> bool:
+    body = worker_result.result_content
+    if (
+        _marker(body) != "ACTION_RESULT"
+        or _field(body, "Workflow") != f"#{source.issue_number}"
+        or _field(body, "Change") != "unset"
+        or _field(body, "Action") != source.action
+        or _field(body, "Role") != source.role
+        or _field(body, "Result")
+        != worker_result.typed_result.result.kind.value.upper().replace("-", "_")
+        or _field(body, "Application-Correlation") is not None
+        or _field(body, "Repository-derived successor") is not None
+    ):
+        return False
+    comments = _paged_github_list(
+        repository,
+        token,
+        f"issues/{source.issue_number}/comments?sort=created",
+    )
+    matches = tuple(
+        comment
+        for comment in comments
+        if is_github_actions_comment(comment) and comment.get("body") == body
+    )
+    return len(matches) == 1
+
+
+def _repair_partial_first_activation_route(
+    *,
+    raw_worker_result: str,
+    materialization: Mapping[str, object],
+    accepted_intent: ApplicationDecisionRecord,
+    source: WorkerRequest,
+    repository: str,
+    token: str,
+    current_revision: str,
+    default_branch: str,
+    request_comment_id: int,
+) -> bool:
+    """Restore only the source route after an invalid pre-validation projection."""
+
+    if (
+        request_comment_id != accepted_intent.request_comment_id
+        or source != WorkerRequest(source.issue_number, "lead", "propose-change")
+        or accepted_intent.change != "unset"
+    ):
+        return False
+    try:
+        worker_result = parse_worker_result(
+            raw_worker_result,
+            source,
+            authorized_change="unset",
+        )
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    if (
+        worker_result.change != "unset"
+        or worker_result.typed_result.result.kind.value != _FIRST_ACTIVATION_RESULT
+    ):
+        return False
+    parsed = find_materialization_payload(materialization, source)
+    if (
+        parsed is None
+        or parsed.expected_change != "unset"
+        or parsed.base_sha != accepted_intent.authorization_revision
+        or parsed.change in {"", "unset"}
+    ):
+        return False
+    if current_revision != accepted_intent.authorization_revision:
+        if not _authorization_revision_is_ancestor(
+            repository,
+            token,
+            accepted_intent.authorization_revision,
+            current_revision,
+        ):
+            return False
+        comparison = _as_mapping(
+            _github_json(
+                repository,
+                token,
+                f"compare/{accepted_intent.authorization_revision}...{current_revision}",
+            )
+        )
+        raw_files = None if comparison is None else comparison.get("files")
+        base_commit = None if comparison is None else _as_mapping(comparison.get("base_commit"))
+        if (
+            comparison is None
+            or comparison.get("status") != "ahead"
+            or base_commit is None
+            or base_commit.get("sha") != accepted_intent.authorization_revision
+            or not isinstance(raw_files, list)
+        ):
+            return False
+        changed_paths = {
+            filename
+            for raw_file in raw_files
+            for filename in ((raw_file.get("filename") if isinstance(raw_file, Mapping) else None),)
+            if isinstance(filename, str)
+        }
+        if changed_paths.intersection(file.path for file in parsed.files):
+            return False
+    if _fresh_branch_head(repository, token, default_branch) != current_revision:
+        return False
+    if not _partial_activation_carrier_matches(
+        materialization,
+        source,
+        repository=repository,
+        token=token,
+        failed_revision=accepted_intent.authorization_revision,
+        default_branch=default_branch,
+    ):
+        return False
+    if not _unbound_first_activation_result_matches(
+        worker_result=worker_result,
+        source=source,
+        repository=repository,
+        token=token,
+    ):
+        return False
+
+    issue = _as_mapping(_github_json(repository, token, f"issues/{source.issue_number}"))
+    observation = None if issue is None else normalize_github_issue(issue)
+    if (
+        issue is None
+        or observation is None
+        or not observation.authoritative
+        or observation.state != "open"
+        or observation.change != "unset"
+        or observation.routing != ("reviewer", "review-openspec")
+        or not isinstance(issue.get("body"), str)
+        or _CHANGE_LINE.findall(cast(str, issue["body"])) != ["unset"]
+    ):
+        return False
+    unrelated_labels = [
+        name for name in _issue_label_names(issue) if not name.startswith(_ROUTING_LABEL_PREFIXES)
+    ]
+    repaired_labels = [*unrelated_labels, f"action:{source.action}"]
+
+    # Re-read the exact target immediately before this sole repair mutation.
+    fresh_issue = _as_mapping(_github_json(repository, token, f"issues/{source.issue_number}"))
+    fresh_observation = None if fresh_issue is None else normalize_github_issue(fresh_issue)
+    if (
+        fresh_issue is None
+        or fresh_observation is None
+        or not fresh_observation.authoritative
+        or fresh_observation.state != "open"
+        or fresh_observation.change != "unset"
+        or fresh_observation.routing != ("reviewer", "review-openspec")
+        or fresh_issue.get("body") != issue.get("body")
+    ):
+        raise RuntimeError("partial first activation repair target changed before mutation")
+    _github_json(
+        repository,
+        token,
+        f"issues/{source.issue_number}",
+        method="PATCH",
+        payload={"labels": repaired_labels},
+    )
+    final = _as_mapping(_github_json(repository, token, f"issues/{source.issue_number}"))
+    final_observation = None if final is None else normalize_github_issue(final)
+    final_labels = [] if final is None else _issue_label_names(final)
+    if (
+        final is None
+        or final_observation is None
+        or not final_observation.authoritative
+        or final_observation.state != "open"
+        or final_observation.change != "unset"
+        or final_observation.routing != (source.role, source.action)
+        or final.get("body") != issue.get("body")
+        or sorted(name for name in final_labels if not name.startswith(_ROUTING_LABEL_PREFIXES))
+        != sorted(unrelated_labels)
+    ):
+        raise RuntimeError("partial first activation repair postcondition was not observed")
+    return True
 
 
 def _recover_partial_first_activation(
@@ -3091,9 +3375,21 @@ def main() -> int:
             preflight=preflight,
         )
     if accepted_intent is not None and accepted_intent.disposition == "ACCEPTED":
+        accepted_source = WorkerRequest(
+            accepted_intent.issue_number,
+            accepted_intent.role,
+            accepted_intent.action,
+        )
+        accepted_raw_worker_result = _accepted_worker_result_for_continuation(
+            accepted_intent=accepted_intent,
+            source=accepted_source,
+            repository=repository,
+            token=token,
+            request_comment_id=accepted_intent.request_comment_id,
+        )
         request = ApplicationRequest(
             authorization_revision=accepted_intent.authorization_revision,
-            raw_worker_result=accepted_intent.raw_worker_result,
+            raw_worker_result=accepted_raw_worker_result,
         )
     if accepted_intent is not None and accepted_intent.disposition == "REJECTED":
         _write_carrier_outputs(ApplyResult(False, "application-rejected"))
@@ -3229,20 +3525,56 @@ def main() -> int:
         requires_validation = materialization_requires_validation(
             parsed_materialization, plan.source
         )
-        if requires_validation and args.validation_passed:
-            target = observe_materialization_target(
-                materialization,
-                plan.source,
-                repository=repository,
-                token=token,
-                current_revision=args.revision,
-                default_branch=args.default_branch,
-                allow_pending_continuation=plan.pending_continuation,
-            )
-            if args.validated_revision is None or target.revision != args.validated_revision:
-                raise RuntimeError("EFFECT_REQUEST validation proof is stale")
-        elif not requires_validation and args.validation_passed:
-            raise RuntimeError("EFFECT_REQUEST has no validation gate to complete")
+
+    pending_continuation = plan.pending_continuation
+    if (
+        first_activation
+        and accepted_intent is not None
+        and request.authorization_revision != args.revision
+    ):
+        pending_continuation = True
+    if (
+        first_activation
+        and materialization is not None
+        and accepted_intent is not None
+        and _repair_partial_first_activation_route(
+            raw_worker_result=application_worker_result,
+            materialization=materialization,
+            accepted_intent=accepted_intent,
+            source=plan.source,
+            repository=repository,
+            token=token,
+            current_revision=args.revision,
+            default_branch=args.default_branch,
+            request_comment_id=plan.request_comment_id,
+        )
+    ):
+        preflight = acquire_current_github_preflight(repository, token)
+        dispatch = classify_dispatch(preflight)
+        if (
+            dispatch.disposition != "AUTHORIZE"
+            or dispatch.selected_issue_id != plan.source.issue_number
+            or dispatch.selected_routing != (plan.source.role, plan.source.action)
+        ):
+            raise RuntimeError("partial first activation source route was not reauthorized")
+        pending_continuation = True
+
+    if requires_validation and args.validation_passed:
+        if materialization is None:
+            raise RuntimeError("validation target is missing materialization")
+        target = observe_materialization_target(
+            materialization,
+            plan.source,
+            repository=repository,
+            token=token,
+            current_revision=args.revision,
+            default_branch=args.default_branch,
+            allow_pending_continuation=pending_continuation,
+        )
+        if args.validated_revision is None or target.revision != args.validated_revision:
+            raise RuntimeError("EFFECT_REQUEST validation proof is stale")
+    elif not requires_validation and args.validation_passed:
+        raise RuntimeError("EFFECT_REQUEST has no validation gate to complete")
     elif args.validation_passed:
         raise RuntimeError("EFFECT_REQUEST validation completion has no materialization")
 
@@ -3270,7 +3602,7 @@ def main() -> int:
                 validated_materialization_revision=args.validated_revision,
                 request_comment_id=plan.request_comment_id,
                 defer_issue_comments=first_activation,
-                allow_pending_continuation=plan.pending_continuation,
+                allow_pending_continuation=pending_continuation,
                 pending_application_correlation=plan.pending_application_correlation,
                 application_request_body=application_request_body,
                 authorization_revision=request.authorization_revision,
@@ -3292,6 +3624,7 @@ def main() -> int:
                     current_revision=args.revision,
                     default_branch=args.default_branch,
                     request_comment_id=plan.request_comment_id,
+                    allow_pending_continuation=pending_continuation,
                 )
         else:
             batch, result = run_guarded_effect_application(
@@ -3305,7 +3638,7 @@ def main() -> int:
                 validated_materialization_revision=args.validated_revision,
                 request_comment_id=plan.request_comment_id,
                 defer_issue_comments=requires_validation and not args.validation_passed,
-                allow_pending_continuation=plan.pending_continuation,
+                allow_pending_continuation=pending_continuation,
                 pending_application_correlation=plan.pending_application_correlation,
                 application_request_body=application_request_body,
                 authorization_revision=request.authorization_revision,
@@ -3365,7 +3698,7 @@ def main() -> int:
             token=token,
             current_revision=args.revision,
             default_branch=args.default_branch,
-            allow_pending_continuation=plan.pending_continuation,
+            allow_pending_continuation=pending_continuation,
         )
     else:
         target = None
