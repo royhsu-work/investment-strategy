@@ -3549,7 +3549,6 @@ def main() -> int:
         ):
             raise RuntimeError("partial first activation source route was not reauthorized")
         pending_continuation = True
-        plan = replace(plan, pending_continuation=True)
 
     if requires_validation and args.validation_passed:
         target = observe_materialization_target(

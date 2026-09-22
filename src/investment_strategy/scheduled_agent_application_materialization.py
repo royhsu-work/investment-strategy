@@ -1543,15 +1543,16 @@ def observe_materialization_target(
                 current_revision=current_revision,
             )
         else:
-            revision = _branch_head(repository, token, request.branch)
-            if revision is None:
+            observed_revision = _branch_head(repository, token, request.branch)
+            if observed_revision is None:
                 raise RuntimeError("application materialization branch is unavailable")
+            revision = observed_revision
             prs = _matching_prs(repository, token, request.branch, default_branch)
             if len(prs) != 1:
                 raise RuntimeError("application materialization carrier count is not exactly one")
             pr = prs[0]
-            number = pr.get("number")
-            if _positive_int(number) is None or not _pr_matches(
+            observed_number = pr.get("number")
+            if _positive_int(observed_number) is None or not _pr_matches(
                 pr,
                 repository=repository,
                 branch=request.branch,
@@ -1562,12 +1563,13 @@ def observe_materialization_target(
                 base_revision=current_revision,
             ):
                 raise RuntimeError("application materialization carrier postcondition is invalid")
+            number = cast(int, observed_number)
             _verify_revision(repository, token, request, revision)
         return _target(
             request,
             repository=repository,
             revision=revision,
-            pr_number=cast(int, number),
+            pr_number=number,
             validation_required=True,
         )
 
