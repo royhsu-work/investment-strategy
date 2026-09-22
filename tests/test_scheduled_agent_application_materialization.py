@@ -88,6 +88,87 @@ def test_existing_change_materialization_requires_current_pr_and_preserves_expec
     assert materialization_requires_validation(request, source)
 
 
+def test_initial_carrier_resume_after_disjoint_default_advance_is_read_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_base = "a" * 40
+    current_default = "b" * 40
+    carrier_head = "c" * 40
+    blob_sha = "d" * 40
+    path = f"openspec/changes/{_CHANGE}/proposal.md"
+    request = MaterializationRequest(
+        issue_number=234,
+        expected_change="unset",
+        change=_CHANGE,
+        branch=f"agent/{_CHANGE}",
+        base_sha=old_base,
+        message="OpenSpec proposal",
+        files=(WorkProductFile(path, blob_sha, None),),
+        pr_number=None,
+    )
+    repository = "royhsu-work/investment-strategy"
+    pr = {
+        "number": 271,
+        "state": "open",
+        "merged": False,
+        "title": f"OpenSpec: {_CHANGE}",
+        "body": "Formalize the change.\n\nRefs #234",
+        "head": {
+            "ref": request.branch,
+            "sha": carrier_head,
+            "repo": {"full_name": repository},
+        },
+        "base": {
+            "ref": "main",
+            "sha": old_base,
+            "repo": {"full_name": repository},
+        },
+    }
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        **_kwargs: object,
+    ) -> object:
+        if api_path == f"compare/{old_base}...{current_default}":
+            return {"status": "ahead", "base_commit": {"sha": old_base}}
+        if api_path == f"git/ref/heads/{request.branch}":
+            return {"object": {"sha": carrier_head}}
+        if api_path == f"compare/{old_base}...{carrier_head}":
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "behind_by": 0,
+                "commits": [{"sha": carrier_head}],
+                "files": [{"filename": path}],
+            }
+        if api_path == f"contents/{path}?ref={carrier_head}":
+            return {"sha": blob_sha}
+        if api_path.startswith("pulls?"):
+            return [pr]
+        raise AssertionError(api_path)
+
+    monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    monkeypatch.setattr(validation_resource, "_github_json", fake_github_json)
+    monkeypatch.setattr(
+        materialization,
+        "_comparison_file_paths",
+        lambda *_args, **_kwargs: {"src/investment_strategy/repair.py"},
+    )
+
+    revision, pr_number = materialization._pending_new_carrier(
+        request,
+        WorkerRequest(234, "lead", "propose-change"),
+        repository=repository,
+        token="token",
+        default_branch="main",
+        current_revision=current_default,
+    )
+
+    assert (revision, pr_number) == (carrier_head, 271)
+
+
 def test_interrupted_carrier_resume_accepts_its_ancestor_base_after_default_drift(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -120,6 +120,45 @@ def _protocol_decision() -> ActionApplicationDecision:
     )
 
 
+def test_semantic_intent_retains_only_application_materialization() -> None:
+    materialization = {
+        "issue_number": 138,
+        "operation": "application-materialize",
+        "expected_change": "unset",
+        "change": _CHANGE,
+        "branch": f"agent/{_CHANGE}",
+        "base_sha": _REVISION,
+        "message": "OpenSpec materialization",
+        "files": [],
+        "pr_number": None,
+    }
+    raw = json.dumps(
+        {
+            **json.loads(_raw()),
+            "_semantic_intent_version": 2,
+            "requested_effects": [
+                {
+                    "kind": "github-mutation",
+                    "payload_json": json.dumps(materialization, sort_keys=True),
+                },
+                {
+                    "kind": "issue-comment",
+                    "payload_json": json.dumps(
+                        {"issue_number": 138, "body": "invocation-local formal result"}
+                    ),
+                },
+            ],
+        },
+        sort_keys=True,
+    )
+
+    retained = json.loads(effects.semantic_intent_payload(raw))
+
+    assert len(retained["requested_effects"]) == 1
+    assert retained["requested_effects"][0]["kind"] == "github-mutation"
+    assert json.loads(retained["requested_effects"][0]["payload_json"]) == materialization
+
+
 def test_application_decision_is_exactly_bound() -> None:
     request_body = "EFFECT_REQUEST\nAuthorization-Revision: " + _REVISION
     raw = _raw()

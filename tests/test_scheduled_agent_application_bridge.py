@@ -338,6 +338,73 @@ def test_main_rehydrates_accepted_intent_before_transport_observation(
     assert seen == {"raw": raw, "source": source}
 
 
+def test_accepted_first_activation_recovers_legacy_mechanical_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(138, "lead", "propose-change")
+    materialization = {
+        "issue_number": source.issue_number,
+        "operation": "application-materialize",
+        "expected_change": "unset",
+        "change": "restore-no-work-idle-discovery",
+        "branch": "agent/restore-no-work-idle-discovery",
+        "base_sha": _REVISION,
+        "message": "OpenSpec proposal",
+        "files": [
+            {
+                "path": "openspec/changes/restore-no-work-idle-discovery/proposal.md",
+                "blob_sha": "b" * 40,
+                "expected_sha": None,
+            }
+        ],
+        "pr_number": None,
+    }
+    original = _worker_result(
+        action=source.action,
+        role=source.role,
+        result_kind="ready-for-openspec-review",
+    )
+    original["issue_number"] = source.issue_number
+    original["requested_effects"] = [
+        {
+            "kind": "github-mutation",
+            "payload_json": json.dumps(materialization, sort_keys=True),
+        }
+    ]
+    original_raw = json.dumps(original, sort_keys=True, separators=(",", ":"))
+    semantic = dict(original)
+    semantic["requested_effects"] = []
+    semantic["_semantic_intent_version"] = 2
+    semantic_raw = json.dumps(semantic, sort_keys=True, separators=(",", ":"))
+    body = _effect_request(original)
+    accepted = _accepted_record(
+        semantic_raw,
+        body,
+        source=source,
+        change="unset",
+        result_kind="ready-for-openspec-review",
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_github_json",
+        lambda _repository, _token, api_path, **_kwargs: (
+            _connector_comment(102, body)
+            if api_path == "issues/comments/102"
+            else pytest.fail(api_path)
+        ),
+    )
+
+    recovered = bridge._accepted_worker_result_for_continuation(
+        accepted_intent=accepted,
+        source=source,
+        repository=_REPOSITORY,
+        token="token",
+        request_comment_id=102,
+    )
+
+    assert recovered == original_raw
+
+
 def test_parse_application_request_decodes_revision_bound_worker_result() -> None:
     body = _effect_request()
     request = parse_application_request(body)
