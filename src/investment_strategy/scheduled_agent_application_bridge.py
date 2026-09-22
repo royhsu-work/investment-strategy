@@ -3551,6 +3551,8 @@ def main() -> int:
         pending_continuation = True
 
     if requires_validation and args.validation_passed:
+        if materialization is None:
+            raise RuntimeError("validation target is missing materialization")
         target = observe_materialization_target(
             materialization,
             plan.source,
