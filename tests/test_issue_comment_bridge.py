@@ -1578,6 +1578,63 @@ def test_historical_raw_request_is_source_filtered_before_frontier_read() -> Non
     assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
 
 
+def test_malformed_legacy_encoded_source_is_filtered_before_frontier_read() -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+
+    def legacy_comment(comment_id: int, raw_worker_result: str) -> dict[str, object]:
+        encoded = base64.b64encode(raw_worker_result.encode("utf-8")).decode("ascii")
+        return {
+            "id": comment_id,
+            "body": "\n".join(
+                (
+                    "EFFECT_REQUEST",
+                    "Dispatch-Request-Comment-ID: 100",
+                    "Dispatch-Decision-Comment-ID: 200",
+                    f"Worker-Result-B64: {encoded}",
+                )
+            ),
+            "created_at": "2026-09-17T12:00:00Z",
+            "user": {"login": "owner"},
+            "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+        }
+
+    malformed_json = legacy_comment(
+        657,
+        '{"issue_number": 999, "role": "executor", "action": "merge-pr", '
+        '"result_content": "unterminated',
+    )
+    obsolete_identity = legacy_comment(
+        658,
+        json.dumps(
+            {
+                "issue_nuber": 998,
+                "role": "executor",
+                "action": "merge-pr",
+                "result_content": "obsolete action vocabulary",
+                "requested_effects": [],
+            }
+        ),
+    )
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [malformed_json, obsolete_identity]
+        if path.startswith("issues/138/comments?"):
+            return []
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+
+    assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
+
+
 def test_preactivation_ingress_before_routing_admission_is_historical() -> None:
     source = bridge.WorkerRequest(138, "lead", "explore-change")
     historical = _effect_request_comment(
