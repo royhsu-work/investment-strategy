@@ -161,7 +161,7 @@ def test_initial_carrier_resume_after_disjoint_default_advance_is_read_only(
         request,
         WorkerRequest(234, "lead", "propose-change"),
         repository=repository,
-        token="token",
+        token=_BASE,
         default_branch="main",
         current_revision=current_default,
     )

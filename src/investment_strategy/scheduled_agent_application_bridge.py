@@ -819,7 +819,10 @@ def _accepted_worker_result_for_continuation(
         raise RuntimeError("accepted first activation mechanical request is unavailable")
 
     original = parse_application_request(body)
-    if original is None or original.authorization_revision != accepted_intent.authorization_revision:
+    if (
+        original is None
+        or original.authorization_revision != accepted_intent.authorization_revision
+    ):
         raise RuntimeError("accepted first activation mechanical request identity is invalid")
     if original.dispatch_correlation is not None and original.dispatch_correlation != (
         dispatch_correlation_for(repository, source, original.authorization_revision)

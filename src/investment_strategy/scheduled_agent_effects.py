@@ -196,7 +196,10 @@ def semantic_intent_payload(raw_worker_result: str) -> str:
                 payload = json.loads(payload_json)
             except json.JSONDecodeError:
                 continue
-            if isinstance(payload, Mapping) and payload.get("operation") == "application-materialize":
+            if (
+                isinstance(payload, Mapping)
+                and payload.get("operation") == "application-materialize"
+            ):
                 retained_effects.append(
                     {
                         "kind": GITHUB_MUTATION_KIND,

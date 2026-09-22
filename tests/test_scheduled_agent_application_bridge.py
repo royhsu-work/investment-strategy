@@ -398,7 +398,7 @@ def test_accepted_first_activation_recovers_legacy_mechanical_manifest(
         accepted_intent=accepted,
         source=source,
         repository=_REPOSITORY,
-        token="token",
+        token=_REVISION,
         request_comment_id=102,
     )
 

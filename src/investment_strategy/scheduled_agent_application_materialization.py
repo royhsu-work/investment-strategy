@@ -551,7 +551,9 @@ def _pending_new_carrier(
     )
     carrier_paths = {file.path for file in request.files}
     if default_paths.intersection(carrier_paths):
-        raise RuntimeError("application materialization first-carrier base overlaps default-branch changes")
+        raise RuntimeError(
+            "application materialization first-carrier base overlaps default-branch changes"
+        )
 
     revision = _branch_head(repository, token, request.branch)
     if revision is None:
