@@ -120,6 +120,7 @@ PreacceptClassification = Literal[
 class _IngressCandidate:
     request_comment_id: int
     body: str | None
+    created_at: str | None
     authorization_revision: str | None
     request: ApplicationRequest | None
 
@@ -996,6 +997,36 @@ def _effect_request_source_hint(body: str) -> WorkerRequest | None:
         return None
 
 
+def _legacy_raw_source_hint(body: str) -> WorkerRequest | None:
+    """Recover source identity from the explicit legacy raw envelope.
+
+    Older EFFECT_REQUEST comments may not contain a parseable modern worker
+    envelope, but an explicit ``Workflow: #N`` plus ``Action: X`` still binds
+    the transport to one source.  Role is derived from the executable Action
+    model; it is never accepted from untrusted prose.
+    """
+
+    lines = body.splitlines()
+    if lines[:1] != ["EFFECT_REQUEST"]:
+        return None
+    workflow = next(
+        (line.removeprefix("Workflow: #") for line in lines if line.startswith("Workflow: #")),
+        None,
+    )
+    action = next(
+        (line.removeprefix("Action: ") for line in lines if line.startswith("Action: ")),
+        None,
+    )
+    if workflow is None or action is None or not workflow.isdigit() or workflow.startswith("0"):
+        return None
+    try:
+        parsed_action = ModelAction(action)
+        role = role_for(parsed_action).value
+        return WorkerRequest(int(workflow), role, parsed_action.value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _effect_request_matches_source(
     *,
     repository: str,
@@ -1254,13 +1285,28 @@ def _frontier_comment_id(frontier: CurrentFrontier | None) -> int | None:
 def _belongs_to_current_frontier(
     request_comment_id: int,
     frontier: CurrentFrontier | None,
+    *,
+    occurrence_created_at: str | None = None,
 ) -> bool:
-    """Bind a request to the route after the latest qualified consequence."""
+    """Bind one ingress to the derived current occurrence.
+
+    Formal routes use the latest qualified consequence comment as their causal
+    boundary.  A first pre-activation route has no such consequence, so it
+    uses the active Issue-timeline routing admission.  Missing admission or
+    ambiguous timing never widens the occurrence to repository history.
+    """
 
     boundary = _frontier_comment_id(frontier)
-    # A pre-activation route has no formal predecessor.  For an active route,
-    # the qualifier cannot produce a frontier without a comment identity.
-    return boundary is None or request_comment_id > boundary
+    if boundary is not None:
+        return request_comment_id > boundary
+    if frontier is None or frontier.occurrence_anchor is None:
+        return False
+    anchor_time = frontier.occurrence_anchor.created_at
+    if anchor_time is None:
+        return False
+    # A missing ingress timestamp is an incomplete current-source observation;
+    # retain it for fail-closed classification rather than treating it as old.
+    return occurrence_created_at is None or occurrence_created_at > anchor_time
 
 
 def _accepted_intent_owns_frontier(
@@ -1365,6 +1411,8 @@ def qualify_application_completion(
     ]
     candidates: dict[int, _IngressCandidate] = {}
     invalid_request_ids: set[int] = set()
+    ingress_created_at: dict[int, str | None] = {}
+    unbound_request_ids: set[int] = set()
     for comment in (*recent, *issue_comments):
         if not _trusted_connector_comment(comment, owner):
             continue
@@ -1378,17 +1426,25 @@ def qualify_application_completion(
         # A semantic envelope with neither is unresolved evidence and therefore
         # fails closed instead of being guessed into the current Action.
         source_hint = _effect_request_source_hint(body)
+        legacy_source_hint = _legacy_raw_source_hint(body)
         comment_id = _positive_int(comment.get("id"))
         if comment_id is None:
             invalid_request_ids.add(-1)
             continue
+        ingress_created_at[comment_id] = _comment_time(comment)
         try:
             request = parse_application_request(body)
         except ValueError:
             request = None
+        source_bound = False
         if source_hint is not None:
             if source_hint != source:
                 continue
+            source_bound = True
+        elif legacy_source_hint is not None:
+            if legacy_source_hint != source:
+                continue
+            source_bound = True
         elif request is not None and request.dispatch_correlation is not None:
             if not _effect_request_matches_source(
                 repository=repository,
@@ -1397,6 +1453,7 @@ def qualify_application_completion(
                 request=request,
             ):
                 continue
+            source_bound = True
         elif request is not None:
             # A semantic-only payload is safe only when the machine-owned
             # envelope carries the one opaque dispatch correlation.  Without
@@ -1404,8 +1461,12 @@ def qualify_application_completion(
             # selected the current frontier and must not guess.
             invalid_request_ids.add(comment_id)
             continue
-        elif request is None:
-            invalid_request_ids.add(comment_id)
+        elif not source_bound:
+            # No source identity is established.  Keep the transport separate
+            # from current-source evidence so terminal historical noise can
+            # retire naturally, while a live/unknown exact Application run
+            # still prevents semantic redispatch below.
+            unbound_request_ids.add(comment_id)
             continue
         try:
             authorization_revision = None if request is None else request.authorization_revision
@@ -1415,6 +1476,7 @@ def qualify_application_completion(
         candidate = _IngressCandidate(
             request_comment_id=comment_id,
             body=body,
+            created_at=_comment_time(comment),
             authorization_revision=authorization_revision,
             request=request,
         )
@@ -1428,6 +1490,7 @@ def qualify_application_completion(
         not relevant_decisions
         and not candidates
         and not invalid_request_ids
+        and not unbound_request_ids
         and not any(
             parse_formal_result(comment, current_revision=current_revision) is not None
             for comment in issue_comments
@@ -1459,6 +1522,41 @@ def qualify_application_completion(
     )
     if not frontier_qualified:
         return ApplicationCompletion("INVALID", "application-completion-current-frontier-invalid")
+
+    decisions_by_request: dict[int, tuple[ApplicationDecisionRecord, ...]] = {}
+    decision_created_at: dict[int, str | None] = {}
+    for comment in issue_comments:
+        record = parse_application_decision(comment.get("body"))
+        if record is None:
+            continue
+        decisions_by_request.setdefault(record.request_comment_id, ())
+        decisions_by_request[record.request_comment_id] = (
+            *decisions_by_request[record.request_comment_id],
+            record,
+        )
+        decision_created_at[record.request_comment_id] = _comment_time(comment)
+
+    # An unbound transport cannot own this source, but it is not safe to erase
+    # it from observation.  A terminal exact application run with no ACCEPT is
+    # inert history; a live, missing, or contradictory run remains unresolved
+    # and blocks redispatch without becoming current-source authority.
+    accepted_request_ids = {
+        request_id
+        for request_id, records in decisions_by_request.items()
+        if any(record.disposition == "ACCEPTED" for record in records)
+    }
+    for request_id in unbound_request_ids - accepted_request_ids:
+        state = _preaccept_application_state(
+            repository,
+            token,
+            request_id,
+            read=read,
+        )
+        if state is None or state.state != "REJECTED":
+            return ApplicationCompletion(
+                "INVALID",
+                "application-completion-unbound-transport-unresolved",
+            )
 
     # A successor wake observes the frontier's canonical correlation, not the
     # predecessor's old Role/Action labels.  Reconcile that exact accepted
@@ -1510,17 +1608,30 @@ def qualify_application_completion(
     current_request_ids = {
         request_id
         for request_id in candidates
-        if _belongs_to_current_frontier(request_id, frontier)
+        if _belongs_to_current_frontier(
+            request_id,
+            frontier,
+            occurrence_created_at=candidates[request_id].created_at,
+        )
     }
     current_invalid_request_ids = {
         request_id
         for request_id in invalid_request_ids
-        if request_id < 0 or _belongs_to_current_frontier(request_id, frontier)
+        if request_id < 0
+        or _belongs_to_current_frontier(
+            request_id,
+            frontier,
+            occurrence_created_at=ingress_created_at.get(request_id),
+        )
     }
     current_frontier_decisions = [
         record
         for record in relevant_decisions
-        if _belongs_to_current_frontier(record.request_comment_id, frontier)
+        if _belongs_to_current_frontier(
+            record.request_comment_id,
+            frontier,
+            occurrence_created_at=decision_created_at.get(record.request_comment_id),
+        )
     ]
     predecessor_decisions = [
         record
@@ -1572,14 +1683,6 @@ def qualify_application_completion(
         )
     if len(accepted) > 1:
         return ApplicationCompletion("AMBIGUOUS", "application-completion-accepted-ambiguous")
-    decisions_by_request: dict[int, tuple[ApplicationDecisionRecord, ...]] = {}
-    for record in relevant_decisions:
-        decisions_by_request.setdefault(record.request_comment_id, ())
-        decisions_by_request[record.request_comment_id] = (
-            *decisions_by_request[record.request_comment_id],
-            record,
-        )
-
     classifications: dict[int, PreacceptClassification] = {}
     for request_id in current_request_ids - accepted_request_ids:
         candidate = candidates[request_id]
