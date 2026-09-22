@@ -997,6 +997,49 @@ def _effect_request_source_hint(body: str) -> WorkerRequest | None:
         return None
 
 
+def _legacy_encoded_source_identity(body: str) -> tuple[int, str] | None:
+    """Recover bounded source identity from an older encoded worker envelope.
+
+    Some pre-protocol envelopes contain a valid source prefix but an invalid
+    or obsolete worker payload later in the JSON document.  They cannot be
+    accepted as application requests, but their explicit encoded Issue and
+    Action are still sufficient to prove that they belong to another source
+    and must not poison the current one.  Role is deliberately ignored and
+    remains derived from Action everywhere it is executable.
+    """
+
+    lines = body.splitlines()
+    if lines[:1] != ["EFFECT_REQUEST"]:
+        return None
+    encoded = [
+        line.removeprefix("Worker-Result-B64: ")
+        for line in lines[1:]
+        if line.startswith("Worker-Result-B64: ")
+    ]
+    if len(encoded) != 1 or not encoded[0] or encoded[0] != encoded[0].strip():
+        return None
+    try:
+        raw = base64.b64decode(encoded[0].encode("ascii"), validate=True).decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError, binascii.Error):
+        return None
+
+    # Legacy worker results put their source fields before requested effects.
+    # Restrict extraction to that prefix so nested effect payloads cannot
+    # become a second source of authority.  Duplicate or absent fields fail
+    # closed instead of being guessed.
+    prefix = raw.split('"requested_effects"', 1)[0]
+
+    def unique_match(pattern: str) -> str | None:
+        matches = re.findall(pattern, prefix)
+        return matches[0] if len(matches) == 1 else None
+
+    issue_text = unique_match(r'(?:^|[,{])\s*"issue_n(?:umber|uber)"\s*:\s*([1-9][0-9]*)')
+    action = unique_match(r'(?:^|[,{])\s*"action"\s*:\s*"([^"\\]+)"')
+    if issue_text is None or action is None:
+        return None
+    return int(issue_text), action
+
+
 def _legacy_raw_source_hint(body: str) -> WorkerRequest | None:
     """Recover source identity from the explicit legacy raw envelope.
 
@@ -1427,6 +1470,7 @@ def qualify_application_completion(
         # fails closed instead of being guessed into the current Action.
         source_hint = _effect_request_source_hint(body)
         legacy_source_hint = _legacy_raw_source_hint(body)
+        encoded_source_identity = _legacy_encoded_source_identity(body)
         comment_id = _positive_int(comment.get("id"))
         if comment_id is None:
             invalid_request_ids.add(-1)
@@ -1461,6 +1505,13 @@ def qualify_application_completion(
             # selected the current frontier and must not guess.
             invalid_request_ids.add(comment_id)
             continue
+        elif encoded_source_identity is not None:
+            # This is only a historical source filter.  It never authorizes
+            # an effect: an exact current-source identity remains subject to
+            # the normal application-run/ACCEPT classifier below.
+            if encoded_source_identity != (source.issue_number, source.action):
+                continue
+            source_bound = True
         elif not source_bound:
             # No source identity is established.  Keep the transport separate
             # from current-source evidence so terminal historical noise can
