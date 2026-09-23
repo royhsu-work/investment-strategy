@@ -2983,7 +2983,9 @@ def _unbound_first_activation_result_matches(
     except (TypeError, ValueError, RuntimeError, json.JSONDecodeError):
         return False
 
-    body = worker_result.result_content
+    body = _formal_result_body(worker_result, source=source)
+    if body is None:
+        return False
     if (
         worker_result.issue_number != source.issue_number
         or worker_result.role != source.role

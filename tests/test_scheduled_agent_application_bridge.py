@@ -442,12 +442,40 @@ def test_unbound_first_activation_result_matches_accepted_revision_after_main_ad
     )
     accepted = bridge.replace(accepted, authorization_revision=accepted_revision)
 
-    current_result = bridge._application_owned_worker_result(
-        raw_result,
+    materialization = {
+        "issue_number": source.issue_number,
+        "operation": "application-materialize",
+        "expected_change": "unset",
+        "change": "restore-no-work-idle-discovery",
+        "branch": "agent/restore-no-work-idle-discovery",
+        "base_sha": accepted_revision,
+        "message": "OpenSpec proposal",
+        "files": [
+            {
+                "path": "openspec/changes/restore-no-work-idle-discovery/proposal.md",
+                "blob_sha": "b" * 40,
+                "expected_sha": None,
+            }
+        ],
+        "pr_number": None,
+    }
+    recovered_result = dict(semantic_result)
+    recovered_result["requested_effects"] = [
+        {
+            "kind": "github-mutation",
+            "payload_json": json.dumps(materialization, sort_keys=True),
+        }
+    ]
+    recovered_raw = json.dumps(recovered_result, sort_keys=True, separators=(",", ":"))
+
+    current_result = bridge._fresh_application_worker_result(
+        recovered_raw,
         source=source,
         change="unset",
+        repository=_REPOSITORY,
+        token=_REVISION,
         current_revision=current_revision,
-        result_revision=current_revision,
+        default_branch="main",
         request_comment_id=accepted.request_comment_id,
     )
     persisted_result = bridge._application_owned_worker_result(
@@ -463,6 +491,7 @@ def test_unbound_first_activation_result_matches_accepted_revision_after_main_ad
         source,
         authorized_change="unset",
     )
+    assert current_worker_result.result_content == semantic_result["result_content"]
     persisted_worker_result = bridge.parse_worker_result(
         persisted_result,
         source,
@@ -486,7 +515,7 @@ def test_unbound_first_activation_result_matches_accepted_revision_after_main_ad
     )
 
     stale_projection = bridge._application_owned_worker_result(
-        raw_result,
+        recovered_raw,
         source=source,
         change="unset",
         current_revision=current_revision,
