@@ -474,6 +474,14 @@ def test_main_keeps_rehydrated_first_activation_manifest_after_acceptance(
     event_path.write_text(json.dumps(_event(request_body)), encoding="utf-8")
     output_path = tmp_path / "github-output.txt"
     seen: dict[str, object] = {}
+    target = bridge.ValidationResourceTarget(
+        repository=_REPOSITORY,
+        revision="c" * 40,
+        correlation="accepted-rerun",
+        pr_number=17,
+        change="restore-no-work-idle-discovery",
+        validation_required=True,
+    )
 
     monkeypatch.setenv("GITHUB_REPOSITORY", _REPOSITORY)
     monkeypatch.setenv("GITHUB_TOKEN", "token")
@@ -539,6 +547,16 @@ def test_main_keeps_rehydrated_first_activation_manifest_after_acceptance(
 
     monkeypatch.setattr(bridge, "_repair_partial_first_activation_route", capture_repair)
 
+    def capture_validation_target(**kwargs: object) -> bridge.ValidationResourceTarget:
+        seen["validation_materialization"] = kwargs["materialization"]
+        seen["validation_source"] = kwargs["source"]
+        seen["validation_revision"] = kwargs["current_revision"]
+        seen["validation_default_branch"] = kwargs["default_branch"]
+        seen["validation_pending_continuation"] = kwargs["allow_pending_continuation"]
+        return target
+
+    monkeypatch.setattr(bridge, "observe_materialization_target", capture_validation_target)
+
     def capture_application(
         raw_result: str,
         **kwargs: object,
@@ -551,19 +569,31 @@ def test_main_keeps_rehydrated_first_activation_manifest_after_acceptance(
         seen["apply_derived"] = kwargs["apply_derived"]
         return (
             EffectBatch(source=source, effects=(), typed_result=None),
-            bridge.ApplyResult(False, "test interception before effects"),
+            bridge.ApplyResult(True, "test interception before validation output"),
         )
 
     monkeypatch.setattr(bridge, "run_guarded_effect_application", capture_application)
 
-    # The intercepted actuator deliberately reports unapplied before mutation.
-    assert bridge.main() == 1
+    # The intercepted actuator reports application success; target observation remains mocked.
+    assert bridge.main() == 0
 
     assert seen["repair_source"] == source
     assert seen["repair_manifest"] == materialization
     assert seen["application_manifest"] == (materialization,)
     assert seen["apply_derived"] is False
+    assert seen["validation_materialization"] == materialization
+    assert seen["validation_source"] == source
+    assert seen["validation_revision"] == current_revision
+    assert seen["validation_default_branch"] == "main"
+    assert seen["validation_pending_continuation"] is False
     assert '"validation_required": true' in capsys.readouterr().out
+    validation_outputs = output_path.read_text(encoding="utf-8")
+    assert "validation_required=true" in validation_outputs
+    assert f"validation_target_repository={target.repository}" in validation_outputs
+    assert f"validation_target_revision={target.revision}" in validation_outputs
+    assert f"validation_correlation={target.correlation}" in validation_outputs
+    assert f"validation_pr_number={target.pr_number}" in validation_outputs
+    assert f"validation_change={target.change}" in validation_outputs
 
 
 def test_unbound_first_activation_result_matches_accepted_revision_after_main_advances(
