@@ -3403,6 +3403,7 @@ def main() -> int:
         return 0
     event_comment_id = _positive_int(None if event_comment is None else event_comment.get("id"))
     accepted_intent: ApplicationDecisionRecord | None = None
+    accepted_raw_worker_result: str | None = None
     try:
         request = parse_application_request(body)
     except ValueError:
@@ -3525,7 +3526,11 @@ def main() -> int:
             raise RuntimeError("accepted application intent identity is invalid")
         # Keep the validated continuation projection, including an exact manifest
         # rehydrated from the immutable original request after acceptance.
-        semantic_worker_result = accepted_raw_worker_result
+        semantic_worker_result = (
+            accepted_raw_worker_result
+            if accepted_raw_worker_result is not None
+            else accepted_intent.raw_worker_result
+        )
     else:
         semantic_worker_result = plan.raw_worker_result
     try:
