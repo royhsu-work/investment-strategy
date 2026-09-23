@@ -547,9 +547,13 @@ def test_main_keeps_rehydrated_first_activation_manifest_after_acceptance(
 
     monkeypatch.setattr(bridge, "_repair_partial_first_activation_route", capture_repair)
 
-    def capture_validation_target(**kwargs: object) -> bridge.ValidationResourceTarget:
-        seen["validation_materialization"] = kwargs["materialization"]
-        seen["validation_source"] = kwargs["source"]
+    def capture_validation_target(
+        observed_materialization: object,
+        observed_source: object,
+        **kwargs: object,
+    ) -> bridge.ValidationResourceTarget:
+        seen["validation_materialization"] = observed_materialization
+        seen["validation_source"] = observed_source
         seen["validation_revision"] = kwargs["current_revision"]
         seen["validation_default_branch"] = kwargs["default_branch"]
         seen["validation_pending_continuation"] = kwargs["allow_pending_continuation"]
@@ -585,7 +589,7 @@ def test_main_keeps_rehydrated_first_activation_manifest_after_acceptance(
     assert seen["validation_source"] == source
     assert seen["validation_revision"] == current_revision
     assert seen["validation_default_branch"] == "main"
-    assert seen["validation_pending_continuation"] is False
+    assert seen["validation_pending_continuation"] is True
     assert '"validation_required": true' in capsys.readouterr().out
     validation_outputs = output_path.read_text(encoding="utf-8")
     assert "validation_required=true" in validation_outputs
