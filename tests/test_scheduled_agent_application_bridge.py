@@ -556,7 +556,8 @@ def test_main_keeps_rehydrated_first_activation_manifest_after_acceptance(
 
     monkeypatch.setattr(bridge, "run_guarded_effect_application", capture_application)
 
-    assert bridge.main() == 0
+    # The intercepted actuator deliberately reports unapplied before mutation.
+    assert bridge.main() == 1
 
     assert seen["repair_source"] == source
     assert seen["repair_manifest"] == materialization
