@@ -2927,18 +2927,74 @@ def _unbound_first_activation_result_matches(
     *,
     worker_result: WorkerActionResult,
     source: WorkerRequest,
+    accepted_intent: ApplicationDecisionRecord,
     repository: str,
     token: str,
+    current_revision: str,
+    request_comment_id: int,
 ) -> bool:
+    if (
+        accepted_intent.disposition != "ACCEPTED"
+        or accepted_intent.issue_number != source.issue_number
+        or accepted_intent.role != source.role
+        or accepted_intent.action != source.action
+        or accepted_intent.change != "unset"
+        or accepted_intent.result_kind != _FIRST_ACTIVATION_RESULT
+        or accepted_intent.request_comment_id != request_comment_id
+        or accepted_intent.worker_result_sha256
+        != hashlib.sha256(accepted_intent.raw_worker_result.encode("utf-8")).hexdigest()
+        or source != WorkerRequest(source.issue_number, "lead", "propose-change")
+        or _SHA.fullmatch(accepted_intent.authorization_revision) is None
+        or _SHA.fullmatch(current_revision) is None
+    ):
+        return False
+
+    try:
+        current_projection = _application_owned_worker_result(
+            accepted_intent.raw_worker_result,
+            source=source,
+            change="unset",
+            current_revision=current_revision,
+            result_revision=accepted_intent.authorization_revision,
+            request_comment_id=request_comment_id,
+        )
+        expected_current = parse_worker_result(
+            current_projection,
+            source,
+            authorized_change="unset",
+        )
+        accepted_projection = _application_owned_worker_result(
+            accepted_intent.raw_worker_result,
+            source=source,
+            change="unset",
+            current_revision=accepted_intent.authorization_revision,
+            result_revision=accepted_intent.authorization_revision,
+            request_comment_id=request_comment_id,
+        )
+        accepted_result = parse_worker_result(
+            accepted_projection,
+            source,
+            authorized_change="unset",
+        )
+    except (TypeError, ValueError, RuntimeError, json.JSONDecodeError):
+        return False
+
     body = worker_result.result_content
     if (
-        _marker(body) != "ACTION_RESULT"
+        worker_result.issue_number != source.issue_number
+        or worker_result.role != source.role
+        or worker_result.action != source.action
+        or worker_result.change != "unset"
+        or worker_result.typed_result.result.kind.value != _FIRST_ACTIVATION_RESULT
+        or body != expected_current.result_content
+        or _marker(body) != "ACTION_RESULT"
         or _field(body, "Workflow") != f"#{source.issue_number}"
         or _field(body, "Change") != "unset"
         or _field(body, "Action") != source.action
         or _field(body, "Role") != source.role
-        or _field(body, "Result")
-        != worker_result.typed_result.result.kind.value.upper().replace("-", "_")
+        or _field(body, "Result") != _FIRST_ACTIVATION_RESULT.upper().replace("-", "_")
+        or _field(body, "Revision") != accepted_intent.authorization_revision
+        or _field(body, "Default-Branch-Revision") != current_revision
         or _field(body, "Application-Correlation") is not None
         or _field(body, "Repository-derived successor") is not None
     ):
@@ -2951,7 +3007,8 @@ def _unbound_first_activation_result_matches(
     matches = tuple(
         comment
         for comment in comments
-        if is_github_actions_comment(comment) and comment.get("body") == body
+        if is_github_actions_comment(comment)
+        and comment.get("body") == accepted_result.result_content
     )
     return len(matches) == 1
 
@@ -3044,8 +3101,11 @@ def _repair_partial_first_activation_route(
     if not _unbound_first_activation_result_matches(
         worker_result=worker_result,
         source=source,
+        accepted_intent=accepted_intent,
         repository=repository,
         token=token,
+        current_revision=current_revision,
+        request_comment_id=request_comment_id,
     ):
         return False
 
