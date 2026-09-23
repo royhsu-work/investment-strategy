@@ -447,7 +447,7 @@ def test_unbound_first_activation_result_matches_accepted_revision_after_main_ad
         source=source,
         change="unset",
         current_revision=current_revision,
-        result_revision=accepted_revision,
+        result_revision=current_revision,
         request_comment_id=accepted.request_comment_id,
     )
     persisted_result = bridge._application_owned_worker_result(
@@ -477,6 +477,28 @@ def test_unbound_first_activation_result_matches_accepted_revision_after_main_ad
 
     assert bridge._unbound_first_activation_result_matches(
         worker_result=current_worker_result,
+        source=source,
+        accepted_intent=accepted,
+        repository=_REPOSITORY,
+        token=_REVISION,
+        current_revision=current_revision,
+        request_comment_id=accepted.request_comment_id,
+    )
+
+    stale_projection = bridge._application_owned_worker_result(
+        raw_result,
+        source=source,
+        change="unset",
+        current_revision=current_revision,
+        result_revision=accepted_revision,
+        request_comment_id=accepted.request_comment_id,
+    )
+    assert not bridge._unbound_first_activation_result_matches(
+        worker_result=bridge.parse_worker_result(
+            stale_projection,
+            source,
+            authorized_change="unset",
+        ),
         source=source,
         accepted_intent=accepted,
         repository=_REPOSITORY,

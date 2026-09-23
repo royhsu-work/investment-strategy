@@ -2955,7 +2955,11 @@ def _unbound_first_activation_result_matches(
             source=source,
             change="unset",
             current_revision=current_revision,
-            result_revision=accepted_intent.authorization_revision,
+            # Before the OpenSpec target has passed exact-head validation,
+            # first-activation projection binds its temporary result revision
+            # to the current default branch.  The durable malformed result is
+            # checked independently below against the original authorization.
+            result_revision=current_revision,
             request_comment_id=request_comment_id,
         )
         expected_current = parse_worker_result(
@@ -2993,7 +2997,7 @@ def _unbound_first_activation_result_matches(
         or _field(body, "Action") != source.action
         or _field(body, "Role") != source.role
         or _field(body, "Result") != _FIRST_ACTIVATION_RESULT.upper().replace("-", "_")
-        or _field(body, "Revision") != accepted_intent.authorization_revision
+        or _field(body, "Revision") != current_revision
         or _field(body, "Default-Branch-Revision") != current_revision
         or _field(body, "Application-Correlation") is not None
         or _field(body, "Repository-derived successor") is not None
