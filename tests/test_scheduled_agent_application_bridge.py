@@ -409,6 +409,162 @@ def test_accepted_first_activation_recovers_legacy_mechanical_manifest(
     )
 
 
+def test_main_keeps_rehydrated_first_activation_manifest_after_acceptance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = WorkerRequest(322, "lead", "propose-change")
+    authorization_revision = "2" * 40
+    current_revision = "a" * 40
+    materialization = {
+        "issue_number": source.issue_number,
+        "operation": "application-materialize",
+        "expected_change": "unset",
+        "change": "restore-no-work-idle-discovery",
+        "branch": "agent/restore-no-work-idle-discovery",
+        "base_sha": authorization_revision,
+        "message": "OpenSpec proposal",
+        "files": [
+            {
+                "path": "openspec/changes/restore-no-work-idle-discovery/proposal.md",
+                "blob_sha": "b" * 40,
+                "expected_sha": None,
+            }
+        ],
+        "pr_number": None,
+    }
+    original = _worker_result(
+        action=source.action,
+        role=source.role,
+        result_kind="ready-for-openspec-review",
+    )
+    original["issue_number"] = source.issue_number
+    original["result_content"] = (
+        "ACTION_RESULT\\n"
+        "Workflow: #322\\n"
+        "Change: unset\\n"
+        "Action: propose-change\\n"
+        "Role: lead\\n"
+        "Result: READY_FOR_OPENSPEC_REVIEW\\n"
+        f"Revision: {authorization_revision}\\n"
+        f"Default-Branch-Revision: {authorization_revision}\\n"
+    )
+    original["requested_effects"] = [
+        {
+            "kind": "github-mutation",
+            "payload_json": json.dumps(materialization, sort_keys=True),
+        }
+    ]
+    semantic = dict(original)
+    semantic["requested_effects"] = []
+    semantic["_semantic_intent_version"] = 2
+    semantic_raw = json.dumps(semantic, sort_keys=True, separators=(",", ":"))
+    request_body = _effect_request(original, revision=authorization_revision)
+    accepted = _accepted_record(
+        semantic_raw,
+        request_body,
+        source=source,
+        change="unset",
+        result_kind="ready-for-openspec-review",
+    )
+    accepted = bridge.replace(accepted, authorization_revision=authorization_revision)
+    request_comment = _connector_comment(102, request_body)
+    event_path = tmp_path / "event.json"
+    event_path.write_text(json.dumps(_event(request_body)), encoding="utf-8")
+    output_path = tmp_path / "github-output.txt"
+    seen: dict[str, object] = {}
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", _REPOSITORY)
+    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output_path))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "scheduled_agent_application_bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            current_revision,
+            "--default-branch",
+            "main",
+            "--run-attempt",
+            "2",
+        ],
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_application_decision_for_request",
+        lambda **kwargs: (
+            accepted
+            if kwargs["issue_number"] == source.issue_number
+            and kwargs["request_comment_id"] == accepted.request_comment_id
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_github_json",
+        lambda _repository, _token, api_path, **_kwargs: (
+            request_comment
+            if api_path == f"issues/comments/{accepted.request_comment_id}"
+            else pytest.fail(api_path)
+        ),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_authorization_revision_is_ancestor",
+        lambda *_args: True,
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_fresh_event_observation",
+        lambda *_args: pytest.fail("accepted recovery must not consult mutable transport"),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "acquire_current_github_preflight",
+        lambda *_args: _preflight(
+            issue_number=source.issue_number,
+            action="review-openspec",
+            change="unset",
+        ),
+    )
+
+    def capture_repair(**kwargs: object) -> bool:
+        seen["repair_source"] = kwargs["source"]
+        seen["repair_manifest"] = kwargs["materialization"]
+        return False
+
+    monkeypatch.setattr(bridge, "_repair_partial_first_activation_route", capture_repair)
+
+    def capture_application(
+        raw_result: str,
+        **kwargs: object,
+    ) -> tuple[EffectBatch, bridge.ApplyResult]:
+        seen["application_manifest"] = bridge._materialization_effects(
+            raw_result,
+            source,
+            change="unset",
+        )
+        seen["apply_derived"] = kwargs["apply_derived"]
+        return (
+            EffectBatch(source=source, effects=(), typed_result=None),
+            bridge.ApplyResult(False, "test interception before effects"),
+        )
+
+    monkeypatch.setattr(bridge, "run_guarded_effect_application", capture_application)
+
+    assert bridge.main() == 0
+
+    assert seen["repair_source"] == source
+    assert seen["repair_manifest"] == materialization
+    assert seen["application_manifest"] == (materialization,)
+    assert seen["apply_derived"] is False
+    assert '"validation_required": true' in capsys.readouterr().out
+
+
 def test_unbound_first_activation_result_matches_accepted_revision_after_main_advances(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

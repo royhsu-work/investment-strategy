@@ -3523,7 +3523,9 @@ def main() -> int:
             != hashlib.sha256(accepted_intent.raw_worker_result.encode("utf-8")).hexdigest()
         ):
             raise RuntimeError("accepted application intent identity is invalid")
-        semantic_worker_result = accepted_intent.raw_worker_result
+        # Keep the validated continuation projection, including an exact manifest
+        # rehydrated from the immutable original request after acceptance.
+        semantic_worker_result = accepted_raw_worker_result
     else:
         semantic_worker_result = plan.raw_worker_result
     try:
