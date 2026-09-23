@@ -409,6 +409,94 @@ def test_accepted_first_activation_recovers_legacy_mechanical_manifest(
     )
 
 
+def test_unbound_first_activation_result_matches_accepted_revision_after_main_advances(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(322, "lead", "propose-change")
+    accepted_revision = "2" * 40
+    current_revision = "a" * 40
+    semantic_result = _worker_result(
+        action=source.action,
+        role=source.role,
+        result_kind="ready-for-openspec-review",
+    )
+    semantic_result["issue_number"] = source.issue_number
+    semantic_result["result_content"] = (
+        "ACTION_RESULT\n"
+        "Workflow: #322\n"
+        "Change: unset\n"
+        "Action: propose-change\n"
+        "Role: lead\n"
+        "Result: READY_FOR_OPENSPEC_REVIEW\n"
+        f"Revision: {accepted_revision}\n"
+        f"Default-Branch-Revision: {accepted_revision}\n"
+    )
+    raw_result = json.dumps(semantic_result, sort_keys=True, separators=(",", ":"))
+    request_body = _effect_request(semantic_result, revision=accepted_revision)
+    accepted = _accepted_record(
+        raw_result,
+        request_body,
+        source=source,
+        change="unset",
+        result_kind="ready-for-openspec-review",
+    )
+    accepted = bridge.replace(accepted, authorization_revision=accepted_revision)
+
+    current_result = bridge._application_owned_worker_result(
+        raw_result,
+        source=source,
+        change="unset",
+        current_revision=current_revision,
+        result_revision=accepted_revision,
+        request_comment_id=accepted.request_comment_id,
+    )
+    persisted_result = bridge._application_owned_worker_result(
+        raw_result,
+        source=source,
+        change="unset",
+        current_revision=accepted_revision,
+        result_revision=accepted_revision,
+        request_comment_id=accepted.request_comment_id,
+    )
+    current_worker_result = bridge.parse_worker_result(
+        current_result,
+        source,
+        authorized_change="unset",
+    )
+    persisted_worker_result = bridge.parse_worker_result(
+        persisted_result,
+        source,
+        authorized_change="unset",
+    )
+    comment = {
+        "body": persisted_worker_result.result_content,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    monkeypatch.setattr(bridge, "_paged_github_list", lambda *_args: (comment,))
+
+    assert bridge._unbound_first_activation_result_matches(
+        worker_result=current_worker_result,
+        source=source,
+        accepted_intent=accepted,
+        repository=_REPOSITORY,
+        token=_REVISION,
+        current_revision=current_revision,
+        request_comment_id=accepted.request_comment_id,
+    )
+
+    monkeypatch.setattr(bridge, "_paged_github_list", lambda *_args: (comment, comment))
+    assert not bridge._unbound_first_activation_result_matches(
+        worker_result=current_worker_result,
+        source=source,
+        accepted_intent=accepted,
+        repository=_REPOSITORY,
+        token=_REVISION,
+        current_revision=current_revision,
+        request_comment_id=accepted.request_comment_id,
+    )
+
+
 def test_parse_application_request_decodes_revision_bound_worker_result() -> None:
     body = _effect_request()
     request = parse_application_request(body)
