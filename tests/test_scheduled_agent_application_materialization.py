@@ -1799,6 +1799,7 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
             "repo": {"full_name": repository},
         },
     }
+    pr_base_payload = cast(dict[str, object], pr["base"])
     target = ValidationResourceTarget(
         repository=repository,
         revision=carrier_head,
@@ -1921,7 +1922,7 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
         allow_pending_continuation=True,
     )
 
-    pr["base"]["sha"] = "a" * 40
+    pr_base_payload["sha"] = "a" * 40
     assert not materialization.materialization_postcondition(
         payload,
         source,
@@ -1933,7 +1934,7 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
         allow_pending_continuation=True,
     )
 
-    pr["base"]["sha"] = pr_base
+    pr_base_payload["sha"] = pr_base
     historical_pr_base_overlaps = True
     assert not materialization.materialization_postcondition(
         payload,
