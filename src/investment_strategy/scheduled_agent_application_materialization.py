@@ -1615,20 +1615,38 @@ def _observe_nonimplementation_existing_target(
             raise RuntimeError("application materialization carrier identity is ambiguous")
     base = _as_mapping(pr.get("base"))
     base_revision = None if base is None else base.get("sha")
-    if (
-        not _pr_matches(
-            pr,
-            repository=repository,
-            branch=request.branch,
-            default_branch=default_branch,
-            revision=cast(str, revision),
-            issue_number=source.issue_number,
-            change=request.change,
-        )
-        or not _valid_sha(base_revision)
-        or base_revision not in {request.base_sha, current_revision}
-    ):
+    if not _pr_matches(
+        pr,
+        repository=repository,
+        branch=request.branch,
+        default_branch=default_branch,
+        revision=cast(str, revision),
+        issue_number=source.issue_number,
+        change=request.change,
+    ) or not _valid_sha(base_revision):
         raise RuntimeError("application materialization carrier identity is invalid")
+    if base_revision not in {request.base_sha, current_revision}:
+        try:
+            historical_pr_base_paths = _ancestor_comparison_paths(
+                repository,
+                token,
+                base_sha=request.base_sha,
+                revision=cast(str, base_revision),
+            )
+            _ancestor_comparison_paths(
+                repository,
+                token,
+                base_sha=cast(str, base_revision),
+                revision=current_revision,
+            )
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "application materialization PR base is not a safe historical ancestor"
+            ) from exc
+        if historical_pr_base_paths.intersection(file.path for file in request.files):
+            raise RuntimeError(
+                "application materialization PR base overlaps the requested manifest"
+            )
 
     manifest = WorkProductManifest(
         branch=request.branch,

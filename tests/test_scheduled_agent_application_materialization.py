@@ -1737,7 +1737,8 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
     source = WorkerRequest(322, "lead", "resolve-question")
     change = "restore-no-work-idle-discovery"
     old_base = "d019fdc604e8a7fa40e2f3e6436a12b076658057"
-    current_default = "1db00c4b50175af30d4dc9febe461cbab8bac5bf"
+    current_default = "77a2c86ebae1a2e1e1136c3e147b2f012be8231d"
+    pr_base = "1db00c4b50175af30d4dc9febe461cbab8bac5bf"
     carrier_head = "5de9641a3e3e7e26071f3f8cdc1843e3fa842049"
     repository = "royhsu-work/investment-strategy"
     branch = f"agent/{change}"
@@ -1794,10 +1795,11 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
         },
         "base": {
             "ref": "main",
-            "sha": current_default,
+            "sha": pr_base,
             "repo": {"full_name": repository},
         },
     }
+    pr_base_payload = cast(dict[str, object], pr["base"])
     target = ValidationResourceTarget(
         repository=repository,
         revision=carrier_head,
@@ -1809,6 +1811,26 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
     )
     manifest_paths = {cast(str, file["path"]) for file in files}
 
+    historical_pr_base_overlaps = False
+    paths_to_pr_base = {
+        "src/investment_strategy/scheduled_agent_application_materialization.py",
+        "src/investment_strategy/scheduled_agent_effect_contract.py",
+        "src/investment_strategy/scheduled_agent_effects.py",
+        "src/investment_strategy/scheduled_agent_validation_resource.py",
+        "tests/fixtures/issue322-application-recovery.json",
+        "tests/test_issue_comment_bridge.py",
+        "tests/test_scheduled_agent_application_bridge.py",
+        "tests/test_scheduled_agent_application_materialization.py",
+        "tests/test_scheduled_agent_consequence_contract.py",
+        "tests/test_scheduled_agent_effects.py",
+        "tests/test_scheduled_agent_validation_resource.py",
+    }
+    paths_after_pr_base = {
+        "src/investment_strategy/scheduled_agent_validation_resource.py",
+        "tests/test_scheduled_agent_application_materialization.py",
+    }
+    paths_to_current = paths_to_pr_base | paths_after_pr_base
+
     def historical_paths(
         _repository: str,
         _token: str,
@@ -1816,12 +1838,22 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
         base_sha: str,
         revision: str,
     ) -> set[str]:
-        if base_sha != old_base:
-            raise AssertionError((base_sha, revision))
-        if revision == current_default:
-            return {"src/unrelated-main.py"}
-        if revision == carrier_head:
+        if base_sha == old_base and revision == pr_base:
+            if historical_pr_base_overlaps:
+                return {next(iter(manifest_paths))}
+            return paths_to_pr_base
+        if base_sha == old_base and revision == current_default:
+            return paths_to_current
+        if base_sha == pr_base and revision == current_default:
+            return paths_after_pr_base
+        if base_sha == old_base and revision == carrier_head:
             return manifest_paths
+        if base_sha == old_base and revision == "a" * 40:
+            raise RuntimeError("comparison is not an ancestor")
+        if base_sha == old_base and revision == "b" * 40:
+            return paths_to_pr_base
+        if base_sha == "b" * 40 and revision == current_default:
+            raise RuntimeError("PR base is not an ancestor of current main")
         raise AssertionError((base_sha, revision))
 
     monkeypatch.setattr(materialization, "_current_authorized_request", lambda *_args: source)
@@ -1883,6 +1915,43 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
     )
 
     monkeypatch.setattr(validation_resource, "_manifest_content_matches", lambda *_a, **_k: False)
+    assert not materialization.materialization_postcondition(
+        payload,
+        source,
+        repository=repository,
+        token=_TOKEN,
+        current_revision=current_default,
+        default_branch="main",
+        target=applied_target,
+        allow_pending_continuation=True,
+    )
+
+    pr_base_payload["sha"] = "a" * 40
+    assert not materialization.materialization_postcondition(
+        payload,
+        source,
+        repository=repository,
+        token=_TOKEN,
+        current_revision=current_default,
+        default_branch="main",
+        target=applied_target,
+        allow_pending_continuation=True,
+    )
+
+    pr_base_payload["sha"] = "b" * 40
+    assert not materialization.materialization_postcondition(
+        payload,
+        source,
+        repository=repository,
+        token=_TOKEN,
+        current_revision=current_default,
+        default_branch="main",
+        target=applied_target,
+        allow_pending_continuation=True,
+    )
+
+    pr_base_payload["sha"] = pr_base
+    historical_pr_base_overlaps = True
     assert not materialization.materialization_postcondition(
         payload,
         source,
