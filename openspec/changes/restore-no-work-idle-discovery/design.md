@@ -2,7 +2,7 @@
 
 ## Current decision boundary
 
-The original Explore reconstruction used default-branch revision `2e00e236f24ba41302c9ba18c685acdf4cebe4ed`; this continuation was freshly reconstructed from `main@d019fdc604e8a7fa40e2f3e6436a12b076658057`. Fresh source inspection establishes these owners:
+The original Explore reconstruction used default-branch revision `2e00e236f24ba41302c9ba18c685acdf4cebe4ed`; the accepted continuation was authorized at `main@d019fdc604e8a7fa40e2f3e6436a12b076658057`; this review and continuation use current `main@1db00c4b50175af30d4dc9febe461cbab8bac5bf` after PR #335 merged as `1db00c4b50175af30d4dc9febe461cbab8bac5bf` from exact head `64e7d89fe87d6ee04cb70ac038db5943d0df5f7f` (PR Python Quality `36029539020`; exact main Python Quality `36030051964`, both succeeded). Fresh source inspection establishes these owners:
 
 - `workflow_dispatch.py` and the runtime preflight reconstruct current repository work and return `AUTHORIZE`, `NO_WORK`, or `FAIL_CLOSED`.
 - `issue_comment_bridge.py` checks the authoritative default branch and publishes one run-scoped dispatch-result artifact.
@@ -12,7 +12,7 @@ The original Explore reconstruction used default-branch revision `2e00e236f24ba4
 
 The current gap is therefore a missing reachability boundary, not a defect in normal selection and not permission to infer work from an empty queue.
 
-The current delivery baseline is `main@d019fdc604e8a7fa40e2f3e6436a12b076658057`. The shared application substrate repair has merged in the sequential PR chain #331/#332/#333; it is an N-1 prerequisite already present on this revision, not remaining Stage 0 work. The exact PR heads and successful Python Quality runs are recorded in proposal.md and tasks.md. Continue with the typed idle handoff and later stages on this current baseline; retain the full parent completion outcome.
+The current delivery baseline is `main@1db00c4b50175af30d4dc9febe461cbab8bac5bf`. The initial shared application substrate repair merged in PRs #331/#332/#333 on historical `main@d019fdc604e8a7fa40e2f3e6436a12b076658057`; PR #335 then completed the shared-recovery refinement on this current baseline. PR #335 merged from exact head `64e7d89fe87d6ee04cb70ac038db5943d0df5f7f`; its exact PR Python Quality run `36029539020` and exact main run `36030051964` succeeded, with no actionable independent review findings. This is the N-1 prerequisite, not remaining Stage 0 work. Continue with the typed idle handoff and later stages on this baseline; retain the full parent completion outcome.
 
 ## Decision 1: Keep normal dispatch Action-only
 
