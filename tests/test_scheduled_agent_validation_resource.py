@@ -995,7 +995,7 @@ def test_apply_work_product_reconciles_diverged_default_branch_with_two_parents(
                 "status": "ahead",
                 "ahead_by": 1,
                 "behind_by": 0,
-                "files": [{"filename": default_only_path}],
+                "files": [{"filename": default_only_path, "status": "modified"}],
             }
         if api_path == f"compare/{merge_base}...{_PR_HEAD}" and method == "GET":
             return {"status": "identical", "ahead_by": 0, "behind_by": 0, "files": []}
@@ -1204,7 +1204,7 @@ def test_accepted_322_work_product_recovers_safe_historical_pr_base(
                             "status": "renamed",
                         }
                         if failure == "rename-overlap"
-                        else {"filename": default_only_path}
+                        else {"filename": default_only_path, "status": "modified"}
                     ]
                 ),
             }
