@@ -143,7 +143,6 @@ def test_initial_carrier_resume_after_disjoint_default_advance_is_read_only(
                 "ahead_by": 1,
                 "behind_by": 0,
                 "base_commit": {"sha": old_base},
-                "head_commit": {"sha": carrier_head},
                 "commits": [{"sha": carrier_head, "parents": [{"sha": old_base}]}],
                 "files": [{"filename": path}],
             }
@@ -234,7 +233,6 @@ def test_first_carrier_postcondition_uses_the_canonical_disjoint_continuation_ob
                 "ahead_by": 1,
                 "behind_by": 0,
                 "base_commit": {"sha": old_base},
-                "head_commit": {"sha": carrier_head},
                 "commits": [{"sha": carrier_head, "parents": [{"sha": old_base}]}],
                 "files": [{"filename": path}],
             }
@@ -327,7 +325,8 @@ def test_pending_first_carrier_with_missing_pr_emits_only_current_main_pr_plan(
                 "status": "ahead",
                 "ahead_by": 1,
                 "behind_by": 0,
-                "commits": [{"sha": carrier_head}],
+                "base_commit": {"sha": old_base},
+                "commits": [{"sha": carrier_head, "parents": [{"sha": old_base}]}],
                 "files": [{"filename": path}],
             }
         if api_path.startswith("pulls?"):
@@ -420,7 +419,8 @@ def test_pending_first_carrier_rejects_wrong_or_duplicate_pr_carriers(
                 "status": "ahead",
                 "ahead_by": 1,
                 "behind_by": 0,
-                "commits": [{"sha": carrier_head}],
+                "base_commit": {"sha": old_base},
+                "commits": [{"sha": carrier_head, "parents": [{"sha": old_base}]}],
                 "files": [{"filename": path}],
             }
         if api_path.startswith("pulls?"):
@@ -498,7 +498,8 @@ def test_pending_first_carrier_rejects_overlap_and_incomplete_all_head_pr_discov
                 "status": "ahead",
                 "ahead_by": 1,
                 "behind_by": 0,
-                "commits": [{"sha": carrier_head}],
+                "base_commit": {"sha": old_base},
+                "commits": [{"sha": carrier_head, "parents": [{"sha": old_base}]}],
                 "files": [{"filename": path}],
             }
         if api_path.startswith("pulls?"):
@@ -546,17 +547,33 @@ def test_pending_first_carrier_rejects_overlap_and_incomplete_all_head_pr_discov
 
 @pytest.mark.parametrize(
     "invalid_evidence",
-    (None, "unrelated-path", "broken-parent", "initial-content", "incomplete-head", "missing-path"),
+    (
+        None,
+        "unrelated-path",
+        "duplicate-path",
+        "missing-base",
+        "wrong-base",
+        "broken-parent",
+        "wrong-last-commit",
+        "missing-delta-base",
+        "wrong-delta-commit",
+        "duplicate-delta-path",
+        "unrelated-delta-path",
+        "initial-content",
+        "missing-last-commit",
+        "missing-path",
+    ),
 )
 def test_existing_first_carrier_pr_reuses_exact_intent_commit_after_same_path_updates(
     monkeypatch: pytest.MonkeyPatch,
     invalid_evidence: str | None,
 ) -> None:
     old_base = "2e00e236f24ba41302c9ba18c685acdf4cebe4ed"
-    current_default = "6586b5e6b40d84717b73fb7548d778e177fd826f"
+    current_default = "817176cd1b74f8bc04c1e480e0b5335514c5e4ee"
     first_commit = "aad3caedd8db1a4dbba13bc9769d5960b8c8a2fd"
     middle_commit = "23f90022a525413c23e6eb546cda0ba72ea84728"
     carrier_head = "adf0b293fe0d263281e02b79b5dde63f0b2f93e4"
+    wrong_head = "f" * 40
     source = WorkerRequest(322, "lead", "propose-change")
     change = "restore-no-work-idle-discovery"
     paths = (
@@ -573,6 +590,12 @@ def test_existing_first_carrier_pr_reuses_exact_intent_commit_after_same_path_up
             "c4509de555fd088b6f08ce8ad255226226e25ab2",
             "c9dcf15e6e536985620cc6c8dbccaf6700b46867",
         )
+    )
+    head_blobs = (
+        "6003d898fae7c40c59d08e3023ed131baf41b383",
+        "05cfb1579bb4a7c6480f180e9a7e025fdb5fde27",
+        "a8ec4b39e5287651ad58cf2b2e0e1a31113cdf06",
+        "331dc671ea6fa05c8fb2d40cc3f6dc65a31a6f0a",
     )
     request = MaterializationRequest(
         issue_number=source.issue_number,
@@ -619,7 +642,13 @@ def test_existing_first_carrier_pr_reuses_exact_intent_commit_after_same_path_up
     }
     default_paths = {
         "src/investment_strategy/issue_comment_bridge.py",
+        "src/investment_strategy/scheduled_agent_application_bridge.py",
         "src/investment_strategy/scheduled_agent_application_materialization.py",
+        "src/investment_strategy/scheduled_agent_effects.py",
+        "tests/test_issue_comment_bridge.py",
+        "tests/test_scheduled_agent_application_bridge.py",
+        "tests/test_scheduled_agent_application_materialization.py",
+        "tests/test_scheduled_agent_effects.py",
     }
 
     def fake_github_json(
@@ -644,7 +673,30 @@ def test_existing_first_carrier_pr_reuses_exact_intent_commit_after_same_path_up
             changed_files = [{"filename": path} for path in paths]
             if invalid_evidence == "unrelated-path":
                 changed_files.append({"filename": "src/unrelated.py"})
-            if invalid_evidence == "incomplete-head":
+            if invalid_evidence == "duplicate-path":
+                changed_files.append({"filename": paths[0]})
+            if invalid_evidence == "missing-base":
+                return {
+                    "status": "ahead",
+                    "ahead_by": 3,
+                    "behind_by": 0,
+                    "commits": commits,
+                    "files": changed_files,
+                }
+            if invalid_evidence == "wrong-base":
+                return {
+                    "status": "ahead",
+                    "ahead_by": 3,
+                    "behind_by": 0,
+                    "base_commit": {"sha": "f" * 40},
+                    "commits": commits,
+                    "files": changed_files,
+                }
+            if invalid_evidence == "wrong-last-commit":
+                commits[-1] = {"sha": wrong_head, "parents": [{"sha": middle_commit}]}
+            if invalid_evidence == "missing-last-commit":
+                commits = commits[:-1]
+            if invalid_evidence in {"wrong-last-commit", "missing-last-commit"}:
                 return {
                     "status": "ahead",
                     "ahead_by": 3,
@@ -658,7 +710,6 @@ def test_existing_first_carrier_pr_reuses_exact_intent_commit_after_same_path_up
                 "ahead_by": 3,
                 "behind_by": 0,
                 "base_commit": {"sha": old_base},
-                "head_commit": {"sha": carrier_head},
                 "commits": commits,
                 "files": changed_files,
             }
@@ -667,27 +718,44 @@ def test_existing_first_carrier_pr_reuses_exact_intent_commit_after_same_path_up
                 "status": "ahead",
                 "ahead_by": 1,
                 "behind_by": 0,
+                "base_commit": {"sha": old_base},
                 "commits": [{"sha": first_commit, "parents": [{"sha": old_base}]}],
                 "files": [{"filename": path} for path in paths],
             }
         if api_path == f"compare/{first_commit}...{middle_commit}":
-            return {
+            delta: dict[str, object] = {
                 "status": "ahead",
                 "ahead_by": 1,
                 "behind_by": 0,
                 "base_commit": {"sha": first_commit},
-                "head_commit": {"sha": middle_commit},
                 "commits": [{"sha": middle_commit, "parents": [{"sha": first_commit}]}],
                 "files": [{"filename": path} for path in paths],
             }
+            if invalid_evidence == "missing-delta-base":
+                delta.pop("base_commit")
+            elif invalid_evidence == "wrong-delta-commit":
+                delta["commits"] = [{"sha": wrong_head, "parents": [{"sha": first_commit}]}]
+            elif invalid_evidence == "duplicate-delta-path":
+                delta["files"] = [{"filename": paths[0]}, {"filename": paths[0]}]
+            elif invalid_evidence == "unrelated-delta-path":
+                delta["files"] = [{"filename": "src/unrelated.py"}]
+            return delta
         if api_path == f"compare/{middle_commit}...{carrier_head}":
             return {
                 "status": "ahead",
                 "ahead_by": 1,
                 "behind_by": 0,
                 "base_commit": {"sha": middle_commit},
-                "head_commit": {"sha": carrier_head},
                 "commits": [{"sha": carrier_head, "parents": [{"sha": middle_commit}]}],
+                "files": [{"filename": path} for path in paths[:-1]],
+            }
+        if api_path == f"compare/{middle_commit}...{wrong_head}":
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "behind_by": 0,
+                "base_commit": {"sha": middle_commit},
+                "commits": [{"sha": wrong_head, "parents": [{"sha": middle_commit}]}],
                 "files": [{"filename": path} for path in paths],
             }
         raise AssertionError(api_path)
@@ -716,6 +784,8 @@ def test_existing_first_carrier_pr_reuses_exact_intent_commit_after_same_path_up
             if revision == first_commit and invalid_evidence != "initial-content"
             else None
             if revision == carrier_head and invalid_evidence == "missing-path" and path == paths[-1]
+            else head_blobs[paths.index(path)]
+            if revision == carrier_head
             else "d" * 40
         ),
     )
@@ -723,9 +793,17 @@ def test_existing_first_carrier_pr_reuses_exact_intent_commit_after_same_path_up
     if invalid_evidence is not None:
         message = {
             "unrelated-path": "PR contains unrelated or missing paths",
+            "duplicate-path": "PR path evidence is incomplete",
+            "missing-base": "PR lineage is incomplete",
+            "wrong-base": "PR lineage is incomplete",
             "broken-parent": "PR ancestry is not linear",
+            "wrong-last-commit": "PR head is not the final accepted descendant",
+            "missing-delta-base": "PR descendant evidence is incomplete",
+            "wrong-delta-commit": "PR descendant evidence is incomplete",
+            "duplicate-delta-path": "PR descendant paths are incomplete",
+            "unrelated-delta-path": "PR descendant changes unrelated paths",
             "initial-content": "does not resolve requested blobs",
-            "incomplete-head": "PR lineage is incomplete",
+            "missing-last-commit": "PR lineage is incomplete",
             "missing-path": "PR head is missing a manifest path",
         }[invalid_evidence]
         with pytest.raises(RuntimeError, match=message):
@@ -799,6 +877,7 @@ def test_multi_commit_first_carrier_branch_without_exact_pr_fails_closed(
                 "status": "ahead",
                 "ahead_by": 3,
                 "behind_by": 0,
+                "base_commit": {"sha": old_base},
                 "commits": [{"sha": "e" * 40}] * 3,
                 "files": [{"filename": request.files[0].path}],
             }
@@ -827,6 +906,94 @@ def test_multi_commit_first_carrier_branch_without_exact_pr_fails_closed(
             default_branch="main",
             current_revision=current_default,
         )
+
+
+@pytest.mark.parametrize(
+    ("invalid_evidence", "expected_error"),
+    (
+        ("missing-base", "not one commit on the base"),
+        ("wrong-base", "not one commit on the base"),
+        ("wrong-head", "not one commit on the base"),
+        ("missing-parent", "not one commit on the base"),
+        ("wrong-parent", "not one commit on the base"),
+        ("duplicate-path", "file evidence is incomplete"),
+        ("missing-path", "contains unrelated paths"),
+    ),
+)
+def test_branch_ref_without_pr_requires_exact_compare_identity_and_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_evidence: str,
+    expected_error: str,
+) -> None:
+    old_base = "a" * 40
+    carrier_head = "c" * 40
+    path = f"openspec/changes/{_CHANGE}/proposal.md"
+    source = WorkerRequest(234, "lead", "propose-change")
+    request = MaterializationRequest(
+        issue_number=source.issue_number,
+        expected_change="unset",
+        change=_CHANGE,
+        branch=f"agent/{_CHANGE}",
+        base_sha=old_base,
+        message="Resume the accepted first-carrier intent",
+        files=(WorkProductFile(path, _BLOB, None),),
+        pr_number=None,
+    )
+    comparison: dict[str, object] = {
+        "status": "ahead",
+        "ahead_by": 1,
+        "behind_by": 0,
+        "base_commit": {"sha": old_base},
+        "commits": [{"sha": carrier_head, "parents": [{"sha": old_base}]}],
+        "files": [{"filename": path}],
+    }
+    if invalid_evidence == "missing-base":
+        comparison.pop("base_commit")
+    elif invalid_evidence == "wrong-base":
+        comparison["base_commit"] = {"sha": "d" * 40}
+    elif invalid_evidence == "wrong-head":
+        comparison["commits"] = [{"sha": "d" * 40, "parents": [{"sha": old_base}]}]
+    elif invalid_evidence == "missing-parent":
+        comparison["commits"] = [{"sha": carrier_head}]
+    elif invalid_evidence == "wrong-parent":
+        comparison["commits"] = [{"sha": carrier_head, "parents": [{"sha": "d" * 40}]}]
+    elif invalid_evidence == "duplicate-path":
+        comparison["files"] = [{"filename": path}, {"filename": path}]
+    elif invalid_evidence == "missing-path":
+        comparison["files"] = []
+    mutation_calls: list[str] = []
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        **_kwargs: object,
+    ) -> object:
+        if method != "GET":
+            mutation_calls.append(f"{method} {api_path}")
+        assert api_path == f"compare/{old_base}...{carrier_head}"
+        return comparison
+
+    monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    monkeypatch.setattr(
+        materialization,
+        "_content_sha_at",
+        lambda _repo, _token, *, path, revision: (
+            _BLOB if path == request.files[0].path and revision == carrier_head else None
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match=expected_error):
+        materialization._verify_revision(
+            "royhsu-work/investment-strategy",
+            _BASE,
+            request,
+            carrier_head,
+        )
+
+    assert mutation_calls == []
 
 
 def test_interrupted_carrier_resume_accepts_its_ancestor_base_after_default_drift(
