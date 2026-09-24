@@ -2119,20 +2119,47 @@ def test_one_accepted_intent_is_resumed_before_semantic_replay() -> None:
 
 
 @pytest.mark.parametrize(
-    ("current_action", "application_run_count", "accepted_decision_count", "expected"),
     (
-        ("propose-change", 1, 1, ("RESUMABLE", "application-completion-resuming")),
-        ("propose-change", 2, 1, ("INVALID", "application-completion-run-identity-ambiguous")),
+        "current_action",
+        "application_run_count",
+        "accepted_decision_count",
+        "trusted_accepted_decision",
+        "expected",
+    ),
+    (
+        (
+            "propose-change",
+            1,
+            1,
+            True,
+            ("RESUMABLE", "application-completion-resuming"),
+        ),
+        (
+            "propose-change",
+            2,
+            1,
+            True,
+            ("INVALID", "application-completion-run-identity-ambiguous"),
+        ),
         (
             "propose-change",
             1,
             2,
+            True,
             ("AMBIGUOUS", "application-completion-invalid-frontier-accepted-intents-ambiguous"),
         ),
         (
             "review-openspec",
             1,
             1,
+            True,
+            ("INVALID", "application-completion-current-frontier-invalid"),
+        ),
+        (
+            "propose-change",
+            1,
+            1,
+            False,
             ("INVALID", "application-completion-current-frontier-invalid"),
         ),
     ),
@@ -2141,6 +2168,7 @@ def test_current_accepted_application_resumes_when_legacy_result_breaks_frontier
     current_action: str,
     application_run_count: int,
     accepted_decision_count: int,
+    trusted_accepted_decision: bool,
     expected: tuple[str, str],
 ) -> None:
     """Recover the exact production prefix: ACCEPT, effects, branch/PR, then uncorrelated result."""
@@ -2195,6 +2223,9 @@ def test_current_accepted_application_resumes_when_legacy_result_breaks_frontier
         comment_id=5781260361,
     )
     accepted_decision["created_at"] = "2026-09-22T17:48:32Z"
+    if not trusted_accepted_decision:
+        accepted_decision["user"] = {"login": "attacker"}
+        accepted_decision.pop("performed_via_github_app", None)
     # This is the observed current GitHub ACTION_RESULT: its application
     # correlation is absent, so it cannot qualify the accepted intent.
     uncorrelated_result = {

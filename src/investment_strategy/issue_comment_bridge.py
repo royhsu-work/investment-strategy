@@ -1605,9 +1605,8 @@ def qualify_application_completion(
         observation = normalize_github_issue(cast(Mapping[str, object], issue))
         current_accepted = tuple(
             record
-            for comment in issue_comments
-            if (record := parse_application_decision(comment.get("body"))) is not None
-            and record.disposition == "ACCEPTED"
+            for record in _application_decisions(issue_comments)
+            if record.disposition == "ACCEPTED"
             and observation is not None
             and (record.issue_number, record.role, record.action, record.change)
             == (source.issue_number, source.role, source.action, observation.change)
