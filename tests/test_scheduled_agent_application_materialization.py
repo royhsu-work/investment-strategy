@@ -142,7 +142,9 @@ def test_initial_carrier_resume_after_disjoint_default_advance_is_read_only(
                 "status": "ahead",
                 "ahead_by": 1,
                 "behind_by": 0,
-                "commits": [{"sha": carrier_head}],
+                "base_commit": {"sha": old_base},
+                "head_commit": {"sha": carrier_head},
+                "commits": [{"sha": carrier_head, "parents": [{"sha": old_base}]}],
                 "files": [{"filename": path}],
             }
         if api_path == f"contents/{path}?ref={carrier_head}":
@@ -231,7 +233,9 @@ def test_first_carrier_postcondition_uses_the_canonical_disjoint_continuation_ob
                 "status": "ahead",
                 "ahead_by": 1,
                 "behind_by": 0,
-                "commits": [{"sha": carrier_head}],
+                "base_commit": {"sha": old_base},
+                "head_commit": {"sha": carrier_head},
+                "commits": [{"sha": carrier_head, "parents": [{"sha": old_base}]}],
                 "files": [{"filename": path}],
             }
         if api_path == f"contents/{path}?ref={carrier_head}":
@@ -538,6 +542,291 @@ def test_pending_first_carrier_rejects_overlap_and_incomplete_all_head_pr_discov
 
     assert pr_discovery_reads == (0 if overlap else 1)
     assert mutation_calls == []
+
+
+@pytest.mark.parametrize(
+    "invalid_evidence",
+    (None, "unrelated-path", "broken-parent", "initial-content", "incomplete-head", "missing-path"),
+)
+def test_existing_first_carrier_pr_reuses_exact_intent_commit_after_same_path_updates(
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_evidence: str | None,
+) -> None:
+    old_base = "2e00e236f24ba41302c9ba18c685acdf4cebe4ed"
+    current_default = "6586b5e6b40d84717b73fb7548d778e177fd826f"
+    first_commit = "aad3caedd8db1a4dbba13bc9769d5960b8c8a2fd"
+    middle_commit = "23f90022a525413c23e6eb546cda0ba72ea84728"
+    carrier_head = "adf0b293fe0d263281e02b79b5dde63f0b2f93e4"
+    source = WorkerRequest(322, "lead", "propose-change")
+    change = "restore-no-work-idle-discovery"
+    paths = (
+        f"openspec/changes/{change}/proposal.md",
+        f"openspec/changes/{change}/design.md",
+        f"openspec/changes/{change}/specs/scheduled-agent-workflow/spec.md",
+        f"openspec/changes/{change}/tasks.md",
+    )
+    blobs = tuple(
+        sha
+        for sha in (
+            "1899d3fc4311a07ffb49a81bcd67ff0efb40bac8",
+            "bbe2ed3b576f543e6cad29f1575be65f2ec8db0d",
+            "c4509de555fd088b6f08ce8ad255226226e25ab2",
+            "c9dcf15e6e536985620cc6c8dbccaf6700b46867",
+        )
+    )
+    request = MaterializationRequest(
+        issue_number=source.issue_number,
+        expected_change="unset",
+        change=change,
+        branch=f"agent/{change}",
+        base_sha=old_base,
+        message="OpenSpec proposal and design for NO_WORK idle handoff",
+        files=tuple(
+            WorkProductFile(path, blob, None) for path, blob in zip(paths, blobs, strict=True)
+        ),
+        pr_number=None,
+    )
+    repository = "royhsu-work/investment-strategy"
+    payload = {
+        "issue_number": source.issue_number,
+        "operation": "application-materialize",
+        "expected_change": "unset",
+        "change": change,
+        "branch": request.branch,
+        "base_sha": old_base,
+        "message": request.message,
+        "files": [
+            {"path": path, "blob_sha": blob, "expected_sha": None}
+            for path, blob in zip(paths, blobs, strict=True)
+        ],
+    }
+    pr = {
+        "number": 324,
+        "state": "open",
+        "merged": False,
+        "title": f"OpenSpec: {change}",
+        "body": f"Formalize OpenSpec change `{change}`.\n\nRefs #322",
+        "head": {
+            "ref": request.branch,
+            "sha": carrier_head,
+            "repo": {"full_name": repository},
+        },
+        "base": {
+            "ref": "main",
+            "sha": old_base,
+            "repo": {"full_name": repository},
+        },
+    }
+    default_paths = {
+        "src/investment_strategy/issue_comment_bridge.py",
+        "src/investment_strategy/scheduled_agent_application_materialization.py",
+    }
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        **_kwargs: object,
+    ) -> object:
+        if api_path == f"compare/{old_base}...{current_default}":
+            return {"status": "ahead", "base_commit": {"sha": old_base}}
+        if api_path == f"compare/{old_base}...{carrier_head}":
+            commits = [
+                {"sha": first_commit, "parents": [{"sha": old_base}]},
+                {
+                    "sha": middle_commit,
+                    "parents": [
+                        {"sha": old_base if invalid_evidence == "broken-parent" else first_commit}
+                    ],
+                },
+                {"sha": carrier_head, "parents": [{"sha": middle_commit}]},
+            ]
+            changed_files = [{"filename": path} for path in paths]
+            if invalid_evidence == "unrelated-path":
+                changed_files.append({"filename": "src/unrelated.py"})
+            if invalid_evidence == "incomplete-head":
+                return {
+                    "status": "ahead",
+                    "ahead_by": 3,
+                    "behind_by": 0,
+                    "base_commit": {"sha": old_base},
+                    "commits": commits,
+                    "files": changed_files,
+                }
+            return {
+                "status": "ahead",
+                "ahead_by": 3,
+                "behind_by": 0,
+                "base_commit": {"sha": old_base},
+                "head_commit": {"sha": carrier_head},
+                "commits": commits,
+                "files": changed_files,
+            }
+        if api_path == f"compare/{old_base}...{first_commit}":
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "behind_by": 0,
+                "commits": [{"sha": first_commit, "parents": [{"sha": old_base}]}],
+                "files": [{"filename": path} for path in paths],
+            }
+        if api_path == f"compare/{first_commit}...{middle_commit}":
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "behind_by": 0,
+                "base_commit": {"sha": first_commit},
+                "head_commit": {"sha": middle_commit},
+                "commits": [{"sha": middle_commit, "parents": [{"sha": first_commit}]}],
+                "files": [{"filename": path} for path in paths],
+            }
+        if api_path == f"compare/{middle_commit}...{carrier_head}":
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "behind_by": 0,
+                "base_commit": {"sha": middle_commit},
+                "head_commit": {"sha": carrier_head},
+                "commits": [{"sha": carrier_head, "parents": [{"sha": middle_commit}]}],
+                "files": [{"filename": path} for path in paths],
+            }
+        raise AssertionError(api_path)
+
+    monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    monkeypatch.setattr(
+        materialization,
+        "_comparison_file_paths",
+        lambda *_a, **_k: default_paths,
+    )
+    monkeypatch.setattr(
+        materialization,
+        "_verify_new_carrier_base_is_empty",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(materialization, "_branch_head", lambda *_a: carrier_head)
+    monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_a: True)
+    monkeypatch.setattr(materialization, "_current_default_branch", lambda *_a: "main")
+    monkeypatch.setattr(materialization, "_ref_head_sha", lambda *_a: current_default)
+    monkeypatch.setattr(materialization, "_matching_prs", lambda *_a: [pr])
+    monkeypatch.setattr(
+        materialization,
+        "_content_sha_at",
+        lambda _repo, _token, *, path, revision: (
+            blobs[paths.index(path)]
+            if revision == first_commit and invalid_evidence != "initial-content"
+            else None
+            if revision == carrier_head and invalid_evidence == "missing-path" and path == paths[-1]
+            else "d" * 40
+        ),
+    )
+
+    if invalid_evidence is not None:
+        message = {
+            "unrelated-path": "PR contains unrelated or missing paths",
+            "broken-parent": "PR ancestry is not linear",
+            "initial-content": "does not resolve requested blobs",
+            "incomplete-head": "PR lineage is incomplete",
+            "missing-path": "PR head is missing a manifest path",
+        }[invalid_evidence]
+        with pytest.raises(RuntimeError, match=message):
+            materialization.observe_materialization_target(
+                payload,
+                source,
+                repository=repository,
+                token=_BASE,
+                current_revision=current_default,
+                default_branch="main",
+                allow_pending_continuation=True,
+            )
+        return
+
+    target = materialization.observe_materialization_target(
+        payload,
+        source,
+        repository=repository,
+        token=_BASE,
+        current_revision=current_default,
+        default_branch="main",
+        allow_pending_continuation=True,
+    )
+
+    assert target == ValidationResourceTarget(
+        repository=repository,
+        revision=carrier_head,
+        correlation=f"effect-request-{source.issue_number}",
+        pr_number=324,
+        change=change,
+        validation_required=True,
+        branch=request.branch,
+    )
+    assert materialization.materialization_postcondition(
+        payload,
+        source,
+        repository=repository,
+        token=_BASE,
+        current_revision=current_default,
+        default_branch="main",
+        target=target,
+        allow_pending_continuation=True,
+    )
+
+
+def test_multi_commit_first_carrier_branch_without_exact_pr_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_base = "2e00e236f24ba41302c9ba18c685acdf4cebe4ed"
+    current_default = "6586b5e6b40d84717b73fb7548d778e177fd826f"
+    carrier_head = "adf0b293fe0d263281e02b79b5dde63f0b2f93e4"
+    source = WorkerRequest(322, "lead", "propose-change")
+    request = parse_materialization_payload(
+        {
+            **_payload(issue_number=source.issue_number),
+            "base_sha": old_base,
+        },
+        source,
+    )
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        **_kwargs: object,
+    ) -> object:
+        if api_path == f"compare/{old_base}...{current_default}":
+            return {"status": "ahead", "base_commit": {"sha": old_base}}
+        if api_path == f"compare/{old_base}...{carrier_head}":
+            return {
+                "status": "ahead",
+                "ahead_by": 3,
+                "behind_by": 0,
+                "commits": [{"sha": "e" * 40}] * 3,
+                "files": [{"filename": request.files[0].path}],
+            }
+        raise AssertionError(api_path)
+
+    monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    monkeypatch.setattr(
+        materialization,
+        "_comparison_file_paths",
+        lambda *_a, **_k: {"src/owner.py"},
+    )
+    monkeypatch.setattr(
+        materialization,
+        "_verify_new_carrier_base_is_empty",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(materialization, "_branch_head", lambda *_a: carrier_head)
+    monkeypatch.setattr(materialization, "_matching_prs", lambda *_a: [])
+
+    with pytest.raises(RuntimeError, match="not one commit on the base"):
+        materialization._pending_new_carrier(
+            request,
+            source,
+            repository="royhsu-work/investment-strategy",
+            token=_BASE,
+            default_branch="main",
+            current_revision=current_default,
+        )
 
 
 def test_interrupted_carrier_resume_accepts_its_ancestor_base_after_default_drift(
