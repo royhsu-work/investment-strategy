@@ -1850,6 +1850,10 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
             return manifest_paths
         if base_sha == old_base and revision == "a" * 40:
             raise RuntimeError("comparison is not an ancestor")
+        if base_sha == old_base and revision == "b" * 40:
+            return paths_to_pr_base
+        if base_sha == "b" * 40 and revision == current_default:
+            raise RuntimeError("PR base is not an ancestor of current main")
         raise AssertionError((base_sha, revision))
 
     monkeypatch.setattr(materialization, "_current_authorized_request", lambda *_args: source)
@@ -1923,6 +1927,18 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
     )
 
     pr_base_payload["sha"] = "a" * 40
+    assert not materialization.materialization_postcondition(
+        payload,
+        source,
+        repository=repository,
+        token=_TOKEN,
+        current_revision=current_default,
+        default_branch="main",
+        target=applied_target,
+        allow_pending_continuation=True,
+    )
+
+    pr_base_payload["sha"] = "b" * 40
     assert not materialization.materialization_postcondition(
         payload,
         source,
