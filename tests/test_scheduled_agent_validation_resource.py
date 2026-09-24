@@ -2112,6 +2112,9 @@ def test_live_322_manifest_recovers_after_disjoint_default_advance(
         "src/investment_strategy/scheduled_agent_validation_resource.py",
         "tests/test_scheduled_agent_application_materialization.py",
     }
+    overlap_path = "src/investment_strategy/scheduled_agent_validation_resource.py"
+    historical_overlap = [False]
+    carrier_paths_after_pr_base = {path for path, _blob, _expected in manifest_values}
     default_paths = pr_base_paths | paths_after_pr_base
     carrier_paths = {path for path, _blob, _expected in manifest_values} | pr_base_paths
     mutation_calls: list[str] = []
@@ -2169,6 +2172,21 @@ def test_live_322_manifest_recovers_after_disjoint_default_advance(
                     "files": [
                         {"filename": path, "status": "modified"}
                         for path in sorted(paths_after_pr_base)
+                    ],
+                }
+            if comparison == f"{historical_pr_base}...{carrier_revision}":
+                changed_carrier_paths = set(carrier_paths_after_pr_base)
+                if historical_overlap[0]:
+                    changed_carrier_paths.add(overlap_path)
+                return {
+                    "status": "ahead",
+                    "ahead_by": 7,
+                    "behind_by": 0,
+                    "base_commit": {"sha": historical_pr_base},
+                    "too_large": False,
+                    "files": [
+                        {"filename": path, "status": "modified"}
+                        for path in sorted(changed_carrier_paths)
                     ],
                 }
             if comparison == f"{historical_base}...{authorization_revision}":
@@ -2260,6 +2278,20 @@ def test_live_322_manifest_recovers_after_disjoint_default_advance(
     assert f"{historical_pr_base}...{authorization_revision}" in comparison_reads
     assert f"{historical_base}...{authorization_revision}" in comparison_reads
     assert f"{historical_base}...{carrier_revision}" in comparison_reads
+    assert mutation_calls == []
+
+    historical_overlap[0] = True
+    comparison_reads.clear()
+    with pytest.raises(RuntimeError, match="historical PR base overlaps"):
+        resource.apply_work_product(
+            plan,
+            repository=_REPOSITORY,
+            token=_FIXTURE_VALUE,
+            default_branch="main",
+            authorization_revision=authorization_revision,
+        )
+
+    assert f"{historical_pr_base}...{carrier_revision}" in comparison_reads
     assert mutation_calls == []
 
 
