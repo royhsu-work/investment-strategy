@@ -1583,9 +1583,8 @@ def _observe_nonimplementation_existing_target(
 ) -> ValidationResourceTarget:
     if request.pr_number is None:
         raise RuntimeError("application materialization validation target lacks PR")
-    # Fresh source authorization above is sufficient to observe an already-durable
-    # carrier from an earlier default-branch revision. The historical observer below
-    # proves ancestry, disjointness, exact carrier content, and identity.
+    if request.base_sha != current_revision and not allow_pending_continuation:
+        raise RuntimeError("application materialization authorization base is stale")
     pr = _open_pr_payload(
         repository=repository,
         token=token,

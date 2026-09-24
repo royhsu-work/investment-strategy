@@ -147,6 +147,7 @@ def test_existing_change_observer_reconstructs_only_exact_current_carrier(
     }
 
     monkeypatch.setattr(materialization, "_current_authorized_request", lambda *_args: source)
+    monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_args: True)
     monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
     monkeypatch.setattr(
         materialization,
@@ -191,6 +192,7 @@ def test_existing_change_observer_reconstructs_only_exact_current_carrier(
                 token=_TOKEN,
                 current_revision=current_default,
                 default_branch="main",
+                allow_pending_continuation=failure == "unproven-historical-base",
             )
         return
 
@@ -1792,7 +1794,7 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
         },
         "base": {
             "ref": "main",
-            "sha": old_base,
+            "sha": current_default,
             "repo": {"full_name": repository},
         },
     }
@@ -1823,6 +1825,7 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
         raise AssertionError((base_sha, revision))
 
     monkeypatch.setattr(materialization, "_current_authorized_request", lambda *_args: source)
+    monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_args: True)
     monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
     monkeypatch.setattr(
         materialization,
@@ -1864,6 +1867,7 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
         token=_TOKEN,
         current_revision=current_default,
         default_branch="main",
+        allow_pending_continuation=True,
     )
 
     assert applied_target == target
@@ -1875,6 +1879,7 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
         current_revision=current_default,
         default_branch="main",
         target=applied_target,
+        allow_pending_continuation=True,
     )
 
     monkeypatch.setattr(validation_resource, "_manifest_content_matches", lambda *_a, **_k: False)
@@ -1886,4 +1891,5 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
         current_revision=current_default,
         default_branch="main",
         target=applied_target,
+        allow_pending_continuation=True,
     )
