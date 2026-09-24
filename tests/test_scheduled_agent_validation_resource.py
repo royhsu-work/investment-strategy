@@ -25,6 +25,38 @@ _CHANGE = "simplify-scheduled-agent-control-plane"
 _FIXTURE_VALUE = "fixture-value"
 
 
+def test_reconciliation_file_comparison_includes_renamed_path_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_sha = "a" * 40
+    revision = "b" * 40
+    requested: list[str] = []
+
+    def fake_github_json(_repository: str, _token: str, api_path: str) -> object:
+        requested.append(api_path)
+        return {
+            "files": [
+                {
+                    "filename": "src/new_name.py",
+                    "previous_filename": "src/old_name.py",
+                    "status": "renamed",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
+
+    paths = resource._comparison_file_paths(
+        _REPOSITORY,
+        _FIXTURE_VALUE,
+        base_sha=base_sha,
+        revision=revision,
+    )
+
+    assert requested == [f"compare/{base_sha}...{revision}"]
+    assert paths == {"src/old_name.py", "src/new_name.py"}
+
+
 def test_candidate_checkout_uses_actions_compatible_basic_auth() -> None:
     environment = resource._candidate_subprocess_environment(_FIXTURE_VALUE)
 

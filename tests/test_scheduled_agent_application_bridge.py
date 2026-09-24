@@ -338,6 +338,131 @@ def test_main_rehydrates_accepted_intent_before_transport_observation(
     assert seen == {"raw": raw, "source": source}
 
 
+def test_main_resumes_live_322_effect_through_the_same_application_owner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A fresh application run reuses #322's accepted intent without semantic replay."""
+
+    fixture_path = Path(__file__).parent / "fixtures" / "issue322-application-recovery.json"
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    request = cast(dict[str, object], fixture["request_comment"])
+    body = cast(str, request["body"])
+    issue_comments = cast(list[dict[str, object]], fixture["issue_comments"])
+    acceptance = next(item for item in issue_comments if item.get("id") == 5810770514)
+    record = bridge.parse_application_decision(cast(str, acceptance["body"]))
+    assert record is not None
+    source = WorkerRequest(322, "lead", "resolve-question")
+    assert record.request_comment_id == 5810765007
+    assert (record.issue_number, record.role, record.action, record.change) == (
+        322,
+        "lead",
+        "resolve-question",
+        "restore-no-work-idle-discovery",
+    )
+    raw_worker_result = record.raw_worker_result
+    event = _event(body)
+    event["issue"] = {
+        "number": 330,
+        "title": checkin_title(date(2026, 9, 24)),
+        "state": "open",
+        "labels": [],
+    }
+    event_comment = cast(dict[str, object], event["comment"])
+    event_comment["id"] = 5810765007
+    event_path = tmp_path / "event.json"
+    event_path.write_text(json.dumps(event), encoding="utf-8")
+    output_path = tmp_path / "github-output.txt"
+    seen: list[dict[str, object]] = []
+    current_revision = cast(str, fixture["source_revision"])
+    target = bridge.ValidationResourceTarget(
+        repository=_REPOSITORY,
+        revision="7af49c85ebcb1cc22435913a154e9895bf43cdd2",
+        correlation="application:5810765007:322:restore-no-work-idle-discovery:lead:resolve-question:ready-for-openspec-review:d019fdc604e8a7fa40e2f3e6436a12b076658057",
+        pr_number=324,
+        change="restore-no-work-idle-discovery",
+        branch="agent/restore-no-work-idle-discovery",
+    )
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", _REPOSITORY)
+    monkeypatch.setenv("GITHUB_TOKEN", "fixture")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output_path))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "scheduled_agent_application_bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            current_revision,
+            "--default-branch",
+            "main",
+            "--run-attempt",
+            "8",
+        ],
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_application_decision_for_request",
+        lambda **kwargs: (
+            record
+            if kwargs["issue_number"] == 322
+            and kwargs["request_comment_id"] == 5810765007
+            and kwargs["request_body"] == body
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_accepted_worker_result_for_continuation",
+        lambda **kwargs: raw_worker_result
+        if kwargs["request_comment_id"] == 5810765007
+        else pytest.fail("accepted request identity changed"),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_fresh_application_worker_result",
+        lambda raw, **_kwargs: raw,
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_fresh_event_observation",
+        lambda *_args: pytest.fail("accepted recovery must not consult mutable transport"),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "acquire_current_github_preflight",
+        lambda *_args: _preflight(
+            issue_number=322,
+            action="resolve-question",
+            change="restore-no-work-idle-discovery",
+        ),
+    )
+
+    def capture_application(raw_result: str, **kwargs: object) -> tuple[EffectBatch, bridge.ApplyResult]:
+        seen.append({"raw": raw_result, **kwargs})
+        return (
+            EffectBatch(source=source, effects=(), typed_result=None),
+            bridge.ApplyResult(True, "recovered from accepted intent"),
+        )
+
+    monkeypatch.setattr(bridge, "run_guarded_effect_application", capture_application)
+    monkeypatch.setattr(bridge, "observe_materialization_target", lambda *_args, **_kwargs: target)
+
+    assert bridge.main() == 0
+    captured = capsys.readouterr()
+    assert '"applied": true' in captured.out
+    assert len(seen) == 1
+    assert seen[0]["raw"] == raw_worker_result
+    assert seen[0]["source"] == source
+    assert seen[0]["request_comment_id"] == 5810765007
+    assert seen[0]["authorization_revision"] == current_revision
+    assert seen[0]["accepted_intent"] is True
+    assert seen[0]["allow_pending_continuation"] is True
+
+
 def test_accepted_first_activation_recovers_legacy_mechanical_manifest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

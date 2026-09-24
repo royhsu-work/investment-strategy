@@ -2366,6 +2366,75 @@ def test_current_accepted_application_resumes_when_legacy_result_breaks_frontier
         assert application_run_reads == 0
 
 
+def test_live_322_accepted_request_resumes_its_exact_failed_application_job() -> None:
+    """Reproduce the live #322 accepted-request prefix from current GitHub evidence."""
+
+    fixture_path = Path(__file__).parent / "fixtures" / "issue322-application-recovery.json"
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    revision = cast(str, fixture["source_revision"])
+    request = cast(dict[str, object], fixture["request_comment"])
+    issue = cast(dict[str, object], fixture["issue"])
+    issue_comments = cast(list[dict[str, object]], fixture["issue_comments"])
+    lifecycle = cast(list[dict[str, object]], fixture["timeline"])
+    comparisons = cast(dict[str, dict[str, object]], fixture["comparisons"])
+    run = cast(dict[str, object], fixture["application_run"])
+    job = cast(dict[str, object], fixture["application_job"])
+    request_id = cast(int, request["id"])
+    run_id = cast(int, run["id"])
+    job_id = cast(int, job["id"])
+    source = bridge.WorkerRequest(322, "lead", "resolve-question")
+    observed: list[str] = []
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        observed.append(path)
+        if path.startswith("issues/comments?"):
+            return [request]
+        if path.startswith("issues/322/comments?"):
+            return issue_comments
+        if path == "issues/322":
+            return issue
+        if path.startswith("issues/322/timeline?"):
+            return lifecycle
+        if path.startswith("compare/"):
+            base = path.removeprefix("compare/").split("...", 1)[0]
+            if base == revision:
+                return {
+                    "status": "identical",
+                    "base_commit": {"sha": revision},
+                    "ahead_by": 0,
+                    "behind_by": 0,
+                    "files": [],
+                }
+            return comparisons[base]
+        if path.startswith("actions/workflows/"):
+            return {"workflow_runs": [run]}
+        if path == f"actions/runs/{run_id}/jobs":
+            return {"jobs": [job]}
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "royhsu-work/investment-strategy",
+        "fixture",
+        source=source,
+        current_revision=revision,
+        read=fake_read,
+        now=datetime(2026, 9, 24, 13, 0, tzinfo=UTC),
+    )
+
+    assert completion == bridge.ApplicationCompletion(
+        "RESUMABLE",
+        "application-completion-resuming",
+        request_comment_id=request_id,
+        job_id=job_id,
+    )
+    assert request_id == 5810765007
+    assert run_id == 35976411803
+    assert job_id == 107664011251
+    assert run["run_attempt"] == 7
+    assert any(path.startswith("actions/workflows/") for path in observed)
+    assert f"actions/runs/{run_id}/jobs" in observed
+
+
 def test_rejected_intent_returns_ownership_to_later_semantic_dispatch() -> None:
     source = bridge.WorkerRequest(138, "lead", "explore-change")
     request = _effect_request_comment(
