@@ -1,0 +1,289 @@
+{
+  "source_revision": "d019fdc604e8a7fa40e2f3e6436a12b076658057",
+  "request_comment": {
+    "id": 5810765007,
+    "body": "EFFECT_REQUEST\nAuthorization-Revision: d019fdc604e8a7fa40e2f3e6436a12b076658057\nWorker-Result-B64: eyJfc2VtYW50aWNfaW50ZW50X3ZlcnNpb24iOjIsImlzc3VlX251bWJlciI6MzIyLCJyb2xlIjoibGVhZCIsImFjdGlvbiI6InJlc29sdmUtcXVlc3Rpb24iLCJjaGFuZ2UiOiJyZXN0b3JlLW5vLXdvcmstaWRsZS1kaXNjb3ZlcnkiLCJyZXN1bHRfa2luZCI6InJlYWR5LWZvci1vcGVuc3BlYy1yZXZpZXciLCJldmlkZW5jZV9yZWYiOiJpc3N1ZWNvbW1lbnQtNTgwOTM1NTQzMSIsInJlc3VsdF9jb250ZW50IjoiUkVTT0xWRURfUkVWSUVXX0ZJTkRJTkdTLiBGaW5kaW5nIDE6IHRoZSBkZWx0YSBub3cgbW9kaWZpZXMgdGhlIGV4YWN0IGNhbm9uaWNhbCByZXF1aXJlbWVudCBBcHBsaWNhdGlvbiBjb25zZXF1ZW5jZSBjb21wbGV0aW9uIGlzIHJlY29uc3RydWN0YWJsZSBhY3Jvc3MgaW50ZXJydXB0aW9uLCBwcmVzZXJ2aW5nIHRoZSBmdWxsIGN1cnJlbnQgY2Fub25pY2FsIGJsb2NrIGFuZCBzdXJ2aXZpbmcgc2NlbmFyaW9zIHdoaWxlIGFkZGluZyB0aGUgYXBwcm92ZWQgc2hhcmVkIEEvQi9DIHJlY292ZXJ5IGludmFyaWFudHMgYW5kIHJlZ3Jlc3Npb24gc2NlbmFyaW9zLiBGaW5kaW5nIDI6IHByb3Bvc2FsL2Rlc2lnbi90YXNrcyBub3cgdXNlIGN1cnJlbnQgbWFpbiBkMDE5ZmRjNjA0ZThhN2ZhNDBlMmYzZTY0MzZhMTJiMDc2NjU4MDU3OyBTdGFnZSAwIGlzIHJlY29uY2lsZWQgdG8gbWVyZ2VkIFBScyAjMzMx4oCTIzMzMyB3aXRoIGV4YWN0IGhlYWRzLCBtZXJnZSBjb21taXRzLCBhbmQgc3VjY2Vzc2Z1bCBQeXRob24gUXVhbGl0eSBydW5zLiBTdGFnZSAwIGlzIG5vdCByZXBsYXllZC4gVGhlIHJlbWFpbmluZyB0eXBlZCBOT19XT1JLIGhhbmRvZmYsIGFkbWlzc2lvbiwgcmVhbCBTY2hlZHVsZWQgVGFzayBhY3RpdmF0aW9uLCBhbmQgcGFyZW50IGNvbXBsZXRpb24gZXZpZGVuY2UgcmVtYWluIG1hbmRhdG9yeS4gRXhpc3RpbmcgQ2hhbmdlIGFuZCBQUiAjMzI0IGFyZSByZXVzZWQuIiwicmVxdWVzdGVkX2VmZmVjdHMiOlt7ImtpbmQiOiJnaXRodWItbXV0YXRpb24iLCJwYXlsb2FkX2pzb24iOiJ7XCJvcGVyYXRpb25cIjpcImFwcGxpY2F0aW9uLW1hdGVyaWFsaXplXCIsXCJpc3N1ZV9udW1iZXJcIjozMjIsXCJleHBlY3RlZF9jaGFuZ2VcIjpcInJlc3RvcmUtbm8td29yay1pZGxlLWRpc2NvdmVyeVwiLFwiY2hhbmdlXCI6XCJyZXN0b3JlLW5vLXdvcmstaWRsZS1kaXNjb3ZlcnlcIixcImJyYW5jaFwiOlwiYWdlbnQvcmVzdG9yZS1uby13b3JrLWlkbGUtZGlzY292ZXJ5XCIsXCJiYXNlX3NoYVwiOlwiZDAxOWZkYzYwNGU4YTdmYTQwZTJmM2U2NDM2YTEyYjA3NjY1ODA1N1wiLFwibWVzc2FnZVwiOlwiUmVzb2x2ZSBleGFjdC1oZWFkIE9wZW5TcGVjIGZpbmRpbmdzIGZvciAjMzIyXCIsXCJmaWxlc1wiOlt7XCJwYXRoXCI6XCJvcGVuc3BlYy9jaGFuZ2VzL3Jlc3RvcmUtbm8td29yay1pZGxlLWRpc2NvdmVyeS9wcm9wb3NhbC5tZFwiLFwiYmxvYl9zaGFcIjpcImJkZWZmZDk0ZmYwMWM3ZjNlMmZkNGU4ZTEyYzNiNTM1YjlkZjY5MzJcIixcImV4cGVjdGVkX3NoYVwiOlwiNjAwM2Q4OThmYWU3YzQwYzU5ZDA4ZTMwMjNlZDEzMWJhZjQxYjM4M1wifSx7XCJwYXRoXCI6XCJvcGVuc3BlYy9jaGFuZ2VzL3Jlc3RvcmUtbm8td29yay1pZGxlLWRpc2NvdmVyeS9kZXNpZ24ubWRcIixcImJsb2Jfc2hhXCI6XCI4MDk2YjI0NjgyYzc3ZDM3ZTE3N2U2OGUzNDYwNzEyYWY3ZGUzMzI1XCIsXCJleHBlY3RlZF9zaGFcIjpcIjA1Y2ZiMTU3OWJiNGE3YzY0ODBmMTgwZTlhN2UwMjVmZGI1ZmRlMjdcIn0se1wicGF0aFwiOlwib3BlbnNwZWMvY2hhbmdlcy9yZXN0b3JlLW5vLXdvcmstaWRsZS1kaXNjb3ZlcnkvdGFza3MubWRcIixcImJsb2Jfc2hhXCI6XCI0ZTQyOGIzZWFkN2VmNmFhMGRlNmNhYmZhZWY0ODg1OTMyYTI4ZDIyXCIsXCJleHBlY3RlZF9zaGFcIjpcIjMzMWRjNjcxZWE2ZmEwNWM4ZmIyZDQwY2MzZjZkYzY1YTMxYTZmMGFcIn0se1wicGF0aFwiOlwib3BlbnNwZWMvY2hhbmdlcy9yZXN0b3JlLW5vLXdvcmstaWRsZS1kaXNjb3Zlcnkvc3BlY3Mvc2NoZWR1bGVkLWFnZW50LXdvcmtmbG93L3NwZWMubWRcIixcImJsb2Jfc2hhXCI6XCJkMTg2MWRkNWI2YTE5MGY4MjFmZGY5OWVjN2JiMmQzNmZlNWRiMjA4XCIsXCJleHBlY3RlZF9zaGFcIjpcImE4ZWM0YjM5ZTUyODc2NTFhZDU4Y2YyYjJlMGUxYTMxMTEzY2RmMDZcIn1dLFwicHJfbnVtYmVyXCI6MzI0fSJ9XX0=",
+    "created_at": "2026-09-24T08:38:15Z",
+    "user": {
+      "login": "royhsu-work"
+    },
+    "performed_via_github_app": {
+      "slug": "chatgpt-codex-connector"
+    }
+  },
+  "issue_comments": [
+    {
+      "id": 5780489187,
+      "body": "APPLICATION_DECISION\nRequest-Comment: 5780481954\nRequest-Body-SHA256: d0f8557ca1ef343e2db7c62a33ae3e1e1ea3373572f3f05c70760b8f20e6145c\nAuthorization-Revision: 6a50eb378cea839dda529d6260f89e3fdd342d28\nIssue: 322\nRole: lead\nAction: explore-change\nChange: unset\nResult-Kind: proposal-ready\nDisposition: ACCEPTED\nWorker-Result-SHA256: 21ab7f2038dc9dde9921ec54d50d01e54e95fe20e04ed859ab461cb0ffb9944c\nApplication-Intent-B64: eyJfc2VtYW50aWNfaW50ZW50X3ZlcnNpb24iOjIsImFjdGlvbiI6ImV4cGxvcmUtY2hhbmdlIiwiY2hhbmdlIjoidW5zZXQiLCJldmlkZW5jZV9yZWYiOiJpc3N1ZTMyMi1tYWluLTZhNTBlYjM3OGNlYTgzOWRkYTUyOWQ2MjYwZjg5ZTNmZGQzNDJkMjgiLCJpc3N1ZV9udW1iZXIiOjMyMiwicmVxdWVzdGVkX2VmZmVjdHMiOltdLCJyZXN1bHRfY29udGVudCI6IlBST1BPU0FMX1JFQURZLiBGcmVzaCBjdXJyZW50LW1haW4gcmVjb25zdHJ1Y3Rpb24gYXQgNmE1MGViMzc4Y2VhODM5ZGRhNTI5ZDYyNjBmODllM2ZkZDM0MmQyOCBjb25maXJtcyB0aGUgbmFycm93IHByb2R1Y3Rpb24gZ2FwOiBzZWxlY3Rfd29yaygpIGFuZCBjbGFzc2lmeV9kaXNwYXRjaCgpIGNvcnJlY3RseSByZW1haW4gQWN0aW9uLW9ubHkgYW5kIHJldHVybiBleGFjdCBOT19XT1JLIHdoZW4gbm8gcm91dGVkIHdvcmsgZXhpc3RzOyBpc3N1ZV9jb21tZW50X2JyaWRnZS5weSBhbmQgc2NoZWR1bGVkLWFnZW50LWJyaWRnZS55bWwgcGVyc2lzdCB0aGUgcnVuLXNjb3BlZCBOT19XT1JLIHJlc3VsdCBidXQgY29udGFpbiBubyBib3VuZGVkIExlYWQgaWRsZSBjb25zdW1lci4gUmV1c2UgdGhlIGV4aXN0aW5nICM1MiBib3VuZGVkIGlkbGUgc2VtYW50aWMgcnVsZXMsICMyMzQgYXV0aG9yaXR5L21hdGVyaWFsaXphdGlvbiBjb250cmFjdCwgYW5kICMyNzIgZnJlc2ggcmVhdXRob3JpemF0aW9uL3Bvc3Rjb25kaXRpb24vcmVjb25jaWxpYXRpb24gcHJpbmNpcGxlcy4gQ29uc29saWRhdGUgdGhlIGNvbnNlcXVlbnRpYWwgYm91bmRhcnkgaW50byBvbmUgcmVwb3NpdG9yeS1vd25lZCwgZnJlc2hseSByZWF1dGhvcml6ZWQgaWRsZS1hZG1pc3Npb24gYXBwbGljYXRpb24gcGF0aCBlbnRlcmVkIG9ubHkgZnJvbSBhbiBleGFjdCBjdXJyZW50IE5PX1dPUksgcmVzdWx0OiBub3JtYWwgQVVUSE9SSVpFIGFuZCBGQUlMX0NMT1NFRCBleGl0IHdpdGhvdXQgaWRsZTsgbm8gZmluZGluZyBoYXMgemVybyBlZmZlY3RzOyBhbiBleGlzdGluZyBlbGlnaWJsZSBjYW5kaWRhdGUgaXMgZGVkdXBsaWNhdGVkIGFuZCBjb21wbGV0ZWQgd2l0aG91dCBvdmVyd3JpdGluZyB1bnJlbGF0ZWQgSXNzdWUgc3RhdGU7IGEgbmV3IG1hdGVyaWFsIGZpbmRpbmcgaXMgb25lIGF0b21pYyByb3V0aW5nLWNvbXBsZXRlIENoYW5nZTogdW5zZXQgcGx1cyBleGFjdGx5IGFjdGlvbjpleHBsb3JlLWNoYW5nZSBjYW5kaWRhdGUuIFNlcmlhbGl6ZSBvbmx5IHRoYXQgZmluYWwgR2l0SHViIG11dGF0aW9uIGJvdW5kYXJ5LCByZWNvbmNpbGUgYW1iaWd1b3VzIHdyaXRlcyByZWFkLW9ubHksIGZhaWwgY2xvc2VkIHdoZW4gdW5pcXVlbmVzcyBpcyBub3QgcHJvdmFibGUsIGFuZCBsZXQgdGhlIG5leHQgbm9ybWFsIGRpc3BhdGNoZXIgc2VsZWN0IHRoZSBjYW5kaWRhdGUuIERvIG5vdCBhZGQgYW4gQWN0aW9uLCBpZGxlIHJvdXRpbmcgZGltZW5zaW9uLCBxdWV1ZSwgY3Vyc29yLCBsZWFzZSwgaGVhcnRiZWF0LCByZWdpc3RyeSwgb3Igc2VtYW50aWMgZGlzY292ZXJ5IGluc2lkZSBzZWxlY3Rfd29yaygpLiBUaGUgcHJvcG9zYWwgbXVzdCBhbHNvIGRlZmluZSB0aGUgcmVhbCBTY2hlZHVsZWQgVGFzay9ib290c3RyYXAgaGFuZG9mZiBhbmQgcHJvZHVjdGlvbi1zaGFwZWQgcHJvb2YsIGJlY2F1c2UgdGhlIGN1cnJlbnQgcmVwb3NpdG9yeSBtZXJnZSBhbG9uZSBjYW5ub3QgZXN0YWJsaXNoIGFjdGl2YXRpb24uIiwicmVzdWx0X2tpbmQiOiJwcm9wb3NhbC1yZWFkeSIsInJvbGUiOiJsZWFkIn0=\nReason: application accepted",
+      "created_at": "2026-09-22T16:52:28Z",
+      "user": {
+        "login": "github-actions[bot]"
+      },
+      "performed_via_github_app": {
+        "slug": "github-actions"
+      }
+    },
+    {
+      "id": 5780489851,
+      "body": "ACTION_RESULT\nWorkflow: #322\nChange: unset\nRole: lead\nAction: explore-change\nResult: PROPOSAL_READY\nRevision: 6a50eb378cea839dda529d6260f89e3fdd342d28\nDefault-Branch-Revision: 6a50eb378cea839dda529d6260f89e3fdd342d28\nApplication-Correlation: application:5780481954:322:unset:lead:explore-change:proposal-ready:6a50eb378cea839dda529d6260f89e3fdd342d28\nRepository-derived successor: lead / propose-change\nEvidence: PROPOSAL_READY. Fresh current-main reconstruction at 6a50eb378cea839dda529d6260f89e3fdd342d28 confirms the narrow production gap: select_work() and classify_dispatch() correctly remain Action-only and return exact NO_WORK when no routed work exists; issue_comment_bridge.py and scheduled-agent-bridge.yml persist the run-scoped NO_WORK result but contain no bounded Lead idle consumer. Reuse the existing #52 bounded idle semantic rules, #234 authority/materialization contract, and #272 fresh reauthorization/postcondition/reconciliation principles. Consolidate the consequential boundary into one repository-owned, freshly reauthorized idle-admission application path entered only from an exact current NO_WORK result: normal AUTHORIZE and FAIL_CLOSED exit without idle; no finding has zero effects; an existing eligible candidate is deduplicated and completed without overwriting unrelated Issue state; a new material finding is one atomic routing-complete Change: unset plus exactly action:explore-change candidate. Serialize only that final GitHub mutation boundary, reconcile ambiguous writes read-only, fail closed when uniqueness is not provable, and let the next normal dispatcher select the candidate. Do not add an Action, idle routing dimension, queue, cursor, lease, heartbeat, registry, or semantic discovery inside select_work(). The proposal must also define the real Scheduled Task/bootstrap handoff and production-shaped proof, because the current repository merge alone cannot establish activation.",
+      "created_at": "2026-09-22T16:52:31Z",
+      "user": {
+        "login": "github-actions[bot]"
+      },
+      "performed_via_github_app": {
+        "slug": "github-actions"
+      }
+    },
+    {
+      "id": 5781260361,
+      "body": "APPLICATION_DECISION\nRequest-Comment: 5781255019\nRequest-Body-SHA256: e9336fe3dcd84cf59822296dd7618df6f490bd4c9813c53b96e381ab1276c4e7\nAuthorization-Revision: 2e00e236f24ba41302c9ba18c685acdf4cebe4ed\nIssue: 322\nRole: lead\nAction: propose-change\nChange: unset\nResult-Kind: ready-for-openspec-review\nDisposition: ACCEPTED\nWorker-Result-SHA256: 4f9c8791fbcff8e342d6b0dc16c058de7dbc4b88301f7c22875dc36e2c9bc9f8\nApplication-Intent-B64: eyJfc2VtYW50aWNfaW50ZW50X3ZlcnNpb24iOjIsImFjdGlvbiI6InByb3Bvc2UtY2hhbmdlIiwiY2hhbmdlIjoidW5zZXQiLCJldmlkZW5jZV9yZWYiOiJtYWluLTJlMDBlMjM2ZjI0YmE0MTMwMmM5YmExOGM2ODVhY2RmNGNlYmU0ZWQtb3BlbnNwZWMtcmVzdG9yZS1uby13b3JrLWlkbGUtZGlzY292ZXJ5IiwiaXNzdWVfbnVtYmVyIjozMjIsInJlcXVlc3RlZF9lZmZlY3RzIjpbXSwicmVzdWx0X2NvbnRlbnQiOiJBQ1RJT05fUkVTVUxUXG5Xb3JrZmxvdzogIzMyMlxuQ2hhbmdlOiB1bnNldFxuQWN0aW9uOiBwcm9wb3NlLWNoYW5nZVxuUm9sZTogbGVhZFxuUmVzdWx0OiBSRUFEWV9GT1JfT1BFTlNQRUNfUkVWSUVXXG5SZXZpc2lvbjogMmUwMGUyMzZmMjRiYTQxMzAyYzliYTE4YzY4NWFjZGY0Y2ViZTRlZFxuRGVmYXVsdC1CcmFuY2gtUmV2aXNpb246IDJlMDBlMjM2ZjI0YmE0MTMwMmM5YmExOGM2ODVhY2RmNGNlYmU0ZWRcbiIsInJlc3VsdF9raW5kIjoicmVhZHktZm9yLW9wZW5zcGVjLXJldmlldyIsInJvbGUiOiJsZWFkIn0=\nReason: application accepted",
+      "created_at": "2026-09-22T17:48:32Z",
+      "user": {
+        "login": "github-actions[bot]"
+      },
+      "performed_via_github_app": {
+        "slug": "github-actions"
+      }
+    },
+    {
+      "id": 5781309198,
+      "body": "ACTION_RESULT\nWorkflow: #322\nChange: unset\nRole: lead\nAction: propose-change\nResult: READY_FOR_OPENSPEC_REVIEW\nRevision: 2e00e236f24ba41302c9ba18c685acdf4cebe4ed\nDefault-Branch-Revision: 2e00e236f24ba41302c9ba18c685acdf4cebe4ed\nEvidence: ACTION_RESULT Workflow: #322 Change: unset Action: propose-change Role: lead Result: READY_FOR_OPENSPEC_REVIEW Revision: 2e00e236f24ba41302c9ba18c685acdf4cebe4ed Default-Branch-Revision: 2e00e236f24ba41302c9ba18c685acdf4cebe4ed",
+      "created_at": "2026-09-22T17:52:19Z",
+      "user": {
+        "login": "github-actions[bot]"
+      },
+      "performed_via_github_app": {
+        "slug": "github-actions"
+      }
+    },
+    {
+      "id": 5809130792,
+      "body": "ACTION_RESULT\nWorkflow: #322\nChange: restore-no-work-idle-discovery\nRole: lead\nAction: propose-change\nResult: READY_FOR_OPENSPEC_REVIEW\nRevision: adf0b293fe0d263281e02b79b5dde63f0b2f93e4\nDefault-Branch-Revision: d019fdc604e8a7fa40e2f3e6436a12b076658057\nApplication-Correlation: application:5781255019:322:restore-no-work-idle-discovery:lead:propose-change:ready-for-openspec-review:d019fdc604e8a7fa40e2f3e6436a12b076658057\nRepository-derived successor: Reviewer / review-openspec\nEvidence: ACTION_RESULT Workflow: #322 Change: unset Action: propose-change Role: lead Result: READY_FOR_OPENSPEC_REVIEW Revision: 2e00e236f24ba41302c9ba18c685acdf4cebe4ed Default-Branch-Revision: 2e00e236f24ba41302c9ba18c685acdf4cebe4ed",
+      "created_at": "2026-09-24T06:42:00Z",
+      "user": {
+        "login": "github-actions[bot]"
+      },
+      "performed_via_github_app": {
+        "slug": "github-actions"
+      }
+    },
+    {
+      "id": 5809355016,
+      "body": "APPLICATION_DECISION\nRequest-Comment: 5809349962\nRequest-Body-SHA256: 9ea60b1cf33a10849ee87c68d79f1a592f6712e87157b542eeaf7ea7642850d9\nAuthorization-Revision: d019fdc604e8a7fa40e2f3e6436a12b076658057\nIssue: 322\nRole: reviewer\nAction: review-openspec\nChange: restore-no-work-idle-discovery\nResult-Kind: findings\nDisposition: ACCEPTED\nWorker-Result-SHA256: 62d6474ecb1f8000adce9a788392e8b2a2f511bb9140735d119cf30e6f1a2710\nApplication-Intent-B64: eyJfc2VtYW50aWNfaW50ZW50X3ZlcnNpb24iOjIsImFjdGlvbiI6InJldmlldy1vcGVuc3BlYyIsImNoYW5nZSI6InJlc3RvcmUtbm8td29yay1pZGxlLWRpc2NvdmVyeSIsImV2aWRlbmNlX3JlZiI6InByMzI0LWFkZjBiMjkzZmUwZDI2MzI4MWUwMmI3OWI1ZGRlNjNmMGIyZjkzZTQiLCJpc3N1ZV9udW1iZXIiOjMyMiwicmVxdWVzdGVkX2VmZmVjdHMiOltdLCJyZXN1bHRfY29udGVudCI6IlJldmlzaW9uOiBhZGYwYjI5M2ZlMGQyNjMyODFlMDJiNzliNWRkZTYzZjBiMmY5M2U0XG5FdmlkZW5jZTogRklORElOR1MuICgxKSBUaGUgZGVsdGEgZGVjbGFyZXMgTU9ESUZJRUQgUmVxdWlyZW1lbnQgJ01hdGVyaWFsaXphdGlvbiBhbmQgY29uc2VxdWVuY2UgY29tcGxldGlvbiByZXN1bWUgZnJvbSBjYW5vbmljYWwgZHVyYWJsZSBldmlkZW5jZScsIGJ1dCB0aGF0IGV4YWN0IHJlcXVpcmVtZW50IGRvZXMgbm90IGV4aXN0IGluIGNhbm9uaWNhbCBvcGVuc3BlYy9zcGVjcy9zY2hlZHVsZWQtYWdlbnQtd29ya2Zsb3cvc3BlYy5tZCBhdCBlaXRoZXIgdGhlIHJldmlld2VkIGhlYWQgb3IgY3VycmVudCBtYWluLiBUaGUgZXhpc3RpbmcgY2Fub25pY2FsIG93bmVyIGlzICdBcHBsaWNhdGlvbiBjb25zZXF1ZW5jZSBjb21wbGV0aW9uIGlzIHJlY29uc3RydWN0YWJsZSBhY3Jvc3MgaW50ZXJydXB0aW9uJy4gVGhpcyB3b3VsZCBjcmVhdGUgYSBjb21wZXRpbmcgcmVxdWlyZW1lbnQgaW5zdGVhZCBvZiBtb2RpZnlpbmcgdGhlIHNoYXJlZCBvd25lciwgY29udHJhcnkgdG8gdGhlIHNwZWMtZHJpdmVuIGFkYXB0ZXIgYW5kIHRoZSBhcHByb3ZlZCBjb25zb2xpZGF0aW9uIGJvdW5kYXJ5OyBwcmVzZXJ2ZSB0aGUgZXhpc3Rpbmcgb3duZXIgYW5kIGFsbCBzdXJ2aXZpbmcgc2NlbmFyaW9zIHdoZW4gY29ycmVjdGluZyBpdC4gKDIpIFRoZSBzdGFnZWQgZGVsaXZlcnkgdHVwbGUgaXMgc3RhbGUgYWdhaW5zdCBjdXJyZW50IE4tMS4gcHJvcG9zYWwubWQvZGVzaWduLm1kIHN0aWxsIGNpdGUgZTYxN2EwNSBhbmQgdGFza3MgMC4xLTAuMTAgcmVtYWluIHVuY2hlY2tlZC9mdXR1cmUsIHdoaWxlIGN1cnJlbnQgbWFpbiBkMDE5ZmRjIGFscmVhZHkgY29udGFpbnMgbWVyZ2VkIFN0YWdlIDAgcmVwYWlycyBmcm9tIFBScyAjMzMxLCAjMzMyLCBhbmQgIzMzMy4gUmVjb25jaWxlIGNvbXBsZXRlZCBTdGFnZSAwIGV2aWRlbmNlLCBjdXJyZW50IGRlbGl2ZXJ5LCByZW1haW5pbmcgbWFuZGF0b3J5IHBhcmVudCBvdXRjb21lLCBOLTEgcHJlcmVxdWlzaXRlcywgYW5kIGNvbnRpbnVhdGlvbiBzbyBFeGVjdXRvciBjYW5ub3QgcmVwbGF5IGFscmVhZHktbWVyZ2VkIHJlcGFpciB3b3JrLiBFeGFjdC1oZWFkIHN0cmljdCBPcGVuU3BlYyB2YWxpZGF0aW9uIHJ1biAzNTk0ODk0NjYzMCBwYXNzZWQgd2l0aCBjaGVja291dCBIRUFEIGFkZjBiMjkzZmUwZDI2MzI4MWUwMmI3OWI1ZGRlNjNmMGIyZjkzZTQsIGJ1dCBtZWNoYW5pY2FsIHZhbGlkYXRpb24gZG9lcyBub3QgY2xvc2UgdGhlc2Ugc2VtYW50aWMgZmluZGluZ3MuIiwicmVzdWx0X2tpbmQiOiJmaW5kaW5ncyIsInJvbGUiOiJyZXZpZXdlciJ9\nReason: application accepted",
+      "created_at": "2026-09-24T06:59:33Z",
+      "user": {
+        "login": "github-actions[bot]"
+      },
+      "performed_via_github_app": {
+        "slug": "github-actions"
+      }
+    },
+    {
+      "id": 5809355431,
+      "body": "REVIEW_RESULT\nWorkflow: #322\nChange: restore-no-work-idle-discovery\nRole: reviewer\nAction: review-openspec\nResult: FINDINGS\nRevision: d019fdc604e8a7fa40e2f3e6436a12b076658057\nDefault-Branch-Revision: d019fdc604e8a7fa40e2f3e6436a12b076658057\nApplication-Correlation: application:5809349962:322:restore-no-work-idle-discovery:reviewer:review-openspec:findings:d019fdc604e8a7fa40e2f3e6436a12b076658057\nRepository-derived successor: Lead / resolve-question\nEvidence: FINDINGS. (1) The delta declares MODIFIED Requirement 'Materialization and consequence completion resume from canonical durable evidence', but that exact requirement does not exist in canonical openspec/specs/scheduled-agent-workflow/spec.md at either the reviewed head or current main. The existing canonical owner is 'Application consequence completion is reconstructable across interruption'. This would create a competing requirement instead of modifying the shared owner, contrary to the spec-driven adapter and the approved consolidation boundary; preserve the existing owner and all surviving scenarios when correcting it. (2) The staged delivery tuple is stale against current N-1. proposal.md/design.md still cite e617a05 and tasks 0.1-0.10 remain unchecked/future, while current main d019fdc already contains merged Stage 0 repairs from PRs #331, #332, and #333. Reconcile completed Stage 0 evidence, current delivery, remaining mandatory parent outcome, N-1 prerequisites, and continuation so Executor cannot replay already-merged repair work. Exact-head strict OpenSpec validation run 35948946630 passed with checkout HEAD adf0b293fe0d263281e02b79b5dde63f0b2f93e4, but mechanical validation does not close these semantic findings.",
+      "created_at": "2026-09-24T06:59:35Z",
+      "user": {
+        "login": "github-actions[bot]"
+      },
+      "performed_via_github_app": {
+        "slug": "github-actions"
+      }
+    },
+    {
+      "id": 5810770514,
+      "body": "APPLICATION_DECISION\nRequest-Comment: 5810765007\nRequest-Body-SHA256: 2933a72e5a29d751dd33b6c1e4c0f84bcd3788d8410ab9cf997818beab155417\nAuthorization-Revision: d019fdc604e8a7fa40e2f3e6436a12b076658057\nIssue: 322\nRole: lead\nAction: resolve-question\nChange: restore-no-work-idle-discovery\nResult-Kind: ready-for-openspec-review\nDisposition: ACCEPTED\nWorker-Result-SHA256: f39b76e8d9a9b4f61bbc8bfdb76efcf932edbedbb7d8c828a81da93c984264d7\nApplication-Intent-B64: eyJfc2VtYW50aWNfaW50ZW50X3ZlcnNpb24iOjIsImFjdGlvbiI6InJlc29sdmUtcXVlc3Rpb24iLCJjaGFuZ2UiOiJyZXN0b3JlLW5vLXdvcmstaWRsZS1kaXNjb3ZlcnkiLCJldmlkZW5jZV9yZWYiOiJpc3N1ZWNvbW1lbnQtNTgwOTM1NTQzMSIsImlzc3VlX251bWJlciI6MzIyLCJyZXF1ZXN0ZWRfZWZmZWN0cyI6W3sia2luZCI6ImdpdGh1Yi1tdXRhdGlvbiIsInBheWxvYWRfanNvbiI6IntcImJhc2Vfc2hhXCI6IFwiZDAxOWZkYzYwNGU4YTdmYTQwZTJmM2U2NDM2YTEyYjA3NjY1ODA1N1wiLCBcImJyYW5jaFwiOiBcImFnZW50L3Jlc3RvcmUtbm8td29yay1pZGxlLWRpc2NvdmVyeVwiLCBcImNoYW5nZVwiOiBcInJlc3RvcmUtbm8td29yay1pZGxlLWRpc2NvdmVyeVwiLCBcImV4cGVjdGVkX2NoYW5nZVwiOiBcInJlc3RvcmUtbm8td29yay1pZGxlLWRpc2NvdmVyeVwiLCBcImZpbGVzXCI6IFt7XCJibG9iX3NoYVwiOiBcImJkZWZmZDk0ZmYwMWM3ZjNlMmZkNGU4ZTEyYzNiNTM1YjlkZjY5MzJcIiwgXCJleHBlY3RlZF9zaGFcIjogXCI2MDAzZDg5OGZhZTdjNDBjNTlkMDhlMzAyM2VkMTMxYmFmNDFiMzgzXCIsIFwicGF0aFwiOiBcIm9wZW5zcGVjL2NoYW5nZXMvcmVzdG9yZS1uby13b3JrLWlkbGUtZGlzY292ZXJ5L3Byb3Bvc2FsLm1kXCJ9LCB7XCJibG9iX3NoYVwiOiBcIjgwOTZiMjQ2ODJjNzdkMzdlMTc3ZTY4ZTM0NjA3MTJhZjdkZTMzMjVcIiwgXCJleHBlY3RlZF9zaGFcIjogXCIwNWNmYjE1NzliYjRhN2M2NDgwZjE4MGU5YTdlMDI1ZmRiNWZkZTI3XCIsIFwicGF0aFwiOiBcIm9wZW5zcGVjL2NoYW5nZXMvcmVzdG9yZS1uby13b3JrLWlkbGUtZGlzY292ZXJ5L2Rlc2lnbi5tZFwifSwge1wiYmxvYl9zaGFcIjogXCI0ZTQyOGIzZWFkN2VmNmFhMGRlNmNhYmZhZWY0ODg1OTMyYTI4ZDIyXCIsIFwiZXhwZWN0ZWRfc2hhXCI6IFwiMzMxZGM2NzFlYTZmYTA1YzhmYjJkNDBjYzNmNmRjNjVhMzFhNmYwYVwiLCBcInBhdGhcIjogXCJvcGVuc3BlYy9jaGFuZ2VzL3Jlc3RvcmUtbm8td29yay1pZGxlLWRpc2NvdmVyeS90YXNrcy5tZFwifSwge1wiYmxvYl9zaGFcIjogXCJkMTg2MWRkNWI2YTE5MGY4MjFmZGY5OWVjN2JiMmQzNmZlNWRiMjA4XCIsIFwiZXhwZWN0ZWRfc2hhXCI6IFwiYThlYzRiMzllNTI4NzY1MWFkNThjZjJiMmUwZTFhMzExMTNjZGYwNlwiLCBcInBhdGhcIjogXCJvcGVuc3BlYy9jaGFuZ2VzL3Jlc3RvcmUtbm8td29yay1pZGxlLWRpc2NvdmVyeS9zcGVjcy9zY2hlZHVsZWQtYWdlbnQtd29ya2Zsb3cvc3BlYy5tZFwifV0sIFwiaXNzdWVfbnVtYmVyXCI6IDMyMiwgXCJtZXNzYWdlXCI6IFwiUmVzb2x2ZSBleGFjdC1oZWFkIE9wZW5TcGVjIGZpbmRpbmdzIGZvciAjMzIyXCIsIFwib3BlcmF0aW9uXCI6IFwiYXBwbGljYXRpb24tbWF0ZXJpYWxpemVcIiwgXCJwcl9udW1iZXJcIjogMzI0fSJ9XSwicmVzdWx0X2NvbnRlbnQiOiJSRVNPTFZFRF9SRVZJRVdfRklORElOR1MuIEZpbmRpbmcgMTogdGhlIGRlbHRhIG5vdyBtb2RpZmllcyB0aGUgZXhhY3QgY2Fub25pY2FsIHJlcXVpcmVtZW50IEFwcGxpY2F0aW9uIGNvbnNlcXVlbmNlIGNvbXBsZXRpb24gaXMgcmVjb25zdHJ1Y3RhYmxlIGFjcm9zcyBpbnRlcnJ1cHRpb24sIHByZXNlcnZpbmcgdGhlIGZ1bGwgY3VycmVudCBjYW5vbmljYWwgYmxvY2sgYW5kIHN1cnZpdmluZyBzY2VuYXJpb3Mgd2hpbGUgYWRkaW5nIHRoZSBhcHByb3ZlZCBzaGFyZWQgQS9CL0MgcmVjb3ZlcnkgaW52YXJpYW50cyBhbmQgcmVncmVzc2lvbiBzY2VuYXJpb3MuIEZpbmRpbmcgMjogcHJvcG9zYWwvZGVzaWduL3Rhc2tzIG5vdyB1c2UgY3VycmVudCBtYWluIGQwMTlmZGM2MDRlOGE3ZmE0MGUyZjNlNjQzNmExMmIwNzY2NTgwNTc7IFN0YWdlIDAgaXMgcmVjb25jaWxlZCB0byBtZXJnZWQgUFJzICMzMzFcdTIwMTMjMzMzIHdpdGggZXhhY3QgaGVhZHMsIG1lcmdlIGNvbW1pdHMsIGFuZCBzdWNjZXNzZnVsIFB5dGhvbiBRdWFsaXR5IHJ1bnMuIFN0YWdlIDAgaXMgbm90IHJlcGxheWVkLiBUaGUgcmVtYWluaW5nIHR5cGVkIE5PX1dPUksgaGFuZG9mZiwgYWRtaXNzaW9uLCByZWFsIFNjaGVkdWxlZCBUYXNrIGFjdGl2YXRpb24sIGFuZCBwYXJlbnQgY29tcGxldGlvbiBldmlkZW5jZSByZW1haW4gbWFuZGF0b3J5LiBFeGlzdGluZyBDaGFuZ2UgYW5kIFBSICMzMjQgYXJlIHJldXNlZC4iLCJyZXN1bHRfa2luZCI6InJlYWR5LWZvci1vcGVuc3BlYy1yZXZpZXciLCJyb2xlIjoibGVhZCJ9\nReason: application accepted",
+      "created_at": "2026-09-24T08:38:42Z",
+      "user": {
+        "login": "github-actions[bot]"
+      },
+      "performed_via_github_app": {
+        "slug": "github-actions"
+      }
+    }
+  ],
+  "issue": {
+    "number": 322,
+    "title": "Explore restoring NO_WORK idle discovery after Action-only dispatch",
+    "state": "open",
+    "created_at": "2026-09-22T15:39:54Z",
+    "closed_at": null,
+    "body": "Change: restore-no-work-idle-discovery\n## Explore intent\n\nInvestigate and root-fix the production integration gap where the **Action-only machine dispatcher can correctly return exact `NO_WORK / no-routed-work` but the Scheduled Task bootstrap does not continue into the already-governed bounded Lead idle-discovery capability**.\n\nThis Explore does **not** reopen the decision to use Action-only normal dispatch, does not turn idle discovery into a workflow Action, and does not introduce a second queue/state machine. It owns the narrow integration boundary:\n\n```text\nexact normal dispatch\n→ NO_WORK\n→ bounded Lead idle semantic mode\n→ zero mutation, advisory, or one safe Formal Explore admission\n→ normal Action workflow takes over\n```\n\nObserved default-branch baseline at materialization: `6a50eb378cea839dda529d6260f89e3fdd342d28`.\n\n## Human materialization authority\n\nThe Human explicitly approved the validated direction and requested this bounded Explore in the current interaction:\n\n> 同意, 開新探索單\n\nPer current default-branch governance, this interaction-layer Human request authorizes materialization of one routing-complete pre-activation Explore tuple. Physical connector writer identity is not the semantic authority source.\n\n## Demonstrated system boundary\n\nFresh repository reconstruction distinguishes this problem from earlier completed work:\n\n- #52 defined Lead Explore / idle-discovery behavior and materiality/authority boundaries.\n- #234 clarified that explicit Human-requested Explore materialization follows the qualified source decision rather than physical writer identity.\n- #272 repaired deterministic **Action application** completion across interruption boundaries.\n- Current canonical governance still defines bounded idle discovery, while the normal executable selector remains intentionally Action-only.\n\nThe unresolved question is therefore not whether idle discovery should exist, and not whether `select_work()` should infer unrouted work. The bounded question is how the real Scheduled Task/runtime consumes an exact machine `NO_WORK` result and safely reaches the existing idle semantic capability without weakening the Action-only control plane.\n\n## Human-approved architecture invariants\n\nPreserve these outcomes during Explore. Implementation mechanics remain open only where they do not change these invariants.\n\n1. **Keep normal dispatch Action-only.**\n   - `select_work()` remains the SSOT for already-routed workflow work.\n   - Existing `AUTHORIZE` and `FAIL_CLOSED` semantics remain unchanged.\n   - Do not make the dispatcher semantically discover repository opportunities.\n\n2. **`NO_WORK` is the idle semantic boundary, not a new Action.**\n   - Exact machine `NO_WORK` may enter bounded Lead idle discovery.\n   - Do not add `Action.IDLE_*`, `action:idle-*`, an idle transition graph, or an idle lifecycle.\n\n3. **Normal workflow always outranks idle admission.**\n   - Immediately before any idle-derived consequential mutation, fresh normal dispatch must still resolve to exact `NO_WORK`.\n   - If fresh state is `AUTHORIZE` or `FAIL_CLOSED`, the idle request performs no workflow mutation.\n\n4. **Semantic judgment and physical mutation remain separate.**\n   - Lead owns bounded semantic discovery/materiality judgment.\n   - A repository-owned admission actuator should perform the consequential GitHub mutation only after fresh reauthorization.\n   - Do not restore generic model-selected target/routing authority.\n\n5. **Admission becomes canonical in one logical boundary.**\n   - Existing candidate: preserve unrelated Issue content/labels and establish the complete legal pre-activation tuple.\n   - New candidate: materialize a routing-complete Issue with `Change: unset` and exactly one `action:explore-change` routing label.\n   - Completion is recognized only after fresh observation of the intended tuple.\n\n6. **Overlap safety must not create repository lock state.**\n   - Serialize only the final idle-admission mutation boundary if serialization is required by the GitHub actuator.\n   - Every serialized request must fresh-recompute the normal dispatch precondition before writing.\n   - The first successful admission makes later overlapping idle requests stale through ordinary canonical routing.\n\n7. **Interruption recovery must not blind-replay creation.**\n   - Before mutation: no durable consequence, so a later wake may rediscover.\n   - After a successful atomic Issue create/update: canonical `action:explore-change` is the durable owner and normal dispatch resumes it.\n   - If a GitHub write result is ambiguous, read/reconcile by exact correlation and fail closed if uniqueness cannot be proven; do not create a replacement object merely because the previous write result is unknown.\n\n8. **Reuse #272 principles without forcing its Action-specific data model onto idle.**\n   - Preserve fresh reauthorization, explicit consequential boundary, postcondition observation, deterministic reconciliation, and no blind semantic replay.\n   - Do not store idle accepted intent in the runtime transport shard merely to reuse the current `APPLICATION_DECISION` record shape.\n   - Do not create an idle intent registry, idle recovery Issue, lease, cursor, heartbeat, progress counter, hidden backlog, or other second control-plane state.\n\n9. **Successful admission immediately exits idle ownership.**\n   - Once `Change: unset + action:explore-change` is durably observable, subsequent work is ordinary pre-activation Action workflow under existing formal-first, WIP=1, finish-first, and deterministic selection predicates.\n\n## Exploration questions\n\nValidate the narrowest implementation that satisfies the approved invariants:\n\n- What exact bootstrap contract should consume run-scoped `NO_WORK` and invoke Lead idle semantics without producing a mapped Action worker?\n- What typed idle result/request is minimally necessary to bind semantic output to the exact dispatch request/run/default-branch revision and source evidence?\n- Which existing repository application/bridge primitives can be reused, consolidated, or left unchanged?\n- What is the smallest concurrency/serialization boundary that prevents two overlapping idle wakes from admitting duplicate work without serializing normal dispatch/model execution?\n- Can existing/new Issue admission be made one consequential GitHub mutation while preserving unrelated state?\n- How should ambiguous create/update results be reconciled from authoritative GitHub state?\n- What exact bootstrap/runtime configuration is outside repository visibility, and what deployment proof is required so a merged repository change is not mistaken for production activation?\n- Which existing tests can prove this behavior and which production-shaped test is required?\n\n## Required validation\n\nA proposed solution is not ready merely because unit tests pass. Validate at least:\n\n```text\nnormal AUTHORIZE\n→ idle does not run\n\nFAIL_CLOSED\n→ idle does not run\n\ntrue NO_WORK\n→ bounded Lead idle semantics actually execute\n\nNO_FINDING\n→ zero repository noise\n\nexisting eligible candidate\n→ exactly one candidate becomes routing-complete\n→ unrelated state preserved\n\nnew material finding\n→ exactly one routing-complete Explore Issue appears\n\ntwo overlapping idle wakes\n→ at most one admitted workflow candidate\n\nstale main/source before mutation\n→ no stale mutation\n\ninterruption before mutation\n→ no durable partial workflow state\n\nsuccessful mutation followed by process interruption\n→ next wake reconstructs canonical Action state\n→ no duplicate admission\n\nambiguous write outcome\n→ read-only reconciliation\n→ fail closed if uniqueness cannot be proven\n\nsuccessful admission\n→ next normal dispatch AUTHORIZEs the ordinary Lead / explore-change work\n```\n\nAlso prove the negative architecture invariants remain true:\n\n```text\nno Action.IDLE_*\nno idle TRANSITION\nno restored agent:* normal routing dimension\nno idle queue\nno idle cursor\nno idle lease\nno hidden backlog/state registry\nno semantic work discovery inside select_work()\n```\n\n## Delivery constraint\n\nIf implementation is required, prefer independently safe stages that keep the parent outcome intact, for example:\n\n1. contract + dark executable substrate;\n2. safe idle-admission application boundary;\n3. real Scheduled Task/bootstrap cutover and production-shaped proof.\n\nA stage boundary may reduce deployment risk but must not redefine completion. The parent outcome is complete only when the production wake path demonstrably executes bounded idle discovery after exact `NO_WORK` and safely hands any admitted Explore back to the normal Action workflow.\n\n## Human-approved systemic root-repair refinement (2026-09-24)\n\nThe Human approved the following **additional delivery requirement for #322**, after isolation investigation. It strengthens the existing NO_WORK parent outcome; it does not reduce, replace, or defer any of the original nine architecture invariants, end-to-end scenarios, or production-activation exit criteria.\n\n**Required systemic repair:** complete the shared application materialization / consequence-reconstruction substrate at its existing canonical owners, rather than special-casing #322 or PR #324:\n\n1. **One positive materialization postcondition.** The current first-carrier apply/read-only observer accepts an already-created carrier after a disjoint, ancestor-only default-branch advance, while `materialization_postcondition()` independently rejects `request.base_sha != current_revision` and compares PR base to current main. Consolidate immediate postcondition observation with the canonical fresh materialization observer, maintaining exact Issue/Change/branch/head/PR/content checks, permitted pending-continuation ancestry and path-disjointness checks, and exact-target comparison where applicable. Eliminate contradictory duplicate success predicates; do not loosen stale, overlap, identity, or ambiguity guards.\n\n2. **Close the branch-ref → PR-carrier interruption gap.** When a valid first carrier branch/head/manifest already exists but a PR was not durably created before interruption, and main then advances, recovery must verify the original authorization base is an ancestor, the advance is disjoint from the requested paths, and the existing branch/head/commit/content exactly matches immutable accepted intent. If and only if no matching PR exists and no competing/ambiguous carrier exists, emit only the missing application-owned PR-carrier plan against fresh current main; do not rerun Lead semantics or recreate/force-move the branch. For an existing valid PR, verify its exact safe historical base snapshot rather than demanding equality to today's main. Reject overlap, non-ancestor, wrong/duplicate PR, wrong Issue/Change/ref/head/content, changed authorization, and incomplete observations.\n\n3. **Fresh-process consequence completion from GitHub truth.** A newly constructed consequence observer must not require another process's invocation-local `_materialization_targets` map or replay historic materialization effects to prove an already-durable current consequence. Use each existing `ConsequenceSpec.evidence_target` and its canonical repository-current positive observer; retain exact correlation, qualifying formal result, current source/frontier, carrier identity, validation and successor gates. In particular, implementation-carrier transitions must use their existing implementation-carrier qualification owner rather than an unpopulated adapter target. Reuse existing owners; do not add a persistence registry, retry state machine, synthetic success fallback, or competing consequence classifier.\n\n**Atomic verification/delivery:** Start with real-current-source RED reproductions for each distinct failure (including branch-created/PR-missing/default-advanced and fresh-process missing-local-target); implement the minimum GREEN at the shared owner; check each durable interruption prefix (before/after acceptance, content, branch ref, PR, carrier return, async workflow, validation, formal result, routing and terminal) as applicable; prove no duplicate/rewind, safe idempotent replay of only missing effects, and negative cases for stale/overlap/ancestor/identity/cardinality/ambiguous writes. Run focused and full regression, lint, format, mypy, strict exact-revision OpenSpec validation, and independent applicable reviews. An isolated fake-GitHub model is feasibility evidence only, **not** proof that production source, the complete consequence topology, or the end-to-end application is green.\n\n**Preserve #322 parent completion:** After the shared substrate is validated, demonstrate the actual exact `NO_WORK` artifact reaches bounded Lead idle semantics; `AUTHORIZE` / `FAIL_CLOSED` suppress it; no finding causes zero repository mutation; existing/new candidate admission is routing-complete, deduplicated and safe under overlap/interruption; and a later ordinary Action-only dispatch selects `Lead / explore-change`. Prove real Scheduled Task/bootstrap activation using production-shaped wake/run/artifact evidence. A merged repair, isolated GREEN, successful PR carrier, or single successful wake is **not** completion.\n\n**Lifecycle and scope:** Reuse #322's existing active OpenSpec Change and PR #324 where applicable. If these findings require material proposal/spec/design/tasks correction, the mapped Lead must preserve the full parent outcome and obtain fresh independent review of the exact resulting revision under current default-branch governance. A staged merge remains a mandatory continuation, not an implicit scope reduction. Preserve the existing Issue lifecycle, immutable Change, action label, unrelated Issue content and labels. This issue-body relay records the Human's interaction-layer decision; it does not manufacture a provenance-bound GitHub Human-only approval or bypass current executable dispatch.\n",
+    "labels": [
+      {
+        "name": "action:resolve-question"
+      }
+    ]
+  },
+  "timeline": [
+    {
+      "id": 31612089246,
+      "event": "labeled",
+      "created_at": "2026-09-22T15:39:56Z",
+      "label": {
+        "name": "action:explore-change"
+      }
+    },
+    {
+      "id": 5780489187,
+      "event": "commented",
+      "created_at": "2026-09-22T16:52:28Z",
+      "body": "APPLICATION_DECISION\nRequest-Comment: 5780481954\nRequest-Body-SHA256: d0f8557ca1ef343e2db7c62a33ae3e1e1ea3373572f3f05c70760b8f20e6145c\nAuthorization-Revision: 6a50eb378cea839dda529d6260f89e3fdd342d28\nIssue: 322\nRole: lead\nAction: explore-change\nChange: unset\nResult-Kind: proposal-ready\nDisposition: ACCEPTED\nWorker-Result-SHA256: 21ab7f2038dc9dde9921ec54d50d01e54e95fe20e04ed859ab461cb0ffb9944c\nApplication-Intent-B64: eyJfc2VtYW50aWNfaW50ZW50X3ZlcnNpb24iOjIsImFjdGlvbiI6ImV4cGxvcmUtY2hhbmdlIiwiY2hhbmdlIjoidW5zZXQiLCJldmlkZW5jZV9yZWYiOiJpc3N1ZTMyMi1tYWluLTZhNTBlYjM3OGNlYTgzOWRkYTUyOWQ2MjYwZjg5ZTNmZGQzNDJkMjgiLCJpc3N1ZV9udW1iZXIiOjMyMiwicmVxdWVzdGVkX2VmZmVjdHMiOltdLCJyZXN1bHRfY29udGVudCI6IlBST1BPU0FMX1JFQURZLiBGcmVzaCBjdXJyZW50LW1haW4gcmVjb25zdHJ1Y3Rpb24gYXQgNmE1MGViMzc4Y2VhODM5ZGRhNTI5ZDYyNjBmODllM2ZkZDM0MmQyOCBjb25maXJtcyB0aGUgbmFycm93IHByb2R1Y3Rpb24gZ2FwOiBzZWxlY3Rfd29yaygpIGFuZCBjbGFzc2lmeV9kaXNwYXRjaCgpIGNvcnJlY3RseSByZW1haW4gQWN0aW9uLW9ubHkgYW5kIHJldHVybiBleGFjdCBOT19XT1JLIHdoZW4gbm8gcm91dGVkIHdvcmsgZXhpc3RzOyBpc3N1ZV9jb21tZW50X2JyaWRnZS5weSBhbmQgc2NoZWR1bGVkLWFnZW50LWJyaWRnZS55bWwgcGVyc2lzdCB0aGUgcnVuLXNjb3BlZCBOT19XT1JLIHJlc3VsdCBidXQgY29udGFpbiBubyBib3VuZGVkIExlYWQgaWRsZSBjb25zdW1lci4gUmV1c2UgdGhlIGV4aXN0aW5nICM1MiBib3VuZGVkIGlkbGUgc2VtYW50aWMgcnVsZXMsICMyMzQgYXV0aG9yaXR5L21hdGVyaWFsaXphdGlvbiBjb250cmFjdCwgYW5kICMyNzIgZnJlc2ggcmVhdXRob3JpemF0aW9uL3Bvc3Rjb25kaXRpb24vcmVjb25jaWxpYXRpb24gcHJpbmNpcGxlcy4gQ29uc29saWRhdGUgdGhlIGNvbnNlcXVlbnRpYWwgYm91bmRhcnkgaW50byBvbmUgcmVwb3NpdG9yeS1vd25lZCwgZnJlc2hseSByZWF1dGhvcml6ZWQgaWRsZS1hZG1pc3Npb24gYXBwbGljYXRpb24gcGF0aCBlbnRlcmVkIG9ubHkgZnJvbSBhbiBleGFjdCBjdXJyZW50IE5PX1dPUksgcmVzdWx0OiBub3JtYWwgQVVUSE9SSVpFIGFuZCBGQUlMX0NMT1NFRCBleGl0IHdpdGhvdXQgaWRsZTsgbm8gZmluZGluZyBoYXMgemVybyBlZmZlY3RzOyBhbiBleGlzdGluZyBlbGlnaWJsZSBjYW5kaWRhdGUgaXMgZGVkdXBsaWNhdGVkIGFuZCBjb21wbGV0ZWQgd2l0aG91dCBvdmVyd3JpdGluZyB1bnJlbGF0ZWQgSXNzdWUgc3RhdGU7IGEgbmV3IG1hdGVyaWFsIGZpbmRpbmcgaXMgb25lIGF0b21pYyByb3V0aW5nLWNvbXBsZXRlIENoYW5nZTogdW5zZXQgcGx1cyBleGFjdGx5IGFjdGlvbjpleHBsb3JlLWNoYW5nZSBjYW5kaWRhdGUuIFNlcmlhbGl6ZSBvbmx5IHRoYXQgZmluYWwgR2l0SHViIG11dGF0aW9uIGJvdW5kYXJ5LCByZWNvbmNpbGUgYW1iaWd1b3VzIHdyaXRlcyByZWFkLW9ubHksIGZhaWwgY2xvc2VkIHdoZW4gdW5pcXVlbmVzcyBpcyBub3QgcHJvdmFibGUsIGFuZCBsZXQgdGhlIG5leHQgbm9ybWFsIGRpc3BhdGNoZXIgc2VsZWN0IHRoZSBjYW5kaWRhdGUuIERvIG5vdCBhZGQgYW4gQWN0aW9uLCBpZGxlIHJvdXRpbmcgZGltZW5zaW9uLCBxdWV1ZSwgY3Vyc29yLCBsZWFzZSwgaGVhcnRiZWF0LCByZWdpc3RyeSwgb3Igc2VtYW50aWMgZGlzY292ZXJ5IGluc2lkZSBzZWxlY3Rfd29yaygpLiBUaGUgcHJvcG9zYWwgbXVzdCBhbHNvIGRlZmluZSB0aGUgcmVhbCBTY2hlZHVsZWQgVGFzay9ib290c3RyYXAgaGFuZG9mZiBhbmQgcHJvZHVjdGlvbi1zaGFwZWQgcHJvb2YsIGJlY2F1c2UgdGhlIGN1cnJlbnQgcmVwb3NpdG9yeSBtZXJnZSBhbG9uZSBjYW5ub3QgZXN0YWJsaXNoIGFjdGl2YXRpb24uIiwicmVzdWx0X2tpbmQiOiJwcm9wb3NhbC1yZWFkeSIsInJvbGUiOiJsZWFkIn0=\nReason: application accepted"
+    },
+    {
+      "id": 5780489851,
+      "event": "commented",
+      "created_at": "2026-09-22T16:52:31Z",
+      "body": "ACTION_RESULT\nWorkflow: #322\nChange: unset\nRole: lead\nAction: explore-change\nResult: PROPOSAL_READY\nRevision: 6a50eb378cea839dda529d6260f89e3fdd342d28\nDefault-Branch-Revision: 6a50eb378cea839dda529d6260f89e3fdd342d28\nApplication-Correlation: application:5780481954:322:unset:lead:explore-change:proposal-ready:6a50eb378cea839dda529d6260f89e3fdd342d28\nRepository-derived successor: lead / propose-change\nEvidence: PROPOSAL_READY. Fresh current-main reconstruction at 6a50eb378cea839dda529d6260f89e3fdd342d28 confirms the narrow production gap: select_work() and classify_dispatch() correctly remain Action-only and return exact NO_WORK when no routed work exists; issue_comment_bridge.py and scheduled-agent-bridge.yml persist the run-scoped NO_WORK result but contain no bounded Lead idle consumer. Reuse the existing #52 bounded idle semantic rules, #234 authority/materialization contract, and #272 fresh reauthorization/postcondition/reconciliation principles. Consolidate the consequential boundary into one repository-owned, freshly reauthorized idle-admission application path entered only from an exact current NO_WORK result: normal AUTHORIZE and FAIL_CLOSED exit without idle; no finding has zero effects; an existing eligible candidate is deduplicated and completed without overwriting unrelated Issue state; a new material finding is one atomic routing-complete Change: unset plus exactly action:explore-change candidate. Serialize only that final GitHub mutation boundary, reconcile ambiguous writes read-only, fail closed when uniqueness is not provable, and let the next normal dispatcher select the candidate. Do not add an Action, idle routing dimension, queue, cursor, lease, heartbeat, registry, or semantic discovery inside select_work(). The proposal must also define the real Scheduled Task/bootstrap handoff and production-shaped proof, because the current repository merge alone cannot establish activation."
+    },
+    {
+      "id": 31616529231,
+      "event": "unlabeled",
+      "created_at": "2026-09-22T16:52:34Z",
+      "label": {
+        "name": "action:explore-change"
+      }
+    },
+    {
+      "id": 31616529287,
+      "event": "labeled",
+      "created_at": "2026-09-22T16:52:34Z",
+      "label": {
+        "name": "action:propose-change"
+      }
+    },
+    {
+      "id": 5781260361,
+      "event": "commented",
+      "created_at": "2026-09-22T17:48:32Z",
+      "body": "APPLICATION_DECISION\nRequest-Comment: 5781255019\nRequest-Body-SHA256: e9336fe3dcd84cf59822296dd7618df6f490bd4c9813c53b96e381ab1276c4e7\nAuthorization-Revision: 2e00e236f24ba41302c9ba18c685acdf4cebe4ed\nIssue: 322\nRole: lead\nAction: propose-change\nChange: unset\nResult-Kind: ready-for-openspec-review\nDisposition: ACCEPTED\nWorker-Result-SHA256: 4f9c8791fbcff8e342d6b0dc16c058de7dbc4b88301f7c22875dc36e2c9bc9f8\nApplication-Intent-B64: eyJfc2VtYW50aWNfaW50ZW50X3ZlcnNpb24iOjIsImFjdGlvbiI6InByb3Bvc2UtY2hhbmdlIiwiY2hhbmdlIjoidW5zZXQiLCJldmlkZW5jZV9yZWYiOiJtYWluLTJlMDBlMjM2ZjI0YmE0MTMwMmM5YmExOGM2ODVhY2RmNGNlYmU0ZWQtb3BlbnNwZWMtcmVzdG9yZS1uby13b3JrLWlkbGUtZGlzY292ZXJ5IiwiaXNzdWVfbnVtYmVyIjozMjIsInJlcXVlc3RlZF9lZmZlY3RzIjpbXSwicmVzdWx0X2NvbnRlbnQiOiJBQ1RJT05fUkVTVUxUXG5Xb3JrZmxvdzogIzMyMlxuQ2hhbmdlOiB1bnNldFxuQWN0aW9uOiBwcm9wb3NlLWNoYW5nZVxuUm9sZTogbGVhZFxuUmVzdWx0OiBSRUFEWV9GT1JfT1BFTlNQRUNfUkVWSUVXXG5SZXZpc2lvbjogMmUwMGUyMzZmMjRiYTQxMzAyYzliYTE4YzY4NWFjZGY0Y2ViZTRlZFxuRGVmYXVsdC1CcmFuY2gtUmV2aXNpb246IDJlMDBlMjM2ZjI0YmE0MTMwMmM5YmExOGM2ODVhY2RmNGNlYmU0ZWRcbiIsInJlc3VsdF9raW5kIjoicmVhZHktZm9yLW9wZW5zcGVjLXJldmlldyIsInJvbGUiOiJsZWFkIn0=\nReason: application accepted"
+    },
+    {
+      "id": 5781309198,
+      "event": "commented",
+      "created_at": "2026-09-22T17:52:19Z",
+      "body": "ACTION_RESULT\nWorkflow: #322\nChange: unset\nRole: lead\nAction: propose-change\nResult: READY_FOR_OPENSPEC_REVIEW\nRevision: 2e00e236f24ba41302c9ba18c685acdf4cebe4ed\nDefault-Branch-Revision: 2e00e236f24ba41302c9ba18c685acdf4cebe4ed\nEvidence: ACTION_RESULT Workflow: #322 Change: unset Action: propose-change Role: lead Result: READY_FOR_OPENSPEC_REVIEW Revision: 2e00e236f24ba41302c9ba18c685acdf4cebe4ed Default-Branch-Revision: 2e00e236f24ba41302c9ba18c685acdf4cebe4ed"
+    },
+    {
+      "id": 31620014721,
+      "event": "unlabeled",
+      "created_at": "2026-09-22T17:52:21Z",
+      "label": {
+        "name": "action:propose-change"
+      }
+    },
+    {
+      "id": 31620014750,
+      "event": "labeled",
+      "created_at": "2026-09-22T17:52:21Z",
+      "label": {
+        "name": "action:review-openspec"
+      }
+    },
+    {
+      "id": 31647225754,
+      "event": "unlabeled",
+      "created_at": "2026-09-23T03:05:36Z",
+      "label": {
+        "name": "action:review-openspec"
+      }
+    },
+    {
+      "id": 31647225775,
+      "event": "labeled",
+      "created_at": "2026-09-23T03:05:36Z",
+      "label": {
+        "name": "action:propose-change"
+      }
+    },
+    {
+      "id": 5809130792,
+      "event": "commented",
+      "created_at": "2026-09-24T06:42:00Z",
+      "body": "ACTION_RESULT\nWorkflow: #322\nChange: restore-no-work-idle-discovery\nRole: lead\nAction: propose-change\nResult: READY_FOR_OPENSPEC_REVIEW\nRevision: adf0b293fe0d263281e02b79b5dde63f0b2f93e4\nDefault-Branch-Revision: d019fdc604e8a7fa40e2f3e6436a12b076658057\nApplication-Correlation: application:5781255019:322:restore-no-work-idle-discovery:lead:propose-change:ready-for-openspec-review:d019fdc604e8a7fa40e2f3e6436a12b076658057\nRepository-derived successor: Reviewer / review-openspec\nEvidence: ACTION_RESULT Workflow: #322 Change: unset Action: propose-change Role: lead Result: READY_FOR_OPENSPEC_REVIEW Revision: 2e00e236f24ba41302c9ba18c685acdf4cebe4ed Default-Branch-Revision: 2e00e236f24ba41302c9ba18c685acdf4cebe4ed"
+    },
+    {
+      "id": 31734364973,
+      "event": "unlabeled",
+      "created_at": "2026-09-24T06:42:13Z",
+      "label": {
+        "name": "action:propose-change"
+      }
+    },
+    {
+      "id": 31734365010,
+      "event": "labeled",
+      "created_at": "2026-09-24T06:42:13Z",
+      "label": {
+        "name": "action:review-openspec"
+      }
+    },
+    {
+      "id": 5809355016,
+      "event": "commented",
+      "created_at": "2026-09-24T06:59:33Z",
+      "body": "APPLICATION_DECISION\nRequest-Comment: 5809349962\nRequest-Body-SHA256: 9ea60b1cf33a10849ee87c68d79f1a592f6712e87157b542eeaf7ea7642850d9\nAuthorization-Revision: d019fdc604e8a7fa40e2f3e6436a12b076658057\nIssue: 322\nRole: reviewer\nAction: review-openspec\nChange: restore-no-work-idle-discovery\nResult-Kind: findings\nDisposition: ACCEPTED\nWorker-Result-SHA256: 62d6474ecb1f8000adce9a788392e8b2a2f511bb9140735d119cf30e6f1a2710\nApplication-Intent-B64: eyJfc2VtYW50aWNfaW50ZW50X3ZlcnNpb24iOjIsImFjdGlvbiI6InJldmlldy1vcGVuc3BlYyIsImNoYW5nZSI6InJlc3RvcmUtbm8td29yay1pZGxlLWRpc2NvdmVyeSIsImV2aWRlbmNlX3JlZiI6InByMzI0LWFkZjBiMjkzZmUwZDI2MzI4MWUwMmI3OWI1ZGRlNjNmMGIyZjkzZTQiLCJpc3N1ZV9udW1iZXIiOjMyMiwicmVxdWVzdGVkX2VmZmVjdHMiOltdLCJyZXN1bHRfY29udGVudCI6IlJldmlzaW9uOiBhZGYwYjI5M2ZlMGQyNjMyODFlMDJiNzliNWRkZTYzZjBiMmY5M2U0XG5FdmlkZW5jZTogRklORElOR1MuICgxKSBUaGUgZGVsdGEgZGVjbGFyZXMgTU9ESUZJRUQgUmVxdWlyZW1lbnQgJ01hdGVyaWFsaXphdGlvbiBhbmQgY29uc2VxdWVuY2UgY29tcGxldGlvbiByZXN1bWUgZnJvbSBjYW5vbmljYWwgZHVyYWJsZSBldmlkZW5jZScsIGJ1dCB0aGF0IGV4YWN0IHJlcXVpcmVtZW50IGRvZXMgbm90IGV4aXN0IGluIGNhbm9uaWNhbCBvcGVuc3BlYy9zcGVjcy9zY2hlZHVsZWQtYWdlbnQtd29ya2Zsb3cvc3BlYy5tZCBhdCBlaXRoZXIgdGhlIHJldmlld2VkIGhlYWQgb3IgY3VycmVudCBtYWluLiBUaGUgZXhpc3RpbmcgY2Fub25pY2FsIG93bmVyIGlzICdBcHBsaWNhdGlvbiBjb25zZXF1ZW5jZSBjb21wbGV0aW9uIGlzIHJlY29uc3RydWN0YWJsZSBhY3Jvc3MgaW50ZXJydXB0aW9uJy4gVGhpcyB3b3VsZCBjcmVhdGUgYSBjb21wZXRpbmcgcmVxdWlyZW1lbnQgaW5zdGVhZCBvZiBtb2RpZnlpbmcgdGhlIHNoYXJlZCBvd25lciwgY29udHJhcnkgdG8gdGhlIHNwZWMtZHJpdmVuIGFkYXB0ZXIgYW5kIHRoZSBhcHByb3ZlZCBjb25zb2xpZGF0aW9uIGJvdW5kYXJ5OyBwcmVzZXJ2ZSB0aGUgZXhpc3Rpbmcgb3duZXIgYW5kIGFsbCBzdXJ2aXZpbmcgc2NlbmFyaW9zIHdoZW4gY29ycmVjdGluZyBpdC4gKDIpIFRoZSBzdGFnZWQgZGVsaXZlcnkgdHVwbGUgaXMgc3RhbGUgYWdhaW5zdCBjdXJyZW50IE4tMS4gcHJvcG9zYWwubWQvZGVzaWduLm1kIHN0aWxsIGNpdGUgZTYxN2EwNSBhbmQgdGFza3MgMC4xLTAuMTAgcmVtYWluIHVuY2hlY2tlZC9mdXR1cmUsIHdoaWxlIGN1cnJlbnQgbWFpbiBkMDE5ZmRjIGFscmVhZHkgY29udGFpbnMgbWVyZ2VkIFN0YWdlIDAgcmVwYWlycyBmcm9tIFBScyAjMzMxLCAjMzMyLCBhbmQgIzMzMy4gUmVjb25jaWxlIGNvbXBsZXRlZCBTdGFnZSAwIGV2aWRlbmNlLCBjdXJyZW50IGRlbGl2ZXJ5LCByZW1haW5pbmcgbWFuZGF0b3J5IHBhcmVudCBvdXRjb21lLCBOLTEgcHJlcmVxdWlzaXRlcywgYW5kIGNvbnRpbnVhdGlvbiBzbyBFeGVjdXRvciBjYW5ub3QgcmVwbGF5IGFscmVhZHktbWVyZ2VkIHJlcGFpciB3b3JrLiBFeGFjdC1oZWFkIHN0cmljdCBPcGVuU3BlYyB2YWxpZGF0aW9uIHJ1biAzNTk0ODk0NjYzMCBwYXNzZWQgd2l0aCBjaGVja291dCBIRUFEIGFkZjBiMjkzZmUwZDI2MzI4MWUwMmI3OWI1ZGRlNjNmMGIyZjkzZTQsIGJ1dCBtZWNoYW5pY2FsIHZhbGlkYXRpb24gZG9lcyBub3QgY2xvc2UgdGhlc2Ugc2VtYW50aWMgZmluZGluZ3MuIiwicmVzdWx0X2tpbmQiOiJmaW5kaW5ncyIsInJvbGUiOiJyZXZpZXdlciJ9\nReason: application accepted"
+    },
+    {
+      "id": 5809355431,
+      "event": "commented",
+      "created_at": "2026-09-24T06:59:35Z",
+      "body": "REVIEW_RESULT\nWorkflow: #322\nChange: restore-no-work-idle-discovery\nRole: reviewer\nAction: review-openspec\nResult: FINDINGS\nRevision: d019fdc604e8a7fa40e2f3e6436a12b076658057\nDefault-Branch-Revision: d019fdc604e8a7fa40e2f3e6436a12b076658057\nApplication-Correlation: application:5809349962:322:restore-no-work-idle-discovery:reviewer:review-openspec:findings:d019fdc604e8a7fa40e2f3e6436a12b076658057\nRepository-derived successor: Lead / resolve-question\nEvidence: FINDINGS. (1) The delta declares MODIFIED Requirement 'Materialization and consequence completion resume from canonical durable evidence', but that exact requirement does not exist in canonical openspec/specs/scheduled-agent-workflow/spec.md at either the reviewed head or current main. The existing canonical owner is 'Application consequence completion is reconstructable across interruption'. This would create a competing requirement instead of modifying the shared owner, contrary to the spec-driven adapter and the approved consolidation boundary; preserve the existing owner and all surviving scenarios when correcting it. (2) The staged delivery tuple is stale against current N-1. proposal.md/design.md still cite e617a05 and tasks 0.1-0.10 remain unchecked/future, while current main d019fdc already contains merged Stage 0 repairs from PRs #331, #332, and #333. Reconcile completed Stage 0 evidence, current delivery, remaining mandatory parent outcome, N-1 prerequisites, and continuation so Executor cannot replay already-merged repair work. Exact-head strict OpenSpec validation run 35948946630 passed with checkout HEAD adf0b293fe0d263281e02b79b5dde63f0b2f93e4, but mechanical validation does not close these semantic findings."
+    },
+    {
+      "id": 31735244991,
+      "event": "unlabeled",
+      "created_at": "2026-09-24T06:59:38Z",
+      "label": {
+        "name": "action:review-openspec"
+      }
+    },
+    {
+      "id": 31735245036,
+      "event": "labeled",
+      "created_at": "2026-09-24T06:59:38Z",
+      "label": {
+        "name": "action:resolve-question"
+      }
+    },
+    {
+      "id": 5810770514,
+      "event": "commented",
+      "created_at": "2026-09-24T08:38:42Z",
+      "body": "APPLICATION_DECISION\nRequest-Comment: 5810765007\nRequest-Body-SHA256: 2933a72e5a29d751dd33b6c1e4c0f84bcd3788d8410ab9cf997818beab155417\nAuthorization-Revision: d019fdc604e8a7fa40e2f3e6436a12b076658057\nIssue: 322\nRole: lead\nAction: resolve-question\nChange: restore-no-work-idle-discovery\nResult-Kind: ready-for-openspec-review\nDisposition: ACCEPTED\nWorker-Result-SHA256: f39b76e8d9a9b4f61bbc8bfdb76efcf932edbedbb7d8c828a81da93c984264d7\nApplication-Intent-B64: eyJfc2VtYW50aWNfaW50ZW50X3ZlcnNpb24iOjIsImFjdGlvbiI6InJlc29sdmUtcXVlc3Rpb24iLCJjaGFuZ2UiOiJyZXN0b3JlLW5vLXdvcmstaWRsZS1kaXNjb3ZlcnkiLCJldmlkZW5jZV9yZWYiOiJpc3N1ZWNvbW1lbnQtNTgwOTM1NTQzMSIsImlzc3VlX251bWJlciI6MzIyLCJyZXF1ZXN0ZWRfZWZmZWN0cyI6W3sia2luZCI6ImdpdGh1Yi1tdXRhdGlvbiIsInBheWxvYWRfanNvbiI6IntcImJhc2Vfc2hhXCI6IFwiZDAxOWZkYzYwNGU4YTdmYTQwZTJmM2U2NDM2YTEyYjA3NjY1ODA1N1wiLCBcImJyYW5jaFwiOiBcImFnZW50L3Jlc3RvcmUtbm8td29yay1pZGxlLWRpc2NvdmVyeVwiLCBcImNoYW5nZVwiOiBcInJlc3RvcmUtbm8td29yay1pZGxlLWRpc2NvdmVyeVwiLCBcImV4cGVjdGVkX2NoYW5nZVwiOiBcInJlc3RvcmUtbm8td29yay1pZGxlLWRpc2NvdmVyeVwiLCBcImZpbGVzXCI6IFt7XCJibG9iX3NoYVwiOiBcImJkZWZmZDk0ZmYwMWM3ZjNlMmZkNGU4ZTEyYzNiNTM1YjlkZjY5MzJcIiwgXCJleHBlY3RlZF9zaGFcIjogXCI2MDAzZDg5OGZhZTdjNDBjNTlkMDhlMzAyM2VkMTMxYmFmNDFiMzgzXCIsIFwicGF0aFwiOiBcIm9wZW5zcGVjL2NoYW5nZXMvcmVzdG9yZS1uby13b3JrLWlkbGUtZGlzY292ZXJ5L3Byb3Bvc2FsLm1kXCJ9LCB7XCJibG9iX3NoYVwiOiBcIjgwOTZiMjQ2ODJjNzdkMzdlMTc3ZTY4ZTM0NjA3MTJhZjdkZTMzMjVcIiwgXCJleHBlY3RlZF9zaGFcIjogXCIwNWNmYjE1NzliYjRhN2M2NDgwZjE4MGU5YTdlMDI1ZmRiNWZkZTI3XCIsIFwicGF0aFwiOiBcIm9wZW5zcGVjL2NoYW5nZXMvcmVzdG9yZS1uby13b3JrLWlkbGUtZGlzY292ZXJ5L2Rlc2lnbi5tZFwifSwge1wiYmxvYl9zaGFcIjogXCI0ZTQyOGIzZWFkN2VmNmFhMGRlNmNhYmZhZWY0ODg1OTMyYTI4ZDIyXCIsIFwiZXhwZWN0ZWRfc2hhXCI6IFwiMzMxZGM2NzFlYTZmYTA1YzhmYjJkNDBjYzNmNmRjNjVhMzFhNmYwYVwiLCBcInBhdGhcIjogXCJvcGVuc3BlYy9jaGFuZ2VzL3Jlc3RvcmUtbm8td29yay1pZGxlLWRpc2NvdmVyeS90YXNrcy5tZFwifSwge1wiYmxvYl9zaGFcIjogXCJkMTg2MWRkNWI2YTE5MGY4MjFmZGY5OWVjN2JiMmQzNmZlNWRiMjA4XCIsIFwiZXhwZWN0ZWRfc2hhXCI6IFwiYThlYzRiMzllNTI4NzY1MWFkNThjZjJiMmUwZTFhMzExMTNjZGYwNlwiLCBcInBhdGhcIjogXCJvcGVuc3BlYy9jaGFuZ2VzL3Jlc3RvcmUtbm8td29yay1pZGxlLWRpc2NvdmVyeS9zcGVjcy9zY2hlZHVsZWQtYWdlbnQtd29ya2Zsb3cvc3BlYy5tZFwifV0sIFwiaXNzdWVfbnVtYmVyXCI6IDMyMiwgXCJtZXNzYWdlXCI6IFwiUmVzb2x2ZSBleGFjdC1oZWFkIE9wZW5TcGVjIGZpbmRpbmdzIGZvciAjMzIyXCIsIFwib3BlcmF0aW9uXCI6IFwiYXBwbGljYXRpb24tbWF0ZXJpYWxpemVcIiwgXCJwcl9udW1iZXJcIjogMzI0fSJ9XSwicmVzdWx0X2NvbnRlbnQiOiJSRVNPTFZFRF9SRVZJRVdfRklORElOR1MuIEZpbmRpbmcgMTogdGhlIGRlbHRhIG5vdyBtb2RpZmllcyB0aGUgZXhhY3QgY2Fub25pY2FsIHJlcXVpcmVtZW50IEFwcGxpY2F0aW9uIGNvbnNlcXVlbmNlIGNvbXBsZXRpb24gaXMgcmVjb25zdHJ1Y3RhYmxlIGFjcm9zcyBpbnRlcnJ1cHRpb24sIHByZXNlcnZpbmcgdGhlIGZ1bGwgY3VycmVudCBjYW5vbmljYWwgYmxvY2sgYW5kIHN1cnZpdmluZyBzY2VuYXJpb3Mgd2hpbGUgYWRkaW5nIHRoZSBhcHByb3ZlZCBzaGFyZWQgQS9CL0MgcmVjb3ZlcnkgaW52YXJpYW50cyBhbmQgcmVncmVzc2lvbiBzY2VuYXJpb3MuIEZpbmRpbmcgMjogcHJvcG9zYWwvZGVzaWduL3Rhc2tzIG5vdyB1c2UgY3VycmVudCBtYWluIGQwMTlmZGM2MDRlOGE3ZmE0MGUyZjNlNjQzNmExMmIwNzY2NTgwNTc7IFN0YWdlIDAgaXMgcmVjb25jaWxlZCB0byBtZXJnZWQgUFJzICMzMzFcdTIwMTMjMzMzIHdpdGggZXhhY3QgaGVhZHMsIG1lcmdlIGNvbW1pdHMsIGFuZCBzdWNjZXNzZnVsIFB5dGhvbiBRdWFsaXR5IHJ1bnMuIFN0YWdlIDAgaXMgbm90IHJlcGxheWVkLiBUaGUgcmVtYWluaW5nIHR5cGVkIE5PX1dPUksgaGFuZG9mZiwgYWRtaXNzaW9uLCByZWFsIFNjaGVkdWxlZCBUYXNrIGFjdGl2YXRpb24sIGFuZCBwYXJlbnQgY29tcGxldGlvbiBldmlkZW5jZSByZW1haW4gbWFuZGF0b3J5LiBFeGlzdGluZyBDaGFuZ2UgYW5kIFBSICMzMjQgYXJlIHJldXNlZC4iLCJyZXN1bHRfa2luZCI6InJlYWR5LWZvci1vcGVuc3BlYy1yZXZpZXciLCJyb2xlIjoibGVhZCJ9\nReason: application accepted"
+    }
+  ],
+  "comparisons": {
+    "6a50eb378cea839dda529d6260f89e3fdd342d28": {
+      "status": "ahead",
+      "base_commit": "6a50eb378cea839dda529d6260f89e3fdd342d28",
+      "ahead_by": 30,
+      "behind_by": 0
+    },
+    "2e00e236f24ba41302c9ba18c685acdf4cebe4ed": {
+      "status": "ahead",
+      "base_commit": "2e00e236f24ba41302c9ba18c685acdf4cebe4ed",
+      "ahead_by": 25,
+      "behind_by": 0
+    },
+    "adf0b293fe0d263281e02b79b5dde63f0b2f93e4": {
+      "status": "diverged",
+      "base_commit": "adf0b293fe0d263281e02b79b5dde63f0b2f93e4",
+      "ahead_by": 25,
+      "behind_by": 3
+    }
+  },
+  "application_run": {
+    "id": 35976411803,
+    "display_title": "Scheduled Agent Application 5810765007",
+    "run_attempt": 7,
+    "status": "completed",
+    "conclusion": "failure",
+    "event": "issue_comment"
+  },
+  "application_job": {
+    "id": 107664011251,
+    "name": "apply",
+    "status": "completed",
+    "conclusion": "failure"
+  }
+}

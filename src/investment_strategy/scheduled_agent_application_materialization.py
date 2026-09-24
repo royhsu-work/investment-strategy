@@ -33,6 +33,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     WorkProductFile,
     WorkProductManifest,
     WorkProductPlan,
+    _ancestor_comparison_paths,
     _as_mapping,
     _change_from_issue,
     _comparison_file_paths,
@@ -44,6 +45,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _is_executor_task_and_implementation_materialization,
     _is_executor_task_bookkeeping,
     _open_pr_payload,
+    _open_prs_for_branch,
     _pending_source_is_current,
     _ref_head_sha,
     _review_openspec_required,
@@ -1585,9 +1587,12 @@ def _observe_nonimplementation_existing_target(
     repository: str,
     token: str,
     default_branch: str,
+    current_revision: str,
 ) -> ValidationResourceTarget:
     if request.pr_number is None:
         raise RuntimeError("application materialization validation target lacks PR")
+    if request.base_sha != current_revision:
+        raise RuntimeError("application materialization authorization base is stale")
     pr = _open_pr_payload(
         repository=repository,
         token=token,
@@ -1601,6 +1606,28 @@ def _observe_nonimplementation_existing_target(
     revision = None if head is None else head.get("sha")
     if not _valid_sha(revision):
         raise RuntimeError("application materialization PR head is incomplete")
+    observed_ref = _ref_head_sha(repository, token, request.branch)
+    if observed_ref != revision:
+        raise RuntimeError("application materialization PR/ref head identity is stale")
+    prs = _open_prs_for_branch(
+        repository,
+        token,
+        branch=request.branch,
+        default_branch=default_branch,
+    )
+    if len(prs) != 1 or prs[0].get("number") != request.pr_number:
+        raise RuntimeError("application materialization carrier identity is ambiguous")
+    try:
+        _ancestor_comparison_paths(
+            repository,
+            token,
+            base_sha=current_revision,
+            revision=cast(str, revision),
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "application materialization PR head omits authorized default history"
+        ) from exc
     if not _manifest_is_current(
         request,
         repository=repository,
@@ -1733,6 +1760,7 @@ def observe_materialization_target(
         repository=repository,
         token=token,
         default_branch=default_branch,
+        current_revision=current_revision,
     )
 
 
