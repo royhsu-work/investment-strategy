@@ -1274,6 +1274,46 @@ def _ancestor_comparison_paths(
     )
 
 
+def _validate_historical_pr_base(
+    repository: str,
+    token: str,
+    *,
+    request_base_sha: str,
+    pr_base_sha: str,
+    authorization_revision: str,
+    requested_paths: set[str],
+) -> None:
+    """Verify an intermediate PR base is ancestral and disjoint from the manifest."""
+
+    if (
+        not _valid_sha(request_base_sha)
+        or not _valid_sha(pr_base_sha)
+        or not _valid_sha(authorization_revision)
+        or request_base_sha == authorization_revision
+        or pr_base_sha in {request_base_sha, authorization_revision}
+    ):
+        raise RuntimeError("work-product historical PR base identity is invalid")
+    try:
+        changed_before_pr_base = _ancestor_comparison_paths(
+            repository,
+            token,
+            base_sha=request_base_sha,
+            revision=pr_base_sha,
+        )
+        _ancestor_comparison_paths(
+            repository,
+            token,
+            base_sha=pr_base_sha,
+            revision=authorization_revision,
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "work-product historical PR base ancestry evidence is incomplete"
+        ) from exc
+    if changed_before_pr_base.intersection(requested_paths):
+        raise RuntimeError("work-product historical PR base overlaps requested manifest")
+
+
 def _safe_historical_carrier_reconciliation(
     repository: str,
     token: str,
@@ -2042,14 +2082,19 @@ def apply_work_product(
             expected_change=plan.expected_change,
             authorization_revision=authorization_revision,
         )
-        if (
-            not default_branch_is_ancestor
-            and plan.manifest.base_sha != authorization_revision
-            and (
-                base.get("sha") == plan.manifest.base_sha
-                or base.get("sha") == authorization_revision
-            )
-        ):
+        if not default_branch_is_ancestor and plan.manifest.base_sha != authorization_revision:
+            historical_pr_base = base.get("sha")
+            if not _valid_sha(historical_pr_base):
+                raise RuntimeError("work-product historical PR base identity is incomplete")
+            if historical_pr_base not in {plan.manifest.base_sha, authorization_revision}:
+                _validate_historical_pr_base(
+                    repository,
+                    token,
+                    request_base_sha=plan.manifest.base_sha,
+                    pr_base_sha=cast(str, historical_pr_base),
+                    authorization_revision=authorization_revision,
+                    requested_paths={file.path for file in plan.manifest.files},
+                )
             observed_prs = _open_prs_for_branch(
                 repository,
                 token,

@@ -55,6 +55,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _valid_branch,
     _valid_repo_path,
     _valid_sha,
+    _validate_historical_pr_base,
     apply_work_product,
     completed_task_bookkeeping_is_current,
     resolve_validation_resource_target,
@@ -1624,28 +1625,15 @@ def _observe_nonimplementation_existing_target(
         issue_number=source.issue_number,
         change=request.change,
     ) or not _valid_sha(base_revision):
-        raise RuntimeError("application materialization carrier identity is invalid")
-    if base_revision not in {request.base_sha, current_revision}:
-        try:
-            historical_pr_base_paths = _ancestor_comparison_paths(
-                repository,
-                token,
-                base_sha=request.base_sha,
-                revision=cast(str, base_revision),
-            )
-            _ancestor_comparison_paths(
-                repository,
-                token,
-                base_sha=cast(str, base_revision),
-                revision=current_revision,
-            )
-        except RuntimeError as exc:
-            raise RuntimeError(
-                "application materialization PR base is not a safe historical ancestor"
-            ) from exc
-        if historical_pr_base_paths.intersection(file.path for file in request.files):
-            raise RuntimeError(
-                "application materialization PR base overlaps the requested manifest"
+        raise RuntimeError("application materializat    if base_revision not in {request.base_sha, current_revision}:
+        _validate_historical_pr_base(
+            repository,
+            token,
+            request_base_sha=request.base_sha,
+            pr_base_sha=cast(str, base_revision),
+            authorization_revision=current_revision,
+            requested_paths={file.path for file in request.files},
+        ) requested manifest"
             )
 
     manifest = WorkProductManifest(
