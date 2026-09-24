@@ -914,7 +914,7 @@ def test_existing_first_carrier_pr_reuses_exact_intent_commit_after_same_path_up
                 "behind_by": 0,
                 "base_commit": {"sha": middle_commit},
                 "commits": [{"sha": wrong_head, "parents": [{"sha": middle_commit}]}],
-                "files": [{"filename": path} for path in paths],
+                "files": [{"filename": path, "status": "modified"} for path in paths],
             }
         raise AssertionError(api_path)
 
