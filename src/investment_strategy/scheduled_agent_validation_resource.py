@@ -1307,15 +1307,22 @@ def _validate_historical_pr_base(
             base_sha=pr_base_sha,
             revision=authorization_revision,
         )
+        carrier_comparison_base = pr_base_sha
+        if pr_base_sha == authorization_revision:
+            # The current-main snapshot is not necessarily an ancestor of a
+            # historical carrier. Use the immutable request base as the
+            # common ancestor and prove both descendant path sets are disjoint.
+            default_branch_paths = changed_before_pr_base
+            carrier_comparison_base = request_base_sha
         carrier_paths = _ancestor_comparison_paths(
             repository,
             token,
-            base_sha=pr_base_sha,
+            base_sha=carrier_comparison_base,
             revision=carrier_revision,
         )
     except RuntimeError as exc:
         raise RuntimeError(
-            "work-product historical PR base ancestry evidence is incomplete"
+            f"work-product historical PR base ancestry evidence is incomplete: {exc}"
         ) from exc
     if changed_before_pr_base.intersection(requested_paths):
         raise RuntimeError("work-product historical PR base overlaps requested manifest")
