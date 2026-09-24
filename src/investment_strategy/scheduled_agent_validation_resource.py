@@ -1494,9 +1494,9 @@ def _historical_manifest_observation_matches(
 ) -> bool:
     """Prove an exact already-materialized manifest across a disjoint main advance.
 
-    This is a read-only completion predicate. Default-branch changes must be
-    disjoint from the requested manifest paths; unrelated paths already on
-    the carrier do not invalidate an exact manifest observation.
+    This read-only completion predicate uses the requested blob SHAs as the
+    durable postcondition. Expected preimage SHAs constrain a write/replay;
+    they need not still exist once the exact manifest is already on the carrier.
     """
 
     if (
@@ -1524,13 +1524,6 @@ def _historical_manifest_observation_matches(
         raise RuntimeError("work-product historical manifest overlaps default-branch changes")
     if not manifest_paths.issubset(carrier_paths):
         return False
-    if not _manifest_expected_content_matches_base(
-        repository,
-        token,
-        base_sha=historical_base_sha,
-        manifest=manifest,
-    ):
-        raise RuntimeError("work-product historical manifest base content is stale")
     return _manifest_content_matches(
         repository,
         token,
