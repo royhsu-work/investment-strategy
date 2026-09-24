@@ -1625,7 +1625,8 @@ def _observe_nonimplementation_existing_target(
         issue_number=source.issue_number,
         change=request.change,
     ) or not _valid_sha(base_revision):
-        raise RuntimeError("application materializat    if base_revision not in {request.base_sha, current_revision}:
+        raise RuntimeError("application materialization carrier identity is invalid")
+    if base_revision not in {request.base_sha, current_revision}:
         _validate_historical_pr_base(
             repository,
             token,
@@ -1633,8 +1634,7 @@ def _observe_nonimplementation_existing_target(
             pr_base_sha=cast(str, base_revision),
             authorization_revision=current_revision,
             requested_paths={file.path for file in request.files},
-        ) requested manifest"
-            )
+        )
 
     manifest = WorkProductManifest(
         branch=request.branch,
