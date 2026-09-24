@@ -1626,7 +1626,6 @@ def _observe_nonimplementation_existing_target(
             change=request.change,
         )
         or not _valid_sha(base_revision)
-        or base_revision not in {request.base_sha, current_revision}
     ):
         raise RuntimeError("application materialization carrier identity is invalid")
     if base_revision not in {request.base_sha, current_revision}:
