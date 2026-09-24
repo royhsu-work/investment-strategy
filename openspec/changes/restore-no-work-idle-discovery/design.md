@@ -70,6 +70,18 @@ The repository implementation can make the contract executable and expose the ex
 
 If that external configuration is not exposed to the available capability, repository implementation and tests remain valid delivery work but production activation is not proven. The final lifecycle must report that exact blocker rather than calling a merged repository implementation complete.
 
+## Shared materialization and consequence recovery
+
+The idle path depends on the same shared application substrate used by normal Actions. It must not acquire a #322-specific recovery path. Keep `observe_materialization_target()` as the positive owner for exact current carrier identity and have `materialization_postcondition()` compare its result with the application target. For a pending first carrier whose original base is behind current main, the observer may accept only a proven ancestor base with disjoint changed paths and an exact immutable one-commit manifest. Its PR must target current main and remain bound to the original base snapshot; stale, overlapping, mismatched, duplicate, or incomplete evidence fails closed.
+
+If an accepted first-carrier intent has a verified branch ref and exact content but no PR because execution stopped at the branch-ref/PR-carrier boundary, a later invocation may emit only the missing PR-create plan after repeating the ancestry, path-disjointness, branch/head/content, current source, and all-heads PR-cardinality checks. It must not re-run Lead semantics, recreate the branch, move its ref, or create a PR when any competing or ambiguous carrier exists. The existing safe PR-plan builder should be shared with initial creation.
+
+Fresh-process consequence observation must use the existing `ConsequenceSpec.evidence_target` and canonical positive owner for the current consequence. Materialization targets are reconstructed from current GitHub state; implementation carriers are qualified by `qualify_implementation_carrier()`. The local `_materialization_targets` map remains only an in-invocation optimization for exact apply/postcondition binding and cannot be required to prove an already-durable consequence after a new process starts. Existing request correlation, accepted-intent qualification, source/frontier checks, validation, review, carrier identity, successor, and terminal gates remain in their current owners.
+
+An accepted application can also be interrupted after it has written some exact effects but before a valid application-correlated formal result is durable. If a legacy or uncorrelated result then leaves the Issue on the accepted source Action while making the formal frontier unqualifiable, completion recovery may consult the existing accepted-intent owner before returning the frontier error. It may resume only when a fresh open Issue still has the exact accepted Issue, Change, Role, and Action, there is exactly one matching accepted decision, and the existing application-run observer finds one exact request-bound run and `apply` job. The existing application job must still perform its ordinary fresh authorization and effect/postcondition checks. This path does not qualify the uncorrelated result, derive or persist a successor, or rerun semantic work. A changed source/Change/routing, stale authorization, duplicate accepted decision, duplicate run/job, or incomplete observation remains fail closed.
+
+These rules reuse the existing fresh observer, carrier qualification, and consequence table. They add no registry, cursor, queue, recovery state machine, synthetic success fallback, or duplicate classifier.
+
 ## Blast radius and non-goals
 
 No Action model, `agent:*` routing dimension, idle label, idle transition, queue, cursor, lease, heartbeat, hidden backlog, registry, or generic model-selected repository target is introduced. No semantic discovery is added to `select_work()`. Existing application formal result/correlation logic remains the owner for normal Actions; idle admission uses a separate typed boundary because an Action-specific completion record would incorrectly turn idle into workflow state.
@@ -84,6 +96,9 @@ The implementation must provide executable coverage for:
 - overlap first-valid-write-wins;
 - stale revision/source refusal;
 - interruption before/after mutation;
+- each first-carrier durable prefix, including accepted intent, content commit, branch ref, PR carrier, returned carrier, validation, formal result, routing, and terminal state;
+- a disjoint default-branch advance before PR-carrier recovery, plus overlap, non-ancestor, wrong/duplicate PR, changed identity, and incomplete-observation negatives;
+- a new process with empty adapter-local target maps reconstructing the same current materialization/implementation consequence;
 - ambiguous create/update reconciliation;
 - later normal `AUTHORIZE` after successful admission;
 - static negative invariants proving no idle Action, transition, queue, cursor, lease, heartbeat, registry, or selector discovery branch;

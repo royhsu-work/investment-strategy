@@ -13,6 +13,7 @@ The current default branch at this Explore boundary is `2e00e236f24ba41302c9ba18
 - Add a typed, evidence-bound idle request/result contract that is not an Action, normal routing state, queue, cursor, lease, heartbeat, registry, or recovery workflow.
 - Reuse the existing bridge transport, fresh repository preflight, application-owned effect/reconciliation, canonical Issue tuple, and later normal dispatch; consolidate the new boundary into those owners.
 - Add the smallest repository-owned admission actuator for one existing-candidate update or one new routing-complete Explore Issue, with fresh reauthorization, minimal overlap serialization, read-only ambiguous-write reconciliation, and fail-closed guards.
+- Repair the shared application substrate required to make that handoff recoverable: use one canonical fresh materialization observer for apply postconditions; resume an exact first-carrier branch whose PR creation was interrupted only after proving immutable intent, original-base ancestry, path disjointness, exact head/content, and absence of competing PR carriers; reconstruct consequence completion in a fresh process from existing `ConsequenceSpec.evidence_target` owners rather than invocation-local adapter memory; and resume a unique exact accepted application run when an uncorrelated legacy result leaves the current source route unchanged but makes the formal frontier unqualifiable.
 - Define and verify the external Scheduled Task/bootstrap activation boundary so a merged repository implementation is not mistaken for production reachability.
 
 ## Decisions and proportionality
@@ -41,6 +42,7 @@ In scope:
 - an exact non-Action idle request/result envelope tied to a successful dispatch run and artifact;
 - existing/new candidate admission, deduplication, postcondition verification, and safe reconciliation;
 - tests for the required negative, concurrency, interruption, stale-state, and handoff properties;
+- accepted-application recovery after an uncorrelated legacy result, including exact source/Change/run binding and fail-closed handling of duplicate intents, duplicate runs, or changed routing;
 - production-shaped bootstrap/cutover evidence and documentation of the external execution boundary.
 
 Out of scope:
@@ -70,6 +72,8 @@ The parent Change is complete only when fresh evidence proves:
 - existing and new candidate admission each form exactly one legal canonical tuple;
 - overlapping wakes admit at most one candidate;
 - stale source/default branch, interruption, and ambiguous writes fail safe;
+- first-carrier recovery after a branch-ref/PR-carrier interruption creates only the missing exact PR consequence against current main when the old base is an ancestor and changes are disjoint;
+- fresh-process consequence completion uses durable GitHub evidence and the canonical positive observer without replaying semantic work or requiring local target memory;
 - successful admission is consumed by a later ordinary normal Action dispatch;
 - repository implementation is merged and the active OpenSpec Change is archived;
 - the actual production bootstrap boundary is activated and has production-shaped evidence.

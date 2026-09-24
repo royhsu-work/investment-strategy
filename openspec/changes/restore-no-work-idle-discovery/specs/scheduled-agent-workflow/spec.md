@@ -233,3 +233,65 @@ If an earlier invocation already made a required mutation durable, recovery MAY 
 - WHEN a later invocation observes the Issue and normal dispatch
 - THEN it recognizes the complete canonical tuple if uniquely provable
 - AND it creates no duplicate Issue and does not replay semantic discovery
+
+### Requirement: Materialization and consequence completion resume from canonical durable evidence
+
+Application SHALL use one canonical fresh materialization observer to decide whether an exact materialization postcondition is complete. The apply-time postcondition MUST compare the observed `ValidationResourceTarget` with the target returned by application and MUST preserve the observer's exact Issue, Change, branch, head, PR, manifest/content, source, default-branch, ancestry, and path-disjointness checks. A first carrier based on a prior default-branch revision MAY remain valid only when that revision is a proven ancestor of current main and intervening paths are disjoint from the requested manifest. Its existing PR MUST remain bound to the original authorized base snapshot.
+
+After accepted immutable intent has durably produced the exact content commit and branch ref but execution stops before PR creation, a later invocation MAY emit only the missing application-owned PR-create plan after fresh verification of the accepted source, original-base ancestry, path disjointness, exact branch/head/one-commit content, and complete PR discovery by exact head across all base branches. It MUST NOT repeat semantic work, recreate the branch or commit, move or force the ref, or create a PR when any competing, wrong-base, duplicate, contradictory, or incomplete carrier evidence exists. The PR plan MUST target the fresh current default branch and bind the exact existing head and current base revision.
+
+Fresh-process consequence completion SHALL select its positive evidence owner through the existing `ConsequenceSpec.evidence_target` and reconstruct that evidence from authoritative current repository state. Materialization consequences MUST use the canonical materialization observer; implementation-carrier consequences MUST use the existing implementation-carrier qualification owner. A newly constructed observer MUST NOT require invocation-local adapter target memory. This reconstruction MUST retain exact accepted request correlation, formal qualification, source/frontier, current carrier, validation, review, successor, and terminal gates; missing, stale, contradictory, ambiguous, or incomplete evidence fails closed.
+
+When formal-frontier qualification fails because a legacy or uncorrelated result follows a durable application acceptance, completion recovery MAY resume that exact accepted application only when the fresh open Issue still matches its exact Issue, immutable Change, Role, and Action; exactly one accepted decision binds the intent; and the existing current-state observer finds exactly one request-bound application run and `apply` job. Resumption MUST use the existing accepted-intent recovery owner and MUST leave fresh authorization, exact effect, and postcondition checks to the ordinary application path. It MUST NOT treat the uncorrelated result as a formal consequence, derive or persist a successor from it, or repeat semantic work. Changed source identity, stale authorization, duplicate accepted decisions, duplicate application runs/jobs, or incomplete evidence MUST remain fail closed.
+
+#### Scenario: Apply postcondition accepts a valid disjoint first-carrier continuation
+
+- GIVEN an accepted first-carrier intent was based on a default-branch revision that remains an ancestor of current main
+- AND the intervening main paths are disjoint from the exact requested manifest
+- AND the exact branch head, one-commit file set, content, Issue, Change, and PR on its original base are freshly observed
+- WHEN application observes its materialization postcondition on current main
+- THEN it compares the fresh canonical target with the apply target and recognizes the same valid consequence
+- AND it does not reject solely because main advanced
+
+#### Scenario: Branch-ref recovery emits only the missing PR carrier
+
+- GIVEN accepted immutable first-carrier intent has an exact branch ref and content commit
+- AND current main has advanced from the accepted base along a disjoint path
+- AND no PR exists for that exact head on any base branch
+- WHEN a later application invocation resumes the accepted intent
+- THEN it emits one exact PR-create plan against current main using the existing head
+- AND it creates no replacement commit, branch, or semantic result
+
+#### Scenario: Unsafe first-carrier continuation fails closed
+
+- GIVEN the original base is not an ancestor, paths overlap, source/Change identity changed, the head/content differs, PR discovery is incomplete, or any wrong/duplicate PR uses the branch head
+- WHEN application observes or resumes the carrier
+- THEN it rejects the continuation without creating or changing a branch or PR
+
+#### Scenario: New consequence observer reconstructs current carrier evidence
+
+- GIVEN accepted consequence evidence and its exact effect payload are durable
+- AND a new process constructs an empty effect adapter with no local materialization target
+- WHEN consequence completion observes the current carrier
+- THEN it uses the `ConsequenceSpec` evidence target and its canonical positive observer
+- AND it preserves the existing source, correlation, qualification, validation, review, and successor gates
+- AND it does not replay an already-completed effect
+
+#### Scenario: Accepted application resumes across an uncorrelated legacy result
+
+- GIVEN one immutable accepted application intent exactly matches the current open Issue, Change, Role, and Action
+- AND an earlier invocation made an application-owned effect durable but left only an uncorrelated legacy result before the formal frontier became unqualifiable
+- AND the current-state observer finds the one exact application run and its one `apply` job
+- WHEN a fresh bridge invocation checks application completion
+- THEN it resumes only that accepted application job through the existing accepted-intent owner
+- AND the uncorrelated result does not qualify a formal consequence or authorize a successor
+- AND the application still performs fresh authorization and exact postcondition checks before any remaining mutation
+- AND semantic work is not repeated
+
+#### Scenario: Ambiguous accepted-application recovery remains fail closed
+
+- GIVEN the current source/Change differs, more than one accepted intent or application run/job matches, authorization is stale, or required evidence is incomplete
+- WHEN a fresh bridge invocation checks application completion
+- THEN it does not resume or select any guessed application job
+- AND it does not qualify the uncorrelated result or derive a successor
+- AND the existing fail-closed or ambiguous classification is preserved
