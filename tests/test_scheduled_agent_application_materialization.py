@@ -1534,3 +1534,108 @@ def test_existing_first_carrier_rejects_renamed_descendant_path(
             request,
             head,
         )
+
+
+def test_existing_materialization_observer_recovers_disjoint_historical_base(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(322, "lead", "resolve-question")
+    old_base = "a" * 40
+    current_default = "d" * 40
+    carrier_head = "e" * 40
+    branch = f"agent/{_CHANGE}"
+    path = f"openspec/changes/{_CHANGE}/proposal.md"
+    payload = _payload(
+        expected_change=_CHANGE,
+        issue_number=source.issue_number,
+        files=[{"path": path, "blob_sha": _BLOB, "expected_sha": None}],
+    )
+    payload["base_sha"] = old_base
+    payload["pr_number"] = 271
+    pr = {
+        "number": 271,
+        "state": "open",
+        "merged": False,
+        "draft": False,
+        "title": f"OpenSpec: {_CHANGE}",
+        "body": f"Formalize the change.\n\nRefs #{source.issue_number}",
+        "head": {
+            "ref": branch,
+            "sha": carrier_head,
+            "repo": {"full_name": "royhsu-work/investment-strategy"},
+        },
+        "base": {
+            "ref": "main",
+            "sha": current_default,
+            "repo": {"full_name": "royhsu-work/investment-strategy"},
+        },
+    }
+    ancestry_reads: list[tuple[str, str]] = []
+
+    def historical_paths(
+        _repository: str,
+        _token: str,
+        *,
+        base_sha: str,
+        revision: str,
+    ) -> set[str]:
+        ancestry_reads.append((base_sha, revision))
+        if base_sha == old_base and revision == current_default:
+            return {"src/unrelated-main.py"}
+        if base_sha == old_base and revision == carrier_head:
+            return {path}
+        raise AssertionError((base_sha, revision))
+
+    monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_args: True)
+    monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
+    monkeypatch.setattr(
+        materialization,
+        "_ref_head_sha",
+        lambda _repo, _token, ref, **_kwargs: (
+            current_default if ref == "main" else carrier_head
+        ),
+    )
+    monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: pr)
+    monkeypatch.setattr(
+        materialization,
+        "_open_prs_for_branch",
+        lambda *_args, **_kwargs: (pr,),
+    )
+    monkeypatch.setattr(materialization, "_ancestor_comparison_paths", historical_paths)
+    monkeypatch.setattr(
+        materialization,
+        "_content_sha_at",
+        lambda _repo, _token, *, path, revision: _BLOB if revision == carrier_head else None,
+    )
+
+    target = materialization.observe_materialization_target(
+        payload,
+        source,
+        repository="royhsu-work/investment-strategy",
+        token=_BASE,
+        current_revision=current_default,
+        default_branch="main",
+        allow_pending_continuation=True,
+    )
+
+    assert target == ValidationResourceTarget(
+        repository="royhsu-work/investment-strategy",
+        revision=carrier_head,
+        correlation=f"effect-request-{source.issue_number}",
+        pr_number=271,
+        change=_CHANGE,
+        validation_required=True,
+        branch=branch,
+    )
+    assert (old_base, current_default) in ancestry_reads
+    assert (old_base, carrier_head) in ancestry_reads
+    assert materialization.materialization_postcondition(
+        payload,
+        source,
+        repository="royhsu-work/investment-strategy",
+        token=_BASE,
+        current_revision=current_default,
+        default_branch="main",
+        target=target,
+        allow_pending_continuation=True,
+    )
