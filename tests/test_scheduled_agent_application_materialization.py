@@ -36,6 +36,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
 _CHANGE = "restore-lifecycle-finalization-correction-routing"
 _BASE = "a" * 40
 _BLOB = "b" * 40
+_TOKEN = "test-token"  # noqa: S105
 
 
 def _payload(
@@ -88,6 +89,107 @@ def test_existing_change_materialization_requires_current_pr_and_preserves_expec
     assert request.pr_number == 201
     assert request.files[0].expected_sha is None
     assert materialization_requires_validation(request, source)
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_error"),
+    (
+        (None, None),
+        ("ref-mismatch", "PR/ref head identity is stale"),
+        ("duplicate-pr", "carrier identity is ambiguous"),
+        ("missing-default-history", "omits authorized default history"),
+        ("stale-base", "authorization base is stale"),
+    ),
+)
+def test_existing_change_observer_reconstructs_only_exact_current_carrier(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str | None,
+    expected_error: str | None,
+) -> None:
+    source = WorkerRequest(322, "lead", "resolve-question")
+    current_default = "d" * 40
+    carrier_head = "e" * 40
+    blob_sha = "b" * 40
+    path = f"openspec/changes/{_CHANGE}/proposal.md"
+    payload = _payload(
+        expected_change=_CHANGE,
+        issue_number=source.issue_number,
+        files=[
+            {
+                "path": path,
+                "blob_sha": blob_sha,
+                "expected_sha": "c" * 40,
+            }
+        ],
+    )
+    payload["base_sha"] = current_default
+    payload["pr_number"] = 324
+    if failure == "stale-base":
+        payload["base_sha"] = "a" * 40
+    request = parse_materialization_payload(payload, source)
+    pr = {
+        "number": 324,
+        "head": {"ref": request.branch, "sha": carrier_head},
+        "base": {"ref": "main", "sha": "a" * 40},
+    }
+
+    monkeypatch.setattr(materialization, "_current_authorized_request", lambda *_args: source)
+    monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
+    monkeypatch.setattr(
+        materialization,
+        "_ref_head_sha",
+        lambda _repo, _token, branch: (
+            current_default
+            if branch == "main"
+            else "f" * 40
+            if failure == "ref-mismatch"
+            else carrier_head
+        ),
+    )
+    monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: pr)
+    monkeypatch.setattr(
+        materialization,
+        "_open_prs_for_branch",
+        lambda *_args, **_kwargs: (pr, pr) if failure == "duplicate-pr" else (pr,),
+    )
+
+    def ancestor_paths(*_args: object, **_kwargs: object) -> set[str]:
+        if failure == "missing-default-history":
+            raise RuntimeError("comparison is not an ancestor")
+        return set()
+
+    monkeypatch.setattr(materialization, "_ancestor_comparison_paths", ancestor_paths)
+    monkeypatch.setattr(materialization, "_manifest_is_current", lambda *_args, **_kwargs: True)
+
+    if expected_error is not None:
+        with pytest.raises(RuntimeError, match=expected_error):
+            materialization.observe_materialization_target(
+                payload,
+                source,
+                repository="owner/repo",
+                token=_TOKEN,
+                current_revision=current_default,
+                default_branch="main",
+            )
+        return
+
+    target = materialization.observe_materialization_target(
+        payload,
+        source,
+        repository="owner/repo",
+        token=_TOKEN,
+        current_revision=current_default,
+        default_branch="main",
+    )
+    assert target == ValidationResourceTarget(
+        repository="owner/repo",
+        revision=carrier_head,
+        correlation=f"effect-request-{source.issue_number}",
+        pr_number=324,
+        change=_CHANGE,
+        validation_required=True,
+        branch=request.branch,
+    )
 
 
 def test_initial_carrier_resume_after_disjoint_default_advance_is_read_only(

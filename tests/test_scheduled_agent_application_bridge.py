@@ -460,7 +460,7 @@ def test_main_resumes_live_322_effect_through_the_same_application_owner(
     assert seen[0]["request_comment_id"] == 5810765007
     assert seen[0]["authorization_revision"] == current_revision
     assert seen[0]["accepted_intent"] is True
-    assert seen[0]["allow_pending_continuation"] is True
+    assert seen[0]["allow_pending_continuation"] is False
 
 
 def test_accepted_first_activation_recovers_legacy_mechanical_manifest(
