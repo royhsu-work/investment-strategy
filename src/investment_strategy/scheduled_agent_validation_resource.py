@@ -1152,7 +1152,7 @@ def _comparison_paths_from_file_entries(
     files: object,
     *,
     malformed_error: str,
-    reject_duplicate_filenames: bool = False,
+    reject_duplicate_filenames: bool = True,
 ) -> set[str]:
     """Return changed paths including both ends of a GitHub-reported rename."""
 
@@ -1160,26 +1160,33 @@ def _comparison_paths_from_file_entries(
         raise RuntimeError(malformed_error)
     paths: set[str] = set()
     filenames: set[str] = set()
+    valid_statuses = {"added", "modified", "removed", "renamed"}
     for raw_file in files:
         file = _as_mapping(raw_file)
         filename = None if file is None else file.get("filename")
         status = None if file is None else file.get("status")
         previous_filename = None if file is None else file.get("previous_filename")
-        if not isinstance(filename, str) or not filename:
+        if (
+            not isinstance(filename, str)
+            or not filename
+            or not isinstance(status, str)
+            or status not in valid_statuses
+        ):
             raise RuntimeError(malformed_error)
         if reject_duplicate_filenames and filename in filenames:
             raise RuntimeError(malformed_error)
         filenames.add(filename)
         paths.add(filename)
-        if previous_filename is not None or status == "renamed":
+        if status == "renamed":
             if (
-                status != "renamed"
-                or not isinstance(previous_filename, str)
+                not isinstance(previous_filename, str)
                 or not previous_filename
                 or previous_filename == filename
             ):
                 raise RuntimeError(malformed_error)
             paths.add(previous_filename)
+        elif previous_filename is not None:
+            raise RuntimeError(malformed_error)
     return paths
 
 

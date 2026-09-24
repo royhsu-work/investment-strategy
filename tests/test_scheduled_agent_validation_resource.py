@@ -1140,7 +1140,7 @@ def test_accepted_322_work_product_recovers_safe_historical_pr_base(
         },
         "base": {
             "ref": "main",
-            "sha": authorization_revision,
+            "sha": historical_base,
             "repo": {"full_name": _REPOSITORY},
         },
     }
@@ -1944,3 +1944,103 @@ def test_comparison_file_paths_reject_malformed_or_duplicate_entries(
             base_sha=_REVISION,
             revision=_PR_HEAD,
         )
+
+
+def test_live_322_accepted_manifest_on_existing_pr_head_recovers_after_interruption(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An accepted #322 manifest already on PR #324 must reconcile without stale rejection."""
+
+    source = WorkerRequest(322, "lead", "resolve-question")
+    change = "restore-no-work-idle-discovery"
+    authorization_revision = "d019fdc604e8a7fa40e2f3e6436a12b076658057"
+    carrier_revision = "7af49c85ebcb1cc22435913a154e9895bf43cdd2"
+    branch = f"agent/{change}"
+    manifest = resource.WorkProductManifest(
+        branch=branch,
+        base_sha=authorization_revision,
+        message="Resolve exact-head OpenSpec findings for #322",
+        files=(
+            resource.WorkProductFile(
+                f"openspec/changes/{change}/proposal.md",
+                "bdeffd94ff01c7f3e2fd4e8e12c3b535b9df6932",
+                "6003d898fae7c40c59d08e3023ed131baf41b383",
+            ),
+            resource.WorkProductFile(
+                f"openspec/changes/{change}/design.md",
+                "8096b24682c77d37e177e68e3460712af7de3325",
+                "05cfb1579bb4a7c6480f180e9a7e025fdb5fde27",
+            ),
+            resource.WorkProductFile(
+                f"openspec/changes/{change}/tasks.md",
+                "4e428b3ead7ef6aa0de6cabfaef4885932a28d22",
+                "331dc671ea6fa05c8fb2d40cc3f6dc65a31a6f0a",
+            ),
+            resource.WorkProductFile(
+                f"openspec/changes/{change}/specs/scheduled-agent-workflow/spec.md",
+                "d1861dd5b6a190f821fdf99ec7bb2d36fe5db208",
+                "a8ec4b39e5287651ad58cf2b2e0e1a31113cdf06",
+            ),
+        ),
+    )
+    plan = resource.WorkProductPlan(
+        True,
+        source=source,
+        pr_number=324,
+        expected_change=change,
+        manifest=manifest,
+    )
+    pr = {
+        "number": 324,
+        "state": "open",
+        "merged": False,
+        "draft": False,
+        "title": f"OpenSpec: {change}",
+        "body": f"Formalize OpenSpec change `{change}`.\n\nRefs #322",
+        "head": {
+            "ref": branch,
+            "sha": carrier_revision,
+            "repo": {"full_name": _REPOSITORY},
+        },
+        "base": {
+            "ref": "main",
+            "sha": authorization_revision,
+            "repo": {"full_name": _REPOSITORY},
+        },
+    }
+
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_args: source)
+    monkeypatch.setattr(resource, "_open_pr_payload", lambda **_kwargs: pr)
+    monkeypatch.setattr(
+        resource,
+        "_ref_head_sha",
+        lambda _repo, _token, ref, **_kwargs: (
+            authorization_revision if ref == "main" else carrier_revision
+        ),
+    )
+    monkeypatch.setattr(resource, "_default_branch_is_ancestor", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        resource, "_manifest_expected_content_matches_base", lambda *_args, **_kwargs: False
+    )
+    monkeypatch.setattr(resource, "_manifest_content_matches", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(resource, "_revision_matches_manifest", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        resource, "_is_reconciled_work_product_revision", lambda *_args, **_kwargs: False
+    )
+
+    target = resource.apply_work_product(
+        plan,
+        repository=_REPOSITORY,
+        token=_FIXTURE_VALUE,
+        default_branch="main",
+        authorization_revision=authorization_revision,
+    )
+
+    assert target == resource.ValidationResourceTarget(
+        repository=_REPOSITORY,
+        revision=carrier_revision,
+        correlation="effect-request-322",
+        pr_number=324,
+        change=change,
+        branch=branch,
+    )
