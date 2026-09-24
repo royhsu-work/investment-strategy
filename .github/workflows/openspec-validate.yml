@@ -8,12 +8,22 @@ on:
       - ".github/openspec-version"
       - ".github/scripts/openspec_compatibility.py"
       - ".github/workflows/openspec-validate.yml"
+      - "src/investment_strategy/scheduled_agent_*.py"
+      - "src/investment_strategy/issue_comment_bridge.py"
+      - "src/investment_strategy/workflow_dispatch.py"
+      - "tests/test_scheduled_agent_*.py"
+      - "tests/test_issue_comment_bridge.py"
   pull_request:
     paths:
       - "openspec/**"
       - ".github/openspec-version"
       - ".github/scripts/openspec_compatibility.py"
       - ".github/workflows/openspec-validate.yml"
+      - "src/investment_strategy/scheduled_agent_*.py"
+      - "src/investment_strategy/issue_comment_bridge.py"
+      - "src/investment_strategy/workflow_dispatch.py"
+      - "tests/test_scheduled_agent_*.py"
+      - "tests/test_issue_comment_bridge.py"
   workflow_dispatch:
     inputs:
       target_repository:
