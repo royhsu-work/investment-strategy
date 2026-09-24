@@ -810,8 +810,7 @@ def test_existing_first_carrier_pr_reuses_exact_intent_commit_after_same_path_up
                 "behind_by": 0,
                 "base_commit": {"sha": old_base},
                 "files": [
-                    {"filename": path, "status": "modified"}
-                    for path in sorted(default_paths)
+                    {"filename": path, "status": "modified"} for path in sorted(default_paths)
                 ],
             }
         if api_path == f"compare/{old_base}...{carrier_head}":
@@ -1664,9 +1663,7 @@ def test_existing_materialization_observer_recovers_disjoint_historical_base(
     monkeypatch.setattr(
         materialization,
         "_ref_head_sha",
-        lambda _repo, _token, ref, **_kwargs: (
-            current_default if ref == "main" else carrier_head
-        ),
+        lambda _repo, _token, ref, **_kwargs: current_default if ref == "main" else carrier_head,
     )
     monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: pr)
     monkeypatch.setattr(materialization, "_matching_prs", lambda *_args: [pr])

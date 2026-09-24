@@ -1187,9 +1187,7 @@ def _comparison_paths_from_file_entries(
             or status not in valid_statuses
         ):
             raise RuntimeError(malformed_error)
-        if filename in previous_filenames or (
-            reject_duplicate_filenames and filename in filenames
-        ):
+        if filename in previous_filenames or (reject_duplicate_filenames and filename in filenames):
             raise RuntimeError(malformed_error)
         filenames.add(filename)
         paths.add(filename)
@@ -1485,7 +1483,6 @@ def _reconciliation_message(change: str) -> str:
     return f"Reconcile default-branch ancestry for {change}"
 
 
-
 def _historical_manifest_observation_matches(
     repository: str,
     token: str,
@@ -1540,6 +1537,7 @@ def _historical_manifest_observation_matches(
         revision=carrier_revision,
         manifest=manifest,
     )
+
 
 def _is_reconciled_work_product_revision(
     repository: str,

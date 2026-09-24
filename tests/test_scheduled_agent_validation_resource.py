@@ -2141,8 +2141,7 @@ def test_live_322_manifest_recovers_after_disjoint_default_advance(
                     "base_commit": {"sha": historical_base},
                     "too_large": False,
                     "files": [
-                        {"filename": path, "status": "modified"}
-                        for path in sorted(default_paths)
+                        {"filename": path, "status": "modified"} for path in sorted(default_paths)
                     ],
                 }
             if comparison == f"{historical_base}...{carrier_revision}":
@@ -2171,10 +2170,7 @@ def test_live_322_manifest_recovers_after_disjoint_default_advance(
             raw_path, _separator, query = api_path.partition("?")
             path = raw_path.removeprefix("contents/")
             reference = query.removeprefix("ref=")
-            by_path = {
-                file_path: (blob, expected)
-                for file_path, blob, expected in manifest_values
-            }
+            by_path = {file_path: (blob, expected) for file_path, blob, expected in manifest_values}
             if path not in by_path:
                 return None
             blob, expected = by_path[path]
