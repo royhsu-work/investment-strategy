@@ -129,8 +129,20 @@ def test_existing_change_observer_reconstructs_only_exact_current_carrier(
     request = parse_materialization_payload(payload, source)
     pr = {
         "number": 324,
-        "head": {"ref": request.branch, "sha": carrier_head},
-        "base": {"ref": "main", "sha": current_default},
+        "state": "open",
+        "merged": False,
+        "title": f"OpenSpec: {_CHANGE}",
+        "body": f"Formalize the Change.\n\nRefs #{source.issue_number}",
+        "head": {
+            "ref": request.branch,
+            "sha": carrier_head,
+            "repo": {"full_name": "owner/repo"},
+        },
+        "base": {
+            "ref": "main",
+            "sha": current_default,
+            "repo": {"full_name": "owner/repo"},
+        },
     }
 
     monkeypatch.setattr(materialization, "_current_authorized_request", lambda *_args: source)
@@ -817,7 +829,7 @@ def test_existing_first_carrier_pr_reuses_exact_intent_commit_after_same_path_up
             if invalid_evidence == "unrelated-path":
                 changed_files.append({"filename": "src/unrelated.py", "status": "added"})
             if invalid_evidence == "duplicate-path":
-                changed_files.append({"filename": paths[0]})
+                changed_files.append({"filename": paths[0], "status": "modified"})
             if invalid_evidence == "missing-base":
                 return {
                     "status": "ahead",
@@ -872,16 +884,19 @@ def test_existing_first_carrier_pr_reuses_exact_intent_commit_after_same_path_up
                 "behind_by": 0,
                 "base_commit": {"sha": first_commit},
                 "commits": [{"sha": middle_commit, "parents": [{"sha": first_commit}]}],
-                "files": [{"filename": path} for path in paths],
+                "files": [{"filename": path, "status": "modified"} for path in paths],
             }
             if invalid_evidence == "missing-delta-base":
                 delta.pop("base_commit")
             elif invalid_evidence == "wrong-delta-commit":
                 delta["commits"] = [{"sha": wrong_head, "parents": [{"sha": first_commit}]}]
             elif invalid_evidence == "duplicate-delta-path":
-                delta["files"] = [{"filename": paths[0]}, {"filename": paths[0]}]
+                delta["files"] = [
+                    {"filename": paths[0], "status": "modified"},
+                    {"filename": paths[0], "status": "modified"},
+                ]
             elif invalid_evidence == "unrelated-delta-path":
-                delta["files"] = [{"filename": "src/unrelated.py"}]
+                delta["files"] = [{"filename": "src/unrelated.py", "status": "added"}]
             return delta
         if api_path == f"compare/{middle_commit}...{carrier_head}":
             return {
