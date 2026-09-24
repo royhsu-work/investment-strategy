@@ -258,6 +258,14 @@ def test_initial_carrier_resume_after_disjoint_default_advance_is_read_only(
         api_path: str,
         **_kwargs: object,
     ) -> object:
+        if api_path == f"compare/{old_base}...{old_base}":
+            return {
+                "status": "identical",
+                "ahead_by": 0,
+                "behind_by": 0,
+                "base_commit": {"sha": old_base},
+                "files": [],
+            }
         if api_path == f"compare/{old_base}...{current_default}":
             return {
                 "status": "ahead",

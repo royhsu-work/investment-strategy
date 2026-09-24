@@ -1292,7 +1292,6 @@ def _validate_historical_pr_base(
         or not _valid_sha(authorization_revision)
         or not _valid_sha(carrier_revision)
         or request_base_sha == authorization_revision
-        or pr_base_sha in {request_base_sha, authorization_revision}
     ):
         raise RuntimeError("work-product historical PR base identity is invalid")
     try:
@@ -2098,16 +2097,15 @@ def apply_work_product(
             historical_pr_base = base.get("sha")
             if not _valid_sha(historical_pr_base):
                 raise RuntimeError("work-product historical PR base identity is incomplete")
-            if historical_pr_base not in {plan.manifest.base_sha, authorization_revision}:
-                _validate_historical_pr_base(
-                    repository,
-                    token,
-                    request_base_sha=plan.manifest.base_sha,
-                    pr_base_sha=cast(str, historical_pr_base),
-                    authorization_revision=authorization_revision,
-                    carrier_revision=current_head,
-                    requested_paths={file.path for file in plan.manifest.files},
-                )
+            _validate_historical_pr_base(
+                repository,
+                token,
+                request_base_sha=plan.manifest.base_sha,
+                pr_base_sha=cast(str, historical_pr_base),
+                authorization_revision=authorization_revision,
+                carrier_revision=current_head,
+                requested_paths={file.path for file in plan.manifest.files},
+            )
             observed_prs = _open_prs_for_branch(
                 repository,
                 token,
