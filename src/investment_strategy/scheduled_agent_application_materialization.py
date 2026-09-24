@@ -9,6 +9,7 @@ no Issue-comment protocol and never consumes a dispatch Artifact.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -66,6 +67,7 @@ _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
 _ISSUE_LINK = re.compile(r"(?mi)^\s*Refs\s+#([0-9]+)\s*$")
 _MATERIALIZATION_OPERATION = "application-materialize"
 _IMPLEMENTATION_ACTION = "implement-change"
+_LOGGER = logging.getLogger(__name__)
 
 
 def materialization_message_is_safe(
@@ -1695,6 +1697,14 @@ def materialization_postcondition(
     """Observe the exact carrier/PR/Change postcondition after application."""
 
     if target is None:
+        _LOGGER.warning(
+            "application-materialize postcondition target is unavailable "
+            "(issue=%s role=%s action=%s current_revision=%s)",
+            source.issue_number,
+            source.role,
+            source.action,
+            current_revision,
+        )
         return False
     try:
         observed = observe_materialization_target(
@@ -1706,11 +1716,34 @@ def materialization_postcondition(
             default_branch=default_branch,
             allow_pending_continuation=allow_pending_continuation,
         )
-        return observed == target
-    except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
+    except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        _LOGGER.warning(
+            "application-materialize postcondition observation failed: %s "
+            "(issue=%s role=%s action=%s base_sha=%s current_revision=%s "
+            "target_pr=%s target_revision=%s)",
+            exc,
+            source.issue_number,
+            source.role,
+            source.action,
+            payload.get("base_sha"),
+            current_revision,
+            target.pr_number,
+            target.revision,
+        )
         return False
-
-
+    if observed != target:
+        _LOGGER.warning(
+            "application-materialize postcondition mismatch: observed=%r target=%r "
+            "(issue=%s role=%s action=%s current_revision=%s)",
+            observed,
+            target,
+            source.issue_number,
+            source.role,
+            source.action,
+            current_revision,
+        )
+        return False
+    return True
 def observe_materialization_target(
     payload: Mapping[str, object],
     source: WorkerRequest,
