@@ -1281,14 +1281,16 @@ def _validate_historical_pr_base(
     request_base_sha: str,
     pr_base_sha: str,
     authorization_revision: str,
+    carrier_revision: str,
     requested_paths: set[str],
 ) -> None:
-    """Verify an intermediate PR base is ancestral and disjoint from the manifest."""
+    """Verify historical ancestry and reject paths changed on both descendants."""
 
     if (
         not _valid_sha(request_base_sha)
         or not _valid_sha(pr_base_sha)
         or not _valid_sha(authorization_revision)
+        or not _valid_sha(carrier_revision)
         or request_base_sha == authorization_revision
         or pr_base_sha in {request_base_sha, authorization_revision}
     ):
@@ -1300,11 +1302,17 @@ def _validate_historical_pr_base(
             base_sha=request_base_sha,
             revision=pr_base_sha,
         )
-        _ancestor_comparison_paths(
+        default_branch_paths = _ancestor_comparison_paths(
             repository,
             token,
             base_sha=pr_base_sha,
             revision=authorization_revision,
+        )
+        carrier_paths = _ancestor_comparison_paths(
+            repository,
+            token,
+            base_sha=pr_base_sha,
+            revision=carrier_revision,
         )
     except RuntimeError as exc:
         raise RuntimeError(
@@ -1312,6 +1320,10 @@ def _validate_historical_pr_base(
         ) from exc
     if changed_before_pr_base.intersection(requested_paths):
         raise RuntimeError("work-product historical PR base overlaps requested manifest")
+    if default_branch_paths.intersection(carrier_paths):
+        raise RuntimeError(
+            "work-product historical PR base overlaps default-branch and carrier changes"
+        )
 
 
 def _safe_historical_carrier_reconciliation(
@@ -2093,6 +2105,7 @@ def apply_work_product(
                     request_base_sha=plan.manifest.base_sha,
                     pr_base_sha=cast(str, historical_pr_base),
                     authorization_revision=authorization_revision,
+                    carrier_revision=current_head,
                     requested_paths={file.path for file in plan.manifest.files},
                 )
             observed_prs = _open_prs_for_branch(

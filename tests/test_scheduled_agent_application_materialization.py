@@ -1737,7 +1737,7 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
     source = WorkerRequest(322, "lead", "resolve-question")
     change = "restore-no-work-idle-discovery"
     old_base = "d019fdc604e8a7fa40e2f3e6436a12b076658057"
-    current_default = "77a2c86ebae1a2e1e1136c3e147b2f012be8231d"
+    current_default = "f5fad326173b21feb5455bcb917766a383a76f7b"
     pr_base = "1db00c4b50175af30d4dc9febe461cbab8bac5bf"
     carrier_head = "5de9641a3e3e7e26071f3f8cdc1843e3fa842049"
     repository = "royhsu-work/investment-strategy"
@@ -1826,9 +1826,13 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
         "tests/test_scheduled_agent_validation_resource.py",
     }
     paths_after_pr_base = {
+        "src/investment_strategy/scheduled_agent_application_materialization.py",
         "src/investment_strategy/scheduled_agent_validation_resource.py",
         "tests/test_scheduled_agent_application_materialization.py",
     }
+    carrier_paths_after_pr_base = set(manifest_paths)
+    overlap_path = "src/investment_strategy/scheduled_agent_validation_resource.py"
+    historical_carrier_overlap = [False]
     paths_to_current = paths_to_pr_base | paths_after_pr_base
 
     def historical_paths(
@@ -1846,6 +1850,11 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
             return paths_to_current
         if base_sha == pr_base and revision == current_default:
             return paths_after_pr_base
+        if base_sha == pr_base and revision == carrier_head:
+            carrier_paths = set(carrier_paths_after_pr_base)
+            if historical_carrier_overlap[0]:
+                carrier_paths.add(overlap_path)
+            return carrier_paths
         if base_sha == old_base and revision == carrier_head:
             return manifest_paths
         if base_sha == old_base and revision == "a" * 40:
@@ -1952,6 +1961,19 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
 
     pr_base_payload["sha"] = pr_base
     historical_pr_base_overlaps = True
+    assert not materialization.materialization_postcondition(
+        payload,
+        source,
+        repository=repository,
+        token=_TOKEN,
+        current_revision=current_default,
+        default_branch="main",
+        target=applied_target,
+        allow_pending_continuation=True,
+    )
+
+    historical_pr_base_overlaps = False
+    historical_carrier_overlap[0] = True
     assert not materialization.materialization_postcondition(
         payload,
         source,

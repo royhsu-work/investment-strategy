@@ -1633,6 +1633,7 @@ def _observe_nonimplementation_existing_target(
             request_base_sha=request.base_sha,
             pr_base_sha=cast(str, base_revision),
             authorization_revision=current_revision,
+            carrier_revision=cast(str, revision),
             requested_paths={file.path for file in request.files},
         )
 
