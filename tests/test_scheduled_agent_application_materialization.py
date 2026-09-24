@@ -1341,3 +1341,192 @@ def test_executor_can_checkpoint_tasks_with_non_openspec_implementation_files() 
         noncanonical_request,
         source,
     )
+
+
+def test_pending_first_carrier_rejects_incomplete_default_ancestry_comparison(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_base = "a" * 40
+    current_default = "b" * 40
+    carrier_head = "c" * 40
+    source = WorkerRequest(234, "lead", "propose-change")
+    request = parse_materialization_payload(_payload(issue_number=source.issue_number), source)
+    path = request.files[0].path
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        **_kwargs: object,
+    ) -> object:
+        if api_path == f"compare/{old_base}...{current_default}":
+            return {"status": "ahead", "base_commit": {"sha": old_base}}
+        if api_path == f"compare/{old_base}...{carrier_head}":
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "behind_by": 0,
+                "base_commit": {"sha": old_base},
+                "commits": [{"sha": carrier_head, "parents": [{"sha": old_base}]}],
+                "files": [{"filename": path, "status": "added"}],
+            }
+        if api_path.startswith("pulls?"):
+            return []
+        if api_path.startswith("contents/openspec/changes/"):
+            return None
+        raise AssertionError(api_path)
+
+    monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    monkeypatch.setattr(materialization, "_comparison_file_paths", lambda *_args, **_kwargs: {"src/unrelated.py"})
+    monkeypatch.setattr(materialization, "_content_sha_at", lambda *_args, **_kwargs: _BLOB)
+    monkeypatch.setattr(materialization, "_branch_head", lambda *_args: carrier_head)
+
+    with pytest.raises(RuntimeError, match="ancestor|ancestry|incomplete"):
+        materialization._pending_new_carrier(
+            request,
+            source,
+            repository="royhsu-work/investment-strategy",
+            token=_BASE,
+            default_branch="main",
+            current_revision=current_default,
+        )
+
+
+@pytest.mark.parametrize(
+    ("status", "previous_filename"),
+    ((None, None), ("copied", None), ("renamed", "src/unrelated.py")),
+    ids=("missing-status", "unknown-status", "rename-into-manifest"),
+)
+def test_first_carrier_revision_rejects_incomplete_or_renamed_file_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    status: str | None,
+    previous_filename: str | None,
+) -> None:
+    source = WorkerRequest(234, "lead", "propose-change")
+    request = parse_materialization_payload(_payload(issue_number=source.issue_number), source)
+    carrier_head = "c" * 40
+    path = request.files[0].path
+    file_entry = {"filename": path}
+    if status is not None:
+        file_entry["status"] = status
+    if previous_filename is not None:
+        file_entry["previous_filename"] = previous_filename
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        **_kwargs: object,
+    ) -> object:
+        assert api_path == f"compare/{_BASE}...{carrier_head}"
+        return {
+            "status": "ahead",
+            "ahead_by": 1,
+            "behind_by": 0,
+            "base_commit": {"sha": _BASE},
+            "commits": [{"sha": carrier_head, "parents": [{"sha": _BASE}]}],
+            "files": [file_entry],
+        }
+
+    monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    monkeypatch.setattr(
+        materialization,
+        "_content_sha_at",
+        lambda _repo, _token, *, path, revision: _BLOB if revision == carrier_head else None,
+    )
+
+    with pytest.raises(RuntimeError, match="file evidence|unrelated paths"):
+        materialization._verify_revision(
+            "royhsu-work/investment-strategy",
+            _BASE,
+            request,
+            carrier_head,
+        )
+
+
+def test_existing_first_carrier_rejects_renamed_descendant_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = "a" * 40
+    first = "b" * 40
+    head = "c" * 40
+    path = f"openspec/changes/{_CHANGE}/proposal.md"
+    request = MaterializationRequest(
+        issue_number=234,
+        expected_change=_CHANGE,
+        change=_CHANGE,
+        branch=f"agent/{_CHANGE}",
+        base_sha=base,
+        message="Keep the exact first carrier commit",
+        files=(WorkProductFile(path, _BLOB, None),),
+        pr_number=271,
+    )
+
+    def comparison(
+        base_sha: str,
+        revision: str,
+        *,
+        commits: list[dict[str, object]],
+        files: list[dict[str, str]],
+    ) -> dict[str, object]:
+        return {
+            "status": "ahead",
+            "ahead_by": len(commits),
+            "behind_by": 0,
+            "base_commit": {"sha": base_sha},
+            "commits": commits,
+            "files": files,
+        }
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        **_kwargs: object,
+    ) -> object:
+        if api_path == f"compare/{base}...{head}":
+            return comparison(
+                base,
+                head,
+                commits=[
+                    {"sha": first, "parents": [{"sha": base}]},
+                    {"sha": head, "parents": [{"sha": first}]},
+                ],
+                files=[{"filename": path, "status": "added"}],
+            )
+        if api_path == f"compare/{base}...{first}":
+            return comparison(
+                base,
+                first,
+                commits=[{"sha": first, "parents": [{"sha": base}]}],
+                files=[{"filename": path, "status": "added"}],
+            )
+        if api_path == f"compare/{first}...{head}":
+            return comparison(
+                first,
+                head,
+                commits=[{"sha": head, "parents": [{"sha": first}]}],
+                files=[
+                    {
+                        "filename": path,
+                        "previous_filename": "src/unrelated.py",
+                        "status": "renamed",
+                    }
+                ],
+            )
+        raise AssertionError(api_path)
+
+    monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    monkeypatch.setattr(
+        materialization,
+        "_content_sha_at",
+        lambda _repo, _token, *, path, revision: _BLOB if path == request.files[0].path else None,
+    )
+
+    with pytest.raises(RuntimeError, match="descendant.*unrelated|descendant paths"):
+        materialization._verify_existing_pr_revision_lineage(
+            "royhsu-work/investment-strategy",
+            _BASE,
+            request,
+            head,
+        )

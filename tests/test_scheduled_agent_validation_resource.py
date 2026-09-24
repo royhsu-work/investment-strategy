@@ -2225,3 +2225,59 @@ def test_live_322_manifest_recovers_after_disjoint_default_advance(
     assert f"{historical_base}...{authorization_revision}" in comparison_reads
     assert f"{historical_base}...{carrier_revision}" in comparison_reads
     assert mutation_calls == []
+
+
+@pytest.mark.parametrize(
+    ("status", "previous_filename"),
+    ((None, None), ("copied", None), ("renamed", "src/unrelated.py")),
+    ids=("missing-status", "unknown-status", "rename-into-manifest"),
+)
+def test_revision_matches_manifest_rejects_incomplete_or_renamed_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    status: str | None,
+    previous_filename: str | None,
+) -> None:
+    base = "a" * 40
+    revision = "b" * 40
+    path = f"openspec/changes/{_CHANGE}/proposal.md"
+    blob = "c" * 40
+    entry = {"filename": path}
+    if status is not None:
+        entry["status"] = status
+    if previous_filename is not None:
+        entry["previous_filename"] = previous_filename
+    manifest = resource.WorkProductManifest(
+        branch=f"agent/{_CHANGE}",
+        base_sha=base,
+        message="Verify exact manifest paths",
+        files=(resource.WorkProductFile(path, blob, "d" * 40),),
+    )
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        **_kwargs: object,
+    ) -> object:
+        if api_path == f"compare/{base}...{revision}":
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "behind_by": 0,
+                "commits": [{"sha": revision}],
+                "files": [entry],
+            }
+        if api_path == f"git/commits/{revision}":
+            return {"sha": revision, "parents": [{"sha": base}]}
+        raise AssertionError(api_path)
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
+    monkeypatch.setattr(resource, "_content_sha_at", lambda *_args, **_kwargs: blob)
+
+    assert not resource._revision_matches_manifest(
+        _REPOSITORY,
+        _FIXTURE_VALUE,
+        base_sha=base,
+        revision=revision,
+        manifest=manifest,
+    )

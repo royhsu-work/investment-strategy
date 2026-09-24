@@ -3950,3 +3950,113 @@ def test_fresh_process_reconstructs_lead_materialization_from_canonical_observer
     assert complete
     assert len(observed) == 1
     assert observed[0] == (payload, source, "owner/repo", _REVISION)
+
+
+@pytest.mark.parametrize(
+    "response",
+    (None, {"message": "partial response"}, [{}], [{}] * 100),
+    ids=("missing", "wrong-shape", "malformed-item", "pagination-cap"),
+)
+def test_pull_request_create_discovery_fails_closed_on_incomplete_response(
+    monkeypatch: pytest.MonkeyPatch,
+    response: object,
+) -> None:
+    source = WorkerRequest(138, "lead", "finalize-change")
+    adapter = GitHubEffectAdapter(
+        "owner/repo",
+        _TEST_TOKEN,
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        expected_result_kind="archive-ready",
+    )
+    payload = {
+        "head": f"agent/{_CHANGE}",
+        "base": "main",
+        "title": "Archive exact change",
+        "body": "Archive\n\nRefs #138",
+        "draft": False,
+        "expected_head_sha": _REVISION,
+    }
+    reads: list[str] = []
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        **_kwargs: object,
+    ) -> object:
+        reads.append(api_path)
+        return response
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+
+    with pytest.raises(RuntimeError, match="discovery|incomplete|malformed"):
+        adapter._existing_pull_request_for_create(payload)
+
+    assert len(reads) == 1
+
+
+def test_pull_request_create_discovery_rejects_same_head_competing_base(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    branch = f"agent/{_CHANGE}-new-carrier"
+    source = WorkerRequest(138, "lead", "finalize-change")
+    adapter = GitHubEffectAdapter(
+        "owner/repo",
+        _TEST_TOKEN,
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        expected_result_kind="archive-ready",
+    )
+    payload = {
+        "head": branch,
+        "base": "main",
+        "title": "Archive exact change",
+        "body": "Archive\n\nRefs #138",
+        "draft": False,
+        "expected_head_sha": _REVISION,
+    }
+    competing = {
+        "number": 278,
+        "state": "open",
+        "merged": False,
+        "title": payload["title"],
+        "body": payload["body"],
+        "draft": False,
+        "head": {
+            "ref": branch,
+            "sha": _REVISION,
+            "repo": {"full_name": "owner/repo"},
+        },
+        "base": {
+            "ref": "release",
+            "sha": _REVISION,
+            "repo": {"full_name": "owner/repo"},
+        },
+    }
+    reads: list[str] = []
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        **_kwargs: object,
+    ) -> object:
+        reads.append(api_path)
+        if api_path == "":
+            return {"default_branch": "main"}
+        if api_path.startswith("pulls?state=all") and "&base=" not in api_path:
+            return [competing]
+        if api_path.startswith("pulls?state=all") and "&base=" in api_path:
+            return []
+        raise AssertionError(api_path)
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+
+    with pytest.raises(RuntimeError):
+        adapter._existing_pull_request_for_create(payload)
+
+    assert any(path.startswith("pulls?state=all") for path in reads)
+    assert all("&base=" not in path for path in reads if path.startswith("pulls?state=all"))
