@@ -130,7 +130,7 @@ def test_existing_change_observer_reconstructs_only_exact_current_carrier(
     pr = {
         "number": 324,
         "head": {"ref": request.branch, "sha": carrier_head},
-        "base": {"ref": "main", "sha": "a" * 40},
+        "base": {"ref": "main", "sha": current_default},
     }
 
     monkeypatch.setattr(materialization, "_current_authorized_request", lambda *_args: source)
@@ -236,7 +236,13 @@ def test_initial_carrier_resume_after_disjoint_default_advance_is_read_only(
         **_kwargs: object,
     ) -> object:
         if api_path == f"compare/{old_base}...{current_default}":
-            return {"status": "ahead", "base_commit": {"sha": old_base}}
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "behind_by": 0,
+                "base_commit": {"sha": old_base},
+                "files": [{"filename": "src/investment_strategy/repair.py", "status": "modified"}],
+            }
         if api_path == f"git/ref/heads/{request.branch}":
             return {"object": {"sha": carrier_head}}
         if api_path == f"compare/{old_base}...{carrier_head}":
@@ -246,7 +252,7 @@ def test_initial_carrier_resume_after_disjoint_default_advance_is_read_only(
                 "behind_by": 0,
                 "base_commit": {"sha": old_base},
                 "commits": [{"sha": carrier_head, "parents": [{"sha": old_base}]}],
-                "files": [{"filename": path}],
+                "files": [{"filename": path, "status": "added"}],
             }
         if api_path == f"contents/{path}?ref={carrier_head}":
             return {"sha": blob_sha}
@@ -327,7 +333,10 @@ def test_first_carrier_postcondition_uses_the_canonical_disjoint_continuation_ob
         if api_path == f"compare/{old_base}...{current_default}":
             return {
                 "status": "ahead",
+                "ahead_by": 1,
+                "behind_by": 0,
                 "base_commit": {"sha": old_base},
+                "files": [{"filename": "src/unrelated.py", "status": "modified"}],
             }
         if api_path == f"compare/{old_base}...{carrier_head}":
             return {
@@ -336,7 +345,7 @@ def test_first_carrier_postcondition_uses_the_canonical_disjoint_continuation_ob
                 "behind_by": 0,
                 "base_commit": {"sha": old_base},
                 "commits": [{"sha": carrier_head, "parents": [{"sha": old_base}]}],
-                "files": [{"filename": path}],
+                "files": [{"filename": path, "status": "added"}],
             }
         if api_path == f"contents/{path}?ref={carrier_head}":
             return {"sha": blob_sha}
@@ -349,6 +358,7 @@ def test_first_carrier_postcondition_uses_the_canonical_disjoint_continuation_ob
         raise AssertionError(api_path)
 
     monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    monkeypatch.setattr(validation_resource, "_github_json", fake_github_json)
     monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_args: True)
     monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
     monkeypatch.setattr(materialization, "_ref_head_sha", lambda *_args: current_default)
@@ -421,7 +431,13 @@ def test_pending_first_carrier_with_missing_pr_emits_only_current_main_pr_plan(
         if api_path == f"issues/{source.issue_number}":
             return issue
         if api_path == f"compare/{old_base}...{current_default}":
-            return {"status": "ahead", "base_commit": {"sha": old_base}}
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "behind_by": 0,
+                "base_commit": {"sha": old_base},
+                "files": [{"filename": "src/unrelated.py", "status": "modified"}],
+            }
         if api_path == f"compare/{old_base}...{carrier_head}":
             return {
                 "status": "ahead",
@@ -429,7 +445,7 @@ def test_pending_first_carrier_with_missing_pr_emits_only_current_main_pr_plan(
                 "behind_by": 0,
                 "base_commit": {"sha": old_base},
                 "commits": [{"sha": carrier_head, "parents": [{"sha": old_base}]}],
-                "files": [{"filename": path}],
+                "files": [{"filename": path, "status": "added"}],
             }
         if api_path.startswith("pulls?"):
             return []
@@ -438,6 +454,7 @@ def test_pending_first_carrier_with_missing_pr_emits_only_current_main_pr_plan(
         raise AssertionError(api_path)
 
     monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    monkeypatch.setattr(validation_resource, "_github_json", fake_github_json)
     monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_args: True)
     monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
     monkeypatch.setattr(materialization, "_ref_head_sha", lambda *_args: current_default)
@@ -515,7 +532,13 @@ def test_pending_first_carrier_rejects_wrong_or_duplicate_pr_carriers(
         **_kwargs: object,
     ) -> object:
         if api_path == f"compare/{old_base}...{current_default}":
-            return {"status": "ahead", "base_commit": {"sha": old_base}}
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "behind_by": 0,
+                "base_commit": {"sha": old_base},
+                "files": [{"filename": "src/unrelated.py", "status": "modified"}],
+            }
         if api_path == f"compare/{old_base}...{carrier_head}":
             return {
                 "status": "ahead",
@@ -523,7 +546,7 @@ def test_pending_first_carrier_rejects_wrong_or_duplicate_pr_carriers(
                 "behind_by": 0,
                 "base_commit": {"sha": old_base},
                 "commits": [{"sha": carrier_head, "parents": [{"sha": old_base}]}],
-                "files": [{"filename": path}],
+                "files": [{"filename": path, "status": "added"}],
             }
         if api_path.startswith("pulls?"):
             from urllib.parse import parse_qs
@@ -537,6 +560,7 @@ def test_pending_first_carrier_rejects_wrong_or_duplicate_pr_carriers(
         raise AssertionError(api_path)
 
     monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    monkeypatch.setattr(validation_resource, "_github_json", fake_github_json)
     monkeypatch.setattr(
         materialization,
         "_comparison_file_paths",
@@ -594,7 +618,14 @@ def test_pending_first_carrier_rejects_overlap_and_incomplete_all_head_pr_discov
         if method != "GET":
             mutation_calls.append(f"{method} {api_path}")
         if api_path == f"compare/{old_base}...{current_default}":
-            return {"status": "ahead", "base_commit": {"sha": old_base}}
+            changed_path = path if overlap else "src/unrelated.py"
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "behind_by": 0,
+                "base_commit": {"sha": old_base},
+                "files": [{"filename": changed_path, "status": "modified"}],
+            }
         if api_path == f"compare/{old_base}...{carrier_head}":
             return {
                 "status": "ahead",
@@ -602,7 +633,7 @@ def test_pending_first_carrier_rejects_overlap_and_incomplete_all_head_pr_discov
                 "behind_by": 0,
                 "base_commit": {"sha": old_base},
                 "commits": [{"sha": carrier_head, "parents": [{"sha": old_base}]}],
-                "files": [{"filename": path}],
+                "files": [{"filename": path, "status": "added"}],
             }
         if api_path.startswith("pulls?"):
             from urllib.parse import parse_qs
@@ -618,6 +649,7 @@ def test_pending_first_carrier_rejects_overlap_and_incomplete_all_head_pr_discov
         raise AssertionError(api_path)
 
     monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    monkeypatch.setattr(validation_resource, "_github_json", fake_github_json)
     monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_args: True)
     monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
     monkeypatch.setattr(materialization, "_ref_head_sha", lambda *_args: current_default)
@@ -760,7 +792,16 @@ def test_existing_first_carrier_pr_reuses_exact_intent_commit_after_same_path_up
         **_kwargs: object,
     ) -> object:
         if api_path == f"compare/{old_base}...{current_default}":
-            return {"status": "ahead", "base_commit": {"sha": old_base}}
+            return {
+                "status": "ahead",
+                "ahead_by": 12,
+                "behind_by": 0,
+                "base_commit": {"sha": old_base},
+                "files": [
+                    {"filename": path, "status": "modified"}
+                    for path in sorted(default_paths)
+                ],
+            }
         if api_path == f"compare/{old_base}...{carrier_head}":
             commits = [
                 {"sha": first_commit, "parents": [{"sha": old_base}]},
@@ -772,9 +813,9 @@ def test_existing_first_carrier_pr_reuses_exact_intent_commit_after_same_path_up
                 },
                 {"sha": carrier_head, "parents": [{"sha": middle_commit}]},
             ]
-            changed_files = [{"filename": path} for path in paths]
+            changed_files = [{"filename": path, "status": "added"} for path in paths]
             if invalid_evidence == "unrelated-path":
-                changed_files.append({"filename": "src/unrelated.py"})
+                changed_files.append({"filename": "src/unrelated.py", "status": "added"})
             if invalid_evidence == "duplicate-path":
                 changed_files.append({"filename": paths[0]})
             if invalid_evidence == "missing-base":
@@ -822,7 +863,7 @@ def test_existing_first_carrier_pr_reuses_exact_intent_commit_after_same_path_up
                 "behind_by": 0,
                 "base_commit": {"sha": old_base},
                 "commits": [{"sha": first_commit, "parents": [{"sha": old_base}]}],
-                "files": [{"filename": path} for path in paths],
+                "files": [{"filename": path, "status": "added"} for path in paths],
             }
         if api_path == f"compare/{first_commit}...{middle_commit}":
             delta: dict[str, object] = {
@@ -849,7 +890,7 @@ def test_existing_first_carrier_pr_reuses_exact_intent_commit_after_same_path_up
                 "behind_by": 0,
                 "base_commit": {"sha": middle_commit},
                 "commits": [{"sha": carrier_head, "parents": [{"sha": middle_commit}]}],
-                "files": [{"filename": path} for path in paths[:-1]],
+                "files": [{"filename": path, "status": "modified"} for path in paths[:-1]],
             }
         if api_path == f"compare/{middle_commit}...{wrong_head}":
             return {
@@ -863,6 +904,7 @@ def test_existing_first_carrier_pr_reuses_exact_intent_commit_after_same_path_up
         raise AssertionError(api_path)
 
     monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    monkeypatch.setattr(validation_resource, "_github_json", fake_github_json)
     monkeypatch.setattr(
         materialization,
         "_comparison_file_paths",
@@ -973,7 +1015,13 @@ def test_multi_commit_first_carrier_branch_without_exact_pr_fails_closed(
         **_kwargs: object,
     ) -> object:
         if api_path == f"compare/{old_base}...{current_default}":
-            return {"status": "ahead", "base_commit": {"sha": old_base}}
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "behind_by": 0,
+                "base_commit": {"sha": old_base},
+                "files": [{"filename": "src/unrelated.py", "status": "modified"}],
+            }
         if api_path == f"compare/{old_base}...{carrier_head}":
             return {
                 "status": "ahead",
@@ -986,6 +1034,7 @@ def test_multi_commit_first_carrier_branch_without_exact_pr_fails_closed(
         raise AssertionError(api_path)
 
     monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    monkeypatch.setattr(validation_resource, "_github_json", fake_github_json)
     monkeypatch.setattr(
         materialization,
         "_comparison_file_paths",
@@ -1079,6 +1128,7 @@ def test_branch_ref_without_pr_requires_exact_compare_identity_and_manifest(
         return comparison
 
     monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    monkeypatch.setattr(validation_resource, "_github_json", fake_github_json)
     monkeypatch.setattr(
         materialization,
         "_content_sha_at",
@@ -1169,6 +1219,7 @@ def test_interrupted_carrier_resume_rejects_a_nonancestor_base(
         return {"status": "diverged", "behind_by": 1}
 
     monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    monkeypatch.setattr(validation_resource, "_github_json", fake_github_json)
     with pytest.raises(RuntimeError, match="not an ancestor of carrier"):
         _verify_implementation_manifest_freshness(
             request,
@@ -1377,6 +1428,7 @@ def test_pending_first_carrier_rejects_incomplete_default_ancestry_comparison(
         raise AssertionError(api_path)
 
     monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    monkeypatch.setattr(validation_resource, "_github_json", fake_github_json)
     monkeypatch.setattr(materialization, "_comparison_file_paths", lambda *_args, **_kwargs: {"src/unrelated.py"})
     monkeypatch.setattr(
         materialization,
@@ -1433,6 +1485,7 @@ def test_first_carrier_revision_rejects_incomplete_or_renamed_file_evidence(
         }
 
     monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    monkeypatch.setattr(validation_resource, "_github_json", fake_github_json)
     monkeypatch.setattr(
         materialization,
         "_content_sha_at",
@@ -1521,6 +1574,7 @@ def test_existing_first_carrier_rejects_renamed_descendant_path(
         raise AssertionError(api_path)
 
     monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    monkeypatch.setattr(validation_resource, "_github_json", fake_github_json)
     monkeypatch.setattr(
         materialization,
         "_content_sha_at",
@@ -1596,14 +1650,21 @@ def test_existing_materialization_observer_recovers_disjoint_historical_base(
         ),
     )
     monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: pr)
+    monkeypatch.setattr(materialization, "_matching_prs", lambda *_args: [pr])
     monkeypatch.setattr(
         materialization,
         "_open_prs_for_branch",
         lambda *_args, **_kwargs: (pr,),
     )
     monkeypatch.setattr(materialization, "_ancestor_comparison_paths", historical_paths)
+    monkeypatch.setattr(validation_resource, "_ancestor_comparison_paths", historical_paths)
     monkeypatch.setattr(
         materialization,
+        "_content_sha_at",
+        lambda _repo, _token, *, path, revision: _BLOB if revision == carrier_head else None,
+    )
+    monkeypatch.setattr(
+        validation_resource,
         "_content_sha_at",
         lambda _repo, _token, *, path, revision: _BLOB if revision == carrier_head else None,
     )

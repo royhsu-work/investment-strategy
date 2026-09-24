@@ -41,8 +41,8 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _content_sha_at,
     _current_authorized_request,
     _current_default_branch,
-    _historical_manifest_observation_matches,
     _github_json,
+    _historical_manifest_observation_matches,
     _is_executor_config_authoring,
     _is_executor_task_and_implementation_materialization,
     _is_executor_task_bookkeeping,
@@ -1601,9 +1601,18 @@ def _observe_nonimplementation_existing_target(
     observed_ref = _ref_head_sha(repository, token, request.branch)
     if observed_ref != revision:
         raise RuntimeError("application materialization PR/ref head identity is stale")
-    prs = _matching_prs(repository, token, request.branch)
+    prs = _open_prs_for_branch(
+        repository,
+        token,
+        branch=request.branch,
+        default_branch=default_branch,
+    )
     if len(prs) != 1 or prs[0].get("number") != request.pr_number:
         raise RuntimeError("application materialization carrier identity is ambiguous")
+    if request.base_sha != current_revision:
+        all_prs = _matching_prs(repository, token, request.branch)
+        if len(all_prs) != 1 or all_prs[0].get("number") != request.pr_number:
+            raise RuntimeError("application materialization carrier identity is ambiguous")
     base = _as_mapping(pr.get("base"))
     base_revision = None if base is None else base.get("sha")
     if (
@@ -1616,6 +1625,7 @@ def _observe_nonimplementation_existing_target(
             issue_number=source.issue_number,
             change=request.change,
         )
+        or not _valid_sha(base_revision)
         or base_revision not in {request.base_sha, current_revision}
     ):
         raise RuntimeError("application materialization carrier identity is invalid")
