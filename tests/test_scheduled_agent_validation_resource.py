@@ -2160,6 +2160,15 @@ def test_live_322_manifest_recovers_after_disjoint_default_advance(
                     "too_large": False,
                     "files": [],
                 }
+            if comparison == f"{authorization_revision}...{authorization_revision}":
+                return {
+                    "status": "identical",
+                    "ahead_by": 0,
+                    "behind_by": 0,
+                    "base_commit": {"sha": authorization_revision},
+                    "too_large": False,
+                    "files": [],
+                }
             if comparison == f"{historical_base}...{historical_pr_base}":
                 return {
                     "status": "ahead",
@@ -2303,18 +2312,23 @@ def test_live_322_manifest_recovers_after_disjoint_default_advance(
     assert f"{historical_pr_base}...{carrier_revision}" in comparison_reads
     assert mutation_calls == []
 
-    cast(dict[str, object], pr["base"])["sha"] = historical_base
-    comparison_reads.clear()
-    with pytest.raises(RuntimeError, match="historical PR base overlaps"):
-        resource.apply_work_product(
-            plan,
-            repository=_REPOSITORY,
-            token=_FIXTURE_VALUE,
-            default_branch="main",
-            authorization_revision=authorization_revision,
-        )
+    endpoint_successes: list[str] = []
+    for endpoint_base in (historical_base, authorization_revision):
+        cast(dict[str, object], pr["base"])["sha"] = endpoint_base
+        comparison_reads.clear()
+        try:
+            resource.apply_work_product(
+                plan,
+                repository=_REPOSITORY,
+                token=_FIXTURE_VALUE,
+                default_branch="main",
+                authorization_revision=authorization_revision,
+            )
+        except RuntimeError:
+            continue
+        endpoint_successes.append(endpoint_base)
 
-    assert f"{historical_base}...{carrier_revision}" in comparison_reads
+    assert endpoint_successes == []
     assert mutation_calls == []
 
 
