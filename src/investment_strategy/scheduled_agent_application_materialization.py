@@ -1744,6 +1744,8 @@ def materialization_postcondition(
         )
         return False
     return True
+
+
 def observe_materialization_target(
     payload: Mapping[str, object],
     source: WorkerRequest,
