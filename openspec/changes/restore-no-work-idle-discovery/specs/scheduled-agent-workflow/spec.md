@@ -56,10 +56,9 @@ Idle discovery MUST NOT introduce a scan cursor, TTL coverage registry, lease, h
 
 - GIVEN Lead performs bounded idle discovery
 - AND no candidate meets repository-authority/materiality requirements
-- WHEN the invocation completes with a no-finding result
-- THEN the idle and admission path performs zero repository mutations
-- AND it writes no Issue, comment, label, branch, pull request, application record, shard, or other durable repository state
-- AND the run remains silent rather than creating repository noise to report that nothing material was found
+- WHEN the invocation completes
+- THEN no workflow mutation is required
+- AND the run does not create repository noise merely to report that nothing material was found
 
 #### Scenario: Exact AUTHORIZE does not enter idle mode
 
