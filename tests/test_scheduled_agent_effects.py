@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import cast
 
 import pytest
@@ -48,6 +48,7 @@ from investment_strategy.workflow_dispatch import (
 )
 
 _REVISION = "a" * 40
+_TEST_TOKEN = "test-token"  # noqa: S105
 _CHANGE = "simplify-scheduled-agent-control-plane"
 _REQUEST_COMMENT_ID = 1003
 
@@ -82,6 +83,7 @@ def _preflight(
 
 def _raw(
     *,
+    issue_number: int = 138,
     action: str = "implement-change",
     role: str = "executor",
     change: str = _CHANGE,
@@ -90,7 +92,7 @@ def _raw(
 ) -> str:
     return json.dumps(
         {
-            "issue_number": 138,
+            "issue_number": issue_number,
             "role": role,
             "action": action,
             "change": change,
@@ -118,6 +120,45 @@ def _protocol_decision() -> ActionApplicationDecision:
         successor,
         role_for(successor),
     )
+
+
+def test_semantic_intent_retains_only_application_materialization() -> None:
+    materialization = {
+        "issue_number": 138,
+        "operation": "application-materialize",
+        "expected_change": "unset",
+        "change": _CHANGE,
+        "branch": f"agent/{_CHANGE}",
+        "base_sha": _REVISION,
+        "message": "OpenSpec materialization",
+        "files": [],
+        "pr_number": None,
+    }
+    raw = json.dumps(
+        {
+            **json.loads(_raw()),
+            "_semantic_intent_version": 2,
+            "requested_effects": [
+                {
+                    "kind": "github-mutation",
+                    "payload_json": json.dumps(materialization, sort_keys=True),
+                },
+                {
+                    "kind": "issue-comment",
+                    "payload_json": json.dumps(
+                        {"issue_number": 138, "body": "invocation-local formal result"}
+                    ),
+                },
+            ],
+        },
+        sort_keys=True,
+    )
+
+    retained = json.loads(effects.semantic_intent_payload(raw))
+
+    assert len(retained["requested_effects"]) == 1
+    assert retained["requested_effects"][0]["kind"] == "github-mutation"
+    assert json.loads(retained["requested_effects"][0]["payload_json"]) == materialization
 
 
 def test_application_decision_is_exactly_bound() -> None:
@@ -3673,3 +3714,239 @@ def test_application_binds_formal_revision_to_materialization_postcondition() ->
 
     assert f"Revision: {target_revision}" in bound
     assert f"Default-Branch-Revision: {_REVISION}" in bound
+
+
+def test_fresh_process_reconstructs_implementation_materialization_without_local_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import investment_strategy.scheduled_agent_application_materialization as materialization
+    from investment_strategy.scheduled_agent_application_carrier import (
+        ImplementationCarrierQualification,
+    )
+
+    source = WorkerRequest(138, "executor", "implement-change")
+    branch = f"agent/{_CHANGE}"
+    carrier_head = "b" * 40
+    blob_sha = "c" * 40
+    path = f"openspec/changes/{_CHANGE}/tasks.md"
+    payload = {
+        "issue_number": source.issue_number,
+        "operation": "application-materialize",
+        "expected_change": _CHANGE,
+        "change": _CHANGE,
+        "branch": branch,
+        "base_sha": _REVISION,
+        "message": "Checkpoint an implementation task",
+        "files": [
+            {
+                "path": path,
+                "blob_sha": blob_sha,
+                "expected_sha": "d" * 40,
+            }
+        ],
+        "pr_number": 178,
+    }
+    raw = _raw(
+        result_kind="more-implementation-required",
+        requested_effects=[
+            {
+                "kind": effects.GITHUB_MUTATION_KIND,
+                "payload_json": json.dumps(payload, sort_keys=True),
+            }
+        ],
+    )
+    qualification_calls: list[tuple[object, object]] = []
+
+    def qualify(
+        request: materialization.MaterializationRequest,
+        observed_source: WorkerRequest,
+        **_kwargs: object,
+    ) -> ImplementationCarrierQualification:
+        qualification_calls.append((request, observed_source))
+        return ImplementationCarrierQualification(
+            disposition="QUALIFIED",
+            reason="current exact implementation carrier",
+            repository="owner/repo",
+            issue_number=source.issue_number,
+            change=_CHANGE,
+            action=source.action,
+            pr_number=178,
+            branch=branch,
+            head_sha=carrier_head,
+            default_branch="main",
+            default_revision=_REVISION,
+        )
+
+    monkeypatch.setattr(materialization, "_current_authorized_request", lambda *_args: source)
+    monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
+    monkeypatch.setattr(materialization, "_ref_head_sha", lambda *_args: _REVISION)
+    monkeypatch.setattr(materialization, "_qualified_implementation_decision", qualify)
+    monkeypatch.setattr(
+        materialization,
+        "_verify_implementation_manifest_freshness",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(materialization, "_manifest_is_current", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        materialization,
+        "_github_json",
+        lambda _repository, _token, api_path, **_kwargs: (
+            {"state": "open", "body": f"Change: {_CHANGE}\n"}
+            if api_path == f"issues/{source.issue_number}"
+            else {"default_branch": "main"}
+            if api_path == ""
+            else {"object": {"sha": _REVISION}}
+            if api_path == "git/ref/heads/main"
+            else None
+        ),
+    )
+
+    adapters: list[GitHubEffectAdapter] = []
+    real_adapter = effects.GitHubEffectAdapter
+
+    def capture_adapter(
+        repository: str,
+        token: str,
+        adapter_source: WorkerRequest,
+        *,
+        authorized_change: str,
+        current_revision: str | None = None,
+        expected_result_kind: str | None = None,
+        request_comment_id: int | None = None,
+        materialization_promote_change: bool = False,
+        validated_materialization_revision: str | None = None,
+        allow_pending_continuation: bool = False,
+        pending_application_correlation: str | None = None,
+        authorization_revision: str | None = None,
+        accepted_intent: bool = False,
+    ) -> GitHubEffectAdapter:
+        adapter = real_adapter(
+            repository,
+            token,
+            adapter_source,
+            authorized_change=authorized_change,
+            current_revision=current_revision,
+            expected_result_kind=expected_result_kind,
+            request_comment_id=request_comment_id,
+            materialization_promote_change=materialization_promote_change,
+            validated_materialization_revision=validated_materialization_revision,
+            allow_pending_continuation=allow_pending_continuation,
+            pending_application_correlation=pending_application_correlation,
+            authorization_revision=authorization_revision,
+            accepted_intent=accepted_intent,
+        )
+        adapters.append(adapter)
+        return adapter
+
+    monkeypatch.setattr(effects, "GitHubEffectAdapter", capture_adapter)
+    monkeypatch.setattr(
+        effects,
+        "_github_json",
+        lambda _repository, _token, api_path, **_kwargs: (
+            {"default_branch": "main"}
+            if api_path == ""
+            else {"object": {"sha": _REVISION}}
+            if api_path == "git/ref/heads/main"
+            else None
+        ),
+    )
+
+    complete = effects.consequence_postconditions_complete(
+        raw,
+        source=source,
+        repository="owner/repo",
+        token=_REVISION,
+        current_revision=_REVISION,
+        authorized_change=_CHANGE,
+        request_comment_id=_REQUEST_COMMENT_ID,
+    )
+    assert len(adapters) == 1
+    assert adapters[0]._materialization_targets == {}
+    assert complete
+    assert len(qualification_calls) == 1
+    request, observed_source = qualification_calls[0]
+    assert isinstance(request, materialization.MaterializationRequest)
+    assert observed_source == source
+
+
+def test_fresh_process_reconstructs_lead_materialization_from_canonical_observer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(322, "lead", "resolve-question")
+    payload = {
+        "issue_number": source.issue_number,
+        "operation": "application-materialize",
+        "expected_change": _CHANGE,
+        "change": _CHANGE,
+        "branch": f"agent/{_CHANGE}",
+        "base_sha": _REVISION,
+        "message": "Resolve the OpenSpec review findings",
+        "files": [
+            {
+                "path": f"openspec/changes/{_CHANGE}/proposal.md",
+                "blob_sha": "b" * 40,
+                "expected_sha": "c" * 40,
+            }
+        ],
+        "pr_number": 324,
+    }
+    raw = _raw(
+        issue_number=source.issue_number,
+        action=source.action,
+        role=source.role,
+        change=_CHANGE,
+        result_kind="ready-for-openspec-review",
+        requested_effects=[
+            {
+                "kind": effects.GITHUB_MUTATION_KIND,
+                "payload_json": json.dumps(payload, sort_keys=True),
+            }
+        ],
+    )
+    target = ValidationResourceTarget(
+        repository="owner/repo",
+        revision="d" * 40,
+        correlation=f"effect-request-{source.issue_number}",
+        pr_number=324,
+        change=_CHANGE,
+        validation_required=True,
+        branch=f"agent/{_CHANGE}",
+    )
+    observed: list[tuple[Mapping[str, object], WorkerRequest, str, str]] = []
+
+    def observe(
+        observed_payload: Mapping[str, object],
+        observed_source: WorkerRequest,
+        *,
+        repository: str,
+        token: str,
+        current_revision: str,
+        default_branch: str,
+        allow_pending_continuation: bool = False,
+    ) -> ValidationResourceTarget:
+        assert not allow_pending_continuation
+        assert default_branch == "main"
+        observed.append((observed_payload, observed_source, repository, current_revision))
+        assert token == _TEST_TOKEN
+        return target
+
+    monkeypatch.setattr(
+        effects,
+        "_github_json",
+        lambda *_args, **_kwargs: {"default_branch": "main"},
+    )
+    monkeypatch.setattr(effects, "observe_materialization_target", observe)
+
+    complete = effects.consequence_postconditions_complete(
+        raw,
+        source=source,
+        repository="owner/repo",
+        token=_TEST_TOKEN,
+        current_revision=_REVISION,
+        authorized_change=_CHANGE,
+        request_comment_id=_REQUEST_COMMENT_ID,
+    )
+
+    assert complete
+    assert len(observed) == 1
+    assert observed[0] == (payload, source, "owner/repo", _REVISION)

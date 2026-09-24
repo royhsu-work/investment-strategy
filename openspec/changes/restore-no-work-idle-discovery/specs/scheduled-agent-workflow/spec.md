@@ -234,16 +234,104 @@ If an earlier invocation already made a required mutation durable, recovery MAY 
 - THEN it recognizes the complete canonical tuple if uniquely provable
 - AND it creates no duplicate Issue and does not replay semantic discovery
 
-### Requirement: Materialization and consequence completion resume from canonical durable evidence
+### Requirement: Application consequence completion is reconstructable across interruption
 
-Application SHALL recognize a materialization as complete only when a fresh current-state assessment proves the exact expected consequence. That assessment MUST bind the same Issue, immutable Change, branch, head, PR, manifest and content, source, default-branch revision, and permitted ancestry and path-disjointness relationship. The application completion report MUST match the freshly observed consequence. A first carrier based on a prior default-branch revision MAY remain valid only when that revision is a proven ancestor of current main and intervening paths are disjoint from the requested manifest. Its existing PR MUST remain bound to the original authorized base snapshot.
+The application bridge SHALL treat an `EFFECT_REQUEST` as an ingress candidate,
+not as an accepted application. Each current-frontier candidate SHALL be
+classified independently as exactly one of `ACCEPTED`, `LIVE_PREACCEPT`,
+`TERMINAL_NO_ACCEPT`, `REJECTED`, or `INVALID/UNKNOWN` before reduction. A
+missing or not-yet-visible Actions run is asynchronous observation evidence,
+not terminal or rejected evidence; `TERMINAL_NO_ACCEPT` requires authoritative
+terminal/non-mutation evidence from the exact application execution. The
+reducer SHALL apply these rules: more than one `ACCEPTED` is ambiguous; one
+`ACCEPTED` exclusively owns continuation and terminal/rejected noise does not
+compete; zero accepted plus more than one live candidate is ambiguous; zero
+accepted plus exactly one live candidate waits without semantic redispatch;
+zero accepted plus only proven terminal-no-accept/rejected candidates returns
+ownership to the semantic Action; and unknown or contradictory evidence fails
+closed. N terminal or rejected candidates SHALL never become ambiguous merely
+from raw count. Before any consequential effect, fresh application
+authorization SHALL durably persist one exact `APPLICATION_DECISION: ACCEPTED`
+bound to the request comment, source Issue, Role/Action, Change, authorization
+revision, result, and immutable worker intent.
 
-After accepted immutable intent has durably produced the exact content commit and branch ref but execution stops before PR creation, a later invocation MAY emit only the missing application-owned PR-create plan after fresh verification of the accepted source, original-base ancestry, path disjointness, exact branch/head/one-commit content, and complete PR discovery by exact head across all base branches. It MUST NOT repeat semantic work, recreate the branch or commit, move or force the ref, or create a PR when any competing, wrong-base, duplicate, contradictory, or incomplete carrier evidence exists. The PR plan MUST target the fresh current default branch and bind the exact existing head and current base revision.
+After durable acceptance, interruption recovery SHALL use only that exact
+accepted intent and idempotently reconcile missing effects.  It SHALL never
+re-execute the semantic Action because mutable ingress was edited, deleted, or
+re-observed after acceptance.  The one canonical `ACTION_RESULT`,
+`REVIEW_RESULT`, or `MERGE_RESULT`, exact-bound by `Application-Correlation`
+and qualified against repository postconditions, SHALL be the normal logical
+application-consequence commit boundary.  Routing or terminal state is a
+projection of that committed consequence; `APPLICATION_OUTCOME: COMPLETED`
+MUST NOT be an independent normal completion authority.
 
-After a process restart, consequence completion SHALL reconstruct whether an exact effect is complete from authoritative current repository evidence. Materialization and implementation-carrier consequences MUST each be recognized only by their existing canonical positive evidence and qualification rules; recognition MUST NOT depend on process-local target memory. This reconstruction MUST retain exact accepted-request correlation, formal qualification, source/frontier, current carrier, validation, review, successor, and terminal gates. Missing, stale, contradictory, ambiguous, or incomplete evidence fails closed.
+Current application ownership SHALL be derived from the existing formal
+lifecycle qualifier: current routing is owned by the latest qualified formal
+predecessor whose repository-derived successor equals that routing.  The
+derivation SHALL preserve legal same-Action recurrence and alternating
+recurrence (including `A -> A` and `A -> B -> A`) without persisting an epoch,
+generation, retry counter, lease, mailbox, or second lifecycle/state system.
 
-When a legacy or uncorrelated result makes the formal source frontier unqualifiable after an application acceptance is durable, completion recovery MAY resume that accepted application only when the fresh open Issue still matches the exact Issue, immutable Change, Role, and Action; exactly one accepted decision binds the intent; and current repository evidence identifies exactly one request-bound application run and application job. Resumption MUST pass through ordinary fresh authorization, exact-effect, and postcondition checks. It MUST NOT treat the uncorrelated result as a formal consequence, derive or persist a successor from it, or repeat semantic work. Changed source identity, stale authorization, duplicate accepted decisions, duplicate application runs or jobs, or incomplete evidence MUST remain fail closed.
+Phase A SHALL resolve the exact machine dispatch, derive authoritative source
+and Change, normalize the semantic worker payload, validate it, fresh-
+reauthorize the current repository, derive the exact effect plan, perform any
+required executable verification, and persist `APPLICATION_DECISION:
+ACCEPTED` or `REJECTED`. No consequential repository mutation may precede
+`ACCEPTED`. The semantic worker MAY omit `requested_effects` and `evidence_ref`,
+which normalize to `[]` and `null`; it SHALL not be required to recreate
+Issue/Role/Action/Change/Authorization-Revision/routing/successor/formal
+headers. The application-owned envelope SHALL carry those machine facts from
+fresh dispatch evidence, preferably through one opaque exact dispatch
+correlation. Phase B SHALL accept only the immutable accepted intent, fresh-
+observe the repository, reconcile exact missing idempotent effects, use a
+carrier only when required, validate postconditions, persist the canonical
+formal result, and derive routing/terminal projection. Failure before ACCEPT
+has zero authoritative repository consequence; failure after ACCEPT resumes
+the same intent and semantic replay count remains zero.
 
+For first-carrier materialization, the apply result, immediate postcondition, and later fresh observer SHALL use one canonical positive materialization observation for exact Issue, Change, branch, head, PR, manifest, and content identity. A pending continuation MAY remain valid after default-branch advancement only when the immutable original base is its ancestor and all carrier paths are disjoint from the intervening changes; the existing stale, overlap, identity, cardinality, and ambiguity guards remain mandatory. When an exact accepted intent already has the verified branch ref and content but no matching PR, recovery SHALL emit only the missing application-owned PR consequence against fresh current main after rechecking ancestry, disjointness, exact branch/head/content, and complete all-head PR cardinality. It SHALL NOT rerun semantic work, recreate the branch, move the ref, or blindly create a duplicate PR.
+
+A fresh process SHALL reconstruct consequence completion from the existing `ConsequenceSpec.evidence_target` and its canonical current-state positive observer. It MUST NOT require invocation-local `_materialization_targets` to recognize an already durable consequence. Implementation-carrier consequences SHALL use their existing implementation-carrier qualification owner. If an uncorrelated legacy result invalidates formal-frontier qualification while the exact source route remains current, recovery MAY resume only one accepted intent and its unique request-bound run/job after exact Issue/Change/Role/Action checks; changed identity/routing, duplicate intent/run/job, or incomplete evidence SHALL fail closed. Existing correlation, formal qualification, source/frontier, carrier, validation, review, successor, and terminal gates remain in force.
+
+#### Scenario: Accepted application resumes without semantic replay
+
+- GIVEN an `APPLICATION_DECISION: ACCEPTED` is durable for one exact request
+- AND an interruption occurs after any requested effect, carrier, validation, formal-result, routing, terminal, or final-postcondition prefix
+- WHEN a later process reconstructs the application
+- THEN it uses the immutable accepted intent
+- AND applies only missing idempotent effects
+- AND persists no second semantic Action execution or independent completion truth
+
+#### Scenario: Historical same-Action evidence does not poison the current frontier
+
+- GIVEN the current formal qualifier reconstructs a later `A -> A` or `A -> B -> A` frontier
+- AND an earlier accepted/rejected/aborted application has the same Role/Action
+- WHEN application completion is qualified
+- THEN the earlier occurrence remains historical
+- AND it does not block the current frontier
+
+#### Scenario: Terminal pre-accept noise does not compete by count
+
+- GIVEN the current frontier has N independently observed terminal-no-accept or rejected ingress candidates
+- AND no candidate has durable `APPLICATION_DECISION: ACCEPTED`
+- WHEN application completion is qualified
+- THEN the candidates are inert evidence rather than competing application owners
+- AND N does not by itself produce ambiguity
+
+#### Scenario: One live candidate wins over terminal noise
+
+- GIVEN the current frontier has one live pre-accept candidate and any number of terminal-no-accept or rejected candidates
+- WHEN application completion is qualified
+- THEN application waits for that one live ingress
+- AND it does not redispatch the semantic Action
+
+#### Scenario: Accepted intent wins over terminal or rejected noise
+
+- GIVEN one current-frontier candidate has durable `APPLICATION_DECISION: ACCEPTED`
+- AND other candidates are terminal-no-accept or rejected
+- WHEN application completion is qualified
+- THEN only the immutable accepted intent owns continuation
+- AND the noise does not create ambiguity or replay
 #### Scenario: Apply postcondition accepts a valid disjoint first-carrier continuation
 
 - GIVEN an accepted first-carrier intent was based on a default-branch revision that remains an ancestor of current main

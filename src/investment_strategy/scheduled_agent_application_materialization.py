@@ -33,6 +33,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     WorkProductFile,
     WorkProductManifest,
     WorkProductPlan,
+    _ancestor_comparison_paths,
     _as_mapping,
     _change_from_issue,
     _comparison_file_paths,
@@ -44,6 +45,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _is_executor_task_and_implementation_materialization,
     _is_executor_task_bookkeeping,
     _open_pr_payload,
+    _open_prs_for_branch,
     _pending_source_is_current,
     _ref_head_sha,
     _review_openspec_required,
@@ -256,12 +258,9 @@ def _matching_prs(
     repository: str,
     token: str,
     branch: str,
-    default_branch: str,
 ) -> list[Mapping[str, object]]:
     owner = repository.split("/", 1)[0]
-    query = urlencode(
-        {"state": "all", "head": f"{owner}:{branch}", "base": default_branch, "per_page": 100}
-    )
+    query = urlencode({"state": "all", "head": f"{owner}:{branch}", "per_page": 100})
     raw = _github_json(repository, token, f"pulls?{query}")
     if not isinstance(raw, list) or len(raw) >= 100:
         raise RuntimeError("application materialization PR discovery is incomplete")
@@ -322,23 +321,35 @@ def _verify_revision(
     comparison = _as_mapping(
         cast(object, _github_json(repository, token, f"compare/{request.base_sha}...{revision}"))
     )
+    base_commit = None if comparison is None else _as_mapping(comparison.get("base_commit"))
     files = None if comparison is None else comparison.get("files")
     commits = None if comparison is None else comparison.get("commits")
+    commit = _as_mapping(commits[0]) if isinstance(commits, list) and len(commits) == 1 else None
+    parents = None if commit is None else commit.get("parents")
+    parent = _as_mapping(parents[0]) if isinstance(parents, list) and len(parents) == 1 else None
     if (
         comparison is None
         or comparison.get("status") != "ahead"
-        or comparison.get("ahead_by") != 1
+        or _positive_int(comparison.get("ahead_by")) != 1
         or comparison.get("behind_by") != 0
-        or not isinstance(commits, list)
-        or len(commits) != 1
+        or not _valid_sha(revision)
+        or base_commit is None
+        or base_commit.get("sha") != request.base_sha
+        or commit is None
+        or commit.get("sha") != revision
+        or not isinstance(parents, list)
+        or len(parents) != 1
+        or parent is None
+        or parent.get("sha") != request.base_sha
         or not isinstance(files, list)
+        or len(files) >= 300
     ):
         raise RuntimeError("application materialization revision is not one commit on the base")
     observed_paths: set[str] = set()
     for raw_file in files:
         observed_file = _as_mapping(raw_file)
         filename = None if observed_file is None else observed_file.get("filename")
-        if not isinstance(filename, str):
+        if not isinstance(filename, str) or filename in observed_paths:
             raise RuntimeError("application materialization revision file evidence is incomplete")
         observed_paths.add(filename)
     if observed_paths != {file.path for file in request.files}:
@@ -348,6 +359,141 @@ def _verify_revision(
             raise RuntimeError(
                 "application materialization revision does not resolve requested blobs"
             )
+
+
+def _verify_existing_pr_revision_lineage(
+    repository: str,
+    token: str,
+    request: MaterializationRequest,
+    revision: str,
+) -> None:
+    """Verify an existing PR still descends from its exact accepted first commit.
+
+    An open first-carrier PR may receive later commits that refine the same
+    OpenSpec Change while review is pending. Reuse that carrier only when the
+    immutable accepted manifest is the first exact commit, every descendant
+    is linear and changes only manifest paths, and every current manifest path
+    is present at the observed head. A branch without its exact PR remains
+    subject to ``_verify_revision``'s single-commit rule.
+    """
+
+    expected_paths = {file.path for file in request.files}
+    comparison = _as_mapping(
+        cast(object, _github_json(repository, token, f"compare/{request.base_sha}...{revision}"))
+    )
+    base_commit = None if comparison is None else _as_mapping(comparison.get("base_commit"))
+    commits = None if comparison is None else comparison.get("commits")
+    files = None if comparison is None else comparison.get("files")
+    ahead_by = None if comparison is None else _positive_int(comparison.get("ahead_by"))
+    if (
+        comparison is None
+        or comparison.get("status") != "ahead"
+        or comparison.get("behind_by") != 0
+        or base_commit is None
+        or base_commit.get("sha") != request.base_sha
+        or ahead_by is None
+        or ahead_by > 32
+        or not isinstance(commits, list)
+        or len(commits) != ahead_by
+        or ahead_by < 1
+        or not isinstance(files, list)
+        or len(files) >= 300
+    ):
+        raise RuntimeError("application materialization PR lineage is incomplete")
+
+    changed_paths: set[str] = set()
+    for raw_file in files:
+        observed_file = _as_mapping(raw_file)
+        filename = None if observed_file is None else observed_file.get("filename")
+        if not isinstance(filename, str) or filename in changed_paths:
+            raise RuntimeError("application materialization PR path evidence is incomplete")
+        changed_paths.add(filename)
+    if changed_paths != expected_paths:
+        raise RuntimeError("application materialization PR contains unrelated or missing paths")
+
+    previous = request.base_sha
+    observed_commits: set[str] = set()
+    for index, raw_commit in enumerate(commits):
+        commit = _as_mapping(raw_commit)
+        sha = None if commit is None else commit.get("sha")
+        parents = None if commit is None else commit.get("parents")
+        parent = (
+            _as_mapping(parents[0]) if isinstance(parents, list) and len(parents) == 1 else None
+        )
+        if (
+            not _valid_sha(sha)
+            or sha in observed_commits
+            or not isinstance(parents, list)
+            or len(parents) != 1
+            or parent is None
+            or parent.get("sha") != previous
+        ):
+            raise RuntimeError("application materialization PR ancestry is not linear")
+        observed_commits.add(cast(str, sha))
+        if index == 0:
+            _verify_revision(repository, token, request, cast(str, sha))
+        else:
+            delta = _as_mapping(
+                cast(object, _github_json(repository, token, f"compare/{previous}...{sha}"))
+            )
+            delta_base = None if delta is None else _as_mapping(delta.get("base_commit"))
+            delta_commits = None if delta is None else delta.get("commits")
+            delta_files = None if delta is None else delta.get("files")
+            delta_commit = (
+                _as_mapping(delta_commits[0])
+                if isinstance(delta_commits, list) and len(delta_commits) == 1
+                else None
+            )
+            delta_parents = None if delta_commit is None else delta_commit.get("parents")
+            delta_parent = (
+                _as_mapping(delta_parents[0])
+                if isinstance(delta_parents, list) and len(delta_parents) == 1
+                else None
+            )
+            if (
+                delta is None
+                or delta.get("status") != "ahead"
+                or _positive_int(delta.get("ahead_by")) != 1
+                or delta.get("behind_by") != 0
+                or delta_base is None
+                or delta_base.get("sha") != previous
+                or not isinstance(delta_commits, list)
+                or len(delta_commits) != 1
+                or delta_commit is None
+                or delta_commit.get("sha") != sha
+                or not isinstance(delta_parents, list)
+                or len(delta_parents) != 1
+                or delta_parent is None
+                or delta_parent.get("sha") != previous
+                or not isinstance(delta_files, list)
+                or not delta_files
+                or len(delta_files) >= 300
+            ):
+                raise RuntimeError(
+                    "application materialization PR descendant evidence is incomplete"
+                )
+            delta_paths: set[str] = set()
+            for raw_file in delta_files:
+                delta_file = _as_mapping(raw_file)
+                filename = None if delta_file is None else delta_file.get("filename")
+                if not isinstance(filename, str) or filename in delta_paths:
+                    raise RuntimeError(
+                        "application materialization PR descendant paths are incomplete"
+                    )
+                delta_paths.add(filename)
+            if not delta_paths.issubset(expected_paths):
+                raise RuntimeError(
+                    "application materialization PR descendant changes unrelated paths"
+                )
+        previous = cast(str, sha)
+
+    if previous != revision:
+        raise RuntimeError(
+            "application materialization PR head is not the final accepted descendant"
+        )
+    for file in request.files:
+        if not _valid_sha(_content_sha_at(repository, token, path=file.path, revision=revision)):
+            raise RuntimeError("application materialization PR head is missing a manifest path")
 
 
 def _create_revision(
@@ -405,15 +551,14 @@ def _create_revision(
     return cast(str, revision)
 
 
-def _ensure_new_carrier(
+def _verify_new_carrier_base_is_empty(
     request: MaterializationRequest,
-    source: WorkerRequest,
     *,
     repository: str,
     token: str,
-    default_branch: str,
-    authorization_revision: str,
-) -> tuple[str, int]:
+) -> None:
+    """Recheck that immutable first-carrier intent only adds new Change paths."""
+
     for file in request.files:
         if (
             _content_sha_at(
@@ -436,6 +581,72 @@ def _ensure_new_carrier(
     )
     if existing_directory is not None:
         raise RuntimeError("application materialization Change directory already exists at base")
+
+
+def _new_carrier_pr_plan(
+    request: MaterializationRequest,
+    source: WorkerRequest,
+    *,
+    repository: str,
+    default_branch: str,
+    authorization_revision: str,
+    revision: str,
+) -> CarrierPlan:
+    title = f"OpenSpec: {request.change}"
+    body = f"Formalize OpenSpec change `{request.change}`.\n\nRefs #{source.issue_number}"
+    return make_carrier_plan(
+        repository=repository,
+        issue_number=source.issue_number,
+        change=request.change,
+        action=source.action,
+        authorization_revision=authorization_revision,
+        operation="pull-request-create",
+        target={
+            "head_ref": request.branch,
+            "base_ref": default_branch,
+            "repository": repository,
+        },
+        expected={
+            "head_ref": request.branch,
+            "head_sha": revision,
+            "base_ref": default_branch,
+            "base_sha": authorization_revision,
+            "existing_pr_count": 0,
+        },
+        requested={
+            "title": title,
+            "body": body,
+            "head": request.branch,
+            "base": default_branch,
+            "draft": False,
+            "head_sha": revision,
+        },
+        expected_postcondition={
+            "repository": repository,
+            "issue_number": source.issue_number,
+            "state": "open",
+            "merged": False,
+            "title": title,
+            "body": body,
+            "draft": False,
+            "head_ref": request.branch,
+            "head_sha": revision,
+            "base_ref": default_branch,
+            "base_sha": authorization_revision,
+        },
+    )
+
+
+def _ensure_new_carrier(
+    request: MaterializationRequest,
+    source: WorkerRequest,
+    *,
+    repository: str,
+    token: str,
+    default_branch: str,
+    authorization_revision: str,
+) -> tuple[str, int]:
+    _verify_new_carrier_base_is_empty(request, repository=repository, token=token)
     revision = _branch_head(repository, token, request.branch)
     if revision is None:
         revision = _create_revision(repository, token, request)
@@ -450,54 +661,20 @@ def _ensure_new_carrier(
             raise RuntimeError("application materialization branch postcondition was not observed")
     _verify_revision(repository, token, request, revision)
 
-    prs = _matching_prs(repository, token, request.branch, default_branch)
+    prs = _matching_prs(repository, token, request.branch)
     if len(prs) > 1:
         raise RuntimeError("application materialization found duplicate Change PR carriers")
     if not prs:
-        title = f"OpenSpec: {request.change}"
-        body = f"Formalize OpenSpec change `{request.change}`.\n\nRefs #{source.issue_number}"
-        plan = make_carrier_plan(
-            repository=repository,
-            issue_number=source.issue_number,
-            change=request.change,
-            action=source.action,
-            authorization_revision=authorization_revision,
-            operation="pull-request-create",
-            target={
-                "head_ref": request.branch,
-                "base_ref": default_branch,
-                "repository": repository,
-            },
-            expected={
-                "head_ref": request.branch,
-                "head_sha": revision,
-                "base_ref": default_branch,
-                "base_sha": authorization_revision,
-                "existing_pr_count": 0,
-            },
-            requested={
-                "title": title,
-                "body": body,
-                "head": request.branch,
-                "base": default_branch,
-                "draft": False,
-                "head_sha": revision,
-            },
-            expected_postcondition={
-                "repository": repository,
-                "issue_number": source.issue_number,
-                "state": "open",
-                "merged": False,
-                "title": title,
-                "body": body,
-                "draft": False,
-                "head_ref": request.branch,
-                "head_sha": revision,
-                "base_ref": default_branch,
-                "base_sha": authorization_revision,
-            },
+        raise CarrierRequired(
+            _new_carrier_pr_plan(
+                request,
+                source,
+                repository=repository,
+                default_branch=default_branch,
+                authorization_revision=authorization_revision,
+                revision=revision,
+            )
         )
-        raise CarrierRequired(plan)
     pr = prs[0]
     number = pr.get("number")
     if _positive_int(number) is None or not _pr_matches(
@@ -511,6 +688,86 @@ def _ensure_new_carrier(
         base_revision=authorization_revision,
     ):
         raise RuntimeError("application materialization Change PR identity is invalid")
+    return revision, cast(int, number)
+
+
+def _pending_new_carrier(
+    request: MaterializationRequest,
+    source: WorkerRequest,
+    *,
+    repository: str,
+    token: str,
+    default_branch: str,
+    current_revision: str,
+) -> tuple[str, int]:
+    """Reconcile an existing first carrier after a disjoint default-branch advance."""
+
+    comparison = _as_mapping(
+        cast(
+            object,
+            _github_json(
+                repository,
+                token,
+                f"compare/{request.base_sha}...{current_revision}",
+            ),
+        )
+    )
+    base_commit = None if comparison is None else _as_mapping(comparison.get("base_commit"))
+    if (
+        comparison is None
+        or comparison.get("status") != "ahead"
+        or base_commit is None
+        or base_commit.get("sha") != request.base_sha
+    ):
+        raise RuntimeError("application materialization first-carrier base is not an ancestor")
+    default_paths = _comparison_file_paths(
+        repository,
+        token,
+        base_sha=request.base_sha,
+        revision=current_revision,
+    )
+    carrier_paths = {file.path for file in request.files}
+    if default_paths.intersection(carrier_paths):
+        raise RuntimeError(
+            "application materialization first-carrier base overlaps default-branch changes"
+        )
+
+    _verify_new_carrier_base_is_empty(request, repository=repository, token=token)
+
+    revision = _branch_head(repository, token, request.branch)
+    if revision is None:
+        raise RuntimeError("application materialization pending carrier branch is unavailable")
+    prs = _matching_prs(repository, token, request.branch)
+    if len(prs) > 1:
+        raise RuntimeError("application materialization pending carrier count is ambiguous")
+    if not prs:
+        # Before PR creation the branch-ref interruption prefix remains exact:
+        # only the one accepted content commit may be resumed.
+        _verify_revision(repository, token, request, revision)
+        raise CarrierRequired(
+            _new_carrier_pr_plan(
+                request,
+                source,
+                repository=repository,
+                default_branch=default_branch,
+                authorization_revision=current_revision,
+                revision=revision,
+            )
+        )
+    pr = prs[0]
+    number = pr.get("number")
+    if _positive_int(number) is None or not _pr_matches(
+        pr,
+        repository=repository,
+        branch=request.branch,
+        default_branch=default_branch,
+        revision=revision,
+        issue_number=source.issue_number,
+        change=request.change,
+        base_revision=request.base_sha,
+    ):
+        raise RuntimeError("application materialization pending carrier identity is invalid")
+    _verify_existing_pr_revision_lineage(repository, token, request, revision)
     return revision, cast(int, number)
 
 
@@ -1280,15 +1537,25 @@ def apply_materialization(
 
     if request.expected_change == "unset":
         if request.base_sha != current_revision:
-            raise RuntimeError("application materialization first-carrier base is stale")
-        revision, pr_number = _ensure_new_carrier(
-            request,
-            source,
-            repository=repository,
-            token=token,
-            default_branch=default_branch,
-            authorization_revision=current_revision,
-        )
+            if not allow_pending_continuation:
+                raise RuntimeError("application materialization first-carrier base is stale")
+            revision, pr_number = _pending_new_carrier(
+                request,
+                source,
+                repository=repository,
+                token=token,
+                default_branch=default_branch,
+                current_revision=current_revision,
+            )
+        else:
+            revision, pr_number = _ensure_new_carrier(
+                request,
+                source,
+                repository=repository,
+                token=token,
+                default_branch=default_branch,
+                authorization_revision=current_revision,
+            )
         target = _target(
             request,
             repository=repository,
@@ -1320,9 +1587,12 @@ def _observe_nonimplementation_existing_target(
     repository: str,
     token: str,
     default_branch: str,
+    current_revision: str,
 ) -> ValidationResourceTarget:
     if request.pr_number is None:
         raise RuntimeError("application materialization validation target lacks PR")
+    if request.base_sha != current_revision:
+        raise RuntimeError("application materialization authorization base is stale")
     pr = _open_pr_payload(
         repository=repository,
         token=token,
@@ -1336,6 +1606,28 @@ def _observe_nonimplementation_existing_target(
     revision = None if head is None else head.get("sha")
     if not _valid_sha(revision):
         raise RuntimeError("application materialization PR head is incomplete")
+    observed_ref = _ref_head_sha(repository, token, request.branch)
+    if observed_ref != revision:
+        raise RuntimeError("application materialization PR/ref head identity is stale")
+    prs = _open_prs_for_branch(
+        repository,
+        token,
+        branch=request.branch,
+        default_branch=default_branch,
+    )
+    if len(prs) != 1 or prs[0].get("number") != request.pr_number:
+        raise RuntimeError("application materialization carrier identity is ambiguous")
+    try:
+        _ancestor_comparison_paths(
+            repository,
+            token,
+            base_sha=current_revision,
+            revision=cast(str, revision),
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "application materialization PR head omits authorized default history"
+        ) from exc
     if not _manifest_is_current(
         request,
         repository=repository,
@@ -1361,68 +1653,23 @@ def materialization_postcondition(
     current_revision: str,
     default_branch: str,
     target: ValidationResourceTarget | None,
+    allow_pending_continuation: bool = False,
 ) -> bool:
     """Observe the exact carrier/PR/Change postcondition after application."""
 
     if target is None:
         return False
     try:
-        request = parse_materialization_payload(payload, source)
-        if request.expected_change == "unset" and request.base_sha != current_revision:
-            return False
-        if _current_default_branch(repository, token) != default_branch:
-            return False
-        if _ref_head_sha(repository, token, default_branch) != current_revision:
-            return False
-        issue = _as_mapping(
-            cast(object, _github_json(repository, token, f"issues/{source.issue_number}"))
-        )
-        if issue is None or issue.get("state") != "open":
-            return False
-        current_change = _change_from_issue(issue)
-        if current_change not in {request.expected_change, request.change}:
-            return False
-
-        if source.role == "executor" and source.action == _IMPLEMENTATION_ACTION:
-            observed = _observe_implementation_target(
-                request,
-                source,
-                repository=repository,
-                token=token,
-                current_revision=current_revision,
-            )
-            return observed == target
-
-        target_branch = target.branch
-        if target_branch is None:
-            return False
-        if _branch_head(repository, token, target_branch) != target.revision:
-            return False
-        pr = _as_mapping(cast(object, _github_json(repository, token, f"pulls/{target.pr_number}")))
-        if pr is None:
-            return False
-        if request.expected_change == "unset":
-            return _pr_matches(
-                pr,
-                repository=repository,
-                branch=request.branch,
-                default_branch=default_branch,
-                revision=target.revision,
-                issue_number=source.issue_number,
-                change=request.change,
-                base_revision=current_revision,
-            )
-        current = _open_pr_payload(
+        observed = observe_materialization_target(
+            payload,
+            source,
             repository=repository,
             token=token,
-            pr_number=target.pr_number,
-            source=source,
-            expected_change=request.expected_change,
+            current_revision=current_revision,
             default_branch=default_branch,
-            expected_branch=target_branch,
+            allow_pending_continuation=allow_pending_continuation,
         )
-        head = _as_mapping(current.get("head"))
-        return head is not None and head.get("sha") == target.revision
+        return observed == target
     except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
         return False
 
@@ -1458,32 +1705,44 @@ def observe_materialization_target(
         raise RuntimeError("application materialization default-branch revision is stale")
     if request.expected_change == "unset":
         if request.base_sha != current_revision:
-            raise RuntimeError("application materialization first-carrier base is stale")
-        revision = _branch_head(repository, token, request.branch)
-        if revision is None:
-            raise RuntimeError("application materialization branch is unavailable")
-        prs = _matching_prs(repository, token, request.branch, default_branch)
-        if len(prs) != 1:
-            raise RuntimeError("application materialization carrier count is not exactly one")
-        pr = prs[0]
-        number = pr.get("number")
-        if _positive_int(number) is None or not _pr_matches(
-            pr,
-            repository=repository,
-            branch=request.branch,
-            default_branch=default_branch,
-            revision=revision,
-            issue_number=source.issue_number,
-            change=request.change,
-            base_revision=current_revision,
-        ):
-            raise RuntimeError("application materialization carrier postcondition is invalid")
-        _verify_revision(repository, token, request, revision)
+            if not allow_pending_continuation:
+                raise RuntimeError("application materialization first-carrier base is stale")
+            revision, number = _pending_new_carrier(
+                request,
+                source,
+                repository=repository,
+                token=token,
+                default_branch=default_branch,
+                current_revision=current_revision,
+            )
+        else:
+            observed_revision = _branch_head(repository, token, request.branch)
+            if observed_revision is None:
+                raise RuntimeError("application materialization branch is unavailable")
+            revision = observed_revision
+            prs = _matching_prs(repository, token, request.branch)
+            if len(prs) != 1:
+                raise RuntimeError("application materialization carrier count is not exactly one")
+            pr = prs[0]
+            observed_number = pr.get("number")
+            if _positive_int(observed_number) is None or not _pr_matches(
+                pr,
+                repository=repository,
+                branch=request.branch,
+                default_branch=default_branch,
+                revision=revision,
+                issue_number=source.issue_number,
+                change=request.change,
+                base_revision=current_revision,
+            ):
+                raise RuntimeError("application materialization carrier postcondition is invalid")
+            number = cast(int, observed_number)
+            _verify_revision(repository, token, request, revision)
         return _target(
             request,
             repository=repository,
             revision=revision,
-            pr_number=cast(int, number),
+            pr_number=number,
             validation_required=True,
         )
 
@@ -1501,6 +1760,7 @@ def observe_materialization_target(
         repository=repository,
         token=token,
         default_branch=default_branch,
+        current_revision=current_revision,
     )
 
 

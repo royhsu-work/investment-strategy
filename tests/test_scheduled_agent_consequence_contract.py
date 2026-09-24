@@ -106,6 +106,20 @@ def test_every_legal_transition_has_exactly_one_consequence_spec() -> None:
     } == expected
 
 
+@pytest.mark.parametrize(
+    "action",
+    (Action.PROPOSE_CHANGE, Action.RESOLVE_QUESTION),
+)
+def test_openspec_ready_consequence_requires_fresh_materialized_revision(
+    action: Action,
+) -> None:
+    spec = consequence_spec_for(action, ResultKind.READY_FOR_OPENSPEC_REVIEW)
+
+    assert spec.evidence_target is EvidenceTarget.MATERIALIZED_REVISION
+    assert spec.completion_predicate == "materialized-revision-and-successor-ready"
+    assert spec.missing_effect == "application-materialize-or-formal-result"
+
+
 def _matrix_intent(action: Action, result: ResultKind) -> str:
     role = (
         "reviewer"

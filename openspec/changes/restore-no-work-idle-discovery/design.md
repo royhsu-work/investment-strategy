@@ -2,7 +2,7 @@
 
 ## Current decision boundary
 
-The original Explore reconstruction used default-branch revision `2e00e236f24ba41302c9ba18c685acdf4cebe4ed`; this continuation was freshly reconstructed from `main@e617a05ada51af9ff8f20697bbf07c4bfc8ec19e`. Fresh source inspection establishes these owners:
+The original Explore reconstruction used default-branch revision `2e00e236f24ba41302c9ba18c685acdf4cebe4ed`; this continuation was freshly reconstructed from `main@d019fdc604e8a7fa40e2f3e6436a12b076658057`. Fresh source inspection establishes these owners:
 
 - `workflow_dispatch.py` and the runtime preflight reconstruct current repository work and return `AUTHORIZE`, `NO_WORK`, or `FAIL_CLOSED`.
 - `issue_comment_bridge.py` checks the authoritative default branch and publishes one run-scoped dispatch-result artifact.
@@ -11,6 +11,8 @@ The original Explore reconstruction used default-branch revision `2e00e236f24ba4
 - the external Scheduled Task/bootstrap is the product boundary that must interpret the exact dispatch artifact and invoke a semantic Lead run; it is not represented in normal Issue routing.
 
 The current gap is therefore a missing reachability boundary, not a defect in normal selection and not permission to infer work from an empty queue.
+
+The current delivery baseline is `main@d019fdc604e8a7fa40e2f3e6436a12b076658057`. The shared application substrate repair has merged in the sequential PR chain #331/#332/#333; it is an N-1 prerequisite already present on this revision, not remaining Stage 0 work. The exact PR heads and successful Python Quality runs are recorded in proposal.md and tasks.md. Continue with the typed idle handoff and later stages on this current baseline; retain the full parent completion outcome.
 
 ## Decision 1: Keep normal dispatch Action-only
 
