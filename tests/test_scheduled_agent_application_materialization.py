@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -1718,31 +1719,64 @@ def test_existing_materialization_observer_recovers_disjoint_historical_base(
     )
 
 
-def test_disjoint_ancestor_advance_reuses_fresh_materialization_postcondition(
+def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The accepted #322 content is already exact even when its base preimages are gone."""
+
     source = WorkerRequest(322, "lead", "resolve-question")
-    old_base = "a" * 40
-    current_default = "d" * 40
-    carrier_head = "e" * 40
+    change = "restore-no-work-idle-discovery"
+    old_base = "d019fdc604e8a7fa40e2f3e6436a12b076658057"
+    current_default = "1db00c4b50175af30d4dc9febe461cbab8bac5bf"
+    carrier_head = "5de9641a3e3e7e26071f3f8cdc1843e3fa842049"
     repository = "royhsu-work/investment-strategy"
-    branch = f"agent/{_CHANGE}"
-    path = f"openspec/changes/{_CHANGE}/proposal.md"
-    payload = _payload(
-        expected_change=_CHANGE,
-        issue_number=source.issue_number,
-        files=[{"path": path, "blob_sha": _BLOB, "expected_sha": None}],
-    )
-    payload["base_sha"] = old_base
-    payload["pr_number"] = 324
-    issue = {"state": "open", "body": f"Change: {_CHANGE}\n"}
+    branch = f"agent/{change}"
+    files = [
+        {
+            "path": f"openspec/changes/{change}/proposal.md",
+            "blob_sha": "bdeffd94ff01c7f3e2fd4e8e12c3b535b9df6932",
+            "expected_sha": "6003d898fae7c40c59d08e3023ed131baf41b383",
+        },
+        {
+            "path": f"openspec/changes/{change}/design.md",
+            "blob_sha": "8096b24682c77d37e177e68e3460712af7de3325",
+            "expected_sha": "05cfb1579bb4a7c6480f180e9a7e025fdb5fde27",
+        },
+        {
+            "path": f"openspec/changes/{change}/tasks.md",
+            "blob_sha": "4e428b3ead7ef6aa0de6cabfaef4885932a28d22",
+            "expected_sha": "331dc671ea6fa05c8fb2d40cc3f6dc65a31a6f0a",
+        },
+        {
+            "path": f"openspec/changes/{change}/specs/scheduled-agent-workflow/spec.md",
+            "blob_sha": "d1861dd5b6a190f821fdf99ec7bb2d36fe5db208",
+            "expected_sha": "a8ec4b39e5287651ad58cf2b2e0e1a31113cdf06",
+        },
+    ]
+    payload = {
+        "issue_number": source.issue_number,
+        "operation": "application-materialize",
+        "expected_change": change,
+        "change": change,
+        "branch": branch,
+        "base_sha": old_base,
+        "message": "Resolve exact-head OpenSpec findings for #322",
+        "pr_number": 324,
+        "files": files,
+    }
+    issue = {
+        "number": source.issue_number,
+        "state": "open",
+        "body": f"Preserve the approved request.\nChange: {change}\n",
+        "labels": [{"name": "action:resolve-question"}, {"name": "unrelated"}],
+    }
     pr = {
         "number": 324,
         "state": "open",
         "merged": False,
         "draft": False,
-        "title": f"OpenSpec: {_CHANGE}",
-        "body": f"Formalize the Change.\n\nRefs #{source.issue_number}",
+        "title": f"OpenSpec: {change}",
+        "body": f"Formalize OpenSpec change {change}.\n\nRefs #322",
         "head": {
             "ref": branch,
             "sha": carrier_head,
@@ -1759,9 +1793,11 @@ def test_disjoint_ancestor_advance_reuses_fresh_materialization_postcondition(
         revision=carrier_head,
         correlation=f"effect-request-{source.issue_number}",
         pr_number=324,
-        change=_CHANGE,
+        change=change,
+        validation_required=True,
         branch=branch,
     )
+    manifest_paths = {cast(str, file["path"]) for file in files}
 
     def historical_paths(
         _repository: str,
@@ -1770,10 +1806,12 @@ def test_disjoint_ancestor_advance_reuses_fresh_materialization_postcondition(
         base_sha: str,
         revision: str,
     ) -> set[str]:
-        if base_sha == old_base and revision == current_default:
+        if base_sha != old_base:
+            raise AssertionError((base_sha, revision))
+        if revision == current_default:
             return {"src/unrelated-main.py"}
-        if base_sha == old_base and revision == carrier_head:
-            return {path}
+        if revision == carrier_head:
+            return manifest_paths
         raise AssertionError((base_sha, revision))
 
     monkeypatch.setattr(materialization, "_current_authorized_request", lambda *_args: source)
@@ -1784,7 +1822,7 @@ def test_disjoint_ancestor_advance_reuses_fresh_materialization_postcondition(
         lambda _repo, _token, ref, **_kwargs: current_default if ref == "main" else carrier_head,
     )
     monkeypatch.setattr(materialization, "_github_json", lambda *_args, **_kwargs: issue)
-    monkeypatch.setattr(materialization, "_change_from_issue", lambda *_args: _CHANGE)
+    monkeypatch.setattr(materialization, "_change_from_issue", lambda *_args: change)
     monkeypatch.setattr(materialization, "_existing_target", lambda *_args, **_kwargs: target)
     monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: pr)
     monkeypatch.setattr(materialization, "_matching_prs", lambda *_args, **_kwargs: [pr])
@@ -1798,12 +1836,17 @@ def test_disjoint_ancestor_advance_reuses_fresh_materialization_postcondition(
     monkeypatch.setattr(
         validation_resource,
         "_manifest_expected_content_matches_base",
-        lambda *_args, **_kwargs: True,
+        lambda *_args, **_kwargs: False,
     )
     monkeypatch.setattr(
         validation_resource,
         "_manifest_content_matches",
-        lambda *_args, **_kwargs: True,
+        lambda _repo, _token, *, revision, manifest: (
+            revision == carrier_head
+            and {file.path for file in manifest.files} == manifest_paths
+            and {file.blob_sha for file in manifest.files}
+            == {cast(str, file["blob_sha"]) for file in files}
+        ),
     )
 
     applied_target = materialization.apply_materialization(
@@ -1817,6 +1860,17 @@ def test_disjoint_ancestor_advance_reuses_fresh_materialization_postcondition(
 
     assert applied_target == target
     assert materialization.materialization_postcondition(
+        payload,
+        source,
+        repository=repository,
+        token=_TOKEN,
+        current_revision=current_default,
+        default_branch="main",
+        target=applied_target,
+    )
+
+    monkeypatch.setattr(validation_resource, "_manifest_content_matches", lambda *_a, **_k: False)
+    assert not materialization.materialization_postcondition(
         payload,
         source,
         repository=repository,
