@@ -1716,3 +1716,112 @@ def test_existing_materialization_observer_recovers_disjoint_historical_base(
         target=target,
         allow_pending_continuation=True,
     )
+
+
+def test_disjoint_ancestor_advance_reuses_fresh_materialization_postcondition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(322, "lead", "resolve-question")
+    old_base = "a" * 40
+    current_default = "d" * 40
+    carrier_head = "e" * 40
+    repository = "royhsu-work/investment-strategy"
+    branch = f"agent/{_CHANGE}"
+    path = f"openspec/changes/{_CHANGE}/proposal.md"
+    payload = _payload(
+        expected_change=_CHANGE,
+        issue_number=source.issue_number,
+        files=[{"path": path, "blob_sha": _BLOB, "expected_sha": None}],
+    )
+    payload["base_sha"] = old_base
+    payload["pr_number"] = 324
+    issue = {"state": "open", "body": f"Change: {_CHANGE}\n"}
+    pr = {
+        "number": 324,
+        "state": "open",
+        "merged": False,
+        "draft": False,
+        "title": f"OpenSpec: {_CHANGE}",
+        "body": f"Formalize the Change.\n\nRefs #{source.issue_number}",
+        "head": {
+            "ref": branch,
+            "sha": carrier_head,
+            "repo": {"full_name": repository},
+        },
+        "base": {
+            "ref": "main",
+            "sha": current_default,
+            "repo": {"full_name": repository},
+        },
+    }
+    target = ValidationResourceTarget(
+        repository=repository,
+        revision=carrier_head,
+        correlation=f"effect-request-{source.issue_number}",
+        pr_number=324,
+        change=_CHANGE,
+        branch=branch,
+    )
+
+    def historical_paths(
+        _repository: str,
+        _token: str,
+        *,
+        base_sha: str,
+        revision: str,
+    ) -> set[str]:
+        if base_sha == old_base and revision == current_default:
+            return {"src/unrelated-main.py"}
+        if base_sha == old_base and revision == carrier_head:
+            return {path}
+        raise AssertionError((base_sha, revision))
+
+    monkeypatch.setattr(materialization, "_current_authorized_request", lambda *_args: source)
+    monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
+    monkeypatch.setattr(
+        materialization,
+        "_ref_head_sha",
+        lambda _repo, _token, ref, **_kwargs: current_default if ref == "main" else carrier_head,
+    )
+    monkeypatch.setattr(materialization, "_github_json", lambda *_args, **_kwargs: issue)
+    monkeypatch.setattr(materialization, "_change_from_issue", lambda *_args: _CHANGE)
+    monkeypatch.setattr(materialization, "_existing_target", lambda *_args, **_kwargs: target)
+    monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: pr)
+    monkeypatch.setattr(materialization, "_matching_prs", lambda *_args, **_kwargs: [pr])
+    monkeypatch.setattr(
+        materialization,
+        "_open_prs_for_branch",
+        lambda *_args, **_kwargs: (pr,),
+    )
+    monkeypatch.setattr(materialization, "_ancestor_comparison_paths", historical_paths)
+    monkeypatch.setattr(validation_resource, "_ancestor_comparison_paths", historical_paths)
+    monkeypatch.setattr(
+        validation_resource,
+        "_manifest_expected_content_matches_base",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        validation_resource,
+        "_manifest_content_matches",
+        lambda *_args, **_kwargs: True,
+    )
+
+    applied_target = materialization.apply_materialization(
+        payload,
+        source,
+        repository=repository,
+        token=_TOKEN,
+        current_revision=current_default,
+        default_branch="main",
+    )
+
+    assert applied_target == target
+    assert materialization.materialization_postcondition(
+        payload,
+        source,
+        repository=repository,
+        token=_TOKEN,
+        current_revision=current_default,
+        default_branch="main",
+        target=applied_target,
+    )
