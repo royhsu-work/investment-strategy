@@ -901,7 +901,7 @@ def test_reconciliation_overlays_default_only_changes_on_a_stale_carrier(
                 "merge_base_commit": {"sha": merge_base},
             }
         if api_path == f"compare/{merge_base}...{_REVISION}":
-            return {"files": [{"filename": default_only_path}]}
+            return {"files": [{"filename": default_only_path, "status": "modified"}]}
         if api_path == f"compare/{merge_base}...{_PR_HEAD}":
             return {"files": []}
         if api_path.startswith(f"contents/{default_only_path}?"):
@@ -1195,7 +1195,7 @@ def test_accepted_322_work_product_recovers_safe_historical_pr_base(
                 "behind_by": 1 if failure == "non-ancestor" else 0,
                 "base_commit": {"sha": historical_base},
                 "files": (
-                    [{"filename": f"openspec/changes/{change}/proposal.md"}]
+                    [{"filename": f"openspec/changes/{change}/proposal.md", "status": "modified"}]
                     if failure == "overlap"
                     else [
                         {
@@ -1217,10 +1217,10 @@ def test_accepted_322_work_product_recovers_safe_historical_pr_base(
                 "files": (
                     [
                         {"filename": default_only_path, "status": "modified"},
-                        *({"filename": path} for path in sorted(paths)),
+                        *({"filename": path, "status": "added"} for path in sorted(paths)),
                     ]
                     if failure in {"overlap", "rename-overlap"}
-                    else [{"filename": path} for path in sorted(paths)]
+                    else [{"filename": path, "status": "added"} for path in sorted(paths)]
                 ),
             }
         if api_path == f"compare/{authorization_revision}...{carrier_head}" and method == "GET":
