@@ -1615,18 +1615,15 @@ def _observe_nonimplementation_existing_target(
             raise RuntimeError("application materialization carrier identity is ambiguous")
     base = _as_mapping(pr.get("base"))
     base_revision = None if base is None else base.get("sha")
-    if (
-        not _pr_matches(
-            pr,
-            repository=repository,
-            branch=request.branch,
-            default_branch=default_branch,
-            revision=cast(str, revision),
-            issue_number=source.issue_number,
-            change=request.change,
-        )
-        or not _valid_sha(base_revision)
-    ):
+    if not _pr_matches(
+        pr,
+        repository=repository,
+        branch=request.branch,
+        default_branch=default_branch,
+        revision=cast(str, revision),
+        issue_number=source.issue_number,
+        change=request.change,
+    ) or not _valid_sha(base_revision):
         raise RuntimeError("application materialization carrier identity is invalid")
     if base_revision not in {request.base_sha, current_revision}:
         try:
