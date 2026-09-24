@@ -256,12 +256,9 @@ def _matching_prs(
     repository: str,
     token: str,
     branch: str,
-    default_branch: str,
 ) -> list[Mapping[str, object]]:
     owner = repository.split("/", 1)[0]
-    query = urlencode(
-        {"state": "all", "head": f"{owner}:{branch}", "base": default_branch, "per_page": 100}
-    )
+    query = urlencode({"state": "all", "head": f"{owner}:{branch}", "per_page": 100})
     raw = _github_json(repository, token, f"pulls?{query}")
     if not isinstance(raw, list) or len(raw) >= 100:
         raise RuntimeError("application materialization PR discovery is incomplete")
@@ -405,15 +402,14 @@ def _create_revision(
     return cast(str, revision)
 
 
-def _ensure_new_carrier(
+def _verify_new_carrier_base_is_empty(
     request: MaterializationRequest,
-    source: WorkerRequest,
     *,
     repository: str,
     token: str,
-    default_branch: str,
-    authorization_revision: str,
-) -> tuple[str, int]:
+) -> None:
+    """Recheck that immutable first-carrier intent only adds new Change paths."""
+
     for file in request.files:
         if (
             _content_sha_at(
@@ -436,6 +432,72 @@ def _ensure_new_carrier(
     )
     if existing_directory is not None:
         raise RuntimeError("application materialization Change directory already exists at base")
+
+
+def _new_carrier_pr_plan(
+    request: MaterializationRequest,
+    source: WorkerRequest,
+    *,
+    repository: str,
+    default_branch: str,
+    authorization_revision: str,
+    revision: str,
+) -> CarrierPlan:
+    title = f"OpenSpec: {request.change}"
+    body = f"Formalize OpenSpec change `{request.change}`.\n\nRefs #{source.issue_number}"
+    return make_carrier_plan(
+        repository=repository,
+        issue_number=source.issue_number,
+        change=request.change,
+        action=source.action,
+        authorization_revision=authorization_revision,
+        operation="pull-request-create",
+        target={
+            "head_ref": request.branch,
+            "base_ref": default_branch,
+            "repository": repository,
+        },
+        expected={
+            "head_ref": request.branch,
+            "head_sha": revision,
+            "base_ref": default_branch,
+            "base_sha": authorization_revision,
+            "existing_pr_count": 0,
+        },
+        requested={
+            "title": title,
+            "body": body,
+            "head": request.branch,
+            "base": default_branch,
+            "draft": False,
+            "head_sha": revision,
+        },
+        expected_postcondition={
+            "repository": repository,
+            "issue_number": source.issue_number,
+            "state": "open",
+            "merged": False,
+            "title": title,
+            "body": body,
+            "draft": False,
+            "head_ref": request.branch,
+            "head_sha": revision,
+            "base_ref": default_branch,
+            "base_sha": authorization_revision,
+        },
+    )
+
+
+def _ensure_new_carrier(
+    request: MaterializationRequest,
+    source: WorkerRequest,
+    *,
+    repository: str,
+    token: str,
+    default_branch: str,
+    authorization_revision: str,
+) -> tuple[str, int]:
+    _verify_new_carrier_base_is_empty(request, repository=repository, token=token)
     revision = _branch_head(repository, token, request.branch)
     if revision is None:
         revision = _create_revision(repository, token, request)
@@ -450,54 +512,20 @@ def _ensure_new_carrier(
             raise RuntimeError("application materialization branch postcondition was not observed")
     _verify_revision(repository, token, request, revision)
 
-    prs = _matching_prs(repository, token, request.branch, default_branch)
+    prs = _matching_prs(repository, token, request.branch)
     if len(prs) > 1:
         raise RuntimeError("application materialization found duplicate Change PR carriers")
     if not prs:
-        title = f"OpenSpec: {request.change}"
-        body = f"Formalize OpenSpec change `{request.change}`.\n\nRefs #{source.issue_number}"
-        plan = make_carrier_plan(
-            repository=repository,
-            issue_number=source.issue_number,
-            change=request.change,
-            action=source.action,
-            authorization_revision=authorization_revision,
-            operation="pull-request-create",
-            target={
-                "head_ref": request.branch,
-                "base_ref": default_branch,
-                "repository": repository,
-            },
-            expected={
-                "head_ref": request.branch,
-                "head_sha": revision,
-                "base_ref": default_branch,
-                "base_sha": authorization_revision,
-                "existing_pr_count": 0,
-            },
-            requested={
-                "title": title,
-                "body": body,
-                "head": request.branch,
-                "base": default_branch,
-                "draft": False,
-                "head_sha": revision,
-            },
-            expected_postcondition={
-                "repository": repository,
-                "issue_number": source.issue_number,
-                "state": "open",
-                "merged": False,
-                "title": title,
-                "body": body,
-                "draft": False,
-                "head_ref": request.branch,
-                "head_sha": revision,
-                "base_ref": default_branch,
-                "base_sha": authorization_revision,
-            },
+        raise CarrierRequired(
+            _new_carrier_pr_plan(
+                request,
+                source,
+                repository=repository,
+                default_branch=default_branch,
+                authorization_revision=authorization_revision,
+                revision=revision,
+            )
         )
-        raise CarrierRequired(plan)
     pr = prs[0]
     number = pr.get("number")
     if _positive_int(number) is None or not _pr_matches(
@@ -555,13 +583,26 @@ def _pending_new_carrier(
             "application materialization first-carrier base overlaps default-branch changes"
         )
 
+    _verify_new_carrier_base_is_empty(request, repository=repository, token=token)
+
     revision = _branch_head(repository, token, request.branch)
     if revision is None:
         raise RuntimeError("application materialization pending carrier branch is unavailable")
     _verify_revision(repository, token, request, revision)
-    prs = _matching_prs(repository, token, request.branch, default_branch)
-    if len(prs) != 1:
-        raise RuntimeError("application materialization pending carrier count is not exactly one")
+    prs = _matching_prs(repository, token, request.branch)
+    if len(prs) > 1:
+        raise RuntimeError("application materialization pending carrier count is ambiguous")
+    if not prs:
+        raise CarrierRequired(
+            _new_carrier_pr_plan(
+                request,
+                source,
+                repository=repository,
+                default_branch=default_branch,
+                authorization_revision=current_revision,
+                revision=revision,
+            )
+        )
     pr = prs[0]
     number = pr.get("number")
     if _positive_int(number) is None or not _pr_matches(
@@ -1435,68 +1476,23 @@ def materialization_postcondition(
     current_revision: str,
     default_branch: str,
     target: ValidationResourceTarget | None,
+    allow_pending_continuation: bool = False,
 ) -> bool:
     """Observe the exact carrier/PR/Change postcondition after application."""
 
     if target is None:
         return False
     try:
-        request = parse_materialization_payload(payload, source)
-        if request.expected_change == "unset" and request.base_sha != current_revision:
-            return False
-        if _current_default_branch(repository, token) != default_branch:
-            return False
-        if _ref_head_sha(repository, token, default_branch) != current_revision:
-            return False
-        issue = _as_mapping(
-            cast(object, _github_json(repository, token, f"issues/{source.issue_number}"))
-        )
-        if issue is None or issue.get("state") != "open":
-            return False
-        current_change = _change_from_issue(issue)
-        if current_change not in {request.expected_change, request.change}:
-            return False
-
-        if source.role == "executor" and source.action == _IMPLEMENTATION_ACTION:
-            observed = _observe_implementation_target(
-                request,
-                source,
-                repository=repository,
-                token=token,
-                current_revision=current_revision,
-            )
-            return observed == target
-
-        target_branch = target.branch
-        if target_branch is None:
-            return False
-        if _branch_head(repository, token, target_branch) != target.revision:
-            return False
-        pr = _as_mapping(cast(object, _github_json(repository, token, f"pulls/{target.pr_number}")))
-        if pr is None:
-            return False
-        if request.expected_change == "unset":
-            return _pr_matches(
-                pr,
-                repository=repository,
-                branch=request.branch,
-                default_branch=default_branch,
-                revision=target.revision,
-                issue_number=source.issue_number,
-                change=request.change,
-                base_revision=current_revision,
-            )
-        current = _open_pr_payload(
+        observed = observe_materialization_target(
+            payload,
+            source,
             repository=repository,
             token=token,
-            pr_number=target.pr_number,
-            source=source,
-            expected_change=request.expected_change,
+            current_revision=current_revision,
             default_branch=default_branch,
-            expected_branch=target_branch,
+            allow_pending_continuation=allow_pending_continuation,
         )
-        head = _as_mapping(current.get("head"))
-        return head is not None and head.get("sha") == target.revision
+        return observed == target
     except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
         return False
 
@@ -1547,7 +1543,7 @@ def observe_materialization_target(
             if observed_revision is None:
                 raise RuntimeError("application materialization branch is unavailable")
             revision = observed_revision
-            prs = _matching_prs(repository, token, request.branch, default_branch)
+            prs = _matching_prs(repository, token, request.branch)
             if len(prs) != 1:
                 raise RuntimeError("application materialization carrier count is not exactly one")
             pr = prs[0]

@@ -44,6 +44,7 @@ from investment_strategy.scheduled_agent_application_materialization import (
     apply_materialization,
     find_materialization_payload,
     materialization_postcondition,
+    observe_materialization_target,
 )
 from investment_strategy.scheduled_agent_carrier import (
     CarrierPlan,
@@ -3151,6 +3152,7 @@ class GitHubEffectAdapter:
                     current_revision=self.current_revision,
                     default_branch=default_branch,
                     target=self._materialization_targets.get(effect),
+                    allow_pending_continuation=self.allow_pending_continuation,
                 )
             )
         if operation == "issue-update":
@@ -3442,6 +3444,43 @@ def merged_pr_readiness_complete(
     )
 
 
+def _fresh_materialization_target(
+    payload: Mapping[str, object],
+    *,
+    adapter: GitHubEffectAdapter,
+    source: WorkerRequest,
+    current_revision: str,
+    allow_pending_continuation: bool,
+) -> ValidationResourceTarget | None:
+    """Reconstruct one exact current materialization target from GitHub truth."""
+
+    request = find_materialization_payload(payload, source)
+    default_branch = adapter._default_branch()
+    if request is None or default_branch is None:
+        return None
+    try:
+        target = observe_materialization_target(
+            payload,
+            source,
+            repository=adapter.repository,
+            token=adapter.token,
+            current_revision=current_revision,
+            default_branch=default_branch,
+            allow_pending_continuation=allow_pending_continuation,
+        )
+    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if (
+        target.repository != adapter.repository
+        or target.change != request.change
+        or target.branch != request.branch
+        or target.correlation != f"effect-request-{source.issue_number}"
+        or (request.pr_number is not None and target.pr_number != request.pr_number)
+    ):
+        return None
+    return target
+
+
 def consequence_postconditions_complete(
     raw_worker_result: str,
     *,
@@ -3451,6 +3490,7 @@ def consequence_postconditions_complete(
     current_revision: str,
     authorized_change: str | None = None,
     request_comment_id: int | None = None,
+    allow_pending_continuation: bool = False,
 ) -> bool:
     """Prove the affirmative consequence contract from fresh repository state.
 
@@ -3506,9 +3546,16 @@ def consequence_postconditions_complete(
                 request_comment_id=request_comment_id,
             )
             payload = _effect_payload(materializations[0])
-            return payload is not None and adapter._observe_github_mutation(
-                materializations[0],
-                payload,
+            return (
+                payload is not None
+                and _fresh_materialization_target(
+                    payload,
+                    adapter=adapter,
+                    source=source,
+                    current_revision=current_revision,
+                    allow_pending_continuation=allow_pending_continuation,
+                )
+                is not None
             )
         if spec.evidence_target is EvidenceTarget.MERGED_PR_HEAD:
             return merged_pr_readiness_complete(
@@ -3520,9 +3567,8 @@ def consequence_postconditions_complete(
                 current_revision=current_revision,
             )
 
-        # Implementation and merged-carrier transitions are qualified by the
-        # existing carrier owner.  The result target is positive; no
-        # action-specific default-branch fallback is used here.
+        # Implementation carrier qualification stays with its existing owner,
+        # even when a new process must reconstruct a materialization effect.
         adapter = GitHubEffectAdapter(
             repository,
             token,
@@ -3532,13 +3578,35 @@ def consequence_postconditions_complete(
             expected_result_kind=batch.typed_result.result.kind.value,
             request_comment_id=request_comment_id,
         )
+        if spec.evidence_target is EvidenceTarget.IMPLEMENTATION_PR_HEAD:
+            materializations = tuple(
+                effect
+                for effect in batch.effects
+                if effect.kind == GITHUB_MUTATION_KIND
+                and (_effect_payload(effect) or {}).get("operation") == "application-materialize"
+            )
+            if len(materializations) > 1:
+                return False
+            if materializations:
+                payload = _effect_payload(materializations[0])
+                if (
+                    payload is None
+                    or _fresh_materialization_target(
+                        payload,
+                        adapter=adapter,
+                        source=source,
+                        current_revision=current_revision,
+                        allow_pending_continuation=allow_pending_continuation,
+                    )
+                    is None
+                ):
+                    return False
         for effect in batch.effects:
             payload = _effect_payload(effect)
             if effect.kind == GITHUB_MUTATION_KIND and payload is not None:
                 if payload.get("operation") == "application-materialize":
-                    if not adapter._observe_github_mutation(effect, payload):
-                        return False
-                elif payload.get("operation") in {
+                    continue
+                if payload.get("operation") in {
                     "pull-request-create",
                     "pull-request-update",
                     "pull-request-ready",
