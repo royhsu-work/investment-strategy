@@ -324,7 +324,7 @@ def _verify_revision(
     if (
         comparison is None
         or comparison.get("status") != "ahead"
-        or comparison.get("ahead_by") != 1
+        or _positive_int(comparison.get("ahead_by")) != 1
         or comparison.get("behind_by") != 0
         or not isinstance(commits, list)
         or len(commits) != 1
@@ -345,6 +345,147 @@ def _verify_revision(
             raise RuntimeError(
                 "application materialization revision does not resolve requested blobs"
             )
+
+
+def _verify_existing_pr_revision_lineage(
+    repository: str,
+    token: str,
+    request: MaterializationRequest,
+    revision: str,
+) -> None:
+    """Verify an existing PR still descends from its exact accepted first commit.
+
+    An open first-carrier PR may receive later commits that refine the same
+    OpenSpec Change while review is pending. Reuse that carrier only when the
+    immutable accepted manifest is the first exact commit, every descendant
+    is linear and changes only manifest paths, and every current manifest path
+    is present at the observed head. A branch without its exact PR remains
+    subject to ``_verify_revision``'s single-commit rule.
+    """
+
+    expected_paths = {file.path for file in request.files}
+    comparison = _as_mapping(
+        cast(object, _github_json(repository, token, f"compare/{request.base_sha}...{revision}"))
+    )
+    base_commit = None if comparison is None else _as_mapping(comparison.get("base_commit"))
+    head_commit = None if comparison is None else _as_mapping(comparison.get("head_commit"))
+    commits = None if comparison is None else comparison.get("commits")
+    files = None if comparison is None else comparison.get("files")
+    ahead_by = None if comparison is None else _positive_int(comparison.get("ahead_by"))
+    if (
+        comparison is None
+        or comparison.get("status") != "ahead"
+        or comparison.get("behind_by") != 0
+        or base_commit is None
+        or base_commit.get("sha") != request.base_sha
+        or head_commit is None
+        or head_commit.get("sha") != revision
+        or ahead_by is None
+        or ahead_by > 32
+        or not isinstance(commits, list)
+        or len(commits) != ahead_by
+        or ahead_by < 1
+        or not isinstance(files, list)
+        or len(files) >= 300
+    ):
+        raise RuntimeError("application materialization PR lineage is incomplete")
+
+    changed_paths: set[str] = set()
+    for raw_file in files:
+        observed_file = _as_mapping(raw_file)
+        filename = None if observed_file is None else observed_file.get("filename")
+        if not isinstance(filename, str) or filename in changed_paths:
+            raise RuntimeError("application materialization PR path evidence is incomplete")
+        changed_paths.add(filename)
+    if changed_paths != expected_paths:
+        raise RuntimeError("application materialization PR contains unrelated or missing paths")
+
+    previous = request.base_sha
+    observed_commits: set[str] = set()
+    for index, raw_commit in enumerate(commits):
+        commit = _as_mapping(raw_commit)
+        sha = None if commit is None else commit.get("sha")
+        parents = None if commit is None else commit.get("parents")
+        parent = (
+            _as_mapping(parents[0]) if isinstance(parents, list) and len(parents) == 1 else None
+        )
+        if (
+            not _valid_sha(sha)
+            or sha in observed_commits
+            or not isinstance(parents, list)
+            or len(parents) != 1
+            or parent is None
+            or parent.get("sha") != previous
+        ):
+            raise RuntimeError("application materialization PR ancestry is not linear")
+        observed_commits.add(cast(str, sha))
+        if index == 0:
+            _verify_revision(repository, token, request, cast(str, sha))
+        else:
+            delta = _as_mapping(
+                cast(object, _github_json(repository, token, f"compare/{previous}...{sha}"))
+            )
+            delta_base = None if delta is None else _as_mapping(delta.get("base_commit"))
+            delta_head = None if delta is None else _as_mapping(delta.get("head_commit"))
+            delta_commits = None if delta is None else delta.get("commits")
+            delta_files = None if delta is None else delta.get("files")
+            delta_commit = (
+                _as_mapping(delta_commits[0])
+                if isinstance(delta_commits, list) and len(delta_commits) == 1
+                else None
+            )
+            delta_parents = None if delta_commit is None else delta_commit.get("parents")
+            delta_parent = (
+                _as_mapping(delta_parents[0])
+                if isinstance(delta_parents, list) and len(delta_parents) == 1
+                else None
+            )
+            if (
+                delta is None
+                or delta.get("status") != "ahead"
+                or _positive_int(delta.get("ahead_by")) != 1
+                or delta.get("behind_by") != 0
+                or delta_base is None
+                or delta_base.get("sha") != previous
+                or delta_head is None
+                or delta_head.get("sha") != sha
+                or not isinstance(delta_commits, list)
+                or len(delta_commits) != 1
+                or delta_commit is None
+                or delta_commit.get("sha") != sha
+                or not isinstance(delta_parents, list)
+                or len(delta_parents) != 1
+                or delta_parent is None
+                or delta_parent.get("sha") != previous
+                or not isinstance(delta_files, list)
+                or not delta_files
+                or len(delta_files) >= 300
+            ):
+                raise RuntimeError(
+                    "application materialization PR descendant evidence is incomplete"
+                )
+            delta_paths: set[str] = set()
+            for raw_file in delta_files:
+                delta_file = _as_mapping(raw_file)
+                filename = None if delta_file is None else delta_file.get("filename")
+                if not isinstance(filename, str) or filename in delta_paths:
+                    raise RuntimeError(
+                        "application materialization PR descendant paths are incomplete"
+                    )
+                delta_paths.add(filename)
+            if not delta_paths.issubset(expected_paths):
+                raise RuntimeError(
+                    "application materialization PR descendant changes unrelated paths"
+                )
+        previous = cast(str, sha)
+
+    if previous != revision:
+        raise RuntimeError(
+            "application materialization PR head is not the final accepted descendant"
+        )
+    for file in request.files:
+        if not _valid_sha(_content_sha_at(repository, token, path=file.path, revision=revision)):
+            raise RuntimeError("application materialization PR head is missing a manifest path")
 
 
 def _create_revision(
@@ -588,11 +729,13 @@ def _pending_new_carrier(
     revision = _branch_head(repository, token, request.branch)
     if revision is None:
         raise RuntimeError("application materialization pending carrier branch is unavailable")
-    _verify_revision(repository, token, request, revision)
     prs = _matching_prs(repository, token, request.branch)
     if len(prs) > 1:
         raise RuntimeError("application materialization pending carrier count is ambiguous")
     if not prs:
+        # Before PR creation the branch-ref interruption prefix remains exact:
+        # only the one accepted content commit may be resumed.
+        _verify_revision(repository, token, request, revision)
         raise CarrierRequired(
             _new_carrier_pr_plan(
                 request,
@@ -616,6 +759,7 @@ def _pending_new_carrier(
         base_revision=request.base_sha,
     ):
         raise RuntimeError("application materialization pending carrier identity is invalid")
+    _verify_existing_pr_revision_lineage(repository, token, request, revision)
     return revision, cast(int, number)
 
 
