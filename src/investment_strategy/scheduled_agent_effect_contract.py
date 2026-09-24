@@ -73,6 +73,14 @@ class ConsequenceSpec:
 
 
 _EVIDENCE_TARGET_OVERRIDES: Final[dict[tuple[Action, ResultKind], EvidenceTarget]] = {
+    (
+        Action.PROPOSE_CHANGE,
+        ResultKind.READY_FOR_OPENSPEC_REVIEW,
+    ): EvidenceTarget.MATERIALIZED_REVISION,
+    (
+        Action.RESOLVE_QUESTION,
+        ResultKind.READY_FOR_OPENSPEC_REVIEW,
+    ): EvidenceTarget.MATERIALIZED_REVISION,
     (Action.FINALIZE_CHANGE, ResultKind.ARCHIVE_READY): EvidenceTarget.ARCHIVE_PR_HEAD,
     (Action.REVIEW_ARCHIVE, ResultKind.PASS): EvidenceTarget.ARCHIVE_PR_HEAD,
     (Action.MERGE_ARCHIVE_PR, ResultKind.MERGED): EvidenceTarget.MERGED_PR_HEAD,
@@ -89,6 +97,10 @@ _EVIDENCE_TARGET_OVERRIDES: Final[dict[tuple[Action, ResultKind], EvidenceTarget
 
 
 _MISSING_EFFECT_OVERRIDES: Final[dict[tuple[Action, ResultKind], str]] = {
+    (
+        Action.PROPOSE_CHANGE,
+        ResultKind.READY_FOR_OPENSPEC_REVIEW,
+    ): "application-materialize-or-formal-result",
     (Action.FINALIZE_CHANGE, ResultKind.ARCHIVE_READY): "archive-pr-create-or-reuse",
 }
 
@@ -153,6 +165,8 @@ def _build_consequence_specs() -> Mapping[tuple[Action, ResultKind], Consequence
                 completion_predicate=(
                     "archive-pr-successor-ready"
                     if target is EvidenceTarget.ARCHIVE_PR_HEAD
+                    else "materialized-revision-and-successor-ready"
+                    if target is EvidenceTarget.MATERIALIZED_REVISION
                     else "formal-result-and-successor-ready"
                     if results[result] is not None
                     else "formal-result-and-terminal-ready"
