@@ -1140,7 +1140,7 @@ def test_accepted_322_work_product_recovers_safe_historical_pr_base(
         },
         "base": {
             "ref": "main",
-            "sha": historical_base,
+            "sha": authorization_revision,
             "repo": {"full_name": _REPOSITORY},
         },
     }
@@ -1913,3 +1913,34 @@ def test_apply_work_product_reuses_current_head_without_commit_when_ancestry_div
     assert target.change == _CONTINUATION_CHANGE
     assert tree_payloads == []
     assert commit_payloads == []
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        [{"filename": "src/file.py"}],
+        [{"filename": "src/file.py", "status": "rewritten"}],
+        [
+            {"filename": "src/file.py", "status": "modified"},
+            {"filename": "src/file.py", "status": "modified"},
+        ],
+    ],
+    ids=("missing-status", "unknown-status", "duplicate-filename"),
+)
+def test_comparison_file_paths_reject_malformed_or_duplicate_entries(
+    monkeypatch: pytest.MonkeyPatch,
+    files: list[dict[str, str]],
+) -> None:
+    monkeypatch.setattr(
+        resource,
+        "_github_json",
+        lambda *_args, **_kwargs: {"files": files},
+    )
+
+    with pytest.raises(RuntimeError, match="comparison is malformed"):
+        resource._comparison_file_paths(
+            _REPOSITORY,
+            _FIXTURE_VALUE,
+            base_sha=_REVISION,
+            revision=_PR_HEAD,
+        )
