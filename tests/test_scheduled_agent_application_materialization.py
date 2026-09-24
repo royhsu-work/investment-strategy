@@ -1378,7 +1378,11 @@ def test_pending_first_carrier_rejects_incomplete_default_ancestry_comparison(
 
     monkeypatch.setattr(materialization, "_github_json", fake_github_json)
     monkeypatch.setattr(materialization, "_comparison_file_paths", lambda *_args, **_kwargs: {"src/unrelated.py"})
-    monkeypatch.setattr(materialization, "_content_sha_at", lambda *_args, **_kwargs: _BLOB)
+    monkeypatch.setattr(
+        materialization,
+        "_content_sha_at",
+        lambda _repo, _token, *, path, revision: _BLOB if revision == carrier_head else None,
+    )
     monkeypatch.setattr(materialization, "_branch_head", lambda *_args: carrier_head)
 
     with pytest.raises(RuntimeError, match="ancestor|ancestry|incomplete"):

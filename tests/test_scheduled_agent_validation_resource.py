@@ -2268,7 +2268,11 @@ def test_revision_matches_manifest_rejects_incomplete_or_renamed_paths(
                 "files": [entry],
             }
         if api_path == f"git/commits/{revision}":
-            return {"sha": revision, "parents": [{"sha": base}]}
+            return {
+                "sha": revision,
+                "message": manifest.message,
+                "parents": [{"sha": base}],
+            }
         raise AssertionError(api_path)
 
     monkeypatch.setattr(resource, "_github_json", fake_github_json)
