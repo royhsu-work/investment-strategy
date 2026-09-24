@@ -1927,28 +1927,35 @@ class GitHubEffectAdapter:
         branch = payload.get("head")
         base = payload.get("base")
         if not isinstance(branch, str) or not isinstance(base, str):
-            return None
+            raise RuntimeError("carrier PR discovery request is incomplete")
         owner = self.repository.split("/", 1)[0]
         head = f"{owner}:{branch}"
         query = "pulls?state=all"
         query += f"&head={quote(head, safe='')}"
-        query += f"&base={quote(base, safe='')}"
         query += "&per_page=100"
         response = _github_json(self.repository, self.token, query)
-        if not isinstance(response, list):
-            return None
+        if not isinstance(response, list) or len(response) >= 100:
+            raise RuntimeError("carrier PR discovery is incomplete")
+
         matches: list[Mapping[str, object]] = []
         for item in response:
             if not isinstance(item, Mapping):
-                continue
+                raise RuntimeError("carrier PR discovery is malformed")
             number = item.get("number")
+            item_head = item.get("head")
             if (
-                isinstance(number, int)
-                and not isinstance(number, bool)
-                and number > 0
-                and self._pull_request_matches_create(item, number, payload)
+                isinstance(number, bool)
+                or not isinstance(number, int)
+                or number <= 0
+                or not isinstance(item_head, Mapping)
+                or item_head.get("ref") != branch
+                or _repository_full_name(item_head.get("repo")) != self.repository
+                or not _valid_sha(item_head.get("sha"))
             ):
-                matches.append(item)
+                raise RuntimeError("carrier PR discovery is malformed")
+            if not self._pull_request_matches_create(item, number, payload):
+                raise RuntimeError("carrier PR discovery found a competing or stale carrier")
+            matches.append(item)
         if len(matches) > 1:
             raise RuntimeError("carrier PR target is ambiguous: duplicate matching PRs")
         return None if not matches else matches[0]

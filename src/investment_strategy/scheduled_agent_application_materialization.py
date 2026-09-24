@@ -37,10 +37,12 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _as_mapping,
     _change_from_issue,
     _comparison_file_paths,
+    _comparison_paths_from_file_entries,
     _content_sha_at,
     _current_authorized_request,
     _current_default_branch,
     _github_json,
+    _historical_manifest_observation_matches,
     _is_executor_config_authoring,
     _is_executor_task_and_implementation_materialization,
     _is_executor_task_bookkeeping,
@@ -332,6 +334,7 @@ def _verify_revision(
         or comparison.get("status") != "ahead"
         or _positive_int(comparison.get("ahead_by")) != 1
         or comparison.get("behind_by") != 0
+        or comparison.get("too_large") is True
         or not _valid_sha(revision)
         or base_commit is None
         or base_commit.get("sha") != request.base_sha
@@ -345,13 +348,15 @@ def _verify_revision(
         or len(files) >= 300
     ):
         raise RuntimeError("application materialization revision is not one commit on the base")
-    observed_paths: set[str] = set()
-    for raw_file in files:
-        observed_file = _as_mapping(raw_file)
-        filename = None if observed_file is None else observed_file.get("filename")
-        if not isinstance(filename, str) or filename in observed_paths:
-            raise RuntimeError("application materialization revision file evidence is incomplete")
-        observed_paths.add(filename)
+    try:
+        observed_paths = _comparison_paths_from_file_entries(
+            files,
+            malformed_error="application materialization revision file evidence is incomplete",
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "application materialization revision file evidence is incomplete"
+        ) from exc
     if observed_paths != {file.path for file in request.files}:
         raise RuntimeError("application materialization revision contains unrelated paths")
     for file in request.files:
@@ -401,13 +406,10 @@ def _verify_existing_pr_revision_lineage(
     ):
         raise RuntimeError("application materialization PR lineage is incomplete")
 
-    changed_paths: set[str] = set()
-    for raw_file in files:
-        observed_file = _as_mapping(raw_file)
-        filename = None if observed_file is None else observed_file.get("filename")
-        if not isinstance(filename, str) or filename in changed_paths:
-            raise RuntimeError("application materialization PR path evidence is incomplete")
-        changed_paths.add(filename)
+    changed_paths = _comparison_paths_from_file_entries(
+        files,
+        malformed_error="application materialization PR path evidence is incomplete",
+    )
     if changed_paths != expected_paths:
         raise RuntimeError("application materialization PR contains unrelated or missing paths")
 
@@ -468,19 +470,15 @@ def _verify_existing_pr_revision_lineage(
                 or not isinstance(delta_files, list)
                 or not delta_files
                 or len(delta_files) >= 300
+                or delta.get("too_large") is True
             ):
                 raise RuntimeError(
                     "application materialization PR descendant evidence is incomplete"
                 )
-            delta_paths: set[str] = set()
-            for raw_file in delta_files:
-                delta_file = _as_mapping(raw_file)
-                filename = None if delta_file is None else delta_file.get("filename")
-                if not isinstance(filename, str) or filename in delta_paths:
-                    raise RuntimeError(
-                        "application materialization PR descendant paths are incomplete"
-                    )
-                delta_paths.add(filename)
+            delta_paths = _comparison_paths_from_file_entries(
+                delta_files,
+                malformed_error="application materialization PR descendant paths are incomplete",
+            )
             if not delta_paths.issubset(expected_paths):
                 raise RuntimeError(
                     "application materialization PR descendant changes unrelated paths"
@@ -702,30 +700,17 @@ def _pending_new_carrier(
 ) -> tuple[str, int]:
     """Reconcile an existing first carrier after a disjoint default-branch advance."""
 
-    comparison = _as_mapping(
-        cast(
-            object,
-            _github_json(
-                repository,
-                token,
-                f"compare/{request.base_sha}...{current_revision}",
-            ),
+    try:
+        default_paths = _ancestor_comparison_paths(
+            repository,
+            token,
+            base_sha=request.base_sha,
+            revision=current_revision,
         )
-    )
-    base_commit = None if comparison is None else _as_mapping(comparison.get("base_commit"))
-    if (
-        comparison is None
-        or comparison.get("status") != "ahead"
-        or base_commit is None
-        or base_commit.get("sha") != request.base_sha
-    ):
-        raise RuntimeError("application materialization first-carrier base is not an ancestor")
-    default_paths = _comparison_file_paths(
-        repository,
-        token,
-        base_sha=request.base_sha,
-        revision=current_revision,
-    )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "application materialization first-carrier base is not an ancestor"
+        ) from exc
     carrier_paths = {file.path for file in request.files}
     if default_paths.intersection(carrier_paths):
         raise RuntimeError(
@@ -756,15 +741,21 @@ def _pending_new_carrier(
         )
     pr = prs[0]
     number = pr.get("number")
-    if _positive_int(number) is None or not _pr_matches(
-        pr,
-        repository=repository,
-        branch=request.branch,
-        default_branch=default_branch,
-        revision=revision,
-        issue_number=source.issue_number,
-        change=request.change,
-        base_revision=request.base_sha,
+    base = _as_mapping(pr.get("base"))
+    base_revision = None if base is None else base.get("sha")
+    if (
+        _positive_int(number) is None
+        or not _pr_matches(
+            pr,
+            repository=repository,
+            branch=request.branch,
+            default_branch=default_branch,
+            revision=revision,
+            issue_number=source.issue_number,
+            change=request.change,
+        )
+        or not _valid_sha(base_revision)
+        or base_revision not in {request.base_sha, current_revision}
     ):
         raise RuntimeError("application materialization pending carrier identity is invalid")
     _verify_existing_pr_revision_lineage(repository, token, request, revision)
@@ -1588,10 +1579,11 @@ def _observe_nonimplementation_existing_target(
     token: str,
     default_branch: str,
     current_revision: str,
+    allow_pending_continuation: bool = False,
 ) -> ValidationResourceTarget:
     if request.pr_number is None:
         raise RuntimeError("application materialization validation target lacks PR")
-    if request.base_sha != current_revision:
+    if request.base_sha != current_revision and not allow_pending_continuation:
         raise RuntimeError("application materialization authorization base is stale")
     pr = _open_pr_payload(
         repository=repository,
@@ -1617,23 +1609,61 @@ def _observe_nonimplementation_existing_target(
     )
     if len(prs) != 1 or prs[0].get("number") != request.pr_number:
         raise RuntimeError("application materialization carrier identity is ambiguous")
-    try:
-        _ancestor_comparison_paths(
-            repository,
-            token,
-            base_sha=current_revision,
+    if request.base_sha != current_revision:
+        all_prs = _matching_prs(repository, token, request.branch)
+        if len(all_prs) != 1 or all_prs[0].get("number") != request.pr_number:
+            raise RuntimeError("application materialization carrier identity is ambiguous")
+    base = _as_mapping(pr.get("base"))
+    base_revision = None if base is None else base.get("sha")
+    if (
+        not _pr_matches(
+            pr,
+            repository=repository,
+            branch=request.branch,
+            default_branch=default_branch,
+            revision=cast(str, revision),
+            issue_number=source.issue_number,
+            change=request.change,
+        )
+        or not _valid_sha(base_revision)
+        or base_revision not in {request.base_sha, current_revision}
+    ):
+        raise RuntimeError("application materialization carrier identity is invalid")
+
+    manifest = WorkProductManifest(
+        branch=request.branch,
+        base_sha=request.base_sha,
+        message=request.message,
+        files=request.files,
+    )
+    if request.base_sha == current_revision:
+        try:
+            _ancestor_comparison_paths(
+                repository,
+                token,
+                base_sha=current_revision,
+                revision=cast(str, revision),
+            )
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "application materialization PR head omits authorized default history"
+            ) from exc
+        manifest_is_current = _manifest_is_current(
+            request,
+            repository=repository,
+            token=token,
             revision=cast(str, revision),
         )
-    except RuntimeError as exc:
-        raise RuntimeError(
-            "application materialization PR head omits authorized default history"
-        ) from exc
-    if not _manifest_is_current(
-        request,
-        repository=repository,
-        token=token,
-        revision=cast(str, revision),
-    ):
+    else:
+        manifest_is_current = _historical_manifest_observation_matches(
+            repository,
+            token,
+            historical_base_sha=request.base_sha,
+            authorization_revision=current_revision,
+            carrier_revision=cast(str, revision),
+            manifest=manifest,
+        )
+    if not manifest_is_current:
         raise RuntimeError("application materialization manifest is not current")
     return _target(
         request,
@@ -1761,6 +1791,7 @@ def observe_materialization_target(
         token=token,
         default_branch=default_branch,
         current_revision=current_revision,
+        allow_pending_continuation=allow_pending_continuation,
     )
 
 

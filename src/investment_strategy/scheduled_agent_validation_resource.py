@@ -1110,25 +1110,38 @@ def _revision_matches_manifest(
     comparison = _as_mapping(
         cast(object, _github_json(repository, token, f"compare/{base_sha}...{revision}"))
     )
+    base_commit = None if comparison is None else _as_mapping(comparison.get("base_commit"))
     files = None if comparison is None else comparison.get("files")
     commits = None if comparison is None else comparison.get("commits")
+    ahead_by = None if comparison is None else comparison.get("ahead_by")
+    behind_by = None if comparison is None else comparison.get("behind_by")
     if (
         comparison is None
         or comparison.get("status") != "ahead"
-        or comparison.get("ahead_by") != 1
-        or comparison.get("behind_by") != 0
+        or isinstance(ahead_by, bool)
+        or not isinstance(ahead_by, int)
+        or ahead_by != 1
+        or isinstance(behind_by, bool)
+        or not isinstance(behind_by, int)
+        or behind_by != 0
+        or comparison.get("too_large") is True
+        or not _valid_sha(base_sha)
+        or not _valid_sha(revision)
+        or base_commit is None
+        or base_commit.get("sha") != base_sha
         or not isinstance(commits, list)
         or len(commits) != 1
         or not isinstance(files, list)
+        or len(files) >= 300
     ):
         return False
-    paths: set[str] = set()
-    for raw_file in files:
-        file = _as_mapping(raw_file)
-        filename = None if file is None else file.get("filename")
-        if not isinstance(filename, str):
-            return False
-        paths.add(filename)
+    try:
+        paths = _comparison_paths_from_file_entries(
+            files,
+            malformed_error="work-product manifest comparison paths are incomplete",
+        )
+    except RuntimeError:
+        return False
     if paths != {file.path for file in manifest.files}:
         return False
     commit = _as_mapping(cast(object, _github_json(repository, token, f"git/commits/{revision}")))
@@ -1146,6 +1159,52 @@ def _revision_matches_manifest(
         _content_sha_at(repository, token, path=file.path, revision=revision) == file.blob_sha
         for file in manifest.files
     )
+
+
+def _comparison_paths_from_file_entries(
+    files: object,
+    *,
+    malformed_error: str,
+    reject_duplicate_filenames: bool = True,
+) -> set[str]:
+    """Return complete changed-path evidence including both ends of renames."""
+
+    if not isinstance(files, list):
+        raise RuntimeError(malformed_error)
+    paths: set[str] = set()
+    filenames: set[str] = set()
+    previous_filenames: set[str] = set()
+    valid_statuses = {"added", "modified", "removed", "renamed"}
+    for raw_file in files:
+        file = _as_mapping(raw_file)
+        filename = None if file is None else file.get("filename")
+        status = None if file is None else file.get("status")
+        previous_filename = None if file is None else file.get("previous_filename")
+        if (
+            not isinstance(filename, str)
+            or not filename
+            or not isinstance(status, str)
+            or status not in valid_statuses
+        ):
+            raise RuntimeError(malformed_error)
+        if filename in previous_filenames or (reject_duplicate_filenames and filename in filenames):
+            raise RuntimeError(malformed_error)
+        filenames.add(filename)
+        paths.add(filename)
+        if status == "renamed":
+            if (
+                not isinstance(previous_filename, str)
+                or not previous_filename
+                or previous_filename == filename
+                or previous_filename in filenames
+                or previous_filename in previous_filenames
+            ):
+                raise RuntimeError(malformed_error)
+            previous_filenames.add(previous_filename)
+            paths.add(previous_filename)
+        elif previous_filename is not None:
+            raise RuntimeError(malformed_error)
+    return paths
 
 
 def _comparison_file_paths(
@@ -1166,14 +1225,10 @@ def _comparison_file_paths(
         or len(files) >= 300
     ):
         raise RuntimeError("work-product reconciliation file comparison is incomplete")
-    paths: set[str] = set()
-    for raw_file in files:
-        file = _as_mapping(raw_file)
-        filename = None if file is None else file.get("filename")
-        if not isinstance(filename, str) or not filename:
-            raise RuntimeError("work-product reconciliation file comparison is malformed")
-        paths.add(filename)
-    return paths
+    return _comparison_paths_from_file_entries(
+        files,
+        malformed_error="work-product reconciliation file comparison is malformed",
+    )
 
 
 def _ancestor_comparison_paths(
@@ -1212,14 +1267,11 @@ def _ancestor_comparison_paths(
     ):
         raise RuntimeError("work-product historical carrier ancestry evidence is incomplete")
 
-    paths: set[str] = set()
-    for raw_file in files:
-        file = _as_mapping(raw_file)
-        filename = None if file is None else file.get("filename")
-        if not isinstance(filename, str) or not filename or filename in paths:
-            raise RuntimeError("work-product historical carrier path evidence is malformed")
-        paths.add(filename)
-    return paths
+    return _comparison_paths_from_file_entries(
+        files,
+        malformed_error="work-product historical carrier path evidence is malformed",
+        reject_duplicate_filenames=True,
+    )
 
 
 def _safe_historical_carrier_reconciliation(
@@ -1429,6 +1481,62 @@ def _manifest_expected_content_matches_base(
 
 def _reconciliation_message(change: str) -> str:
     return f"Reconcile default-branch ancestry for {change}"
+
+
+def _historical_manifest_observation_matches(
+    repository: str,
+    token: str,
+    *,
+    historical_base_sha: str,
+    authorization_revision: str,
+    carrier_revision: str,
+    manifest: WorkProductManifest,
+) -> bool:
+    """Prove an exact already-materialized manifest across a disjoint main advance.
+
+    This is a read-only completion predicate. Default-branch changes must be
+    disjoint from the requested manifest paths; unrelated paths already on
+    the carrier do not invalidate an exact manifest observation.
+    """
+
+    if (
+        not _valid_sha(historical_base_sha)
+        or historical_base_sha != manifest.base_sha
+        or historical_base_sha == authorization_revision
+        or not _valid_sha(authorization_revision)
+        or not _valid_sha(carrier_revision)
+    ):
+        raise RuntimeError("work-product historical manifest identity is invalid")
+    default_paths = _ancestor_comparison_paths(
+        repository,
+        token,
+        base_sha=historical_base_sha,
+        revision=authorization_revision,
+    )
+    carrier_paths = _ancestor_comparison_paths(
+        repository,
+        token,
+        base_sha=historical_base_sha,
+        revision=carrier_revision,
+    )
+    manifest_paths = {file.path for file in manifest.files}
+    if default_paths.intersection(manifest_paths):
+        raise RuntimeError("work-product historical manifest overlaps default-branch changes")
+    if not manifest_paths.issubset(carrier_paths):
+        return False
+    if not _manifest_expected_content_matches_base(
+        repository,
+        token,
+        base_sha=historical_base_sha,
+        manifest=manifest,
+    ):
+        raise RuntimeError("work-product historical manifest base content is stale")
+    return _manifest_content_matches(
+        repository,
+        token,
+        revision=carrier_revision,
+        manifest=manifest,
+    )
 
 
 def _is_reconciled_work_product_revision(
@@ -1941,6 +2049,38 @@ def apply_work_product(
             expected_change=plan.expected_change,
             authorization_revision=authorization_revision,
         )
+        if (
+            not default_branch_is_ancestor
+            and plan.manifest.base_sha != authorization_revision
+            and (
+                base.get("sha") == plan.manifest.base_sha
+                or base.get("sha") == authorization_revision
+            )
+        ):
+            observed_prs = _open_prs_for_branch(
+                repository,
+                token,
+                branch=expected_branch,
+                default_branch=default_branch,
+            )
+            if len(observed_prs) != 1 or observed_prs[0].get("number") != plan.pr_number:
+                raise RuntimeError("work-product historical carrier identity is ambiguous")
+            if _historical_manifest_observation_matches(
+                repository,
+                token,
+                historical_base_sha=plan.manifest.base_sha,
+                authorization_revision=authorization_revision,
+                carrier_revision=current_head,
+                manifest=plan.manifest,
+            ):
+                return ValidationResourceTarget(
+                    repository=repository,
+                    revision=current_head,
+                    correlation=f"effect-request-{plan.source.issue_number}",
+                    pr_number=plan.pr_number,
+                    change=plan.expected_change,
+                    branch=expected_branch,
+                )
         if default_branch_is_ancestor and (manifest_applied or reconciled):
             return ValidationResourceTarget(
                 repository=repository,
