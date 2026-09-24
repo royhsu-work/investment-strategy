@@ -2044,3 +2044,184 @@ def test_live_322_accepted_manifest_on_existing_pr_head_recovers_after_interrupt
         change=change,
         branch=branch,
     )
+
+
+def test_live_322_manifest_recovers_after_disjoint_default_advance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(322, "lead", "resolve-question")
+    change = "restore-no-work-idle-discovery"
+    historical_base = "d019fdc604e8a7fa40e2f3e6436a12b076658057"
+    authorization_revision = "dd2b1b2885ba35d4654b1b424b6627c0754e1d28"
+    carrier_revision = "7af49c85ebcb1cc22435913a154e9895bf43cdd2"
+    branch = f"agent/{change}"
+    manifest_values = (
+        (
+            f"openspec/changes/{change}/proposal.md",
+            "bdeffd94ff01c7f3e2fd4e8e12c3b535b9df6932",
+            "6003d898fae7c40c59d08e3023ed131baf41b383",
+        ),
+        (
+            f"openspec/changes/{change}/design.md",
+            "8096b24682c77d37e177e68e3460712af7de3325",
+            "05cfb1579bb4a7c6480f180e9a7e025fdb5fde27",
+        ),
+        (
+            f"openspec/changes/{change}/tasks.md",
+            "4e428b3ead7ef6aa0de6cabfaef4885932a28d22",
+            "331dc671ea6fa05c8fb2d40cc3f6dc65a31a6f0a",
+        ),
+        (
+            f"openspec/changes/{change}/specs/scheduled-agent-workflow/spec.md",
+            "d1861dd5b6a190f821fdf99ec7bb2d36fe5db208",
+            "a8ec4b39e5287651ad58cf2b2e0e1a31113cdf06",
+        ),
+    )
+    manifest = resource.WorkProductManifest(
+        branch=branch,
+        base_sha=historical_base,
+        message="Resolve exact-head OpenSpec findings for #322",
+        files=tuple(
+            resource.WorkProductFile(path, blob, expected)
+            for path, blob, expected in manifest_values
+        ),
+    )
+    plan = resource.WorkProductPlan(
+        True,
+        source=source,
+        pr_number=324,
+        expected_change=change,
+        manifest=manifest,
+    )
+    shared_code_path = "src/investment_strategy/scheduled_agent_validation_resource.py"
+    default_paths = {
+        shared_code_path,
+        "src/investment_strategy/scheduled_agent_application_materialization.py",
+    }
+    carrier_paths = {path for path, _blob, _expected in manifest_values} | default_paths
+    mutation_calls: list[str] = []
+    comparison_reads: list[str] = []
+    pr = {
+        "number": 324,
+        "state": "open",
+        "merged": False,
+        "draft": False,
+        "title": f"OpenSpec: {change}",
+        "body": f"Formalize OpenSpec change `{change}`.\n\nRefs #322",
+        "head": {
+            "ref": branch,
+            "sha": carrier_revision,
+            "repo": {"full_name": _REPOSITORY},
+        },
+        "base": {
+            "ref": "main",
+            "sha": authorization_revision,
+            "repo": {"full_name": _REPOSITORY},
+        },
+    }
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        **_kwargs: object,
+    ) -> object:
+        if method != "GET":
+            mutation_calls.append(f"{method} {api_path}")
+        if api_path.startswith("compare/"):
+            comparison = api_path.removeprefix("compare/")
+            comparison_reads.append(comparison)
+            if comparison == f"{historical_base}...{authorization_revision}":
+                return {
+                    "status": "ahead",
+                    "ahead_by": 8,
+                    "behind_by": 0,
+                    "base_commit": {"sha": historical_base},
+                    "too_large": False,
+                    "files": [
+                        {"filename": path, "status": "modified"}
+                        for path in sorted(default_paths)
+                    ],
+                }
+            if comparison == f"{historical_base}...{carrier_revision}":
+                return {
+                    "status": "ahead",
+                    "ahead_by": 4,
+                    "behind_by": 0,
+                    "base_commit": {"sha": historical_base},
+                    "too_large": False,
+                    "files": [
+                        {
+                            "filename": path,
+                            "status": "added" if path.startswith("openspec/") else "modified",
+                        }
+                        for path in sorted(carrier_paths)
+                    ],
+                }
+            if comparison == f"{authorization_revision}...{carrier_revision}":
+                return {
+                    "status": "diverged",
+                    "ahead_by": 4,
+                    "behind_by": 8,
+                    "merge_base_commit": {"sha": historical_base},
+                }
+        if api_path.startswith("contents/") and method == "GET":
+            raw_path, _separator, query = api_path.partition("?")
+            path = raw_path.removeprefix("contents/")
+            reference = query.removeprefix("ref=")
+            by_path = {
+                file_path: (blob, expected)
+                for file_path, blob, expected in manifest_values
+            }
+            if path not in by_path:
+                return None
+            blob, expected = by_path[path]
+            if reference == historical_base:
+                return {"sha": expected}
+            if reference == carrier_revision:
+                return {"sha": blob}
+            return None
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path}")
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_args: source)
+    monkeypatch.setattr(resource, "_open_pr_payload", lambda **_kwargs: pr)
+    monkeypatch.setattr(
+        resource,
+        "_open_prs_for_branch",
+        lambda *_args, **_kwargs: (pr,),
+    )
+    monkeypatch.setattr(
+        resource,
+        "_ref_head_sha",
+        lambda _repo, _token, ref, **_kwargs: (
+            authorization_revision if ref == "main" else carrier_revision
+        ),
+    )
+    monkeypatch.setattr(
+        resource,
+        "_is_reconciled_work_product_revision",
+        lambda *_args, **_kwargs: False,
+    )
+
+    target = resource.apply_work_product(
+        plan,
+        repository=_REPOSITORY,
+        token=_FIXTURE_VALUE,
+        default_branch="main",
+        authorization_revision=authorization_revision,
+    )
+
+    assert target == resource.ValidationResourceTarget(
+        repository=_REPOSITORY,
+        revision=carrier_revision,
+        correlation="effect-request-322",
+        pr_number=324,
+        change=change,
+        branch=branch,
+    )
+    assert f"{historical_base}...{authorization_revision}" in comparison_reads
+    assert f"{historical_base}...{carrier_revision}" in comparison_reads
+    assert mutation_calls == []
