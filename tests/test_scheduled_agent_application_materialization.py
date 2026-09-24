@@ -258,6 +258,14 @@ def test_initial_carrier_resume_after_disjoint_default_advance_is_read_only(
         api_path: str,
         **_kwargs: object,
     ) -> object:
+        if api_path == f"compare/{old_base}...{old_base}":
+            return {
+                "status": "identical",
+                "ahead_by": 0,
+                "behind_by": 0,
+                "base_commit": {"sha": old_base},
+                "files": [],
+            }
         if api_path == f"compare/{old_base}...{current_default}":
             return {
                 "status": "ahead",
@@ -1737,7 +1745,7 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
     source = WorkerRequest(322, "lead", "resolve-question")
     change = "restore-no-work-idle-discovery"
     old_base = "d019fdc604e8a7fa40e2f3e6436a12b076658057"
-    current_default = "77a2c86ebae1a2e1e1136c3e147b2f012be8231d"
+    current_default = "f5fad326173b21feb5455bcb917766a383a76f7b"
     pr_base = "1db00c4b50175af30d4dc9febe461cbab8bac5bf"
     carrier_head = "5de9641a3e3e7e26071f3f8cdc1843e3fa842049"
     repository = "royhsu-work/investment-strategy"
@@ -1812,6 +1820,8 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
     manifest_paths = {cast(str, file["path"]) for file in files}
 
     historical_pr_base_overlaps = False
+    historical_main_carrier_overlap = [False]
+    overlap_path = "src/investment_strategy/scheduled_agent_validation_resource.py"
     paths_to_pr_base = {
         "src/investment_strategy/scheduled_agent_application_materialization.py",
         "src/investment_strategy/scheduled_agent_effect_contract.py",
@@ -1826,9 +1836,13 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
         "tests/test_scheduled_agent_validation_resource.py",
     }
     paths_after_pr_base = {
+        "src/investment_strategy/scheduled_agent_application_materialization.py",
         "src/investment_strategy/scheduled_agent_validation_resource.py",
         "tests/test_scheduled_agent_application_materialization.py",
     }
+    carrier_paths_after_pr_base = set(manifest_paths)
+    overlap_path = "src/investment_strategy/scheduled_agent_validation_resource.py"
+    historical_carrier_overlap = [False]
     paths_to_current = paths_to_pr_base | paths_after_pr_base
 
     def historical_paths(
@@ -1838,6 +1852,10 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
         base_sha: str,
         revision: str,
     ) -> set[str]:
+        if base_sha == old_base and revision == old_base:
+            return set()
+        if base_sha == current_default and revision == current_default:
+            return set()
         if base_sha == old_base and revision == pr_base:
             if historical_pr_base_overlaps:
                 return {next(iter(manifest_paths))}
@@ -1846,7 +1864,16 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
             return paths_to_current
         if base_sha == pr_base and revision == current_default:
             return paths_after_pr_base
+        if base_sha == current_default and revision == carrier_head:
+            raise RuntimeError("current PR base is not an ancestor of the carrier")
+        if base_sha == pr_base and revision == carrier_head:
+            carrier_paths = set(carrier_paths_after_pr_base)
+            if historical_carrier_overlap[0]:
+                carrier_paths.add(overlap_path)
+            return carrier_paths
         if base_sha == old_base and revision == carrier_head:
+            if historical_main_carrier_overlap[0]:
+                return manifest_paths | {overlap_path}
             return manifest_paths
         if base_sha == old_base and revision == "a" * 40:
             raise RuntimeError("comparison is not an ancestor")
@@ -1962,3 +1989,45 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
         target=applied_target,
         allow_pending_continuation=True,
     )
+
+    historical_pr_base_overlaps = False
+    historical_carrier_overlap[0] = True
+    assert not materialization.materialization_postcondition(
+        payload,
+        source,
+        repository=repository,
+        token=_TOKEN,
+        current_revision=current_default,
+        default_branch="main",
+        target=applied_target,
+        allow_pending_continuation=True,
+    )
+
+    monkeypatch.setattr(
+        validation_resource,
+        "_manifest_content_matches",
+        lambda _repo, _token, *, revision, manifest: (
+            revision == carrier_head
+            and {file.path for file in manifest.files} == manifest_paths
+            and {file.blob_sha for file in manifest.files}
+            == {cast(str, file["blob_sha"]) for file in files}
+        ),
+    )
+    historical_pr_base_overlaps = False
+    historical_main_carrier_overlap[0] = True
+    endpoint_successes: list[str] = []
+    for endpoint_base in (old_base, current_default):
+        pr_base_payload["sha"] = endpoint_base
+        if materialization.materialization_postcondition(
+            payload,
+            source,
+            repository=repository,
+            token=_TOKEN,
+            current_revision=current_default,
+            default_branch="main",
+            target=applied_target,
+            allow_pending_continuation=True,
+        ):
+            endpoint_successes.append(endpoint_base)
+
+    assert endpoint_successes == []

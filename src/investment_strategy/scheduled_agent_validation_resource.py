@@ -1274,6 +1274,65 @@ def _ancestor_comparison_paths(
     )
 
 
+def _validate_historical_pr_base(
+    repository: str,
+    token: str,
+    *,
+    request_base_sha: str,
+    pr_base_sha: str,
+    authorization_revision: str,
+    carrier_revision: str,
+    requested_paths: set[str],
+) -> None:
+    """Verify historical ancestry and reject paths changed on both descendants."""
+
+    if (
+        not _valid_sha(request_base_sha)
+        or not _valid_sha(pr_base_sha)
+        or not _valid_sha(authorization_revision)
+        or not _valid_sha(carrier_revision)
+        or request_base_sha == authorization_revision
+    ):
+        raise RuntimeError("work-product historical PR base identity is invalid")
+    try:
+        changed_before_pr_base = _ancestor_comparison_paths(
+            repository,
+            token,
+            base_sha=request_base_sha,
+            revision=pr_base_sha,
+        )
+        if pr_base_sha == authorization_revision:
+            # The current-main snapshot is not necessarily an ancestor of a
+            # historical carrier. Use the immutable request base as the
+            # common ancestor and prove both descendant path sets are disjoint.
+            default_branch_paths = changed_before_pr_base
+            carrier_comparison_base = request_base_sha
+        else:
+            default_branch_paths = _ancestor_comparison_paths(
+                repository,
+                token,
+                base_sha=pr_base_sha,
+                revision=authorization_revision,
+            )
+            carrier_comparison_base = pr_base_sha
+        carrier_paths = _ancestor_comparison_paths(
+            repository,
+            token,
+            base_sha=carrier_comparison_base,
+            revision=carrier_revision,
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"work-product historical PR base ancestry evidence is incomplete: {exc}"
+        ) from exc
+    if changed_before_pr_base.intersection(requested_paths):
+        raise RuntimeError("work-product historical PR base overlaps requested manifest")
+    if default_branch_paths.intersection(carrier_paths):
+        raise RuntimeError(
+            "work-product historical PR base overlaps default-branch and carrier changes"
+        )
+
+
 def _safe_historical_carrier_reconciliation(
     repository: str,
     token: str,
@@ -2042,14 +2101,19 @@ def apply_work_product(
             expected_change=plan.expected_change,
             authorization_revision=authorization_revision,
         )
-        if (
-            not default_branch_is_ancestor
-            and plan.manifest.base_sha != authorization_revision
-            and (
-                base.get("sha") == plan.manifest.base_sha
-                or base.get("sha") == authorization_revision
+        if not default_branch_is_ancestor and plan.manifest.base_sha != authorization_revision:
+            historical_pr_base = base.get("sha")
+            if not _valid_sha(historical_pr_base):
+                raise RuntimeError("work-product historical PR base identity is incomplete")
+            _validate_historical_pr_base(
+                repository,
+                token,
+                request_base_sha=plan.manifest.base_sha,
+                pr_base_sha=cast(str, historical_pr_base),
+                authorization_revision=authorization_revision,
+                carrier_revision=current_head,
+                requested_paths={file.path for file in plan.manifest.files},
             )
-        ):
             observed_prs = _open_prs_for_branch(
                 repository,
                 token,
