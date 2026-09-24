@@ -420,9 +420,11 @@ def test_main_resumes_live_322_effect_through_the_same_application_owner(
     monkeypatch.setattr(
         bridge,
         "_accepted_worker_result_for_continuation",
-        lambda **kwargs: raw_worker_result
-        if kwargs["request_comment_id"] == 5810765007
-        else pytest.fail("accepted request identity changed"),
+        lambda **kwargs: (
+            raw_worker_result
+            if kwargs["request_comment_id"] == 5810765007
+            else pytest.fail("accepted request identity changed")
+        ),
     )
     monkeypatch.setattr(
         bridge,
