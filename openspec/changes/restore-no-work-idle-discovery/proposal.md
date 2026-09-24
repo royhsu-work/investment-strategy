@@ -4,7 +4,7 @@
 
 Issue #322 identifies a real integration gap on the current default branch: the Action-only repository dispatcher can produce an exact run-scoped `NO_WORK` result, while the Scheduled Task/bootstrap boundary has no executable continuation into the already-governed bounded Lead idle-discovery capability. The result is that a retained semantic capability exists in canonical governance but is unreachable in production.
 
-The current default branch at this Explore boundary is `2e00e236f24ba41302c9ba18c685acdf4cebe4ed`. Fresh reconstruction confirms that `select_work()` and its bridge remain intentionally Action-only, that the bridge emits an exact machine `NO_WORK` artifact, and that the application bridge owns repository mutations and postcondition qualification. No current executable consumer connects that artifact to bounded Lead idle semantics.
+The original Explore reconstruction used default-branch revision `2e00e236f24ba41302c9ba18c685acdf4cebe4ed`; the current continuation baseline is freshly observed as `main@e617a05ada51af9ff8f20697bbf07c4bfc8ec19e`. Fresh reconstruction confirms that normal dispatch and its bridge remain intentionally Action-only, that the bridge emits an exact machine `NO_WORK` artifact, and that repository application owns mutations and postcondition qualification. No current executable consumer connects that artifact to bounded Lead idle semantics.
 
 ## What Changes
 
@@ -13,7 +13,7 @@ The current default branch at this Explore boundary is `2e00e236f24ba41302c9ba18
 - Add a typed, evidence-bound idle request/result contract that is not an Action, normal routing state, queue, cursor, lease, heartbeat, registry, or recovery workflow.
 - Reuse the existing bridge transport, fresh repository preflight, application-owned effect/reconciliation, canonical Issue tuple, and later normal dispatch; consolidate the new boundary into those owners.
 - Add the smallest repository-owned admission actuator for one existing-candidate update or one new routing-complete Explore Issue, with fresh reauthorization, minimal overlap serialization, read-only ambiguous-write reconciliation, and fail-closed guards.
-- Repair the shared application substrate required to make that handoff recoverable: use one canonical fresh materialization observer for apply postconditions; resume an exact first-carrier branch whose PR creation was interrupted only after proving immutable intent, original-base ancestry, path disjointness, exact head/content, and absence of competing PR carriers; reconstruct consequence completion in a fresh process from existing `ConsequenceSpec.evidence_target` owners rather than invocation-local adapter memory; and resume a unique exact accepted application run when an uncorrelated legacy result leaves the current source route unchanged but makes the formal frontier unqualifiable.
+- Repair shared application materialization and consequence recovery so safe ancestor/disjoint continuation, interruption between branch and PR creation, and fresh-process completion reconcile from exact accepted intent and durable repository evidence without replaying completed semantic work or weakening safety guards. Also preserve recovery of one exact accepted application when an uncorrelated legacy result invalidates formal-frontier qualification while the accepted source route remains unchanged.
 - Define and verify the external Scheduled Task/bootstrap activation boundary so a merged repository implementation is not mistaken for production reachability.
 
 ## Decisions and proportionality
@@ -28,7 +28,7 @@ Place idle handoff validation, admission preconditions, and reconciliation in th
 
 ### NO-DELTA
 
-Do not change the Action enum/topology, `select_work()`, normal Role derivation, formal WIP/finish-first ordering, Human authority, normal routing labels, daily control-shard semantics, or the existing Action successor lifecycle. Do not create an idle Action, an idle transition, an `agent:*` normal routing dimension, a second queue/state machine, a cursor, lease, heartbeat, hidden backlog, or registry.
+Do not change normal Action-only dispatch, Role derivation, formal WIP/finish-first ordering, Human authority, normal routing labels, daily transport semantics, or the existing Action successor lifecycle. Do not create an idle Action, an idle transition, an `agent:*` normal routing dimension, a second queue/state machine, a cursor, lease, heartbeat, hidden backlog, or registry.
 
 ### ADD
 
@@ -48,7 +48,7 @@ In scope:
 Out of scope:
 
 - adding any Action or idle lifecycle;
-- moving semantic discovery into `select_work()`;
+- moving semantic discovery into normal dispatch;
 - changing Human approval/provenance rules;
 - creating a second workflow graph, queue, lease, cursor, progress registry, or recovery workflow;
 - changing financial strategy behavior;
@@ -56,11 +56,14 @@ Out of scope:
 
 ## Staged delivery
 
-1. Contract and dark executable substrate: typed `NO_WORK` envelope/result, pure qualification, and negative/positive contract tests without enabling writes.
-2. Safe admission boundary: repository-owned fresh reauthorization, existing/new candidate atomic mutation, overlap serialization, postcondition/reconciliation tests, and application-shaped carrier.
-3. Bootstrap activation and proof: connect the real Scheduled Task/bootstrap to the exact `NO_WORK` artifact, exercise bounded Lead idle semantics, verify no-finding/no-noise and one safe admission, and prove that the next normal wake authorizes ordinary `Lead / explore-change`.
+The shared application recovery is a prerequisite for the idle path. No idle admission or production handoff stage may begin on an N-1 revision that still rejects a valid materialization continuation or cannot reconstruct its durable consequence after process restart.
 
-Each stage remains independently testable, reviewable, mergeable, and deployable on the current N-1 substrate while preserving this parent outcome. A merged repository stage is not completion until the production wake path and the normal Action handoff are observed.
+0. **Shared application materialization and consequence recovery** — N-1 is the freshly read default branch with the existing application behavior. Reproduce the apply/observer contradiction, the branch-ref-without-PR interruption after a disjoint main advance, and fresh-process loss of consequence recognition from current source. Exit only after the shared owners accept the same exact safe materialization, emit only a missing PR consequence when ancestry/path/cardinality/content checks pass, reconstruct already durable consequences after restart, and resume only one exact accepted application across the uncorrelated-result frontier case. Run applicable durable-prefix, stale/overlap/identity/cardinality/ambiguity negatives, focused and full regression, type/lint/format checks, strict OpenSpec validation, and independent implementation review; merge the exact reviewed revision. This repairs shared behavior without enabling idle admission. The parent idle outcome remains mandatory.
+1. **Contract and dark executable substrate** — N-1 is Stage 0 on the default branch. Add the typed run-bound `NO_WORK` handoff and positive/negative qualification while writes and the external idle wake remain disabled. Exit when exact completed `NO_WORK` reaches one bounded Lead semantic request, `AUTHORIZE` and `FAIL_CLOSED` do not, and the Action-only selector and all normal routing remain unchanged under focused and full validation. Candidate admission and production reachability remain mandatory.
+2. **Safe admission boundary** — N-1 is Stage 1 on the default branch. Add one existing-candidate update or new routing-complete Issue create, immediate fresh reauthorization, minimal overlap serialization, exact postcondition, and read-only ambiguous-write reconciliation. Exit when no-finding is mutation-free; unrelated state is preserved; existing/new candidates form one canonical tuple; overlap, stale evidence, interruption, and ambiguous outcomes remain safe; and full applicable gates pass. Scheduled Task/bootstrap production proof remains mandatory.
+3. **Scheduled Task/bootstrap activation and parent proof** — N-1 is Stages 0–2 merged on the default branch. Connect the real Scheduled Task/bootstrap to the exact dispatch artifact and typed boundary; exercise bounded Lead semantics and safe admission; then prove a later ordinary wake authorizes `Lead / explore-change`. Exit only with production-shaped wake, run, and artifact evidence for `AUTHORIZE`/`FAIL_CLOSED` suppression, true `NO_WORK` idle execution, no-finding silence, safe existing/new admission, overlap and interruption recovery, and the later normal Action handoff. Verify the active OpenSpec Change is complete and archive it only through its governed lifecycle. If external scheduler configuration cannot be changed through available authorized capability, the production activation criterion remains unmet and the exact external boundary stays a blocker.
+
+Every stage must have a fresh exact-head review, required validation, and an exact-head merge before the next stage uses it as N-1. Stages are independently testable and deployable while preserving the full parent outcome; their exit criteria do not replace the parent completion evidence below. A merged stage, including Stage 0, is not completion until Stage 3 proves the production wake path and normal Action handoff.
 
 ## Completion evidence
 

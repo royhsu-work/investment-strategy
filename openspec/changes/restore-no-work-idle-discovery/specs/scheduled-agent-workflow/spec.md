@@ -6,7 +6,7 @@ Lead SHALL keep idle discovery/advisory behavior bounded and subordinate to exis
 
 Lead may enter idle discovery only when no formal active or terminal-pending workflow requires advancement, no already eligible pre-activation work should be selected first, and no unresolved orphan/governance evidence requires diagnosis. Reviewer and Executor remain silent when they have no eligible workflow work.
 
-An exact completed run-scoped dispatch result with disposition `NO_WORK` is the only normal-runtime handoff that may invoke this idle mode. The handoff MUST identify one request comment, one successful bridge run, one immutable dispatch-result artifact, and the default-branch revision observed by that run. A disposition of `AUTHORIZE` or `FAIL_CLOSED` MUST NOT invoke idle mode. Idle mode is semantic execution, not a mapped Action; it MUST NOT be selected by or alter `select_work()`.
+An exact completed run-scoped dispatch result with disposition `NO_WORK` is the only normal-runtime handoff that may invoke this idle mode. The handoff MUST identify one request comment, one successful bridge run, one immutable dispatch-result artifact, and the default-branch revision observed by that run. A disposition of `AUTHORIZE` or `FAIL_CLOSED` MUST NOT invoke idle mode. Idle mode is semantic execution, not a mapped Action; it MUST NOT alter normal Action-only dispatch.
 
 When the idle boundary is reached, Lead MAY create an idle advisory Issue containing at most three current recommendations only if no other open `advisory:idle` Issue exists. An advisory Issue MUST NOT contain `agent:*` or `action:*` routing labels and is not itself a coordination workflow instance. If an open advisory remains without valid Human admission, later Lead runs SHALL no-op rather than create duplicate advisory noise.
 
@@ -236,13 +236,13 @@ If an earlier invocation already made a required mutation durable, recovery MAY 
 
 ### Requirement: Materialization and consequence completion resume from canonical durable evidence
 
-Application SHALL use one canonical fresh materialization observer to decide whether an exact materialization postcondition is complete. The apply-time postcondition MUST compare the observed `ValidationResourceTarget` with the target returned by application and MUST preserve the observer's exact Issue, Change, branch, head, PR, manifest/content, source, default-branch, ancestry, and path-disjointness checks. A first carrier based on a prior default-branch revision MAY remain valid only when that revision is a proven ancestor of current main and intervening paths are disjoint from the requested manifest. Its existing PR MUST remain bound to the original authorized base snapshot.
+Application SHALL recognize a materialization as complete only when a fresh current-state assessment proves the exact expected consequence. That assessment MUST bind the same Issue, immutable Change, branch, head, PR, manifest and content, source, default-branch revision, and permitted ancestry and path-disjointness relationship. The application completion report MUST match the freshly observed consequence. A first carrier based on a prior default-branch revision MAY remain valid only when that revision is a proven ancestor of current main and intervening paths are disjoint from the requested manifest. Its existing PR MUST remain bound to the original authorized base snapshot.
 
 After accepted immutable intent has durably produced the exact content commit and branch ref but execution stops before PR creation, a later invocation MAY emit only the missing application-owned PR-create plan after fresh verification of the accepted source, original-base ancestry, path disjointness, exact branch/head/one-commit content, and complete PR discovery by exact head across all base branches. It MUST NOT repeat semantic work, recreate the branch or commit, move or force the ref, or create a PR when any competing, wrong-base, duplicate, contradictory, or incomplete carrier evidence exists. The PR plan MUST target the fresh current default branch and bind the exact existing head and current base revision.
 
-Fresh-process consequence completion SHALL select its positive evidence owner through the existing `ConsequenceSpec.evidence_target` and reconstruct that evidence from authoritative current repository state. Materialization consequences MUST use the canonical materialization observer; implementation-carrier consequences MUST use the existing implementation-carrier qualification owner. A newly constructed observer MUST NOT require invocation-local adapter target memory. This reconstruction MUST retain exact accepted request correlation, formal qualification, source/frontier, current carrier, validation, review, successor, and terminal gates; missing, stale, contradictory, ambiguous, or incomplete evidence fails closed.
+After a process restart, consequence completion SHALL reconstruct whether an exact effect is complete from authoritative current repository evidence. Materialization and implementation-carrier consequences MUST each be recognized only by their existing canonical positive evidence and qualification rules; recognition MUST NOT depend on process-local target memory. This reconstruction MUST retain exact accepted-request correlation, formal qualification, source/frontier, current carrier, validation, review, successor, and terminal gates. Missing, stale, contradictory, ambiguous, or incomplete evidence fails closed.
 
-When formal-frontier qualification fails because a legacy or uncorrelated result follows a durable application acceptance, completion recovery MAY resume that exact accepted application only when the fresh open Issue still matches its exact Issue, immutable Change, Role, and Action; exactly one accepted decision binds the intent; and the existing current-state observer finds exactly one request-bound application run and `apply` job. Resumption MUST use the existing accepted-intent recovery owner and MUST leave fresh authorization, exact effect, and postcondition checks to the ordinary application path. It MUST NOT treat the uncorrelated result as a formal consequence, derive or persist a successor from it, or repeat semantic work. Changed source identity, stale authorization, duplicate accepted decisions, duplicate application runs/jobs, or incomplete evidence MUST remain fail closed.
+When a legacy or uncorrelated result makes the formal source frontier unqualifiable after an application acceptance is durable, completion recovery MAY resume that accepted application only when the fresh open Issue still matches the exact Issue, immutable Change, Role, and Action; exactly one accepted decision binds the intent; and current repository evidence identifies exactly one request-bound application run and application job. Resumption MUST pass through ordinary fresh authorization, exact-effect, and postcondition checks. It MUST NOT treat the uncorrelated result as a formal consequence, derive or persist a successor from it, or repeat semantic work. Changed source identity, stale authorization, duplicate accepted decisions, duplicate application runs or jobs, or incomplete evidence MUST remain fail closed.
 
 #### Scenario: Apply postcondition accepts a valid disjoint first-carrier continuation
 
@@ -268,12 +268,12 @@ When formal-frontier qualification fails because a legacy or uncorrelated result
 - WHEN application observes or resumes the carrier
 - THEN it rejects the continuation without creating or changing a branch or PR
 
-#### Scenario: New consequence observer reconstructs current carrier evidence
+#### Scenario: Restart recognizes an already completed consequence
 
 - GIVEN accepted consequence evidence and its exact effect payload are durable
-- AND a new process constructs an empty effect adapter with no local materialization target
+- AND a later process starts without access to state held only in the earlier process
 - WHEN consequence completion observes the current carrier
-- THEN it uses the `ConsequenceSpec` evidence target and its canonical positive observer
+- THEN it recognizes the exact already completed consequence from current repository evidence
 - AND it preserves the existing source, correlation, qualification, validation, review, and successor gates
 - AND it does not replay an already-completed effect
 

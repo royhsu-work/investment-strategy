@@ -2,7 +2,7 @@
 
 ## Current decision boundary
 
-The current default branch is `2e00e236f24ba41302c9ba18c685acdf4cebe4ed`. Fresh source inspection establishes these owners:
+The original Explore reconstruction used default-branch revision `2e00e236f24ba41302c9ba18c685acdf4cebe4ed`; this continuation was freshly reconstructed from `main@e617a05ada51af9ff8f20697bbf07c4bfc8ec19e`. Fresh source inspection establishes these owners:
 
 - `workflow_dispatch.py` and the runtime preflight reconstruct current repository work and return `AUTHORIZE`, `NO_WORK`, or `FAIL_CLOSED`.
 - `issue_comment_bridge.py` checks the authoritative default branch and publishes one run-scoped dispatch-result artifact.
