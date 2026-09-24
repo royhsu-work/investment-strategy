@@ -99,7 +99,7 @@ def test_existing_change_materialization_requires_current_pr_and_preserves_expec
         ("ref-mismatch", "PR/ref head identity is stale"),
         ("duplicate-pr", "carrier identity is ambiguous"),
         ("missing-default-history", "omits authorized default history"),
-        ("stale-base", "authorization base is stale"),
+        ("unproven-historical-base", "comparison is not an ancestor"),
     ),
 )
 def test_existing_change_observer_reconstructs_only_exact_current_carrier(
@@ -125,7 +125,7 @@ def test_existing_change_observer_reconstructs_only_exact_current_carrier(
     )
     payload["base_sha"] = current_default
     payload["pr_number"] = 324
-    if failure == "stale-base":
+    if failure == "unproven-historical-base":
         payload["base_sha"] = "a" * 40
     request = parse_materialization_payload(payload, source)
     pr = {
@@ -165,13 +165,21 @@ def test_existing_change_observer_reconstructs_only_exact_current_carrier(
         "_open_prs_for_branch",
         lambda *_args, **_kwargs: (pr, pr) if failure == "duplicate-pr" else (pr,),
     )
+    monkeypatch.setattr(materialization, "_matching_prs", lambda *_args, **_kwargs: [pr])
 
-    def ancestor_paths(*_args: object, **_kwargs: object) -> set[str]:
-        if failure == "missing-default-history":
+    def ancestor_paths(
+        _repository: str,
+        _token: str,
+        *,
+        base_sha: str,
+        revision: str,
+    ) -> set[str]:
+        if failure == "missing-default-history" or failure == "unproven-historical-base":
             raise RuntimeError("comparison is not an ancestor")
         return set()
 
     monkeypatch.setattr(materialization, "_ancestor_comparison_paths", ancestor_paths)
+    monkeypatch.setattr(validation_resource, "_ancestor_comparison_paths", ancestor_paths)
     monkeypatch.setattr(materialization, "_manifest_is_current", lambda *_args, **_kwargs: True)
 
     if expected_error is not None:
