@@ -319,23 +319,35 @@ def _verify_revision(
     comparison = _as_mapping(
         cast(object, _github_json(repository, token, f"compare/{request.base_sha}...{revision}"))
     )
+    base_commit = None if comparison is None else _as_mapping(comparison.get("base_commit"))
     files = None if comparison is None else comparison.get("files")
     commits = None if comparison is None else comparison.get("commits")
+    commit = _as_mapping(commits[0]) if isinstance(commits, list) and len(commits) == 1 else None
+    parents = None if commit is None else commit.get("parents")
+    parent = _as_mapping(parents[0]) if isinstance(parents, list) and len(parents) == 1 else None
     if (
         comparison is None
         or comparison.get("status") != "ahead"
         or _positive_int(comparison.get("ahead_by")) != 1
         or comparison.get("behind_by") != 0
-        or not isinstance(commits, list)
-        or len(commits) != 1
+        or not _valid_sha(revision)
+        or base_commit is None
+        or base_commit.get("sha") != request.base_sha
+        or commit is None
+        or commit.get("sha") != revision
+        or not isinstance(parents, list)
+        or len(parents) != 1
+        or parent is None
+        or parent.get("sha") != request.base_sha
         or not isinstance(files, list)
+        or len(files) >= 300
     ):
         raise RuntimeError("application materialization revision is not one commit on the base")
     observed_paths: set[str] = set()
     for raw_file in files:
         observed_file = _as_mapping(raw_file)
         filename = None if observed_file is None else observed_file.get("filename")
-        if not isinstance(filename, str):
+        if not isinstance(filename, str) or filename in observed_paths:
             raise RuntimeError("application materialization revision file evidence is incomplete")
         observed_paths.add(filename)
     if observed_paths != {file.path for file in request.files}:
@@ -368,7 +380,6 @@ def _verify_existing_pr_revision_lineage(
         cast(object, _github_json(repository, token, f"compare/{request.base_sha}...{revision}"))
     )
     base_commit = None if comparison is None else _as_mapping(comparison.get("base_commit"))
-    head_commit = None if comparison is None else _as_mapping(comparison.get("head_commit"))
     commits = None if comparison is None else comparison.get("commits")
     files = None if comparison is None else comparison.get("files")
     ahead_by = None if comparison is None else _positive_int(comparison.get("ahead_by"))
@@ -378,8 +389,6 @@ def _verify_existing_pr_revision_lineage(
         or comparison.get("behind_by") != 0
         or base_commit is None
         or base_commit.get("sha") != request.base_sha
-        or head_commit is None
-        or head_commit.get("sha") != revision
         or ahead_by is None
         or ahead_by > 32
         or not isinstance(commits, list)
@@ -426,7 +435,6 @@ def _verify_existing_pr_revision_lineage(
                 cast(object, _github_json(repository, token, f"compare/{previous}...{sha}"))
             )
             delta_base = None if delta is None else _as_mapping(delta.get("base_commit"))
-            delta_head = None if delta is None else _as_mapping(delta.get("head_commit"))
             delta_commits = None if delta is None else delta.get("commits")
             delta_files = None if delta is None else delta.get("files")
             delta_commit = (
@@ -447,8 +455,6 @@ def _verify_existing_pr_revision_lineage(
                 or delta.get("behind_by") != 0
                 or delta_base is None
                 or delta_base.get("sha") != previous
-                or delta_head is None
-                or delta_head.get("sha") != sha
                 or not isinstance(delta_commits, list)
                 or len(delta_commits) != 1
                 or delta_commit is None
