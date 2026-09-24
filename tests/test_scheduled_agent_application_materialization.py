@@ -1792,7 +1792,7 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
         },
         "base": {
             "ref": "main",
-            "sha": current_default,
+            "sha": old_base,
             "repo": {"full_name": repository},
         },
     }
