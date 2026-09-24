@@ -1385,7 +1385,7 @@ def test_pending_first_carrier_rejects_incomplete_default_ancestry_comparison(
     )
     monkeypatch.setattr(materialization, "_branch_head", lambda *_args: carrier_head)
 
-    with pytest.raises(RuntimeError, match="ancestor|ancestry|incomplete"):
+    with pytest.raises(RuntimeError, match="first-carrier base is not an ancestor"):
         materialization._pending_new_carrier(
             request,
             source,
