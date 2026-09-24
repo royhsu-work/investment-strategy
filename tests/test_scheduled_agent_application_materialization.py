@@ -2049,7 +2049,11 @@ def test_materialization_postcondition_logs_raw_observation_failure(
         branch=f"agent/{_CHANGE}",
     )
 
-    def fail_observation(_payload: object, _source: object, **_kwargs: object) -> ValidationResourceTarget:
+    def fail_observation(
+        _payload: object,
+        _source: object,
+        **_kwargs: object,
+    ) -> ValidationResourceTarget:
         raise RuntimeError("work-product historical manifest overlaps default changes")
 
     monkeypatch.setattr(materialization, "observe_materialization_target", fail_observation)
