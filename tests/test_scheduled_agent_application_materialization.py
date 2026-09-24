@@ -454,6 +454,92 @@ def test_pending_first_carrier_rejects_wrong_or_duplicate_pr_carriers(
         )
 
 
+@pytest.mark.parametrize(
+    ("overlap", "incomplete_pr_discovery", "expected_error"),
+    (
+        (True, False, "first-carrier base overlaps"),
+        (False, True, "PR discovery is incomplete"),
+    ),
+)
+def test_pending_first_carrier_rejects_overlap_and_incomplete_all_head_pr_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+    overlap: bool,
+    incomplete_pr_discovery: bool,
+    expected_error: str,
+) -> None:
+    old_base = "a" * 40
+    current_default = "b" * 40
+    carrier_head = "c" * 40
+    source = WorkerRequest(234, "lead", "propose-change")
+    request = parse_materialization_payload(_payload(issue_number=source.issue_number), source)
+    path = request.files[0].path
+    pr_discovery_reads = 0
+    mutation_calls: list[str] = []
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        **_kwargs: object,
+    ) -> object:
+        nonlocal pr_discovery_reads
+        if method != "GET":
+            mutation_calls.append(f"{method} {api_path}")
+        if api_path == f"compare/{old_base}...{current_default}":
+            return {"status": "ahead", "base_commit": {"sha": old_base}}
+        if api_path == f"compare/{old_base}...{carrier_head}":
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "behind_by": 0,
+                "commits": [{"sha": carrier_head}],
+                "files": [{"filename": path}],
+            }
+        if api_path.startswith("pulls?"):
+            from urllib.parse import parse_qs
+
+            parameters = parse_qs(api_path.partition("?")[2])
+            assert parameters.get("state") == ["all"]
+            assert parameters.get("head") == [f"royhsu-work:{request.branch}"]
+            assert "base" not in parameters
+            pr_discovery_reads += 1
+            return [{}] * 100 if incomplete_pr_discovery else []
+        if api_path.startswith(f"contents/openspec/changes/{_CHANGE}?"):
+            return None
+        raise AssertionError(api_path)
+
+    monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_args: True)
+    monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
+    monkeypatch.setattr(materialization, "_ref_head_sha", lambda *_args: current_default)
+    monkeypatch.setattr(materialization, "_branch_head", lambda *_args: carrier_head)
+    monkeypatch.setattr(
+        materialization,
+        "_comparison_file_paths",
+        lambda *_args, **_kwargs: {path} if overlap else {"src/unrelated.py"},
+    )
+    monkeypatch.setattr(
+        materialization,
+        "_content_sha_at",
+        lambda _repo, _token, *, path, revision: _BLOB if revision == carrier_head else None,
+    )
+
+    with pytest.raises(RuntimeError, match=expected_error):
+        materialization._pending_new_carrier(
+            request,
+            source,
+            repository="royhsu-work/investment-strategy",
+            token=_BASE,
+            default_branch="main",
+            current_revision=current_default,
+        )
+
+    assert pr_discovery_reads == (0 if overlap else 1)
+    assert mutation_calls == []
+
+
 def test_interrupted_carrier_resume_accepts_its_ancestor_base_after_default_drift(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
