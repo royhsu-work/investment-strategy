@@ -2031,3 +2031,87 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
             endpoint_successes.append(endpoint_base)
 
     assert endpoint_successes == []
+
+
+def test_materialization_postcondition_logs_raw_observation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    source = WorkerRequest(322, "lead", "resolve-question")
+    current_revision = "a" * 40
+    target = ValidationResourceTarget(
+        repository="royhsu-work/investment-strategy",
+        revision="b" * 40,
+        correlation="effect-request-322",
+        pr_number=324,
+        change=_CHANGE,
+        validation_required=True,
+        branch=f"agent/{_CHANGE}",
+    )
+
+    def fail_observation(
+        _payload: object,
+        _source: object,
+        **_kwargs: object,
+    ) -> ValidationResourceTarget:
+        raise RuntimeError("work-product historical manifest overlaps default changes")
+
+    monkeypatch.setattr(materialization, "observe_materialization_target", fail_observation)
+    caplog.set_level("WARNING", logger=materialization.__name__)
+
+    assert not materialization.materialization_postcondition(
+        {"base_sha": "c" * 40},
+        source,
+        repository="royhsu-work/investment-strategy",
+        token=_TOKEN,
+        current_revision=current_revision,
+        default_branch="main",
+        target=target,
+    )
+    assert "work-product historical manifest overlaps default changes" in caplog.text
+    assert "target_pr=324" in caplog.text
+    assert current_revision in caplog.text
+
+
+def test_materialization_postcondition_logs_target_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    source = WorkerRequest(322, "lead", "resolve-question")
+    target = ValidationResourceTarget(
+        repository="royhsu-work/investment-strategy",
+        revision="b" * 40,
+        correlation="effect-request-322",
+        pr_number=324,
+        change=_CHANGE,
+        validation_required=True,
+        branch=f"agent/{_CHANGE}",
+    )
+    observed = ValidationResourceTarget(
+        repository="royhsu-work/investment-strategy",
+        revision="d" * 40,
+        correlation="effect-request-322",
+        pr_number=324,
+        change=_CHANGE,
+        validation_required=True,
+        branch=f"agent/{_CHANGE}",
+    )
+    monkeypatch.setattr(
+        materialization,
+        "observe_materialization_target",
+        lambda _payload, _source, **_kwargs: observed,
+    )
+    caplog.set_level("WARNING", logger=materialization.__name__)
+
+    assert not materialization.materialization_postcondition(
+        {},
+        source,
+        repository="royhsu-work/investment-strategy",
+        token=_TOKEN,
+        current_revision="a" * 40,
+        default_branch="main",
+        target=target,
+    )
+    assert "postcondition mismatch" in caplog.text
+    assert repr(observed) in caplog.text
+    assert repr(target) in caplog.text
