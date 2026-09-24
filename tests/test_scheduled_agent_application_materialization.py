@@ -1812,6 +1812,8 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
     manifest_paths = {cast(str, file["path"]) for file in files}
 
     historical_pr_base_overlaps = False
+    historical_main_carrier_overlap = [False]
+    overlap_path = "src/investment_strategy/scheduled_agent_validation_resource.py"
     paths_to_pr_base = {
         "src/investment_strategy/scheduled_agent_application_materialization.py",
         "src/investment_strategy/scheduled_agent_effect_contract.py",
@@ -1842,6 +1844,8 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
         base_sha: str,
         revision: str,
     ) -> set[str]:
+        if base_sha == old_base and revision == old_base:
+            return set()
         if base_sha == old_base and revision == pr_base:
             if historical_pr_base_overlaps:
                 return {next(iter(manifest_paths))}
@@ -1856,6 +1860,8 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
                 carrier_paths.add(overlap_path)
             return carrier_paths
         if base_sha == old_base and revision == carrier_head:
+            if historical_main_carrier_overlap[0]:
+                return manifest_paths | {overlap_path}
             return manifest_paths
         if base_sha == old_base and revision == "a" * 40:
             raise RuntimeError("comparison is not an ancestor")
@@ -1974,6 +1980,20 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
 
     historical_pr_base_overlaps = False
     historical_carrier_overlap[0] = True
+    assert not materialization.materialization_postcondition(
+        payload,
+        source,
+        repository=repository,
+        token=_TOKEN,
+        current_revision=current_default,
+        default_branch="main",
+        target=applied_target,
+        allow_pending_continuation=True,
+    )
+
+    pr_base_payload["sha"] = old_base
+    historical_pr_base_overlaps = False
+    historical_main_carrier_overlap[0] = True
     assert not materialization.materialization_postcondition(
         payload,
         source,

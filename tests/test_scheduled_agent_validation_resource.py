@@ -2151,6 +2151,15 @@ def test_live_322_manifest_recovers_after_disjoint_default_advance(
         if api_path.startswith("compare/"):
             comparison = api_path.removeprefix("compare/")
             comparison_reads.append(comparison)
+            if comparison == f"{historical_base}...{historical_base}":
+                return {
+                    "status": "identical",
+                    "ahead_by": 0,
+                    "behind_by": 0,
+                    "base_commit": {"sha": historical_base},
+                    "too_large": False,
+                    "files": [],
+                }
             if comparison == f"{historical_base}...{historical_pr_base}":
                 return {
                     "status": "ahead",
@@ -2292,6 +2301,20 @@ def test_live_322_manifest_recovers_after_disjoint_default_advance(
         )
 
     assert f"{historical_pr_base}...{carrier_revision}" in comparison_reads
+    assert mutation_calls == []
+
+    cast(dict[str, object], pr["base"])["sha"] = historical_base
+    comparison_reads.clear()
+    with pytest.raises(RuntimeError, match="historical PR base overlaps"):
+        resource.apply_work_product(
+            plan,
+            repository=_REPOSITORY,
+            token=_FIXTURE_VALUE,
+            default_branch="main",
+            authorization_revision=authorization_revision,
+        )
+
+    assert f"{historical_base}...{carrier_revision}" in comparison_reads
     assert mutation_calls == []
 
 
