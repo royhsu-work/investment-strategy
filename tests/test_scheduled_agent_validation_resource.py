@@ -2156,8 +2156,7 @@ def test_live_322_manifest_recovers_after_disjoint_default_advance(
                     "base_commit": {"sha": historical_base},
                     "too_large": False,
                     "files": [
-                        {"filename": path, "status": "modified"}
-                        for path in sorted(pr_base_paths)
+                        {"filename": path, "status": "modified"} for path in sorted(pr_base_paths)
                     ],
                 }
             if comparison == f"{historical_pr_base}...{authorization_revision}":
