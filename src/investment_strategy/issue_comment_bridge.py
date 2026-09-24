@@ -605,6 +605,10 @@ def _fresh_completion_postconditions(
         current_revision=current_revision,
         authorized_change=authorized_change,
         request_comment_id=request_comment_id,
+        # This read follows accepted-intent and formal-correlation qualification.
+        # The canonical materialization observer may therefore reconstruct an
+        # exact disjoint pending continuation from its original accepted base.
+        allow_pending_continuation=True,
     )
 
 
@@ -1590,6 +1594,50 @@ def qualify_application_completion(
         read=read,
     )
     if not frontier_qualified:
+        # A durable ACCEPTED intent is the source of truth for its immutable
+        # application job.  A legacy/unqualified ACTION_RESULT may leave the
+        # current Issue route unchanged while making the formal frontier
+        # temporarily unqualifiable.  In that narrow case, resume only one
+        # accepted intent whose exact source and Change still match the fresh
+        # open Issue.  The existing accepted-intent owner performs ancestry,
+        # durable consequence, and exact application-run checks; ambiguity or
+        # missing evidence still fails closed.
+        observation = normalize_github_issue(cast(Mapping[str, object], issue))
+        current_accepted = tuple(
+            record
+            for comment in issue_comments
+            if (record := parse_application_decision(comment.get("body"))) is not None
+            and record.disposition == "ACCEPTED"
+            and observation is not None
+            and (record.issue_number, record.role, record.action, record.change)
+            == (source.issue_number, source.role, source.action, observation.change)
+        )
+        if (
+            observation is not None
+            and observation.authoritative
+            and observation.state == "open"
+            and observation.issue_number == source.issue_number
+            and observation.routing == (source.role, source.action)
+            and len(current_accepted) == 1
+        ):
+            resumed = _accepted_application_state(
+                repository=repository,
+                token=token,
+                source=source,
+                record=current_accepted[0],
+                issue_comments=issue_comments,
+                lifecycle_events=lifecycle,
+                current_issue=cast(Mapping[str, object], issue),
+                current_revision=current_revision,
+                read=read,
+            )
+            if resumed.state != "NONE":
+                return resumed
+        elif len(current_accepted) > 1:
+            return ApplicationCompletion(
+                "AMBIGUOUS",
+                "application-completion-invalid-frontier-accepted-intents-ambiguous",
+            )
         return ApplicationCompletion("INVALID", "application-completion-current-frontier-invalid")
 
     decisions_by_request: dict[int, tuple[ApplicationDecisionRecord, ...]] = {}

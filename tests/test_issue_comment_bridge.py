@@ -355,19 +355,21 @@ def _formal_frontier_comment(
     successor: str,
     request_id: int,
     change: str,
+    issue_number: int = 138,
+    revision: str = REVISION,
 ) -> dict[str, object]:
     body = "\n".join(
         (
             "ACTION_RESULT",
-            "Workflow: #138",
+            f"Workflow: #{issue_number}",
             f"Change: {change}",
             f"Action: {action}",
             f"Role: {role}",
             f"Result: {result.upper().replace('-', '_')}",
-            f"Revision: {REVISION}",
-            f"Default-Branch-Revision: {REVISION}",
+            f"Revision: {revision}",
+            f"Default-Branch-Revision: {revision}",
             "Application-Correlation: "
-            f"application:{request_id}:138:{change}:{role}:{action}:{result}:{REVISION}",
+            f"application:{request_id}:{issue_number}:{change}:{role}:{action}:{result}:{revision}",
             f"Repository-derived successor: {successor}",
         )
     )
@@ -2114,6 +2116,223 @@ def test_one_accepted_intent_is_resumed_before_semantic_replay() -> None:
     assert completion.state == "RESUMABLE"
     assert completion.request_comment_id == 654
     assert completion.job_id == 888
+
+
+@pytest.mark.parametrize(
+    ("current_action", "application_run_count", "accepted_decision_count", "expected"),
+    (
+        ("propose-change", 1, 1, ("RESUMABLE", "application-completion-resuming")),
+        ("propose-change", 2, 1, ("INVALID", "application-completion-run-identity-ambiguous")),
+        (
+            "propose-change",
+            1,
+            2,
+            ("AMBIGUOUS", "application-completion-invalid-frontier-accepted-intents-ambiguous"),
+        ),
+        (
+            "review-openspec",
+            1,
+            1,
+            ("INVALID", "application-completion-current-frontier-invalid"),
+        ),
+    ),
+)
+def test_current_accepted_application_resumes_when_legacy_result_breaks_frontier(
+    current_action: str,
+    application_run_count: int,
+    accepted_decision_count: int,
+    expected: tuple[str, str],
+) -> None:
+    """Recover the exact production prefix: ACCEPT, effects, branch/PR, then uncorrelated result."""
+
+    current_revision = "e617a05ada51af9ff8f20697bbf07c4bfc8ec19e"
+    authorization_revision = "2e00e236f24ba41302c9ba18c685acdf4cebe4ed"
+    source = bridge.WorkerRequest(322, "lead", "propose-change")
+
+    def request(comment_id: int, action: str, result_kind: str) -> dict[str, object]:
+        item = _effect_request_comment(
+            comment_id=comment_id,
+            created_at="2026-09-22T16:51:57Z",
+            issue_number=322,
+            action=action,
+            role="lead",
+            result_kind=result_kind,
+            authorization_revision=authorization_revision,
+        )
+        body = cast(str, item["body"])
+        lines = body.splitlines()
+        raw = base64.b64decode(lines[2].removeprefix("Worker-Result-B64: ")).decode("utf-8")
+        worker = json.loads(raw)
+        worker["_semantic_intent_version"] = 2
+        encoded = base64.b64encode(
+            json.dumps(worker, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).decode("ascii")
+        item["body"] = "\n".join((lines[0], lines[1], f"Worker-Result-B64: {encoded}"))
+        return item
+
+    explore_request = request(5780481954, "explore-change", "proposal-ready")
+    explore_decision = _application_decision_comment(
+        explore_request,
+        comment_id=5780489187,
+    )
+    explore_decision["created_at"] = "2026-09-22T16:52:28Z"
+    explore_result = _formal_frontier_comment(
+        5780489851,
+        action="explore-change",
+        role="lead",
+        result="proposal-ready",
+        successor="Lead / propose-change",
+        request_id=5780481954,
+        change="unset",
+        issue_number=322,
+        revision=current_revision,
+    )
+    explore_result["created_at"] = "2026-09-22T16:52:31Z"
+
+    accepted_request = request(5781255019, "propose-change", "ready-for-openspec-review")
+    accepted_decision = _application_decision_comment(
+        accepted_request,
+        comment_id=5781260361,
+    )
+    accepted_decision["created_at"] = "2026-09-22T17:48:32Z"
+    # This is the observed current GitHub ACTION_RESULT: its application
+    # correlation is absent, so it cannot qualify the accepted intent.
+    uncorrelated_result = {
+        "id": 5781309198,
+        "created_at": "2026-09-22T17:52:19Z",
+        "body": "\n".join(
+            (
+                "ACTION_RESULT",
+                "Workflow: #322",
+                "Change: unset",
+                "Role: lead",
+                "Action: propose-change",
+                "Result: READY_FOR_OPENSPEC_REVIEW",
+                f"Revision: {current_revision}",
+                f"Default-Branch-Revision: {current_revision}",
+                "Evidence: ACTION_RESULT Workflow: #322 Change: unset",
+            )
+        ),
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    issue = {
+        "number": 322,
+        "title": "Explore restoring NO_WORK idle discovery after Action-only dispatch",
+        "state": "open",
+        "created_at": "2026-09-22T15:39:54Z",
+        "closed_at": None,
+        "labels": [{"name": f"action:{current_action}"}],
+        "body": "Change: unset",
+    }
+    lifecycle = [
+        {
+            "id": 31612089246,
+            "event": "labeled",
+            "created_at": "2026-09-22T15:39:56Z",
+            "label": {"name": "action:explore-change"},
+        },
+        {"id": 5780489187, "event": "commented", "created_at": "2026-09-22T16:52:28Z"},
+        {"id": 5780489851, "event": "commented", "created_at": "2026-09-22T16:52:31Z"},
+        {
+            "id": 31616529231,
+            "event": "unlabeled",
+            "created_at": "2026-09-22T16:52:34Z",
+            "label": {"name": "action:explore-change"},
+        },
+        {
+            "id": 31616529287,
+            "event": "labeled",
+            "created_at": "2026-09-22T16:52:34Z",
+            "label": {"name": "action:propose-change"},
+        },
+        {"id": 5781260361, "event": "commented", "created_at": "2026-09-22T17:48:32Z"},
+        {"id": 5781309198, "event": "commented", "created_at": "2026-09-22T17:52:19Z"},
+        {
+            "id": 31620014721,
+            "event": "unlabeled",
+            "created_at": "2026-09-22T17:52:21Z",
+            "label": {"name": "action:propose-change"},
+        },
+        {
+            "id": 31620014750,
+            "event": "labeled",
+            "created_at": "2026-09-22T17:52:21Z",
+            "label": {"name": "action:review-openspec"},
+        },
+        {
+            "id": 31647225754,
+            "event": "unlabeled",
+            "created_at": "2026-09-23T03:05:36Z",
+            "label": {"name": "action:review-openspec"},
+        },
+        {
+            "id": 31647225775,
+            "event": "labeled",
+            "created_at": "2026-09-23T03:05:36Z",
+            "label": {"name": "action:propose-change"},
+        },
+    ]
+
+    issue_comment_list = [explore_decision, explore_result, accepted_decision, uncorrelated_result]
+    if accepted_decision_count == 2:
+        issue_comment_list.append(
+            {
+                **accepted_decision,
+                "id": 5781260362,
+                "created_at": "2026-09-22T17:48:33Z",
+            }
+        )
+    application_run_reads = 0
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        nonlocal application_run_reads
+        if path.startswith("issues/comments?"):
+            return [explore_request, accepted_request]
+        if path.startswith("issues/322/comments?"):
+            return issue_comment_list
+        if path == "issues/322":
+            return issue
+        if path.startswith("issues/322/timeline?"):
+            return lifecycle
+        if path.startswith("compare/"):
+            base = path.removeprefix("compare/").split("...", 1)[0]
+            return {"status": "ahead", "base_commit": {"sha": base}}
+        if path.startswith("actions/workflows/"):
+            application_run_reads += 1
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 35762997171 + index,
+                        "display_title": "Scheduled Agent Application 5781255019",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "run_attempt": 6,
+                    }
+                    for index in range(application_run_count)
+                ]
+            }
+        if path == "actions/runs/35762997171/jobs":
+            return {"jobs": [{"id": 107028234822, "name": "apply"}]}
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=current_revision,
+        read=fake_read,
+        now=datetime(2026, 9, 23, 4, 0, tzinfo=UTC),
+    )
+
+    assert (completion.state, completion.reason) == expected
+    if expected[0] == "RESUMABLE":
+        assert completion.request_comment_id == 5781255019
+        assert completion.job_id == 107028234822
+    elif expected[1] == "application-completion-run-identity-ambiguous":
+        assert application_run_reads > 0
+    else:
+        assert application_run_reads == 0
 
 
 def test_rejected_intent_returns_ownership_to_later_semantic_dispatch() -> None:
