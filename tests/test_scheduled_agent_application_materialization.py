@@ -1444,7 +1444,11 @@ def test_pending_first_carrier_rejects_incomplete_default_ancestry_comparison(
 
     monkeypatch.setattr(materialization, "_github_json", fake_github_json)
     monkeypatch.setattr(validation_resource, "_github_json", fake_github_json)
-    monkeypatch.setattr(materialization, "_comparison_file_paths", lambda *_args, **_kwargs: {"src/unrelated.py"})
+    monkeypatch.setattr(
+        materialization,
+        "_comparison_file_paths",
+        lambda *_args, **_kwargs: {"src/unrelated.py"},
+    )
     monkeypatch.setattr(
         materialization,
         "_content_sha_at",
