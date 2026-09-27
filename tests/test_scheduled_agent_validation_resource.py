@@ -61,6 +61,42 @@ def test_github_json_uses_repository_endpoint_for_empty_api_path(
     assert requested_urls == [f"https://api.github.com/repos/{_REPOSITORY}"]
 
 
+def test_pending_source_can_reconcile_one_derived_successor_frontier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(322, "lead", "resolve-question")
+    issue = {
+        "number": source.issue_number,
+        "state": "open",
+        "created_at": "2026-09-27T00:00:00Z",
+        "closed_at": None,
+        "labels": [{"name": "action:review-openspec"}],
+        "body": "Change: restore-no-work-idle-discovery\n",
+    }
+    monkeypatch.setattr(resource, "_github_json", lambda *_args, **_kwargs: issue)
+
+    assert not resource._pending_source_is_current(
+        _REPOSITORY,
+        _FIXTURE_VALUE,
+        source,
+        "restore-no-work-idle-discovery",
+    )
+    assert resource._pending_source_is_current(
+        _REPOSITORY,
+        _FIXTURE_VALUE,
+        source,
+        "restore-no-work-idle-discovery",
+        accepted_successor_routing=("reviewer", "review-openspec"),
+    )
+    assert not resource._pending_source_is_current(
+        _REPOSITORY,
+        _FIXTURE_VALUE,
+        source,
+        "restore-no-work-idle-discovery",
+        accepted_successor_routing=("reviewer", "review-implementation"),
+    )
+
+
 def test_blob_text_requires_exact_response_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         resource,

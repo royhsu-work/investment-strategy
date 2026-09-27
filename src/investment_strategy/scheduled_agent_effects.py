@@ -3458,6 +3458,7 @@ def _fresh_materialization_target(
     source: WorkerRequest,
     current_revision: str,
     allow_pending_continuation: bool,
+    accepted_successor_routing: tuple[str, str] | None = None,
 ) -> ValidationResourceTarget | None:
     """Reconstruct one exact current materialization target from GitHub truth."""
 
@@ -3466,15 +3467,27 @@ def _fresh_materialization_target(
     if request is None or default_branch is None:
         return None
     try:
-        target = observe_materialization_target(
-            payload,
-            source,
-            repository=adapter.repository,
-            token=adapter.token,
-            current_revision=current_revision,
-            default_branch=default_branch,
-            allow_pending_continuation=allow_pending_continuation,
-        )
+        if accepted_successor_routing is None:
+            target = observe_materialization_target(
+                payload,
+                source,
+                repository=adapter.repository,
+                token=adapter.token,
+                current_revision=current_revision,
+                default_branch=default_branch,
+                allow_pending_continuation=allow_pending_continuation,
+            )
+        else:
+            target = observe_materialization_target(
+                payload,
+                source,
+                repository=adapter.repository,
+                token=adapter.token,
+                current_revision=current_revision,
+                default_branch=default_branch,
+                allow_pending_continuation=allow_pending_continuation,
+                accepted_successor_routing=accepted_successor_routing,
+            )
     except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return None
     if (
@@ -3498,6 +3511,7 @@ def consequence_postconditions_complete(
     authorized_change: str | None = None,
     request_comment_id: int | None = None,
     allow_pending_continuation: bool = False,
+    allow_accepted_successor: bool = False,
 ) -> bool:
     """Prove the affirmative consequence contract from fresh repository state.
 
@@ -3516,6 +3530,14 @@ def consequence_postconditions_complete(
         )
         if batch.typed_result is None:
             return False
+        accepted_successor_routing: tuple[str, str] | None = None
+        if allow_accepted_successor:
+            try:
+                successor = next_action(batch.typed_result.action, batch.typed_result.result)
+            except (TypeError, ValueError):
+                successor = None
+            if successor is not None:
+                accepted_successor_routing = (role_for(successor).value, successor.value)
         spec = consequence_spec_for(
             batch.typed_result.action,
             batch.typed_result.result.kind,
@@ -3561,6 +3583,7 @@ def consequence_postconditions_complete(
                     source=source,
                     current_revision=current_revision,
                     allow_pending_continuation=allow_pending_continuation,
+                    accepted_successor_routing=accepted_successor_routing,
                 )
                 is not None
             )
@@ -3604,6 +3627,7 @@ def consequence_postconditions_complete(
                         source=source,
                         current_revision=current_revision,
                         allow_pending_continuation=allow_pending_continuation,
+                        accepted_successor_routing=accepted_successor_routing,
                     )
                     is None
                 ):
