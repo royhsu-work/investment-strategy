@@ -376,6 +376,15 @@ A fresh process SHALL reconstruct consequence completion from the existing `Cons
 - AND the application still performs fresh authorization and exact postcondition checks before any remaining mutation
 - AND semantic work is not repeated
 
+#### Scenario: Repeated accepted-application attempt fails closed
+
+- GIVEN one immutable accepted application intent still matches the current open Issue, Change, Role, and Action
+- AND its completed request-bound application run reports `run_attempt > 1`
+- WHEN a fresh bridge invocation checks application completion
+- THEN it returns the machine-owned `application-completion-rerun-limit` fail-closed disposition
+- AND it emits no application job for another scheduled rerun
+- AND it does not replay semantic work or reapply the same consequence
+
 #### Scenario: Ambiguous accepted-application recovery remains fail closed
 
 - GIVEN the current source/Change differs, more than one accepted intent or application run/job matches, authorization is stale, or required evidence is incomplete
