@@ -368,12 +368,14 @@ A fresh process SHALL reconstruct consequence completion from the existing `Cons
 #### Scenario: Merged materialization is not converted into a replacement
 
 - GIVEN an accepted materialization names one exact PR carrier
-- AND that PR is closed and merged, its merge commit is in current main, and its recorded head contains every requested blob
-- AND current main contains the same requested blobs while the accepted base is an ancestor of the PR base
+- AND that PR is closed and merged, its merge commit and recorded head are in current main
+- AND the accepted base is an ancestor of the PR base
+- AND one complete compare-history commit reachable from the recorded head contains every requested blob
 - WHEN a later application process resumes or observes the materialization
 - THEN it reconstructs the existing PR-head target as the durable consequence
 - AND it creates no same-Change replacement branch, commit, or PR
-- AND missing, stale, or contradictory ancestry/content evidence fails closed
+- AND later same-Change updates to those files do not erase the historical consequence
+- AND missing, truncated, stale, or contradictory ancestry/content evidence fails closed
 
 #### Scenario: Accepted application resumes across an uncorrelated legacy result
 

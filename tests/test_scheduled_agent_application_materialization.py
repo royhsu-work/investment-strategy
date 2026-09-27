@@ -2044,6 +2044,7 @@ def test_live_322_merged_carrier_observer_recovers_exact_target(
     accepted_base = "d019fdc604e8a7fa40e2f3e6436a12b076658057"
     current_main = "b751948875a49582a0d073a47809d697badc8a6d"
     carrier_head = "4ff78b463a24844309aa5025deb7eeaef78bbf55"
+    historical_materialization_revision = "5de9641a3e3e7e26071f3f8cdc1843e3fa842049"
     branch = f"agent/{change}"
     files = [
         {
@@ -2106,7 +2107,48 @@ def test_live_322_merged_carrier_observer_recovers_exact_target(
     )
     monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: merged_pr)
     monkeypatch.setattr(validation_resource, "_default_branch_is_ancestor", lambda *_a, **_k: True)
-    monkeypatch.setattr(validation_resource, "_manifest_content_matches", lambda *_a, **_k: True)
+
+    final_blobs = {
+        files[0]["path"]: "a84a82367e4eb62087654c8e0eb104b930928482",
+        files[1]["path"]: "3d38ddc47e6f26f3dc7de5c579f5e87700156fd2",
+        files[2]["path"]: "7367ab0bb5adc63e204ff293ce1f4f9ceb03c5ed",
+        files[3]["path"]: "0ff040539d076f98adcb46274cd64cb2d5deaf61",
+    }
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        **_kwargs: object,
+    ) -> object:
+        assert method == "GET"
+        if api_path == f"compare/{accepted_base}...{carrier_head}":
+            return {
+                "status": "ahead",
+                "ahead_by": 2,
+                "behind_by": 0,
+                "base_commit": {"sha": accepted_base},
+                "head_commit": {"sha": carrier_head},
+                "commits": [
+                    {"sha": historical_materialization_revision},
+                    {"sha": carrier_head},
+                ],
+                "total_commits": 2,
+            }
+        if api_path.startswith("contents/"):
+            raw_path, _separator, query = api_path.partition("?")
+            path = raw_path.removeprefix("contents/")
+            reference = query.removeprefix("ref=")
+            if reference == historical_materialization_revision:
+                return {"sha": next(file["blob_sha"] for file in files if file["path"] == path)}
+            if reference == carrier_head:
+                return {"sha": final_blobs[path]}
+            return None
+        raise AssertionError(api_path)
+
+    monkeypatch.setattr(validation_resource, "_github_json", fake_github_json)
 
     target = materialization.observe_materialization_target(
         payload,

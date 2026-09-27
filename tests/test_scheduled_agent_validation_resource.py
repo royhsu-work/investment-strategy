@@ -810,6 +810,26 @@ def test_apply_work_product_builds_same_change_replacement_after_merged_carrier(
             return [{"filename": f"openspec/changes/{_CHANGE}/design.md"}]
         if api_path == f"compare/{merge_commit}...{_REVISION}":
             return {"status": "ahead", "ahead_by": 1, "behind_by": 0}
+        if api_path == f"compare/{_PR_HEAD}...{_REVISION}":
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "behind_by": 0,
+                "base_commit": {"sha": _PR_HEAD},
+                "head_commit": {"sha": _REVISION},
+                "commits": [{"sha": _REVISION}],
+                "total_commits": 1,
+            }
+        if api_path == f"compare/{_REVISION}...{_PR_HEAD}":
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "behind_by": 0,
+                "base_commit": {"sha": _REVISION},
+                "head_commit": {"sha": _PR_HEAD},
+                "commits": [{"sha": _PR_HEAD}],
+                "total_commits": 1,
+            }
         if api_path == f"compare/{_REVISION}...{_REVISION}":
             return {"status": "identical", "ahead_by": 0, "behind_by": 0}
         if api_path.startswith("pulls?state=open"):
@@ -1852,6 +1872,18 @@ def test_apply_work_product_reuses_current_head_without_commit_when_ancestry_div
             return [{"filename": f"openspec/changes/{_CONTINUATION_CHANGE}/design.md"}]
         if api_path == f"compare/{merge_commit}...{base_sha}":
             return {"status": "ahead", "ahead_by": 1, "behind_by": 0}
+        if api_path == f"compare/{historical_head}...{base_sha}":
+            return {"status": "ahead", "ahead_by": 1, "behind_by": 0}
+        if api_path == f"compare/{base_sha}...{historical_head}":
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "behind_by": 0,
+                "base_commit": {"sha": base_sha},
+                "head_commit": {"sha": historical_head},
+                "commits": [{"sha": historical_head}],
+                "total_commits": 1,
+            }
         if api_path.startswith("pulls?state=open"):
             return [replacement_pr]
         if api_path == "pulls/236":
@@ -1876,7 +1908,7 @@ def test_apply_work_product_reuses_current_head_without_commit_when_ancestry_div
             }
         if api_path.startswith(f"contents/{path}?"):
             revision = api_path.rsplit("ref=", 1)[-1]
-            return {"sha": expected_sha if revision == base_sha else blob_sha}
+            return {"sha": expected_sha if revision in {base_sha, historical_head} else blob_sha}
         if api_path == "git/trees" and method == "POST":
             tree_payloads.append(payload)
             return {"sha": "2" * 40}
@@ -2056,6 +2088,7 @@ def test_live_322_merged_carrier_is_reconciled_without_replacement(
     accepted_base = "d019fdc604e8a7fa40e2f3e6436a12b076658057"
     current_main = "b751948875a49582a0d073a47809d697badc8a6d"
     carrier_head = "4ff78b463a24844309aa5025deb7eeaef78bbf55"
+    historical_materialization_revision = "5de9641a3e3e7e26071f3f8cdc1843e3fa842049"
     merge_commit = current_main
     pr_base = "6a4aadb40b875fce7715947fef7d9f59f9a9d9b2"
     branch = f"agent/{change}"
@@ -2120,7 +2153,50 @@ def test_live_322_merged_carrier_is_reconciled_without_replacement(
         lambda _repository, _token, ref, **_kwargs: current_main if ref == "main" else carrier_head,
     )
     monkeypatch.setattr(resource, "_default_branch_is_ancestor", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(resource, "_manifest_content_matches", lambda *_args, **_kwargs: True)
+
+    final_blobs = {
+        f"openspec/changes/{change}/proposal.md": "a84a82367e4eb62087654c8e0eb104b930928482",
+        f"openspec/changes/{change}/design.md": "3d38ddc47e6f26f3dc7de5c579f5e87700156fd2",
+        f"openspec/changes/{change}/tasks.md": "7367ab0bb5adc63e204ff293ce1f4f9ceb03c5ed",
+        f"openspec/changes/{change}/specs/scheduled-agent-workflow/spec.md": (
+            "0ff040539d076f98adcb46274cd64cb2d5deaf61"
+        ),
+    }
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        **_kwargs: object,
+    ) -> object:
+        assert method == "GET"
+        if api_path == f"compare/{accepted_base}...{carrier_head}":
+            return {
+                "status": "ahead",
+                "ahead_by": 2,
+                "behind_by": 0,
+                "base_commit": {"sha": accepted_base},
+                "head_commit": {"sha": carrier_head},
+                "commits": [
+                    {"sha": historical_materialization_revision},
+                    {"sha": carrier_head},
+                ],
+                "total_commits": 2,
+            }
+        if api_path.startswith("contents/"):
+            raw_path, _separator, query = api_path.partition("?")
+            path = raw_path.removeprefix("contents/")
+            reference = query.removeprefix("ref=")
+            if reference == historical_materialization_revision:
+                return {"sha": next(file.blob_sha for file in manifest.files if file.path == path)}
+            if reference == carrier_head:
+                return {"sha": final_blobs[path]}
+            return None
+        raise AssertionError(api_path)
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
 
     target = resource.apply_work_product(
         plan,
@@ -2138,6 +2214,36 @@ def test_live_322_merged_carrier_is_reconciled_without_replacement(
         change=change,
         branch=branch,
     )
+
+    def incomplete_history(
+        repository: str,
+        token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        **kwargs: object,
+    ) -> object:
+        if api_path == f"compare/{accepted_base}...{carrier_head}":
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "behind_by": 0,
+                "base_commit": {"sha": accepted_base},
+                "head_commit": {"sha": carrier_head},
+                "commits": [{"sha": carrier_head}],
+                "total_commits": 1,
+            }
+        return fake_github_json(repository, token, api_path, method=method, **kwargs)
+
+    monkeypatch.setattr(resource, "_github_json", incomplete_history)
+    with pytest.raises(RuntimeError, match="replacement work-product base is not current"):
+        resource.apply_work_product(
+            plan,
+            repository=_REPOSITORY,
+            token=_FIXTURE_VALUE,
+            default_branch="main",
+            authorization_revision=current_main,
+        )
 
 
 def test_live_322_manifest_recovers_after_disjoint_default_advance(

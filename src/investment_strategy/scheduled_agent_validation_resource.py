@@ -1538,6 +1538,95 @@ def _manifest_expected_content_matches_base(
     )
 
 
+def _historical_manifest_materialization_commit(
+    repository: str,
+    token: str,
+    *,
+    base_sha: str,
+    revision: str,
+    manifest: WorkProductManifest,
+) -> str | None:
+    """Find one authoritative carrier commit containing the exact manifest.
+
+    A merged PR may legitimately have later commits that update the same
+    OpenSpec files.  The durable consequence of the original application is
+    therefore proved from the PR's complete compare history, not from the
+    final tree alone.  GitHub's compare/commit/content identities are all
+    content-addressed and read-only; any incomplete or truncated observation
+    fails closed.
+    """
+
+    if (
+        not _valid_sha(base_sha)
+        or not _valid_sha(revision)
+        or not manifest.files
+        or base_sha == revision
+    ):
+        return None
+    comparison = _as_mapping(
+        cast(object, _github_json(repository, token, f"compare/{base_sha}...{revision}"))
+    )
+    base_commit = None if comparison is None else _as_mapping(comparison.get("base_commit"))
+    head_commit = None if comparison is None else _as_mapping(comparison.get("head_commit"))
+    commits = None if comparison is None else comparison.get("commits")
+    ahead_by = None if comparison is None else comparison.get("ahead_by")
+    behind_by = None if comparison is None else comparison.get("behind_by")
+    total_commits = None if comparison is None else comparison.get("total_commits")
+    if (
+        comparison is None
+        or comparison.get("status") != "ahead"
+        or comparison.get("too_large") is True
+        or base_commit is None
+        or base_commit.get("sha") != base_sha
+        or head_commit is None
+        or head_commit.get("sha") != revision
+        or not isinstance(ahead_by, int)
+        or isinstance(ahead_by, bool)
+        or ahead_by <= 0
+        or not isinstance(behind_by, int)
+        or isinstance(behind_by, bool)
+        or behind_by != 0
+        or not isinstance(commits, list)
+        or len(commits) != ahead_by
+        or (
+            total_commits is not None
+            and (
+                not isinstance(total_commits, int)
+                or isinstance(total_commits, bool)
+                or total_commits != len(commits)
+            )
+        )
+        or not commits
+    ):
+        return None
+
+    commit_shas: list[str] = []
+    seen_commits: set[str] = set()
+    for raw_commit in commits:
+        commit = _as_mapping(raw_commit)
+        commit_sha = None if commit is None else commit.get("sha")
+        if not _valid_sha(commit_sha) or cast(str, commit_sha) in seen_commits:
+            return None
+        seen_commits.add(cast(str, commit_sha))
+        commit_shas.append(cast(str, commit_sha))
+    if commit_shas[-1] != revision:
+        return None
+
+    requested_paths = {file.path for file in manifest.files}
+    if len(requested_paths) != len(manifest.files):
+        return None
+
+    for commit_sha in commit_shas:
+        if _manifest_content_matches(
+            repository,
+            token,
+            revision=commit_sha,
+            manifest=manifest,
+        ):
+            return commit_sha
+    return None
+
+
 def _already_merged_work_product_target(
     *,
     repository: str,
@@ -1557,8 +1646,10 @@ def _already_merged_work_product_target(
     same-Change replacement.  This observer is intentionally narrow: the PR
     must be a historical merged carrier, its merge commit must be in the
     current default-branch history, and every requested blob must be present
-    both on the recorded PR head and on current main.  If any proof is absent,
-    callers retain the existing replacement/fail-closed path.
+    on one complete historical PR tree which is reachable from the recorded
+    head.  Later same-Change descendants may update those files legitimately;
+    if the historical exact effect or its ancestry is not provable, callers
+    retain the existing replacement/fail-closed path.
     """
 
     if not _is_historical_merged_carrier(pr):
@@ -1587,6 +1678,13 @@ def _already_merged_work_product_target(
         revision=authorization_revision,
     ):
         return None
+    if not _default_branch_is_ancestor(
+        repository,
+        token,
+        default_revision=cast(str, pr_head_sha),
+        revision=authorization_revision,
+    ):
+        return None
     if pr_base_sha != manifest.base_sha and not _default_branch_is_ancestor(
         repository,
         token,
@@ -1594,16 +1692,15 @@ def _already_merged_work_product_target(
         revision=cast(str, pr_base_sha),
     ):
         return None
-    if not _manifest_content_matches(
-        repository,
-        token,
-        revision=cast(str, pr_head_sha),
-        manifest=manifest,
-    ) or not _manifest_content_matches(
-        repository,
-        token,
-        revision=authorization_revision,
-        manifest=manifest,
+    if (
+        _historical_manifest_materialization_commit(
+            repository,
+            token,
+            base_sha=manifest.base_sha,
+            revision=cast(str, pr_head_sha),
+            manifest=manifest,
+        )
+        is None
     ):
         return None
     return ValidationResourceTarget(
