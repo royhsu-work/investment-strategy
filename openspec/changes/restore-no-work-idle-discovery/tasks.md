@@ -34,9 +34,10 @@ Stage 0 is merged and active on current `main@d019fdc604e8a7fa40e2f3e6436a12b076
 ## 3. Scheduled Task/bootstrap cutover
 
 - [ ] 3.1 RED: add a production-shaped bridge/bootstrap test showing exact `NO_WORK` reaches bounded Lead idle semantics and `AUTHORIZE`/`FAIL_CLOSED` do not.
-- [x] 3.2 GREEN: connect the repository-visible application carrier to the typed idle boundary through one `workflow_dispatch` request input without representing idle as an Action or relying on the daily control shard as accepted-intent state.
-- [ ] 3.3 GREEN: execute the available external Scheduled Task configuration change if it is within capability; otherwise preserve the exact activation contract and record the authoritative external boundary as a blocker rather than weakening the parent outcome.
-- [ ] 3.4 RED/GREEN: prove no-finding is repository-silent, and a successful admission is consumed by a later normal wake that authorizes ordinary `Lead / explore-change`.
+- [x] 3.2 GREEN: implement the typed idle-admission kernel and repository workflow entrypoint; the existing `workflow_dispatch` input proves the repository-owned application contract but is not the production Scheduled Task ingress.
+- [ ] 3.3 RED/GREEN: add a strictly parsed `IDLE_ADMISSION_REQUEST` `issue_comment` adapter on the current daily runtime shard. Treat the comment only as trigger/staging evidence, fresh-reauthorize the exact `NO_WORK` envelope in repository code, and retire `workflow_dispatch` as a production-path requirement after equivalent coverage is green.
+- [ ] 3.4 GREEN: use the currently available Scheduled Task GitHub connector to post the exact request only for one candidate; if the Human-owned Scheduled Task configuration itself cannot be changed through available capability, preserve that activation boundary as a blocker rather than weakening the parent outcome.
+- [ ] 3.5 RED/GREEN: prove no-finding is repository-silent, and a successful admission is consumed by a later normal wake that authorizes ordinary `Lead / explore-change`.
 
 ## 4. Verification and delivery
 

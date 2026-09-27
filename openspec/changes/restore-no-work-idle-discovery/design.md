@@ -2,7 +2,7 @@
 
 ## Current decision boundary
 
-The original Explore reconstruction used default-branch revision `2e00e236f24ba41302c9ba18c685acdf4cebe4ed`; this continuation was freshly reconstructed from `main@d019fdc604e8a7fa40e2f3e6436a12b076658057`. Fresh source inspection establishes these owners:
+The original Explore reconstruction used default-branch revision `2e00e236f24ba41302c9ba18c685acdf4cebe4ed`; this continuation was freshly reconstructed from `main@01e22a7ebad34b434c0e12c8293f02a9bed24a40`. Fresh source inspection establishes these owners:
 
 - `workflow_dispatch.py` and the runtime preflight reconstruct current repository work and return `AUTHORIZE`, `NO_WORK`, or `FAIL_CLOSED`.
 - `issue_comment_bridge.py` checks the authoritative default branch and publishes one run-scoped dispatch-result artifact.
@@ -12,7 +12,7 @@ The original Explore reconstruction used default-branch revision `2e00e236f24ba4
 
 The current gap is therefore a missing reachability boundary, not a defect in normal selection and not permission to infer work from an empty queue.
 
-The current delivery baseline is `main@d019fdc604e8a7fa40e2f3e6436a12b076658057`. The shared application substrate repair has merged in the sequential PR chain #331/#332/#333; it is an N-1 prerequisite already present on this revision, not remaining Stage 0 work. The exact PR heads and successful Python Quality runs are recorded in proposal.md and tasks.md. Continue with the typed idle handoff and later stages on this current baseline; retain the full parent completion outcome.
+The current delivery baseline is `main@01e22a7ebad34b434c0e12c8293f02a9bed24a40`. The shared application substrate repair has merged in the sequential PR chain #331/#332/#333; it is an N-1 prerequisite already present on this revision, not remaining Stage 0 work. The exact PR heads and successful Python Quality runs are recorded in proposal.md and tasks.md. Continue with the typed idle handoff and later stages on this current baseline; retain the full parent completion outcome.
 
 ## Decision 1: Keep normal dispatch Action-only
 
@@ -74,10 +74,13 @@ artifact id/digest, parsed artifact content, checked-out default-branch revision
 `NO_WORK / no-routed-work` disposition. The admission request binds one bounded Lead candidate to
 that envelope with a content-addressed correlation; no request registry or retry record is persisted.
 
-The existing application workflow accepts the request through `workflow_dispatch` rather than an
-Issue comment, so a no-finding result does not create repository comment noise. Its idle job has a
-repository concurrency group with cancellation disabled. The job rechecks the exact run/artifact
-content, default branch ref, and normal dispatch immediately before each possible write. Existing
+The existing application workflow accepts a candidate through one strictly parsed
+`IDLE_ADMISSION_REQUEST` issue comment on the current daily runtime shard. The comment carries the
+base64 typed request as trigger/staging evidence only and is never accepted intent, routing, workflow
+state, or a mailbox. A no-finding result submits no request and therefore creates no repository
+comment noise. The idle job has a repository concurrency group with cancellation disabled. The job
+rechecks the exact run/artifact content, default branch ref, and normal dispatch immediately before
+each possible write. Existing
 targets use one full Issue update derived from the fresh object; new targets use one Issue create
 with the correlation/source evidence in the body. Both paths fresh-observe the complete tuple,
 including the full candidate body and preserved existing body and labels. Correlation reconciliation
@@ -86,9 +89,10 @@ fail-closed. A lost or ambiguous response is reconciled read-only by exact Issue
 and never blindly replayed.
 
 The external bootstrap must obtain the envelope from the successful bridge run, execute bounded Lead
-idle semantics, and call the existing application workflow with the base64 request input only when
-there is one candidate. The repository cannot prove or mutate that external Scheduled Task setting;
-the activation boundary remains an explicit production handoff requirement.
+idle semantics, and post the exact base64 request comment only when there is one candidate. This uses
+the GitHub connector capability available to the Scheduled Task while leaving all transition and
+mutation authority in the repository application. The repository cannot prove or mutate that external
+Scheduled Task setting; the activation boundary remains an explicit production handoff requirement.
 
 ## Production activation boundary
 
