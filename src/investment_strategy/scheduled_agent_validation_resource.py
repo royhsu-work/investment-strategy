@@ -1567,7 +1567,6 @@ def _historical_manifest_materialization_commit(
         cast(object, _github_json(repository, token, f"compare/{base_sha}...{revision}"))
     )
     base_commit = None if comparison is None else _as_mapping(comparison.get("base_commit"))
-    head_commit = None if comparison is None else _as_mapping(comparison.get("head_commit"))
     commits = None if comparison is None else comparison.get("commits")
     ahead_by = None if comparison is None else comparison.get("ahead_by")
     behind_by = None if comparison is None else comparison.get("behind_by")
@@ -1578,8 +1577,6 @@ def _historical_manifest_materialization_commit(
         or comparison.get("too_large") is True
         or base_commit is None
         or base_commit.get("sha") != base_sha
-        or head_commit is None
-        or head_commit.get("sha") != revision
         or not isinstance(ahead_by, int)
         or isinstance(ahead_by, bool)
         or ahead_by <= 0

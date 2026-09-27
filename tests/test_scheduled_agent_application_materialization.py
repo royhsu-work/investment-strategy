@@ -2130,7 +2130,6 @@ def test_live_322_merged_carrier_observer_recovers_exact_target(
                 "ahead_by": 2,
                 "behind_by": 0,
                 "base_commit": {"sha": accepted_base},
-                "head_commit": {"sha": carrier_head},
                 "commits": [
                     {"sha": historical_materialization_revision},
                     {"sha": carrier_head},

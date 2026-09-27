@@ -816,7 +816,6 @@ def test_apply_work_product_builds_same_change_replacement_after_merged_carrier(
                 "ahead_by": 1,
                 "behind_by": 0,
                 "base_commit": {"sha": _PR_HEAD},
-                "head_commit": {"sha": _REVISION},
                 "commits": [{"sha": _REVISION}],
                 "total_commits": 1,
             }
@@ -826,7 +825,6 @@ def test_apply_work_product_builds_same_change_replacement_after_merged_carrier(
                 "ahead_by": 1,
                 "behind_by": 0,
                 "base_commit": {"sha": _REVISION},
-                "head_commit": {"sha": _PR_HEAD},
                 "commits": [{"sha": _PR_HEAD}],
                 "total_commits": 1,
             }
@@ -1880,7 +1878,6 @@ def test_apply_work_product_reuses_current_head_without_commit_when_ancestry_div
                 "ahead_by": 1,
                 "behind_by": 0,
                 "base_commit": {"sha": base_sha},
-                "head_commit": {"sha": historical_head},
                 "commits": [{"sha": historical_head}],
                 "total_commits": 1,
             }
@@ -2178,7 +2175,6 @@ def test_live_322_merged_carrier_is_reconciled_without_replacement(
                 "ahead_by": 2,
                 "behind_by": 0,
                 "base_commit": {"sha": accepted_base},
-                "head_commit": {"sha": carrier_head},
                 "commits": [
                     {"sha": historical_materialization_revision},
                     {"sha": carrier_head},
@@ -2229,7 +2225,6 @@ def test_live_322_merged_carrier_is_reconciled_without_replacement(
                 "ahead_by": 1,
                 "behind_by": 0,
                 "base_commit": {"sha": accepted_base},
-                "head_commit": {"sha": carrier_head},
                 "commits": [{"sha": carrier_head}],
                 "total_commits": 1,
             }
