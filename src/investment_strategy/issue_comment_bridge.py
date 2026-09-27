@@ -382,6 +382,18 @@ def _application_job(
             "application-completion-job-identity-incomplete",
             request_comment_id=request_comment_id,
         )
+    if run_attempt > 1:
+        # A completed run has already crossed the one continuation boundary
+        # owned by this accepted intent.  Re-running the same immutable
+        # application from every scheduled wake blindly replays the same
+        # consequence and can never make progress without a new authoritative
+        # application boundary.  The run-attempt is GitHub-owned evidence;
+        # no repository retry state is introduced here.
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-rerun-limit",
+            request_comment_id=request_comment_id,
+        )
     return ApplicationCompletion(
         "RESUMABLE",
         "application-completion-resuming",
