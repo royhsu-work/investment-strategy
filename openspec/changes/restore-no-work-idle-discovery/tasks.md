@@ -40,8 +40,8 @@ Stage 0 is merged and active on current `main@d019fdc604e8a7fa40e2f3e6436a12b076
 ## 4. Verification and delivery
 
 - [x] 4.1 Run focused idle contract, application, bridge, and dispatch tests.
-- [ ] 4.2 Run full regression, type checks, lint, and repository workflow/static invariant checks.
-- [ ] 4.3 Run strict OpenSpec validation on the active change and resolve every reported error.
+- [x] 4.2 Run full regression, type checks, lint, and repository workflow/static invariant checks on the current-main merge snapshot; remote Python Quality also passes on the exact PR head.
+- [x] 4.3 Run strict OpenSpec validation on the active change and resolve every reported error; remote OpenSpec Validate also passes on the exact PR head.
 - [ ] 4.4 Capture production-shaped evidence for exact `NO_WORK` idle execution, no-finding silence, safe admission, and later normal Action handoff before declaring #322 complete.
 
 ## Lifecycle gates
