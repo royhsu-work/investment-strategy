@@ -24,6 +24,7 @@ from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from investment_strategy.scheduled_agent_dispatch_result import fetch_dispatch_result
 from investment_strategy.scheduled_agent_runtime import acquire_current_github_preflight
 from investment_strategy.workflow_dispatch import (
     DispatchDecision,
@@ -45,6 +46,7 @@ _SOURCE_REVISION_LINE = re.compile(r"(?m)^Idle-Source-Revision:\s*(\S+)\s*$")
 _SOURCE_LINE = re.compile(r"(?m)^Idle-Source:\s*(\S+)\s*$")
 _DISPATCH_RUN_PREFIX = "Scheduled Agent Dispatch "
 _DISPATCH_ARTIFACT_NAME = "dispatch-result.json"
+_DISPATCH_WORKFLOW_PATH = ".github/workflows/scheduled-agent-bridge.yml"
 
 IdleCandidateKind = Literal["no-finding", "existing", "new"]
 IdleAdmissionState = Literal[
@@ -59,6 +61,7 @@ IdleAdmissionState = Literal[
 GitHubReader = Callable[[str, str, str], object | None]
 GitHubWriter = Callable[[str, str, str, Mapping[str, object]], object | None]
 FreshDispatch = Callable[[], DispatchDecision]
+ArtifactResultReader = Callable[[], Mapping[str, object] | None]
 
 
 def _positive_int(value: object) -> int | None:
@@ -537,6 +540,7 @@ def _fresh_gate(
     *,
     read: GitHubReader,
     fresh_dispatch: FreshDispatch,
+    artifact_result: ArtifactResultReader,
 ) -> IdleAdmissionResult | None:
     run = read(
         request.envelope.repository,
@@ -545,10 +549,18 @@ def _fresh_gate(
     )
     if not isinstance(run, Mapping):
         return IdleAdmissionResult("FAIL_CLOSED", "idle-dispatch-run-unavailable")
+    run_title = f"{_DISPATCH_RUN_PREFIX}{request.envelope.request_comment_id}"
+    run_path = run.get("path")
+    path_matches = run_path in {
+        _DISPATCH_WORKFLOW_PATH,
+        f"{_DISPATCH_WORKFLOW_PATH}@{request.envelope.default_branch}",
+        f"{_DISPATCH_WORKFLOW_PATH}@refs/heads/{request.envelope.default_branch}",
+    }
+    title_matches = run.get("name") == run_title or run.get("display_title") == run_title
     if (
         run.get("id") != request.envelope.dispatch_run_id
-        or run.get("name") != f"{_DISPATCH_RUN_PREFIX}{request.envelope.request_comment_id}"
-        or run.get("path") != ".github/workflows/scheduled-agent-bridge.yml"
+        or not title_matches
+        or not path_matches
         or run.get("event") != "issue_comment"
         or run.get("head_sha") != request.envelope.default_branch_revision
         or run.get("status") != "completed"
@@ -563,7 +575,15 @@ def _fresh_gate(
     artifacts = (
         artifacts_payload.get("artifacts") if isinstance(artifacts_payload, Mapping) else None
     )
-    if not isinstance(artifacts, list):
+    total_count = (
+        artifacts_payload.get("total_count") if isinstance(artifacts_payload, Mapping) else None
+    )
+    if (
+        not isinstance(artifacts, list)
+        or isinstance(total_count, bool)
+        or not isinstance(total_count, int)
+        or total_count != len(artifacts)
+    ):
         return IdleAdmissionResult("FAIL_CLOSED", "idle-dispatch-artifact-list-incomplete")
     matches = tuple(
         item
@@ -581,6 +601,18 @@ def _fresh_gate(
         or normalized_digest != request.envelope.dispatch_artifact_sha256
     ):
         return IdleAdmissionResult("STALE", "idle-dispatch-artifact-stale")
+    try:
+        result = artifact_result()
+    except (HTTPError, OSError, RuntimeError, TimeoutError, ValueError):
+        return IdleAdmissionResult("FAIL_CLOSED", "idle-dispatch-artifact-content-unavailable")
+    if (
+        not isinstance(result, Mapping)
+        or result.get("request_comment_id") != request.envelope.request_comment_id
+        or result.get("default_branch_revision") != request.envelope.default_branch_revision
+        or result.get("disposition") != "NO_WORK"
+        or result.get("reason") != "no-routed-work"
+    ):
+        return IdleAdmissionResult("STALE", "idle-dispatch-artifact-content-stale")
     root = read(request.envelope.repository, "", "")
     if (
         not isinstance(root, Mapping)
@@ -613,7 +645,7 @@ def _paged_open_issues(
     issues: list[Mapping[str, object]] = []
     page = 1
     while True:
-        payload = read(repository, token, f"issues?state=open&per_page=100&page={page}")
+        payload = read(repository, token, f"issues?state=all&per_page=100&page={page}")
         if not isinstance(payload, list):
             return None
         for item in payload:
@@ -673,8 +705,13 @@ def _new_postcondition(request: IdleAdmissionRequest, issue: Mapping[str, object
     body = issue.get("body")
     if not isinstance(body, str):
         return False
+    try:
+        expected_body = _new_body(request)
+    except ValueError:
+        return False
     return (
-        _CORRELATION_LINE.findall(body) == [request.correlation]
+        body == expected_body
+        and _CORRELATION_LINE.findall(body) == [request.correlation]
         and _SOURCE_REVISION_LINE.findall(body) == [request.envelope.default_branch_revision]
         and _SOURCE_LINE.findall(body)
         == [f"{request.candidate.source_kind}:{request.candidate.source_ref}"]
@@ -685,13 +722,15 @@ def _existing_postcondition(
     issue: Mapping[str, object],
     *,
     unrelated: tuple[str, ...],
+    expected_body: str,
 ) -> bool:
     if not _routing_complete(issue):
         return False
     names = _labels(issue)
     return (
-        names is not None
-        and tuple(name for name in names if not name.startswith("action:")) == unrelated
+        issue.get("body") == expected_body
+        and names is not None
+        and names == unrelated + (ACTION_EXPLORE_CHANGE,)
     )
 
 
@@ -701,6 +740,7 @@ def admit_idle_request(
     read: GitHubReader,
     write: GitHubWriter,
     fresh_dispatch: FreshDispatch,
+    artifact_result: ArtifactResultReader,
 ) -> IdleAdmissionResult:
     """Freshly authorize and apply one bounded idle candidate.
 
@@ -737,11 +777,21 @@ def admit_idle_request(
                 "FAIL_CLOSED", "idle-existing-target-invalid", candidate.issue_number
             )
         fields, unrelated = prepared
-        if _existing_postcondition(current, unrelated=unrelated):
+        expected_body = cast(str, fields["body"])
+        if _existing_postcondition(
+            current,
+            unrelated=unrelated,
+            expected_body=expected_body,
+        ):
             return IdleAdmissionResult(
                 "ALREADY_ADMITTED", "idle-existing-target-already-complete", candidate.issue_number
             )
-        gate = _fresh_gate(request, read=read, fresh_dispatch=fresh_dispatch)
+        gate = _fresh_gate(
+            request,
+            read=read,
+            fresh_dispatch=fresh_dispatch,
+            artifact_result=artifact_result,
+        )
         if gate is not None:
             return IdleAdmissionResult(gate.state, gate.reason, candidate.issue_number)
         latest = read(request.envelope.repository, "", f"issues/{candidate.issue_number}")
@@ -749,7 +799,12 @@ def admit_idle_request(
             return IdleAdmissionResult(
                 "STALE", "idle-existing-target-changed-before-write", candidate.issue_number
             )
-        gate = _fresh_gate(request, read=read, fresh_dispatch=fresh_dispatch)
+        gate = _fresh_gate(
+            request,
+            read=read,
+            fresh_dispatch=fresh_dispatch,
+            artifact_result=artifact_result,
+        )
         if gate is not None:
             return IdleAdmissionResult(gate.state, gate.reason, candidate.issue_number)
         try:
@@ -762,7 +817,9 @@ def admit_idle_request(
         except (HTTPError, OSError, RuntimeError, TimeoutError):
             reconciled = read(request.envelope.repository, "", f"issues/{candidate.issue_number}")
             if isinstance(reconciled, Mapping) and _existing_postcondition(
-                reconciled, unrelated=unrelated
+                reconciled,
+                unrelated=unrelated,
+                expected_body=expected_body,
             ):
                 return IdleAdmissionResult(
                     "ADMITTED", "idle-existing-write-reconciled", candidate.issue_number, True
@@ -771,7 +828,11 @@ def admit_idle_request(
                 "AMBIGUOUS", "idle-existing-write-ambiguous", candidate.issue_number, True
             )
         observed = read(request.envelope.repository, "", f"issues/{candidate.issue_number}")
-        if isinstance(observed, Mapping) and _existing_postcondition(observed, unrelated=unrelated):
+        if isinstance(observed, Mapping) and _existing_postcondition(
+            observed,
+            unrelated=unrelated,
+            expected_body=expected_body,
+        ):
             return IdleAdmissionResult(
                 "ADMITTED", "idle-existing-admitted", candidate.issue_number, True
             )
@@ -795,7 +856,12 @@ def admit_idle_request(
         if number is None or not _new_postcondition(request, matches[0]):
             return IdleAdmissionResult("AMBIGUOUS", "idle-new-target-postcondition-invalid")
         return IdleAdmissionResult("ALREADY_ADMITTED", "idle-new-target-already-complete", number)
-    gate = _fresh_gate(request, read=read, fresh_dispatch=fresh_dispatch)
+    gate = _fresh_gate(
+        request,
+        read=read,
+        fresh_dispatch=fresh_dispatch,
+        artifact_result=artifact_result,
+    )
     if gate is not None:
         return gate
     issues_again = _paged_open_issues(request.envelope.repository, "", read=read)
@@ -807,7 +873,12 @@ def admit_idle_request(
             return IdleAdmissionResult("AMBIGUOUS", "idle-new-target-correlation-ambiguous")
         number = _positive_int(matches_again[0].get("number"))
         return IdleAdmissionResult("ALREADY_ADMITTED", "idle-new-target-already-complete", number)
-    gate = _fresh_gate(request, read=read, fresh_dispatch=fresh_dispatch)
+    gate = _fresh_gate(
+        request,
+        read=read,
+        fresh_dispatch=fresh_dispatch,
+        artifact_result=artifact_result,
+    )
     if gate is not None:
         return gate
     payload = {"title": candidate.title, "body": body, "labels": list(labels)}
@@ -849,6 +920,26 @@ def _default_dispatch(repository: str, token: str) -> DispatchDecision:
     return classify_dispatch(acquire_current_github_preflight(repository, token))
 
 
+def _verified_artifact_result(
+    repository: str,
+    token: str,
+    envelope: IdleDispatchEnvelope,
+) -> Mapping[str, object]:
+    result = fetch_dispatch_result(
+        repository,
+        token,
+        request_comment_id=envelope.request_comment_id,
+        run_id=envelope.dispatch_run_id,
+        current_revision=envelope.default_branch_revision,
+    )
+    return {
+        "request_comment_id": result.request_comment_id,
+        "default_branch_revision": result.default_branch_revision,
+        "disposition": result.disposition,
+        "reason": result.reason,
+    }
+
+
 def _main() -> int:
     parser = argparse.ArgumentParser(description="Apply one typed NO_WORK idle admission request")
     parser.add_argument("--request-b64", required=True)
@@ -873,6 +964,7 @@ def _main() -> int:
             repo, token, path, method="POST" if path == "issues" else "PATCH", payload=payload
         ),
         fresh_dispatch=lambda: _default_dispatch(repository, token),
+        artifact_result=lambda: _verified_artifact_result(repository, token, request.envelope),
     )
     print(
         json.dumps(

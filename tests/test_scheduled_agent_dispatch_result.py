@@ -97,6 +97,39 @@ def test_fetch_dispatch_result_reads_only_exact_successful_run_artifact(
     )
 
 
+def test_fetch_dispatch_result_accepts_actions_display_title_and_ref_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _run()
+    run.update(
+        {
+            "name": "Scheduled Agent Issue Comment Bridge",
+            "display_title": f"Scheduled Agent Dispatch {_REQUEST_ID}",
+            "path": ".github/workflows/scheduled-agent-bridge.yml@main",
+        }
+    )
+
+    def fake_json(repository: str, token: str, path: str) -> object:
+        del repository, token
+        if path == f"actions/runs/{_RUN_ID}":
+            return run
+        if path == f"actions/runs/{_RUN_ID}/artifacts?per_page=100":
+            return _artifact_listing()
+        raise AssertionError(f"unexpected JSON read: {path}")
+
+    monkeypatch.setattr(transport, "_github_json", fake_json)
+    monkeypatch.setattr(transport, "_github_bytes", lambda *_args: _authorize_document())
+
+    result = transport.fetch_dispatch_result(
+        "owner/repo",
+        "token",
+        request_comment_id=_REQUEST_ID,
+        run_id=_RUN_ID,
+        current_revision=_REVISION,
+    )
+    assert result.request_comment_id == _REQUEST_ID
+
+
 def test_fetch_dispatch_result_rejects_wrong_run_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -397,20 +397,21 @@ A fresh process SHALL reconstruct consequence completion from the existing `Cons
 
 The repository-owned idle boundary SHALL accept only a typed request bound to one completed,
 successful `scheduled-agent-bridge.yml` run, its unexpired `dispatch-result.json` artifact id and
-digest, the exact request comment, and the checked-out default-branch revision. The envelope MUST
-carry the exact `NO_WORK / no-routed-work` disposition. `AUTHORIZE`, `FAIL_CLOSED`, incomplete
-observations, stale revisions, contradictory run/artifact identity, and ambiguous artifacts MUST
-not invoke idle admission or mutate a repository Issue.
+digest, the parsed artifact content, the exact request comment, and the checked-out default-branch
+revision. The envelope MUST carry the exact `NO_WORK / no-routed-work` disposition. `AUTHORIZE`,
+`FAIL_CLOSED`, incomplete observations, stale revisions, contradictory run/artifact identity, and
+ambiguous artifacts MUST not invoke idle admission or mutate a repository Issue.
 
 An idle candidate request SHALL contain no more than one no-finding, existing-target, or new-target
 candidate. Immediately before every consequential write, the application MUST fresh-read the default
 branch ref and reconstruct exact normal dispatch; only qualified `NO_WORK` permits the write. An
-existing target SHALL preserve its body and all unrelated labels while producing exactly one
-`action:explore-change` routing label and `Change: unset`. A new target SHALL be created in one
-logical write with `Change: unset`, reconstructable source evidence, and exactly one
-`action:explore-change` routing label. The application MUST fresh-observe the complete tuple and
-reconcile an unknown write outcome by exact Issue identity or immutable admission correlation before
-any later wake; it MUST never blindly replay a create or update.
+existing target SHALL preserve its complete body and all unrelated labels while producing exactly
+one `action:explore-change` routing label and `Change: unset`. A new target SHALL be created in one
+logical write with the complete candidate body, `Change: unset`, reconstructable source evidence, and
+exactly one `action:explore-change` routing label. The application MUST fresh-observe the complete
+tuple and reconcile an unknown write outcome by exact Issue identity or immutable admission
+correlation across all Issue states before any later wake; it MUST never blindly replay a create or
+update, including when a prior correlated Issue is closed.
 
 The application carrier MAY use one non-durable concurrency group for idle admission. It MUST NOT
 create an idle Action, transition, queue, cursor, lease, heartbeat, retry registry, or accepted-intent
@@ -421,7 +422,7 @@ record. After a complete tuple is observed, the next normal wake MUST own the or
 
 - GIVEN one successful bridge run has one unexpired `dispatch-result.json` artifact whose digest,
   request comment, run identity, and checked-out main revision agree
-- AND the artifact disposition is exactly `NO_WORK / no-routed-work`
+- AND the parsed artifact disposition is exactly `NO_WORK / no-routed-work`
 - WHEN the external bootstrap submits one typed idle request
 - THEN the repository application can evaluate one bounded candidate
 - AND no Action, successor, or idle control state is created

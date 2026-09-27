@@ -55,6 +55,15 @@ def _decision(disposition: str = "NO_WORK") -> DispatchDecision:
     )
 
 
+def _artifact_result() -> Mapping[str, object]:
+    return {
+        "request_comment_id": 101,
+        "default_branch_revision": REVISION,
+        "disposition": "NO_WORK",
+        "reason": "no-routed-work",
+    }
+
+
 def test_envelope_and_request_are_content_addressed_and_strict() -> None:
     envelope = _envelope()
     candidate = IdleCandidate(
@@ -108,6 +117,7 @@ def test_no_finding_is_silent_and_does_not_call_writer() -> None:
         read=lambda *_args: (_ for _ in ()).throw(AssertionError("no-finding must not read")),
         write=lambda *_args: writes.append(cast(Mapping[str, object], _args[-1])),
         fresh_dispatch=lambda: _decision(),
+        artifact_result=_artifact_result,
     )
     assert result == IdleAdmissionResult("NO_FINDING", "idle-no-finding")
     assert writes == []
@@ -130,6 +140,7 @@ def _github_root(path: str) -> object:
         }
     if path == "actions/runs/202/artifacts?per_page=100":
         return {
+            "total_count": 1,
             "artifacts": [
                 {
                     "id": 303,
@@ -137,7 +148,7 @@ def _github_root(path: str) -> object:
                     "expired": False,
                     "digest": f"sha256:{DIGEST}",
                 }
-            ]
+            ],
         }
     raise AssertionError(path)
 
@@ -178,15 +189,84 @@ def test_existing_candidate_is_admitted_once_and_preserves_unrelated_state() -> 
         current["labels"] = [{"name": name} for name in cast(list[str], payload["labels"])]
         return current
 
-    result = admit_idle_request(request, read=read, write=write, fresh_dispatch=lambda: _decision())
+    result = admit_idle_request(
+        request,
+        read=read,
+        write=write,
+        fresh_dispatch=lambda: _decision(),
+        artifact_result=_artifact_result,
+    )
     assert result.state == "ADMITTED"
     assert len(writes) == 1
     assert writes[0][0] == "issues/11"
     assert writes[0][1]["labels"] == ["bug", "advisory:idle", ACTION_EXPLORE_CHANGE]
     assert cast(str, current["body"]).startswith("Change: unset\n")
 
-    second = admit_idle_request(request, read=read, write=write, fresh_dispatch=lambda: _decision())
+    second = admit_idle_request(
+        request,
+        read=read,
+        write=write,
+        fresh_dispatch=lambda: _decision(),
+        artifact_result=_artifact_result,
+    )
     assert second.state == "ALREADY_ADMITTED"
+    assert len(writes) == 1
+
+
+def test_real_actions_run_identity_shape_accepts_display_title_and_ref_path() -> None:
+    request = make_idle_admission_request(
+        _envelope(),
+        IdleCandidate(
+            kind="existing",
+            source_kind="workflow-friction",
+            source_ref="run:55",
+            source_revision=REVISION,
+            evidence="repeated failure",
+            issue_number=11,
+        ),
+    )
+    issue = {
+        "number": 11,
+        "state": "open",
+        "title": "Existing finding",
+        "body": "Description",
+        "labels": [{"name": "bug"}],
+    }
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path in {"", "git/ref/heads/main"}:
+            return _github_root(path)
+        if path.startswith("actions/runs/"):
+            value = _github_root(path)
+            if path == "actions/runs/202":
+                assert isinstance(value, dict)
+                value = {
+                    **value,
+                    "name": "Scheduled Agent Issue Comment Bridge",
+                    "display_title": "Scheduled Agent Dispatch 101",
+                    "path": ".github/workflows/scheduled-agent-bridge.yml@main",
+                }
+            return value
+        if path == "issues/11":
+            return issue
+        raise AssertionError(path)
+
+    writes: list[object] = []
+
+    def write(_repository: str, _token: str, path: str, payload: Mapping[str, object]) -> object:
+        writes.append(payload)
+        issue["body"] = payload["body"]
+        issue["labels"] = [{"name": name} for name in cast(list[str], payload["labels"])]
+        return issue
+
+    result = admit_idle_request(
+        request,
+        read=read,
+        write=write,
+        fresh_dispatch=lambda: _decision(),
+        artifact_result=_artifact_result,
+    )
+    assert result.state == "ADMITTED"
     assert len(writes) == 1
 
 
@@ -224,8 +304,55 @@ def test_existing_candidate_fails_closed_when_normal_work_wins_before_write() ->
         read=read,
         write=lambda *_args: writes.append(_args[-1]),
         fresh_dispatch=lambda: _decision("AUTHORIZE"),
+        artifact_result=_artifact_result,
     )
     assert result.state == "FAIL_CLOSED"
+    assert writes == []
+
+
+def test_artifact_content_must_confirm_exact_no_work() -> None:
+    request = make_idle_admission_request(
+        _envelope(),
+        IdleCandidate(
+            kind="existing",
+            source_kind="friction",
+            source_ref="run:57",
+            source_revision=REVISION,
+            evidence="repeated failure",
+            issue_number=14,
+        ),
+    )
+    issue = {
+        "number": 14,
+        "state": "open",
+        "title": "Finding",
+        "body": "Description",
+        "labels": [],
+    }
+    writes: list[object] = []
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path in {"", "git/ref/heads/main"}:
+            return _github_root(path)
+        if path.startswith("actions/runs/"):
+            return _github_root(path)
+        if path == "issues/14":
+            return issue
+        raise AssertionError(path)
+
+    result = admit_idle_request(
+        request,
+        read=read,
+        write=lambda *_args: writes.append(_args[-1]),
+        fresh_dispatch=lambda: _decision(),
+        artifact_result=lambda: {
+            **_artifact_result(),
+            "disposition": "AUTHORIZE",
+            "reason": "selected-formal-action",
+        },
+    )
+    assert result.state == "STALE"
+    assert result.reason == "idle-dispatch-artifact-content-stale"
     assert writes == []
 
 
@@ -264,10 +391,111 @@ def test_stale_default_branch_revision_is_rejected_before_idle_write() -> None:
         read=read,
         write=lambda *_args: writes.append(_args[-1]),
         fresh_dispatch=lambda: _decision(),
+        artifact_result=_artifact_result,
     )
     assert result.state == "STALE"
     assert result.reason == "idle-source-revision-stale"
     assert writes == []
+
+
+def test_closed_correlated_issue_blocks_new_duplicate_admission() -> None:
+    request = make_idle_admission_request(
+        _envelope(),
+        IdleCandidate(
+            kind="new",
+            source_kind="friction",
+            source_ref="run:58",
+            source_revision=REVISION,
+            evidence="repeated failure",
+            title="Already admitted finding",
+            body="Change: unset\n\nEvidence: repeated failure",
+            labels=(ACTION_EXPLORE_CHANGE,),
+        ),
+    )
+    body = (
+        "Change: unset\n\nEvidence: repeated failure\n\n"
+        f"Idle-Admission-Correlation: {request.correlation}\n"
+        f"Idle-Source-Revision: {REVISION}\n"
+        "Idle-Source: friction:run:58\n"
+    )
+    issues = [
+        {
+            "number": 88,
+            "state": "closed",
+            "title": "Already admitted finding",
+            "body": body,
+            "labels": [{"name": ACTION_EXPLORE_CHANGE}],
+        }
+    ]
+    writes: list[object] = []
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path in {"", "git/ref/heads/main"}:
+            return _github_root(path)
+        if path.startswith("actions/runs/"):
+            return _github_root(path)
+        if path == "issues?state=all&per_page=100&page=1":
+            return issues
+        raise AssertionError(path)
+
+    result = admit_idle_request(
+        request,
+        read=read,
+        write=lambda *_args: writes.append(_args[-1]),
+        fresh_dispatch=lambda: _decision(),
+        artifact_result=_artifact_result,
+    )
+    assert result.state == "AMBIGUOUS"
+    assert result.reason == "idle-new-target-postcondition-invalid"
+    assert writes == []
+
+
+def test_existing_write_that_loses_unrelated_body_fails_closed() -> None:
+    current: dict[str, object] = {
+        "number": 15,
+        "state": "open",
+        "title": "Body preservation",
+        "body": "Original evidence that must survive",
+        "labels": [{"name": "bug"}],
+    }
+    request = make_idle_admission_request(
+        _envelope(),
+        IdleCandidate(
+            kind="existing",
+            source_kind="friction",
+            source_ref="run:59",
+            source_revision=REVISION,
+            evidence="body preservation",
+            issue_number=15,
+        ),
+    )
+    writes: list[object] = []
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path in {"", "git/ref/heads/main"}:
+            return _github_root(path)
+        if path.startswith("actions/runs/"):
+            return _github_root(path)
+        if path == "issues/15":
+            return current
+        raise AssertionError(path)
+
+    def write(_repository: str, _token: str, path: str, payload: Mapping[str, object]) -> object:
+        writes.append(payload)
+        current["body"] = "Change: unset\n"
+        current["labels"] = [{"name": "bug"}, {"name": ACTION_EXPLORE_CHANGE}]
+        return current
+
+    result = admit_idle_request(
+        request,
+        read=read,
+        write=write,
+        fresh_dispatch=lambda: _decision(),
+        artifact_result=_artifact_result,
+    )
+    assert result.state == "AMBIGUOUS"
+    assert result.reason == "idle-existing-postcondition-unproven"
+    assert len(writes) == 1
 
 
 def test_new_candidate_forms_one_complete_tuple_and_reconciles_next_wake() -> None:
@@ -292,7 +520,7 @@ def test_new_candidate_forms_one_complete_tuple_and_reconciles_next_wake() -> No
             return _github_root(path)
         if path.startswith("actions/runs/"):
             return _github_root(path)
-        if path == "issues?state=open&per_page=100&page=1":
+        if path == "issues?state=all&per_page=100&page=1":
             return issues
         if path == "issues/77":
             return issues[0]
@@ -310,14 +538,26 @@ def test_new_candidate_forms_one_complete_tuple_and_reconciles_next_wake() -> No
         issues.append(issue)
         return issue
 
-    result = admit_idle_request(request, read=read, write=write, fresh_dispatch=lambda: _decision())
+    result = admit_idle_request(
+        request,
+        read=read,
+        write=write,
+        fresh_dispatch=lambda: _decision(),
+        artifact_result=_artifact_result,
+    )
     assert result.state == "ADMITTED"
     assert len(writes) == 1
     assert writes[0]["labels"] == [ACTION_EXPLORE_CHANGE]
     assert f"Idle-Admission-Correlation: {request.correlation}" in cast(str, writes[0]["body"])
     assert len(issues) == 1
 
-    second = admit_idle_request(request, read=read, write=write, fresh_dispatch=lambda: _decision())
+    second = admit_idle_request(
+        request,
+        read=read,
+        write=write,
+        fresh_dispatch=lambda: _decision(),
+        artifact_result=_artifact_result,
+    )
     assert second.state == "ALREADY_ADMITTED"
     assert len(writes) == 1
 
@@ -343,7 +583,7 @@ def test_new_ambiguous_write_fails_closed_without_blind_retry() -> None:
             return _github_root(path)
         if path.startswith("actions/runs/"):
             return _github_root(path)
-        if path == "issues?state=open&per_page=100&page=1":
+        if path == "issues?state=all&per_page=100&page=1":
             return []
         raise AssertionError(path)
 
@@ -352,7 +592,13 @@ def test_new_ambiguous_write_fails_closed_without_blind_retry() -> None:
         writes += 1
         raise RuntimeError("response lost")
 
-    result = admit_idle_request(request, read=read, write=write, fresh_dispatch=lambda: _decision())
+    result = admit_idle_request(
+        request,
+        read=read,
+        write=write,
+        fresh_dispatch=lambda: _decision(),
+        artifact_result=_artifact_result,
+    )
     assert result.state == "AMBIGUOUS"
     assert result.mutation_attempted
     assert writes == 1

@@ -26,7 +26,7 @@ Stage 0 is merged and active on current `main@d019fdc604e8a7fa40e2f3e6436a12b076
 
 - [x] 2.1 RED/GREEN: add tests for no-finding zero mutation, existing-candidate tuple completion with unrelated content/labels preserved, and new-candidate creation with exactly `Change: unset + action:explore-change`.
 - [x] 2.2 GREEN: implement the smallest repository-owned idle admission actuator using fresh default-branch reauthorization and one logical create/update boundary.
-- [x] 2.3 RED/GREEN: cover stale source/default branch, interruption-before/after mutation, overlap recovery through the canonical tuple, and ambiguous-write reconciliation.
+- [x] 2.3 RED/GREEN: cover stale source/default branch, real Actions run/artifact identity and content, interruption-before/after mutation, overlap recovery through all-state correlation, closed/contradictory matches, body/label preservation, and ambiguous-write reconciliation.
 - [x] 2.4 GREEN: add minimal non-durable workflow concurrency and read-only ambiguous-write reconciliation; fail closed when uniqueness or the complete postcondition cannot be proved.
 - [x] 2.5 REFACTOR: reuse current dispatch/application carrier and fresh-read primitives; no duplicate queue, lock state, lease, cursor, heartbeat, registry, recovery workflow, or hidden backlog is introduced.
 
