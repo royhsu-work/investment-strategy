@@ -1586,8 +1586,6 @@ def _observe_nonimplementation_existing_target(
 ) -> ValidationResourceTarget:
     if request.pr_number is None:
         raise RuntimeError("application materialization validation target lacks PR")
-    if request.base_sha != current_revision and not allow_pending_continuation:
-        raise RuntimeError("application materialization authorization base is stale")
     pr = _open_pr_payload(
         repository=repository,
         token=token,
@@ -1629,6 +1627,14 @@ def _observe_nonimplementation_existing_target(
             pr_number=request.pr_number,
             validation_required=materialization_requires_validation(request, source),
         )
+    # An open carrier whose accepted base is no longer current still needs an
+    # explicit pending-continuation proof.  A historical merged carrier is
+    # different: its durable consequence is reconstructed above from the
+    # immutable manifest, carrier ancestry, and exact historical snapshot, so
+    # rejecting it here would make a successful merge unrecoverable after a
+    # disjoint default-branch advance.
+    if request.base_sha != current_revision and not allow_pending_continuation:
+        raise RuntimeError("application materialization authorization base is stale")
     observed_ref = _ref_head_sha(repository, token, request.branch)
     if observed_ref != revision:
         raise RuntimeError("application materialization PR/ref head identity is stale")
