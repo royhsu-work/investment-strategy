@@ -96,6 +96,14 @@ def test_pending_source_can_reconcile_one_derived_successor_frontier(
         accepted_successor_routing=("reviewer", "review-implementation"),
     )
 
+    issue["labels"] = []
+    assert not resource._pending_source_is_current(
+        _REPOSITORY,
+        _FIXTURE_VALUE,
+        source,
+        "restore-no-work-idle-discovery",
+    )
+
 
 def test_blob_text_requires_exact_response_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(

@@ -253,7 +253,13 @@ def _pending_source_is_current(
         and observation.issue_number == source.issue_number
         and observation.state == "open"
         and observation.change == expected_change
-        and current_routing in {source_routing, accepted_successor_routing}
+        and (
+            current_routing == source_routing
+            or (
+                accepted_successor_routing is not None
+                and current_routing == accepted_successor_routing
+            )
+        )
     )
 
 
