@@ -1643,8 +1643,8 @@ def _already_merged_work_product_target(
     same-Change replacement.  This observer is intentionally narrow: the PR
     must be a historical merged carrier, its merge commit must be in the
     current default-branch history, and every requested blob must be present
-    on one complete historical PR tree which is reachable from the recorded
-    head.  Later same-Change descendants may update those files legitimately;
+    in one complete historical PR snapshot which is reachable from the
+    recorded head.  Later same-Change descendants may update those files legitimately;
     if the historical exact effect or its ancestry is not provable, callers
     retain the existing replacement/fail-closed path.
     """
