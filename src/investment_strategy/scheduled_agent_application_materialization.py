@@ -1756,21 +1756,32 @@ def observe_materialization_target(
     current_revision: str,
     default_branch: str,
     allow_pending_continuation: bool = False,
+    accepted_successor_routing: tuple[str, str] | None = None,
 ) -> ValidationResourceTarget:
     """Read-only reconstruction of the exact carrier after materialization."""
 
     request = parse_materialization_payload(payload, source)
+    pending_source_current = False
+    if allow_pending_continuation:
+        pending_source_current = (
+            _pending_source_is_current(
+                repository,
+                token,
+                source,
+                request.expected_change,
+            )
+            if accepted_successor_routing is None
+            else _pending_source_is_current(
+                repository,
+                token,
+                source,
+                request.expected_change,
+                accepted_successor_routing=accepted_successor_routing,
+            )
+        )
     if (
         not allow_pending_continuation and _current_authorized_request(repository, token) != source
-    ) or (
-        allow_pending_continuation
-        and not _pending_source_is_current(
-            repository,
-            token,
-            source,
-            request.expected_change,
-        )
-    ):
+    ) or (allow_pending_continuation and not pending_source_current):
         raise RuntimeError("application materialization source dispatch is stale")
     if _current_default_branch(repository, token) != default_branch:
         raise RuntimeError("application materialization default branch changed")

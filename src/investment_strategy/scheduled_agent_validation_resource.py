@@ -240,16 +240,26 @@ def _pending_source_is_current(
     token: str,
     source: WorkerRequest,
     expected_change: str,
+    *,
+    accepted_successor_routing: tuple[str, str] | None = None,
 ) -> bool:
     issue = _as_mapping(_github_json(repository, token, f"issues/{source.issue_number}"))
     observation = None if issue is None else normalize_github_issue(issue)
+    current_routing = None if observation is None else observation.routing
+    source_routing = (source.role, source.action)
     return bool(
         observation is not None
         and observation.authoritative
         and observation.issue_number == source.issue_number
         and observation.state == "open"
         and observation.change == expected_change
-        and observation.routing == (source.role, source.action)
+        and (
+            current_routing == source_routing
+            or (
+                accepted_successor_routing is not None
+                and current_routing == accepted_successor_routing
+            )
+        )
     )
 
 

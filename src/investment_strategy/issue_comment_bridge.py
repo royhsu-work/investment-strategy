@@ -621,6 +621,10 @@ def _fresh_completion_postconditions(
         # The canonical materialization observer may therefore reconstruct an
         # exact disjoint pending continuation from its original accepted base.
         allow_pending_continuation=True,
+        # The formal result has already qualified the exact successor frontier.
+        # Let the postcondition observer bind that same immutable intent after
+        # the normal routing transition, without widening source authority.
+        allow_accepted_successor=True,
     )
 
 
