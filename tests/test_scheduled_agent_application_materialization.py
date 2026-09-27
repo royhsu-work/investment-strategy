@@ -100,6 +100,7 @@ def test_existing_change_materialization_requires_current_pr_and_preserves_expec
         ("duplicate-pr", "carrier identity is ambiguous"),
         ("missing-default-history", "omits authorized default history"),
         ("unproven-historical-base", "comparison is not an ancestor"),
+        ("stale-open-base", "authorization base is stale"),
     ),
 )
 def test_existing_change_observer_reconstructs_only_exact_current_carrier(
@@ -125,7 +126,7 @@ def test_existing_change_observer_reconstructs_only_exact_current_carrier(
     )
     payload["base_sha"] = current_default
     payload["pr_number"] = 324
-    if failure == "unproven-historical-base":
+    if failure in {"unproven-historical-base", "stale-open-base"}:
         payload["base_sha"] = "a" * 40
     request = parse_materialization_payload(payload, source)
     pr = {
@@ -2098,6 +2099,7 @@ def test_live_322_merged_carrier_observer_recovers_exact_target(
         },
     }
 
+    monkeypatch.setattr(materialization, "_current_authorized_request", lambda *_args: source)
     monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_args: True)
     monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
     monkeypatch.setattr(
@@ -2156,7 +2158,11 @@ def test_live_322_merged_carrier_observer_recovers_exact_target(
         token=_TOKEN,
         current_revision=current_main,
         default_branch="main",
-        allow_pending_continuation=True,
+        # A merged carrier is already a durable consequence.  Its accepted
+        # base may be historical, so the observer must prove the merged
+        # carrier from GitHub history without requiring the pending-carrier
+        # continuation flag.
+        allow_pending_continuation=False,
     )
 
     assert target == ValidationResourceTarget(
