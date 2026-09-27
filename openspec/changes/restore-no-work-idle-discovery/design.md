@@ -66,6 +66,28 @@ A later retry must never replay Lead semantic discovery merely to recreate an ap
 
 Once a complete candidate tuple is observed, idle ownership ends. The next normal Scheduled Task wake fresh-dispatches and authorizes ordinary `Lead / explore-change`. The idle path never executes that Action in the same wake and never stores a successor/cursor.
 
+## Repository implementation of the boundary
+
+`scheduled_agent_idle_admission.py` is the repository-owned implementation of the typed boundary.
+Its envelope binds the request comment, successful bridge run, unexpired `dispatch-result.json`
+artifact id/digest, checked-out default-branch revision, and the exact `NO_WORK / no-routed-work`
+disposition. The admission request binds one bounded Lead candidate to that envelope with a
+content-addressed correlation; no request registry or retry record is persisted.
+
+The existing application workflow accepts the request through `workflow_dispatch` rather than an
+Issue comment, so a no-finding result does not create repository comment noise. Its idle job has a
+repository concurrency group with cancellation disabled. The job rechecks the exact run/artifact,
+default branch ref, and normal dispatch immediately before each possible write. Existing targets
+use one full Issue update derived from the fresh object; new targets use one Issue create with the
+correlation/source evidence in the body. Both paths fresh-observe the complete tuple. A lost or
+ambiguous response is reconciled read-only by exact Issue identity/correlation and never blindly
+replayed.
+
+The external bootstrap must obtain the envelope from the successful bridge run, execute bounded Lead
+idle semantics, and call the existing application workflow with the base64 request input only when
+there is one candidate. The repository cannot prove or mutate that external Scheduled Task setting;
+the activation boundary remains an explicit production handoff requirement.
+
 ## Production activation boundary
 
 The repository implementation can make the contract executable and expose the exact carrier, but the external Scheduled Task configuration must be updated to consume `NO_WORK`, invoke Lead idle semantics, and submit the typed idle request when a candidate exists. Production proof must include the real wake/run/artifact identity, a no-finding run with zero repository mutation, and a material finding whose canonical Issue is consumed by the next normal dispatch.

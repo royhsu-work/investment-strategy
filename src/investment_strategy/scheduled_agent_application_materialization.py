@@ -55,6 +55,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _valid_branch,
     _valid_repo_path,
     _valid_sha,
+    _validate_historical_pr_base,
     apply_work_product,
     completed_task_bookkeeping_is_current,
     resolve_validation_resource_target,
@@ -1615,20 +1616,26 @@ def _observe_nonimplementation_existing_target(
             raise RuntimeError("application materialization carrier identity is ambiguous")
     base = _as_mapping(pr.get("base"))
     base_revision = None if base is None else base.get("sha")
-    if (
-        not _pr_matches(
-            pr,
-            repository=repository,
-            branch=request.branch,
-            default_branch=default_branch,
-            revision=cast(str, revision),
-            issue_number=source.issue_number,
-            change=request.change,
-        )
-        or not _valid_sha(base_revision)
-        or base_revision not in {request.base_sha, current_revision}
-    ):
+    if not _pr_matches(
+        pr,
+        repository=repository,
+        branch=request.branch,
+        default_branch=default_branch,
+        revision=cast(str, revision),
+        issue_number=source.issue_number,
+        change=request.change,
+    ) or not _valid_sha(base_revision):
         raise RuntimeError("application materialization carrier identity is invalid")
+    if request.base_sha != current_revision:
+        _validate_historical_pr_base(
+            repository,
+            token,
+            request_base_sha=request.base_sha,
+            pr_base_sha=cast(str, base_revision),
+            authorization_revision=current_revision,
+            carrier_revision=cast(str, revision),
+            requested_paths={file.path for file in request.files},
+        )
 
     manifest = WorkProductManifest(
         branch=request.branch,

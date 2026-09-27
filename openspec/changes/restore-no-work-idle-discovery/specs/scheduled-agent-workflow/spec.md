@@ -392,3 +392,69 @@ A fresh process SHALL reconstruct consequence completion from the existing `Cons
 - THEN it does not resume or select any guessed application job
 - AND it does not qualify the uncorrelated result or derive a successor
 - AND the existing fail-closed or ambiguous classification is preserved
+
+### Requirement: NO_WORK idle admission is typed, fresh, and bounded
+
+The repository-owned idle boundary SHALL accept only a typed request bound to one completed,
+successful `scheduled-agent-bridge.yml` run, its unexpired `dispatch-result.json` artifact id and
+digest, the exact request comment, and the checked-out default-branch revision. The envelope MUST
+carry the exact `NO_WORK / no-routed-work` disposition. `AUTHORIZE`, `FAIL_CLOSED`, incomplete
+observations, stale revisions, contradictory run/artifact identity, and ambiguous artifacts MUST
+not invoke idle admission or mutate a repository Issue.
+
+An idle candidate request SHALL contain no more than one no-finding, existing-target, or new-target
+candidate. Immediately before every consequential write, the application MUST fresh-read the default
+branch ref and reconstruct exact normal dispatch; only qualified `NO_WORK` permits the write. An
+existing target SHALL preserve its body and all unrelated labels while producing exactly one
+`action:explore-change` routing label and `Change: unset`. A new target SHALL be created in one
+logical write with `Change: unset`, reconstructable source evidence, and exactly one
+`action:explore-change` routing label. The application MUST fresh-observe the complete tuple and
+reconcile an unknown write outcome by exact Issue identity or immutable admission correlation before
+any later wake; it MUST never blindly replay a create or update.
+
+The application carrier MAY use one non-durable concurrency group for idle admission. It MUST NOT
+create an idle Action, transition, queue, cursor, lease, heartbeat, retry registry, or accepted-intent
+record. After a complete tuple is observed, the next normal wake MUST own the ordinary
+`Lead / explore-change` Action.
+
+#### Scenario: Exact NO_WORK envelope reaches one bounded idle request
+
+- GIVEN one successful bridge run has one unexpired `dispatch-result.json` artifact whose digest,
+  request comment, run identity, and checked-out main revision agree
+- AND the artifact disposition is exactly `NO_WORK / no-routed-work`
+- WHEN the external bootstrap submits one typed idle request
+- THEN the repository application can evaluate one bounded candidate
+- AND no Action, successor, or idle control state is created
+
+#### Scenario: Normal work suppresses idle mutation
+
+- GIVEN an idle request was derived from an earlier exact `NO_WORK` envelope
+- AND fresh dispatch now returns `AUTHORIZE` or `FAIL_CLOSED`
+- WHEN the application reaches the admission boundary
+- THEN it performs no Issue create or update
+- AND it fails closed without replaying Lead semantic work
+
+#### Scenario: No finding is repository-silent
+
+- GIVEN bounded Lead idle semantics return no candidate
+- WHEN the bootstrap completes the wake
+- THEN it submits no idle admission mutation
+- AND no Issue comment, label, body, or routing state is created
+
+#### Scenario: Existing candidate preserves unrelated Issue state
+
+- GIVEN one fresh existing Issue target has no immutable Change and arbitrary unrelated body/labels
+- AND fresh normal dispatch remains exact `NO_WORK`
+- WHEN the idle application admits it
+- THEN one Issue update establishes `Change: unset` and one `action:explore-change`
+- AND every unrelated body byte and label remains present
+- AND the next normal dispatch authorizes ordinary `Lead / explore-change`
+
+#### Scenario: New candidate and ambiguous result are reconciled from GitHub truth
+
+- GIVEN one bounded new candidate has exact source evidence and one immutable admission correlation
+- AND fresh normal dispatch remains exact `NO_WORK`
+- WHEN the application creates the candidate or loses the create response
+- THEN it observes exactly one complete open Issue with `Change: unset` and one
+  `action:explore-change`, or fails closed when zero/multiple contradictory matches remain
+- AND it never blindly creates a replacement Issue

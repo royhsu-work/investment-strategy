@@ -2052,8 +2052,9 @@ def test_live_322_manifest_recovers_after_disjoint_default_advance(
     source = WorkerRequest(322, "lead", "resolve-question")
     change = "restore-no-work-idle-discovery"
     historical_base = "d019fdc604e8a7fa40e2f3e6436a12b076658057"
-    authorization_revision = "dd2b1b2885ba35d4654b1b424b6627c0754e1d28"
-    carrier_revision = "7af49c85ebcb1cc22435913a154e9895bf43cdd2"
+    historical_pr_base = "1db00c4b50175af30d4dc9febe461cbab8bac5bf"
+    authorization_revision = "f5fad326173b21feb5455bcb917766a383a76f7b"
+    carrier_revision = "5de9641a3e3e7e26071f3f8cdc1843e3fa842049"
     branch = f"agent/{change}"
     manifest_values = (
         (
@@ -2093,12 +2094,29 @@ def test_live_322_manifest_recovers_after_disjoint_default_advance(
         expected_change=change,
         manifest=manifest,
     )
-    shared_code_path = "src/investment_strategy/scheduled_agent_validation_resource.py"
-    default_paths = {
-        shared_code_path,
+    pr_base_paths = {
         "src/investment_strategy/scheduled_agent_application_materialization.py",
+        "src/investment_strategy/scheduled_agent_effect_contract.py",
+        "src/investment_strategy/scheduled_agent_effects.py",
+        "src/investment_strategy/scheduled_agent_validation_resource.py",
+        "tests/fixtures/issue322-application-recovery.json",
+        "tests/test_issue_comment_bridge.py",
+        "tests/test_scheduled_agent_application_bridge.py",
+        "tests/test_scheduled_agent_application_materialization.py",
+        "tests/test_scheduled_agent_consequence_contract.py",
+        "tests/test_scheduled_agent_effects.py",
+        "tests/test_scheduled_agent_validation_resource.py",
     }
-    carrier_paths = {path for path, _blob, _expected in manifest_values} | default_paths
+    paths_after_pr_base = {
+        "src/investment_strategy/scheduled_agent_application_materialization.py",
+        "src/investment_strategy/scheduled_agent_validation_resource.py",
+        "tests/test_scheduled_agent_application_materialization.py",
+    }
+    overlap_path = "src/investment_strategy/scheduled_agent_validation_resource.py"
+    historical_overlap = [False]
+    carrier_paths_after_pr_base = {path for path, _blob, _expected in manifest_values}
+    default_paths = pr_base_paths | paths_after_pr_base
+    carrier_paths = {path for path, _blob, _expected in manifest_values} | pr_base_paths
     mutation_calls: list[str] = []
     comparison_reads: list[str] = []
     pr = {
@@ -2115,7 +2133,7 @@ def test_live_322_manifest_recovers_after_disjoint_default_advance(
         },
         "base": {
             "ref": "main",
-            "sha": authorization_revision,
+            "sha": historical_pr_base,
             "repo": {"full_name": _REPOSITORY},
         },
     }
@@ -2133,10 +2151,66 @@ def test_live_322_manifest_recovers_after_disjoint_default_advance(
         if api_path.startswith("compare/"):
             comparison = api_path.removeprefix("compare/")
             comparison_reads.append(comparison)
+            if comparison == f"{historical_base}...{historical_base}":
+                return {
+                    "status": "identical",
+                    "ahead_by": 0,
+                    "behind_by": 0,
+                    "base_commit": {"sha": historical_base},
+                    "too_large": False,
+                    "files": [],
+                }
+            if comparison == f"{authorization_revision}...{authorization_revision}":
+                return {
+                    "status": "identical",
+                    "ahead_by": 0,
+                    "behind_by": 0,
+                    "base_commit": {"sha": authorization_revision},
+                    "too_large": False,
+                    "files": [],
+                }
+            if comparison == f"{historical_base}...{historical_pr_base}":
+                return {
+                    "status": "ahead",
+                    "ahead_by": 19,
+                    "behind_by": 0,
+                    "base_commit": {"sha": historical_base},
+                    "too_large": False,
+                    "files": [
+                        {"filename": path, "status": "modified"} for path in sorted(pr_base_paths)
+                    ],
+                }
+            if comparison == f"{historical_pr_base}...{authorization_revision}":
+                return {
+                    "status": "ahead",
+                    "ahead_by": 15,
+                    "behind_by": 0,
+                    "base_commit": {"sha": historical_pr_base},
+                    "too_large": False,
+                    "files": [
+                        {"filename": path, "status": "modified"}
+                        for path in sorted(paths_after_pr_base)
+                    ],
+                }
+            if comparison == f"{historical_pr_base}...{carrier_revision}":
+                changed_carrier_paths = set(carrier_paths_after_pr_base)
+                if historical_overlap[0]:
+                    changed_carrier_paths.add(overlap_path)
+                return {
+                    "status": "ahead",
+                    "ahead_by": 7,
+                    "behind_by": 0,
+                    "base_commit": {"sha": historical_pr_base},
+                    "too_large": False,
+                    "files": [
+                        {"filename": path, "status": "modified"}
+                        for path in sorted(changed_carrier_paths)
+                    ],
+                }
             if comparison == f"{historical_base}...{authorization_revision}":
                 return {
                     "status": "ahead",
-                    "ahead_by": 8,
+                    "ahead_by": 34,
                     "behind_by": 0,
                     "base_commit": {"sha": historical_base},
                     "too_large": False,
@@ -2147,7 +2221,7 @@ def test_live_322_manifest_recovers_after_disjoint_default_advance(
             if comparison == f"{historical_base}...{carrier_revision}":
                 return {
                     "status": "ahead",
-                    "ahead_by": 4,
+                    "ahead_by": 26,
                     "behind_by": 0,
                     "base_commit": {"sha": historical_base},
                     "too_large": False,
@@ -2162,9 +2236,9 @@ def test_live_322_manifest_recovers_after_disjoint_default_advance(
             if comparison == f"{authorization_revision}...{carrier_revision}":
                 return {
                     "status": "diverged",
-                    "ahead_by": 4,
-                    "behind_by": 8,
-                    "merge_base_commit": {"sha": historical_base},
+                    "ahead_by": 7,
+                    "behind_by": 15,
+                    "merge_base_commit": {"sha": historical_pr_base},
                 }
         if api_path.startswith("contents/") and method == "GET":
             raw_path, _separator, query = api_path.partition("?")
@@ -2218,8 +2292,43 @@ def test_live_322_manifest_recovers_after_disjoint_default_advance(
         change=change,
         branch=branch,
     )
+    assert f"{historical_base}...{historical_pr_base}" in comparison_reads
+    assert f"{historical_pr_base}...{authorization_revision}" in comparison_reads
     assert f"{historical_base}...{authorization_revision}" in comparison_reads
     assert f"{historical_base}...{carrier_revision}" in comparison_reads
+    assert mutation_calls == []
+
+    historical_overlap[0] = True
+    comparison_reads.clear()
+    with pytest.raises(RuntimeError, match="historical PR base overlaps"):
+        resource.apply_work_product(
+            plan,
+            repository=_REPOSITORY,
+            token=_FIXTURE_VALUE,
+            default_branch="main",
+            authorization_revision=authorization_revision,
+        )
+
+    assert f"{historical_pr_base}...{carrier_revision}" in comparison_reads
+    assert mutation_calls == []
+
+    endpoint_successes: list[str] = []
+    for endpoint_base in (historical_base, authorization_revision):
+        cast(dict[str, object], pr["base"])["sha"] = endpoint_base
+        comparison_reads.clear()
+        try:
+            resource.apply_work_product(
+                plan,
+                repository=_REPOSITORY,
+                token=_FIXTURE_VALUE,
+                default_branch="main",
+                authorization_revision=authorization_revision,
+            )
+        except RuntimeError:
+            continue
+        endpoint_successes.append(endpoint_base)
+
+    assert endpoint_successes == []
     assert mutation_calls == []
 
 
