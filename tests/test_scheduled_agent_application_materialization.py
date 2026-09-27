@@ -2031,3 +2031,99 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
             endpoint_successes.append(endpoint_base)
 
     assert endpoint_successes == []
+
+
+def test_live_322_merged_carrier_observer_recovers_exact_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh observer recognizes the already-merged #324 consequence."""
+
+    source = WorkerRequest(322, "lead", "resolve-question")
+    repository = "royhsu-work/investment-strategy"
+    change = "restore-no-work-idle-discovery"
+    accepted_base = "d019fdc604e8a7fa40e2f3e6436a12b076658057"
+    current_main = "b751948875a49582a0d073a47809d697badc8a6d"
+    carrier_head = "4ff78b463a24844309aa5025deb7eeaef78bbf55"
+    branch = f"agent/{change}"
+    files = [
+        {
+            "path": f"openspec/changes/{change}/proposal.md",
+            "blob_sha": "bdeffd94ff01c7f3e2fd4e8e12c3b535b9df6932",
+            "expected_sha": "6003d898fae7c40c59d08e3023ed131baf41b383",
+        },
+        {
+            "path": f"openspec/changes/{change}/design.md",
+            "blob_sha": "8096b24682c77d37e177e68e3460712af7de3325",
+            "expected_sha": "05cfb1579bb4a7c6480f180e9a7e025fdb5fde27",
+        },
+        {
+            "path": f"openspec/changes/{change}/tasks.md",
+            "blob_sha": "4e428b3ead7ef6aa0de6cabfaef4885932a28d22",
+            "expected_sha": "331dc671ea6fa05c8fb2d40cc3f6dc65a31a6f0a",
+        },
+        {
+            "path": f"openspec/changes/{change}/specs/scheduled-agent-workflow/spec.md",
+            "blob_sha": "d1861dd5b6a190f821fdf99ec7bb2d36fe5db208",
+            "expected_sha": "a8ec4b39e5287651ad58cf2b2e0e1a31113cdf06",
+        },
+    ]
+    payload = {
+        "issue_number": source.issue_number,
+        "operation": "application-materialize",
+        "expected_change": change,
+        "change": change,
+        "branch": branch,
+        "base_sha": accepted_base,
+        "message": "Resolve exact-head OpenSpec findings for #322",
+        "pr_number": 324,
+        "files": files,
+    }
+    merged_pr = {
+        "number": 324,
+        "state": "closed",
+        "merged": True,
+        "merged_at": "2026-09-27T10:25:10Z",
+        "merge_commit_sha": current_main,
+        "body": "Formalize OpenSpec change.\n\nRefs #322\n",
+        "head": {
+            "ref": branch,
+            "sha": carrier_head,
+            "repo": {"full_name": repository},
+        },
+        "base": {
+            "ref": "main",
+            "sha": "6a4aadb40b875fce7715947fef7d9f59f9a9d9b2",
+            "repo": {"full_name": repository},
+        },
+    }
+
+    monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_args: True)
+    monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
+    monkeypatch.setattr(
+        materialization,
+        "_ref_head_sha",
+        lambda _repository, _token, ref, **_kwargs: current_main if ref == "main" else None,
+    )
+    monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: merged_pr)
+    monkeypatch.setattr(validation_resource, "_default_branch_is_ancestor", lambda *_a, **_k: True)
+    monkeypatch.setattr(validation_resource, "_manifest_content_matches", lambda *_a, **_k: True)
+
+    target = materialization.observe_materialization_target(
+        payload,
+        source,
+        repository=repository,
+        token=_TOKEN,
+        current_revision=current_main,
+        default_branch="main",
+        allow_pending_continuation=True,
+    )
+
+    assert target == ValidationResourceTarget(
+        repository=repository,
+        revision=carrier_head,
+        correlation="effect-request-322",
+        pr_number=324,
+        change=change,
+        validation_required=True,
+        branch=branch,
+    )

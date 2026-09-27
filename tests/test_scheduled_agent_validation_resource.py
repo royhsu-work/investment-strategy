@@ -2046,6 +2046,100 @@ def test_live_322_accepted_manifest_on_existing_pr_head_recovers_after_interrupt
     )
 
 
+def test_live_322_merged_carrier_is_reconciled_without_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A merged requested carrier is complete, not a replacement request."""
+
+    source = WorkerRequest(322, "lead", "resolve-question")
+    change = "restore-no-work-idle-discovery"
+    accepted_base = "d019fdc604e8a7fa40e2f3e6436a12b076658057"
+    current_main = "b751948875a49582a0d073a47809d697badc8a6d"
+    carrier_head = "4ff78b463a24844309aa5025deb7eeaef78bbf55"
+    merge_commit = current_main
+    pr_base = "6a4aadb40b875fce7715947fef7d9f59f9a9d9b2"
+    branch = f"agent/{change}"
+    manifest = resource.WorkProductManifest(
+        branch=branch,
+        base_sha=accepted_base,
+        message="Resolve exact-head OpenSpec findings for #322",
+        files=(
+            resource.WorkProductFile(
+                f"openspec/changes/{change}/proposal.md",
+                "bdeffd94ff01c7f3e2fd4e8e12c3b535b9df6932",
+                "6003d898fae7c40c59d08e3023ed131baf41b383",
+            ),
+            resource.WorkProductFile(
+                f"openspec/changes/{change}/design.md",
+                "8096b24682c77d37e177e68e3460712af7de3325",
+                "05cfb1579bb4a7c6480f180e9a7e025fdb5fde27",
+            ),
+            resource.WorkProductFile(
+                f"openspec/changes/{change}/tasks.md",
+                "4e428b3ead7ef6aa0de6cabfaef4885932a28d22",
+                "331dc671ea6fa05c8fb2d40cc3f6dc65a31a6f0a",
+            ),
+            resource.WorkProductFile(
+                f"openspec/changes/{change}/specs/scheduled-agent-workflow/spec.md",
+                "d1861dd5b6a190f821fdf99ec7bb2d36fe5db208",
+                "a8ec4b39e5287651ad58cf2b2e0e1a31113cdf06",
+            ),
+        ),
+    )
+    plan = resource.WorkProductPlan(
+        True,
+        source=source,
+        pr_number=324,
+        expected_change=change,
+        manifest=manifest,
+    )
+    merged_pr = {
+        "number": 324,
+        "state": "closed",
+        "merged": True,
+        "merged_at": "2026-09-27T10:25:10Z",
+        "merge_commit_sha": merge_commit,
+        "body": "Formalize OpenSpec change.\n\nRefs #322\n",
+        "head": {
+            "ref": branch,
+            "sha": carrier_head,
+            "repo": {"full_name": _REPOSITORY},
+        },
+        "base": {
+            "ref": "main",
+            "sha": pr_base,
+            "repo": {"full_name": _REPOSITORY},
+        },
+    }
+
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_args: source)
+    monkeypatch.setattr(resource, "_open_pr_payload", lambda **_kwargs: merged_pr)
+    monkeypatch.setattr(
+        resource,
+        "_ref_head_sha",
+        lambda _repository, _token, ref, **_kwargs: current_main if ref == "main" else carrier_head,
+    )
+    monkeypatch.setattr(resource, "_default_branch_is_ancestor", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(resource, "_manifest_content_matches", lambda *_args, **_kwargs: True)
+
+    target = resource.apply_work_product(
+        plan,
+        repository=_REPOSITORY,
+        token=_FIXTURE_VALUE,
+        default_branch="main",
+        authorization_revision=current_main,
+    )
+
+    assert target == resource.ValidationResourceTarget(
+        repository=_REPOSITORY,
+        revision=carrier_head,
+        correlation="effect-request-322",
+        pr_number=324,
+        change=change,
+        branch=branch,
+    )
+
+
 def test_live_322_manifest_recovers_after_disjoint_default_advance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

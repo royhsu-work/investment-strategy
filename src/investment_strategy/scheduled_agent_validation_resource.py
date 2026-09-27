@@ -1538,6 +1538,84 @@ def _manifest_expected_content_matches_base(
     )
 
 
+def _already_merged_work_product_target(
+    *,
+    repository: str,
+    token: str,
+    default_branch: str,
+    authorization_revision: str,
+    pr: Mapping[str, object],
+    issue_number: int,
+    pr_number: int,
+    expected_change: str,
+    expected_branch: str,
+    manifest: WorkProductManifest,
+) -> ValidationResourceTarget | None:
+    """Recognize a requested carrier whose exact content is already merged.
+
+    A completed carrier is a durable consequence, not a request to create a
+    same-Change replacement.  This observer is intentionally narrow: the PR
+    must be a historical merged carrier, its merge commit must be in the
+    current default-branch history, and every requested blob must be present
+    both on the recorded PR head and on current main.  If any proof is absent,
+    callers retain the existing replacement/fail-closed path.
+    """
+
+    if not _is_historical_merged_carrier(pr):
+        return None
+    head = _as_mapping(pr.get("head"))
+    base = _as_mapping(pr.get("base"))
+    pr_head_sha = None if head is None else head.get("sha")
+    pr_base_sha = None if base is None else base.get("sha")
+    merge_commit_sha = pr.get("merge_commit_sha")
+    if (
+        pr.get("number") != pr_number
+        or head is None
+        or base is None
+        or head.get("ref") != expected_branch
+        or base.get("ref") != default_branch
+        or not _valid_sha(pr_head_sha)
+        or not _valid_sha(pr_base_sha)
+        or not _valid_sha(merge_commit_sha)
+    ):
+        return None
+
+    if not _default_branch_is_ancestor(
+        repository,
+        token,
+        default_revision=cast(str, merge_commit_sha),
+        revision=authorization_revision,
+    ):
+        return None
+    if pr_base_sha != manifest.base_sha and not _default_branch_is_ancestor(
+        repository,
+        token,
+        default_revision=manifest.base_sha,
+        revision=cast(str, pr_base_sha),
+    ):
+        return None
+    if not _manifest_content_matches(
+        repository,
+        token,
+        revision=cast(str, pr_head_sha),
+        manifest=manifest,
+    ) or not _manifest_content_matches(
+        repository,
+        token,
+        revision=authorization_revision,
+        manifest=manifest,
+    ):
+        return None
+    return ValidationResourceTarget(
+        repository=repository,
+        revision=cast(str, pr_head_sha),
+        correlation=f"effect-request-{issue_number}",
+        pr_number=pr_number,
+        change=expected_change,
+        branch=expected_branch,
+    )
+
+
 def _reconciliation_message(change: str) -> str:
     return f"Reconcile default-branch ancestry for {change}"
 
@@ -1901,6 +1979,21 @@ def apply_work_product(
     if base is None or base.get("ref") != default_branch:
         raise RuntimeError("work-product PR base identity is stale")
     historical_merged_carrier = _is_historical_merged_carrier(pr)
+    if historical_merged_carrier:
+        completed_target = _already_merged_work_product_target(
+            repository=repository,
+            token=token,
+            default_branch=default_branch,
+            authorization_revision=authorization_revision,
+            pr=pr,
+            issue_number=plan.source.issue_number,
+            pr_number=plan.pr_number,
+            expected_change=plan.expected_change,
+            expected_branch=expected_branch,
+            manifest=plan.manifest,
+        )
+        if completed_target is not None:
+            return completed_target
     replacement_branch: str | None = None
     replacement_ref_exists = False
     replacement_pr: Mapping[str, object] | None = None
