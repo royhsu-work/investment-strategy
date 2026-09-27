@@ -33,6 +33,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     WorkProductFile,
     WorkProductManifest,
     WorkProductPlan,
+    _already_merged_work_product_target,
     _ancestor_comparison_paths,
     _as_mapping,
     _change_from_issue,
@@ -46,6 +47,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _is_executor_config_authoring,
     _is_executor_task_and_implementation_materialization,
     _is_executor_task_bookkeeping,
+    _is_historical_merged_carrier,
     _open_pr_payload,
     _open_prs_for_branch,
     _pending_source_is_current,
@@ -1594,11 +1596,39 @@ def _observe_nonimplementation_existing_target(
         expected_change=request.expected_change,
         default_branch=default_branch,
         expected_branch=request.branch,
+        allow_historical_merged_carrier=True,
     )
     head = _as_mapping(pr.get("head"))
     revision = None if head is None else head.get("sha")
     if not _valid_sha(revision):
         raise RuntimeError("application materialization PR head is incomplete")
+    if _is_historical_merged_carrier(pr):
+        merged_target = _already_merged_work_product_target(
+            repository=repository,
+            token=token,
+            default_branch=default_branch,
+            authorization_revision=current_revision,
+            pr=pr,
+            issue_number=source.issue_number,
+            pr_number=request.pr_number,
+            expected_change=request.expected_change,
+            expected_branch=request.branch,
+            manifest=WorkProductManifest(
+                branch=request.branch,
+                base_sha=request.base_sha,
+                message=request.message,
+                files=request.files,
+            ),
+        )
+        if merged_target is None:
+            raise RuntimeError("application materialization merged carrier is incomplete")
+        return _target(
+            request,
+            repository=repository,
+            revision=merged_target.revision,
+            pr_number=request.pr_number,
+            validation_required=materialization_requires_validation(request, source),
+        )
     observed_ref = _ref_head_sha(repository, token, request.branch)
     if observed_ref != revision:
         raise RuntimeError("application materialization PR/ref head identity is stale")
