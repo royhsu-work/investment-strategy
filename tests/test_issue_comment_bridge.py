@@ -2132,7 +2132,7 @@ def test_one_accepted_intent_is_resumed_before_semantic_replay() -> None:
             1,
             1,
             True,
-            ("RESUMABLE", "application-completion-resuming"),
+            ("INVALID", "application-completion-rerun-limit"),
         ),
         (
             "propose-change",
@@ -2164,14 +2164,14 @@ def test_one_accepted_intent_is_resumed_before_semantic_replay() -> None:
         ),
     ),
 )
-def test_current_accepted_application_resumes_when_legacy_result_breaks_frontier(
+def test_current_accepted_application_stops_replaying_after_repeated_failed_attempt(
     current_action: str,
     application_run_count: int,
     accepted_decision_count: int,
     trusted_accepted_decision: bool,
     expected: tuple[str, str],
 ) -> None:
-    """Recover the exact production prefix: ACCEPT, effects, branch/PR, then uncorrelated result."""
+    """Stop replay after the exact production prefix has already been retried."""
 
     current_revision = "e617a05ada51af9ff8f20697bbf07c4bfc8ec19e"
     authorization_revision = "2e00e236f24ba41302c9ba18c685acdf4cebe4ed"
@@ -2360,14 +2360,17 @@ def test_current_accepted_application_resumes_when_legacy_result_breaks_frontier
     if expected[0] == "RESUMABLE":
         assert completion.request_comment_id == 5781255019
         assert completion.job_id == 107028234822
-    elif expected[1] == "application-completion-run-identity-ambiguous":
+    elif expected[1] in {
+        "application-completion-run-identity-ambiguous",
+        "application-completion-rerun-limit",
+    }:
         assert application_run_reads > 0
     else:
         assert application_run_reads == 0
 
 
-def test_live_322_accepted_request_resumes_its_exact_failed_application_job() -> None:
-    """Reproduce the live #322 accepted-request prefix from current GitHub evidence."""
+def test_live_322_accepted_request_does_not_resume_completed_failed_application_job() -> None:
+    """A repeated #322 application attempt must stop the scheduled retry loop."""
 
     fixture_path = Path(__file__).parent / "fixtures" / "issue322-application-recovery.json"
     fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
@@ -2422,10 +2425,9 @@ def test_live_322_accepted_request_resumes_its_exact_failed_application_job() ->
     )
 
     assert completion == bridge.ApplicationCompletion(
-        "RESUMABLE",
-        "application-completion-resuming",
+        "INVALID",
+        "application-completion-rerun-limit",
         request_comment_id=request_id,
-        job_id=job_id,
     )
     assert request_id == 5810765007
     assert run_id == 35976411803
