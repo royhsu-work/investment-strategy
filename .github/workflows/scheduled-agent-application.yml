@@ -22,7 +22,10 @@ concurrency:
 
 jobs:
   idle-admission:
-    if: github.event_name == 'workflow_dispatch' && inputs.idle_request_b64 != ''
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.idle_request_b64 != '') ||
+      (github.event_name == 'issue_comment' &&
+      startsWith(github.event.comment.body, 'IDLE_ADMISSION_REQUEST'))
     concurrency:
       group: scheduled-agent-idle-admission-${{ github.repository }}
       cancel-in-progress: false
@@ -58,13 +61,23 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           IDLE_REQUEST_B64: ${{ inputs.idle_request_b64 }}
           PYTHONPATH: ${{ github.workspace }}/src
-        run: >-
-          uv run python -m investment_strategy.scheduled_agent_idle_admission
-          --request-b64 "$IDLE_REQUEST_B64"
-          --revision "${{ steps.revision.outputs.sha }}"
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "issue_comment" ]]; then
+            uv run python -m investment_strategy.scheduled_agent_idle_admission \
+              --event-path "$GITHUB_EVENT_PATH" \
+              --revision "${{ steps.revision.outputs.sha }}"
+          else
+            uv run python -m investment_strategy.scheduled_agent_idle_admission \
+              --request-b64 "$IDLE_REQUEST_B64" \
+              --revision "${{ steps.revision.outputs.sha }}"
+          fi
 
   apply:
-    if: github.event_name == 'issue_comment' && startsWith(github.event.comment.body, 'EFFECT_REQUEST')
+    if: >-
+      github.event_name == 'issue_comment' &&
+      (startsWith(github.event.comment.body, 'EFFECT_REQUEST') ||
+      startsWith(github.event.comment.body, 'APPLICATION_CONTINUATION'))
     permissions:
       actions: write
       contents: write

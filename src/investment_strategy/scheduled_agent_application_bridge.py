@@ -71,9 +71,13 @@ from investment_strategy.workflow_dispatch import (
 )
 
 APPLICATION_REQUEST_MARKER = "EFFECT_REQUEST"
+APPLICATION_CONTINUATION_MARKER = "APPLICATION_CONTINUATION"
 AUTHORIZATION_REVISION_PREFIX = "Authorization-Revision: "
 DISPATCH_CORRELATION_PREFIX = "Dispatch-Correlation: "
 WORKER_RESULT_B64_PREFIX = "Worker-Result-B64: "
+ORIGINAL_REQUEST_COMMENT_PREFIX = "Original-Request-Comment: "
+ACCEPTED_DECISION_SHA256_PREFIX = "Accepted-Decision-SHA256: "
+CONTINUATION_CORRELATION_PREFIX = "Continuation-Correlation: "
 _CHATGPT_CONNECTOR_APP_SLUG = "chatgpt-codex-connector"
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _FORMAL_RESULT_MARKERS = frozenset({"ACTION_RESULT", "REVIEW_RESULT", "MERGE_RESULT"})
@@ -95,6 +99,111 @@ class ApplicationRequest:
     authorization_revision: str
     raw_worker_result: str
     dispatch_correlation: str | None = None
+
+
+@dataclass(frozen=True)
+class ApplicationContinuationRequest:
+    """A fresh transport trigger bound to one immutable accepted intent."""
+
+    issue_number: int
+    original_request_comment_id: int
+    accepted_decision_sha256: str
+    continuation_correlation: str
+
+
+def application_continuation_correlation(
+    repository: str,
+    issue_number: int,
+    original_request_comment_id: int,
+    accepted_decision_sha256: str,
+) -> str:
+    """Derive the content address for one accepted-intent continuation."""
+
+    if (
+        "/" not in repository
+        or _positive_int(issue_number) is None
+        or _positive_int(original_request_comment_id) is None
+        or not re.fullmatch(r"[0-9a-f]{64}", accepted_decision_sha256)
+    ):
+        raise ValueError("application continuation identity is invalid")
+    material = ":".join(
+        (
+            repository,
+            str(issue_number),
+            str(original_request_comment_id),
+            accepted_decision_sha256,
+        )
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def render_application_continuation_request(
+    *,
+    repository: str,
+    issue_number: int,
+    original_request_comment_id: int,
+    accepted_decision_sha256: str,
+) -> str:
+    correlation = application_continuation_correlation(
+        repository,
+        issue_number,
+        original_request_comment_id,
+        accepted_decision_sha256,
+    )
+    return "\n".join(
+        (
+            APPLICATION_CONTINUATION_MARKER,
+            f"Issue: {issue_number}",
+            f"{ORIGINAL_REQUEST_COMMENT_PREFIX}{original_request_comment_id}",
+            f"{ACCEPTED_DECISION_SHA256_PREFIX}{accepted_decision_sha256}",
+            f"{CONTINUATION_CORRELATION_PREFIX}{correlation}",
+        )
+    )
+
+
+def parse_application_continuation_request(
+    body: str,
+) -> ApplicationContinuationRequest | None:
+    """Parse the strict transport-only continuation marker."""
+
+    lines = body.splitlines()
+    if len(lines) != 5 or lines[0] != APPLICATION_CONTINUATION_MARKER:
+        return None
+    if not lines[1].startswith("Issue: "):
+        return None
+    issue_value = lines[1][len("Issue: ") :]
+    try:
+        issue_number = int(issue_value)
+    except ValueError:
+        return None
+    if (
+        _positive_int(issue_number) is None
+        or issue_value != str(issue_number)
+        or not lines[2].startswith(ORIGINAL_REQUEST_COMMENT_PREFIX)
+        or not lines[3].startswith(ACCEPTED_DECISION_SHA256_PREFIX)
+        or not lines[4].startswith(CONTINUATION_CORRELATION_PREFIX)
+    ):
+        return None
+    original_request_value = lines[2][len(ORIGINAL_REQUEST_COMMENT_PREFIX) :]
+    try:
+        original_request_comment_id = int(original_request_value)
+    except ValueError:
+        return None
+    accepted_decision_sha256 = lines[3][len(ACCEPTED_DECISION_SHA256_PREFIX) :]
+    continuation_correlation = lines[4][len(CONTINUATION_CORRELATION_PREFIX) :]
+    if (
+        _positive_int(original_request_comment_id) is None
+        or original_request_value != str(original_request_comment_id)
+        or re.fullmatch(r"[0-9a-f]{64}", accepted_decision_sha256) is None
+        or re.fullmatch(r"[0-9a-f]{64}", continuation_correlation) is None
+    ):
+        return None
+    return ApplicationContinuationRequest(
+        issue_number=issue_number,
+        original_request_comment_id=original_request_comment_id,
+        accepted_decision_sha256=accepted_decision_sha256,
+        continuation_correlation=continuation_correlation,
+    )
 
 
 @dataclass(frozen=True)
@@ -469,6 +578,7 @@ def plan_application(
     allow_descendant_resume: bool = False,
     allow_accepted_request_mutation: bool = False,
     accepted_intent: ApplicationDecisionRecord | None = None,
+    accepted_request_comment_id: int | None = None,
 ) -> ApplicationPlan:
     """Freshly derive the only legal source Issue/Action/Role from the repository."""
 
@@ -500,14 +610,19 @@ def plan_application(
     repository_owner = repository.split("/", 1)[0]
     if not _trusted_connector_comment(event_comment, repository_owner):
         raise ValueError("EFFECT_REQUEST must originate from the configured ChatGPT connector")
-    request_comment_id = _positive_int(event_comment.get("id"))
-    if request_comment_id is None:
+    event_comment_id = _positive_int(event_comment.get("id"))
+    if event_comment_id is None:
         raise ValueError("EFFECT_REQUEST event comment id is invalid")
+    request_comment_id = event_comment_id
 
     if accepted_intent is not None and accepted_intent.disposition == "ACCEPTED":
         # After ACCEPT, the immutable intent—not the current semantic
         # frontier—owns continuation.  The current frontier may already be
         # the derived successor and therefore has a different correlation.
+        if accepted_request_comment_id is not None:
+            if accepted_request_comment_id != accepted_intent.request_comment_id:
+                raise ValueError("accepted application intent request identity is invalid")
+            request_comment_id = accepted_request_comment_id
         if accepted_intent.request_comment_id != request_comment_id:
             raise ValueError("accepted application intent request identity is invalid")
         accepted_source = WorkerRequest(
@@ -762,6 +877,35 @@ def _application_decisions_for_request_id(
     if len(matches) > 1:
         raise ValueError("application decision identity is ambiguous")
     return () if not matches else (matches[0],)
+
+
+def _application_decision_comment_for_request(
+    *,
+    repository: str,
+    token: str,
+    issue_number: int,
+    request_comment_id: int,
+) -> tuple[ApplicationDecisionRecord, str] | None:
+    """Return one exact decision record together with its immutable body."""
+
+    comments = _paged_github_list(
+        repository,
+        token,
+        f"issues/{issue_number}/comments?sort=created&direction=asc",
+    )
+    matches: list[tuple[ApplicationDecisionRecord, str]] = []
+    for comment in comments:
+        if not is_github_actions_comment(comment):
+            continue
+        body = comment.get("body")
+        if not isinstance(body, str):
+            continue
+        record = parse_application_decision(body)
+        if record is not None and record.request_comment_id == request_comment_id:
+            matches.append((record, body))
+    if len(matches) > 1:
+        raise ValueError("application decision identity is ambiguous")
+    return None if not matches else matches[0]
 
 
 def _worker_semantic_projection(raw_worker_result: str) -> str:
@@ -3404,6 +3548,11 @@ def main() -> int:
     event_comment_id = _positive_int(None if event_comment is None else event_comment.get("id"))
     accepted_intent: ApplicationDecisionRecord | None = None
     accepted_raw_worker_result: str | None = None
+    continuation: ApplicationContinuationRequest | None = None
+    if isinstance(body, str):
+        continuation = parse_application_continuation_request(body)
+        if body.startswith(APPLICATION_CONTINUATION_MARKER) and continuation is None:
+            raise ValueError("application continuation request is invalid")
     try:
         request = parse_application_request(body)
     except ValueError:
@@ -3416,7 +3565,52 @@ def main() -> int:
     # Semantic-only payloads, edited envelopes, and deleted envelopes use the
     # complete fresh-Issue fallback below.
     preflight: DispatchPreflight | None = None
-    if event_comment_id is not None and request is not None and args.run_attempt > 1:
+    if continuation is not None:
+        if event_comment_id is None:
+            raise ValueError("application continuation event comment id is invalid")
+        if _fresh_event_observation(event, body, repository, token):
+            raise ValueError("application continuation current comment was mutated")
+        preflight = acquire_current_github_preflight(repository, token)
+        accepted_intent = _find_application_decision_from_current_frontier(
+            repository=repository,
+            token=token,
+            request_comment_id=continuation.original_request_comment_id,
+            preflight=preflight,
+        )
+        if (
+            accepted_intent is None
+            or accepted_intent.disposition != "ACCEPTED"
+            or accepted_intent.issue_number != continuation.issue_number
+        ):
+            raise ValueError("application continuation accepted intent is unavailable")
+        decision_comments = _application_decision_comment_for_request(
+            repository=repository,
+            token=token,
+            issue_number=accepted_intent.issue_number,
+            request_comment_id=accepted_intent.request_comment_id,
+        )
+        if decision_comments is None:
+            raise ValueError("application continuation decision evidence is unavailable")
+        _decision_record, decision_body = decision_comments
+        decision_sha256 = hashlib.sha256(decision_body.encode("utf-8")).hexdigest()
+        expected_correlation = application_continuation_correlation(
+            repository,
+            accepted_intent.issue_number,
+            accepted_intent.request_comment_id,
+            decision_sha256,
+        )
+        if (
+            decision_sha256 != continuation.accepted_decision_sha256
+            or expected_correlation != continuation.continuation_correlation
+        ):
+            raise ValueError("application continuation correlation is invalid")
+
+    if (
+        continuation is None
+        and event_comment_id is not None
+        and request is not None
+        and args.run_attempt > 1
+    ):
         claimed_source = _claimed_source(request.raw_worker_result)
         if claimed_source is not None:
             accepted_intent = _application_decision_for_request(
@@ -3487,6 +3681,9 @@ def main() -> int:
         allow_descendant_resume=args.run_attempt > 1 or accepted_intent is not None,
         allow_accepted_request_mutation=accepted_intent is not None,
         accepted_intent=accepted_intent,
+        accepted_request_comment_id=(
+            None if continuation is None else continuation.original_request_comment_id
+        ),
     )
     if not plan.should_apply:
         _write_validation_outputs(None)

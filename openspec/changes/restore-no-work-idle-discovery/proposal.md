@@ -63,14 +63,14 @@ The shared application recovery is a prerequisite for the idle path. No idle adm
 2. **Safe admission boundary — implemented in this continuation** — The repository-owned application actuator accepts one typed existing/new candidate, reauthorizes exact current `NO_WORK`, serializes only idle admission, preserves unrelated existing state, reconciles interruptions/ambiguous writes from GitHub truth, and emits the canonical tuple. The stage is not production-complete until its exact head is merged and the current default branch reruns the applicable checks.
 3. **Scheduled Task/bootstrap activation and parent proof** — N-1 is Stages 0–2 merged on the default branch. Connect the real Scheduled Task/bootstrap to the exact dispatch artifact and typed boundary; exercise bounded Lead semantics and safe admission; then prove a later ordinary wake authorizes `Lead / explore-change`. Exit only with production-shaped wake, run, and artifact evidence for `AUTHORIZE`/`FAIL_CLOSED` suppression, true `NO_WORK` idle execution, no-finding silence, safe existing/new admission, overlap and interruption recovery, and the later normal Action handoff. Verify the active OpenSpec Change is complete and archive it only through its governed lifecycle. If external scheduler configuration cannot be changed through available authorized capability, the production activation criterion remains unmet and the exact external boundary stays a blocker.
 
-The repository-visible cutover reuses the existing `scheduled-agent-application.yml` carrier through
-a strictly parsed `IDLE_ADMISSION_REQUEST` comment on the current daily runtime shard. The comment
-carries one base64 typed request as trigger/staging evidence only; it is not accepted intent, workflow
-state, routing, or a mailbox. A real external Scheduled Task can create that comment with the currently
-available GitHub connector, but still must be configured to read the exact successful bridge artifact,
-invoke bounded Lead idle semantics, and emit the comment only for one candidate. A no-finding result
-remains zero-write. The external Scheduled Task setting itself is not available through repository
-access and remains an explicit Human-owned activation boundary.
+The repository-visible cutover uses the existing `scheduled-agent-application.yml` carrier with one
+typed `IDLE_ADMISSION_REQUEST` Issue-comment RPC on the current daily runtime shard. The comment is
+only a trigger/staging transport, not a mailbox or accepted-intent record; no-finding remains silent.
+The same boundary carries an exact `APPLICATION_CONTINUATION` body for an accepted application that
+needs a fresh GitHub workflow run after an exhausted attempt. A real external Scheduled Task must
+still be configured to read the exact successful bridge artifact, invoke bounded Lead idle semantics,
+and post the exact typed body only when a candidate or continuation is present; that external setting
+is not available through repository access.
 
 Every stage must have a fresh exact-head review, required validation, and an exact-head merge before the next stage uses it as N-1. Stages are independently testable and deployable while preserving the full parent outcome; their exit criteria do not replace the parent completion evidence below. A merged stage, including Stage 0, is not completion until Stage 3 proves the production wake path and normal Action handoff.
 

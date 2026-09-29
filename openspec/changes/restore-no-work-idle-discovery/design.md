@@ -74,29 +74,33 @@ artifact id/digest, parsed artifact content, checked-out default-branch revision
 `NO_WORK / no-routed-work` disposition. The admission request binds one bounded Lead candidate to
 that envelope with a content-addressed correlation; no request registry or retry record is persisted.
 
-The existing application workflow accepts a candidate through one strictly parsed
-`IDLE_ADMISSION_REQUEST` issue comment on the current daily runtime shard. The comment carries the
-base64 typed request as trigger/staging evidence only and is never accepted intent, routing, workflow
-state, or a mailbox. A no-finding result submits no request and therefore creates no repository
-comment noise. The idle job has a repository concurrency group with cancellation disabled. The job
-rechecks the exact run/artifact content, default branch ref, and normal dispatch immediately before
-each possible write. Existing
-targets use one full Issue update derived from the fresh object; new targets use one Issue create
-with the correlation/source evidence in the body. Both paths fresh-observe the complete tuple,
-including the full candidate body and preserved existing body and labels. Correlation reconciliation
-enumerates all Issue states (not just open Issues), so a closed or contradictory prior result remains
-fail-closed. A lost or ambiguous response is reconciled read-only by exact Issue identity/correlation
-and never blindly replayed.
+The existing application workflow accepts the request through one typed `IDLE_ADMISSION_REQUEST`
+Issue-comment RPC on the current daily runtime shard. The comment is only a connector trigger and
+staging carrier; it is not an accepted intent, mailbox, or repository-owned state record. A
+no-finding result remains silent and creates no comment. Its idle job has a repository concurrency
+group with cancellation disabled. The job rechecks the exact request body, current runtime shard,
+default branch ref, and normal dispatch immediately before each possible write. Existing targets
+use one full Issue update derived from the fresh object; new targets use one Issue create with the
+correlation/source evidence in the body. Both paths fresh-observe the complete tuple, including the
+full candidate body and preserved existing body and labels. Correlation reconciliation enumerates
+all Issue states (not just open Issues), so a closed or contradictory prior result remains fail-closed.
+A lost or ambiguous response is reconciled read-only by exact Issue identity/correlation and never
+blindly replayed. The same daily-shard comment boundary carries an
+`APPLICATION_CONTINUATION` transport after an accepted application reaches GitHub's exhausted
+run-attempt boundary; that body is content-addressed to the immutable accepted decision and the
+application re-reads the decision before applying any effect.
 
 The external bootstrap must obtain the envelope from the successful bridge run, execute bounded Lead
-idle semantics, and post the exact base64 request comment only when there is one candidate. This uses
-the GitHub connector capability available to the Scheduled Task while leaving all transition and
-mutation authority in the repository application. The repository cannot prove or mutate that external
-Scheduled Task setting; the activation boundary remains an explicit production handoff requirement.
+idle semantics, and post exactly one typed `IDLE_ADMISSION_REQUEST` body through the configured
+GitHub connector only when a candidate exists. It must also relay an exact
+`APPLICATION_CONTINUATION` body emitted by the dispatch artifact when an accepted application needs
+a fresh transport boundary; it must not create a new semantic request. The repository cannot prove
+or mutate that external Scheduled Task setting; the activation boundary remains an explicit
+production handoff requirement.
 
 ## Production activation boundary
 
-The repository implementation can make the contract executable and expose the exact carrier, but the external Scheduled Task configuration must be updated to consume `NO_WORK`, invoke Lead idle semantics, and submit the typed idle request when a candidate exists. Production proof must include the real wake/run/artifact identity, a no-finding run with zero repository mutation, and a material finding whose canonical Issue is consumed by the next normal dispatch.
+The repository implementation can make the contract executable and expose the exact carrier, but the external Scheduled Task configuration must be updated to consume `NO_WORK`, invoke Lead idle semantics, and post the typed idle request to the current runtime shard when a candidate exists. It must relay an emitted application continuation body exactly once per fresh boundary without inventing a new semantic request. Production proof must include the real wake/run/artifact identity, a no-finding run with zero repository mutation, and a material finding whose canonical Issue is consumed by the next normal dispatch.
 
 If that external configuration is not exposed to the available capability, repository implementation and tests remain valid delivery work but production activation is not proven. The final lifecycle must report that exact blocker rather than calling a merged repository implementation complete.
 

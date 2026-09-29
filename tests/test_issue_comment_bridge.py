@@ -171,6 +171,47 @@ def test_non_authorizing_decisions_have_no_selected_work(
     assert parsed.reason == "test decision"
 
 
+def test_retry_limit_dispatch_result_carries_one_content_addressed_continuation() -> None:
+    continuation = bridge.render_application_continuation_request(
+        repository="owner/repo",
+        issue_number=138,
+        original_request_comment_id=987,
+        accepted_decision_sha256="a" * 64,
+    )
+    decision = _decision("FAIL_CLOSED")
+    decision = DispatchDecision(
+        completeness=decision.completeness,
+        observation_provenance=decision.observation_provenance,
+        formal_issue_ids=decision.formal_issue_ids,
+        preactivation_candidate_ids=decision.preactivation_candidate_ids,
+        selected_issue_id=decision.selected_issue_id,
+        selected_routing=decision.selected_routing,
+        disposition=decision.disposition,
+        reason="application-completion-rerun-limit",
+    )
+
+    rendered = bridge.render_dispatch_result_document(
+        request_comment_id=987,
+        default_branch_revision=REVISION,
+        decision=decision,
+        application_continuation=continuation,
+    )
+    parsed = bridge.parse_dispatch_result_document(rendered)
+
+    assert parsed.application_continuation == continuation
+    with pytest.raises(ValueError, match="only valid"):
+        bridge.render_dispatch_result_document(
+            request_comment_id=987,
+            default_branch_revision=REVISION,
+            decision=_decision("NO_WORK"),
+            application_continuation=continuation,
+        )
+    malformed = json.loads(rendered)
+    malformed["application_continuation"] = "APPLICATION_CONTINUATION\nmalformed"
+    with pytest.raises(RuntimeError, match="application continuation"):
+        bridge.parse_dispatch_result_document(json.dumps(malformed))
+
+
 def test_dispatch_plan_uses_only_current_day_shard_identity() -> None:
     decision = _decision(
         "AUTHORIZE",
@@ -2435,6 +2476,42 @@ def test_live_322_accepted_request_does_not_resume_completed_failed_application_
     assert run["run_attempt"] == 7
     assert any(path.startswith("actions/workflows/") for path in observed)
     assert f"actions/runs/{run_id}/jobs" in observed
+
+
+def test_rerun_limit_has_a_fresh_transport_bound_to_the_exact_decision() -> None:
+    source = bridge.WorkerRequest(322, "lead", "resolve-question")
+    request = _effect_request_comment(
+        comment_id=5810765007,
+        created_at="2026-09-23T03:00:00Z",
+        issue_number=322,
+        action=source.action,
+        role=source.role,
+        result_kind="ready-for-openspec-review",
+    )
+    decision = _application_decision_comment(request, comment_id=5810765008)
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/322/comments?"):
+            return [decision]
+        raise AssertionError(path)
+
+    body = bridge._application_continuation_body(
+        repository="owner/repo",
+        token=REVISION,
+        source=source,
+        request_comment_id=5810765007,
+        read=fake_read,
+    )
+
+    assert body is not None
+    parsed = bridge.parse_application_continuation_request(body)
+    assert parsed is not None
+    assert parsed.issue_number == source.issue_number
+    assert parsed.original_request_comment_id == 5810765007
+    assert (
+        parsed.accepted_decision_sha256
+        == hashlib.sha256(cast(str, decision["body"]).encode("utf-8")).hexdigest()
+    )
 
 
 def test_rejected_intent_returns_ownership_to_later_semantic_dispatch() -> None:

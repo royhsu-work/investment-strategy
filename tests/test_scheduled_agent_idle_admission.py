@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Mapping
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -10,6 +11,7 @@ import pytest
 from investment_strategy.scheduled_agent_idle_admission import (
     ACTION_EXPLORE_CHANGE,
     IDLE_REQUEST_MARKER,
+    IdleAdmissionRequest,
     IdleAdmissionResult,
     IdleCandidate,
     IdleDispatchEnvelope,
@@ -17,6 +19,7 @@ from investment_strategy.scheduled_agent_idle_admission import (
     idle_admission_correlation,
     is_exact_no_work,
     make_idle_admission_request,
+    parse_idle_admission_event,
     parse_idle_admission_request,
     parse_idle_envelope,
     qualify_idle_handoff,
@@ -62,6 +65,52 @@ def _artifact_result() -> Mapping[str, object]:
         "disposition": "NO_WORK",
         "reason": "no-routed-work",
     }
+
+
+def _idle_event(request: IdleAdmissionRequest, *, trusted: bool = True) -> dict[str, object]:
+    body = render_idle_admission_request(request)
+    return {
+        "action": "created",
+        "issue": {
+            "number": 77,
+            "title": "[Agent Runtime] 2026-09-29",
+            "state": "open",
+            "labels": [],
+        },
+        "comment": {
+            "id": 404,
+            "body": body,
+            "user": {"login": "owner"},
+            "performed_via_github_app": {
+                "slug": "chatgpt-codex-connector" if trusted else "other-app"
+            },
+        },
+    }
+
+
+def test_issue_comment_ingress_is_strict_and_preserves_original_no_work_binding() -> None:
+    request = make_idle_admission_request(_envelope(), IdleCandidate(kind="no-finding"))
+
+    parsed = parse_idle_admission_event(_idle_event(request), repository=REPOSITORY)
+    assert parsed == request
+    assert (
+        parse_idle_admission_event(_idle_event(request, trusted=False), repository=REPOSITORY)
+        is None
+    )
+    assert parse_idle_admission_event(_idle_event(request), repository="other/repository") is None
+
+    malformed = _idle_event(request)
+    cast(dict[str, object], malformed["comment"])["body"] = "IDLE_ADMISSION_REQUEST\ninvalid"
+    assert parse_idle_admission_event(malformed, repository=REPOSITORY) is None
+
+
+def test_application_workflow_has_repository_owned_issue_comment_idle_ingress() -> None:
+    workflow = Path(".github/workflows/scheduled-agent-application.yml").read_text(encoding="utf-8")
+    assert "github.event_name == 'issue_comment'" in workflow
+    assert "startsWith(github.event.comment.body, 'IDLE_ADMISSION_REQUEST')" in workflow
+    assert '--event-path "$GITHUB_EVENT_PATH"' in workflow
+    assert '--request-b64 "$IDLE_REQUEST_B64"' in workflow
+    assert "github.event_name == 'workflow_dispatch' && inputs.idle_request_b64 != ''" in workflow
 
 
 def test_envelope_and_request_are_content_addressed_and_strict() -> None:

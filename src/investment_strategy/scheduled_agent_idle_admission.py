@@ -19,11 +19,13 @@ import os
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal, cast
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
 from investment_strategy.scheduled_agent_dispatch_result import fetch_dispatch_result
 from investment_strategy.scheduled_agent_runtime import acquire_current_github_preflight
 from investment_strategy.workflow_dispatch import (
@@ -47,6 +49,7 @@ _SOURCE_LINE = re.compile(r"(?m)^Idle-Source:\s*(\S+)\s*$")
 _DISPATCH_RUN_PREFIX = "Scheduled Agent Dispatch "
 _DISPATCH_ARTIFACT_NAME = "dispatch-result.json"
 _DISPATCH_WORKFLOW_PATH = ".github/workflows/scheduled-agent-bridge.yml"
+_CHATGPT_CONNECTOR_APP_SLUG = "chatgpt-codex-connector"
 
 IdleCandidateKind = Literal["no-finding", "existing", "new"]
 IdleAdmissionState = Literal[
@@ -415,6 +418,49 @@ def parse_idle_admission_request(body: str) -> IdleAdmissionRequest | None:
         )
     except (TypeError, ValueError):
         return None
+
+
+def _trusted_connector_comment(comment: Mapping[str, object], owner: str) -> bool:
+    user = comment.get("user")
+    app = comment.get("performed_via_github_app")
+    return (
+        isinstance(user, Mapping)
+        and user.get("login") == owner
+        and isinstance(app, Mapping)
+        and app.get("slug") == _CHATGPT_CONNECTOR_APP_SLUG
+    )
+
+
+def parse_idle_admission_event(
+    event: Mapping[str, object],
+    *,
+    repository: str,
+) -> IdleAdmissionRequest | None:
+    """Parse the production issue-comment ingress for one idle request.
+
+    The comment is only a trigger.  The request remains bound to the original
+    successful ``NO_WORK`` artifact and is re-authorized by ``admit_idle_request``.
+    Requiring the configured connector identity here prevents an arbitrary Issue
+    comment from becoming an application carrier.
+    """
+
+    if event.get("action") != "created":
+        return None
+    issue = event.get("issue")
+    comment = event.get("comment")
+    if not isinstance(issue, Mapping) or not isinstance(comment, Mapping):
+        return None
+    if not is_runtime_checkin_issue(issue) or not _trusted_connector_comment(
+        comment, repository.split("/", 1)[0]
+    ):
+        return None
+    body = comment.get("body")
+    if not isinstance(body, str):
+        return None
+    request = parse_idle_admission_request(body)
+    if request is None or request.envelope.repository != repository:
+        return None
+    return request
 
 
 @dataclass(frozen=True, slots=True)
@@ -942,16 +988,31 @@ def _verified_artifact_result(
 
 def _main() -> int:
     parser = argparse.ArgumentParser(description="Apply one typed NO_WORK idle admission request")
-    parser.add_argument("--request-b64", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--request-b64")
+    source.add_argument("--event-path", type=Path)
     parser.add_argument("--revision", required=True)
     args = parser.parse_args()
-    request = parse_idle_admission_request(
-        base64.b64decode(args.request_b64, validate=True).decode("utf-8")
-    )
-    if request is None:
-        raise SystemExit("invalid idle admission request")
     repository = os.environ.get("GITHUB_REPOSITORY", "")
     token = os.environ.get("GITHUB_TOKEN", "")
+    if args.event_path is not None:
+        try:
+            event = json.loads(args.event_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise SystemExit("invalid idle admission event") from exc
+        request = (
+            parse_idle_admission_event(event, repository=repository)
+            if isinstance(event, Mapping)
+            else None
+        )
+    else:
+        try:
+            body = base64.b64decode(args.request_b64, validate=True).decode("utf-8")
+        except (UnicodeDecodeError, binascii.Error, ValueError) as exc:
+            raise SystemExit("invalid idle admission request") from exc
+        request = parse_idle_admission_request(body)
+    if request is None:
+        raise SystemExit("invalid idle admission request")
     if (
         repository != request.envelope.repository
         or args.revision != request.envelope.default_branch_revision
