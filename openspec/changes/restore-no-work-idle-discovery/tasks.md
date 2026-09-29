@@ -33,9 +33,9 @@ Stage 0 is merged and active on current `main@d019fdc604e8a7fa40e2f3e6436a12b076
 
 ## 3. Scheduled Task/bootstrap cutover
 
-- [ ] 3.1 RED: add a production-shaped bridge/bootstrap test showing exact `NO_WORK` reaches bounded Lead idle semantics and `AUTHORIZE`/`FAIL_CLOSED` do not.
+- [x] 3.1 RED/GREEN: add a production-shaped bridge/bootstrap test showing the exact `NO_WORK` artifact reaches one typed bounded Lead idle ingress and `AUTHORIZE`/`FAIL_CLOSED` do not.
 - [x] 3.2 GREEN: connect the repository-visible application carrier to the typed idle boundary through one `IDLE_ADMISSION_REQUEST` Issue-comment RPC on the current daily runtime shard, without representing idle as an Action or relying on the comment as accepted-intent state; reuse the same boundary for content-addressed `APPLICATION_CONTINUATION` recovery.
-- [ ] 3.3 GREEN: execute the available external Scheduled Task configuration change if it is within capability; otherwise preserve the exact activation contract and record the authoritative external boundary as a blocker rather than weakening the parent outcome.
+- [x] 3.3 GREEN: update the available external Lead Scheduled Task prompt to consume the repository-produced `NO_WORK` artifact, post only exact typed idle requests/continuations through the current connector boundary, and remain silent for no-finding or unproven evidence.
 - [ ] 3.4 RED/GREEN: prove no-finding is repository-silent, and a successful admission is consumed by a later normal wake that authorizes ordinary `Lead / explore-change`.
 
 ## 4. Verification and delivery
