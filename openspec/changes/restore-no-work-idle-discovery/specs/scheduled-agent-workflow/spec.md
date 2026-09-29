@@ -405,12 +405,18 @@ A fresh process SHALL reconstruct consequence completion from the existing `Cons
 - AND it does not qualify the uncorrelated result or derive a successor
 - AND the existing fail-closed or ambiguous classification is preserved
 
+## ADDED Requirements
+
 ### Requirement: NO_WORK idle admission is typed, fresh, and bounded
 
 The repository-owned idle boundary SHALL accept only a typed request bound to one completed,
 successful `scheduled-agent-bridge.yml` run, its unexpired `dispatch-result.json` artifact id and
 digest, the parsed artifact content, the exact request comment, and the checked-out default-branch
-revision. The envelope MUST carry the exact `NO_WORK / no-routed-work` disposition. `AUTHORIZE`,
+revision. In the current Scheduled Task environment, one candidate SHALL enter through a strictly
+parsed `IDLE_ADMISSION_REQUEST` comment on the current daily runtime shard. That comment is only
+trigger/staging evidence and MUST NOT become accepted intent, routing, workflow state, or mailbox
+authority; repository application MUST fresh-reauthorize it before mutation. A no-finding result
+MUST submit no request. The envelope MUST carry the exact `NO_WORK / no-routed-work` disposition. `AUTHORIZE`,
 `FAIL_CLOSED`, incomplete observations, stale revisions, contradictory run/artifact identity, and
 ambiguous artifacts MUST not invoke idle admission or mutate a repository Issue.
 

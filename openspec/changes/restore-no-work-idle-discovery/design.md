@@ -2,7 +2,7 @@
 
 ## Current decision boundary
 
-The original Explore reconstruction used default-branch revision `2e00e236f24ba41302c9ba18c685acdf4cebe4ed`; this continuation was freshly reconstructed from `main@d019fdc604e8a7fa40e2f3e6436a12b076658057`. Fresh source inspection establishes these owners:
+The original Explore reconstruction used default-branch revision `2e00e236f24ba41302c9ba18c685acdf4cebe4ed`; this continuation was freshly reconstructed from `main@01e22a7ebad34b434c0e12c8293f02a9bed24a40`. Fresh source inspection establishes these owners:
 
 - `workflow_dispatch.py` and the runtime preflight reconstruct current repository work and return `AUTHORIZE`, `NO_WORK`, or `FAIL_CLOSED`.
 - `issue_comment_bridge.py` checks the authoritative default branch and publishes one run-scoped dispatch-result artifact.
@@ -12,7 +12,7 @@ The original Explore reconstruction used default-branch revision `2e00e236f24ba4
 
 The current gap is therefore a missing reachability boundary, not a defect in normal selection and not permission to infer work from an empty queue.
 
-The current delivery baseline is `main@d019fdc604e8a7fa40e2f3e6436a12b076658057`. The shared application substrate repair has merged in the sequential PR chain #331/#332/#333; it is an N-1 prerequisite already present on this revision, not remaining Stage 0 work. The exact PR heads and successful Python Quality runs are recorded in proposal.md and tasks.md. Continue with the typed idle handoff and later stages on this current baseline; retain the full parent completion outcome.
+The current delivery baseline is `main@01e22a7ebad34b434c0e12c8293f02a9bed24a40`. The shared application substrate repair has merged in the sequential PR chain #331/#332/#333; it is an N-1 prerequisite already present on this revision, not remaining Stage 0 work. The exact PR heads and successful Python Quality runs are recorded in proposal.md and tasks.md. Continue with the typed idle handoff and later stages on this current baseline; retain the full parent completion outcome.
 
 ## Decision 1: Keep normal dispatch Action-only
 
@@ -74,25 +74,33 @@ artifact id/digest, parsed artifact content, checked-out default-branch revision
 `NO_WORK / no-routed-work` disposition. The admission request binds one bounded Lead candidate to
 that envelope with a content-addressed correlation; no request registry or retry record is persisted.
 
-The existing application workflow accepts the request through `workflow_dispatch` rather than an
-Issue comment, so a no-finding result does not create repository comment noise. Its idle job has a
-repository concurrency group with cancellation disabled. The job rechecks the exact run/artifact
-content, default branch ref, and normal dispatch immediately before each possible write. Existing
-targets use one full Issue update derived from the fresh object; new targets use one Issue create
-with the correlation/source evidence in the body. Both paths fresh-observe the complete tuple,
-including the full candidate body and preserved existing body and labels. Correlation reconciliation
-enumerates all Issue states (not just open Issues), so a closed or contradictory prior result remains
-fail-closed. A lost or ambiguous response is reconciled read-only by exact Issue identity/correlation
-and never blindly replayed.
+The existing application workflow accepts the request through one typed `IDLE_ADMISSION_REQUEST`
+Issue-comment RPC on the current daily runtime shard. The comment is only a connector trigger and
+staging carrier; it is not an accepted intent, mailbox, or repository-owned state record. A
+no-finding result remains silent and creates no comment. Its idle job has a repository concurrency
+group with cancellation disabled. The job rechecks the exact request body, current runtime shard,
+default branch ref, and normal dispatch immediately before each possible write. Existing targets
+use one full Issue update derived from the fresh object; new targets use one Issue create with the
+correlation/source evidence in the body. Both paths fresh-observe the complete tuple, including the
+full candidate body and preserved existing body and labels. Correlation reconciliation enumerates
+all Issue states (not just open Issues), so a closed or contradictory prior result remains fail-closed.
+A lost or ambiguous response is reconciled read-only by exact Issue identity/correlation and never
+blindly replayed. The same daily-shard comment boundary carries an
+`APPLICATION_CONTINUATION` transport after an accepted application reaches GitHub's exhausted
+run-attempt boundary; that body is content-addressed to the immutable accepted decision and the
+application re-reads the decision before applying any effect.
 
 The external bootstrap must obtain the envelope from the successful bridge run, execute bounded Lead
-idle semantics, and call the existing application workflow with the base64 request input only when
-there is one candidate. The repository cannot prove or mutate that external Scheduled Task setting;
-the activation boundary remains an explicit production handoff requirement.
+idle semantics, and post exactly one typed `IDLE_ADMISSION_REQUEST` body through the configured
+GitHub connector only when a candidate exists. It must also relay an exact
+`APPLICATION_CONTINUATION` body emitted by the dispatch artifact when an accepted application needs
+a fresh transport boundary; it must not create a new semantic request. The repository cannot prove
+or mutate that external Scheduled Task setting; the activation boundary remains an explicit
+production handoff requirement.
 
 ## Production activation boundary
 
-The repository implementation can make the contract executable and expose the exact carrier, but the external Scheduled Task configuration must be updated to consume `NO_WORK`, invoke Lead idle semantics, and submit the typed idle request when a candidate exists. Production proof must include the real wake/run/artifact identity, a no-finding run with zero repository mutation, and a material finding whose canonical Issue is consumed by the next normal dispatch.
+The repository implementation can make the contract executable and expose the exact carrier, but the external Scheduled Task configuration must be updated to consume `NO_WORK`, invoke Lead idle semantics, and post the typed idle request to the current runtime shard when a candidate exists. It must relay an emitted application continuation body exactly once per fresh boundary without inventing a new semantic request. Production proof must include the real wake/run/artifact identity, a no-finding run with zero repository mutation, and a material finding whose canonical Issue is consumed by the next normal dispatch.
 
 If that external configuration is not exposed to the available capability, repository implementation and tests remain valid delivery work but production activation is not proven. The final lifecycle must report that exact blocker rather than calling a merged repository implementation complete.
 

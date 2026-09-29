@@ -22,8 +22,11 @@ from investment_strategy.scheduled_agent_action_model import Action as ModelActi
 from investment_strategy.scheduled_agent_action_model import next_action, role_for
 from investment_strategy.scheduled_agent_application_bridge import (
     ApplicationRequest,
+    application_continuation_correlation,
     dispatch_correlation_for,
+    parse_application_continuation_request,
     parse_application_request,
+    render_application_continuation_request,
 )
 from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
 from investment_strategy.scheduled_agent_effects import (
@@ -88,6 +91,7 @@ class MachineDispatchDecision:
     role: str | None = None
     action: str | None = None
     reason: str | None = None
+    application_continuation: str | None = None
 
 
 @dataclass(frozen=True)
@@ -318,10 +322,17 @@ def _application_job(
     request_comment_id: int,
     *,
     read: GitHubReader,
+    transport_comment_ids: tuple[int, ...] = (),
 ) -> ApplicationCompletion:
     """Locate the one exact application run for an accepted intent."""
 
-    runs = _application_runs(repository, token, request_comment_id, read=read)
+    runs = _application_runs(
+        repository,
+        token,
+        request_comment_id,
+        read=read,
+        transport_comment_ids=transport_comment_ids,
+    )
     if runs is None or not runs:
         return ApplicationCompletion(
             "INVALID",
@@ -408,10 +419,12 @@ def _application_runs(
     request_comment_id: int,
     *,
     read: GitHubReader,
+    transport_comment_ids: tuple[int, ...] = (),
 ) -> tuple[Mapping[str, object], ...] | None:
     """Read every transport run bound to an exact request, if observable."""
 
-    title = render_application_run_name(request_comment_id)
+    transport_ids = transport_comment_ids or (request_comment_id,)
+    titles = {render_application_run_name(comment_id) for comment_id in transport_ids}
     page = 1
     matches: list[Mapping[str, object]] = []
     while True:
@@ -427,7 +440,7 @@ def _application_runs(
         if not isinstance(raw_runs, list):
             return None
         for raw in raw_runs:
-            if isinstance(raw, Mapping) and raw.get("display_title") == title:
+            if isinstance(raw, Mapping) and raw.get("display_title") in titles:
                 matches.append(cast(Mapping[str, object], raw))
         if len(raw_runs) < 100:
             break
@@ -823,6 +836,7 @@ def _accepted_application_state(
     current_issue: Mapping[str, object],
     current_revision: str,
     read: GitHubReader,
+    continuation_transport_comment_ids: tuple[int, ...] = (),
 ) -> ApplicationCompletion:
     worker = _application_worker_for_record(record, source)
     if worker is None or record.disposition != "ACCEPTED":
@@ -901,6 +915,7 @@ def _accepted_application_state(
             token,
             record.request_comment_id,
             read=read,
+            transport_comment_ids=continuation_transport_comment_ids,
         )
         if resumed.state == "RESUMABLE":
             return resumed
@@ -967,6 +982,7 @@ def _accepted_application_state(
             token,
             record.request_comment_id,
             read=read,
+            transport_comment_ids=continuation_transport_comment_ids,
         )
     if successor is not None and observation.routing == expected_routing:
         return ApplicationCompletion(
@@ -1451,6 +1467,117 @@ def _frontier_application_decisions(
     )
 
 
+def _continuation_transport_comment_ids(
+    *,
+    repository: str,
+    owner: str,
+    source: WorkerRequest,
+    record: ApplicationDecisionRecord,
+    issue_comments: tuple[Mapping[str, object], ...],
+    recent_comments: tuple[Mapping[str, object], ...],
+) -> tuple[int, ...]:
+    """Find fresh transport comments for one immutable accepted intent.
+
+    A continuation comment is deliberately not an application intent.  It is
+    only a new issue-comment workflow boundary, content-addressed to the one
+    accepted decision body.  Runs started by that boundary have a different
+    GitHub comment id in their run name, so the recovery reducer must bind
+    exactly those runs while ignoring the exhausted predecessor run.
+    """
+
+    decision_bodies = []
+    for comment in issue_comments:
+        if not is_github_actions_comment(comment):
+            continue
+        body = comment.get("body")
+        if not isinstance(body, str):
+            continue
+        parsed = parse_application_decision(body)
+        if (
+            parsed is not None
+            and parsed.request_comment_id == record.request_comment_id
+            and parsed.disposition == "ACCEPTED"
+            and parsed.issue_number == source.issue_number
+            and parsed.role == source.role
+            and parsed.action == source.action
+        ):
+            decision_bodies.append(body)
+    if len(decision_bodies) != 1:
+        return ()
+    decision_sha256 = hashlib.sha256(decision_bodies[0].encode("utf-8")).hexdigest()
+    expected_correlation = application_continuation_correlation(
+        repository,
+        source.issue_number,
+        record.request_comment_id,
+        decision_sha256,
+    )
+    matches: set[int] = set()
+    for comment in recent_comments:
+        if not _trusted_connector_comment(comment, owner):
+            continue
+        body = comment.get("body")
+        comment_id = _positive_int(comment.get("id"))
+        if not isinstance(body, str) or comment_id is None:
+            continue
+        continuation = parse_application_continuation_request(body)
+        if (
+            continuation is not None
+            and continuation.issue_number == source.issue_number
+            and continuation.original_request_comment_id == record.request_comment_id
+            and continuation.accepted_decision_sha256 == decision_sha256
+            and continuation.continuation_correlation == expected_correlation
+        ):
+            matches.add(comment_id)
+    return tuple(sorted(matches))
+
+
+def _application_continuation_body(
+    *,
+    repository: str,
+    token: str,
+    source: WorkerRequest,
+    request_comment_id: int,
+    read: GitHubReader = _github_json,
+) -> str | None:
+    """Render one exact continuation transport for a completed retry limit."""
+
+    comments = _paged_list(
+        repository,
+        token,
+        f"issues/{source.issue_number}/comments?sort=created&direction=asc",
+        read=read,
+    )
+    matches: list[str] = []
+    for comment in comments:
+        if not is_github_actions_comment(comment):
+            continue
+        body = comment.get("body")
+        if not isinstance(body, str):
+            continue
+        record = parse_application_decision(body)
+        if (
+            record is not None
+            and record.request_comment_id == request_comment_id
+            and record.disposition == "ACCEPTED"
+            and record.issue_number == source.issue_number
+            and record.role == source.role
+            and record.action == source.action
+        ):
+            matches.append(body)
+    if len(matches) != 1:
+        return None
+    decision_sha256 = hashlib.sha256(matches[0].encode("utf-8")).hexdigest()
+    body = render_application_continuation_request(
+        repository=repository,
+        issue_number=source.issue_number,
+        original_request_comment_id=request_comment_id,
+        accepted_decision_sha256=decision_sha256,
+    )
+    if parse_application_continuation_request(body) is None:
+        raise RuntimeError("rendered application continuation is not parseable")
+    return body
+
+
 def _application_correlation_fields(correlation: str) -> tuple[str, ...] | None:
     fields = tuple(correlation.split(":"))
     return fields if len(fields) == 8 and fields[0] == "application" else None
@@ -1645,6 +1772,14 @@ def qualify_application_completion(
                 current_issue=cast(Mapping[str, object], issue),
                 current_revision=current_revision,
                 read=read,
+                continuation_transport_comment_ids=_continuation_transport_comment_ids(
+                    repository=repository,
+                    owner=owner,
+                    source=source,
+                    record=current_accepted[0],
+                    issue_comments=issue_comments,
+                    recent_comments=recent,
+                ),
             )
             if resumed.state != "NONE":
                 return resumed
@@ -1729,6 +1864,14 @@ def qualify_application_completion(
             current_issue=cast(Mapping[str, object], issue),
             current_revision=current_revision,
             read=read,
+            continuation_transport_comment_ids=_continuation_transport_comment_ids(
+                repository=repository,
+                owner=owner,
+                source=frontier_source,
+                record=frontier_owner,
+                issue_comments=issue_comments,
+                recent_comments=recent,
+            ),
         )
         if frontier_completion.state != "COMPLETE":
             return frontier_completion
@@ -1910,6 +2053,14 @@ def qualify_application_completion(
         current_issue=cast(Mapping[str, object], issue),
         current_revision=current_revision,
         read=read,
+        continuation_transport_comment_ids=_continuation_transport_comment_ids(
+            repository=repository,
+            owner=owner,
+            source=source,
+            record=record,
+            issue_comments=issue_comments,
+            recent_comments=recent,
+        ),
     )
 
 
@@ -1918,6 +2069,7 @@ def render_dispatch_result_document(
     request_comment_id: int,
     default_branch_revision: str,
     decision: DispatchDecision,
+    application_continuation: str | None = None,
 ) -> str:
     """Render the one canonical plaintext JSON result owned by an exact bridge run."""
 
@@ -1933,6 +2085,8 @@ def render_dispatch_result_document(
         "disposition": decision.disposition,
     }
     if decision.disposition == "AUTHORIZE":
+        if application_continuation is not None:
+            raise ValueError("AUTHORIZE cannot carry an application continuation")
         issue_number = decision.selected_issue_id
         if (
             isinstance(issue_number, bool)
@@ -1955,6 +2109,15 @@ def render_dispatch_result_document(
         if not _valid_reason(decision.reason):
             raise ValueError("dispatch reason is invalid")
         payload["reason"] = decision.reason
+        if application_continuation is not None:
+            if (
+                decision.disposition != "FAIL_CLOSED"
+                or decision.reason != "application-completion-rerun-limit"
+            ):
+                raise ValueError("application continuation is only valid for the retry limit")
+            if parse_application_continuation_request(application_continuation) is None:
+                raise ValueError("application continuation is invalid")
+            payload["application_continuation"] = application_continuation
 
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
@@ -1992,12 +2155,19 @@ def parse_dispatch_result_document(raw: bytes | str) -> MachineDispatchDecision:
         "default_branch_revision",
         "disposition",
     }
-    expected_keys = (
-        common_keys | {"issue_number", "action"}
-        if disposition == "AUTHORIZE"
-        else common_keys | {"reason"}
-    )
-    if set(payload) != expected_keys or payload.get("schema") != DISPATCH_RESULT_SCHEMA:
+    if disposition == "AUTHORIZE":
+        expected_keys = common_keys | {"issue_number", "action"}
+        valid_keys = set(expected_keys)
+        payload_keys_valid = set(payload) == valid_keys
+    else:
+        expected_keys = common_keys | {"reason"}
+        valid_keys = set(expected_keys)
+        payload_keys_valid = set(payload) == valid_keys
+        if disposition == "FAIL_CLOSED":
+            payload_keys_valid = payload_keys_valid or set(payload) == (
+                valid_keys | {"application_continuation"}
+            )
+    if not payload_keys_valid or payload.get("schema") != DISPATCH_RESULT_SCHEMA:
         raise RuntimeError("exact dispatch result schema is invalid")
 
     request_comment_id = _positive_int(payload.get("request_comment_id"))
@@ -2030,11 +2200,18 @@ def parse_dispatch_result_document(raw: bytes | str) -> MachineDispatchDecision:
     reason = payload.get("reason")
     if not _valid_reason(reason):
         raise RuntimeError("non-authorizing dispatch reason is invalid")
+    application_continuation = payload.get("application_continuation")
+    if application_continuation is not None:
+        if disposition != "FAIL_CLOSED" or not isinstance(application_continuation, str):
+            raise RuntimeError("exact application continuation is invalid")
+        if parse_application_continuation_request(application_continuation) is None:
+            raise RuntimeError("exact application continuation is invalid")
     return MachineDispatchDecision(
         request_comment_id=request_comment_id,
         default_branch_revision=revision,
         disposition=disposition,
         reason=cast(str, reason),
+        application_continuation=application_continuation,
     )
 
 
@@ -2070,6 +2247,7 @@ def plan_dispatch_decision(
     default_branch_revision: str,
     decision: DispatchDecision,
     application_resume_job_id: int | None = None,
+    application_continuation: str | None = None,
 ) -> BridgePlan:
     identity = _request_identity(event)
     if identity is None:
@@ -2083,6 +2261,7 @@ def plan_dispatch_decision(
             request_comment_id=request_comment_id,
             default_branch_revision=default_branch_revision,
             decision=decision,
+            application_continuation=application_continuation,
         ),
         application_resume_job_id=application_resume_job_id,
     )
@@ -2149,7 +2328,24 @@ def main() -> int:
             )
         )
         resume_job_id = None
+        continuation_body = None
         if completion.state in {"RESUMABLE", "INVALID", "AMBIGUOUS"}:
+            if (
+                completion.reason == "application-completion-rerun-limit"
+                and source is not None
+                and completion.request_comment_id is not None
+            ):
+                try:
+                    continuation_body = _application_continuation_body(
+                        repository=repository,
+                        token=token,
+                        source=source,
+                        request_comment_id=completion.request_comment_id,
+                    )
+                except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
+                    # The accepted-decision evidence is not uniquely readable;
+                    # retain the fail-closed result and emit no transport.
+                    continuation_body = None
             decision = replace(
                 decision,
                 selected_issue_id=None,
@@ -2163,6 +2359,7 @@ def main() -> int:
             default_branch_revision=args.revision,
             decision=decision,
             application_resume_job_id=resume_job_id,
+            application_continuation=continuation_body,
         )
     _write_outputs(args.github_output, plan)
     _write_result_payload(args.result_payload, plan)

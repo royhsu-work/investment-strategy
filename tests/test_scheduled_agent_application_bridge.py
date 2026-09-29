@@ -16,8 +16,12 @@ import investment_strategy.scheduled_agent_application_bridge as bridge
 from investment_strategy.scheduled_agent_application_bridge import (
     APPLICATION_REQUEST_MARKER,
     AUTHORIZATION_REVISION_PREFIX,
+    ApplicationRequest,
+    application_continuation_correlation,
+    parse_application_continuation_request,
     parse_application_request,
     plan_application,
+    render_application_continuation_request,
 )
 from investment_strategy.scheduled_agent_carrier import CarrierRequired, make_carrier_plan
 from investment_strategy.scheduled_agent_checkin import checkin_title
@@ -179,16 +183,22 @@ def _connector_comment(comment_id: int, body: str, *, trusted: bool = True) -> d
     }
 
 
-def _event(body: str, *, trusted: bool = True) -> dict[str, object]:
+def _event(
+    body: str,
+    *,
+    trusted: bool = True,
+    comment_id: int = 102,
+    issue_number: int = 142,
+) -> dict[str, object]:
     return {
         "action": "created",
         "issue": {
-            "number": 142,
+            "number": issue_number,
             "title": checkin_title(date(2026, 9, 3)),
             "state": "open",
             "labels": [],
         },
-        "comment": _connector_comment(102, body, trusted=trusted),
+        "comment": _connector_comment(comment_id, body, trusted=trusted),
     }
 
 
@@ -336,6 +346,113 @@ def test_main_rehydrates_accepted_intent_before_transport_observation(
 
     assert bridge.main() == 0
     assert seen == {"raw": raw, "source": source}
+
+
+def test_main_accepts_only_a_fresh_continuation_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = WorkerRequest(138, "lead", "finalize-change")
+    worker = _worker_result(
+        action=source.action,
+        role=source.role,
+        result_kind="archive-ready",
+    )
+    worker["change"] = _CHANGE
+    raw = json.dumps(worker, sort_keys=True, separators=(",", ":"))
+    original_body = _effect_request(worker)
+    record = _accepted_record(
+        raw,
+        original_body,
+        source=source,
+        change=_CHANGE,
+        result_kind="archive-ready",
+        request_comment_id=102,
+    )
+    decision_body = "accepted-decision-body"
+    continuation_body = render_application_continuation_request(
+        repository=_REPOSITORY,
+        issue_number=source.issue_number,
+        original_request_comment_id=record.request_comment_id,
+        accepted_decision_sha256=hashlib.sha256(decision_body.encode("utf-8")).hexdigest(),
+    )
+    event_path = tmp_path / "continuation-event.json"
+    event_path.write_text(
+        json.dumps(_event(continuation_body, comment_id=404)),
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "github-output.txt"
+    seen: dict[str, object] = {}
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", _REPOSITORY)
+    monkeypatch.setenv("GITHUB_TOKEN", _REVISION)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output_path))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "scheduled_agent_application_bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            _REVISION,
+            "--default-branch",
+            "main",
+            "--run-attempt",
+            "1",
+        ],
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_fresh_event_observation",
+        lambda event, body, *_args: (
+            False
+            if body == continuation_body and cast(dict[str, object], event["comment"])["id"] == 404
+            else pytest.fail("continuation transport was not freshly observed")
+        ),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "acquire_current_github_preflight",
+        lambda *_args: _preflight(
+            issue_number=source.issue_number,
+            action=source.action,
+            change=_CHANGE,
+        ),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_find_application_decision_from_current_frontier",
+        lambda **_kwargs: record,
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_application_decision_comment_for_request",
+        lambda **_kwargs: (record, decision_body),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_accepted_worker_result_for_continuation",
+        lambda **_kwargs: raw,
+    )
+
+    def fake_apply(raw_result: str, **kwargs: object) -> tuple[EffectBatch, object]:
+        seen["raw"] = raw_result
+        seen["source"] = kwargs["source"]
+        seen["request_comment_id"] = kwargs["request_comment_id"]
+        return (
+            EffectBatch(
+                source=cast(WorkerRequest, kwargs["source"]),
+                effects=(),
+                typed_result=None,
+            ),
+            bridge.ApplyResult(True, "continued"),
+        )
+
+    monkeypatch.setattr(bridge, "run_guarded_effect_application", fake_apply)
+
+    assert bridge.main() == 0
+    assert seen == {"raw": raw, "source": source, "request_comment_id": 102}
 
 
 def test_main_resumes_live_322_effect_through_the_same_application_owner(
@@ -882,6 +999,92 @@ def test_parse_application_request_decodes_revision_bound_worker_result() -> Non
 def test_parse_application_request_rejects_old_correlation_shape() -> None:
     with pytest.raises(ValueError, match="exactly three lines"):
         parse_application_request("\n".join((APPLICATION_REQUEST_MARKER, "old", "old", "old")))
+
+
+def test_application_continuation_is_content_addressed_and_strict() -> None:
+    decision_sha256 = "a" * 64
+    rendered = render_application_continuation_request(
+        repository=_REPOSITORY,
+        issue_number=138,
+        original_request_comment_id=102,
+        accepted_decision_sha256=decision_sha256,
+    )
+
+    parsed = parse_application_continuation_request(rendered)
+
+    assert parsed is not None
+    assert parsed.issue_number == 138
+    assert parsed.original_request_comment_id == 102
+    assert parsed.accepted_decision_sha256 == decision_sha256
+    assert parsed.continuation_correlation == application_continuation_correlation(
+        _REPOSITORY, 138, 102, decision_sha256
+    )
+    assert parse_application_continuation_request(rendered + "\nextra") is None
+    assert (
+        parse_application_continuation_request(rendered.replace("Issue: 138", "Issue: 0138"))
+        is None
+    )
+
+
+def test_accepted_continuation_binds_original_request_not_relay_comment() -> None:
+    source = WorkerRequest(138, "lead", "finalize-change")
+    worker = _worker_result(action=source.action, role=source.role, result_kind="archive-ready")
+    worker["change"] = _CHANGE
+    raw = json.dumps(worker, sort_keys=True, separators=(",", ":"))
+    original_body = _effect_request(worker)
+    record = _accepted_record(
+        raw,
+        original_body,
+        source=source,
+        change=_CHANGE,
+        result_kind="archive-ready",
+        request_comment_id=102,
+    )
+    continuation_body = render_application_continuation_request(
+        repository=_REPOSITORY,
+        issue_number=source.issue_number,
+        original_request_comment_id=record.request_comment_id,
+        accepted_decision_sha256="b" * 64,
+    )
+    continuation_request = ApplicationRequest(_REVISION, raw)
+
+    plan = plan_application(
+        event=_event(continuation_body, comment_id=404),
+        request=continuation_request,
+        preflight=_preflight(
+            issue_number=source.issue_number,
+            action=source.action,
+            change=_CHANGE,
+        ),
+        repository=_REPOSITORY,
+        current_revision=_REVISION,
+        token=_REVISION,
+        allow_descendant_resume=True,
+        allow_accepted_request_mutation=True,
+        accepted_intent=record,
+        accepted_request_comment_id=record.request_comment_id,
+    )
+
+    assert plan.should_apply
+    assert plan.source == source
+    assert plan.request_comment_id == record.request_comment_id
+    with pytest.raises(ValueError, match="request identity"):
+        plan_application(
+            event=_event(continuation_body, comment_id=404),
+            request=continuation_request,
+            preflight=_preflight(
+                issue_number=source.issue_number,
+                action=source.action,
+                change=_CHANGE,
+            ),
+            repository=_REPOSITORY,
+            current_revision=_REVISION,
+            token=_REVISION,
+            allow_descendant_resume=True,
+            allow_accepted_request_mutation=True,
+            accepted_intent=record,
+            accepted_request_comment_id=999,
+        )
 
 
 def test_plan_application_derives_source_from_fresh_repository_preflight() -> None:
