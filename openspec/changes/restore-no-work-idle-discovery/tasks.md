@@ -16,7 +16,7 @@
 - [x] 0.12 RED/GREEN: reproduce an accepted materialization whose exact PR carrier merged before the application process resumed; reconcile the merged head from complete GitHub compare history and exact historical blob evidence without creating a same-Change replacement, while retaining the existing replacement path when content or ancestry proof is incomplete.
 - [x] 0.13 RED/GREEN: reproduce an accepted materialization whose historical carrier is superseded by a same-Change merge after acceptance; recover the exact immutable manifest from current-main compare history only when the historical merge commit remains an ancestor, and fail closed for incomplete evidence.
 
-Stage 0 is merged and active on current `main@d019fdc604e8a7fa40e2f3e6436a12b076658057`: PR #331 merged as `6586b5e6b40d84717b73fb7548d778e177fd826f` from exact head `9d7fc4810ad921e17bc6c2bfc0fa955fc848e9b3` (Python Quality run `35953768705`, 729 tests reported); PR #332 merged as `817176cd1b74f8bc04c1e480e0b5335514c5e4ee` from exact head `49ad4d2aa55738b548ffb4b84f57741cd249247e` (run `35958582031`, 736 full-suite and 24 focused tests reported); PR #333 merged as `d019fdc604e8a7fa40e2f3e6436a12b076658057` from exact head `a47519dae24b853b0eda2a6a2c3fd9991f1b4aad` (run `35963968270`, 751 tests reported). PR bodies record the corresponding current-source materialization, interruption, consequence, and lineage regressions plus applicable Ruff/format/mypy checks. Stage 0 is complete as delivered; the remaining parent outcome is not complete.
+Stage 0 is merged and active on current `main@3a2bbf45f449fbcb8f64afc4ea2fd4b1262b3480`: the shared application recovery chain #331 → #333 plus same-Change recovery PRs #347 and #349 are merged and have passed their exact-head gates. Their merged scopes cover current-source materialization, interruption, consequence, and complete accepted-base-to-main lineage recovery. Stage 0 is complete as delivered; the remaining parent outcome is not complete.
 
 ## 1. Contract and typed NO_WORK handoff
 
@@ -31,6 +31,7 @@ Stage 0 is merged and active on current `main@d019fdc604e8a7fa40e2f3e6436a12b076
 - [x] 2.3 RED/GREEN: cover stale source/default branch, real Actions run/artifact identity and content, interruption-before/after mutation, overlap recovery through all-state correlation, closed/contradictory matches, body/label preservation, and ambiguous-write reconciliation.
 - [x] 2.4 GREEN: add minimal non-durable workflow concurrency and read-only ambiguous-write reconciliation; fail closed when uniqueness or the complete postcondition cannot be proved.
 - [x] 2.5 REFACTOR: reuse current dispatch/application carrier and fresh-read primitives; no duplicate queue, lock state, lease, cursor, heartbeat, registry, recovery workflow, or hidden backlog is introduced.
+- [x] 2.6 RED/GREEN: add the bounded typed advisory candidate path with one-to-three recommendation validation, exact `advisory:idle` non-routing admission, all-state correlation reconciliation, open-advisory suppression, closed/contradictory fail-closed recovery, ambiguous-write coverage, and production-shaped issue-comment ingress.
 
 ## 3. Scheduled Task/bootstrap cutover
 

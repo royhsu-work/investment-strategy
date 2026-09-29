@@ -15,6 +15,8 @@ When forming bounded advisory recommendations, Lead SHALL consider relevant Issu
 One idle invocation MAY instead autonomously materialize at most one valid repository-authorized Formal Explore candidate under the admission requirement above.
 The bounded idle result MAY be no-finding, advisory-only, or one admission candidate. Only the repository-owned application admission boundary may materialize a candidate. Before any consequential candidate mutation, that boundary MUST fresh-reconstruct the exact `NO_WORK` handoff and current normal dispatch; it MUST perform no mutation when current dispatch is `AUTHORIZE` or `FAIL_CLOSED`. A successful candidate admission MUST leave the existing canonical `Change: unset + action:explore-change` tuple observable so a later normal wake, rather than idle mode, owns the workflow. Before creating that candidate, Lead MUST deduplicate against existing open or reconstructably unresolved Issues and required-deferred trackers.
 
+An advisory-only result SHALL use a typed advisory candidate distinct from a Formal Explore candidate. Its repository-owned admission boundary MUST fresh-reconstruct the same exact `NO_WORK` evidence and current normal dispatch, create at most one open Issue with exactly `advisory:idle`, preserve the bounded recommendation body and source markers, and carry no `Change:` line, `action:*` label, or `agent:*` label. The candidate SHALL contain one through three recommendations. All-state correlation reconciliation MUST treat one complete open advisory as already admitted, and a closed, malformed, contradictory, or multiply correlated advisory as ambiguous and non-replaceable. An unrelated existing open `advisory:idle` Issue suppresses another advisory. Advisory admission is diagnostic only and does not enter normal Action workflow; only a later Formal Explore admission can hand back the canonical `Change: unset + action:explore-change` tuple.
+
 Idle discovery SHALL use materiality rather than style preference. Repeated materially similar responsibility/knowledge/workaround evidence MAY use Rule-of-Three as sufficient investigation evidence; a clear single-instance structural hazard such as dual authority, circular ownership, dead abstraction, or a known-always-failing normal workflow step MAY also satisfy the threshold when concrete cost/risk/friction and bounded ownership are demonstrated.
 
 Idle discovery MUST NOT introduce a scan cursor, TTL coverage registry, lease, heartbeat, progress counter, global priority score, hidden backlog state, or requirement for exhaustive repository coverage merely to remember what was inspected previously.
@@ -59,6 +61,31 @@ Idle discovery MUST NOT introduce a scan cursor, TTL coverage registry, lease, h
 - WHEN the invocation completes
 - THEN no workflow mutation is required
 - AND the run does not create repository noise merely to report that nothing material was found
+
+#### Scenario: Bounded advisory admission is non-routing and all-state deduplicated
+
+- GIVEN exact `NO_WORK` remains current
+- AND Lead returns one advisory candidate containing no more than three recommendations
+- AND no open `advisory:idle` Issue exists
+- WHEN the repository-owned admission boundary evaluates the candidate
+- THEN it creates at most one Issue with exactly `advisory:idle`
+- AND the Issue has no `Change:` line, `action:*` label, or `agent:*` label
+- AND the body contains the exact admission correlation and source markers
+- AND a later retry reconstructs all Issue states before deciding whether the advisory is already admitted
+
+#### Scenario: Closed or contradictory advisory evidence blocks replacement
+
+- GIVEN a candidate's exact correlation is found on a closed, malformed, or contradictory Issue
+- WHEN the advisory admission boundary reconciles the repository
+- THEN it returns an ambiguous/fail-closed result
+- AND it does not create a replacement advisory Issue
+
+#### Scenario: Existing open advisory suppresses advisory noise
+
+- GIVEN one unrelated open `advisory:idle` Issue exists without a valid Human admission
+- WHEN Lead returns another bounded advisory candidate
+- THEN the admission boundary performs no create
+- AND it returns the existing advisory as the durable suppression evidence
 
 #### Scenario: Exact AUTHORIZE does not enter idle mode
 
@@ -192,7 +219,7 @@ The wake MUST NOT require same-role continuation, cross-role barriers, invocatio
 
 Repository application SHALL fresh-reauthorize the exact source Action, Change, Issue, PR/head, revision, Human/review/gate evidence, and effect-specific preconditions before every consequential mutation. It SHALL apply only necessary exact effects, preserve unrelated content, and fresh-observe each postcondition. Stale, replayed, ambiguous, contradictory, incomplete, or provenance-incomplete evidence MUST fail closed.
 
-For an idle-derived admission, application SHALL accept only a typed request bound to the exact completed `NO_WORK` dispatch artifact, source request/run identity, observed default-branch revision, and reconstructable Lead evidence. It MUST fresh-read the current default branch, current normal dispatch, and the exact existing or candidate Issue immediately before the one necessary create/update mutation. Existing-candidate update MUST preserve unrelated content and labels; new-candidate creation MUST form the complete pre-activation tuple in that one logical boundary. The application MUST fresh-observe the tuple after mutation and MUST reconcile an ambiguous result read-only before any retry. Idle requests do not create an Action, normal routing dimension, accepted-intent registry, queue, cursor, lease, heartbeat, or recovery workflow.
+For an idle-derived admission, application SHALL accept only a typed request bound to the exact completed `NO_WORK` dispatch artifact, source request/run identity, observed default-branch revision, and reconstructable Lead evidence. It MUST fresh-read the current default branch, current normal dispatch, and the exact existing or candidate Issue immediately before the one necessary create/update mutation. Existing-candidate update MUST preserve unrelated content and labels; new Formal Explore creation MUST form the complete pre-activation tuple in that one logical boundary; advisory creation MUST form only the exact non-routing advisory body and label set. The application MUST fresh-observe the tuple after mutation and MUST reconcile an ambiguous result read-only before any retry. Idle requests do not create an Action, normal routing dimension, accepted-intent registry, queue, cursor, lease, heartbeat, or recovery workflow.
 
 If an earlier invocation already made a required mutation durable, recovery MAY complete only still-required non-contradictory effects. It MUST NOT replay semantic work merely to recreate a missing record, and MUST NOT rewind current routing or lifecycle state when valid descendant evidence proves the earlier transition was consumed. Recovery is ordinary idempotent application/reconciliation; it is not another Action, lifecycle state, transaction framework, retry/lock/lease system, or public protocol. Deterministic rejections identify the exact failed guard class and relevant expected/observed evidence machine-readably.
 

@@ -38,11 +38,13 @@ IDLE_ENVELOPE_MARKER = "NO_WORK_IDLE_ENVELOPE"
 IDLE_REQUEST_MARKER = "IDLE_ADMISSION_REQUEST"
 IDLE_SCHEMA = "scheduled-agent-idle-admission/v1"
 ACTION_EXPLORE_CHANGE = "action:explore-change"
+ADVISORY_IDLE = "advisory:idle"
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _BRANCH = re.compile(r"^[A-Za-z0-9._/-]+$")
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
+_RECOMMENDATION_LINE = re.compile(r"(?m)^Recommendation:\s*(\S.*?)\s*$")
 _CORRELATION_LINE = re.compile(r"(?m)^Idle-Admission-Correlation:\s*(\S+)\s*$")
 _SOURCE_REVISION_LINE = re.compile(r"(?m)^Idle-Source-Revision:\s*(\S+)\s*$")
 _SOURCE_LINE = re.compile(r"(?m)^Idle-Source:\s*(\S+)\s*$")
@@ -51,7 +53,7 @@ _DISPATCH_ARTIFACT_NAME = "dispatch-result.json"
 _DISPATCH_WORKFLOW_PATH = ".github/workflows/scheduled-agent-bridge.yml"
 _CHATGPT_CONNECTOR_APP_SLUG = "chatgpt-codex-connector"
 
-IdleCandidateKind = Literal["no-finding", "existing", "new"]
+IdleCandidateKind = Literal["no-finding", "advisory", "existing", "new"]
 IdleAdmissionState = Literal[
     "NO_FINDING",
     "ADMITTED",
@@ -246,6 +248,7 @@ class IdleCandidate:
     body: str | None = None
     labels: tuple[str, ...] = ()
     observed_issue_sha256: str | None = None
+    recommendation_count: int | None = None
 
     def validate(self, envelope: IdleDispatchEnvelope) -> None:
         if self.kind == "no-finding":
@@ -261,6 +264,7 @@ class IdleCandidate:
                         self.source_revision,
                         self.evidence,
                         self.observed_issue_sha256,
+                        self.recommendation_count,
                     )
                 )
                 or self.labels
@@ -284,6 +288,24 @@ class IdleCandidate:
                 raise ValueError("existing idle candidate Issue is invalid")
             if self.title is not None or self.body is not None or self.labels:
                 raise ValueError("existing candidate must not carry replacement Issue fields")
+            if self.recommendation_count is not None:
+                raise ValueError("existing candidate must not carry advisory count")
+            return
+        if self.kind == "advisory":
+            if self.issue_number is not None:
+                raise ValueError("advisory candidate unexpectedly carries an Issue")
+            if not _valid_text(self.title, maximum=256) or not _valid_text(
+                self.body, maximum=60_000
+            ):
+                raise ValueError("advisory candidate content is invalid")
+            if self.labels != (ADVISORY_IDLE,):
+                raise ValueError("advisory candidate must use only advisory:idle")
+            if _positive_int(self.recommendation_count) not in {1, 2, 3}:
+                raise ValueError("advisory candidate must contain one to three recommendations")
+            if _CHANGE_LINE.findall(cast(str, self.body)):
+                raise ValueError("advisory candidate must not carry Change state")
+            if len(_RECOMMENDATION_LINE.findall(cast(str, self.body))) != self.recommendation_count:
+                raise ValueError("advisory recommendation count does not match its body")
             return
         if self.kind != "new":
             raise ValueError("idle candidate kind is invalid")
@@ -301,6 +323,8 @@ class IdleCandidate:
         change_values = _CHANGE_LINE.findall(cast(str, self.body))
         if change_values != ["unset"]:
             raise ValueError("new idle candidate must contain exactly Change: unset")
+        if self.recommendation_count is not None:
+            raise ValueError("new candidate must not carry advisory count")
 
     def payload(self) -> dict[str, object]:
         return {
@@ -314,6 +338,7 @@ class IdleCandidate:
             "body": self.body,
             "labels": list(self.labels),
             "observed_issue_sha256": self.observed_issue_sha256,
+            "recommendation_count": self.recommendation_count,
         }
 
 
@@ -388,6 +413,7 @@ def parse_idle_admission_request(body: str) -> IdleAdmissionRequest | None:
         "body",
         "labels",
         "observed_issue_sha256",
+        "recommendation_count",
     }:
         return None
     envelope_body = f"{IDLE_ENVELOPE_MARKER}\nEnvelope-B64: {_encode_payload(envelope_payload)}"
@@ -409,6 +435,7 @@ def parse_idle_admission_request(body: str) -> IdleAdmissionRequest | None:
             body=cast(str | None, candidate_payload.get("body")),
             labels=tuple(cast(list[str], labels)),
             observed_issue_sha256=cast(str | None, candidate_payload.get("observed_issue_sha256")),
+            recommendation_count=cast(int | None, candidate_payload.get("recommendation_count")),
         )
         return IdleAdmissionRequest(
             envelope=envelope,
@@ -729,6 +756,34 @@ def _new_body(request: IdleAdmissionRequest) -> str:
     return body if not missing else body.rstrip() + "\n\n" + "\n".join(missing) + "\n"
 
 
+def _advisory_body(request: IdleAdmissionRequest) -> str:
+    """Return the exact non-routing advisory body with source provenance."""
+
+    candidate = request.candidate
+    body = candidate.body
+    if body is None:
+        raise ValueError("advisory candidate body is missing")
+    additions = (
+        f"Idle-Admission-Correlation: {request.correlation}",
+        f"Idle-Source-Revision: {request.envelope.default_branch_revision}",
+        f"Idle-Source: {candidate.source_kind}:{candidate.source_ref}",
+    )
+    for marker, pattern in zip(
+        additions, (_CORRELATION_LINE, _SOURCE_REVISION_LINE, _SOURCE_LINE), strict=True
+    ):
+        matches = pattern.findall(body)
+        if matches and matches != [marker.split(": ", 1)[1]]:
+            raise ValueError("idle candidate source marker contradicts request")
+    missing = tuple(
+        marker
+        for marker, pattern in zip(
+            additions, (_CORRELATION_LINE, _SOURCE_REVISION_LINE, _SOURCE_LINE), strict=True
+        )
+        if not pattern.search(body)
+    )
+    return body if not missing else body.rstrip() + "\n\n" + "\n".join(missing) + "\n"
+
+
 def _matching_new_candidates(
     request: IdleAdmissionRequest,
     issues: tuple[Mapping[str, object], ...],
@@ -740,6 +795,39 @@ def _matching_new_candidates(
         if "pull_request" not in issue
         and isinstance(issue.get("body"), str)
         and _CORRELATION_LINE.findall(cast(str, issue["body"])) == [marker]
+    )
+
+
+def _matching_advisory_candidates(
+    request: IdleAdmissionRequest,
+    issues: tuple[Mapping[str, object], ...],
+) -> tuple[Mapping[str, object], ...]:
+    """Find every non-PR Issue carrying this exact advisory correlation.
+
+    All Issue states are intentionally enumerated.  A closed or malformed
+    correlated Issue is evidence that a prior write may have happened and
+    therefore blocks a replacement create rather than being treated as absent.
+    """
+
+    marker = request.correlation
+    return tuple(
+        issue
+        for issue in issues
+        if "pull_request" not in issue
+        and isinstance(issue.get("body"), str)
+        and _CORRELATION_LINE.findall(cast(str, issue["body"])) == [marker]
+    )
+
+
+def _open_advisory_issues(
+    issues: tuple[Mapping[str, object], ...],
+) -> tuple[Mapping[str, object], ...]:
+    return tuple(
+        issue
+        for issue in issues
+        if "pull_request" not in issue
+        and issue.get("state") == "open"
+        and ADVISORY_IDLE in (_labels(issue) or ())
     )
 
 
@@ -762,6 +850,140 @@ def _new_postcondition(request: IdleAdmissionRequest, issue: Mapping[str, object
         and _SOURCE_LINE.findall(body)
         == [f"{request.candidate.source_kind}:{request.candidate.source_ref}"]
     )
+
+
+def _advisory_postcondition(request: IdleAdmissionRequest, issue: Mapping[str, object]) -> bool:
+    if issue.get("state") != "open" or "pull_request" in issue:
+        return False
+    if issue.get("title") != request.candidate.title:
+        return False
+    names = _labels(issue)
+    if names != (ADVISORY_IDLE,):
+        return False
+    body = issue.get("body")
+    if not isinstance(body, str):
+        return False
+    try:
+        expected_body = _advisory_body(request)
+    except ValueError:
+        return False
+    return (
+        body == expected_body
+        and not _change_values(body)
+        and _CORRELATION_LINE.findall(body) == [request.correlation]
+        and _SOURCE_REVISION_LINE.findall(body) == [request.envelope.default_branch_revision]
+        and _SOURCE_LINE.findall(body)
+        == [f"{request.candidate.source_kind}:{request.candidate.source_ref}"]
+    )
+
+
+def _advisory_existing_result(
+    request: IdleAdmissionRequest,
+    issues: tuple[Mapping[str, object], ...],
+) -> IdleAdmissionResult | None:
+    """Classify durable advisory evidence before allowing a create."""
+
+    matches = _matching_advisory_candidates(request, issues)
+    if len(matches) > 1:
+        return IdleAdmissionResult("AMBIGUOUS", "idle-advisory-correlation-ambiguous")
+    if matches:
+        number = _positive_int(matches[0].get("number"))
+        if number is None or not _advisory_postcondition(request, matches[0]):
+            return IdleAdmissionResult(
+                "AMBIGUOUS", "idle-advisory-correlated-postcondition-invalid"
+            )
+        return IdleAdmissionResult("ALREADY_ADMITTED", "idle-advisory-already-admitted", number)
+
+    open_advisories = _open_advisory_issues(issues)
+    if len(open_advisories) > 1:
+        return IdleAdmissionResult("AMBIGUOUS", "idle-advisory-open-set-ambiguous")
+    if open_advisories:
+        number = _positive_int(open_advisories[0].get("number"))
+        if number is None:
+            return IdleAdmissionResult("AMBIGUOUS", "idle-advisory-open-identity-invalid")
+        return IdleAdmissionResult("ALREADY_ADMITTED", "idle-advisory-open-exists", number)
+    return None
+
+
+def _admit_advisory_request(
+    request: IdleAdmissionRequest,
+    *,
+    read: GitHubReader,
+    write: GitHubWriter,
+    fresh_dispatch: FreshDispatch,
+    artifact_result: ArtifactResultReader,
+) -> IdleAdmissionResult:
+    try:
+        body = _advisory_body(request)
+    except ValueError as exc:
+        return IdleAdmissionResult("INVALID", str(exc))
+
+    issues = _paged_open_issues(request.envelope.repository, "", read=read)
+    if issues is None:
+        return IdleAdmissionResult("AMBIGUOUS", "idle-advisory-enumeration-incomplete")
+    prior = _advisory_existing_result(request, issues)
+    if prior is not None:
+        return prior
+    gate = _fresh_gate(
+        request,
+        read=read,
+        fresh_dispatch=fresh_dispatch,
+        artifact_result=artifact_result,
+    )
+    if gate is not None:
+        return gate
+    issues_again = _paged_open_issues(request.envelope.repository, "", read=read)
+    if issues_again is None:
+        return IdleAdmissionResult("AMBIGUOUS", "idle-advisory-enumeration-incomplete")
+    prior_again = _advisory_existing_result(request, issues_again)
+    if prior_again is not None:
+        return prior_again
+    gate = _fresh_gate(
+        request,
+        read=read,
+        fresh_dispatch=fresh_dispatch,
+        artifact_result=artifact_result,
+    )
+    if gate is not None:
+        return gate
+    payload = {"title": request.candidate.title, "body": body, "labels": [ADVISORY_IDLE]}
+    try:
+        response = write(request.envelope.repository, "", "issues", payload)
+    except (HTTPError, OSError, RuntimeError, TimeoutError):
+        reconciled = _paged_open_issues(request.envelope.repository, "", read=read)
+        if reconciled is None:
+            return IdleAdmissionResult(
+                "AMBIGUOUS", "idle-advisory-write-reconciliation-incomplete", None, True
+            )
+        matches_after = _matching_advisory_candidates(request, reconciled)
+        if len(matches_after) == 1 and _advisory_postcondition(request, matches_after[0]):
+            return IdleAdmissionResult(
+                "ADMITTED",
+                "idle-advisory-write-reconciled",
+                _positive_int(matches_after[0].get("number")),
+                True,
+            )
+        return IdleAdmissionResult("AMBIGUOUS", "idle-advisory-write-ambiguous", None, True)
+
+    number = _positive_int(response.get("number")) if isinstance(response, Mapping) else None
+    observed = None if number is None else read(request.envelope.repository, "", f"issues/{number}")
+    if (
+        number is not None
+        and isinstance(observed, Mapping)
+        and _advisory_postcondition(request, observed)
+    ):
+        return IdleAdmissionResult("ADMITTED", "idle-advisory-admitted", number, True)
+    reconciled = _paged_open_issues(request.envelope.repository, "", read=read)
+    if reconciled is not None:
+        matches_after = _matching_advisory_candidates(request, reconciled)
+        if len(matches_after) == 1 and _advisory_postcondition(request, matches_after[0]):
+            return IdleAdmissionResult(
+                "ADMITTED",
+                "idle-advisory-postcondition-reconciled",
+                _positive_int(matches_after[0].get("number")),
+                True,
+            )
+    return IdleAdmissionResult("AMBIGUOUS", "idle-advisory-postcondition-unproven", number, True)
 
 
 def _existing_postcondition(
@@ -884,6 +1106,15 @@ def admit_idle_request(
             )
         return IdleAdmissionResult(
             "AMBIGUOUS", "idle-existing-postcondition-unproven", candidate.issue_number, True
+        )
+
+    if candidate.kind == "advisory":
+        return _admit_advisory_request(
+            request,
+            read=read,
+            write=write,
+            fresh_dispatch=fresh_dispatch,
+            artifact_result=artifact_result,
         )
 
     try:
