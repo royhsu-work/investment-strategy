@@ -377,6 +377,17 @@ A fresh process SHALL reconstruct consequence completion from the existing `Cons
 - AND later same-Change updates to those files do not erase the historical consequence
 - AND missing, truncated, stale, or contradictory ancestry/content evidence fails closed
 
+#### Scenario: Merged same-Change successor satisfies an older carrier intent
+
+- GIVEN an accepted materialization names a historical PR carrier whose merge commit is in current main
+- AND the accepted base is newer than that carrier's recorded PR base
+- AND one complete compare-history commit from the accepted base to current main contains every requested blob
+- AND the historical carrier merge commit is an ancestor of that exact materialization commit
+- WHEN a later application process resumes or observes the materialization
+- THEN it returns that exact historical materialization revision as the durable consequence
+- AND it creates no replacement branch, commit, or PR
+- AND missing, truncated, stale, or contradictory ancestry/content evidence fails closed
+
 #### Scenario: Accepted application resumes across an uncorrelated legacy result
 
 - GIVEN one immutable accepted application intent exactly matches the current open Issue, Change, Role, and Action
