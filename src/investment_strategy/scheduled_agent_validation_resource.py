@@ -1653,10 +1653,13 @@ def _already_merged_work_product_target(
     same-Change replacement.  This observer is intentionally narrow: the PR
     must be a historical merged carrier, its merge commit must be in the
     current default-branch history, and every requested blob must be present
-    in one complete historical PR snapshot which is reachable from the
-    recorded head.  Later same-Change descendants may update those files legitimately;
-    if the historical exact effect or its ancestry is not provable, callers
-    retain the existing replacement/fail-closed path.
+    in one complete historical PR snapshot.  The snapshot normally comes
+    from the recorded head; after a same-Change successor has merged, it may
+    instead come from the complete accepted-base-to-main history, but only
+    when the historical merge commit is an ancestor of that exact snapshot.
+    Later same-Change descendants may update those files legitimately; if the
+    historical exact effect or its ancestry is not provable, callers retain
+    the existing replacement/fail-closed path.
     """
 
     if not _is_historical_merged_carrier(pr):
@@ -1685,34 +1688,66 @@ def _already_merged_work_product_target(
         revision=authorization_revision,
     ):
         return None
-    if not _default_branch_is_ancestor(
+    # The usual case is that the accepted base is an ancestor of the
+    # historical PR base and the exact manifest can be found in the PR head's
+    # complete compare history.  A resumed accepted application can instead
+    # observe a later same-Change successor already merged on main: the
+    # accepted base is then newer than the recorded carrier base, while the
+    # immutable manifest was materialized by that successor.  Do not reject
+    # that durable consequence merely because the old carrier's base cannot
+    # be compared in the forward direction.  The successor path is still
+    # narrow: the exact manifest must be found in the complete compare history
+    # from the accepted base to current main, and the historical carrier's
+    # merge commit must be an ancestor of that exact materialization commit.
+    direct_materialization = None
+    if _default_branch_is_ancestor(
         repository,
         token,
         default_revision=cast(str, pr_head_sha),
         revision=authorization_revision,
+    ) and (
+        pr_base_sha == manifest.base_sha
+        or _default_branch_is_ancestor(
+            repository,
+            token,
+            default_revision=manifest.base_sha,
+            revision=cast(str, pr_base_sha),
+        )
     ):
-        return None
-    if pr_base_sha != manifest.base_sha and not _default_branch_is_ancestor(
-        repository,
-        token,
-        default_revision=manifest.base_sha,
-        revision=cast(str, pr_base_sha),
-    ):
-        return None
-    if (
-        _historical_manifest_materialization_commit(
+        direct_materialization = _historical_manifest_materialization_commit(
             repository,
             token,
             base_sha=manifest.base_sha,
             revision=cast(str, pr_head_sha),
             manifest=manifest,
         )
-        is None
+    if direct_materialization is not None:
+        return ValidationResourceTarget(
+            repository=repository,
+            revision=cast(str, pr_head_sha),
+            correlation=f"effect-request-{issue_number}",
+            pr_number=pr_number,
+            change=expected_change,
+            branch=expected_branch,
+        )
+
+    successor_materialization = _historical_manifest_materialization_commit(
+        repository,
+        token,
+        base_sha=manifest.base_sha,
+        revision=authorization_revision,
+        manifest=manifest,
+    )
+    if successor_materialization is None or not _default_branch_is_ancestor(
+        repository,
+        token,
+        default_revision=cast(str, merge_commit_sha),
+        revision=successor_materialization,
     ):
         return None
     return ValidationResourceTarget(
         repository=repository,
-        revision=cast(str, pr_head_sha),
+        revision=successor_materialization,
         correlation=f"effect-request-{issue_number}",
         pr_number=pr_number,
         change=expected_change,

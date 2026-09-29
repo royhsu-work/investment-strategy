@@ -2263,7 +2263,10 @@ def test_live_322_merged_carrier_is_reconciled_without_replacement(
         method: str = "GET",
         **kwargs: object,
     ) -> object:
-        if api_path == f"compare/{accepted_base}...{carrier_head}":
+        if api_path in {
+            f"compare/{accepted_base}...{carrier_head}",
+            f"compare/{accepted_base}...{current_main}",
+        }:
             return {
                 "status": "ahead",
                 "ahead_by": 1,
@@ -2283,6 +2286,168 @@ def test_live_322_merged_carrier_is_reconciled_without_replacement(
             default_branch="main",
             authorization_revision=current_main,
         )
+
+
+def test_merged_carrier_recovers_exact_manifest_from_same_change_successor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A later same-Change merge must satisfy an older accepted carrier intent."""
+
+    source = WorkerRequest(322, "lead", "resolve-question")
+    change = "restore-no-work-idle-discovery"
+    accepted_base = "01e22a7ebad34b434c0e12c8293f02a9bed24a40"
+    current_main = "0fef37d90201d5394663101004083f404c744e40"
+    historical_carrier_head = "4ff78b463a24844309aa5025deb7eeaef78bbf55"
+    historical_merge_commit = "b751948875a49582a0d073a47809d697badc8a6d"
+    materialization_commit = "ca9763b5dde4a913acde6d0e25f924d77e160f4e"
+    historical_pr_base = "6a4aadb40b875fce7715947fef7d9f59f9a9d9b2"
+    branch = f"agent/{change}"
+    manifest_values = (
+        (
+            f"openspec/changes/{change}/proposal.md",
+            "a26d5898858133ef0960f069016573dabcaffa2d",
+            "a84a82367e4eb62087654c8e0eb104b930928482",
+        ),
+        (
+            f"openspec/changes/{change}/design.md",
+            "d33fafef5b654f17ba7a4200d75c96097dfcd4f3",
+            "18a7f1b67bc5a135aac22342719c12fa52a55fd1",
+        ),
+        (
+            f"openspec/changes/{change}/tasks.md",
+            "e88951c200fab1ad2a74ec789b0df6871b40611c",
+            "e7211b6a7813863db383fdc80bd572047343b34e",
+        ),
+        (
+            f"openspec/changes/{change}/specs/scheduled-agent-workflow/spec.md",
+            "9e9469441bc6f9a5163c267e2c25b341f5e56b60",
+            "13bbec20b98330945f198a91201256a96e2f62da",
+        ),
+    )
+    manifest = resource.WorkProductManifest(
+        branch=branch,
+        base_sha=accepted_base,
+        message="Resolve OpenSpec review findings for idle ingress",
+        files=tuple(
+            resource.WorkProductFile(path, blob, expected)
+            for path, blob, expected in manifest_values
+        ),
+    )
+    plan = resource.WorkProductPlan(
+        True,
+        source=source,
+        pr_number=324,
+        expected_change=change,
+        manifest=manifest,
+    )
+    merged_pr = {
+        "number": 324,
+        "state": "closed",
+        "merged": True,
+        "merged_at": "2026-09-27T10:25:10Z",
+        "merge_commit_sha": historical_merge_commit,
+        "body": "Formalize OpenSpec change.\n\nRefs #322\n",
+        "head": {
+            "ref": branch,
+            "sha": historical_carrier_head,
+            "repo": {"full_name": _REPOSITORY},
+        },
+        "base": {
+            "ref": "main",
+            "sha": historical_pr_base,
+            "repo": {"full_name": _REPOSITORY},
+        },
+    }
+    comparison_calls: list[str] = []
+    mutation_calls: list[str] = []
+
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_args: source)
+    monkeypatch.setattr(resource, "_open_pr_payload", lambda **_kwargs: merged_pr)
+    monkeypatch.setattr(
+        resource,
+        "_ref_head_sha",
+        lambda _repository, _token, ref, **_kwargs: (
+            current_main if ref == "main" else historical_carrier_head
+        ),
+    )
+
+    def fake_ancestor(
+        _repository: str,
+        _token: str,
+        *,
+        default_revision: str,
+        revision: str,
+    ) -> bool:
+        if default_revision == historical_merge_commit:
+            return revision in {current_main, materialization_commit}
+        if default_revision == historical_carrier_head:
+            return revision == current_main
+        # The accepted base is newer than the historical PR base.  This is
+        # the condition that used to force the live continuation to fail.
+        if default_revision == accepted_base and revision == historical_pr_base:
+            return False
+        return False
+
+    monkeypatch.setattr(resource, "_default_branch_is_ancestor", fake_ancestor)
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        **_kwargs: object,
+    ) -> object:
+        if method != "GET":
+            mutation_calls.append(api_path)
+            raise AssertionError(f"unexpected mutation: {method} {api_path}")
+        if api_path == f"compare/{accepted_base}...{current_main}":
+            comparison_calls.append(api_path)
+            return {
+                "status": "ahead",
+                "ahead_by": 2,
+                "behind_by": 0,
+                "base_commit": {"sha": accepted_base},
+                "commits": [
+                    {"sha": materialization_commit},
+                    {"sha": current_main},
+                ],
+                "total_commits": 2,
+            }
+        if api_path.startswith("contents/"):
+            _raw_path, _separator, query = api_path.partition("?")
+            path = _raw_path.removeprefix("contents/")
+            reference = query.removeprefix("ref=")
+            if reference == materialization_commit:
+                return {
+                    "sha": next(
+                        blob
+                        for manifest_path, blob, _expected in manifest_values
+                        if manifest_path == path
+                    )
+                }
+        raise AssertionError(api_path)
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
+
+    target = resource.apply_work_product(
+        plan,
+        repository=_REPOSITORY,
+        token=_FIXTURE_VALUE,
+        default_branch="main",
+        authorization_revision=current_main,
+    )
+
+    assert target == resource.ValidationResourceTarget(
+        repository=_REPOSITORY,
+        revision=materialization_commit,
+        correlation="effect-request-322",
+        pr_number=324,
+        change=change,
+        branch=branch,
+    )
+    assert comparison_calls == [f"compare/{accepted_base}...{current_main}"]
+    assert mutation_calls == []
 
 
 def test_live_322_manifest_recovers_after_disjoint_default_advance(
