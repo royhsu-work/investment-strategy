@@ -1927,28 +1927,35 @@ class GitHubEffectAdapter:
         branch = payload.get("head")
         base = payload.get("base")
         if not isinstance(branch, str) or not isinstance(base, str):
-            return None
+            raise RuntimeError("carrier PR discovery request is incomplete")
         owner = self.repository.split("/", 1)[0]
         head = f"{owner}:{branch}"
         query = "pulls?state=all"
         query += f"&head={quote(head, safe='')}"
-        query += f"&base={quote(base, safe='')}"
         query += "&per_page=100"
         response = _github_json(self.repository, self.token, query)
-        if not isinstance(response, list):
-            return None
+        if not isinstance(response, list) or len(response) >= 100:
+            raise RuntimeError("carrier PR discovery is incomplete")
+
         matches: list[Mapping[str, object]] = []
         for item in response:
             if not isinstance(item, Mapping):
-                continue
+                raise RuntimeError("carrier PR discovery is malformed")
             number = item.get("number")
+            item_head = item.get("head")
             if (
-                isinstance(number, int)
-                and not isinstance(number, bool)
-                and number > 0
-                and self._pull_request_matches_create(item, number, payload)
+                isinstance(number, bool)
+                or not isinstance(number, int)
+                or number <= 0
+                or not isinstance(item_head, Mapping)
+                or item_head.get("ref") != branch
+                or _repository_full_name(item_head.get("repo")) != self.repository
+                or not _valid_sha(item_head.get("sha"))
             ):
-                matches.append(item)
+                raise RuntimeError("carrier PR discovery is malformed")
+            if not self._pull_request_matches_create(item, number, payload):
+                raise RuntimeError("carrier PR discovery found a competing or stale carrier")
+            matches.append(item)
         if len(matches) > 1:
             raise RuntimeError("carrier PR target is ambiguous: duplicate matching PRs")
         return None if not matches else matches[0]
@@ -3451,6 +3458,7 @@ def _fresh_materialization_target(
     source: WorkerRequest,
     current_revision: str,
     allow_pending_continuation: bool,
+    accepted_successor_routing: tuple[str, str] | None = None,
 ) -> ValidationResourceTarget | None:
     """Reconstruct one exact current materialization target from GitHub truth."""
 
@@ -3459,15 +3467,27 @@ def _fresh_materialization_target(
     if request is None or default_branch is None:
         return None
     try:
-        target = observe_materialization_target(
-            payload,
-            source,
-            repository=adapter.repository,
-            token=adapter.token,
-            current_revision=current_revision,
-            default_branch=default_branch,
-            allow_pending_continuation=allow_pending_continuation,
-        )
+        if accepted_successor_routing is None:
+            target = observe_materialization_target(
+                payload,
+                source,
+                repository=adapter.repository,
+                token=adapter.token,
+                current_revision=current_revision,
+                default_branch=default_branch,
+                allow_pending_continuation=allow_pending_continuation,
+            )
+        else:
+            target = observe_materialization_target(
+                payload,
+                source,
+                repository=adapter.repository,
+                token=adapter.token,
+                current_revision=current_revision,
+                default_branch=default_branch,
+                allow_pending_continuation=allow_pending_continuation,
+                accepted_successor_routing=accepted_successor_routing,
+            )
     except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return None
     if (
@@ -3491,6 +3511,7 @@ def consequence_postconditions_complete(
     authorized_change: str | None = None,
     request_comment_id: int | None = None,
     allow_pending_continuation: bool = False,
+    allow_accepted_successor: bool = False,
 ) -> bool:
     """Prove the affirmative consequence contract from fresh repository state.
 
@@ -3509,6 +3530,14 @@ def consequence_postconditions_complete(
         )
         if batch.typed_result is None:
             return False
+        accepted_successor_routing: tuple[str, str] | None = None
+        if allow_accepted_successor:
+            try:
+                successor = next_action(batch.typed_result.action, batch.typed_result.result)
+            except (TypeError, ValueError):
+                successor = None
+            if successor is not None:
+                accepted_successor_routing = (role_for(successor).value, successor.value)
         spec = consequence_spec_for(
             batch.typed_result.action,
             batch.typed_result.result.kind,
@@ -3554,6 +3583,7 @@ def consequence_postconditions_complete(
                     source=source,
                     current_revision=current_revision,
                     allow_pending_continuation=allow_pending_continuation,
+                    accepted_successor_routing=accepted_successor_routing,
                 )
                 is not None
             )
@@ -3597,6 +3627,7 @@ def consequence_postconditions_complete(
                         source=source,
                         current_revision=current_revision,
                         allow_pending_continuation=allow_pending_continuation,
+                        accepted_successor_routing=accepted_successor_routing,
                     )
                     is None
                 ):

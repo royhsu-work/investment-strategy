@@ -126,13 +126,25 @@ def fetch_dispatch_result(
         raise RuntimeError("exact dispatch run identity is invalid")
 
     run = _as_mapping(_github_json(repository, token, f"actions/runs/{run_id}"))
-    run_name = None if run is None else run.get("name")
+    run_names = (
+        ()
+        if run is None
+        else tuple(
+            value for value in (run.get("name"), run.get("display_title")) if isinstance(value, str)
+        )
+    )
+    run_path = None if run is None else run.get("path")
     if (
         run is None
         or _positive_int(run.get("id")) != run_id
-        or not isinstance(run_name, str)
-        or parse_dispatch_run_name(run_name) != request_comment_id
-        or run.get("path") != ".github/workflows/scheduled-agent-bridge.yml"
+        or not any(parse_dispatch_run_name(name) == request_comment_id for name in run_names)
+        or not (
+            run_path == ".github/workflows/scheduled-agent-bridge.yml"
+            or (
+                isinstance(run_path, str)
+                and run_path.startswith(".github/workflows/scheduled-agent-bridge.yml@")
+            )
+        )
         or run.get("event") != "issue_comment"
         or run.get("head_sha") != current_revision
         or run.get("status") != "completed"

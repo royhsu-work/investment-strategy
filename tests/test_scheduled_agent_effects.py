@@ -3950,3 +3950,200 @@ def test_fresh_process_reconstructs_lead_materialization_from_canonical_observer
     assert complete
     assert len(observed) == 1
     assert observed[0] == (payload, source, "owner/repo", _REVISION)
+
+
+def test_accepted_materialization_reconciles_after_successor_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(322, "lead", "resolve-question")
+    payload = {
+        "issue_number": source.issue_number,
+        "operation": "application-materialize",
+        "expected_change": _CHANGE,
+        "change": _CHANGE,
+        "branch": f"agent/{_CHANGE}",
+        "base_sha": _REVISION,
+        "message": "Resolve the OpenSpec review findings",
+        "files": [
+            {
+                "path": f"openspec/changes/{_CHANGE}/proposal.md",
+                "blob_sha": "b" * 40,
+                "expected_sha": "c" * 40,
+            }
+        ],
+        "pr_number": 324,
+    }
+    raw = _raw(
+        issue_number=source.issue_number,
+        action=source.action,
+        role=source.role,
+        result_kind="ready-for-openspec-review",
+        requested_effects=[
+            {
+                "kind": effects.GITHUB_MUTATION_KIND,
+                "payload_json": json.dumps(payload, sort_keys=True),
+            }
+        ],
+    )
+    target = ValidationResourceTarget(
+        repository="owner/repo",
+        revision="d" * 40,
+        correlation=f"effect-request-{source.issue_number}",
+        pr_number=324,
+        change=_CHANGE,
+        validation_required=True,
+        branch=f"agent/{_CHANGE}",
+    )
+    observed: list[tuple[bool, tuple[str, str] | None]] = []
+
+    def observe(
+        _payload: Mapping[str, object],
+        _source: WorkerRequest,
+        *,
+        repository: str,
+        token: str,
+        current_revision: str,
+        default_branch: str,
+        allow_pending_continuation: bool = False,
+        accepted_successor_routing: tuple[str, str] | None = None,
+    ) -> ValidationResourceTarget:
+        assert (repository, token, current_revision, default_branch) == (
+            "owner/repo",
+            _TEST_TOKEN,
+            _REVISION,
+            "main",
+        )
+        observed.append((allow_pending_continuation, accepted_successor_routing))
+        return target
+
+    monkeypatch.setattr(
+        effects,
+        "_github_json",
+        lambda _repository, _token, api_path, **_kwargs: (
+            {"default_branch": "main"} if api_path == "" else None
+        ),
+    )
+    monkeypatch.setattr(effects, "observe_materialization_target", observe)
+
+    assert effects.consequence_postconditions_complete(
+        raw,
+        source=source,
+        repository="owner/repo",
+        token=_TEST_TOKEN,
+        current_revision=_REVISION,
+        authorized_change=_CHANGE,
+        request_comment_id=_REQUEST_COMMENT_ID,
+        allow_pending_continuation=True,
+        allow_accepted_successor=True,
+    )
+    assert observed == [(True, ("reviewer", "review-openspec"))]
+
+
+@pytest.mark.parametrize(
+    "response",
+    (None, {"message": "partial response"}, [{}], [{}] * 100),
+    ids=("missing", "wrong-shape", "malformed-item", "pagination-cap"),
+)
+def test_pull_request_create_discovery_fails_closed_on_incomplete_response(
+    monkeypatch: pytest.MonkeyPatch,
+    response: object,
+) -> None:
+    source = WorkerRequest(138, "lead", "finalize-change")
+    adapter = GitHubEffectAdapter(
+        "owner/repo",
+        _TEST_TOKEN,
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        expected_result_kind="archive-ready",
+    )
+    payload = {
+        "head": f"agent/{_CHANGE}",
+        "base": "main",
+        "title": "Archive exact change",
+        "body": "Archive\n\nRefs #138",
+        "draft": False,
+        "expected_head_sha": _REVISION,
+    }
+    reads: list[str] = []
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        **_kwargs: object,
+    ) -> object:
+        reads.append(api_path)
+        return response
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+
+    with pytest.raises(RuntimeError, match="discovery|incomplete|malformed"):
+        adapter._existing_pull_request_for_create(payload)
+
+    assert len(reads) == 1
+
+
+def test_pull_request_create_discovery_rejects_same_head_competing_base(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    branch = f"agent/{_CHANGE}-new-carrier"
+    source = WorkerRequest(138, "lead", "finalize-change")
+    adapter = GitHubEffectAdapter(
+        "owner/repo",
+        _TEST_TOKEN,
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        expected_result_kind="archive-ready",
+    )
+    payload = {
+        "head": branch,
+        "base": "main",
+        "title": "Archive exact change",
+        "body": "Archive\n\nRefs #138",
+        "draft": False,
+        "expected_head_sha": _REVISION,
+    }
+    competing = {
+        "number": 278,
+        "state": "open",
+        "merged": False,
+        "title": payload["title"],
+        "body": payload["body"],
+        "draft": False,
+        "head": {
+            "ref": branch,
+            "sha": _REVISION,
+            "repo": {"full_name": "owner/repo"},
+        },
+        "base": {
+            "ref": "release",
+            "sha": _REVISION,
+            "repo": {"full_name": "owner/repo"},
+        },
+    }
+    reads: list[str] = []
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        **_kwargs: object,
+    ) -> object:
+        reads.append(api_path)
+        if api_path == "":
+            return {"default_branch": "main"}
+        if api_path.startswith("pulls?state=all") and "&base=" not in api_path:
+            return [competing]
+        if api_path.startswith("pulls?state=all") and "&base=" in api_path:
+            return []
+        raise AssertionError(api_path)
+
+    monkeypatch.setattr(effects, "_github_json", fake_github_json)
+
+    with pytest.raises(RuntimeError):
+        adapter._existing_pull_request_for_create(payload)
+
+    assert any(path.startswith("pulls?state=all") for path in reads)
+    assert all("&base=" not in path for path in reads if path.startswith("pulls?state=all"))
