@@ -26,6 +26,7 @@ from investment_strategy.scheduled_agent_action_model import (
 from investment_strategy.scheduled_agent_application_carrier import (
     ImplementationCarrierQualification,
     canonical_implementation_branch,
+    qualify_change_carrier,
     qualify_implementation_carrier,
 )
 from investment_strategy.scheduled_agent_carrier import (
@@ -178,123 +179,6 @@ def work_product_path_allowed(
     return False
 
 
-def qualify_lead_openspec_carrier(
-    *,
-    repository: str,
-    token: str,
-    source: WorkerRequest,
-    change: str,
-    pr_number: int,
-    branch: str,
-    authorization_revision: str,
-    default_branch: str,
-) -> str | None:
-    """Qualify one exact current Lead OpenSpec carrier without widening branch authority."""
-
-    if (
-        (source.role, source.action) not in _OPEN_SPEC_AUTHORING_SOURCES
-        or not _valid_change(change)
-        or not isinstance(pr_number, int)
-        or isinstance(pr_number, bool)
-        or pr_number <= 0
-        or not _valid_branch(branch)
-        or branch == _source_branch(change)
-        or not _valid_sha(authorization_revision)
-    ):
-        return None
-
-    def qualified_candidate(number: int, candidate_branch: str) -> str | None:
-        try:
-            pr = _open_pr_payload(
-                repository=repository,
-                token=token,
-                pr_number=number,
-                source=source,
-                expected_change=change,
-                default_branch=default_branch,
-                expected_branch=candidate_branch,
-            )
-        except (OSError, RuntimeError, TypeError, ValueError):
-            return None
-        if pr.get("draft") is True:
-            return None
-        head = _as_mapping(pr.get("head"))
-        base = _as_mapping(pr.get("base"))
-        head_sha = None if head is None else head.get("sha")
-        if (
-            head is None
-            or base is None
-            or not _valid_sha(head_sha)
-            or head.get("ref") != candidate_branch
-            or base.get("ref") != default_branch
-            or base.get("sha") != authorization_revision
-            or _ref_head_sha(
-                repository,
-                token,
-                candidate_branch,
-                allow_not_found=True,
-            )
-            != head_sha
-        ):
-            return None
-        files = _github_json(repository, token, f"pulls/{number}/files?per_page=100")
-        if not isinstance(files, list) or not files or len(files) >= 100:
-            return None
-        saw_change = False
-        for raw_file in files:
-            item = _as_mapping(raw_file)
-            if item is None:
-                return None
-            filename = item.get("filename")
-            status = item.get("status")
-            previous = item.get("previous_filename")
-            if (
-                not isinstance(filename, str)
-                or not isinstance(status, str)
-                or not status
-                or not work_product_path_allowed(source, change, filename)
-                or (
-                    previous is not None
-                    and (
-                        not isinstance(previous, str)
-                        or not work_product_path_allowed(source, change, previous)
-                    )
-                )
-            ):
-                return None
-            if filename.startswith(f"openspec/changes/{change}/"):
-                saw_change = True
-        return cast(str, head_sha) if saw_change else None
-
-    requested_head = qualified_candidate(pr_number, branch)
-    if requested_head is None:
-        return None
-
-    raw_open = _github_json(
-        repository,
-        token,
-        f"pulls?{urlencode({'state': 'open', 'base': default_branch, 'per_page': 100})}",
-    )
-    if not isinstance(raw_open, list) or len(raw_open) >= 100:
-        return None
-    qualified_numbers: set[int] = set()
-    for raw_pr in raw_open:
-        candidate = _as_mapping(raw_pr)
-        number = None if candidate is None else candidate.get("number")
-        head = None if candidate is None else _as_mapping(candidate.get("head"))
-        candidate_branch = None if head is None else head.get("ref")
-        if (
-            not isinstance(number, int)
-            or isinstance(number, bool)
-            or number <= 0
-            or not isinstance(candidate_branch, str)
-        ):
-            return None
-        if qualified_candidate(number, candidate_branch) is not None:
-            qualified_numbers.add(number)
-    return requested_head if qualified_numbers == {pr_number} else None
-
-
 def _as_mapping(value: object) -> Mapping[str, object] | None:
     return cast(Mapping[str, object], value) if isinstance(value, Mapping) else None
 
@@ -436,6 +320,39 @@ def _implementation_carrier_decision(
     return decision
 
 
+def _change_carrier_decision(
+    source: WorkerRequest,
+    *,
+    repository: str,
+    token: str,
+    default_branch: str,
+    expected_change: str,
+    pr_number: int,
+) -> ImplementationCarrierQualification:
+    """Reuse the shared carrier owner for OpenSpec continuation semantics."""
+
+    current_revision = _ref_head_sha(
+        repository,
+        token,
+        default_branch,
+        allow_not_found=True,
+    )
+    if current_revision is None:
+        raise RuntimeError("validation resource default branch revision is unavailable")
+    decision = qualify_change_carrier(
+        repository=repository,
+        token=token,
+        source=source,
+        change=expected_change,
+        pr_number=pr_number,
+        current_revision=current_revision,
+        read=_github_json,
+    )
+    if not decision.recognized:
+        raise RuntimeError(f"validation resource carrier is not eligible: {decision.reason}")
+    return decision
+
+
 def _is_historical_merged_carrier(payload: Mapping[str, object]) -> bool:
     merged_at = payload.get("merged_at")
     return (
@@ -500,28 +417,22 @@ def _open_pr_payload(
     ):
         raise RuntimeError("validation resource target PR linkage is invalid")
 
-    implementation_continuation = (
-        source.action in {"implement-change", "review-implementation", "merge-implementation-pr"}
-        and expected_branch is not None
+    shared_continuation = (
+        expected_branch is not None
         and expected_branch != canonical_implementation_branch(expected_change)
+        and carrier_decision is not None
     )
-    if implementation_continuation:
-        decision = carrier_decision or _implementation_carrier_decision(
-            source,
-            repository=repository,
-            token=token,
-            default_branch=default_branch,
-            expected_change=expected_change,
-            pr_number=pr_number,
-        )
-        if (
-            not (
-                decision.qualified
-                or (allow_reconciliation and decision.disposition == "RECONCILIATION_REQUIRED")
+    if shared_continuation:
+        decision = carrier_decision
+        allowed = (
+            decision.qualified
+            or (allow_reconciliation and decision.disposition == "RECONCILIATION_REQUIRED")
+            or (
+                allow_historical_merged_carrier
+                and decision.disposition == "HISTORICAL_MERGED"
             )
-            or decision.pr_number != pr_number
-            or decision.branch != branch
-        ):
+        )
+        if not allowed or decision.pr_number != pr_number or decision.branch != branch:
             raise RuntimeError("validation resource continuation carrier is not qualified")
         return pr
 
@@ -878,6 +789,28 @@ def resolve_validation_resource_target(
         ):
             raise RuntimeError(
                 "validation resource implementation carrier is not qualified for consumption"
+            )
+        return ValidationResourceTarget(
+            repository=repository,
+            revision=decision.head_sha,
+            correlation=f"effect-request-{plan.source.issue_number}",
+            pr_number=plan.pr_number,
+            change=plan.expected_change,
+            branch=decision.branch,
+        )
+
+    if plan.source.role == "reviewer" and plan.source.action == "review-openspec":
+        decision = _change_carrier_decision(
+            plan.source,
+            repository=repository,
+            token=token,
+            default_branch=default_branch,
+            expected_change=plan.expected_change,
+            pr_number=plan.pr_number,
+        )
+        if decision.disposition != "QUALIFIED" or decision.head_sha is None:
+            raise RuntimeError(
+                "validation resource OpenSpec carrier is not qualified for consumption"
             )
         return ValidationResourceTarget(
             repository=repository,
@@ -2184,18 +2117,16 @@ def apply_work_product(
     else:
         expected_branch = _source_branch(plan.expected_change)
         if expected_branch is not None and plan.manifest.branch != expected_branch:
-            qualified_head = qualify_lead_openspec_carrier(
+            carrier_decision = _change_carrier_decision(
+                plan.source,
                 repository=repository,
                 token=token,
-                source=plan.source,
-                change=plan.expected_change,
-                pr_number=plan.pr_number,
-                branch=plan.manifest.branch,
-                authorization_revision=authorization_revision,
                 default_branch=default_branch,
+                expected_change=plan.expected_change,
+                pr_number=plan.pr_number,
             )
-            if qualified_head is not None:
-                expected_branch = plan.manifest.branch
+            if carrier_decision.branch == plan.manifest.branch:
+                expected_branch = carrier_decision.branch
     if expected_branch is None or plan.manifest.branch != expected_branch:
         if carrier_decision is not None:
             raise RuntimeError(
