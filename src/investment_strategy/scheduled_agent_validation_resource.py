@@ -178,6 +178,123 @@ def work_product_path_allowed(
     return False
 
 
+def qualify_lead_openspec_carrier(
+    *,
+    repository: str,
+    token: str,
+    source: WorkerRequest,
+    change: str,
+    pr_number: int,
+    branch: str,
+    authorization_revision: str,
+    default_branch: str,
+) -> str | None:
+    """Qualify one exact current Lead OpenSpec carrier without widening branch authority."""
+
+    if (
+        (source.role, source.action) not in _OPEN_SPEC_AUTHORING_SOURCES
+        or not _valid_change(change)
+        or not isinstance(pr_number, int)
+        or isinstance(pr_number, bool)
+        or pr_number <= 0
+        or not _valid_branch(branch)
+        or branch == _source_branch(change)
+        or not _valid_sha(authorization_revision)
+    ):
+        return None
+
+    def qualified_candidate(number: int, candidate_branch: str) -> str | None:
+        try:
+            pr = _open_pr_payload(
+                repository=repository,
+                token=token,
+                pr_number=number,
+                source=source,
+                expected_change=change,
+                default_branch=default_branch,
+                expected_branch=candidate_branch,
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return None
+        if pr.get("draft") is True:
+            return None
+        head = _as_mapping(pr.get("head"))
+        base = _as_mapping(pr.get("base"))
+        head_sha = None if head is None else head.get("sha")
+        if (
+            head is None
+            or base is None
+            or not _valid_sha(head_sha)
+            or head.get("ref") != candidate_branch
+            or base.get("ref") != default_branch
+            or base.get("sha") != authorization_revision
+            or _ref_head_sha(
+                repository,
+                token,
+                candidate_branch,
+                allow_not_found=True,
+            )
+            != head_sha
+        ):
+            return None
+        files = _github_json(repository, token, f"pulls/{number}/files?per_page=100")
+        if not isinstance(files, list) or not files or len(files) >= 100:
+            return None
+        saw_change = False
+        for raw_file in files:
+            item = _as_mapping(raw_file)
+            if item is None:
+                return None
+            filename = item.get("filename")
+            status = item.get("status")
+            previous = item.get("previous_filename")
+            if (
+                not isinstance(filename, str)
+                or not isinstance(status, str)
+                or not status
+                or not work_product_path_allowed(source, change, filename)
+                or (
+                    previous is not None
+                    and (
+                        not isinstance(previous, str)
+                        or not work_product_path_allowed(source, change, previous)
+                    )
+                )
+            ):
+                return None
+            if filename.startswith(f"openspec/changes/{change}/"):
+                saw_change = True
+        return cast(str, head_sha) if saw_change else None
+
+    requested_head = qualified_candidate(pr_number, branch)
+    if requested_head is None:
+        return None
+
+    raw_open = _github_json(
+        repository,
+        token,
+        f"pulls?{urlencode({'state': 'open', 'base': default_branch, 'per_page': 100})}",
+    )
+    if not isinstance(raw_open, list) or len(raw_open) >= 100:
+        return None
+    qualified_numbers: set[int] = set()
+    for raw_pr in raw_open:
+        candidate = _as_mapping(raw_pr)
+        number = None if candidate is None else candidate.get("number")
+        head = None if candidate is None else _as_mapping(candidate.get("head"))
+        candidate_branch = None if head is None else head.get("ref")
+        if (
+            not isinstance(number, int)
+            or isinstance(number, bool)
+            or number <= 0
+            or not isinstance(candidate_branch, str)
+        ):
+            return None
+        if qualified_candidate(number, candidate_branch) is not None:
+            qualified_numbers.add(number)
+    return requested_head if qualified_numbers == {pr_number} else None
+
+
 def _as_mapping(value: object) -> Mapping[str, object] | None:
     return cast(Mapping[str, object], value) if isinstance(value, Mapping) else None
 
@@ -2066,6 +2183,19 @@ def apply_work_product(
             expected_branch = carrier_decision.branch
     else:
         expected_branch = _source_branch(plan.expected_change)
+        if expected_branch is not None and plan.manifest.branch != expected_branch:
+            qualified_head = qualify_lead_openspec_carrier(
+                repository=repository,
+                token=token,
+                source=plan.source,
+                change=plan.expected_change,
+                pr_number=plan.pr_number,
+                branch=plan.manifest.branch,
+                authorization_revision=authorization_revision,
+                default_branch=default_branch,
+            )
+            if qualified_head is not None:
+                expected_branch = plan.manifest.branch
     if expected_branch is None or plan.manifest.branch != expected_branch:
         if carrier_decision is not None:
             raise RuntimeError(
