@@ -452,6 +452,7 @@ def _historical_carriers(
     default_branch: str,
     default_revision: str,
     read: GitHubReader,
+    stop_before_branch: str | None = None,
 ) -> tuple[tuple[int, Mapping[str, object]], ...] | None:
     """Return the unique merged carrier lineage, or None when history is ambiguous."""
 
@@ -465,6 +466,8 @@ def _historical_carriers(
     seen_numbers: set[int] = set()
 
     while True:
+        if expected_branch == stop_before_branch:
+            return tuple(result)
         query = urlencode(
             {
                 "state": "closed",
@@ -732,6 +735,7 @@ def qualify_change_carrier(
         default_branch=default_branch,
         default_revision=default_revision,
         read=reader,
+        stop_before_branch=branch if not _is_merged_pr(pr) else None,
     )
     if historical is None:
         return _indeterminate(

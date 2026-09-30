@@ -420,10 +420,32 @@ def _open_pr_payload(
     shared_continuation = (
         expected_branch is not None
         and expected_branch != canonical_implementation_branch(expected_change)
-        and carrier_decision is not None
     )
     if shared_continuation:
         decision = carrier_decision
+        if decision is None:
+            if source.action in {
+                "implement-change",
+                "review-implementation",
+                "merge-implementation-pr",
+            }:
+                decision = _implementation_carrier_decision(
+                    source,
+                    repository=repository,
+                    token=token,
+                    default_branch=default_branch,
+                    expected_change=expected_change,
+                    pr_number=pr_number,
+                )
+            else:
+                decision = _change_carrier_decision(
+                    source,
+                    repository=repository,
+                    token=token,
+                    default_branch=default_branch,
+                    expected_change=expected_change,
+                    pr_number=pr_number,
+                )
         allowed = (
             decision.qualified
             or (allow_reconciliation and decision.disposition == "RECONCILIATION_REQUIRED")

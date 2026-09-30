@@ -158,7 +158,10 @@ def _fake_github(
                 .replace("/", "%2F")
                 in api_path
             ]
-            return [{"number": candidate["number"]} for candidate in closed_candidates]
+            deduplicated = {
+                cast(int, candidate["number"]): candidate for candidate in closed_candidates
+            }
+            return [{"number": number} for number in deduplicated]
         if api_path.startswith("pulls?") and "state=open" in api_path:
             return opens
         if historical is not None and api_path.startswith(f"pulls/{historical['number']}/files?"):
