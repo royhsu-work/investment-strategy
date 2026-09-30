@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Mapping
-from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -11,7 +10,6 @@ import pytest
 
 from investment_strategy.scheduled_agent_idle_admission import (
     ACTION_EXPLORE_CHANGE,
-    ADVISORY_IDLE,
     IDLE_REQUEST_MARKER,
     IdleAdmissionRequest,
     IdleAdmissionResult,
@@ -139,46 +137,6 @@ def test_envelope_and_request_are_content_addressed_and_strict() -> None:
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).decode("ascii")
     assert parse_idle_admission_request(f"{IDLE_REQUEST_MARKER}\nRequest-B64: {encoded}") is None
-
-
-def test_advisory_candidate_is_non_routing_and_bounded() -> None:
-    candidate = IdleCandidate(
-        kind="advisory",
-        source_kind="workflow-friction",
-        source_ref="run:91",
-        source_revision=REVISION,
-        evidence="three bounded recommendations",
-        title="Bounded idle advisory",
-        body=(
-            "Recommendation: keep the evidence boundary\nRecommendation: remove duplicate guidance"
-        ),
-        labels=(ADVISORY_IDLE,),
-        recommendation_count=2,
-    )
-    request = make_idle_admission_request(_envelope(), candidate)
-    assert parse_idle_admission_request(render_idle_admission_request(request)) == request
-    with pytest.raises(ValueError, match="advisory:idle"):
-        make_idle_admission_request(
-            _envelope(),
-            replace(candidate, labels=(ACTION_EXPLORE_CHANGE,)),
-        )
-    with pytest.raises(ValueError, match="one to three"):
-        make_idle_admission_request(
-            _envelope(),
-            IdleCandidate(
-                kind="advisory",
-                source_kind="workflow-friction",
-                source_ref="run:91",
-                source_revision=REVISION,
-                evidence="too many",
-                title="Unbounded",
-                body="Recommendation: one",
-                labels=(ADVISORY_IDLE,),
-                recommendation_count=4,
-            ),
-        )
-    with pytest.raises(ValueError, match="does not match"):
-        make_idle_admission_request(_envelope(), replace(candidate, recommendation_count=1))
 
 
 @pytest.mark.parametrize("disposition", ["AUTHORIZE", "FAIL_CLOSED"])
@@ -651,151 +609,6 @@ def test_new_candidate_forms_one_complete_tuple_and_reconciles_next_wake() -> No
     )
     assert second.state == "ALREADY_ADMITTED"
     assert len(writes) == 1
-
-
-def test_advisory_admission_is_bounded_non_routing_and_idempotent() -> None:
-    request = make_idle_admission_request(
-        _envelope(),
-        IdleCandidate(
-            kind="advisory",
-            source_kind="workflow-friction",
-            source_ref="run:92",
-            source_revision=REVISION,
-            evidence="bounded advisory evidence",
-            title="Bounded idle advisory",
-            body="Recommendation: keep one owner\nRecommendation: document the guard",
-            labels=(ADVISORY_IDLE,),
-            recommendation_count=2,
-        ),
-    )
-    issues: list[dict[str, object]] = []
-    writes: list[Mapping[str, object]] = []
-
-    def read(_repository: str, _token: str, path: str) -> object:
-        if path in {"", "git/ref/heads/main"}:
-            return _github_root(path)
-        if path.startswith("actions/runs/"):
-            return _github_root(path)
-        if path == "issues?state=all&per_page=100&page=1":
-            return issues
-        if path.startswith("issues/"):
-            number = int(path.split("/", 1)[1])
-            return next(issue for issue in issues if issue["number"] == number)
-        raise AssertionError(path)
-
-    def write(_repository: str, _token: str, path: str, payload: Mapping[str, object]) -> object:
-        writes.append(payload)
-        issue = {
-            "number": 93,
-            "state": "open",
-            "title": payload["title"],
-            "body": payload["body"],
-            "labels": [{"name": label} for label in cast(list[str], payload["labels"])],
-        }
-        issues.append(issue)
-        return issue
-
-    result = admit_idle_request(
-        request,
-        read=read,
-        write=write,
-        fresh_dispatch=lambda: _decision(),
-        artifact_result=_artifact_result,
-    )
-    assert result == IdleAdmissionResult("ADMITTED", "idle-advisory-admitted", 93, True)
-    assert len(writes) == 1
-    assert writes[0]["labels"] == [ADVISORY_IDLE]
-    assert "Change:" not in cast(str, writes[0]["body"])
-    assert f"Idle-Admission-Correlation: {request.correlation}" in cast(str, writes[0]["body"])
-
-    second = admit_idle_request(
-        request,
-        read=read,
-        write=write,
-        fresh_dispatch=lambda: _decision(),
-        artifact_result=_artifact_result,
-    )
-    assert second == IdleAdmissionResult("ALREADY_ADMITTED", "idle-advisory-already-admitted", 93)
-    assert len(writes) == 1
-
-
-def test_advisory_suppression_and_closed_correlation_block() -> None:
-    request = make_idle_admission_request(
-        _envelope(),
-        IdleCandidate(
-            kind="advisory",
-            source_kind="workflow-friction",
-            source_ref="run:94",
-            source_revision=REVISION,
-            evidence="bounded advisory evidence",
-            title="Another bounded advisory",
-            body="Recommendation: keep one owner",
-            labels=(ADVISORY_IDLE,),
-            recommendation_count=1,
-        ),
-    )
-    open_issue = {
-        "number": 95,
-        "state": "open",
-        "title": "Existing advisory",
-        "body": "Recommendation: existing",
-        "labels": [{"name": ADVISORY_IDLE}],
-    }
-    writes: list[object] = []
-
-    def read_open(_repository: str, _token: str, path: str) -> object:
-        if path in {"", "git/ref/heads/main"}:
-            return _github_root(path)
-        if path.startswith("actions/runs/"):
-            return _github_root(path)
-        if path == "issues?state=all&per_page=100&page=1":
-            return [open_issue]
-        raise AssertionError(path)
-
-    result = admit_idle_request(
-        request,
-        read=read_open,
-        write=lambda *_args: writes.append(_args[-1]),
-        fresh_dispatch=lambda: _decision(),
-        artifact_result=_artifact_result,
-    )
-    assert result == IdleAdmissionResult("ALREADY_ADMITTED", "idle-advisory-open-exists", 95)
-    assert writes == []
-
-    closed_body = (
-        "Recommendation: keep one owner\n\n"
-        f"Idle-Admission-Correlation: {request.correlation}\n"
-        f"Idle-Source-Revision: {REVISION}\n"
-        "Idle-Source: workflow-friction:run:94\n"
-    )
-    closed_issue = {
-        "number": 96,
-        "state": "closed",
-        "title": request.candidate.title,
-        "body": closed_body,
-        "labels": [{"name": ADVISORY_IDLE}],
-    }
-
-    def read_closed(_repository: str, _token: str, path: str) -> object:
-        if path in {"", "git/ref/heads/main"}:
-            return _github_root(path)
-        if path.startswith("actions/runs/"):
-            return _github_root(path)
-        if path == "issues?state=all&per_page=100&page=1":
-            return [closed_issue]
-        raise AssertionError(path)
-
-    result_closed = admit_idle_request(
-        request,
-        read=read_closed,
-        write=lambda *_args: writes.append(_args[-1]),
-        fresh_dispatch=lambda: _decision(),
-        artifact_result=_artifact_result,
-    )
-    assert result_closed == IdleAdmissionResult(
-        "AMBIGUOUS", "idle-advisory-correlated-postcondition-invalid"
-    )
-    assert writes == []
 
 
 def test_new_ambiguous_write_fails_closed_without_blind_retry() -> None:

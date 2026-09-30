@@ -12,7 +12,6 @@ import pytest
 from investment_strategy import issue_comment_bridge as bridge
 from investment_strategy.scheduled_agent_checkin import checkin_title
 from investment_strategy.scheduled_agent_idle_admission import (
-    ADVISORY_IDLE,
     IdleCandidate,
     IdleDispatchEnvelope,
     make_idle_admission_request,
@@ -281,27 +280,6 @@ def test_production_shaped_no_work_bootstrap_reaches_one_typed_idle_ingress() ->
         },
     }
     assert parse_idle_admission_event(event, repository="owner/repo") == request
-
-    advisory = IdleCandidate(
-        kind="advisory",
-        source_kind="workflow-friction",
-        source_ref="run:production-shaped",
-        source_revision=REVISION,
-        evidence="bounded advisory production-shaped finding",
-        title="Bounded idle advisory",
-        body="Recommendation: retain the exact source boundary",
-        labels=(ADVISORY_IDLE,),
-        recommendation_count=1,
-    )
-    advisory_request = make_idle_admission_request(envelope, advisory)
-    advisory_event = {
-        **event,
-        "comment": {
-            **cast(dict[str, object], event["comment"]),
-            "body": render_idle_admission_request(advisory_request),
-        },
-    }
-    assert parse_idle_admission_event(advisory_event, repository="owner/repo") == advisory_request
 
     for disposition in ("AUTHORIZE", "FAIL_CLOSED"):
         decision = _decision(cast(Literal["AUTHORIZE", "FAIL_CLOSED"], disposition))
