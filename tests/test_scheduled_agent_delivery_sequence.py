@@ -196,7 +196,19 @@ class GitHubSequence:
         if route == "pulls":
             if query.get("state") == ["open"]:
                 return [] if self.merged else [self.pr()]
-            return [self.pr(True)]
+            candidates = [self.pr(True)]
+            if self.merged:
+                candidates.append(self.pr())
+            requested_heads = query.get("head")
+            if requested_heads:
+                _owner, _separator, requested_branch = requested_heads[0].partition(":")
+                candidates = [
+                    candidate
+                    for candidate in candidates
+                    if cast(dict[str, object], candidate["head"]).get("ref")
+                    == requested_branch
+                ]
+            return candidates
         if route == "pulls/232/files":
             return [{"filename": f"openspec/changes/{CHANGE}/proposal.md"}]
         if route == "pulls/236/files":
