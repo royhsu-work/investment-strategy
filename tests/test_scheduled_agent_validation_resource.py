@@ -2794,3 +2794,175 @@ def test_revision_matches_manifest_rejects_incomplete_or_renamed_paths(
         revision=revision,
         manifest=manifest,
     )
+
+
+def test_lead_exact_noncanonical_openspec_carrier_is_qualified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(322, "lead", "resolve-question")
+    change = "restore-no-work-idle-discovery"
+    base = "a" * 40
+    head = "b" * 40
+    branch = "agent/322-advisory-current"
+    path = f"openspec/changes/{change}/proposal.md"
+    pr = {
+        "number": 350,
+        "state": "open",
+        "merged": False,
+        "draft": False,
+        "body": "Complete bounded advisory idle admission.\n\nRefs #322",
+        "head": {
+            "ref": branch,
+            "sha": head,
+            "repo": {"full_name": _REPOSITORY},
+        },
+        "base": {
+            "ref": "main",
+            "sha": base,
+            "repo": {"full_name": _REPOSITORY},
+        },
+    }
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        **_kwargs: object,
+    ) -> object:
+        if api_path == "issues/322":
+            return {"number": 322, "state": "open", "body": f"Change: {change}"}
+        if api_path == "pulls/350":
+            return pr
+        if api_path == "pulls/350/files?per_page=100":
+            return [{"filename": path, "status": "modified"}]
+        if api_path.startswith("pulls?state=open"):
+            return [pr]
+        if api_path == f"git/ref/heads/{branch}":
+            return {"object": {"sha": head}}
+        raise AssertionError(api_path)
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
+    assert resource.qualify_lead_openspec_carrier(
+        repository=_REPOSITORY,
+        token=_FIXTURE_VALUE,
+        source=source,
+        change=change,
+        pr_number=350,
+        branch=branch,
+        authorization_revision=base,
+        default_branch="main",
+    ) == head
+
+
+@pytest.mark.parametrize(
+    ("changed_files", "base_sha", "open_prs"),
+    (
+        (
+            [
+                {
+                    "filename": "src/investment_strategy/scheduled_agent_idle_admission.py",
+                    "status": "modified",
+                }
+            ],
+            "a" * 40,
+            None,
+        ),
+        (
+            [
+                {
+                    "filename": "openspec/changes/restore-no-work-idle-discovery/proposal.md",
+                    "status": "modified",
+                }
+            ],
+            "c" * 40,
+            None,
+        ),
+        (
+            [
+                {
+                    "filename": "openspec/changes/restore-no-work-idle-discovery/proposal.md",
+                    "status": "modified",
+                }
+            ],
+            "a" * 40,
+            "duplicate",
+        ),
+    ),
+    ids=("implementation-file", "stale-base", "duplicate-carrier"),
+)
+def test_lead_exact_noncanonical_openspec_carrier_rejects_unqualified_source(
+    monkeypatch: pytest.MonkeyPatch,
+    changed_files: list[dict[str, str]],
+    base_sha: str,
+    open_prs: str | None,
+) -> None:
+    source = WorkerRequest(322, "lead", "resolve-question")
+    change = "restore-no-work-idle-discovery"
+    head = "b" * 40
+    branch = "agent/322-advisory-current"
+    pr = {
+        "number": 350,
+        "state": "open",
+        "merged": False,
+        "draft": False,
+        "body": "Complete bounded advisory idle admission.\n\nRefs #322",
+        "head": {
+            "ref": branch,
+            "sha": head,
+            "repo": {"full_name": _REPOSITORY},
+        },
+        "base": {
+            "ref": "main",
+            "sha": base_sha,
+            "repo": {"full_name": _REPOSITORY},
+        },
+    }
+    duplicate = {
+        **pr,
+        "number": 352,
+        "head": {
+            "ref": "agent/322-other-openspec",
+            "sha": "d" * 40,
+            "repo": {"full_name": _REPOSITORY},
+        },
+    }
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        **_kwargs: object,
+    ) -> object:
+        if api_path == "issues/322":
+            return {"number": 322, "state": "open", "body": f"Change: {change}"}
+        if api_path == "pulls/350":
+            return pr
+        if api_path == "pulls/350/files?per_page=100":
+            return changed_files
+        if api_path == "pulls/352/files?per_page=100":
+            return [
+                {
+                    "filename": f"openspec/changes/{change}/design.md",
+                    "status": "modified",
+                }
+            ]
+        if api_path.startswith("pulls?state=open"):
+            return [pr, duplicate] if open_prs == "duplicate" else [pr]
+        if api_path == f"git/ref/heads/{branch}":
+            return {"object": {"sha": head}}
+        raise AssertionError(api_path)
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
+    assert (
+        resource.qualify_lead_openspec_carrier(
+            repository=_REPOSITORY,
+            token=_FIXTURE_VALUE,
+            source=source,
+            change=change,
+            pr_number=350,
+            branch=branch,
+            authorization_revision="a" * 40,
+            default_branch="main",
+        )
+        is None
+    )
