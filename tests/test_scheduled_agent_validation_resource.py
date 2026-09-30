@@ -2829,6 +2829,8 @@ def test_lead_exact_noncanonical_openspec_carrier_is_qualified(
         api_path: str,
         **_kwargs: object,
     ) -> object:
+        if api_path == "":
+            return {"default_branch": "main"}
         if api_path == "issues/322":
             return {"number": 322, "state": "open", "body": f"Change: {change}"}
         if api_path == "pulls/350":
@@ -2839,6 +2841,8 @@ def test_lead_exact_noncanonical_openspec_carrier_is_qualified(
             return [pr]
         if api_path == f"git/ref/heads/{branch}":
             return {"object": {"sha": head}}
+        if api_path == "git/ref/heads/agent/322-other-openspec":
+            return {"object": {"sha": "d" * 40}}
         raise AssertionError(api_path)
 
     monkeypatch.setattr(resource, "_github_json", fake_github_json)
@@ -2933,10 +2937,14 @@ def test_lead_exact_noncanonical_openspec_carrier_rejects_unqualified_source(
         api_path: str,
         **_kwargs: object,
     ) -> object:
+        if api_path == "":
+            return {"default_branch": "main"}
         if api_path == "issues/322":
             return {"number": 322, "state": "open", "body": f"Change: {change}"}
         if api_path == "pulls/350":
             return pr
+        if api_path == "pulls/352":
+            return duplicate
         if api_path == "pulls/350/files?per_page=100":
             return changed_files
         if api_path == "pulls/352/files?per_page=100":
@@ -2950,6 +2958,8 @@ def test_lead_exact_noncanonical_openspec_carrier_rejects_unqualified_source(
             return [pr, duplicate] if open_prs == "duplicate" else [pr]
         if api_path == f"git/ref/heads/{branch}":
             return {"object": {"sha": head}}
+        if api_path == "git/ref/heads/agent/322-other-openspec":
+            return {"object": {"sha": "d" * 40}}
         raise AssertionError(api_path)
 
     monkeypatch.setattr(resource, "_github_json", fake_github_json)
