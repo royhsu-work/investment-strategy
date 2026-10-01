@@ -1086,8 +1086,10 @@ def test_existing_replacement_reconciles_after_disjoint_default_advance(
     monkeypatch.setattr(
         resource,
         "_content_sha_at",
-        lambda _repository, _token, *, path: observed_path, revision: (
-            blob_sha if observed_path == path and revision == reconciled_revision else expected_sha
+        lambda _repository, _token, **kwargs: (
+            blob_sha
+            if kwargs["path"] == path and kwargs["revision"] == reconciled_revision
+            else expected_sha
         ),
     )
 
