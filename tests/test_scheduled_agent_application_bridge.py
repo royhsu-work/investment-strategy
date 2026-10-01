@@ -7,6 +7,7 @@ import hashlib
 import json
 import sys
 from datetime import date
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
@@ -2451,7 +2452,7 @@ def test_bootstrap_recovery_merges_exact_control_plane_head_and_replay_is_read_o
             event=event,
             request=request,
             repository=_REPOSITORY,
-            token="test",
+            token=_CHANGE,
             current_revision=request.default_branch_revision,
             default_branch="main",
         )
@@ -2463,7 +2464,7 @@ def test_bootstrap_recovery_merges_exact_control_plane_head_and_replay_is_read_o
             event=event,
             request=request,
             repository=_REPOSITORY,
-            token="test",
+            token=_CHANGE,
             current_revision=merge_sha,
             default_branch="main",
         )
@@ -2534,7 +2535,7 @@ def test_bootstrap_recovery_rejects_non_control_plane_path(
             event=event,
             request=request,
             repository=_REPOSITORY,
-            token="test",
+            token=_CHANGE,
             current_revision=request.default_branch_revision,
             default_branch="main",
         )
