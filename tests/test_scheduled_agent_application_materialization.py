@@ -2240,10 +2240,10 @@ def test_merged_lead_carrier_observer_reconstructs_deterministic_replacement(
         materialization,
         "_open_prs_for_branch",
         lambda _repository, _token, *, branch, default_branch: (
-            {"number": 353, "head": {"ref": branch}, "base": {"ref": default_branch}},
-        )
-        if branch == replacement_branch
-        else (),
+            ({"number": 353, "head": {"ref": branch}, "base": {"ref": default_branch}},)
+            if branch == replacement_branch
+            else ()
+        ),
     )
     monkeypatch.setattr(
         materialization,
