@@ -49,6 +49,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _is_executor_task_and_implementation_materialization,
     _is_executor_task_bookkeeping,
     _is_historical_merged_carrier,
+    _is_reconciled_work_product_revision,
     _open_pr_payload,
     _open_prs_for_branch,
     _pending_source_is_current,
@@ -1584,6 +1585,7 @@ def _observe_historical_replacement_target(
     repository: str,
     token: str,
     default_branch: str,
+    current_revision: str,
     manifest: WorkProductManifest,
 ) -> ValidationResourceTarget | None:
     """Read-only reconstruction of one deterministic replacement carrier."""
@@ -1617,14 +1619,47 @@ def _observe_historical_replacement_target(
         or decision.pr_number != raw_number
         or decision.branch != replacement_branch
         or decision.head_sha is None
-        or not _revision_matches_manifest(
+    ):
+        raise RuntimeError("application materialization replacement carrier is incomplete")
+
+    if request.base_sha == current_revision:
+        replacement_is_current = _revision_matches_manifest(
             repository,
             token,
             base_sha=request.base_sha,
             revision=decision.head_sha,
             manifest=manifest,
         )
-    ):
+    else:
+        try:
+            default_advance_paths = _ancestor_comparison_paths(
+                repository,
+                token,
+                base_sha=request.base_sha,
+                revision=current_revision,
+            )
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "replacement work-product base is not current default branch: "
+                "ancestry evidence is incomplete"
+            ) from exc
+        manifest_paths = {file.path for file in manifest.files}
+        if default_advance_paths.intersection(manifest_paths):
+            raise RuntimeError(
+                "replacement work-product base is not current default branch: "
+                "requested paths overlap default-branch changes"
+            )
+        replacement_is_current = _is_reconciled_work_product_revision(
+            repository,
+            token,
+            base_sha=request.base_sha,
+            revision=decision.head_sha,
+            manifest=manifest,
+            expected_change=request.expected_change,
+            authorization_revision=current_revision,
+        )
+
+    if not replacement_is_current:
         raise RuntimeError("application materialization replacement carrier is incomplete")
     return _target(
         request,
@@ -1689,14 +1724,13 @@ def _observe_nonimplementation_existing_target(
                 pr_number=request.pr_number,
                 validation_required=materialization_requires_validation(request, source),
             )
-        if request.base_sha != current_revision:
-            raise RuntimeError("replacement work-product base is not current default branch")
         replacement_target = _observe_historical_replacement_target(
             request,
             source,
             repository=repository,
             token=token,
             default_branch=default_branch,
+            current_revision=current_revision,
             manifest=manifest,
         )
         if replacement_target is None:
