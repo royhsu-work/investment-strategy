@@ -189,6 +189,32 @@ precisely as semantic authority, application, transport/actuator, or implementat
 capability does not imply that the approved meaning forbids repair. An uncatchable termination is
 reconstructed later without fabricated evidence.
 
+### Bounded bootstrap self-repair activation
+
+A self-hosting application/control-plane defect can make the normal Action graph unable to reach the
+merge capability needed to repair that same defect. That condition is a capability failure, not a new
+workflow state. The repository therefore owns one bounded bootstrap recovery actuator in the existing
+Scheduled-Agent application boundary; it is not an Action, routing label, Reviewer PASS, Human-reserved
+capability, retry state, queue, or second control plane.
+
+The actuator is eligible only from an exact interaction-layer request on the current coordination Issue
+and must freshly prove all of the following together: current complete workflow dispatch still selects
+the exact Issue/Change/Action; the checked-out default-branch revision is exact; the target is one
+same-repository, owner-authored, non-Draft, mergeable recovery PR on an agent/recover-<issue>-* branch;
+its body has non-closing Refs #<issue> plus exact Recovery-For, Recovery-Change, and
+Recovery-Reason markers; every current and previous filename is limited to Scheduled-Agent
+control-plane workflow/runtime/application/test surfaces; and all exact-head quality and validate
+checks are complete and successful. Recovery targets MUST NOT modify agents/*, OpenSpec artifacts,
+README, product/application domain code, routing state, or lifecycle state.
+
+The request comment is transport only and does not manufacture human:approved, semantic acceptance,
+or review evidence. Immediately before mutation the actuator re-reads default branch and exact PR head;
+it may merge only that exact head once, then must freshly prove the merged PR identity, merge parent,
+and default-branch ancestry. A replay after a completed merge is read-only idempotent reconciliation.
+After this single activation boundary, execution exits; the next fresh wake returns to the ordinary
+Action graph. Any stale, ambiguous, competing, broadened-path, failed-check, closing-linkage, or
+identity mismatch fails closed with no weaker fallback.
+
 ## Bounded daily transport
 
 The Asia/Taipei daily shard is only a bounded trigger-and-audit transport. It records one request,

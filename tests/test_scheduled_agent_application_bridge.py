@@ -16,12 +16,17 @@ import investment_strategy.scheduled_agent_application_bridge as bridge
 from investment_strategy.scheduled_agent_application_bridge import (
     APPLICATION_REQUEST_MARKER,
     AUTHORIZATION_REVISION_PREFIX,
+    BOOTSTRAP_RECOVERY_MARKER,
     ApplicationRequest,
+    BootstrapRecoveryRequest,
     application_continuation_correlation,
+    apply_bootstrap_recovery,
     parse_application_continuation_request,
     parse_application_request,
+    parse_bootstrap_recovery_request,
     plan_application,
     render_application_continuation_request,
+    render_bootstrap_recovery_request,
 )
 from investment_strategy.scheduled_agent_carrier import CarrierRequired, make_carrier_plan
 from investment_strategy.scheduled_agent_checkin import checkin_title
@@ -2319,3 +2324,218 @@ def test_rerun_reauthorizes_exact_request_on_descendant_main(
     assert plan.should_apply
     assert plan.source == WorkerRequest(138, "lead", "explore-change")
     assert plan.request_comment_id == 102
+
+def _bootstrap_recovery_request() -> BootstrapRecoveryRequest:
+    return BootstrapRecoveryRequest(
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+        action="resolve-question",
+        pr_number=334,
+        head_sha="1" * 40,
+        default_branch_revision="2" * 40,
+    )
+
+
+def test_bootstrap_recovery_request_is_strict_and_round_trips() -> None:
+    request = _bootstrap_recovery_request()
+    body = render_bootstrap_recovery_request(request)
+
+    assert body.startswith(BOOTSTRAP_RECOVERY_MARKER)
+    assert parse_bootstrap_recovery_request(body) == request
+    assert parse_bootstrap_recovery_request(body + "\nextra") is None
+    assert (
+        parse_bootstrap_recovery_request(
+            body.replace("Action: resolve-question", "Action: nope")
+        )
+        is None
+    )
+
+
+def test_bootstrap_recovery_merges_exact_control_plane_head_and_replay_is_read_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = _bootstrap_recovery_request()
+    body = render_bootstrap_recovery_request(request)
+    event = _event(body, issue_number=322)
+    event["issue"] = {"number": 322, "state": "open", "labels": []}
+    merge_sha = "3" * 40
+    state: dict[str, object] = {
+        "merged": False,
+        "default": request.default_branch_revision,
+        "writes": 0,
+    }
+
+    def pr() -> dict[str, object]:
+        return {
+            "number": 334,
+            "state": "closed" if state["merged"] else "open",
+            "merged": state["merged"],
+            "merged_at": "2026-10-01T03:00:00Z" if state["merged"] else None,
+            "merge_commit_sha": merge_sha if state["merged"] else None,
+            "draft": False,
+            "mergeable": True,
+            "title": "Restore #322 application recovery",
+            "body": (
+                "Recovery prerequisite.\n\nRefs #322\n"
+                "Recovery-For: #322\n"
+                "Recovery-Change: restore-no-work-idle-discovery\n"
+                "Recovery-Reason: control-plane-self-hosting-deadlock"
+            ),
+            "user": {"login": "royhsu-work"},
+            "head": {
+                "ref": "agent/recover-322-application-gate",
+                "sha": request.head_sha,
+                "repo": {"full_name": _REPOSITORY},
+            },
+            "base": {
+                "ref": "main",
+                "sha": request.default_branch_revision,
+                "repo": {"full_name": _REPOSITORY},
+            },
+        }
+
+    def fake_github(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: Mapping[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object:
+        del allow_not_found
+        if api_path == "":
+            return {"default_branch": "main"}
+        if api_path == "git/ref/heads/main":
+            return {"object": {"sha": state["default"]}}
+        if api_path == "pulls/334":
+            return pr()
+        if api_path.startswith("pulls/334/files?"):
+            return [
+                {"filename": "src/investment_strategy/scheduled_agent_application_bridge.py"},
+                {"filename": "tests/test_scheduled_agent_application_bridge.py"},
+            ]
+        if api_path == f"commits/{request.head_sha}/check-runs?per_page=100":
+            return {
+                "total_count": 2,
+                "check_runs": [
+                    {"name": "quality", "status": "completed", "conclusion": "success"},
+                    {"name": "validate", "status": "completed", "conclusion": "success"},
+                ],
+            }
+        if api_path == f"git/commits/{merge_sha}":
+            return {"parents": [{"sha": request.default_branch_revision}]}
+        if api_path == "pulls/334/merge" and method == "PUT":
+            assert payload == {"sha": request.head_sha, "merge_method": "merge"}
+            state["writes"] = cast(int, state["writes"]) + 1
+            state["merged"] = True
+            state["default"] = merge_sha
+            return {"merged": True, "sha": merge_sha}
+        if api_path == f"compare/{merge_sha}...{state['default']}":
+            return {"status": "identical", "behind_by": 0}
+        raise AssertionError(f"unexpected GitHub read {method} {api_path}")
+
+    monkeypatch.setattr(bridge, "_github_json", fake_github)
+    monkeypatch.setattr(
+        bridge,
+        "acquire_current_github_preflight",
+        lambda _repository, _token: _preflight(
+            action="resolve-question",
+            issue_number=322,
+            change="restore-no-work-idle-discovery",
+        ),
+    )
+
+    assert (
+        apply_bootstrap_recovery(
+            event=event,
+            request=request,
+            repository=_REPOSITORY,
+            token="test",
+            current_revision=request.default_branch_revision,
+            default_branch="main",
+        )
+        == merge_sha
+    )
+    assert state["writes"] == 1
+    assert (
+        apply_bootstrap_recovery(
+            event=event,
+            request=request,
+            repository=_REPOSITORY,
+            token="test",
+            current_revision=merge_sha,
+            default_branch="main",
+        )
+        == merge_sha
+    )
+    assert state["writes"] == 1
+
+
+def test_bootstrap_recovery_rejects_non_control_plane_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = _bootstrap_recovery_request()
+    body = render_bootstrap_recovery_request(request)
+    event = _event(body, issue_number=322)
+    event["issue"] = {"number": 322, "state": "open", "labels": []}
+
+    def fake_github(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        **_kwargs: object,
+    ) -> object:
+        if api_path == "":
+            return {"default_branch": "main"}
+        if api_path == "git/ref/heads/main":
+            return {"object": {"sha": request.default_branch_revision}}
+        if api_path == "pulls/334":
+            return {
+                "number": 334,
+                "state": "open",
+                "merged": False,
+                "draft": False,
+                "mergeable": True,
+                "body": (
+                    "Refs #322\nRecovery-For: #322\n"
+                    "Recovery-Change: restore-no-work-idle-discovery\n"
+                    "Recovery-Reason: control-plane-self-hosting-deadlock"
+                ),
+                "user": {"login": "royhsu-work"},
+                "head": {
+                    "ref": "agent/recover-322-application-gate",
+                    "sha": request.head_sha,
+                    "repo": {"full_name": _REPOSITORY},
+                },
+                "base": {
+                    "ref": "main",
+                    "sha": request.default_branch_revision,
+                    "repo": {"full_name": _REPOSITORY},
+                },
+            }
+        if api_path.startswith("pulls/334/files?"):
+            return [{"filename": "agents/AGENTS.md"}]
+        raise AssertionError(f"unexpected GitHub read {api_path}")
+
+    monkeypatch.setattr(bridge, "_github_json", fake_github)
+    monkeypatch.setattr(
+        bridge,
+        "acquire_current_github_preflight",
+        lambda _repository, _token: _preflight(
+            action="resolve-question",
+            issue_number=322,
+            change="restore-no-work-idle-discovery",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="eligible control-plane repair"):
+        apply_bootstrap_recovery(
+            event=event,
+            request=request,
+            repository=_REPOSITORY,
+            token="test",
+            current_revision=request.default_branch_revision,
+            default_branch="main",
+        )
+
