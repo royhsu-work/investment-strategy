@@ -2521,7 +2521,9 @@ def apply_work_product(
                 revision=current_head,
                 correlation=f"effect-request-{plan.source.issue_number}",
                 pr_number=(
-                    replacement_pr_number if replacement_branch is not None else plan.pr_number
+                    cast(int, replacement_pr_number)
+                    if replacement_branch is not None
+                    else plan.pr_number
                 ),
                 change=plan.expected_change,
                 branch=replacement_branch if replacement_branch is not None else expected_branch,
