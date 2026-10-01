@@ -2794,3 +2794,141 @@ def test_revision_matches_manifest_rejects_incomplete_or_renamed_paths(
         revision=revision,
         manifest=manifest,
     )
+
+
+def test_lead_materialization_bases_next_continuation_on_merged_continuation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(322, "lead", "resolve-question")
+    change = "restore-no-work-idle-discovery"
+    historical_branch = f"agent/{change}-continuation-324"
+    next_branch = f"agent/{change}-continuation-347"
+    base = "a" * 40
+    historical_head = "b" * 40
+    merge_commit = "c" * 40
+    path = f"openspec/changes/{change}/proposal.md"
+    decision = resource.ImplementationCarrierQualification(
+        disposition="HISTORICAL_MERGED",
+        reason="merged-continuation-carrier-qualified",
+        repository=_REPOSITORY,
+        issue_number=322,
+        change=change,
+        action=source.action,
+        pr_number=347,
+        branch=historical_branch,
+        head_sha=historical_head,
+        default_branch="main",
+        default_revision=base,
+        historical_pr_number=324,
+    )
+    plan = resource.WorkProductPlan(
+        True,
+        source=source,
+        pr_number=347,
+        expected_change=change,
+        manifest=resource.WorkProductManifest(
+            branch=historical_branch,
+            base_sha=base,
+            message="Correct #322 semantics",
+            files=(resource.WorkProductFile(path, "d" * 40, "e" * 40),),
+        ),
+    )
+    merged_pr = {
+        "number": 347,
+        "state": "closed",
+        "merged": True,
+        "merged_at": "2026-09-29T00:00:00Z",
+        "merge_commit_sha": merge_commit,
+        "body": "Continue the Change.\n\nRefs #322",
+        "head": {
+            "ref": historical_branch,
+            "sha": historical_head,
+            "repo": {"full_name": _REPOSITORY},
+        },
+        "base": {
+            "ref": "main",
+            "sha": base,
+            "repo": {"full_name": _REPOSITORY},
+        },
+    }
+
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_args: source)
+    monkeypatch.setattr(
+        resource,
+        "_ref_head_sha",
+        lambda _repo, _token, ref, **_kwargs: base if ref == "main" else historical_head,
+    )
+    monkeypatch.setattr(resource, "_change_carrier_decision", lambda *_args, **_kwargs: decision)
+    monkeypatch.setattr(resource, "_open_pr_payload", lambda **_kwargs: merged_pr)
+    monkeypatch.setattr(resource, "_already_merged_work_product_target", lambda **_kwargs: None)
+    monkeypatch.setattr(resource, "_default_branch_is_ancestor", lambda *_args, **_kwargs: True)
+
+    class _ReachedNextContinuation(RuntimeError):
+        pass
+
+    def capture_open_prs(
+        _repository: str,
+        _token: str,
+        *,
+        branch: str,
+        default_branch: str,
+    ) -> tuple[object, ...]:
+        assert branch == next_branch
+        assert default_branch == "main"
+        raise _ReachedNextContinuation
+
+    monkeypatch.setattr(resource, "_open_prs_for_branch", capture_open_prs)
+
+    with pytest.raises(_ReachedNextContinuation):
+        resource.apply_work_product(
+            plan,
+            repository=_REPOSITORY,
+            token=_FIXTURE_VALUE,
+            default_branch="main",
+            authorization_revision=base,
+        )
+
+
+def test_review_openspec_consumes_shared_qualified_continuation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(322, "reviewer", "review-openspec")
+    change = "restore-no-work-idle-discovery"
+    branch = f"agent/{change}-continuation-347"
+    head = "b" * 40
+    decision = resource.ImplementationCarrierQualification(
+        disposition="QUALIFIED",
+        reason="continuation-carrier-qualified",
+        repository=_REPOSITORY,
+        issue_number=322,
+        change=change,
+        action=source.action,
+        pr_number=352,
+        branch=branch,
+        head_sha=head,
+        default_branch="main",
+        default_revision="a" * 40,
+        historical_pr_number=347,
+    )
+    plan = resource.ValidationResourcePlan(
+        True,
+        source=source,
+        pr_number=352,
+        expected_change=change,
+    )
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_args: source)
+    monkeypatch.setattr(resource, "_change_carrier_decision", lambda *_args, **_kwargs: decision)
+
+    assert resource.resolve_validation_resource_target(
+        plan,
+        repository=_REPOSITORY,
+        token=_FIXTURE_VALUE,
+        default_branch="main",
+    ) == resource.ValidationResourceTarget(
+        repository=_REPOSITORY,
+        revision=head,
+        correlation="effect-request-322",
+        pr_number=352,
+        change=change,
+        branch=branch,
+    )

@@ -94,6 +94,7 @@ def _fake_github(
     *,
     current_pr: dict[str, object] | None = None,
     historical_pr: dict[str, object] | None | object = _DEFAULT_HISTORICAL,
+    merged_continuations: list[dict[str, object]] | None = None,
     open_prs: list[dict[str, object]] | None = None,
     pr_files: list[dict[str, object]] | None = None,
     historical_files: list[dict[str, object]] | None = None,
@@ -111,6 +112,7 @@ def _fake_github(
         if historical_pr is _DEFAULT_HISTORICAL
         else cast(dict[str, object] | None, historical_pr)
     )
+    continuations = [] if merged_continuations is None else merged_continuations
     opens = [current] if open_prs is None else open_prs
     files = [{"filename": "src/investment_strategy/example.py"}] if pr_files is None else pr_files
     history_files = (
@@ -140,12 +142,33 @@ def _fake_github(
             return current
         if historical is not None and api_path == f"pulls/{historical['number']}":
             return historical
+        for continuation in continuations:
+            if api_path == f"pulls/{continuation['number']}":
+                return continuation
         if api_path.startswith("pulls?") and "state=closed" in api_path:
-            return [] if historical is None else [{"number": historical["number"]}]
+            closed_candidates = [
+                candidate
+                for candidate in ([historical] if historical is not None else [])
+                + continuations
+                + ([current] if current.get("merged") is True else [])
+                if isinstance(candidate, dict)
+                and isinstance(candidate.get("head"), dict)
+                and str(cast(dict[str, object], candidate["head"]).get("ref", "")).replace(
+                    "/", "%2F"
+                )
+                in api_path
+            ]
+            deduplicated = {
+                cast(int, candidate["number"]): candidate for candidate in closed_candidates
+            }
+            return [{"number": number} for number in deduplicated]
         if api_path.startswith("pulls?") and "state=open" in api_path:
             return opens
         if historical is not None and api_path.startswith(f"pulls/{historical['number']}/files?"):
             return history_files
+        for continuation in continuations:
+            if api_path.startswith(f"pulls/{continuation['number']}/files?"):
+                return files
         if api_path.startswith(f"pulls/{current['number']}/files?"):
             return files
         if historical is not None and api_path == f"compare/{MERGE}...{default_revision}":
@@ -153,6 +176,12 @@ def _fake_github(
                 "status": "ahead" if historical_is_ancestor else "diverged",
                 "behind_by": 0 if historical_is_ancestor else 1,
             }
+        for continuation in continuations:
+            continuation_merge = continuation.get("merge_commit_sha")
+            if continuation_merge is not None and api_path == (
+                f"compare/{continuation_merge}...{default_revision}"
+            ):
+                return {"status": "ahead", "behind_by": 0}
         current_merge = current.get("merge_commit_sha")
         if current_merge is not None and api_path == (
             f"compare/{current_merge}...{default_revision}"
@@ -518,3 +547,47 @@ def test_initial_carrier_accepts_only_disjoint_ancestry_proven_default_advance(
     else:
         assert decision.disposition == "RECONCILIATION_REQUIRED"
         assert decision.reason == "initial-carrier-requires-default-reconciliation"
+
+
+def test_second_generation_openspec_continuation_uses_latest_merged_predecessor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_continuation = _continuation_pr()
+    first_continuation.update(
+        {
+            "state": "closed",
+            "merged": True,
+            "merged_at": "2026-09-13T00:00:00Z",
+            "merge_commit_sha": CONTINUATION_MERGE,
+        }
+    )
+    next_head = "5" * 40
+    current = _continuation_pr(
+        number=240,
+        branch=carrier.deterministic_continuation_branch(CHANGE, 236),
+        head_sha=next_head,
+    )
+    fake = _fake_github(
+        current_pr=current,
+        merged_continuations=[first_continuation],
+        open_prs=[current],
+        pr_files=[{"filename": f"openspec/changes/{CHANGE}/proposal.md"}],
+        branch_ref_sha=next_head,
+    )
+    monkeypatch.setattr(carrier, "_github_json", fake)
+
+    for source in (
+        WorkerRequest(229, "lead", "resolve-question"),
+        WorkerRequest(229, "reviewer", "review-openspec"),
+    ):
+        decision = carrier.qualify_change_carrier(
+            repository=REPOSITORY,
+            token=TEST_VALUE,
+            source=source,
+            change=CHANGE,
+            pr_number=240,
+            current_revision=MAIN,
+        )
+        assert decision.disposition == "QUALIFIED"
+        assert decision.branch == carrier.deterministic_continuation_branch(CHANGE, 236)
+        assert decision.historical_pr_number == 236

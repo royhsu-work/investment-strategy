@@ -1,8 +1,9 @@
-"""Application-owned qualification for implementation continuation carriers.
+"""Application-owned qualification for deterministic same-Change carriers.
 
 This module is a read-only evidence/decision boundary. It owns no persisted
-workflow state and performs no mutation. All implementation-carrier consumers
-reuse the same fresh qualification instead of reconstructing branch identity.
+workflow state and performs no mutation. OpenSpec and implementation consumers
+reuse the same fresh canonical / merged-history / continuation qualification
+instead of reconstructing branch identity independently.
 """
 
 from __future__ import annotations
@@ -28,6 +29,31 @@ CarrierDisposition = Literal[
     "INDETERMINATE",
 ]
 GitHubReader = Callable[..., object | None]
+
+_CHANGE_CARRIER_SOURCES = frozenset(
+    {
+        ("lead", "propose-change"),
+        ("lead", "resolve-question"),
+        ("reviewer", "review-openspec"),
+        ("executor", "implement-change"),
+        ("reviewer", "review-implementation"),
+        ("executor", "merge-implementation-pr"),
+    }
+)
+_IMPLEMENTATION_CARRIER_SOURCES = frozenset(
+    {
+        ("executor", "implement-change"),
+        ("reviewer", "review-implementation"),
+        ("executor", "merge-implementation-pr"),
+    }
+)
+_OPENSPEC_CARRIER_SOURCES = frozenset(
+    {
+        ("lead", "propose-change"),
+        ("lead", "resolve-question"),
+        ("reviewer", "review-openspec"),
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -426,56 +452,83 @@ def _historical_carriers(
     default_branch: str,
     default_revision: str,
     read: GitHubReader,
-) -> tuple[tuple[int, Mapping[str, object]], ...]:
+    stop_before_branch: str | None = None,
+) -> tuple[tuple[int, Mapping[str, object]], ...] | None:
+    """Return the unique merged carrier lineage, or None when history is ambiguous."""
+
     canonical = canonical_implementation_branch(change)
     if canonical is None:
         return ()
+
     owner = repository.split("/", 1)[0]
-    query = urlencode(
-        {
-            "state": "closed",
-            "head": f"{owner}:{canonical}",
-            "base": default_branch,
-        }
-    )
-    candidates = _paged_list(repository, token, f"pulls?{query}&", read=read)
+    expected_branch = canonical
     result: list[tuple[int, Mapping[str, object]]] = []
-    for summary in candidates:
-        number = summary.get("number")
-        if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
-            continue
-        pr = _as_mapping(cast(object, read(repository, token, f"pulls/{number}")))
-        if pr is None:
-            raise RuntimeError("historical implementation carrier evidence is incomplete")
-        identity = _pr_identity_is_coherent(
-            pr,
-            repository=repository,
-            issue_number=issue_number,
-            default_branch=default_branch,
+    seen_numbers: set[int] = set()
+
+    while True:
+        if expected_branch == stop_before_branch:
+            return tuple(result)
+        query = urlencode(
+            {
+                "state": "closed",
+                "head": f"{owner}:{expected_branch}",
+                "base": default_branch,
+            }
         )
-        merge_sha = pr.get("merge_commit_sha")
-        active_changes, _has_code = _pr_active_changes(
-            repository,
-            token,
-            number,
-            read=read,
-        )
-        if (
-            identity is not None
-            and identity[0] == canonical
-            and _is_merged_pr(pr)
-            and _valid_sha(merge_sha)
-            and active_changes == {change}
-            and _compare_is_ancestor(
+        candidates = _paged_list(repository, token, f"pulls?{query}&", read=read)
+        matches: list[tuple[int, Mapping[str, object]]] = []
+        for summary in candidates:
+            number = summary.get("number")
+            if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+                continue
+            pr = _as_mapping(cast(object, read(repository, token, f"pulls/{number}")))
+            if pr is None:
+                raise RuntimeError("historical implementation carrier evidence is incomplete")
+            identity = _pr_identity_is_coherent(
+                pr,
+                repository=repository,
+                issue_number=issue_number,
+                default_branch=default_branch,
+            )
+            merge_sha = pr.get("merge_commit_sha")
+            active_changes, _has_code = _pr_active_changes(
                 repository,
                 token,
-                ancestor=cast(str, merge_sha),
-                descendant=default_revision,
+                number,
                 read=read,
             )
-        ):
-            result.append((number, pr))
-    return tuple(result)
+            change_identity_ok = (
+                active_changes == {change}
+                if expected_branch == canonical
+                else not any(active_change != change for active_change in active_changes)
+            )
+            if (
+                identity is not None
+                and identity[0] == expected_branch
+                and _is_merged_pr(pr)
+                and _valid_sha(merge_sha)
+                and change_identity_ok
+                and _compare_is_ancestor(
+                    repository,
+                    token,
+                    ancestor=cast(str, merge_sha),
+                    descendant=default_revision,
+                    read=read,
+                )
+            ):
+                matches.append((number, pr))
+
+        if len(matches) > 1:
+            return None
+        if not matches:
+            return tuple(result)
+
+        number, pr = matches[0]
+        if number in seen_numbers:
+            return None
+        seen_numbers.add(number)
+        result.append((number, pr))
+        expected_branch = deterministic_continuation_branch(change, number)
 
 
 def _claimed_open_carriers(
@@ -542,7 +595,7 @@ def _indeterminate(
     )
 
 
-def qualify_implementation_carrier(
+def qualify_change_carrier(
     *,
     repository: str,
     token: str,
@@ -552,7 +605,7 @@ def qualify_implementation_carrier(
     current_revision: str,
     read: GitHubReader | None = None,
 ) -> ImplementationCarrierQualification:
-    """Freshly qualify one exact implementation carrier.
+    """Freshly qualify one exact canonical or deterministic same-Change carrier.
 
     `RECONCILIATION_REQUIRED` means identity is repository-approved but the
     current default branch is not yet an ancestor of the carrier head. Only
@@ -566,8 +619,7 @@ def qualify_implementation_carrier(
     reader = _github_json if read is None else read
     if (
         source.issue_number <= 0
-        or source.action
-        not in {"implement-change", "review-implementation", "merge-implementation-pr"}
+        or (source.role, source.action) not in _CHANGE_CARRIER_SOURCES
         or not isinstance(pr_number, int)
         or isinstance(pr_number, bool)
         or pr_number <= 0
@@ -683,8 +735,9 @@ def qualify_implementation_carrier(
         default_branch=default_branch,
         default_revision=default_revision,
         read=reader,
+        stop_before_branch=branch if not _is_merged_pr(pr) else None,
     )
-    if len(historical) > 1:
+    if historical is None:
         return _indeterminate(
             repository=repository,
             source=source,
@@ -696,7 +749,7 @@ def qualify_implementation_carrier(
             default_branch=default_branch,
             default_revision=default_revision,
         )
-    historical_pr_number = historical[0][0] if historical else None
+    historical_pr_number = historical[-1][0] if historical else None
 
     active_changes, _has_code = _pr_active_changes(
         repository,
@@ -704,6 +757,20 @@ def qualify_implementation_carrier(
         pr_number,
         read=reader,
     )
+    if (source.role, source.action) in _OPENSPEC_CARRIER_SOURCES and active_changes != {change}:
+        return _indeterminate(
+            repository=repository,
+            source=source,
+            change=change,
+            pr_number=pr_number,
+            reason="carrier-openspec-change-missing-or-competing",
+            branch=branch,
+            head_sha=head_sha,
+            default_branch=default_branch,
+            default_revision=default_revision,
+            historical_pr_number=historical_pr_number,
+        )
+
     if _is_merged_pr(pr):
         merge_sha = pr.get("merge_commit_sha")
         if not _valid_sha(merge_sha) or not _compare_is_ancestor(
@@ -725,14 +792,37 @@ def qualify_implementation_carrier(
                 default_revision=default_revision,
                 historical_pr_number=historical_pr_number,
             )
-        canonical_merged = historical_pr_number == pr_number and branch == canonical
-        continuation_merged = (
-            historical_pr_number is not None
-            and pr_number != historical_pr_number
-            and branch == deterministic_continuation_branch(change, historical_pr_number)
-            and not any(active_change != change for active_change in active_changes)
+
+        lineage_index = next(
+            (index for index, (number, _carrier) in enumerate(historical) if number == pr_number),
+            None,
         )
-        if not canonical_merged and not continuation_merged:
+        if lineage_index is None:
+            return _indeterminate(
+                repository=repository,
+                source=source,
+                change=change,
+                pr_number=pr_number,
+                reason="carrier-merged-pr-is-not-approved-history",
+                branch=branch,
+                head_sha=head_sha,
+                default_branch=default_branch,
+                default_revision=default_revision,
+                historical_pr_number=historical_pr_number,
+            )
+        if lineage_index == 0:
+            predecessor_number = pr_number
+            expected_historical_branch = canonical
+            historical_reason = "historical-merged-carrier-qualified"
+        else:
+            predecessor_number = historical[lineage_index - 1][0]
+            expected_historical_branch = deterministic_continuation_branch(
+                change, predecessor_number
+            )
+            historical_reason = "merged-continuation-carrier-qualified"
+        if branch != expected_historical_branch or any(
+            active_change != change for active_change in active_changes
+        ):
             return _indeterminate(
                 repository=repository,
                 source=source,
@@ -747,11 +837,7 @@ def qualify_implementation_carrier(
             )
         return ImplementationCarrierQualification(
             disposition="HISTORICAL_MERGED",
-            reason=(
-                "historical-merged-carrier-qualified"
-                if canonical_merged
-                else "merged-continuation-carrier-qualified"
-            ),
+            reason=historical_reason,
             repository=repository,
             issue_number=source.issue_number,
             change=change,
@@ -761,7 +847,7 @@ def qualify_implementation_carrier(
             head_sha=head_sha,
             default_branch=default_branch,
             default_revision=default_revision,
-            historical_pr_number=historical_pr_number,
+            historical_pr_number=predecessor_number,
         )
 
     if pr.get("state") != "open" or pr.get("merged") is True:
@@ -964,11 +1050,43 @@ def qualify_implementation_carrier(
     )
 
 
+def qualify_implementation_carrier(
+    *,
+    repository: str,
+    token: str,
+    source: WorkerRequest,
+    change: str,
+    pr_number: int,
+    current_revision: str,
+    read: GitHubReader | None = None,
+) -> ImplementationCarrierQualification:
+    """Compatibility entry point restricted to implementation-owned Actions."""
+
+    if (source.role, source.action) not in _IMPLEMENTATION_CARRIER_SOURCES:
+        return _indeterminate(
+            repository=repository,
+            source=source,
+            change=change,
+            pr_number=pr_number,
+            reason="carrier-input-incomplete",
+        )
+    return qualify_change_carrier(
+        repository=repository,
+        token=token,
+        source=source,
+        change=change,
+        pr_number=pr_number,
+        current_revision=current_revision,
+        read=read,
+    )
+
+
 __all__ = [
     "CarrierDisposition",
     "GitHubReader",
     "ImplementationCarrierQualification",
     "canonical_implementation_branch",
     "deterministic_continuation_branch",
+    "qualify_change_carrier",
     "qualify_implementation_carrier",
 ]

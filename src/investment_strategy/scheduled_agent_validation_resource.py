@@ -26,6 +26,7 @@ from investment_strategy.scheduled_agent_action_model import (
 from investment_strategy.scheduled_agent_application_carrier import (
     ImplementationCarrierQualification,
     canonical_implementation_branch,
+    qualify_change_carrier,
     qualify_implementation_carrier,
 )
 from investment_strategy.scheduled_agent_carrier import (
@@ -319,6 +320,39 @@ def _implementation_carrier_decision(
     return decision
 
 
+def _change_carrier_decision(
+    source: WorkerRequest,
+    *,
+    repository: str,
+    token: str,
+    default_branch: str,
+    expected_change: str,
+    pr_number: int,
+) -> ImplementationCarrierQualification:
+    """Reuse the shared carrier owner for OpenSpec continuation semantics."""
+
+    current_revision = _ref_head_sha(
+        repository,
+        token,
+        default_branch,
+        allow_not_found=True,
+    )
+    if current_revision is None:
+        raise RuntimeError("validation resource default branch revision is unavailable")
+    decision = qualify_change_carrier(
+        repository=repository,
+        token=token,
+        source=source,
+        change=expected_change,
+        pr_number=pr_number,
+        current_revision=current_revision,
+        read=_github_json,
+    )
+    if not decision.recognized:
+        raise RuntimeError(f"validation resource carrier is not eligible: {decision.reason}")
+    return decision
+
+
 def _is_historical_merged_carrier(payload: Mapping[str, object]) -> bool:
     merged_at = payload.get("merged_at")
     return (
@@ -383,28 +417,41 @@ def _open_pr_payload(
     ):
         raise RuntimeError("validation resource target PR linkage is invalid")
 
-    implementation_continuation = (
-        source.action in {"implement-change", "review-implementation", "merge-implementation-pr"}
-        and expected_branch is not None
+    shared_continuation = (
+        expected_branch is not None
         and expected_branch != canonical_implementation_branch(expected_change)
     )
-    if implementation_continuation:
-        decision = carrier_decision or _implementation_carrier_decision(
-            source,
-            repository=repository,
-            token=token,
-            default_branch=default_branch,
-            expected_change=expected_change,
-            pr_number=pr_number,
+    if shared_continuation:
+        decision = carrier_decision
+        if decision is None:
+            if source.action in {
+                "implement-change",
+                "review-implementation",
+                "merge-implementation-pr",
+            }:
+                decision = _implementation_carrier_decision(
+                    source,
+                    repository=repository,
+                    token=token,
+                    default_branch=default_branch,
+                    expected_change=expected_change,
+                    pr_number=pr_number,
+                )
+            else:
+                decision = _change_carrier_decision(
+                    source,
+                    repository=repository,
+                    token=token,
+                    default_branch=default_branch,
+                    expected_change=expected_change,
+                    pr_number=pr_number,
+                )
+        allowed = (
+            decision.qualified
+            or (allow_reconciliation and decision.disposition == "RECONCILIATION_REQUIRED")
+            or (allow_historical_merged_carrier and decision.disposition == "HISTORICAL_MERGED")
         )
-        if (
-            not (
-                decision.qualified
-                or (allow_reconciliation and decision.disposition == "RECONCILIATION_REQUIRED")
-            )
-            or decision.pr_number != pr_number
-            or decision.branch != branch
-        ):
+        if not allowed or decision.pr_number != pr_number or decision.branch != branch:
             raise RuntimeError("validation resource continuation carrier is not qualified")
         return pr
 
@@ -761,6 +808,28 @@ def resolve_validation_resource_target(
         ):
             raise RuntimeError(
                 "validation resource implementation carrier is not qualified for consumption"
+            )
+        return ValidationResourceTarget(
+            repository=repository,
+            revision=decision.head_sha,
+            correlation=f"effect-request-{plan.source.issue_number}",
+            pr_number=plan.pr_number,
+            change=plan.expected_change,
+            branch=decision.branch,
+        )
+
+    if plan.source.role == "reviewer" and plan.source.action == "review-openspec":
+        decision = _change_carrier_decision(
+            plan.source,
+            repository=repository,
+            token=token,
+            default_branch=default_branch,
+            expected_change=plan.expected_change,
+            pr_number=plan.pr_number,
+        )
+        if decision.disposition != "QUALIFIED" or decision.head_sha is None:
+            raise RuntimeError(
+                "validation resource OpenSpec carrier is not qualified for consumption"
             )
         return ValidationResourceTarget(
             repository=repository,
@@ -2066,6 +2135,17 @@ def apply_work_product(
             expected_branch = carrier_decision.branch
     else:
         expected_branch = _source_branch(plan.expected_change)
+        if expected_branch is not None and plan.manifest.branch != expected_branch:
+            carrier_decision = _change_carrier_decision(
+                plan.source,
+                repository=repository,
+                token=token,
+                default_branch=default_branch,
+                expected_change=plan.expected_change,
+                pr_number=plan.pr_number,
+            )
+            if carrier_decision.branch == plan.manifest.branch:
+                expected_branch = carrier_decision.branch
     if expected_branch is None or plan.manifest.branch != expected_branch:
         if carrier_decision is not None:
             raise RuntimeError(
