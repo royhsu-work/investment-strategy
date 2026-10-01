@@ -2346,3 +2346,154 @@ def test_merged_lead_carrier_observer_rejects_ambiguous_replacement(
             default_branch="main",
             current_revision=current_main,
         )
+
+
+
+def test_merged_lead_carrier_observer_accepts_reconciled_stale_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(322, "lead", "resolve-question")
+    change = "restore-no-work-idle-discovery"
+    repository = "royhsu-work/investment-strategy"
+    accepted_base = "1" * 40
+    current_main = "2" * 40
+    historical_head = "3" * 40
+    reconciled_head = "4" * 40
+    historical_branch = f"agent/{change}-continuation-324"
+    replacement_branch = f"agent/{change}-continuation-347"
+    path = f"openspec/changes/{change}/proposal.md"
+    request = MaterializationRequest(
+        issue_number=322,
+        expected_change=change,
+        change=change,
+        branch=historical_branch,
+        base_sha=accepted_base,
+        message="Correct #322 semantics",
+        files=(WorkProductFile(path, "5" * 40, "6" * 40),),
+        pr_number=347,
+    )
+    historical_pr = {
+        "number": 347,
+        "state": "closed",
+        "merged": True,
+        "merged_at": "2026-10-01T00:00:00Z",
+        "merge_commit_sha": "7" * 40,
+        "head": {
+            "ref": historical_branch,
+            "sha": historical_head,
+            "repo": {"full_name": repository},
+        },
+        "base": {
+            "ref": "main",
+            "sha": accepted_base,
+            "repo": {"full_name": repository},
+        },
+    }
+    decision = materialization.ImplementationCarrierQualification(
+        disposition="QUALIFIED",
+        reason="continuation-carrier-qualified-after-reconciliation",
+        repository=repository,
+        issue_number=322,
+        change=change,
+        action=source.action,
+        pr_number=353,
+        branch=replacement_branch,
+        head_sha=reconciled_head,
+        default_branch="main",
+        default_revision=current_main,
+        historical_pr_number=347,
+    )
+    default_paths = [{"README.md"}]
+    reconciled_calls: list[str] = []
+
+    monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: historical_pr)
+    monkeypatch.setattr(
+        materialization,
+        "_already_merged_work_product_target",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        materialization,
+        "_open_prs_for_branch",
+        lambda _repository, _token, *, branch, default_branch: (
+            ({"number": 353, "head": {"ref": branch}, "base": {"ref": default_branch}},)
+            if branch == replacement_branch
+            else ()
+        ),
+    )
+    monkeypatch.setattr(
+        materialization,
+        "_change_carrier_decision",
+        lambda *_args, **_kwargs: decision,
+    )
+    monkeypatch.setattr(
+        materialization,
+        "_ancestor_comparison_paths",
+        lambda _repository, _token, *, base_sha, revision: (
+            set(default_paths[0])
+            if base_sha == accepted_base and revision == current_main
+            else set()
+        ),
+    )
+
+    def is_reconciled(
+        _repository: str,
+        _token: str,
+        *,
+        base_sha: str,
+        revision: str,
+        manifest: WorkProductManifest,
+        expected_change: str,
+        authorization_revision: str,
+        **_kwargs: object,
+    ) -> bool:
+        reconciled_calls.append(revision)
+        return (
+            base_sha == accepted_base
+            and revision == reconciled_head
+            and manifest.files[0].path == path
+            and expected_change == change
+            and authorization_revision == current_main
+        )
+
+    monkeypatch.setattr(
+        materialization,
+        "_is_reconciled_work_product_revision",
+        is_reconciled,
+    )
+    monkeypatch.setattr(
+        materialization,
+        "_revision_matches_manifest",
+        lambda *_args, **_kwargs: False,
+    )
+
+    assert materialization._observe_nonimplementation_existing_target(
+        request,
+        source,
+        repository=repository,
+        token=_TOKEN,
+        default_branch="main",
+        current_revision=current_main,
+    ) == ValidationResourceTarget(
+        repository=repository,
+        revision=reconciled_head,
+        correlation="effect-request-322",
+        pr_number=353,
+        change=change,
+        validation_required=True,
+        branch=replacement_branch,
+    )
+    assert reconciled_calls == [reconciled_head]
+
+    default_paths[0] = {path}
+    reconciled_calls.clear()
+    with pytest.raises(RuntimeError, match="requested paths overlap default-branch changes"):
+        materialization._observe_nonimplementation_existing_target(
+            request,
+            source,
+            repository=repository,
+            token=_TOKEN,
+            default_branch="main",
+            current_revision=current_main,
+        )
+    assert reconciled_calls == []
