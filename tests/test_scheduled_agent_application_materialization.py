@@ -2174,3 +2174,175 @@ def test_live_322_merged_carrier_observer_recovers_exact_target(
         validation_required=True,
         branch=branch,
     )
+
+
+def test_merged_lead_carrier_observer_reconstructs_deterministic_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(322, "lead", "resolve-question")
+    change = "restore-no-work-idle-discovery"
+    repository = "royhsu-work/investment-strategy"
+    current_main = "a" * 40
+    historical_head = "b" * 40
+    replacement_head = "c" * 40
+    historical_branch = f"agent/{change}-continuation-324"
+    replacement_branch = f"agent/{change}-continuation-347"
+    path = f"openspec/changes/{change}/proposal.md"
+    request = MaterializationRequest(
+        issue_number=322,
+        expected_change=change,
+        change=change,
+        branch=historical_branch,
+        base_sha=current_main,
+        message="Correct #322 semantics",
+        files=(WorkProductFile(path, "d" * 40, "e" * 40),),
+        pr_number=347,
+    )
+    historical_pr = {
+        "number": 347,
+        "state": "closed",
+        "merged": True,
+        "merged_at": "2026-09-29T00:00:00Z",
+        "merge_commit_sha": "f" * 40,
+        "head": {
+            "ref": historical_branch,
+            "sha": historical_head,
+            "repo": {"full_name": repository},
+        },
+        "base": {
+            "ref": "main",
+            "sha": current_main,
+            "repo": {"full_name": repository},
+        },
+    }
+    decision = materialization.ImplementationCarrierQualification(
+        disposition="QUALIFIED",
+        reason="continuation-carrier-qualified",
+        repository=repository,
+        issue_number=322,
+        change=change,
+        action=source.action,
+        pr_number=353,
+        branch=replacement_branch,
+        head_sha=replacement_head,
+        default_branch="main",
+        default_revision=current_main,
+        historical_pr_number=347,
+    )
+
+    monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: historical_pr)
+    monkeypatch.setattr(
+        materialization,
+        "_already_merged_work_product_target",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        materialization,
+        "_open_prs_for_branch",
+        lambda _repository, _token, *, branch, default_branch: (
+            ({"number": 353, "head": {"ref": branch}, "base": {"ref": default_branch}},)
+            if branch == replacement_branch
+            else ()
+        ),
+    )
+    monkeypatch.setattr(
+        materialization,
+        "_change_carrier_decision",
+        lambda *_args, **_kwargs: decision,
+    )
+    monkeypatch.setattr(
+        materialization,
+        "_revision_matches_manifest",
+        lambda _repository, _token, *, base_sha, revision, manifest: (
+            base_sha == current_main
+            and revision == replacement_head
+            and manifest.branch == historical_branch
+            and {file.path for file in manifest.files} == {path}
+        ),
+    )
+
+    assert materialization._observe_nonimplementation_existing_target(
+        request,
+        source,
+        repository=repository,
+        token=_TOKEN,
+        default_branch="main",
+        current_revision=current_main,
+    ) == ValidationResourceTarget(
+        repository=repository,
+        revision=replacement_head,
+        correlation="effect-request-322",
+        pr_number=353,
+        change=change,
+        validation_required=True,
+        branch=replacement_branch,
+    )
+
+
+def test_merged_lead_carrier_observer_rejects_ambiguous_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(322, "lead", "resolve-question")
+    change = "restore-no-work-idle-discovery"
+    repository = "royhsu-work/investment-strategy"
+    current_main = "a" * 40
+    historical_branch = f"agent/{change}-continuation-324"
+    replacement_branch = f"agent/{change}-continuation-347"
+    request = MaterializationRequest(
+        issue_number=322,
+        expected_change=change,
+        change=change,
+        branch=historical_branch,
+        base_sha=current_main,
+        message="Correct #322 semantics",
+        files=(
+            WorkProductFile(
+                f"openspec/changes/{change}/proposal.md",
+                "d" * 40,
+                "e" * 40,
+            ),
+        ),
+        pr_number=347,
+    )
+    historical_pr = {
+        "number": 347,
+        "state": "closed",
+        "merged": True,
+        "merged_at": "2026-09-29T00:00:00Z",
+        "merge_commit_sha": "f" * 40,
+        "head": {
+            "ref": historical_branch,
+            "sha": "b" * 40,
+            "repo": {"full_name": repository},
+        },
+        "base": {
+            "ref": "main",
+            "sha": current_main,
+            "repo": {"full_name": repository},
+        },
+    }
+
+    monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: historical_pr)
+    monkeypatch.setattr(
+        materialization,
+        "_already_merged_work_product_target",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        materialization,
+        "_open_prs_for_branch",
+        lambda *_args, **_kwargs: (
+            {"number": 353, "head": {"ref": replacement_branch}},
+            {"number": 354, "head": {"ref": replacement_branch}},
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="replacement carrier is ambiguous"):
+        materialization._observe_nonimplementation_existing_target(
+            request,
+            source,
+            repository=repository,
+            token=_TOKEN,
+            default_branch="main",
+            current_revision=current_main,
+        )

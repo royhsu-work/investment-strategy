@@ -36,6 +36,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _already_merged_work_product_target,
     _ancestor_comparison_paths,
     _as_mapping,
+    _change_carrier_decision,
     _change_from_issue,
     _comparison_file_paths,
     _comparison_paths_from_file_entries,
@@ -52,7 +53,9 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _open_prs_for_branch,
     _pending_source_is_current,
     _ref_head_sha,
+    _replacement_branch,
     _review_openspec_required,
+    _revision_matches_manifest,
     _source_branch,
     _valid_branch,
     _valid_repo_path,
@@ -1574,6 +1577,65 @@ def apply_materialization(
     )
 
 
+def _observe_historical_replacement_target(
+    request: MaterializationRequest,
+    source: WorkerRequest,
+    *,
+    repository: str,
+    token: str,
+    default_branch: str,
+    manifest: WorkProductManifest,
+) -> ValidationResourceTarget | None:
+    """Read-only reconstruction of one deterministic replacement carrier."""
+
+    if request.pr_number is None:
+        raise RuntimeError("application materialization historical carrier lacks PR")
+    replacement_branch = _replacement_branch(request.expected_change, request.pr_number)
+    replacement_prs = _open_prs_for_branch(
+        repository,
+        token,
+        branch=replacement_branch,
+        default_branch=default_branch,
+    )
+    if len(replacement_prs) > 1:
+        raise RuntimeError("application materialization replacement carrier is ambiguous")
+    if not replacement_prs:
+        return None
+    raw_number = replacement_prs[0].get("number")
+    if isinstance(raw_number, bool) or not isinstance(raw_number, int) or raw_number <= 0:
+        raise RuntimeError("application materialization replacement carrier number is incomplete")
+    decision = _change_carrier_decision(
+        source,
+        repository=repository,
+        token=token,
+        default_branch=default_branch,
+        expected_change=request.expected_change,
+        pr_number=raw_number,
+    )
+    if (
+        decision.disposition != "QUALIFIED"
+        or decision.pr_number != raw_number
+        or decision.branch != replacement_branch
+        or decision.head_sha is None
+        or not _revision_matches_manifest(
+            repository,
+            token,
+            base_sha=request.base_sha,
+            revision=decision.head_sha,
+            manifest=manifest,
+        )
+    ):
+        raise RuntimeError("application materialization replacement carrier is incomplete")
+    return _target(
+        request,
+        repository=repository,
+        revision=decision.head_sha,
+        pr_number=raw_number,
+        validation_required=materialization_requires_validation(request, source),
+        branch=replacement_branch,
+    )
+
+
 def _observe_nonimplementation_existing_target(
     request: MaterializationRequest,
     source: WorkerRequest,
@@ -1601,6 +1663,12 @@ def _observe_nonimplementation_existing_target(
     if not _valid_sha(revision):
         raise RuntimeError("application materialization PR head is incomplete")
     if _is_historical_merged_carrier(pr):
+        manifest = WorkProductManifest(
+            branch=request.branch,
+            base_sha=request.base_sha,
+            message=request.message,
+            files=request.files,
+        )
         merged_target = _already_merged_work_product_target(
             repository=repository,
             token=token,
@@ -1611,22 +1679,29 @@ def _observe_nonimplementation_existing_target(
             pr_number=request.pr_number,
             expected_change=request.expected_change,
             expected_branch=request.branch,
-            manifest=WorkProductManifest(
-                branch=request.branch,
-                base_sha=request.base_sha,
-                message=request.message,
-                files=request.files,
-            ),
+            manifest=manifest,
         )
-        if merged_target is None:
-            raise RuntimeError("application materialization merged carrier is incomplete")
-        return _target(
+        if merged_target is not None:
+            return _target(
+                request,
+                repository=repository,
+                revision=merged_target.revision,
+                pr_number=request.pr_number,
+                validation_required=materialization_requires_validation(request, source),
+            )
+        if request.base_sha != current_revision:
+            raise RuntimeError("replacement work-product base is not current default branch")
+        replacement_target = _observe_historical_replacement_target(
             request,
+            source,
             repository=repository,
-            revision=merged_target.revision,
-            pr_number=request.pr_number,
-            validation_required=materialization_requires_validation(request, source),
+            token=token,
+            default_branch=default_branch,
+            manifest=manifest,
         )
+        if replacement_target is None:
+            raise RuntimeError("application materialization merged carrier is incomplete")
+        return replacement_target
     # An open carrier whose accepted base is no longer current still needs an
     # explicit pending-continuation proof.  A historical merged carrier is
     # different: its durable consequence is reconstructed above from the
