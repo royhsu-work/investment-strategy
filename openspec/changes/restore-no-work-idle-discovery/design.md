@@ -2,7 +2,7 @@
 
 ## Current decision boundary
 
-The original Explore reconstruction used default-branch revision `2e00e236f24ba41302c9ba18c685acdf4cebe4ed`; this continuation was freshly reconstructed from `main@01e22a7ebad34b434c0e12c8293f02a9bed24a40`. Fresh source inspection establishes these owners:
+The original Explore reconstruction used default-branch revision `2e00e236f24ba41302c9ba18c685acdf4cebe4ed`; this continuation was freshly reconstructed from `main@3a2bbf45f449fbcb8f64afc4ea2fd4b1262b3480`. Fresh source inspection establishes these owners:
 
 - `workflow_dispatch.py` and the runtime preflight reconstruct current repository work and return `AUTHORIZE`, `NO_WORK`, or `FAIL_CLOSED`.
 - `issue_comment_bridge.py` checks the authoritative default branch and publishes one run-scoped dispatch-result artifact.
@@ -12,7 +12,7 @@ The original Explore reconstruction used default-branch revision `2e00e236f24ba4
 
 The current gap is therefore a missing reachability boundary, not a defect in normal selection and not permission to infer work from an empty queue.
 
-The current delivery baseline is `main@01e22a7ebad34b434c0e12c8293f02a9bed24a40`. The shared application substrate repair has merged in the sequential PR chain #331/#332/#333; it is an N-1 prerequisite already present on this revision, not remaining Stage 0 work. The exact PR heads and successful Python Quality runs are recorded in proposal.md and tasks.md. Continue with the typed idle handoff and later stages on this current baseline; retain the full parent completion outcome.
+The current delivery baseline is `main@3a2bbf45f449fbcb8f64afc4ea2fd4b1262b3480`. The shared application substrate repair and same-Change recovery are merged through PR #349; they are N-1 prerequisites already present on this revision, not remaining Stage 0 work. Continue with the typed idle handoff and later stages on this current baseline; retain the full parent completion outcome.
 
 ## Decision 1: Keep normal dispatch Action-only
 
@@ -41,12 +41,14 @@ For a candidate result, the bootstrap submits one explicit idle application requ
 
 - the exact `NO_WORK` envelope;
 - the Lead result and source evidence;
-- either one existing candidate Issue id or one new-candidate descriptor;
+- either one existing candidate Issue id, one new Formal Explore descriptor, or one bounded advisory descriptor;
 - a deterministic admission correlation derived from the exact wake and candidate evidence.
 
-The application rejects malformed, stale, contradictory, or replayed requests before mutation. Immediately before any write it fresh-reads the default branch and reconstructs normal dispatch. Only exact current `NO_WORK` permits the write.
+The application rejects malformed, stale, contradictory, or replayed requests before mutation. Immediately before any write it fresh-reads the default branch and reconstructs normal dispatch. Only exact current `NO_WORK` permits the write. An advisory descriptor is limited to one through three recommendations, carries exactly `advisory:idle`, carries no `Change:` line or `action:*`/`agent:*` label, and is never a normal workflow candidate.
 
 Existing-candidate admission uses one GitHub Issue update whose body and full label set are derived from the fresh observed object, preserving all unrelated fields while leaving exactly `Change: unset` and one `action:explore-change`. New-candidate admission uses one Issue creation with the canonical body, reconstructable source evidence, and exactly one `action:explore-change` label. The application then fresh-reads the target and reports success only after the complete tuple is visible.
+
+Advisory admission uses one Issue creation with the bounded recommendation body, exact source markers, and only `advisory:idle`. It reports success only after the open Issue, exact body, and exact label set are visible. An existing open `advisory:idle` Issue suppresses another advisory, even when its recommendation is unrelated; a correlated Issue in any state must first be proven uniquely complete or the request fails closed.
 
 The final write boundary may be protected by a workflow concurrency group with cancellation disabled. This serializes only concurrent idle admission attempts; it is not a durable lock, lease, heartbeat, cursor, or workflow state. Every serialized attempt redoes the normal `NO_WORK` precondition.
 
@@ -55,16 +57,24 @@ The final write boundary may be protected by a workflow concurrency group with c
 Before the write, interruption leaves no admission state. After a successful write, the canonical Issue routing is the durable owner and a later normal wake can select it. If the response is lost, the application performs read-only reconciliation:
 
 - existing target: verify the exact Issue id and complete tuple;
-- new target: search current open Issues for exactly one immutable admission correlation/source-evidence marker and the complete tuple;
+- new Formal Explore or advisory target: enumerate **all Issue states** (not only current open Issues) for exactly one immutable admission correlation/source-evidence marker and the complete tuple;
 - one match: continue from the observed consequence;
-- zero matches: treat the consequence as unproven and fail closed rather than blind-create;
+- zero matches: treat the consequence as unproven and fail closed rather than blind-create (for advisory creation, a different open `advisory:idle` Issue also suppresses a new advisory);
 - multiple matches or contradictory state: fail closed.
+
+For a correlated advisory, a single complete open Issue is `ALREADY_ADMITTED`; a closed, malformed, or otherwise incomplete correlated Issue is not replaceable and returns `AMBIGUOUS`. This all-state rule protects both Formal Explore and advisory admissions from replay after an interrupted or unknown write.
 
 A later retry must never replay Lead semantic discovery merely to recreate an application record. If current normal dispatch already returns `AUTHORIZE`, the idle request is stale and performs no mutation.
 
 ## Decision 5: Preserve the normal handoff
 
 Once a complete candidate tuple is observed, idle ownership ends. The next normal Scheduled Task wake fresh-dispatches and authorizes ordinary `Lead / explore-change`. The idle path never executes that Action in the same wake and never stores a successor/cursor.
+
+## Decision 6: Derive unanswered-Human waiting without adding workflow state
+
+When the current qualified frontier is an unanswered `HUMAN_DECISION_REQUIRED` whose repository-derived successor is the same `Lead / resolve-question`, a later Scheduled Task wake must not repeat the same semantic Action merely because it is a new transport request. Before semantic ingress, the bootstrap/runtime derives the current frontier from existing formal result, routing, Human provenance, and relevant repository evidence. If there is no newer qualifying Human decision and no material evidence change, the wake is a repository-silent derived wait/no-op: it emits no new `EFFECT_REQUEST`, formal result, routing write, retry counter, lease, cursor, mailbox, or persisted waiting state.
+
+A newer qualifying Human decision or materially changed authoritative evidence invalidates that derived wait and restores ordinary fresh dispatch plus semantic execution. This rule is deliberately narrower than a generic “same BLOCKED fingerprint” cache: unrelated BLOCKED results remain normal Action outcomes and evidence freshness is never hidden by suppression.
 
 ## Repository implementation of the boundary
 
@@ -83,7 +93,7 @@ default branch ref, and normal dispatch immediately before each possible write. 
 use one full Issue update derived from the fresh object; new targets use one Issue create with the
 correlation/source evidence in the body. Both paths fresh-observe the complete tuple, including the
 full candidate body and preserved existing body and labels. Correlation reconciliation enumerates
-all Issue states (not just open Issues), so a closed or contradictory prior result remains fail-closed.
+all Issue states (not just open Issues), so a closed or contradictory prior result remains fail-closed. Advisory requests use the same boundary but create only a non-routing Issue with exactly `advisory:idle`, at most three recommendations, and no `Change:` line; any open advisory suppresses duplicate advisory noise.
 A lost or ambiguous response is reconciled read-only by exact Issue identity/correlation and never
 blindly replayed. The same daily-shard comment boundary carries an
 `APPLICATION_CONTINUATION` transport after an accepted application reaches GitHub's exhausted
@@ -100,7 +110,7 @@ production handoff requirement.
 
 ## Production activation boundary
 
-The repository implementation can make the contract executable and expose the exact carrier, but the external Scheduled Task configuration must be updated to consume `NO_WORK`, invoke Lead idle semantics, and post the typed idle request to the current runtime shard when a candidate exists. It must relay an emitted application continuation body exactly once per fresh boundary without inventing a new semantic request. Production proof must include the real wake/run/artifact identity, a no-finding run with zero repository mutation, and a material finding whose canonical Issue is consumed by the next normal dispatch.
+The repository implementation can make the contract executable and expose the exact carrier, but true production `NO_WORK` acceptance is only observable after #322 has completed its governed merge/archive lifecycle and no routed formal work remains to outrank idle. The external Scheduled Task configuration must then consume exact `NO_WORK`, invoke bounded Lead idle semantics, and post the typed idle request to the current runtime shard only when a candidate exists. It must relay an emitted application continuation body exactly once per fresh boundary without inventing a new semantic request. Production proof must include the real post-terminal wake/run/artifact identity, a no-finding run with zero repository mutation or one safe advisory/Explore admission, and for Formal Explore admission a later ordinary dispatch that consumes the canonical Issue.
 
 If that external configuration is not exposed to the available capability, repository implementation and tests remain valid delivery work but production activation is not proven. The final lifecycle must report that exact blocker rather than calling a merged repository implementation complete.
 
@@ -126,7 +136,7 @@ The implementation must provide executable coverage for:
 
 - `AUTHORIZE` and `FAIL_CLOSED` suppression;
 - exact `NO_WORK` idle execution and no-finding no-op;
-- existing/new candidate tuple formation and unrelated-field preservation;
+- advisory/non-routing and existing/new candidate formation with unrelated-field preservation;
 - overlap first-valid-write-wins;
 - stale revision/source refusal;
 - interruption before/after mutation;
@@ -136,7 +146,9 @@ The implementation must provide executable coverage for:
 - ambiguous create/update reconciliation;
 - later normal `AUTHORIZE` after successful admission;
 - static negative invariants proving no idle Action, transition, queue, cursor, lease, heartbeat, registry, or selector discovery branch;
-- repository workflow and production-shaped carrier evidence.
+- repository workflow and production-shaped carrier evidence;
+- unchanged unanswered-Human frontier suppression before semantic ingress, plus resumption when qualifying Human/material evidence changes;
+- post-terminal true-`NO_WORK` production acceptance without a dispatcher exception or synthetic idle-validation state.
 
 ## Implementation note
 

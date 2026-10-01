@@ -16,7 +16,7 @@
 - [x] 0.12 RED/GREEN: reproduce an accepted materialization whose exact PR carrier merged before the application process resumed; reconcile the merged head from complete GitHub compare history and exact historical blob evidence without creating a same-Change replacement, while retaining the existing replacement path when content or ancestry proof is incomplete.
 - [x] 0.13 RED/GREEN: reproduce an accepted materialization whose historical carrier is superseded by a same-Change merge after acceptance; recover the exact immutable manifest from current-main compare history only when the historical merge commit remains an ancestor, and fail closed for incomplete evidence.
 
-Stage 0 is merged and active on current `main@d019fdc604e8a7fa40e2f3e6436a12b076658057`: PR #331 merged as `6586b5e6b40d84717b73fb7548d778e177fd826f` from exact head `9d7fc4810ad921e17bc6c2bfc0fa955fc848e9b3` (Python Quality run `35953768705`, 729 tests reported); PR #332 merged as `817176cd1b74f8bc04c1e480e0b5335514c5e4ee` from exact head `49ad4d2aa55738b548ffb4b84f57741cd249247e` (run `35958582031`, 736 full-suite and 24 focused tests reported); PR #333 merged as `d019fdc604e8a7fa40e2f3e6436a12b076658057` from exact head `a47519dae24b853b0eda2a6a2c3fd9991f1b4aad` (run `35963968270`, 751 tests reported). PR bodies record the corresponding current-source materialization, interruption, consequence, and lineage regressions plus applicable Ruff/format/mypy checks. Stage 0 is complete as delivered; the remaining parent outcome is not complete.
+Stage 0 is merged and active on current `main@3a2bbf45f449fbcb8f64afc4ea2fd4b1262b3480`: the shared application recovery chain #331 → #333 plus same-Change recovery PRs #347 and #349 are merged and have passed their exact-head gates. Their merged scopes cover current-source materialization, interruption, consequence, and complete accepted-base-to-main lineage recovery. Stage 0 is complete as delivered; the remaining parent outcome is not complete.
 
 ## 1. Contract and typed NO_WORK handoff
 
@@ -31,20 +31,27 @@ Stage 0 is merged and active on current `main@d019fdc604e8a7fa40e2f3e6436a12b076
 - [x] 2.3 RED/GREEN: cover stale source/default branch, real Actions run/artifact identity and content, interruption-before/after mutation, overlap recovery through all-state correlation, closed/contradictory matches, body/label preservation, and ambiguous-write reconciliation.
 - [x] 2.4 GREEN: add minimal non-durable workflow concurrency and read-only ambiguous-write reconciliation; fail closed when uniqueness or the complete postcondition cannot be proved.
 - [x] 2.5 REFACTOR: reuse current dispatch/application carrier and fresh-read primitives; no duplicate queue, lock state, lease, cursor, heartbeat, registry, recovery workflow, or hidden backlog is introduced.
+- [ ] 2.6 RED/GREEN: add the bounded typed advisory candidate path with one-to-three recommendation validation, exact `advisory:idle` non-routing admission, all-state correlation reconciliation, open-advisory suppression, closed/contradictory fail-closed recovery, ambiguous-write coverage, and production-shaped issue-comment ingress.
+- [ ] 2.7 RED/GREEN: derive an unanswered `HUMAN_DECISION_REQUIRED → Lead / resolve-question` wait from the qualified current frontier before semantic ingress; prove an unchanged frontier emits no new `EFFECT_REQUEST`/formal result/mutation, and prove newer qualifying Human or materially changed evidence resumes ordinary execution without persisted wait/retry state.
 
 ## 3. Scheduled Task/bootstrap cutover
 
 - [x] 3.1 RED/GREEN: add a production-shaped bridge/bootstrap test showing the exact `NO_WORK` artifact reaches one typed bounded Lead idle ingress and `AUTHORIZE`/`FAIL_CLOSED` do not.
 - [x] 3.2 GREEN: connect the repository-visible application carrier to the typed idle boundary through one `IDLE_ADMISSION_REQUEST` Issue-comment RPC on the current daily runtime shard, without representing idle as an Action or relying on the comment as accepted-intent state; reuse the same boundary for content-addressed `APPLICATION_CONTINUATION` recovery.
-- [x] 3.3 GREEN: update the available external Lead Scheduled Task prompt to consume the repository-produced `NO_WORK` artifact, post only exact typed idle requests/continuations through the current connector boundary, and remain silent for no-finding or unproven evidence.
-- [ ] 3.4 RED/GREEN: prove no-finding is repository-silent, and a successful admission is consumed by a later normal wake that authorizes ordinary `Lead / explore-change`.
+External Scheduled Task configuration and production acceptance are deployment/lifecycle evidence, not Executor implementation task markers; see the gates below.
 
 ## 4. Verification and delivery
 
-- [x] 4.1 Run focused idle contract, application, bridge, and dispatch tests.
-- [x] 4.2 Run full regression, type checks, lint, and repository workflow/static invariant checks on the current-main merge snapshot; remote Python Quality also passes on the exact PR head.
-- [x] 4.3 Run strict OpenSpec validation on the active change and resolve every reported error; remote OpenSpec Validate also passes on the exact PR head.
-- [ ] 4.4 Capture production-shaped evidence for exact `NO_WORK` idle execution, no-finding silence, safe admission, and later normal Action handoff before declaring #322 complete.
+- [ ] 4.1 Run focused idle contract, application, bridge, dispatch, advisory, and unchanged-Human-frontier tests on the final implementation head.
+- [ ] 4.2 Run full regression, type checks, lint, and repository workflow/static invariant checks on the final implementation head; require remote Python Quality on that exact head.
+- [ ] 4.3 Run strict OpenSpec validation on this corrected exact OpenSpec revision and again on the final implementation head as required.
+## Production acceptance gates (not implementation task markers)
+
+- External Scheduled Task/bootstrap configuration consumes only exact repository-produced `NO_WORK`, remains silent for no-finding, and relays only exact typed idle/continuation bodies.
+- The repository implementation passes independent review, exact-head merge, finalize/archive review and merge, and #322 reaches legal terminal lifecycle before true `NO_WORK` acceptance is attempted.
+- A later real Scheduled Task wake proves exact `NO_WORK` idle execution with real request/run/artifact identity and either no-finding zero repository mutation or one safe advisory/Explore admission.
+- If a Formal Explore is admitted, a still later ordinary Action-only wake authorizes `Lead / explore-change` for that canonical tuple.
+- Human-defined completion requires all of the above; no PR, CI run, archive, terminal state, or single wake is sufficient alone.
 
 ## Lifecycle gates
 
