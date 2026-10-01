@@ -73,52 +73,6 @@ jobs:
               --revision "${{ steps.revision.outputs.sha }}"
           fi
 
-  bootstrap-recovery:
-    if: >-
-      github.event_name == 'issue_comment' &&
-      startsWith(github.event.comment.body, 'BOOTSTRAP_RECOVERY_REQUEST')
-    concurrency:
-      group: scheduled-agent-bootstrap-recovery-${{ github.repository }}
-      cancel-in-progress: false
-    permissions:
-      actions: read
-      checks: read
-      contents: write
-      issues: read
-      pull-requests: write
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out authoritative default branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          version: "0.10.0"
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Record exact checked-out default-branch revision
-        id: revision
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Freshly authorize and activate one bounded bootstrap recovery
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          PYTHONPATH: ${{ github.workspace }}/src
-        run: >-
-          uv run python -m investment_strategy.scheduled_agent_application_bridge
-          --event-path "$GITHUB_EVENT_PATH"
-          --revision "${{ steps.revision.outputs.sha }}"
-          --default-branch "${{ github.event.repository.default_branch }}"
-
   apply:
     if: >-
       github.event_name == 'issue_comment' &&
