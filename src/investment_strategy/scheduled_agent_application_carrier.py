@@ -813,13 +813,13 @@ def qualify_change_carrier(
         if lineage_index == 0:
             predecessor_number = pr_number
             expected_historical_branch = canonical
-            reason = "historical-merged-carrier-qualified"
+            historical_reason = "historical-merged-carrier-qualified"
         else:
             predecessor_number = historical[lineage_index - 1][0]
             expected_historical_branch = deterministic_continuation_branch(
                 change, predecessor_number
             )
-            reason = "merged-continuation-carrier-qualified"
+            historical_reason = "merged-continuation-carrier-qualified"
         if branch != expected_historical_branch or any(
             active_change != change for active_change in active_changes
         ):
@@ -837,7 +837,7 @@ def qualify_change_carrier(
             )
         return ImplementationCarrierQualification(
             disposition="HISTORICAL_MERGED",
-            reason=reason,
+            reason=historical_reason,
             repository=repository,
             issue_number=source.issue_number,
             change=change,

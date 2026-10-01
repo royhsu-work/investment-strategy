@@ -153,7 +153,9 @@ def _fake_github(
                 + ([current] if current.get("merged") is True else [])
                 if isinstance(candidate, dict)
                 and isinstance(candidate.get("head"), dict)
-                and cast(dict[str, object], candidate["head"]).get("ref", "").replace("/", "%2F")
+                and str(
+                    cast(dict[str, object], candidate["head"]).get("ref", "")
+                ).replace("/", "%2F")
                 in api_path
             ]
             deduplicated = {
