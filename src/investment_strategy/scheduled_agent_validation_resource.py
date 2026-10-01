@@ -2218,6 +2218,7 @@ def apply_work_product(
     replacement_pr: Mapping[str, object] | None = None
     replacement_pr_number: int | None = None
     replacement_reconciliation_required = False
+    replacement_base_requires_reconciliation = False
     safe_historical_reconciliation = False
     current_carrier_is_materialized = replacement_branch is None
     current_target_pr_number: int | None = plan.pr_number
@@ -2231,7 +2232,26 @@ def apply_work_product(
         ):
             raise RuntimeError("work-product historical carrier is not in current default history")
         if plan.manifest.base_sha != authorization_revision:
-            raise RuntimeError("replacement work-product base is not current default branch")
+            try:
+                default_advance_paths = _ancestor_comparison_paths(
+                    repository,
+                    token,
+                    base_sha=plan.manifest.base_sha,
+                    revision=authorization_revision,
+                )
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    "replacement work-product base is not current default branch: "
+                    "ancestry evidence is incomplete"
+                ) from exc
+            manifest_paths = {file.path for file in plan.manifest.files}
+            if default_advance_paths.intersection(manifest_paths):
+                raise RuntimeError(
+                    "replacement work-product base is not current default branch: "
+                    "requested paths overlap default-branch changes"
+                )
+            replacement_base_requires_reconciliation = True
+            replacement_reconciliation_required = True
         replacement_branch = _replacement_branch(plan.expected_change, plan.pr_number)
         replacement_prs = _open_prs_for_branch(
             repository,
@@ -2264,13 +2284,26 @@ def apply_work_product(
             replacement_revision = None if replacement_head is None else replacement_head.get("sha")
             if not _valid_sha(replacement_revision):
                 raise RuntimeError("work-product replacement carrier head is incomplete")
-            if _revision_matches_manifest(
+            replacement_matches_manifest = _revision_matches_manifest(
                 repository,
                 token,
                 base_sha=plan.manifest.base_sha,
                 revision=cast(str, replacement_revision),
                 manifest=plan.manifest,
-            ):
+            )
+            replacement_is_reconciled = (
+                replacement_base_requires_reconciliation
+                and _is_reconciled_work_product_revision(
+                    repository,
+                    token,
+                    base_sha=plan.manifest.base_sha,
+                    revision=cast(str, replacement_revision),
+                    manifest=plan.manifest,
+                    expected_change=plan.expected_change,
+                    authorization_revision=authorization_revision,
+                )
+            )
+            if replacement_matches_manifest and not replacement_base_requires_reconciliation:
                 return ValidationResourceTarget(
                     repository=repository,
                     revision=cast(str, replacement_revision),
@@ -2278,6 +2311,13 @@ def apply_work_product(
                     pr_number=replacement_pr_number,
                     change=plan.expected_change,
                     branch=replacement_branch,
+                )
+            if replacement_base_requires_reconciliation and not (
+                replacement_matches_manifest or replacement_is_reconciled
+            ):
+                raise RuntimeError(
+                    "replacement work-product base is not current default branch: "
+                    "replacement head does not match accepted intent"
                 )
             replacement_reconciliation_required = True
         replacement_ref_head = _ref_head_sha(
@@ -2299,12 +2339,16 @@ def apply_work_product(
             and replacement_ref_head != replacement_pr_revision
         ):
             raise RuntimeError("work-product replacement PR/ref head identity is stale")
-        if replacement_ref_head is not None and _revision_matches_manifest(
-            repository,
-            token,
-            base_sha=plan.manifest.base_sha,
-            revision=replacement_ref_head,
-            manifest=plan.manifest,
+        if (
+            replacement_ref_head is not None
+            and not replacement_base_requires_reconciliation
+            and _revision_matches_manifest(
+                repository,
+                token,
+                base_sha=plan.manifest.base_sha,
+                revision=replacement_ref_head,
+                manifest=plan.manifest,
+            )
         ):
             raise CarrierRequired(
                 _replacement_carrier_plan(
@@ -2378,6 +2422,7 @@ def apply_work_product(
             default_branch_is_ancestor
             or (
                 replacement_branch is not None
+                and not replacement_base_requires_reconciliation
                 and _manifest_expected_content_matches_base(
                     repository,
                     token,
@@ -2413,7 +2458,11 @@ def apply_work_product(
             expected_change=plan.expected_change,
             authorization_revision=authorization_revision,
         )
-        if not default_branch_is_ancestor and plan.manifest.base_sha != authorization_revision:
+        if (
+            replacement_branch is None
+            and not default_branch_is_ancestor
+            and plan.manifest.base_sha != authorization_revision
+        ):
             historical_pr_base = base.get("sha")
             if not _valid_sha(historical_pr_base):
                 raise RuntimeError("work-product historical PR base identity is incomplete")
@@ -2451,11 +2500,31 @@ def apply_work_product(
                     branch=expected_branch,
                 )
         if default_branch_is_ancestor and (manifest_applied or reconciled):
+            if replacement_branch is not None and (
+                replacement_pr is None or replacement_pr_number is None
+            ):
+                raise CarrierRequired(
+                    _replacement_carrier_plan(
+                        repository=repository,
+                        issue_number=plan.source.issue_number,
+                        change=plan.expected_change,
+                        action=plan.source.action,
+                        authorization_revision=authorization_revision,
+                        branch=replacement_branch,
+                        revision=current_head,
+                        default_branch=default_branch,
+                        historical_pr_number=plan.pr_number,
+                    )
+                )
             return ValidationResourceTarget(
                 repository=repository,
                 revision=current_head,
                 correlation=f"effect-request-{plan.source.issue_number}",
-                pr_number=plan.pr_number,
+                pr_number=(
+                    cast(int, replacement_pr_number)
+                    if replacement_branch is not None
+                    else plan.pr_number
+                ),
                 change=plan.expected_change,
                 branch=replacement_branch if replacement_branch is not None else expected_branch,
             )
@@ -2545,7 +2614,11 @@ def apply_work_product(
             for file in plan.manifest.files
         ]
     )
-    if not replay_manifest or reconciliation_tree_elements is not None:
+    if (
+        not replay_manifest
+        or reconciliation_tree_elements is not None
+        or reconcile_replacement_from_default
+    ):
         try:
             tree_response = _as_mapping(
                 cast(
@@ -2591,7 +2664,11 @@ def apply_work_product(
         or not isinstance(tree_entries, list)
     ):
         raise RuntimeError("work-product tree postcondition is incomplete")
-    if not replay_manifest or reconciliation_tree_elements is not None:
+    if (
+        not replay_manifest
+        or reconciliation_tree_elements is not None
+        or reconcile_replacement_from_default
+    ):
         for file in plan.manifest.files:
             matches = [
                 entry
