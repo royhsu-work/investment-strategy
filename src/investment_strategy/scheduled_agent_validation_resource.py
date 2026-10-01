@@ -449,10 +449,7 @@ def _open_pr_payload(
         allowed = (
             decision.qualified
             or (allow_reconciliation and decision.disposition == "RECONCILIATION_REQUIRED")
-            or (
-                allow_historical_merged_carrier
-                and decision.disposition == "HISTORICAL_MERGED"
-            )
+            or (allow_historical_merged_carrier and decision.disposition == "HISTORICAL_MERGED")
         )
         if not allowed or decision.pr_number != pr_number or decision.branch != branch:
             raise RuntimeError("validation resource continuation carrier is not qualified")

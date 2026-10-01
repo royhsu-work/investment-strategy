@@ -820,9 +820,8 @@ def qualify_change_carrier(
                 change, predecessor_number
             )
             reason = "merged-continuation-carrier-qualified"
-        if (
-            branch != expected_historical_branch
-            or any(active_change != change for active_change in active_changes)
+        if branch != expected_historical_branch or any(
+            active_change != change for active_change in active_changes
         ):
             return _indeterminate(
                 repository=repository,

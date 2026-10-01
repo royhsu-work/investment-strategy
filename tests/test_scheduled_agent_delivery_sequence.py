@@ -205,8 +205,7 @@ class GitHubSequence:
                 candidates = [
                     candidate
                     for candidate in candidates
-                    if cast(dict[str, object], candidate["head"]).get("ref")
-                    == requested_branch
+                    if cast(dict[str, object], candidate["head"]).get("ref") == requested_branch
                 ]
             return candidates
         if route == "pulls/232/files":
