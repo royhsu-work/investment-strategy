@@ -11,6 +11,14 @@ import pytest
 
 from investment_strategy import issue_comment_bridge as bridge
 from investment_strategy.scheduled_agent_checkin import checkin_title
+from investment_strategy.scheduled_agent_idle_admission import (
+    IdleCandidate,
+    IdleDispatchEnvelope,
+    make_idle_admission_request,
+    parse_idle_admission_event,
+    qualify_idle_handoff,
+    render_idle_admission_request,
+)
 from investment_strategy.workflow_dispatch import (
     DispatchDecision,
     ObservationProvenance,
@@ -169,6 +177,113 @@ def test_non_authorizing_decisions_have_no_selected_work(
     assert parsed.issue_number is None
     assert parsed.action is None
     assert parsed.reason == "test decision"
+
+
+def test_retry_limit_dispatch_result_carries_one_content_addressed_continuation() -> None:
+    continuation = bridge.render_application_continuation_request(
+        repository="owner/repo",
+        issue_number=138,
+        original_request_comment_id=987,
+        accepted_decision_sha256="a" * 64,
+    )
+    decision = _decision("FAIL_CLOSED")
+    decision = DispatchDecision(
+        completeness=decision.completeness,
+        observation_provenance=decision.observation_provenance,
+        formal_issue_ids=decision.formal_issue_ids,
+        preactivation_candidate_ids=decision.preactivation_candidate_ids,
+        selected_issue_id=decision.selected_issue_id,
+        selected_routing=decision.selected_routing,
+        disposition=decision.disposition,
+        reason="application-completion-rerun-limit",
+    )
+
+    rendered = bridge.render_dispatch_result_document(
+        request_comment_id=987,
+        default_branch_revision=REVISION,
+        decision=decision,
+        application_continuation=continuation,
+    )
+    parsed = bridge.parse_dispatch_result_document(rendered)
+
+    assert parsed.application_continuation == continuation
+    with pytest.raises(ValueError, match="only valid"):
+        bridge.render_dispatch_result_document(
+            request_comment_id=987,
+            default_branch_revision=REVISION,
+            decision=_decision("NO_WORK"),
+            application_continuation=continuation,
+        )
+    malformed = json.loads(rendered)
+    malformed["application_continuation"] = "APPLICATION_CONTINUATION\nmalformed"
+    with pytest.raises(RuntimeError, match="application continuation"):
+        bridge.parse_dispatch_result_document(json.dumps(malformed))
+
+
+def test_production_shaped_no_work_bootstrap_reaches_one_typed_idle_ingress() -> None:
+    """The bridge artifact is consumed once, then Lead's candidate is typed."""
+
+    decision_fixture = _decision("NO_WORK")
+    no_work = DispatchDecision(
+        completeness=decision_fixture.completeness,
+        observation_provenance=decision_fixture.observation_provenance,
+        formal_issue_ids=decision_fixture.formal_issue_ids,
+        preactivation_candidate_ids=decision_fixture.preactivation_candidate_ids,
+        selected_issue_id=decision_fixture.selected_issue_id,
+        selected_routing=decision_fixture.selected_routing,
+        disposition=decision_fixture.disposition,
+        reason="no-routed-work",
+    )
+    artifact = bridge.render_dispatch_result_document(
+        request_comment_id=987,
+        default_branch_revision=REVISION,
+        decision=no_work,
+    )
+    parsed = bridge.parse_dispatch_result_document(artifact)
+    assert parsed.disposition == "NO_WORK"
+    assert qualify_idle_handoff(no_work)
+
+    envelope = IdleDispatchEnvelope(
+        repository="owner/repo",
+        default_branch="main",
+        request_comment_id=parsed.request_comment_id,
+        dispatch_run_id=202,
+        dispatch_artifact_id=303,
+        dispatch_artifact_sha256="a" * 64,
+        default_branch_revision=parsed.default_branch_revision,
+    )
+    candidate = IdleCandidate(
+        kind="new",
+        source_kind="canonical-requirement",
+        source_ref="openspec/spec.md#idle",
+        source_revision=REVISION,
+        evidence="bounded production-shaped finding",
+        title="Explore the bounded finding",
+        body="Change: unset\n\nEvidence: bounded production-shaped finding",
+        labels=("action:explore-change",),
+    )
+    request = make_idle_admission_request(envelope, candidate)
+    body = render_idle_admission_request(request)
+    event = {
+        "action": "created",
+        "issue": {
+            "number": 77,
+            "title": "[Agent Runtime] 2026-09-29",
+            "state": "open",
+            "labels": [],
+        },
+        "comment": {
+            "id": 404,
+            "body": body,
+            "user": {"login": "owner"},
+            "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+        },
+    }
+    assert parse_idle_admission_event(event, repository="owner/repo") == request
+
+    for disposition in ("AUTHORIZE", "FAIL_CLOSED"):
+        decision = _decision(cast(Literal["AUTHORIZE", "FAIL_CLOSED"], disposition))
+        assert not qualify_idle_handoff(decision)
 
 
 def test_dispatch_plan_uses_only_current_day_shard_identity() -> None:
@@ -2132,7 +2247,7 @@ def test_one_accepted_intent_is_resumed_before_semantic_replay() -> None:
             1,
             1,
             True,
-            ("RESUMABLE", "application-completion-resuming"),
+            ("INVALID", "application-completion-rerun-limit"),
         ),
         (
             "propose-change",
@@ -2164,14 +2279,14 @@ def test_one_accepted_intent_is_resumed_before_semantic_replay() -> None:
         ),
     ),
 )
-def test_current_accepted_application_resumes_when_legacy_result_breaks_frontier(
+def test_current_accepted_application_stops_replaying_after_repeated_failed_attempt(
     current_action: str,
     application_run_count: int,
     accepted_decision_count: int,
     trusted_accepted_decision: bool,
     expected: tuple[str, str],
 ) -> None:
-    """Recover the exact production prefix: ACCEPT, effects, branch/PR, then uncorrelated result."""
+    """Stop replay after the exact production prefix has already been retried."""
 
     current_revision = "e617a05ada51af9ff8f20697bbf07c4bfc8ec19e"
     authorization_revision = "2e00e236f24ba41302c9ba18c685acdf4cebe4ed"
@@ -2360,14 +2475,17 @@ def test_current_accepted_application_resumes_when_legacy_result_breaks_frontier
     if expected[0] == "RESUMABLE":
         assert completion.request_comment_id == 5781255019
         assert completion.job_id == 107028234822
-    elif expected[1] == "application-completion-run-identity-ambiguous":
+    elif expected[1] in {
+        "application-completion-run-identity-ambiguous",
+        "application-completion-rerun-limit",
+    }:
         assert application_run_reads > 0
     else:
         assert application_run_reads == 0
 
 
-def test_live_322_accepted_request_resumes_its_exact_failed_application_job() -> None:
-    """Reproduce the live #322 accepted-request prefix from current GitHub evidence."""
+def test_live_322_accepted_request_does_not_resume_completed_failed_application_job() -> None:
+    """A repeated #322 application attempt must stop the scheduled retry loop."""
 
     fixture_path = Path(__file__).parent / "fixtures" / "issue322-application-recovery.json"
     fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
@@ -2422,10 +2540,9 @@ def test_live_322_accepted_request_resumes_its_exact_failed_application_job() ->
     )
 
     assert completion == bridge.ApplicationCompletion(
-        "RESUMABLE",
-        "application-completion-resuming",
+        "INVALID",
+        "application-completion-rerun-limit",
         request_comment_id=request_id,
-        job_id=job_id,
     )
     assert request_id == 5810765007
     assert run_id == 35976411803
@@ -2433,6 +2550,42 @@ def test_live_322_accepted_request_resumes_its_exact_failed_application_job() ->
     assert run["run_attempt"] == 7
     assert any(path.startswith("actions/workflows/") for path in observed)
     assert f"actions/runs/{run_id}/jobs" in observed
+
+
+def test_rerun_limit_has_a_fresh_transport_bound_to_the_exact_decision() -> None:
+    source = bridge.WorkerRequest(322, "lead", "resolve-question")
+    request = _effect_request_comment(
+        comment_id=5810765007,
+        created_at="2026-09-23T03:00:00Z",
+        issue_number=322,
+        action=source.action,
+        role=source.role,
+        result_kind="ready-for-openspec-review",
+    )
+    decision = _application_decision_comment(request, comment_id=5810765008)
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/322/comments?"):
+            return [decision]
+        raise AssertionError(path)
+
+    body = bridge._application_continuation_body(
+        repository="owner/repo",
+        token=REVISION,
+        source=source,
+        request_comment_id=5810765007,
+        read=fake_read,
+    )
+
+    assert body is not None
+    parsed = bridge.parse_application_continuation_request(body)
+    assert parsed is not None
+    assert parsed.issue_number == source.issue_number
+    assert parsed.original_request_comment_id == 5810765007
+    assert (
+        parsed.accepted_decision_sha256
+        == hashlib.sha256(cast(str, decision["body"]).encode("utf-8")).hexdigest()
+    )
 
 
 def test_rejected_intent_returns_ownership_to_later_semantic_dispatch() -> None:

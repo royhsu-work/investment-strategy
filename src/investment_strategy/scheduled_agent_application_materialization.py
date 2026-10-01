@@ -9,7 +9,6 @@ no Issue-comment protocol and never consumes a dispatch Artifact.
 from __future__ import annotations
 
 import json
-import logging
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -34,8 +33,10 @@ from investment_strategy.scheduled_agent_validation_resource import (
     WorkProductFile,
     WorkProductManifest,
     WorkProductPlan,
+    _already_merged_work_product_target,
     _ancestor_comparison_paths,
     _as_mapping,
+    _change_carrier_decision,
     _change_from_issue,
     _comparison_file_paths,
     _comparison_paths_from_file_entries,
@@ -47,10 +48,13 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _is_executor_config_authoring,
     _is_executor_task_and_implementation_materialization,
     _is_executor_task_bookkeeping,
+    _is_historical_merged_carrier,
     _open_pr_payload,
     _open_prs_for_branch,
     _pending_source_is_current,
     _ref_head_sha,
+    _replacement_branch,
+    _revision_matches_manifest,
     _review_openspec_required,
     _source_branch,
     _valid_branch,
@@ -67,7 +71,6 @@ _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
 _ISSUE_LINK = re.compile(r"(?mi)^\s*Refs\s+#([0-9]+)\s*$")
 _MATERIALIZATION_OPERATION = "application-materialize"
 _IMPLEMENTATION_ACTION = "implement-change"
-_LOGGER = logging.getLogger(__name__)
 
 
 def materialization_message_is_safe(
@@ -1574,6 +1577,69 @@ def apply_materialization(
     )
 
 
+def _observe_historical_replacement_target(
+    request: MaterializationRequest,
+    source: WorkerRequest,
+    *,
+    repository: str,
+    token: str,
+    default_branch: str,
+    manifest: WorkProductManifest,
+) -> ValidationResourceTarget | None:
+    """Read-only reconstruction of one deterministic replacement carrier."""
+
+    if request.pr_number is None:
+        raise RuntimeError("application materialization historical carrier lacks PR")
+    replacement_branch = _replacement_branch(request.expected_change, request.pr_number)
+    replacement_prs = _open_prs_for_branch(
+        repository,
+        token,
+        branch=replacement_branch,
+        default_branch=default_branch,
+    )
+    if len(replacement_prs) > 1:
+        raise RuntimeError("application materialization replacement carrier is ambiguous")
+    if not replacement_prs:
+        return None
+    raw_number = replacement_prs[0].get("number")
+    if (
+        isinstance(raw_number, bool)
+        or not isinstance(raw_number, int)
+        or raw_number <= 0
+    ):
+        raise RuntimeError("application materialization replacement carrier number is incomplete")
+    decision = _change_carrier_decision(
+        source,
+        repository=repository,
+        token=token,
+        default_branch=default_branch,
+        expected_change=request.expected_change,
+        pr_number=raw_number,
+    )
+    if (
+        decision.disposition != "QUALIFIED"
+        or decision.pr_number != raw_number
+        or decision.branch != replacement_branch
+        or decision.head_sha is None
+        or not _revision_matches_manifest(
+            repository,
+            token,
+            base_sha=request.base_sha,
+            revision=decision.head_sha,
+            manifest=manifest,
+        )
+    ):
+        raise RuntimeError("application materialization replacement carrier is incomplete")
+    return _target(
+        request,
+        repository=repository,
+        revision=decision.head_sha,
+        pr_number=raw_number,
+        validation_required=materialization_requires_validation(request, source),
+        branch=replacement_branch,
+    )
+
+
 def _observe_nonimplementation_existing_target(
     request: MaterializationRequest,
     source: WorkerRequest,
@@ -1586,8 +1652,6 @@ def _observe_nonimplementation_existing_target(
 ) -> ValidationResourceTarget:
     if request.pr_number is None:
         raise RuntimeError("application materialization validation target lacks PR")
-    if request.base_sha != current_revision and not allow_pending_continuation:
-        raise RuntimeError("application materialization authorization base is stale")
     pr = _open_pr_payload(
         repository=repository,
         token=token,
@@ -1596,11 +1660,60 @@ def _observe_nonimplementation_existing_target(
         expected_change=request.expected_change,
         default_branch=default_branch,
         expected_branch=request.branch,
+        allow_historical_merged_carrier=True,
     )
     head = _as_mapping(pr.get("head"))
     revision = None if head is None else head.get("sha")
     if not _valid_sha(revision):
         raise RuntimeError("application materialization PR head is incomplete")
+    if _is_historical_merged_carrier(pr):
+        manifest = WorkProductManifest(
+            branch=request.branch,
+            base_sha=request.base_sha,
+            message=request.message,
+            files=request.files,
+        )
+        merged_target = _already_merged_work_product_target(
+            repository=repository,
+            token=token,
+            default_branch=default_branch,
+            authorization_revision=current_revision,
+            pr=pr,
+            issue_number=source.issue_number,
+            pr_number=request.pr_number,
+            expected_change=request.expected_change,
+            expected_branch=request.branch,
+            manifest=manifest,
+        )
+        if merged_target is not None:
+            return _target(
+                request,
+                repository=repository,
+                revision=merged_target.revision,
+                pr_number=request.pr_number,
+                validation_required=materialization_requires_validation(request, source),
+            )
+        if request.base_sha != current_revision:
+            raise RuntimeError("replacement work-product base is not current default branch")
+        replacement_target = _observe_historical_replacement_target(
+            request,
+            source,
+            repository=repository,
+            token=token,
+            default_branch=default_branch,
+            manifest=manifest,
+        )
+        if replacement_target is None:
+            raise RuntimeError("application materialization merged carrier is incomplete")
+        return replacement_target
+    # An open carrier whose accepted base is no longer current still needs an
+    # explicit pending-continuation proof.  A historical merged carrier is
+    # different: its durable consequence is reconstructed above from the
+    # immutable manifest, carrier ancestry, and exact historical snapshot, so
+    # rejecting it here would make a successful merge unrecoverable after a
+    # disjoint default-branch advance.
+    if request.base_sha != current_revision and not allow_pending_continuation:
+        raise RuntimeError("application materialization authorization base is stale")
     observed_ref = _ref_head_sha(repository, token, request.branch)
     if observed_ref != revision:
         raise RuntimeError("application materialization PR/ref head identity is stale")
@@ -1697,14 +1810,6 @@ def materialization_postcondition(
     """Observe the exact carrier/PR/Change postcondition after application."""
 
     if target is None:
-        _LOGGER.warning(
-            "application-materialize postcondition target is unavailable "
-            "(issue=%s role=%s action=%s current_revision=%s)",
-            source.issue_number,
-            source.role,
-            source.action,
-            current_revision,
-        )
         return False
     try:
         observed = observe_materialization_target(
@@ -1716,34 +1821,9 @@ def materialization_postcondition(
             default_branch=default_branch,
             allow_pending_continuation=allow_pending_continuation,
         )
-    except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError) as exc:
-        _LOGGER.warning(
-            "application-materialize postcondition observation failed: %s "
-            "(issue=%s role=%s action=%s base_sha=%s current_revision=%s "
-            "target_pr=%s target_revision=%s)",
-            exc,
-            source.issue_number,
-            source.role,
-            source.action,
-            payload.get("base_sha"),
-            current_revision,
-            target.pr_number,
-            target.revision,
-        )
+        return observed == target
+    except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
         return False
-    if observed != target:
-        _LOGGER.warning(
-            "application-materialize postcondition mismatch: observed=%r target=%r "
-            "(issue=%s role=%s action=%s current_revision=%s)",
-            observed,
-            target,
-            source.issue_number,
-            source.role,
-            source.action,
-            current_revision,
-        )
-        return False
-    return True
 
 
 def observe_materialization_target(
@@ -1755,21 +1835,32 @@ def observe_materialization_target(
     current_revision: str,
     default_branch: str,
     allow_pending_continuation: bool = False,
+    accepted_successor_routing: tuple[str, str] | None = None,
 ) -> ValidationResourceTarget:
     """Read-only reconstruction of the exact carrier after materialization."""
 
     request = parse_materialization_payload(payload, source)
+    pending_source_current = False
+    if allow_pending_continuation:
+        pending_source_current = (
+            _pending_source_is_current(
+                repository,
+                token,
+                source,
+                request.expected_change,
+            )
+            if accepted_successor_routing is None
+            else _pending_source_is_current(
+                repository,
+                token,
+                source,
+                request.expected_change,
+                accepted_successor_routing=accepted_successor_routing,
+            )
+        )
     if (
         not allow_pending_continuation and _current_authorized_request(repository, token) != source
-    ) or (
-        allow_pending_continuation
-        and not _pending_source_is_current(
-            repository,
-            token,
-            source,
-            request.expected_change,
-        )
-    ):
+    ) or (allow_pending_continuation and not pending_source_current):
         raise RuntimeError("application materialization source dispatch is stale")
     if _current_default_branch(repository, token) != default_branch:
         raise RuntimeError("application materialization default branch changed")

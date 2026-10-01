@@ -3952,6 +3952,93 @@ def test_fresh_process_reconstructs_lead_materialization_from_canonical_observer
     assert observed[0] == (payload, source, "owner/repo", _REVISION)
 
 
+def test_accepted_materialization_reconciles_after_successor_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(322, "lead", "resolve-question")
+    payload = {
+        "issue_number": source.issue_number,
+        "operation": "application-materialize",
+        "expected_change": _CHANGE,
+        "change": _CHANGE,
+        "branch": f"agent/{_CHANGE}",
+        "base_sha": _REVISION,
+        "message": "Resolve the OpenSpec review findings",
+        "files": [
+            {
+                "path": f"openspec/changes/{_CHANGE}/proposal.md",
+                "blob_sha": "b" * 40,
+                "expected_sha": "c" * 40,
+            }
+        ],
+        "pr_number": 324,
+    }
+    raw = _raw(
+        issue_number=source.issue_number,
+        action=source.action,
+        role=source.role,
+        result_kind="ready-for-openspec-review",
+        requested_effects=[
+            {
+                "kind": effects.GITHUB_MUTATION_KIND,
+                "payload_json": json.dumps(payload, sort_keys=True),
+            }
+        ],
+    )
+    target = ValidationResourceTarget(
+        repository="owner/repo",
+        revision="d" * 40,
+        correlation=f"effect-request-{source.issue_number}",
+        pr_number=324,
+        change=_CHANGE,
+        validation_required=True,
+        branch=f"agent/{_CHANGE}",
+    )
+    observed: list[tuple[bool, tuple[str, str] | None]] = []
+
+    def observe(
+        _payload: Mapping[str, object],
+        _source: WorkerRequest,
+        *,
+        repository: str,
+        token: str,
+        current_revision: str,
+        default_branch: str,
+        allow_pending_continuation: bool = False,
+        accepted_successor_routing: tuple[str, str] | None = None,
+    ) -> ValidationResourceTarget:
+        assert (repository, token, current_revision, default_branch) == (
+            "owner/repo",
+            _TEST_TOKEN,
+            _REVISION,
+            "main",
+        )
+        observed.append((allow_pending_continuation, accepted_successor_routing))
+        return target
+
+    monkeypatch.setattr(
+        effects,
+        "_github_json",
+        lambda _repository, _token, api_path, **_kwargs: (
+            {"default_branch": "main"} if api_path == "" else None
+        ),
+    )
+    monkeypatch.setattr(effects, "observe_materialization_target", observe)
+
+    assert effects.consequence_postconditions_complete(
+        raw,
+        source=source,
+        repository="owner/repo",
+        token=_TEST_TOKEN,
+        current_revision=_REVISION,
+        authorized_change=_CHANGE,
+        request_comment_id=_REQUEST_COMMENT_ID,
+        allow_pending_continuation=True,
+        allow_accepted_successor=True,
+    )
+    assert observed == [(True, ("reviewer", "review-openspec"))]
+
+
 @pytest.mark.parametrize(
     "response",
     (None, {"message": "partial response"}, [{}], [{}] * 100),

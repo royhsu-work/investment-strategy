@@ -100,6 +100,7 @@ def test_existing_change_materialization_requires_current_pr_and_preserves_expec
         ("duplicate-pr", "carrier identity is ambiguous"),
         ("missing-default-history", "omits authorized default history"),
         ("unproven-historical-base", "comparison is not an ancestor"),
+        ("stale-open-base", "authorization base is stale"),
     ),
 )
 def test_existing_change_observer_reconstructs_only_exact_current_carrier(
@@ -125,7 +126,7 @@ def test_existing_change_observer_reconstructs_only_exact_current_carrier(
     )
     payload["base_sha"] = current_default
     payload["pr_number"] = 324
-    if failure == "unproven-historical-base":
+    if failure in {"unproven-historical-base", "stale-open-base"}:
         payload["base_sha"] = "a" * 40
     request = parse_materialization_payload(payload, source)
     pr = {
@@ -2033,85 +2034,315 @@ def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
     assert endpoint_successes == []
 
 
-def test_materialization_postcondition_logs_raw_observation_failure(
+def test_live_322_merged_carrier_observer_recovers_exact_target(
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    source = WorkerRequest(322, "lead", "resolve-question")
-    current_revision = "a" * 40
-    target = ValidationResourceTarget(
-        repository="royhsu-work/investment-strategy",
-        revision="b" * 40,
-        correlation="effect-request-322",
-        pr_number=324,
-        change=_CHANGE,
-        validation_required=True,
-        branch=f"agent/{_CHANGE}",
-    )
+    """A fresh observer recognizes the already-merged #324 consequence."""
 
-    def fail_observation(
-        _payload: object,
-        _source: object,
+    source = WorkerRequest(322, "lead", "resolve-question")
+    repository = "royhsu-work/investment-strategy"
+    change = "restore-no-work-idle-discovery"
+    accepted_base = "d019fdc604e8a7fa40e2f3e6436a12b076658057"
+    current_main = "b751948875a49582a0d073a47809d697badc8a6d"
+    carrier_head = "4ff78b463a24844309aa5025deb7eeaef78bbf55"
+    historical_materialization_revision = "5de9641a3e3e7e26071f3f8cdc1843e3fa842049"
+    branch = f"agent/{change}"
+    files = [
+        {
+            "path": f"openspec/changes/{change}/proposal.md",
+            "blob_sha": "bdeffd94ff01c7f3e2fd4e8e12c3b535b9df6932",
+            "expected_sha": "6003d898fae7c40c59d08e3023ed131baf41b383",
+        },
+        {
+            "path": f"openspec/changes/{change}/design.md",
+            "blob_sha": "8096b24682c77d37e177e68e3460712af7de3325",
+            "expected_sha": "05cfb1579bb4a7c6480f180e9a7e025fdb5fde27",
+        },
+        {
+            "path": f"openspec/changes/{change}/tasks.md",
+            "blob_sha": "4e428b3ead7ef6aa0de6cabfaef4885932a28d22",
+            "expected_sha": "331dc671ea6fa05c8fb2d40cc3f6dc65a31a6f0a",
+        },
+        {
+            "path": f"openspec/changes/{change}/specs/scheduled-agent-workflow/spec.md",
+            "blob_sha": "d1861dd5b6a190f821fdf99ec7bb2d36fe5db208",
+            "expected_sha": "a8ec4b39e5287651ad58cf2b2e0e1a31113cdf06",
+        },
+    ]
+    payload = {
+        "issue_number": source.issue_number,
+        "operation": "application-materialize",
+        "expected_change": change,
+        "change": change,
+        "branch": branch,
+        "base_sha": accepted_base,
+        "message": "Resolve exact-head OpenSpec findings for #322",
+        "pr_number": 324,
+        "files": files,
+    }
+    merged_pr = {
+        "number": 324,
+        "state": "closed",
+        "merged": True,
+        "merged_at": "2026-09-27T10:25:10Z",
+        "merge_commit_sha": current_main,
+        "body": "Formalize OpenSpec change.\n\nRefs #322\n",
+        "head": {
+            "ref": branch,
+            "sha": carrier_head,
+            "repo": {"full_name": repository},
+        },
+        "base": {
+            "ref": "main",
+            "sha": "6a4aadb40b875fce7715947fef7d9f59f9a9d9b2",
+            "repo": {"full_name": repository},
+        },
+    }
+
+    monkeypatch.setattr(materialization, "_current_authorized_request", lambda *_args: source)
+    monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_args: True)
+    monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
+    monkeypatch.setattr(
+        materialization,
+        "_ref_head_sha",
+        lambda _repository, _token, ref, **_kwargs: current_main if ref == "main" else None,
+    )
+    monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: merged_pr)
+    monkeypatch.setattr(validation_resource, "_default_branch_is_ancestor", lambda *_a, **_k: True)
+
+    final_blobs = {
+        files[0]["path"]: "a84a82367e4eb62087654c8e0eb104b930928482",
+        files[1]["path"]: "3d38ddc47e6f26f3dc7de5c579f5e87700156fd2",
+        files[2]["path"]: "7367ab0bb5adc63e204ff293ce1f4f9ceb03c5ed",
+        files[3]["path"]: "0ff040539d076f98adcb46274cd64cb2d5deaf61",
+    }
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
         **_kwargs: object,
-    ) -> ValidationResourceTarget:
-        raise RuntimeError("work-product historical manifest overlaps default changes")
+    ) -> object:
+        assert method == "GET"
+        if api_path == f"compare/{accepted_base}...{carrier_head}":
+            return {
+                "status": "ahead",
+                "ahead_by": 2,
+                "behind_by": 0,
+                "base_commit": {"sha": accepted_base},
+                "commits": [
+                    {"sha": historical_materialization_revision},
+                    {"sha": carrier_head},
+                ],
+                "total_commits": 2,
+            }
+        if api_path.startswith("contents/"):
+            raw_path, _separator, query = api_path.partition("?")
+            path = raw_path.removeprefix("contents/")
+            reference = query.removeprefix("ref=")
+            if reference == historical_materialization_revision:
+                return {"sha": next(file["blob_sha"] for file in files if file["path"] == path)}
+            if reference == carrier_head:
+                return {"sha": final_blobs[path]}
+            return None
+        raise AssertionError(api_path)
 
-    monkeypatch.setattr(materialization, "observe_materialization_target", fail_observation)
-    caplog.set_level("WARNING", logger=materialization.__name__)
+    monkeypatch.setattr(validation_resource, "_github_json", fake_github_json)
 
-    assert not materialization.materialization_postcondition(
-        {"base_sha": "c" * 40},
+    target = materialization.observe_materialization_target(
+        payload,
         source,
-        repository="royhsu-work/investment-strategy",
+        repository=repository,
         token=_TOKEN,
-        current_revision=current_revision,
+        current_revision=current_main,
         default_branch="main",
-        target=target,
+        # A merged carrier is already a durable consequence.  Its accepted
+        # base may be historical, so the observer must prove the merged
+        # carrier from GitHub history without requiring the pending-carrier
+        # continuation flag.
+        allow_pending_continuation=False,
     )
-    assert "work-product historical manifest overlaps default changes" in caplog.text
-    assert "target_pr=324" in caplog.text
-    assert current_revision in caplog.text
 
+    assert target == ValidationResourceTarget(
+        repository=repository,
+        revision=carrier_head,
+        correlation="effect-request-322",
+        pr_number=324,
+        change=change,
+        validation_required=True,
+        branch=branch,
+    )
 
-def test_materialization_postcondition_logs_target_mismatch(
+def test_merged_lead_carrier_observer_reconstructs_deterministic_replacement(
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     source = WorkerRequest(322, "lead", "resolve-question")
-    target = ValidationResourceTarget(
-        repository="royhsu-work/investment-strategy",
-        revision="b" * 40,
-        correlation="effect-request-322",
-        pr_number=324,
-        change=_CHANGE,
-        validation_required=True,
-        branch=f"agent/{_CHANGE}",
+    change = "restore-no-work-idle-discovery"
+    repository = "royhsu-work/investment-strategy"
+    current_main = "a" * 40
+    historical_head = "b" * 40
+    replacement_head = "c" * 40
+    historical_branch = f"agent/{change}-continuation-324"
+    replacement_branch = f"agent/{change}-continuation-347"
+    path = f"openspec/changes/{change}/proposal.md"
+    request = MaterializationRequest(
+        issue_number=322,
+        expected_change=change,
+        change=change,
+        branch=historical_branch,
+        base_sha=current_main,
+        message="Correct #322 semantics",
+        files=(WorkProductFile(path, "d" * 40, "e" * 40),),
+        pr_number=347,
     )
-    observed = ValidationResourceTarget(
-        repository="royhsu-work/investment-strategy",
-        revision="d" * 40,
-        correlation="effect-request-322",
-        pr_number=324,
-        change=_CHANGE,
-        validation_required=True,
-        branch=f"agent/{_CHANGE}",
+    historical_pr = {
+        "number": 347,
+        "state": "closed",
+        "merged": True,
+        "merged_at": "2026-09-29T00:00:00Z",
+        "merge_commit_sha": "f" * 40,
+        "head": {
+            "ref": historical_branch,
+            "sha": historical_head,
+            "repo": {"full_name": repository},
+        },
+        "base": {
+            "ref": "main",
+            "sha": current_main,
+            "repo": {"full_name": repository},
+        },
+    }
+    decision = materialization.ImplementationCarrierQualification(
+        disposition="QUALIFIED",
+        reason="continuation-carrier-qualified",
+        repository=repository,
+        issue_number=322,
+        change=change,
+        action=source.action,
+        pr_number=353,
+        branch=replacement_branch,
+        head_sha=replacement_head,
+        default_branch="main",
+        default_revision=current_main,
+        historical_pr_number=347,
+    )
+
+    monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: historical_pr)
+    monkeypatch.setattr(
+        materialization,
+        "_already_merged_work_product_target",
+        lambda **_kwargs: None,
     )
     monkeypatch.setattr(
         materialization,
-        "observe_materialization_target",
-        lambda _payload, _source, **_kwargs: observed,
+        "_open_prs_for_branch",
+        lambda _repository, _token, *, branch, default_branch: (
+            {"number": 353, "head": {"ref": branch}, "base": {"ref": default_branch}},
+        )
+        if branch == replacement_branch
+        else (),
     )
-    caplog.set_level("WARNING", logger=materialization.__name__)
+    monkeypatch.setattr(
+        materialization,
+        "_change_carrier_decision",
+        lambda *_args, **_kwargs: decision,
+    )
+    monkeypatch.setattr(
+        materialization,
+        "_revision_matches_manifest",
+        lambda _repository, _token, *, base_sha, revision, manifest: (
+            base_sha == current_main
+            and revision == replacement_head
+            and manifest.branch == historical_branch
+            and {file.path for file in manifest.files} == {path}
+        ),
+    )
 
-    assert not materialization.materialization_postcondition(
-        {},
+    assert materialization._observe_nonimplementation_existing_target(
+        request,
         source,
-        repository="royhsu-work/investment-strategy",
+        repository=repository,
         token=_TOKEN,
-        current_revision="a" * 40,
         default_branch="main",
-        target=target,
+        current_revision=current_main,
+    ) == ValidationResourceTarget(
+        repository=repository,
+        revision=replacement_head,
+        correlation="effect-request-322",
+        pr_number=353,
+        change=change,
+        validation_required=True,
+        branch=replacement_branch,
     )
-    assert "postcondition mismatch" in caplog.text
-    assert repr(observed) in caplog.text
-    assert repr(target) in caplog.text
+
+
+def test_merged_lead_carrier_observer_rejects_ambiguous_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = WorkerRequest(322, "lead", "resolve-question")
+    change = "restore-no-work-idle-discovery"
+    repository = "royhsu-work/investment-strategy"
+    current_main = "a" * 40
+    historical_branch = f"agent/{change}-continuation-324"
+    replacement_branch = f"agent/{change}-continuation-347"
+    request = MaterializationRequest(
+        issue_number=322,
+        expected_change=change,
+        change=change,
+        branch=historical_branch,
+        base_sha=current_main,
+        message="Correct #322 semantics",
+        files=(
+            WorkProductFile(
+                f"openspec/changes/{change}/proposal.md",
+                "d" * 40,
+                "e" * 40,
+            ),
+        ),
+        pr_number=347,
+    )
+    historical_pr = {
+        "number": 347,
+        "state": "closed",
+        "merged": True,
+        "merged_at": "2026-09-29T00:00:00Z",
+        "merge_commit_sha": "f" * 40,
+        "head": {
+            "ref": historical_branch,
+            "sha": "b" * 40,
+            "repo": {"full_name": repository},
+        },
+        "base": {
+            "ref": "main",
+            "sha": current_main,
+            "repo": {"full_name": repository},
+        },
+    }
+
+    monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: historical_pr)
+    monkeypatch.setattr(
+        materialization,
+        "_already_merged_work_product_target",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        materialization,
+        "_open_prs_for_branch",
+        lambda *_args, **_kwargs: (
+            {"number": 353, "head": {"ref": replacement_branch}},
+            {"number": 354, "head": {"ref": replacement_branch}},
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="replacement carrier is ambiguous"):
+        materialization._observe_nonimplementation_existing_target(
+            request,
+            source,
+            repository=repository,
+            token=_TOKEN,
+            default_branch="main",
+            current_revision=current_main,
+        )
+

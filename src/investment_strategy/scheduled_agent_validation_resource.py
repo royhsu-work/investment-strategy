@@ -26,6 +26,7 @@ from investment_strategy.scheduled_agent_action_model import (
 from investment_strategy.scheduled_agent_application_carrier import (
     ImplementationCarrierQualification,
     canonical_implementation_branch,
+    qualify_change_carrier,
     qualify_implementation_carrier,
 )
 from investment_strategy.scheduled_agent_carrier import (
@@ -240,16 +241,26 @@ def _pending_source_is_current(
     token: str,
     source: WorkerRequest,
     expected_change: str,
+    *,
+    accepted_successor_routing: tuple[str, str] | None = None,
 ) -> bool:
     issue = _as_mapping(_github_json(repository, token, f"issues/{source.issue_number}"))
     observation = None if issue is None else normalize_github_issue(issue)
+    current_routing = None if observation is None else observation.routing
+    source_routing = (source.role, source.action)
     return bool(
         observation is not None
         and observation.authoritative
         and observation.issue_number == source.issue_number
         and observation.state == "open"
         and observation.change == expected_change
-        and observation.routing == (source.role, source.action)
+        and (
+            current_routing == source_routing
+            or (
+                accepted_successor_routing is not None
+                and current_routing == accepted_successor_routing
+            )
+        )
     )
 
 
@@ -296,6 +307,39 @@ def _implementation_carrier_decision(
     if current_revision is None:
         raise RuntimeError("validation resource default branch revision is unavailable")
     decision = qualify_implementation_carrier(
+        repository=repository,
+        token=token,
+        source=source,
+        change=expected_change,
+        pr_number=pr_number,
+        current_revision=current_revision,
+        read=_github_json,
+    )
+    if not decision.recognized:
+        raise RuntimeError(f"validation resource carrier is not eligible: {decision.reason}")
+    return decision
+
+
+def _change_carrier_decision(
+    source: WorkerRequest,
+    *,
+    repository: str,
+    token: str,
+    default_branch: str,
+    expected_change: str,
+    pr_number: int,
+) -> ImplementationCarrierQualification:
+    """Reuse the shared carrier owner for OpenSpec continuation semantics."""
+
+    current_revision = _ref_head_sha(
+        repository,
+        token,
+        default_branch,
+        allow_not_found=True,
+    )
+    if current_revision is None:
+        raise RuntimeError("validation resource default branch revision is unavailable")
+    decision = qualify_change_carrier(
         repository=repository,
         token=token,
         source=source,
@@ -373,28 +417,41 @@ def _open_pr_payload(
     ):
         raise RuntimeError("validation resource target PR linkage is invalid")
 
-    implementation_continuation = (
-        source.action in {"implement-change", "review-implementation", "merge-implementation-pr"}
-        and expected_branch is not None
+    shared_continuation = (
+        expected_branch is not None
         and expected_branch != canonical_implementation_branch(expected_change)
     )
-    if implementation_continuation:
-        decision = carrier_decision or _implementation_carrier_decision(
-            source,
-            repository=repository,
-            token=token,
-            default_branch=default_branch,
-            expected_change=expected_change,
-            pr_number=pr_number,
+    if shared_continuation:
+        decision = carrier_decision
+        if decision is None:
+            if source.action in {
+                "implement-change",
+                "review-implementation",
+                "merge-implementation-pr",
+            }:
+                decision = _implementation_carrier_decision(
+                    source,
+                    repository=repository,
+                    token=token,
+                    default_branch=default_branch,
+                    expected_change=expected_change,
+                    pr_number=pr_number,
+                )
+            else:
+                decision = _change_carrier_decision(
+                    source,
+                    repository=repository,
+                    token=token,
+                    default_branch=default_branch,
+                    expected_change=expected_change,
+                    pr_number=pr_number,
+                )
+        allowed = (
+            decision.qualified
+            or (allow_reconciliation and decision.disposition == "RECONCILIATION_REQUIRED")
+            or (allow_historical_merged_carrier and decision.disposition == "HISTORICAL_MERGED")
         )
-        if (
-            not (
-                decision.qualified
-                or (allow_reconciliation and decision.disposition == "RECONCILIATION_REQUIRED")
-            )
-            or decision.pr_number != pr_number
-            or decision.branch != branch
-        ):
+        if not allowed or decision.pr_number != pr_number or decision.branch != branch:
             raise RuntimeError("validation resource continuation carrier is not qualified")
         return pr
 
@@ -751,6 +808,28 @@ def resolve_validation_resource_target(
         ):
             raise RuntimeError(
                 "validation resource implementation carrier is not qualified for consumption"
+            )
+        return ValidationResourceTarget(
+            repository=repository,
+            revision=decision.head_sha,
+            correlation=f"effect-request-{plan.source.issue_number}",
+            pr_number=plan.pr_number,
+            change=plan.expected_change,
+            branch=decision.branch,
+        )
+
+    if plan.source.role == "reviewer" and plan.source.action == "review-openspec":
+        decision = _change_carrier_decision(
+            plan.source,
+            repository=repository,
+            token=token,
+            default_branch=default_branch,
+            expected_change=plan.expected_change,
+            pr_number=plan.pr_number,
+        )
+        if decision.disposition != "QUALIFIED" or decision.head_sha is None:
+            raise RuntimeError(
+                "validation resource OpenSpec carrier is not qualified for consumption"
             )
         return ValidationResourceTarget(
             repository=repository,
@@ -1538,6 +1617,213 @@ def _manifest_expected_content_matches_base(
     )
 
 
+def _historical_manifest_materialization_commit(
+    repository: str,
+    token: str,
+    *,
+    base_sha: str,
+    revision: str,
+    manifest: WorkProductManifest,
+) -> str | None:
+    """Find one authoritative carrier commit containing the exact manifest.
+
+    A merged PR may legitimately have later commits that update the same
+    OpenSpec files.  The durable consequence of the original application is
+    therefore proved from the PR's complete compare history, not from the
+    final tree alone.  GitHub's compare/commit/content identities are all
+    content-addressed and read-only; any incomplete or truncated observation
+    fails closed.
+    """
+
+    if (
+        not _valid_sha(base_sha)
+        or not _valid_sha(revision)
+        or not manifest.files
+        or base_sha == revision
+    ):
+        return None
+    comparison = _as_mapping(
+        cast(object, _github_json(repository, token, f"compare/{base_sha}...{revision}"))
+    )
+    base_commit = None if comparison is None else _as_mapping(comparison.get("base_commit"))
+    commits = None if comparison is None else comparison.get("commits")
+    ahead_by = None if comparison is None else comparison.get("ahead_by")
+    behind_by = None if comparison is None else comparison.get("behind_by")
+    total_commits = None if comparison is None else comparison.get("total_commits")
+    if (
+        comparison is None
+        or comparison.get("status") != "ahead"
+        or comparison.get("too_large") is True
+        or base_commit is None
+        or base_commit.get("sha") != base_sha
+        or not isinstance(ahead_by, int)
+        or isinstance(ahead_by, bool)
+        or ahead_by <= 0
+        or not isinstance(behind_by, int)
+        or isinstance(behind_by, bool)
+        or behind_by != 0
+        or not isinstance(commits, list)
+        or len(commits) != ahead_by
+        or (
+            total_commits is not None
+            and (
+                not isinstance(total_commits, int)
+                or isinstance(total_commits, bool)
+                or total_commits != len(commits)
+            )
+        )
+        or not commits
+    ):
+        return None
+
+    commit_shas: list[str] = []
+    seen_commits: set[str] = set()
+    for raw_commit in commits:
+        commit = _as_mapping(raw_commit)
+        commit_sha = None if commit is None else commit.get("sha")
+        if not _valid_sha(commit_sha) or cast(str, commit_sha) in seen_commits:
+            return None
+        seen_commits.add(cast(str, commit_sha))
+        commit_shas.append(cast(str, commit_sha))
+    if commit_shas[-1] != revision:
+        return None
+
+    requested_paths = {file.path for file in manifest.files}
+    if len(requested_paths) != len(manifest.files):
+        return None
+
+    for commit_sha in commit_shas:
+        if _manifest_content_matches(
+            repository,
+            token,
+            revision=commit_sha,
+            manifest=manifest,
+        ):
+            return commit_sha
+    return None
+
+
+def _already_merged_work_product_target(
+    *,
+    repository: str,
+    token: str,
+    default_branch: str,
+    authorization_revision: str,
+    pr: Mapping[str, object],
+    issue_number: int,
+    pr_number: int,
+    expected_change: str,
+    expected_branch: str,
+    manifest: WorkProductManifest,
+) -> ValidationResourceTarget | None:
+    """Recognize a requested carrier whose exact content is already merged.
+
+    A completed carrier is a durable consequence, not a request to create a
+    same-Change replacement.  This observer is intentionally narrow: the PR
+    must be a historical merged carrier, its merge commit must be in the
+    current default-branch history, and every requested blob must be present
+    in one complete historical PR snapshot.  The snapshot normally comes
+    from the recorded head; after a same-Change successor has merged, it may
+    instead come from the complete accepted-base-to-main history, but only
+    when the historical merge commit is an ancestor of that exact snapshot.
+    Later same-Change descendants may update those files legitimately; if the
+    historical exact effect or its ancestry is not provable, callers retain
+    the existing replacement/fail-closed path.
+    """
+
+    if not _is_historical_merged_carrier(pr):
+        return None
+    head = _as_mapping(pr.get("head"))
+    base = _as_mapping(pr.get("base"))
+    pr_head_sha = None if head is None else head.get("sha")
+    pr_base_sha = None if base is None else base.get("sha")
+    merge_commit_sha = pr.get("merge_commit_sha")
+    if (
+        pr.get("number") != pr_number
+        or head is None
+        or base is None
+        or head.get("ref") != expected_branch
+        or base.get("ref") != default_branch
+        or not _valid_sha(pr_head_sha)
+        or not _valid_sha(pr_base_sha)
+        or not _valid_sha(merge_commit_sha)
+    ):
+        return None
+
+    if not _default_branch_is_ancestor(
+        repository,
+        token,
+        default_revision=cast(str, merge_commit_sha),
+        revision=authorization_revision,
+    ):
+        return None
+    # The usual case is that the accepted base is an ancestor of the
+    # historical PR base and the exact manifest can be found in the PR head's
+    # complete compare history.  A resumed accepted application can instead
+    # observe a later same-Change successor already merged on main: the
+    # accepted base is then newer than the recorded carrier base, while the
+    # immutable manifest was materialized by that successor.  Do not reject
+    # that durable consequence merely because the old carrier's base cannot
+    # be compared in the forward direction.  The successor path is still
+    # narrow: the exact manifest must be found in the complete compare history
+    # from the accepted base to current main, and the historical carrier's
+    # merge commit must be an ancestor of that exact materialization commit.
+    direct_materialization = None
+    if _default_branch_is_ancestor(
+        repository,
+        token,
+        default_revision=cast(str, pr_head_sha),
+        revision=authorization_revision,
+    ) and (
+        pr_base_sha == manifest.base_sha
+        or _default_branch_is_ancestor(
+            repository,
+            token,
+            default_revision=manifest.base_sha,
+            revision=cast(str, pr_base_sha),
+        )
+    ):
+        direct_materialization = _historical_manifest_materialization_commit(
+            repository,
+            token,
+            base_sha=manifest.base_sha,
+            revision=cast(str, pr_head_sha),
+            manifest=manifest,
+        )
+    if direct_materialization is not None:
+        return ValidationResourceTarget(
+            repository=repository,
+            revision=cast(str, pr_head_sha),
+            correlation=f"effect-request-{issue_number}",
+            pr_number=pr_number,
+            change=expected_change,
+            branch=expected_branch,
+        )
+
+    successor_materialization = _historical_manifest_materialization_commit(
+        repository,
+        token,
+        base_sha=manifest.base_sha,
+        revision=authorization_revision,
+        manifest=manifest,
+    )
+    if successor_materialization is None or not _default_branch_is_ancestor(
+        repository,
+        token,
+        default_revision=cast(str, merge_commit_sha),
+        revision=successor_materialization,
+    ):
+        return None
+    return ValidationResourceTarget(
+        repository=repository,
+        revision=successor_materialization,
+        correlation=f"effect-request-{issue_number}",
+        pr_number=pr_number,
+        change=expected_change,
+        branch=expected_branch,
+    )
+
+
 def _reconciliation_message(change: str) -> str:
     return f"Reconcile default-branch ancestry for {change}"
 
@@ -1849,6 +2135,17 @@ def apply_work_product(
             expected_branch = carrier_decision.branch
     else:
         expected_branch = _source_branch(plan.expected_change)
+        if expected_branch is not None and plan.manifest.branch != expected_branch:
+            carrier_decision = _change_carrier_decision(
+                plan.source,
+                repository=repository,
+                token=token,
+                default_branch=default_branch,
+                expected_change=plan.expected_change,
+                pr_number=plan.pr_number,
+            )
+            if carrier_decision.branch == plan.manifest.branch:
+                expected_branch = carrier_decision.branch
     if expected_branch is None or plan.manifest.branch != expected_branch:
         if carrier_decision is not None:
             raise RuntimeError(
@@ -1901,6 +2198,21 @@ def apply_work_product(
     if base is None or base.get("ref") != default_branch:
         raise RuntimeError("work-product PR base identity is stale")
     historical_merged_carrier = _is_historical_merged_carrier(pr)
+    if historical_merged_carrier:
+        completed_target = _already_merged_work_product_target(
+            repository=repository,
+            token=token,
+            default_branch=default_branch,
+            authorization_revision=authorization_revision,
+            pr=pr,
+            issue_number=plan.source.issue_number,
+            pr_number=plan.pr_number,
+            expected_change=plan.expected_change,
+            expected_branch=expected_branch,
+            manifest=plan.manifest,
+        )
+        if completed_target is not None:
+            return completed_target
     replacement_branch: str | None = None
     replacement_ref_exists = False
     replacement_pr: Mapping[str, object] | None = None
