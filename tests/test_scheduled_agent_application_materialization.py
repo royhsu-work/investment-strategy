@@ -2348,7 +2348,6 @@ def test_merged_lead_carrier_observer_rejects_ambiguous_replacement(
         )
 
 
-
 def test_merged_lead_carrier_observer_accepts_reconciled_stale_replacement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
