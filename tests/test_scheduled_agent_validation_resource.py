@@ -922,6 +922,255 @@ def test_apply_work_product_builds_same_change_replacement_after_merged_carrier(
     assert carrier_plan.expected["historical_pull_request"] == 178
 
 
+def test_existing_replacement_reconciles_after_disjoint_default_advance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An exact replacement carrier is reconciled when main advances disjointly."""
+
+    source = WorkerRequest(322, "lead", "resolve-question")
+    change = "restore-no-work-idle-discovery"
+    accepted_base = "1" * 40
+    current_main = "2" * 40
+    historical_head = "3" * 40
+    historical_merge_commit = "4" * 40
+    replacement_head = "5" * 40
+    tree_sha = "6" * 40
+    reconciled_revision = "7" * 40
+    historical_branch = f"agent/{change}-continuation-324"
+    replacement_branch = f"agent/{change}-continuation-347"
+    path = f"openspec/changes/{change}/proposal.md"
+    expected_sha = "8" * 40
+    blob_sha = "9" * 40
+    manifest = resource.WorkProductManifest(
+        branch=historical_branch,
+        base_sha=accepted_base,
+        message="Correct #322 NO_WORK idle completion semantics",
+        files=(resource.WorkProductFile(path, blob_sha, expected_sha),),
+    )
+    plan = resource.WorkProductPlan(
+        True,
+        source=source,
+        pr_number=347,
+        expected_change=change,
+        manifest=manifest,
+    )
+    historical_pr = {
+        "number": 347,
+        "state": "closed",
+        "merged": True,
+        "merged_at": "2026-10-01T00:00:00Z",
+        "merge_commit_sha": historical_merge_commit,
+        "body": "Continue OpenSpec change.\n\nRefs #322\n",
+        "head": {
+            "ref": historical_branch,
+            "sha": historical_head,
+            "repo": {"full_name": _REPOSITORY},
+        },
+        "base": {
+            "ref": "main",
+            "sha": accepted_base,
+            "repo": {"full_name": _REPOSITORY},
+        },
+    }
+    replacement_pr = {
+        "number": 353,
+        "state": "open",
+        "merged": False,
+        "draft": False,
+        "body": "Continue OpenSpec change.\n\nRefs #322\n",
+        "head": {
+            "ref": replacement_branch,
+            "sha": replacement_head,
+            "repo": {"full_name": _REPOSITORY},
+        },
+        "base": {
+            "ref": "main",
+            "sha": accepted_base,
+            "repo": {"full_name": _REPOSITORY},
+        },
+    }
+    decision = resource.ImplementationCarrierQualification(
+        disposition="QUALIFIED",
+        reason="continuation-carrier-qualified",
+        repository=_REPOSITORY,
+        issue_number=322,
+        change=change,
+        action=source.action,
+        pr_number=347,
+        branch=historical_branch,
+        head_sha=historical_head,
+        default_branch="main",
+        default_revision=current_main,
+        historical_pr_number=324,
+    )
+    default_paths = [{"README.md"}]
+    mutations: list[tuple[str, dict[str, object] | None]] = []
+
+    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_args: source)
+    monkeypatch.setattr(
+        resource,
+        "_change_carrier_decision",
+        lambda *_args, **_kwargs: decision,
+    )
+    monkeypatch.setattr(
+        resource,
+        "_open_pr_payload",
+        lambda **kwargs: historical_pr if kwargs["pr_number"] == 347 else replacement_pr,
+    )
+    monkeypatch.setattr(
+        resource,
+        "_open_prs_for_branch",
+        lambda *_args, branch, **_kwargs: (
+            ({"number": 353},) if branch == replacement_branch else ()
+        ),
+    )
+    monkeypatch.setattr(
+        resource,
+        "_already_merged_work_product_target",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        resource,
+        "_ref_head_sha",
+        lambda _repository, _token, ref, **_kwargs: (
+            current_main
+            if ref == "main"
+            else replacement_head
+            if ref == replacement_branch
+            else historical_head
+        ),
+    )
+    monkeypatch.setattr(
+        resource,
+        "_default_branch_is_ancestor",
+        lambda _repository, _token, *, default_revision, revision: (
+            default_revision == historical_merge_commit and revision == current_main
+        ),
+    )
+    monkeypatch.setattr(
+        resource,
+        "_ancestor_comparison_paths",
+        lambda _repository, _token, *, base_sha, revision: (
+            set(default_paths[0])
+            if base_sha == accepted_base and revision == current_main
+            else set()
+        ),
+    )
+    monkeypatch.setattr(
+        resource,
+        "_revision_matches_manifest",
+        lambda _repository, _token, *, base_sha, revision, manifest: (
+            base_sha == accepted_base
+            and revision == replacement_head
+            and manifest.files[0].path == path
+        ),
+    )
+    monkeypatch.setattr(
+        resource,
+        "_manifest_content_matches",
+        lambda _repository, _token, *, revision, manifest: (
+            revision in {replacement_head, reconciled_revision}
+            and manifest.files[0].blob_sha == blob_sha
+        ),
+    )
+    monkeypatch.setattr(
+        resource,
+        "_manifest_expected_content_matches_base",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        resource,
+        "_is_reconciled_work_product_revision",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        resource,
+        "_content_sha_at",
+        lambda _repository, _token, **kwargs: (
+            blob_sha
+            if kwargs["path"] == path and kwargs["revision"] == reconciled_revision
+            else expected_sha
+        ),
+    )
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+        **_kwargs: object,
+    ) -> object:
+        if method != "GET":
+            mutations.append((api_path, payload))
+        if api_path == f"git/commits/{current_main}" and method == "GET":
+            return {"sha": current_main, "tree": {"sha": "a" * 40}}
+        if api_path == "git/trees" and method == "POST":
+            assert payload == {
+                "base_tree": "a" * 40,
+                "tree": [
+                    {
+                        "path": path,
+                        "mode": "100644",
+                        "type": "blob",
+                        "sha": blob_sha,
+                    }
+                ],
+            }
+            return {"sha": tree_sha}
+        if api_path == f"git/trees/{tree_sha}?recursive=1" and method == "GET":
+            return {
+                "sha": tree_sha,
+                "truncated": False,
+                "tree": [{"path": path, "type": "blob", "sha": blob_sha}],
+            }
+        if api_path == "git/commits" and method == "POST":
+            assert payload == {
+                "message": f"Reconcile default-branch ancestry for {change}",
+                "tree": tree_sha,
+                "parents": [replacement_head, current_main],
+            }
+            return {"sha": reconciled_revision}
+        if api_path == f"git/commits/{reconciled_revision}" and method == "GET":
+            return {
+                "sha": reconciled_revision,
+                "message": f"Reconcile default-branch ancestry for {change}",
+                "tree": {"sha": tree_sha},
+                "parents": [{"sha": replacement_head}, {"sha": current_main}],
+            }
+        raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
+
+    monkeypatch.setattr(resource, "_github_json", fake_github_json)
+
+    with pytest.raises(CarrierRequired) as raised:
+        resource.apply_work_product(
+            plan,
+            repository=_REPOSITORY,
+            token=_FIXTURE_VALUE,
+            default_branch="main",
+            authorization_revision=current_main,
+        )
+
+    carrier_plan = raised.value.plan
+    assert carrier_plan.operation == "pull-request-head-update"
+    assert carrier_plan.requested["sha"] == reconciled_revision
+    assert carrier_plan.requested["expected_head_sha"] == replacement_head
+    assert carrier_plan.requested["commit_parents"] == [replacement_head, current_main]
+
+    mutations.clear()
+    default_paths[0] = {path}
+    with pytest.raises(RuntimeError, match="replacement work-product base is not current"):
+        resource.apply_work_product(
+            plan,
+            repository=_REPOSITORY,
+            token=_FIXTURE_VALUE,
+            default_branch="main",
+            authorization_revision=current_main,
+        )
+    assert mutations == []
+
+
 def test_reconciliation_overlays_default_only_changes_on_a_stale_carrier(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
