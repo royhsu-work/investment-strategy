@@ -43,6 +43,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     _content_sha_at,
     _current_authorized_request,
     _current_default_branch,
+    _default_branch_is_ancestor,
     _github_json,
     _historical_manifest_observation_matches,
     _is_executor_config_authoring,
@@ -1771,7 +1772,37 @@ def _observe_nonimplementation_existing_target(
         change=request.change,
     ) or not _valid_sha(base_revision):
         raise RuntimeError("application materialization carrier identity is invalid")
+    manifest = WorkProductManifest(
+        branch=request.branch,
+        base_sha=request.base_sha,
+        message=request.message,
+        files=request.files,
+    )
     if request.base_sha != current_revision:
+        direct_carrier_postcondition = (
+            cast(str, base_revision) == current_revision
+            and _default_branch_is_ancestor(
+                repository,
+                token,
+                default_revision=current_revision,
+                revision=cast(str, revision),
+            )
+            and _revision_matches_manifest(
+                repository,
+                token,
+                base_sha=request.base_sha,
+                revision=cast(str, revision),
+                manifest=manifest,
+            )
+        )
+        if direct_carrier_postcondition:
+            return _target(
+                request,
+                repository=repository,
+                revision=cast(str, revision),
+                pr_number=request.pr_number,
+                validation_required=materialization_requires_validation(request, source),
+            )
         _validate_historical_pr_base(
             repository,
             token,
@@ -1782,12 +1813,6 @@ def _observe_nonimplementation_existing_target(
             requested_paths={file.path for file in request.files},
         )
 
-    manifest = WorkProductManifest(
-        branch=request.branch,
-        base_sha=request.base_sha,
-        message=request.message,
-        files=request.files,
-    )
     if request.base_sha == current_revision:
         try:
             _ancestor_comparison_paths(
