@@ -2,7 +2,7 @@
 
 ## Current decision boundary
 
-The original Explore reconstruction used default-branch revision `2e00e236f24ba41302c9ba18c685acdf4cebe4ed`; this continuation was freshly reconstructed from `main@3a2bbf45f449fbcb8f64afc4ea2fd4b1262b3480`. Fresh source inspection establishes these owners:
+The original Explore reconstruction used default-branch revision `2e00e236f24ba41302c9ba18c685acdf4cebe4ed`; this continuation is reconciled onto the then-current N-1 substrate `main@5fa6fdf7d9b33e3f2718c9525bb685f74393d3f3`. Fresh source inspection establishes these owners:
 
 - `workflow_dispatch.py` and the runtime preflight reconstruct current repository work and return `AUTHORIZE`, `NO_WORK`, or `FAIL_CLOSED`.
 - `issue_comment_bridge.py` checks the authoritative default branch and publishes one run-scoped dispatch-result artifact.
@@ -12,7 +12,7 @@ The original Explore reconstruction used default-branch revision `2e00e236f24ba4
 
 The current gap is therefore a missing reachability boundary, not a defect in normal selection and not permission to infer work from an empty queue.
 
-The current delivery baseline is `main@3a2bbf45f449fbcb8f64afc4ea2fd4b1262b3480`. The shared application substrate repair and same-Change recovery are merged through PR #349; they are N-1 prerequisites already present on this revision, not remaining Stage 0 work. Continue with the typed idle handoff and later stages on this current baseline; retain the full parent completion outcome.
+The current delivery baseline is `main@5fa6fdf7d9b33e3f2718c9525bb685f74393d3f3`. The shared application substrate and same-Change recovery established through #331 → #333 and #347/#349 required two bounded bootstrap continuations before this semantic review could be reached: PR #354 aligned the positive materialization postcondition observer with the deterministic replacement carrier already created by apply-side ownership, and PR #355 reused the existing safe two-parent reconciliation/carrier path when that accepted replacement became stale after a disjoint default-branch advance. Both are merged into this N-1 and preserve the same shared owner rather than introducing #322-specific recovery state. Continue with the remaining idle implementation and later lifecycle/production stages on this current baseline; retain the full parent completion outcome.
 
 ## Decision 1: Keep normal dispatch Action-only
 
