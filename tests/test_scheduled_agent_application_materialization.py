@@ -152,6 +152,11 @@ def test_existing_change_observer_reconstructs_only_exact_current_carrier(
     monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
     monkeypatch.setattr(
         materialization,
+        "_default_branch_is_ancestor",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        materialization,
         "_ref_head_sha",
         lambda _repo, _token, branch: (
             current_default
@@ -1628,6 +1633,156 @@ def test_existing_first_carrier_rejects_renamed_descendant_path(
         )
 
 
+def test_existing_materialization_observer_accepts_direct_carrier_commit_on_current_main(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An exact carrier child commit is a positive postcondition.
+
+    It must not be misclassified as historical default-base debt.
+    """
+
+    source = WorkerRequest(322, "lead", "resolve-question")
+    previous_head = "1" * 40
+    current_default = "2" * 40
+    carrier_head = "3" * 40
+    branch = f"agent/{_CHANGE}-continuation-347"
+    path = f"openspec/changes/{_CHANGE}/proposal.md"
+    payload = _payload(
+        expected_change=_CHANGE,
+        issue_number=source.issue_number,
+        files=[{"path": path, "blob_sha": _BLOB, "expected_sha": "4" * 40}],
+    )
+    payload.update(
+        {
+            "branch": branch,
+            "base_sha": previous_head,
+            "pr_number": 353,
+            "message": "Correct staged-delivery prerequisite evidence after review",
+        }
+    )
+    pr = {
+        "number": 353,
+        "state": "open",
+        "merged": False,
+        "draft": False,
+        "title": f"OpenSpec: {_CHANGE} continuation",
+        "body": f"Continue the OpenSpec change.\n\nRefs #{source.issue_number}",
+        "head": {
+            "ref": branch,
+            "sha": carrier_head,
+            "repo": {"full_name": "royhsu-work/investment-strategy"},
+        },
+        "base": {
+            "ref": "main",
+            "sha": current_default,
+            "repo": {"full_name": "royhsu-work/investment-strategy"},
+        },
+    }
+    exact_manifest_calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_args: True)
+    monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
+    monkeypatch.setattr(
+        materialization,
+        "_ref_head_sha",
+        lambda _repo, _token, ref, **_kwargs: current_default if ref == "main" else carrier_head,
+    )
+    monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: pr)
+    monkeypatch.setattr(materialization, "_matching_prs", lambda *_args, **_kwargs: [pr])
+    monkeypatch.setattr(
+        materialization,
+        "_open_prs_for_branch",
+        lambda *_args, **_kwargs: (pr,),
+    )
+    monkeypatch.setattr(
+        materialization,
+        "_default_branch_is_ancestor",
+        lambda _repo, _token, *, default_revision, revision: (
+            default_revision == current_default and revision == carrier_head
+        ),
+    )
+
+    def exact_manifest(
+        _repository: str,
+        _token: str,
+        *,
+        base_sha: str,
+        revision: str,
+        manifest: WorkProductManifest,
+    ) -> bool:
+        exact_manifest_calls.append((base_sha, revision))
+        return (
+            base_sha == previous_head
+            and revision == carrier_head
+            and {file.path for file in manifest.files} == {path}
+            and {file.blob_sha for file in manifest.files} == {_BLOB}
+        )
+
+    def historical_base_should_not_run(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError(
+            "direct carrier postcondition must not use historical-default-base validation"
+        )
+
+    monkeypatch.setattr(materialization, "_revision_matches_manifest", exact_manifest)
+    monkeypatch.setattr(
+        materialization,
+        "_validate_historical_pr_base",
+        historical_base_should_not_run,
+    )
+
+    target = materialization.observe_materialization_target(
+        payload,
+        source,
+        repository="royhsu-work/investment-strategy",
+        token=_TOKEN,
+        current_revision=current_default,
+        default_branch="main",
+        allow_pending_continuation=True,
+    )
+
+    assert target == ValidationResourceTarget(
+        repository="royhsu-work/investment-strategy",
+        revision=carrier_head,
+        correlation=f"effect-request-{source.issue_number}",
+        pr_number=353,
+        change=_CHANGE,
+        validation_required=True,
+        branch=branch,
+    )
+    assert exact_manifest_calls == [(previous_head, carrier_head)]
+    assert materialization.materialization_postcondition(
+        payload,
+        source,
+        repository="royhsu-work/investment-strategy",
+        token=_TOKEN,
+        current_revision=current_default,
+        default_branch="main",
+        target=target,
+        allow_pending_continuation=True,
+    )
+
+    monkeypatch.setattr(materialization, "_revision_matches_manifest", lambda *_a, **_k: False)
+
+    def reject_invalid_historical_shape(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("historical default-base ancestry is invalid")
+
+    monkeypatch.setattr(
+        materialization,
+        "_validate_historical_pr_base",
+        reject_invalid_historical_shape,
+    )
+    assert not materialization.materialization_postcondition(
+        payload,
+        source,
+        repository="royhsu-work/investment-strategy",
+        token=_TOKEN,
+        current_revision=current_default,
+        default_branch="main",
+        target=target,
+        allow_pending_continuation=True,
+    )
+
+
 def test_existing_materialization_observer_recovers_disjoint_historical_base(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1680,6 +1835,11 @@ def test_existing_materialization_observer_recovers_disjoint_historical_base(
 
     monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_args: True)
     monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
+    monkeypatch.setattr(
+        materialization,
+        "_default_branch_is_ancestor",
+        lambda *_args, **_kwargs: False,
+    )
     monkeypatch.setattr(
         materialization,
         "_ref_head_sha",
