@@ -1636,7 +1636,7 @@ def test_existing_first_carrier_rejects_renamed_descendant_path(
 def test_existing_materialization_observer_accepts_direct_carrier_commit_on_current_main(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A carrier-applied exact child commit is a positive postcondition, not historical-base debt."""
+    """An exact carrier child commit is a positive postcondition.\n\n    It must not be misclassified as historical default-base debt.\n    """
 
     source = WorkerRequest(322, "lead", "resolve-question")
     previous_head = "1" * 40
