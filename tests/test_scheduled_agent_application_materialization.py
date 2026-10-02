@@ -152,6 +152,11 @@ def test_existing_change_observer_reconstructs_only_exact_current_carrier(
     monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
     monkeypatch.setattr(
         materialization,
+        "_default_branch_is_ancestor",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        materialization,
         "_ref_head_sha",
         lambda _repo, _token, branch: (
             current_default
@@ -1827,6 +1832,11 @@ def test_existing_materialization_observer_recovers_disjoint_historical_base(
 
     monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_args: True)
     monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
+    monkeypatch.setattr(
+        materialization,
+        "_default_branch_is_ancestor",
+        lambda *_args, **_kwargs: False,
+    )
     monkeypatch.setattr(
         materialization,
         "_ref_head_sha",
