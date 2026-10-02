@@ -1,6 +1,6 @@
 # Tasks
 
-## 0. Shared application materialization recovery
+## 0A. Historical materialization recovery characterization
 
 - [x] 0.1 RED: reproduce the first-carrier postcondition contradiction after a safe disjoint main advance, with real current materialization source and exact Issue/Change/branch/head/PR/content observations.
 - [x] 0.2 GREEN: make `materialization_postcondition()` compare the canonical fresh observer's exact target while retaining pending-continuation ancestry, path, identity, and ambiguity guards.
@@ -16,7 +16,17 @@
 - [x] 0.12 RED/GREEN: reproduce an accepted materialization whose exact PR carrier merged before the application process resumed; reconcile the merged head from complete GitHub compare history and exact historical blob evidence without creating a same-Change replacement, while retaining the existing replacement path when content or ancestry proof is incomplete.
 - [x] 0.13 RED/GREEN: reproduce an accepted materialization whose historical carrier is superseded by a same-Change merge after acceptance; recover the exact immutable manifest from current-main compare history only when the historical merge commit remains an ancestor, and fail closed for incomplete evidence.
 
-Stage 0 is merged and active on current `main@5fa6fdf7d9b33e3f2718c9525bb685f74393d3f3`: the shared application recovery chain #331 → #333 plus same-Change recovery PRs #347/#349 established current-source materialization, interruption/consequence recovery, and accepted-base-to-main lineage. The bounded bootstrap continuation additionally required merged PR #354 to recognize the deterministic replacement in the positive materialization postcondition and merged PR #355 to reconcile that accepted replacement across a later disjoint main advance using the existing safe two-parent carrier path. The accepted #322 materialization has traversed those prerequisites to the current semantic-review boundary. Stage 0 is complete as delivered; tasks 2.6/2.7, final verification, governed lifecycle completion, and post-terminal production acceptance remain mandatory, so the parent outcome is not complete.
+These historical repairs are merged and active on current `main@5fa6fdf7d9b33e3f2718c9525bb685f74393d3f3`: the application recovery chain #331 → #333 plus #347/#349/#354/#355 provides production characterization and reusable recovery/lineage/witness primitives. They are **not** the systemic root-completion gate: latest Human evidence shows the same materialized consequence still has multiple effective positive completion semantics. PR #357 is additional RED characterization and its topology-specific branch is not final architecture.
+
+## 0B. Canonical durable-consequence proof consolidation
+
+- [ ] 0B.1 CHARACTERIZE: preserve executable positive characterization for ancestor carrier, disjoint main advance, historical PR base, reconciled carrier, merged carrier, merged carrier plus same-Change successor, deterministic replacement, replacement plus main advance, reconciliation, and reconciliation plus later one-parent correction (#357), plus negative wrong-blob/PR/ref, duplicate/ambiguous carrier, overlap, broken ancestry, incomplete compare, and contradictory-state cases; do not change production behavior in this slice.
+- [ ] 0B.2 RED/GREEN: introduce one canonical read-only materialized durable-consequence proof owner returning `COMPLETE(target, witness)`, `INCOMPLETE`, or `CONTRADICTORY(reason)` from Identity + Content + Lineage + Non-conflict; run it in shadow against the characterization matrix before cutover.
+- [ ] 0B.3 RED/GREEN: cut materialization observation/postcondition, fresh interruption recovery, and consequence-completion classification over to the canonical proof; keep existing topology helpers only as proof primitives/witness finders and prove the consumers cannot independently manufacture positive completion.
+- [ ] 0B.4 RED/GREEN: cut apply-side already-complete qualification over to the same canonical proof; prove `apply(I) -> fresh prove(I) == COMPLETE` and that an obsolete mutation preimage such as `expected_sha` does not invalidate an otherwise proven durable desired consequence.
+- [ ] 0B.5 VERIFY: exercise interruption after accepted decision, blob/tree/commit, branch/ref, PR carrier, CarrierRequired exit, validation, formal result, merge, and successor routing; each fresh continuation reconstructs solely from GitHub truth with zero semantic replay.
+- [ ] 0B.6 VERIFY: prove safe-evolution monotonicity across disjoint main advance, legal reconciliation, legal merge, and legal same-Change descendants; prove conflict preservation for all stale/overlap/identity/cardinality/blob/ancestry/incomplete/contradictory negatives.
+- [ ] 0B.7 CLEANUP: after every positive completion consumer is proven to delegate to the canonical owner, remove superseded topology-specific top-level completion branches (including the permanent need for a `direct_carrier_postcondition`-style #357 special case) while retaining reusable proof primitives; run focused/full pytest, Ruff, format, mypy, static workflow invariants, and exact-revision OpenSpec validation.
 
 ## 1. Contract and typed NO_WORK handoff
 

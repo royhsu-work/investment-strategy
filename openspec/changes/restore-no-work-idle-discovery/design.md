@@ -116,15 +116,65 @@ If that external configuration is not exposed to the available capability, repos
 
 ## Shared materialization and consequence recovery
 
-The idle path depends on the same shared application substrate used by normal Actions. It must not acquire a #322-specific recovery path. Keep `observe_materialization_target()` as the positive owner for exact current carrier identity and have `materialization_postcondition()` compare its result with the application target. For a pending first carrier whose original base is behind current main, the observer may accept only a proven ancestor base with disjoint changed paths and an exact immutable one-commit manifest. Its PR must target current main and remain bound to the original base snapshot; stale, overlapping, mismatched, duplicate, or incomplete evidence fails closed.
+The idle path depends on the same shared application substrate used by normal Actions. It MUST NOT acquire a #322-specific recovery path, and Git topology MUST NOT define separate positive completion states.
 
-If an accepted first-carrier intent has a verified branch ref and exact content but no PR because execution stopped at the branch-ref/PR-carrier boundary, a later invocation may emit only the missing PR-create plan after repeating the ancestry, path-disjointness, branch/head/content, current source, and all-heads PR-cardinality checks. It must not re-run Lead semantics, recreate the branch, move its ref, or create a PR when any competing or ambiguous carrier exists. The existing safe PR-plan builder should be shared with initial creation.
+### Single durable-consequence proof owner
 
-Fresh-process consequence observation must use the existing `ConsequenceSpec.evidence_target` and canonical positive owner for the current consequence. Materialization targets are reconstructed from current GitHub state; implementation carriers are qualified by `qualify_implementation_carrier()`. The local `_materialization_targets` map remains only an in-invocation optimization for exact apply/postcondition binding and cannot be required to prove an already-durable consequence after a new process starts. When the exact requested materialization PR is already merged, its recorded merge commit and head remain authoritative evidence. Recovery may return that head only after proving the merge commit and PR head are in current main, the requested base is an ancestor of the PR base, and one complete compare-history commit reachable from that head contains every requested blob. If a later same-Change successor has already merged the immutable requested manifest, recovery may instead return the one exact manifest commit found in the complete compare history from the accepted base to current main, provided the historical merge commit is an ancestor of that commit. Later same-Change commits may legitimately update those files, so current-main equality is not required; missing, truncated, or contradictory historical content/ancestry proof remains fail closed. It must not reinterpret that completed carrier as a same-Change replacement. Existing request correlation, accepted-intent qualification, source/frontier checks, validation, review, carrier identity, successor, and terminal gates remain in their current owners.
+For one accepted materialization intent `I` and fresh repository state `S`, one canonical read-only proof owner answers only:
 
-An accepted application can also be interrupted after it has written some exact effects but before a valid application-correlated formal result is durable. If a legacy or uncorrelated result then leaves the Issue on the accepted source Action while making the formal frontier unqualifiable, completion recovery may consult the existing accepted-intent owner before returning the frontier error. It may resume only when a fresh open Issue still has the exact accepted Issue, Change, Role, and Action, there is exactly one matching accepted decision, and the existing application-run observer finds one exact request-bound run and `apply` job. For a completed run, the bridge permits at most one continuation: when GitHub reports `run_attempt > 1`, it returns the existing fail-closed `application-completion-rerun-limit` disposition and emits no job to rerun. The attempt number is GitHub-owned evidence, not a repository retry registry. The existing application job must still perform its ordinary fresh authorization and effect/postcondition checks. This path does not qualify the uncorrelated result, derive or persist a successor, or rerun semantic work. A changed source/Change/routing, stale authorization, duplicate accepted decision, duplicate run/job, or incomplete observation remains fail closed.
+```text
+COMPLETE(target, witness)
+INCOMPLETE
+CONTRADICTORY(reason)
+```
 
-These rules reuse the existing fresh observer, carrier qualification, and consequence table. They add no registry, cursor, queue, recovery state machine, synthetic success fallback, or duplicate classifier.
+`COMPLETE` requires all four proof dimensions:
+
+1. **Identity** — exact repository, Issue, immutable Change, source Role/Action, intended PR/ref/branch, and unique carrier/cardinality.
+2. **Content** — every accepted desired blob/content identity is present in the qualified witness. A mutation preimage such as `expected_sha` is a stale-write guard, not durable completion evidence after the accepted desired consequence exists.
+3. **Lineage** — Git graph evidence proves the witness is legally related to the accepted base, current default branch, PR base/head/merge ancestry, and any application-built reconciliation lineage.
+4. **Non-conflict** — no duplicate/ambiguous carrier, wrong PR/ref/blob, requested-path overlap, broken or incomplete ancestry/compare evidence, unrelated overwritten content, or contradictory observation.
+
+Existing exact-manifest checks, historical ancestry validation, merged-witness lookup, reconciliation recognition, replacement qualification, and similar helpers remain reusable proof primitives or witness finders. They MUST NOT independently return a competing top-level positive completion meaning.
+
+### Consumers and mutation protocol
+
+The apply-side already-complete pre-check, materialization observer/postcondition, fresh interruption recovery, and higher consequence-completion classifier MUST consume the same canonical proof. The postcondition is a thin consumer; it does not define a second success predicate. A fresh process reconstructs proof from GitHub truth and does not require invocation-local `_materialization_targets`.
+
+The mutation protocol is:
+
+```text
+fresh observe
+→ canonical proof
+   COMPLETE       → zero mutation; reuse durable target
+   CONTRADICTORY  → fail closed
+   INCOMPLETE     → plan only the narrow missing mutation
+→ consequential mutation
+→ discard local success as authority
+→ fresh observe
+→ the same canonical proof
+```
+
+API success, commit/ref/PR creation, carrier return, validation, or merge response never independently establishes workflow completion.
+
+### Historical topology is characterization, not semantics
+
+The existing ancestor-carrier, disjoint-main-advance, historical PR-base, reconciled carrier, merged carrier, merged carrier plus same-Change successor, deterministic replacement, replacement plus main advance, reconciliation, and reconciliation plus later one-parent correction cases are retained as characterization/witness shapes. PR #357 is a valid RED for the last class; its current `direct_carrier_postcondition`-style branch is bootstrap evidence only and MUST not survive as a permanent top-level completion authority once the canonical proof cutover is complete.
+
+Accepted first-carrier branch→PR recovery and accepted-application continuation remain bounded missing-effect mechanisms. They may plan only a genuinely `INCOMPLETE` consequence after the canonical proof and existing fresh authorization/cardinality/overlap checks. They MUST NOT replay semantic work, recreate an already-proven carrier, force-move a ref, or create a competing recovery lifecycle.
+
+### Staged cutover and systemic properties
+
+Delivery is atomic and recoverable:
+
+1. **Characterization:** freeze historical positive shapes and conflict negatives without changing production behavior.
+2. **Read-only proof:** introduce the canonical proof owner in shadow and compare its result with current consumers.
+3. **Observer/postcondition cutover:** materialization observation, postcondition, fresh recovery, and consequence classification consume the proof.
+4. **Apply-side cutover:** already-complete logic consumes the same proof, eliminating apply/observe semantic divergence.
+5. **Property verification:** prove apply→fresh-observe consistency, interruption invariance across every durable mutation boundary, safe-evolution monotonicity across legal disjoint advance/reconciliation/merge/same-Change descendant, and conflict preservation.
+6. **Cleanup:** only after all consumers are cut over, delete superseded topology-specific top-level positive decision branches while retaining necessary proof primitives.
+
+The accepted-application run/job continuation remains subject to exact Issue/Change/Role/Action identity, unique accepted decision and run/job, current authorization, and the existing `run_attempt > 1` fail-closed boundary. It neither qualifies uncorrelated results nor creates retry state.
 
 ## Blast radius and non-goals
 
@@ -140,6 +190,11 @@ The implementation must provide executable coverage for:
 - overlap first-valid-write-wins;
 - stale revision/source refusal;
 - interruption before/after mutation;
+- canonical-proof characterization for ancestor carrier, disjoint default-branch advance, historical PR base, reconciled carrier, merged carrier, merged carrier plus same-Change successor, deterministic replacement, replacement plus main advance, reconciliation, and reconciliation plus later one-parent correction;
+- apply→fresh-observe consistency for every legally produced materialized consequence;
+- interruption invariance across accepted decision, blob/tree/commit, branch/ref, PR carrier, CarrierRequired exit, validation, formal result, merge, and successor routing boundaries;
+- safe-evolution monotonicity across disjoint main advance, legal reconciliation, legal merge, and legal same-Change descendants;
+- conflict preservation for wrong blob/PR/ref, duplicate or ambiguous carrier, requested-path overlap, broken ancestry, incomplete compare evidence, and contradictory repository evidence;
 - each first-carrier durable prefix, including accepted intent, content commit, branch ref, PR carrier, returned carrier, validation, formal result, routing, and terminal state;
 - a disjoint default-branch advance before PR-carrier recovery, plus overlap, non-ancestor, wrong/duplicate PR, changed identity, and incomplete-observation negatives;
 - a new process with empty adapter-local target maps reconstructing the same current materialization/implementation consequence;

@@ -316,9 +316,15 @@ formal result, and derive routing/terminal projection. Failure before ACCEPT
 has zero authoritative repository consequence; failure after ACCEPT resumes
 the same intent and semantic replay count remains zero.
 
-For first-carrier materialization, the apply result, immediate postcondition, and later fresh observer SHALL use one canonical positive materialization observation for exact Issue, Change, branch, head, PR, manifest, and content identity. A pending continuation MAY remain valid after default-branch advancement only when the immutable original base is its ancestor and all carrier paths are disjoint from the intervening changes; the existing stale, overlap, identity, cardinality, and ambiguity guards remain mandatory. When an exact accepted intent already has the verified branch ref and content but no matching PR, recovery SHALL emit only the missing application-owned PR consequence against fresh current main after rechecking ancestry, disjointness, exact branch/head/content, and complete all-head PR cardinality. It SHALL NOT rerun semantic work, recreate the branch, move the ref, or blindly create a duplicate PR.
+For first-carrier materialization, the apply-side already-complete check, immediate postcondition, and later fresh observer SHALL use one canonical durable-consequence proof for exact Issue, Change, branch, head, PR, manifest/content identity, lineage, and non-conflict. A pending continuation MAY remain valid after default-branch advancement only when the same proof classifies the consequence `INCOMPLETE` rather than complete or contradictory and the immutable original base is its ancestor with all carrier paths disjoint from intervening changes. Existing stale, overlap, identity, cardinality, and ambiguity guards remain mandatory. When an exact accepted intent has the verified branch ref and content but no matching PR, recovery SHALL emit only the missing application-owned PR consequence against fresh current main after the canonical proof plus ancestry, disjointness, exact branch/head/content, and complete all-head PR cardinality checks. It SHALL NOT rerun semantic work, recreate the branch, move the ref, or blindly create a duplicate PR.
 
-A fresh process SHALL reconstruct consequence completion from the existing `ConsequenceSpec.evidence_target` and its canonical current-state positive observer. It MUST NOT require invocation-local `_materialization_targets` to recognize an already durable consequence. Implementation-carrier consequences SHALL use their existing implementation-carrier qualification owner. If an uncorrelated legacy result invalidates formal-frontier qualification while the exact source route remains current, recovery MAY resume only one accepted intent and its unique request-bound run/job after exact Issue/Change/Role/Action checks. For a completed request-bound run, that continuation is bounded to the first GitHub attempt; `run_attempt > 1` SHALL return the existing fail-closed `application-completion-rerun-limit` disposition and SHALL NOT emit a rerun job. The attempt number is GitHub-owned evidence and does not create repository retry state. Changed identity/routing, duplicate intent/run/job, or incomplete evidence SHALL fail closed. Existing correlation, formal qualification, source/frontier, carrier, validation, review, successor, and terminal gates remain in force.
+A fresh process SHALL reconstruct materialized-consequence completion from the existing `ConsequenceSpec.evidence_target` through the same canonical durable-consequence proof owner. It MUST NOT require invocation-local `_materialization_targets` to recognize an already durable consequence. Implementation-carrier qualification remains in its existing owner except where that owner supplies materialization proof primitives; it MUST NOT become a competing positive definition for the same materialized consequence. If an uncorrelated legacy result invalidates formal-frontier qualification while the exact source route remains current, recovery MAY resume only one accepted intent and its unique request-bound run/job after exact Issue/Change/Role/Action checks. For a completed request-bound run, that continuation is bounded to the first GitHub attempt; `run_attempt > 1` SHALL return the existing fail-closed `application-completion-rerun-limit` disposition and SHALL NOT emit a rerun job. The attempt number is GitHub-owned evidence and does not create repository retry state. Changed identity/routing, duplicate intent/run/job, or incomplete evidence SHALL fail closed. Existing correlation, formal qualification, source/frontier, carrier, validation, review, successor, and terminal gates remain in force.
+
+The materialized durable consequence itself SHALL have exactly one authoritative positive proof definition. Given one accepted intent and fresh repository state, the proof owner SHALL return exactly one of `COMPLETE(target, witness)`, `INCOMPLETE`, or `CONTRADICTORY(reason)`. `COMPLETE` SHALL require coherent Identity, Content, Lineage, and Non-conflict evidence together. Git topology labels such as historical, replacement, merged, reconciled, or direct SHALL be treated only as evidence/witness shapes and MUST NOT create separate top-level positive completion semantics.
+
+Identity SHALL include the exact repository, Issue, immutable Change, source Role/Action, intended PR/ref/branch, and unique carrier/cardinality. Content SHALL prove every accepted desired blob/content identity in the qualified witness. A mutation preimage such as `expected_sha` SHALL remain a stale-write authorization guard and MUST NOT be required as durable completion evidence after the accepted desired consequence is already proven. Lineage SHALL be proven from actual Git graph evidence connecting the witness to the accepted base, current default branch, PR base/head/merge ancestry, and any application-built reconciliation lineage. Non-conflict SHALL reject duplicate or ambiguous carriers, wrong PR/ref/blob, requested-path overlap, broken or incomplete ancestry/compare evidence, unrelated overwritten content, and contradictory repository observations.
+
+Application/apply-side already-complete checks, materialization observation/postcondition, fresh interruption recovery, and consequence completion classification SHALL all consume that same proof owner. Existing exact-manifest, historical-ancestry, merged-witness, reconciliation, and replacement-carrier helpers MAY remain as proof primitives or witness finders, but MUST NOT independently define top-level completion. After any consequential mutation the application SHALL discard local success as authority, fresh-read repository state, and use the same proof; only fresh `COMPLETE` permits completion to proceed.
 
 #### Scenario: Accepted application resumes without semantic replay
 
@@ -365,7 +371,8 @@ A fresh process SHALL reconstruct consequence completion from the existing `Cons
 - AND the intervening main paths are disjoint from the exact requested manifest
 - AND the exact branch head, one-commit file set, content, Issue, Change, and PR on its original base are freshly observed
 - WHEN application observes its materialization postcondition on current main
-- THEN it compares the fresh canonical target with the apply target and recognizes the same valid consequence
+- THEN the canonical durable-consequence proof returns `COMPLETE` for the same accepted consequence
+- AND apply-side and postcondition consumers reuse that result
 - AND it does not reject solely because main advanced
 
 #### Scenario: Branch-ref recovery emits only the missing PR carrier
@@ -442,6 +449,44 @@ A fresh process SHALL reconstruct consequence completion from the existing `Cons
 - THEN it does not resume or select any guessed application job
 - AND it does not qualify the uncorrelated result or derive a successor
 - AND the existing fail-closed or ambiguous classification is preserved
+
+#### Scenario: Apply and fresh observation have one completion meaning
+
+- GIVEN repository application legally produces fresh state `S'` for accepted materialization intent `I`
+- WHEN a new process evaluates the canonical durable-consequence proof using only fresh GitHub truth
+- THEN it returns `COMPLETE` for that same consequence
+- AND no apply-side, postcondition, recovery, or classifier-specific positive rule can disagree
+
+#### Scenario: Completion survives safe repository evolution
+
+- GIVEN the canonical proof has returned `COMPLETE` for an accepted materialized consequence
+- AND current repository state later undergoes a disjoint default-branch advance, legal application reconciliation, legal merge, or legal same-Change descendant
+- WHEN the consequence is freshly proven again
+- THEN it remains `COMPLETE` when Identity, Content, Lineage, and Non-conflict still hold
+- AND it does not become `INCOMPLETE` merely because the Git topology shape changed
+
+#### Scenario: Mutation preimage is not durable completion evidence
+
+- GIVEN an accepted materialization was authorized against one exact preimage `expected_sha`
+- AND the desired accepted blob/content identities are now durably present in a qualified witness
+- AND legal later evolution means the original preimage is no longer current
+- WHEN the canonical proof evaluates the consequence
+- THEN the absent old preimage does not by itself make the consequence `INCOMPLETE`
+- AND content and lineage are proven from the accepted desired identities and fresh GitHub graph evidence
+
+#### Scenario: Contradictory or incomplete proof remains fail closed
+
+- GIVEN the candidate evidence has a wrong blob, wrong PR/ref, duplicate or ambiguous carrier, requested-path overlap, broken ancestry, incomplete compare evidence, unrelated overwritten content, or another contradiction
+- WHEN any completion consumer evaluates the materialized consequence
+- THEN the canonical proof returns `CONTRADICTORY` or otherwise fails closed
+- AND no topology-specific fallback manufactures `COMPLETE` or authorizes a mutation
+
+#### Scenario: Interruption reconstruction uses the same proof
+
+- GIVEN execution interrupts after any durable boundary including accepted decision, content commit, branch/ref, PR carrier, CarrierRequired exit, validation, formal result, merge, or successor routing
+- WHEN a later process resumes from fresh repository truth
+- THEN it reconstructs materialized-consequence completion through the same canonical proof
+- AND it does not depend on invocation-local memory or replay completed semantic work
 
 ## ADDED Requirements
 
