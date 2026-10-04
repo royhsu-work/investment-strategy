@@ -322,7 +322,9 @@ A fresh process SHALL reconstruct materialized-consequence completion from the e
 
 The materialized durable consequence itself SHALL have exactly one authoritative positive proof definition. Given one accepted intent and fresh repository state, the proof owner SHALL return exactly one of `COMPLETE(target, witness)`, `INCOMPLETE`, or `CONTRADICTORY(reason)`. `COMPLETE` SHALL require coherent Identity, Content, Lineage, and Non-conflict evidence together. Git topology labels such as historical, replacement, merged, reconciled, or direct SHALL be treated only as evidence/witness shapes and MUST NOT create separate top-level positive completion semantics.
 
-Identity SHALL include the exact repository, Issue, immutable Change, source Role/Action, intended PR/ref/branch, and unique carrier/cardinality. Content SHALL prove every accepted desired blob/content identity in the qualified witness. A mutation preimage such as `expected_sha` SHALL remain a stale-write authorization guard and MUST NOT be required as durable completion evidence after the accepted desired consequence is already proven. Lineage SHALL be proven from actual Git graph evidence connecting the witness to the accepted base, current default branch, PR base/head/merge ancestry, and any application-built reconciliation lineage. Non-conflict SHALL reject duplicate or ambiguous carriers, wrong PR/ref/blob, requested-path overlap, broken or incomplete ancestry/compare evidence, unrelated overwritten content, and contradictory repository observations.
+Identity SHALL include the exact repository, Issue, immutable Change, source Role/Action, intended PR/ref/branch, and unique carrier/cardinality. Content SHALL prove every accepted desired blob/content identity in the immutable qualified witness `W`. The current target `T` SHALL be the exact freshly qualified carrier/consumer revision for the requested evidence target; exact review and validation SHALL bind `T`. The proof MAY return `COMPLETE(T, W)` with `T != W` after legal same-Change evolution changes the target or accepted paths, provided Identity, complete Lineage from `W` to the qualified target, and Non-conflict remain proven. It MUST NOT require original desired bytes at a legal later `T`, `T == W`, or equality with an invocation-local apply target as durable completion predicates.
+
+The accepted authorization revision `A`, declared carrier base `B`, actual prospective mutation parent/preimage `P`, and fresh default-branch revision `D` SHALL be qualified as separate identities and MAY differ. `A` records immutable accepted authorization; `B` is the declared carrier graph anchor; `P` is the actual tree a missing write would extend, including parent zero for an existing-carrier correction/reconciliation; `D` supplies fresh governance and authorization. Before each missing mutation, `expected_sha` SHALL match the requested path in actual prospective parent `P`, not merely in `A`, `B`, or `D`. A reconciliation with parents `[P, D]` and a declared base `B != P` SHALL retain that preimage guard, complete graph/compare/overlap checks, and unrelated-content preservation. A mutation preimage SHALL remain a stale-write authorization guard and MUST NOT be required to remain current as durable completion evidence after the accepted desired consequence is proven at `W`. Lineage SHALL qualify these separate revisions, witness/current target, PR base/head/merge ancestry, and application-built reconciliation lineage from complete actual Git evidence. Non-conflict SHALL reject duplicate or ambiguous carriers, wrong PR/ref/blob, requested-path overlap, broken or incomplete ancestry/compare evidence, unrelated overwritten content, and contradictory repository observations.
 
 Application/apply-side already-complete checks, materialization observation/postcondition, fresh interruption recovery, and consequence completion classification SHALL all consume that same proof owner. Existing exact-manifest, historical-ancestry, merged-witness, reconciliation, and replacement-carrier helpers MAY remain as proof primitives or witness finders, but MUST NOT independently define top-level completion. After any consequential mutation the application SHALL discard local success as authority, fresh-read repository state, and use the same proof; only fresh `COMPLETE` permits completion to proceed.
 
@@ -406,7 +408,7 @@ Application/apply-side already-complete checks, materialization observation/post
 - AND the accepted base is an ancestor of the PR base
 - AND one complete compare-history commit reachable from the recorded head contains every requested blob
 - WHEN a later application process resumes or observes the materialization
-- THEN it reconstructs the existing PR-head target as the durable consequence
+- THEN the canonical proof returns the freshly qualified consumer target `T` together with the exact historical content witness `W`, which may differ from `T`
 - AND it creates no same-Change replacement branch, commit, or PR
 - AND later same-Change updates to those files do not erase the historical consequence
 - AND missing, truncated, stale, or contradictory ancestry/content evidence fails closed
@@ -418,7 +420,7 @@ Application/apply-side already-complete checks, materialization observation/post
 - AND one complete compare-history commit from the accepted base to current main contains every requested blob
 - AND the historical carrier merge commit is an ancestor of that exact materialization commit
 - WHEN a later application process resumes or observes the materialization
-- THEN it returns that exact historical materialization revision as the durable consequence
+- THEN it returns `COMPLETE(T, W)` with that exact historical materialization revision as immutable witness `W` and the freshly qualified consumer revision as target `T`
 - AND it creates no replacement branch, commit, or PR
 - AND missing, truncated, stale, or contradictory ancestry/content evidence fails closed
 
@@ -483,10 +485,28 @@ Application/apply-side already-complete checks, materialization observation/post
 
 #### Scenario: Interruption reconstruction uses the same proof
 
-- GIVEN execution interrupts after any durable boundary including accepted decision, content commit, branch/ref, PR carrier, CarrierRequired exit, validation, formal result, merge, or successor routing
+- GIVEN execution interrupts after any durable boundary including accepted decision, blob/tree/content commit, branch/ref, PR carrier, CarrierRequired exit, validation, formal result, merge, successor routing, terminal transition, or final postcondition
 - WHEN a later process resumes from fresh repository truth
 - THEN it reconstructs materialized-consequence completion through the same canonical proof
 - AND it does not depend on invocation-local memory or replay completed semantic work
+
+#### Scenario: Legal same-Change correction separates current target from immutable witness
+
+- GIVEN accepted desired content is proven at immutable witness `W`
+- AND a qualified legal same-Change descendant `T` changes one accepted path while preserving complete lineage and non-conflict
+- WHEN a fresh consumer proves the older accepted materialized consequence
+- THEN the canonical proof returns `COMPLETE(T, W)` with `T != W` and no materialization replay
+- AND exact-head review and validation consume `T`, not the historical witness or invocation-local target
+- AND wrong Issue/Change/carrier identity, broken descendant lineage, incomplete compare evidence, or conflicting evolution fails closed
+
+#### Scenario: Existing-carrier mutation guards its actual parent rather than declared base
+
+- GIVEN accepted authorization revision `A`, declared carrier base `B`, fresh main `D`, and actual current PR-head prospective parent `P` are separately qualified
+- AND `A` or `B` differs from `P`, as in the existing #353 correction or a reconciliation with parents `[P, D]`
+- WHEN the application plans a genuinely missing materialization write under fresh current authorization
+- THEN each `expected_sha` must match the requested path in `P`, with complete lineage, overlap, cardinality, and unrelated-content guards
+- AND a preimage that matches only `A`, `B`, or `D` but differs in `P` rejects the write
+- AND after accepted desired content is proven at a qualified witness, the obsolete preimage need not remain current
 
 ## ADDED Requirements
 

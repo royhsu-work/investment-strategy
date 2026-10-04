@@ -633,12 +633,17 @@ def plan_application(
         claimed = _claimed_source(accepted_intent.raw_worker_result)
         if claimed is not None and claimed != accepted_source:
             raise ValueError("accepted application intent worker source is invalid")
+        current_dispatch = classify_dispatch(preflight)
         return ApplicationPlan(
             should_apply=True,
             source=accepted_source,
             raw_worker_result=accepted_intent.raw_worker_result,
             change=accepted_intent.change,
             request_comment_id=request_comment_id,
+            pending_continuation=(
+                current_dispatch.disposition == "FAIL_CLOSED"
+                and current_dispatch.reason == "observations-unqualified"
+            ),
         )
 
     claimed = _claimed_source(request.raw_worker_result)
@@ -2758,6 +2763,7 @@ def _complete_first_activation(
     repository: str,
     token: str,
     current_revision: str,
+    accepted_authorization_revision: str,
     default_branch: str,
     request_comment_id: int,
     allow_pending_continuation: bool = False,
@@ -2815,6 +2821,7 @@ def _complete_first_activation(
         token=token,
         current_revision=current_revision,
         default_branch=default_branch,
+        accepted_authorization_revision=accepted_authorization_revision,
         allow_pending_continuation=allow_pending_continuation,
     )
     if fresh_target != target:
@@ -3839,6 +3846,7 @@ def main() -> int:
             token=token,
             current_revision=args.revision,
             default_branch=args.default_branch,
+            accepted_authorization_revision=request.authorization_revision,
             allow_pending_continuation=pending_continuation,
         )
         if args.validated_revision is None or target.revision != args.validated_revision:
@@ -3894,6 +3902,7 @@ def main() -> int:
                     current_revision=args.revision,
                     default_branch=args.default_branch,
                     request_comment_id=plan.request_comment_id,
+                    accepted_authorization_revision=accepted_intent.authorization_revision,
                     allow_pending_continuation=pending_continuation,
                 )
         else:
@@ -3968,6 +3977,7 @@ def main() -> int:
             token=token,
             current_revision=args.revision,
             default_branch=args.default_branch,
+            accepted_authorization_revision=request.authorization_revision,
             allow_pending_continuation=pending_continuation,
         )
     else:

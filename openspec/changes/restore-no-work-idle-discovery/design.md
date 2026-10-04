@@ -2,7 +2,7 @@
 
 ## Current decision boundary
 
-The original Explore reconstruction used default-branch revision `2e00e236f24ba41302c9ba18c685acdf4cebe4ed`; this continuation is reconciled onto the then-current N-1 substrate `main@5fa6fdf7d9b33e3f2718c9525bb685f74393d3f3`. Fresh source inspection establishes these owners:
+The original Explore reconstruction used default-branch revision `2e00e236f24ba41302c9ba18c685acdf4cebe4ed`; the earlier continuation was reconciled onto historical N-1 substrate `main@5fa6fdf7d9b33e3f2718c9525bb685f74393d3f3`. Fresh current delivery authority is `main@1ca1d8e37e42bf1b689826ec34a0e335ba1f68b4`; these owners remain unchanged:
 
 - `workflow_dispatch.py` and the runtime preflight reconstruct current repository work and return `AUTHORIZE`, `NO_WORK`, or `FAIL_CLOSED`.
 - `issue_comment_bridge.py` checks the authoritative default branch and publishes one run-scoped dispatch-result artifact.
@@ -10,9 +10,9 @@ The original Explore reconstruction used default-branch revision `2e00e236f24ba4
 - `.github/workflows/scheduled-agent-bridge.yml` and `.github/workflows/scheduled-agent-application.yml` are repository-owned execution carriers.
 - the external Scheduled Task/bootstrap is the product boundary that must interpret the exact dispatch artifact and invoke a semantic Lead run; it is not represented in normal Issue routing.
 
-The current gap is therefore a missing reachability boundary, not a defect in normal selection and not permission to infer work from an empty queue.
+The original gap was production reachability of bounded idle semantics. Normal selection remains authoritative; no empty queue permits inferred work. The typed substrate is now merged, while bounded advisory/wait delivery and post-terminal production acceptance remain required.
 
-The current delivery baseline is `main@5fa6fdf7d9b33e3f2718c9525bb685f74393d3f3`. The shared application substrate and same-Change recovery established through #331 → #333 and #347/#349 required two bounded bootstrap continuations before this semantic review could be reached: PR #354 aligned the positive materialization postcondition observer with the deterministic replacement carrier already created by apply-side ownership, and PR #355 reused the existing safe two-parent reconciliation/carrier path when that accepted replacement became stale after a disjoint default-branch advance. Both are merged into this N-1 and preserve the same shared owner rather than introducing #322-specific recovery state. Continue with the remaining idle implementation and later lifecycle/production stages on this current baseline; retain the full parent completion outcome.
+The historical pre-consolidation delivery baseline was `main@5fa6fdf7d9b33e3f2718c9525bb685f74393d3f3`. The shared application substrate and same-Change recovery established through #331 → #333 and #347/#349 required two bounded bootstrap continuations before this semantic review could be reached: PR #354 aligned the positive materialization postcondition observer with the deterministic replacement carrier already created by apply-side ownership, and PR #355 reused the existing safe two-parent reconciliation/carrier path when that accepted replacement became stale after a disjoint default-branch advance. Both are historical merged prerequisites and introduce no #322-specific recovery state. PR #357 subsequently consolidated every positive materialization consumer under the single proof at current N-1 `1ca1d8e37e42bf1b689826ec34a0e335ba1f68b4`. Continue ordinary verification, remaining idle implementation, and later lifecycle/production stages from this merged prerequisite; retain the full parent completion outcome.
 
 ## Decision 1: Keep normal dispatch Action-only
 
@@ -128,11 +128,15 @@ INCOMPLETE
 CONTRADICTORY(reason)
 ```
 
+`target` (`T`) is the exact currently qualified carrier/consumer revision for the requested evidence target, including any review or validation that consumes it. `witness` (`W`) is immutable Git evidence that the exact accepted desired content was legally produced. The same proof may therefore return `COMPLETE(T, W)` with `T != W`: a legal same-Change descendant can become the current target and change accepted paths while the ancestor witness still proves the older accepted consequence. Content is proved at `W`; exact-head review/validation remains bound to `T`. Identity, complete lineage from `W` to the qualified current target, and Non-conflict must still hold. Neither `T == W` nor equality with an invocation-local apply target defines durable completion; local target memory supplies no independent authority.
+
+The accepted authorization revision `A` is the immutable revision under which the intent was accepted. The declared carrier base `B` is the accepted carrier's declared graph anchor. The actual prospective mutation parent/preimage `P` is the tree that a missing write would extend (parent zero for an existing-carrier correction or reconciliation). The fresh default-branch revision `D` supplies current governance and authorization. These are separate identities and need not be equal. Fresh authorization against `D` and graph/non-conflict qualification of `A`, `B`, and `P` are mandatory; equality is not a substitute for those checks. Before a missing mutation, every `expected_sha` MUST match its requested path in the actual prospective parent `P`, not merely in `A`, `B`, or `D`. A reconciliation may use parents `[P, D]` with a declared base `B` different from `P`; the accepted path preimages still guard `P`, while complete compare/overlap evidence protects both lineages and unrelated content. After a qualified durable witness exists, an obsolete preimage need not remain current.
+
 `COMPLETE` requires all four proof dimensions:
 
 1. **Identity** — exact repository, Issue, immutable Change, source Role/Action, intended PR/ref/branch, and unique carrier/cardinality.
 2. **Content** — every accepted desired blob/content identity is present in the qualified witness. A mutation preimage such as `expected_sha` is a stale-write guard, not durable completion evidence after the accepted desired consequence exists.
-3. **Lineage** — Git graph evidence proves the witness is legally related to the accepted base, current default branch, PR base/head/merge ancestry, and any application-built reconciliation lineage.
+3. **Lineage** — Complete Git graph evidence qualifies the separate accepted authorization revision `A`, declared carrier base `B`, actual mutation parent `P`, fresh default branch `D`, immutable witness `W`, and current target `T`, including PR base/head/merge and application-built reconciliation ancestry. It does not collapse those identities or require accepted bytes to remain at a legal later target.
 4. **Non-conflict** — no duplicate/ambiguous carrier, wrong PR/ref/blob, requested-path overlap, broken or incomplete ancestry/compare evidence, unrelated overwritten content, or contradictory observation.
 
 Existing exact-manifest checks, historical ancestry validation, merged-witness lookup, reconciliation recognition, replacement qualification, and similar helpers remain reusable proof primitives or witness finders. They MUST NOT independently return a competing top-level positive completion meaning.
@@ -146,7 +150,7 @@ The mutation protocol is:
 ```text
 fresh observe
 → canonical proof
-   COMPLETE       → zero mutation; reuse durable target
+   COMPLETE       → zero materialization mutation; return current target T and durable witness W
    CONTRADICTORY  → fail closed
    INCOMPLETE     → plan only the narrow missing mutation
 → consequential mutation
@@ -159,13 +163,15 @@ API success, commit/ref/PR creation, carrier return, validation, or merge respon
 
 ### Historical topology is characterization, not semantics
 
-The existing ancestor-carrier, disjoint-main-advance, historical PR-base, reconciled carrier, merged carrier, merged carrier plus same-Change successor, deterministic replacement, replacement plus main advance, reconciliation, and reconciliation plus later one-parent correction cases are retained as characterization/witness shapes. PR #357 is a valid RED for the last class; its current `direct_carrier_postcondition`-style branch is bootstrap evidence only and MUST not survive as a permanent top-level completion authority once the canonical proof cutover is complete.
+The existing ancestor-carrier, disjoint-main-advance, historical PR-base, reconciled carrier, merged carrier, merged carrier plus same-Change successor, deterministic replacement, replacement plus main advance, reconciliation, and reconciliation plus later one-parent correction cases are retained as characterization/witness shapes. PR #357 originally supplied a valid RED for the last class. Its final reviewed repair replaced the temporary `direct_carrier_postcondition`-style positive branch with the canonical proof and merged at `1ca1d8e37e42bf1b689826ec34a0e335ba1f68b4`; historical topology remains characterization rather than a permanent completion authority.
 
 Accepted first-carrier branch→PR recovery and accepted-application continuation remain bounded missing-effect mechanisms. They may plan only a genuinely `INCOMPLETE` consequence after the canonical proof and existing fresh authorization/cardinality/overlap checks. They MUST NOT replay semantic work, recreate an already-proven carrier, force-move a ref, or create a competing recovery lifecycle.
 
 ### Staged cutover and systemic properties
 
-Delivery is atomic and recoverable:
+The bounded Human-authorized bootstrap consolidated this prerequisite in PR #357 at `1ca1d8e37e42bf1b689826ec34a0e335ba1f68b4`. Exact-head independent review `5405763214`, Python Quality (891 tests, Ruff/format, mypy), and strict OpenSpec validation bound candidate `63df1af3928e2c41f0ef69dcd3cc3623f4221544`. Production continuation run `37199451772` then reused the existing PR #353 head with zero materialization replay and validated exact revision `ae9eba694cf56e510051b7a85f0eae531d528829`. This establishes the current prerequisite N-1, not completion of the parent Change. Ordinary Executor delivery must verify the merged proof against this clarified contract and retain advisory admission, derived Human wait, final review/lifecycle, and post-terminal production acceptance.
+
+The consolidation's atomic and recoverable sequence is:
 
 1. **Characterization:** freeze historical positive shapes and conflict negatives without changing production behavior.
 2. **Read-only proof:** introduce the canonical proof owner in shadow and compare its result with current consumers.

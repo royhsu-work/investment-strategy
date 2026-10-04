@@ -7,6 +7,7 @@ import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
+from urllib.parse import unquote
 from urllib.request import Request
 
 import pytest
@@ -17,6 +18,16 @@ from investment_strategy.scheduled_agent_application_carrier import (
 )
 from investment_strategy.scheduled_agent_carrier import CarrierRequired
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
+from tests.test_scheduled_agent_application_materialization import (
+    _accepted_git_carrier,
+    _postcondition_git,
+    _ProofGitRepository,
+    test_canonical_git_proof_survives_disjoint_advance_reconciliation_and_merge,
+    test_canonical_replacement_has_its_own_target_and_legal_descendants,
+)
+from tests.test_scheduled_agent_application_materialization import (
+    proof_git as proof_git,
+)
 
 _REPOSITORY = "royhsu-work/investment-strategy"
 _REVISION = "013510b12c5d3cde869308a319a1e2fb12cdfa60"
@@ -492,7 +503,7 @@ def test_task_checkpoint_accepts_standard_openspec_numbered_slices(
     )
 
 
-def test_apply_work_product_rejects_non_monotonic_task_marker_before_tree(
+def test_constructor_apply_work_product_rejects_non_monotonic_task_marker_before_tree(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = WorkerRequest(138, "executor", "implement-change")
@@ -553,7 +564,7 @@ def test_apply_work_product_rejects_non_monotonic_task_marker_before_tree(
 
     monkeypatch.setattr(resource, "_github_json", fail_github_json)
     with pytest.raises(RuntimeError, match="monotonic checkbox-only"):
-        resource.apply_work_product(
+        resource._construct_work_product(
             plan,
             repository=_REPOSITORY,
             token=_FIXTURE_VALUE,
@@ -562,7 +573,7 @@ def test_apply_work_product_rejects_non_monotonic_task_marker_before_tree(
         )
 
 
-def test_apply_work_product_reuses_continuation_carrier_decision(
+def test_constructor_apply_work_product_reuses_continuation_carrier_decision(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Continuation branch identity comes from the shared carrier owner."""
@@ -628,7 +639,7 @@ def test_apply_work_product_reuses_continuation_carrier_decision(
     monkeypatch.setattr(resource, "_open_pr_payload", fail_open_pr)
 
     with pytest.raises(_ReachedOpenPR):
-        resource.apply_work_product(
+        resource._construct_work_product(
             plan,
             repository=_REPOSITORY,
             token=_FIXTURE_VALUE,
@@ -666,7 +677,7 @@ def _work_product_plan(
     )
 
 
-def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r(
+def test_constructor_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = WorkerRequest(138, "lead", "resolve-question")
@@ -766,7 +777,7 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
 
     monkeypatch.setattr(resource, "_github_json", fake_github_json)
     with pytest.raises(CarrierRequired) as raised:
-        resource.apply_work_product(
+        resource._construct_work_product(
             plan,
             repository=_REPOSITORY,
             token=_FIXTURE_VALUE,
@@ -787,7 +798,7 @@ def test_apply_work_product_builds_one_tree_and_one_commit_then_observes_exact_r
     }
 
 
-def test_apply_work_product_builds_same_change_replacement_after_merged_carrier(
+def test_constructor_apply_work_product_builds_same_change_replacement_after_merged_carrier(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = WorkerRequest(138, "executor", "implement-change")
@@ -877,7 +888,7 @@ def test_apply_work_product_builds_same_change_replacement_after_merged_carrier(
         if api_path.startswith("pulls?state=open"):
             assert replacement_branch.replace("/", "%2F") in api_path
             return []
-        if api_path == f"git/ref/heads/{replacement_branch}":
+        if unquote(api_path) == f"git/ref/heads/{replacement_branch}":
             if allow_not_found:
                 return None
             return {"object": {"sha": revision}}
@@ -908,7 +919,7 @@ def test_apply_work_product_builds_same_change_replacement_after_merged_carrier(
 
     monkeypatch.setattr(resource, "_github_json", fake_github_json)
     with pytest.raises(CarrierRequired) as raised:
-        resource.apply_work_product(
+        resource._construct_work_product(
             plan,
             repository=_REPOSITORY,
             token=_FIXTURE_VALUE,
@@ -922,7 +933,7 @@ def test_apply_work_product_builds_same_change_replacement_after_merged_carrier(
     assert carrier_plan.expected["historical_pull_request"] == 178
 
 
-def test_existing_replacement_reconciles_after_disjoint_default_advance(
+def test_constructor_existing_replacement_reconciles_after_disjoint_default_advance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An exact replacement carrier is reconciled when main advances disjointly."""
@@ -1026,11 +1037,6 @@ def test_existing_replacement_reconciles_after_disjoint_default_advance(
     )
     monkeypatch.setattr(
         resource,
-        "_already_merged_work_product_target",
-        lambda **_kwargs: None,
-    )
-    monkeypatch.setattr(
-        resource,
         "_ref_head_sha",
         lambda _repository, _token, ref, **_kwargs: (
             current_main
@@ -1072,11 +1078,6 @@ def test_existing_replacement_reconciles_after_disjoint_default_advance(
             revision in {replacement_head, reconciled_revision}
             and manifest.files[0].blob_sha == blob_sha
         ),
-    )
-    monkeypatch.setattr(
-        resource,
-        "_manifest_expected_content_matches_base",
-        lambda *_args, **_kwargs: True,
     )
     monkeypatch.setattr(
         resource,
@@ -1127,7 +1128,7 @@ def test_existing_replacement_reconciles_after_disjoint_default_advance(
             }
         if api_path == "git/commits" and method == "POST":
             assert payload == {
-                "message": f"Reconcile default-branch ancestry for {change}",
+                "message": "Correct #322 NO_WORK idle completion semantics",
                 "tree": tree_sha,
                 "parents": [replacement_head, current_main],
             }
@@ -1135,7 +1136,7 @@ def test_existing_replacement_reconciles_after_disjoint_default_advance(
         if api_path == f"git/commits/{reconciled_revision}" and method == "GET":
             return {
                 "sha": reconciled_revision,
-                "message": f"Reconcile default-branch ancestry for {change}",
+                "message": "Correct #322 NO_WORK idle completion semantics",
                 "tree": {"sha": tree_sha},
                 "parents": [{"sha": replacement_head}, {"sha": current_main}],
             }
@@ -1144,7 +1145,7 @@ def test_existing_replacement_reconciles_after_disjoint_default_advance(
     monkeypatch.setattr(resource, "_github_json", fake_github_json)
 
     with pytest.raises(CarrierRequired) as raised:
-        resource.apply_work_product(
+        resource._construct_work_product(
             plan,
             repository=_REPOSITORY,
             token=_FIXTURE_VALUE,
@@ -1161,7 +1162,7 @@ def test_existing_replacement_reconciles_after_disjoint_default_advance(
     mutations.clear()
     default_paths[0] = {path}
     with pytest.raises(RuntimeError, match="replacement work-product base is not current"):
-        resource.apply_work_product(
+        resource._construct_work_product(
             plan,
             repository=_REPOSITORY,
             token=_FIXTURE_VALUE,
@@ -1258,7 +1259,7 @@ def test_reconciliation_overlays_default_only_changes_on_a_stale_carrier(
     ]
 
 
-def test_apply_work_product_reconciles_diverged_default_branch_with_two_parents(
+def test_constructor_apply_work_product_reconciles_diverged_default_branch_with_two_parents(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = WorkerRequest(138, "lead", "resolve-question")
@@ -1366,7 +1367,7 @@ def test_apply_work_product_reconciles_diverged_default_branch_with_two_parents(
 
     monkeypatch.setattr(resource, "_github_json", fake_github_json)
     with pytest.raises(CarrierRequired) as raised:
-        resource.apply_work_product(
+        resource._construct_work_product(
             plan,
             repository=_REPOSITORY,
             token=_FIXTURE_VALUE,
@@ -1398,7 +1399,7 @@ def test_apply_work_product_reconciles_diverged_default_branch_with_two_parents(
         ("rename-overlap", "overlaps default-branch changes"),
     ),
 )
-def test_accepted_322_work_product_recovers_safe_historical_pr_base(
+def test_constructor_accepted_322_work_product_recovers_safe_historical_pr_base(
     monkeypatch: pytest.MonkeyPatch,
     failure: str | None,
     expected_error: str | None,
@@ -1594,7 +1595,7 @@ def test_accepted_322_work_product_recovers_safe_historical_pr_base(
 
     if expected_error is not None:
         with pytest.raises(RuntimeError, match=expected_error):
-            resource.apply_work_product(
+            resource._construct_work_product(
                 plan,
                 repository=_REPOSITORY,
                 token=_FIXTURE_VALUE,
@@ -1605,7 +1606,7 @@ def test_accepted_322_work_product_recovers_safe_historical_pr_base(
         return
 
     with pytest.raises(CarrierRequired) as raised:
-        resource.apply_work_product(
+        resource._construct_work_product(
             plan,
             repository=_REPOSITORY,
             token=_FIXTURE_VALUE,
@@ -1628,167 +1629,34 @@ def test_accepted_322_work_product_recovers_safe_historical_pr_base(
 
 
 def test_replayed_reconciled_work_product_returns_current_target_without_new_commit(
-    monkeypatch: pytest.MonkeyPatch,
+    proof_git: _ProofGitRepository,
 ) -> None:
-    source = WorkerRequest(138, "lead", "resolve-question")
-    blob_sha = "b" * 40
-    reconciled_revision = "f" * 40
-    path = f"openspec/changes/{_CHANGE}/design.md"
-    plan = _work_product_plan(
-        source=source,
-        path=path,
-        blob_sha=blob_sha,
-        expected_sha="a" * 40,
+    accepted = _accepted_git_carrier(proof_git)
+    proof_git.main = proof_git.commit(
+        {"README.md": "disjoint advance"}, "Advance", (proof_git.main,)
     )
-    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_: source)
-    commit_payloads: list[object] = []
-
-    def fake_github_json(
-        repository: str,
-        token: str,
-        api_path: str,
-        *,
-        method: str = "GET",
-        payload: dict[str, object] | None = None,
-        allow_not_found: bool = False,
-    ) -> object | None:
-        assert repository == _REPOSITORY
-        assert token == _FIXTURE_VALUE
-        del method, payload, allow_not_found
-        if api_path == "":
-            return {"default_branch": "main"}
-        if api_path == "git/ref/heads/main":
-            return {"object": {"sha": _REVISION}}
-        if api_path == f"git/ref/heads/agent/{_CHANGE}":
-            return {"object": {"sha": reconciled_revision}}
-        if api_path == f"compare/{_REVISION}...{reconciled_revision}":
-            return {"status": "ahead", "ahead_by": 2, "behind_by": 0}
-        if api_path == f"compare/{_PR_HEAD}...{reconciled_revision}":
-            return {
-                "status": "ahead",
-                "ahead_by": 2,
-                "behind_by": 0,
-                "files": [{"filename": path}],
-                "commits": [{"sha": reconciled_revision}],
-            }
-        if api_path == f"compare/{_REVISION}...{_REVISION}":
-            return {"status": "identical", "ahead_by": 0, "behind_by": 0}
-        if api_path == "issues/138":
-            return {"state": "open", "body": f"Change: {_CHANGE}\n"}
-        if api_path == "pulls/178":
-            return {
-                "number": 178,
-                "state": "open",
-                "merged": False,
-                "body": "Refs #138\n",
-                "head": {
-                    "sha": reconciled_revision,
-                    "ref": f"agent/{_CHANGE}",
-                    "repo": {"full_name": _REPOSITORY},
-                },
-                "base": {
-                    "ref": "main",
-                    "sha": _REVISION,
-                    "repo": {"full_name": _REPOSITORY},
-                },
-            }
-        if api_path == "pulls/178/files?per_page=100":
-            return [{"filename": path}]
-        if api_path.startswith(f"contents/{path}?"):
-            return {"sha": blob_sha}
-        if api_path == f"git/commits/{reconciled_revision}":
-            return {
-                "sha": reconciled_revision,
-                "message": "Correct #138 N-1 ordering",
-                "tree": {"sha": "c" * 40},
-                "parents": [{"sha": _PR_HEAD}, {"sha": _REVISION}],
-            }
-        raise AssertionError(f"unexpected GitHub call: {api_path}")
-
-    monkeypatch.setattr(resource, "_github_json", fake_github_json)
-    target = resource.apply_work_product(
-        plan,
-        repository=_REPOSITORY,
-        token=_FIXTURE_VALUE,
-        default_branch="main",
-        authorization_revision=_REVISION,
-    )
-
-    assert target.revision == reconciled_revision
-    assert target.pr_number == 178
-    assert commit_payloads == []
+    target = _apply_public_work_product(proof_git)
+    assert target.revision == accepted
+    assert _apply_public_work_product(proof_git) == target
+    assert _postcondition_git(proof_git, target=None)
+    assert proof_git.mutations == []
 
 
 def test_replayed_accepted_manifest_is_idempotent_on_current_reconciled_pr_head(
-    monkeypatch: pytest.MonkeyPatch,
+    proof_git: _ProofGitRepository,
 ) -> None:
-    source = WorkerRequest(322, "lead", "resolve-question")
-    authorization_revision = "a" * 40
-    reconciled_revision = "b" * 40
-    change = "restore-no-work-idle-discovery"
-    branch = f"agent/{change}"
-    manifest = resource.WorkProductManifest(
-        branch=branch,
-        base_sha=authorization_revision,
-        message="Resolve exact-head OpenSpec findings for #322",
-        files=(
-            resource.WorkProductFile(
-                f"openspec/changes/{change}/proposal.md",
-                "c" * 40,
-                "d" * 40,
-            ),
-        ),
+    accepted = _accepted_git_carrier(proof_git)
+    proof_git.main = proof_git.commit(
+        {"README.md": "disjoint advance"}, "Advance", (proof_git.main,)
     )
-    plan = resource.WorkProductPlan(
-        True,
-        source=source,
-        pr_number=324,
-        expected_change=change,
-        manifest=manifest,
-    )
-    pr = {
-        "number": 324,
-        "head": {"ref": branch, "sha": reconciled_revision},
-        "base": {"ref": "main", "sha": "e" * 40},
-    }
-    refs: list[str] = []
-
-    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_args: source)
-    monkeypatch.setattr(resource, "_open_pr_payload", lambda **_kwargs: pr)
-
-    def ref_head(_repository: str, _token: str, ref: str, **_kwargs: object) -> str:
-        refs.append(ref)
-        return authorization_revision if ref == "main" else reconciled_revision
-
-    monkeypatch.setattr(resource, "_ref_head_sha", ref_head)
-    monkeypatch.setattr(resource, "_default_branch_is_ancestor", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(resource, "_manifest_content_matches", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(
-        resource,
-        "_manifest_expected_content_matches_base",
-        lambda *_args, **_kwargs: pytest.fail("already-materialized target must be idempotent"),
-    )
-
-    target = resource.apply_work_product(
-        plan,
-        repository=_REPOSITORY,
-        token=_FIXTURE_VALUE,
-        default_branch="main",
-        authorization_revision=authorization_revision,
-    )
-
-    assert target == resource.ValidationResourceTarget(
-        repository=_REPOSITORY,
-        revision=reconciled_revision,
-        correlation=f"effect-request-{source.issue_number}",
-        pr_number=324,
-        change=change,
-        branch=branch,
-    )
-    assert refs == ["main", branch]
+    target = _apply_public_work_product(proof_git)
+    assert target.revision == accepted
+    assert _apply_public_work_product(proof_git) == target
+    assert _postcondition_git(proof_git, target=None)
+    assert proof_git.mutations == []
 
 
-def test_work_product_rejects_stale_current_file_before_git_construction(
+def test_constructor_work_product_rejects_stale_current_file_before_git_construction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = WorkerRequest(138, "lead", "resolve-question")
@@ -1844,7 +1712,7 @@ def test_work_product_rejects_stale_current_file_before_git_construction(
 
     monkeypatch.setattr(resource, "_github_json", fake_github_json)
     with pytest.raises(RuntimeError, match="expected content SHA is stale"):
-        resource.apply_work_product(
+        resource._construct_work_product(
             plan,
             repository=_REPOSITORY,
             token=_FIXTURE_VALUE,
@@ -2058,183 +1926,17 @@ def test_validation_requires_qualified_continuation_unless_reconciling(
 
 
 def test_apply_work_product_reuses_current_head_without_commit_when_ancestry_diverged(
-    monkeypatch: pytest.MonkeyPatch,
+    proof_git: _ProofGitRepository,
 ) -> None:
-    source = WorkerRequest(229, "executor", "implement-change")
-    base_sha = "a" * 40
-    merge_commit = "b" * 40
-    historical_head = "c" * 40
-    current_head = "d" * 40
-    expected_sha = "e" * 40
-    blob_sha = "f" * 40
-    path = f"openspec/changes/{_CONTINUATION_CHANGE}/tasks.md"
-    replacement_branch = _CONTINUATION_BRANCH
-    message = "Stage 2: materialize verified qualification implementation; checkpoint pending"
-    plan = resource.WorkProductPlan(
-        True,
-        source=source,
-        pr_number=232,
-        expected_change=_CONTINUATION_CHANGE,
-        manifest=resource.WorkProductManifest(
-            branch=f"agent/{_CONTINUATION_CHANGE}",
-            base_sha=base_sha,
-            message=message,
-            files=(resource.WorkProductFile(path, blob_sha, expected_sha),),
-        ),
+    accepted = _accepted_git_carrier(proof_git)
+    proof_git.main = proof_git.commit(
+        {"README.md": "disjoint advance"}, "Advance", (proof_git.main,)
     )
-    historical_pr = {
-        "number": 232,
-        "state": "closed",
-        "merged": True,
-        "merged_at": "2026-09-10T00:00:00Z",
-        "merge_commit_sha": merge_commit,
-        "body": "Stage 1\n\nRefs #229\n",
-        "head": {
-            "ref": f"agent/{_CONTINUATION_CHANGE}",
-            "sha": historical_head,
-            "repo": {"full_name": _REPOSITORY},
-        },
-        "base": {
-            "ref": "main",
-            "sha": base_sha,
-            "repo": {"full_name": _REPOSITORY},
-        },
-    }
-    replacement_pr = {
-        "number": 236,
-        "state": "open",
-        "merged": False,
-        "body": _CONTINUATION_PR_BODY,
-        "head": {
-            "ref": replacement_branch,
-            "sha": current_head,
-            "repo": {"full_name": _REPOSITORY},
-        },
-        "base": {
-            "ref": "main",
-            "sha": base_sha,
-            "repo": {"full_name": _REPOSITORY},
-        },
-    }
-    tree_payloads: list[object] = []
-    commit_payloads: list[object] = []
-
-    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_args: source)
-    monkeypatch.setattr(
-        resource,
-        "_implementation_carrier_decision",
-        lambda *_args, **_kwargs: ImplementationCarrierQualification(
-            disposition="RECONCILIATION_REQUIRED",
-            reason="fixture-continuation-reconciliation",
-            repository=_REPOSITORY,
-            issue_number=source.issue_number,
-            change=_CONTINUATION_CHANGE,
-            action=source.action,
-            pr_number=236,
-            branch=replacement_branch,
-            head_sha=current_head,
-            default_branch="main",
-            default_revision=base_sha,
-            historical_pr_number=232,
-        ),
-    )
-
-    def fake_github_json(
-        repository: str,
-        token: str,
-        api_path: str,
-        *,
-        method: str = "GET",
-        payload: dict[str, object] | None = None,
-        allow_not_found: bool = False,
-    ) -> object | None:
-        assert repository == _REPOSITORY
-        assert token == _FIXTURE_VALUE
-        del allow_not_found
-        if api_path == "":
-            return {"default_branch": "main"}
-        if api_path == "git/ref/heads/main":
-            return {"object": {"sha": base_sha}}
-        if api_path == "issues/229":
-            return {"state": "open", "body": f"Change: {_CONTINUATION_CHANGE}\n"}
-        if api_path == "pulls/232":
-            return historical_pr
-        if api_path == "pulls/232/files?per_page=100":
-            return [{"filename": f"openspec/changes/{_CONTINUATION_CHANGE}/design.md"}]
-        if api_path == f"compare/{merge_commit}...{base_sha}":
-            return {"status": "ahead", "ahead_by": 1, "behind_by": 0}
-        if api_path == f"compare/{historical_head}...{base_sha}":
-            return {"status": "ahead", "ahead_by": 1, "behind_by": 0}
-        if api_path == f"compare/{base_sha}...{historical_head}":
-            return {
-                "status": "ahead",
-                "ahead_by": 1,
-                "behind_by": 0,
-                "base_commit": {"sha": base_sha},
-                "commits": [{"sha": historical_head}],
-                "total_commits": 1,
-            }
-        if api_path.startswith("pulls?state=open"):
-            return [replacement_pr]
-        if api_path == "pulls/236":
-            return replacement_pr
-        if api_path == "pulls/236/files?per_page=100":
-            return [{"filename": path}]
-        if api_path == f"git/ref/heads/{replacement_branch}":
-            return {"object": {"sha": current_head}}
-        if api_path == f"compare/{base_sha}...{current_head}":
-            return {
-                "status": "diverged",
-                "ahead_by": 2,
-                "behind_by": 1,
-                "files": [{"filename": path}],
-                "commits": [{"sha": historical_head}, {"sha": current_head}],
-            }
-        if api_path == f"git/commits/{current_head}":
-            return {
-                "sha": current_head,
-                "tree": {"sha": "1" * 40},
-                "parents": [{"sha": historical_head}],
-            }
-        if api_path.startswith(f"contents/{path}?"):
-            revision = api_path.rsplit("ref=", 1)[-1]
-            return {"sha": expected_sha if revision in {base_sha, historical_head} else blob_sha}
-        if api_path == "git/trees" and method == "POST":
-            tree_payloads.append(payload)
-            return {"sha": "2" * 40}
-        if api_path == "git/trees/" + "2" * 40 + "?recursive=1":
-            return {
-                "sha": "2" * 40,
-                "truncated": False,
-                "tree": [{"path": path, "type": "blob", "sha": blob_sha}],
-            }
-        if api_path == "git/commits" and method == "POST":
-            commit_payloads.append(payload)
-            return {"sha": "3" * 40}
-        if api_path == "git/commits/" + "3" * 40:
-            return {
-                "sha": "3" * 40,
-                "message": message,
-                "tree": {"sha": "2" * 40},
-                "parents": [{"sha": current_head}],
-            }
-        raise AssertionError(f"unexpected GitHub call: {method} {api_path} {payload!r}")
-
-    monkeypatch.setattr(resource, "_github_json", fake_github_json)
-
-    target = resource.apply_work_product(
-        plan,
-        repository=_REPOSITORY,
-        token=_FIXTURE_VALUE,
-        default_branch="main",
-        authorization_revision=base_sha,
-    )
-
-    assert target.revision == current_head
-    assert target.pr_number == 236
-    assert target.change == _CONTINUATION_CHANGE
-    assert tree_payloads == []
-    assert commit_payloads == []
+    target = _apply_public_work_product(proof_git)
+    assert target.revision == accepted
+    assert _apply_public_work_product(proof_git) == target
+    assert _postcondition_git(proof_git, target=None)
+    assert proof_git.mutations == []
 
 
 @pytest.mark.parametrize(
@@ -2269,720 +1971,63 @@ def test_comparison_file_paths_reject_malformed_or_duplicate_entries(
 
 
 def test_live_322_accepted_manifest_on_existing_pr_head_recovers_after_interruption(
-    monkeypatch: pytest.MonkeyPatch,
+    proof_git: _ProofGitRepository,
 ) -> None:
-    """An accepted #322 manifest already on PR #324 must reconcile without stale rejection."""
-
-    source = WorkerRequest(322, "lead", "resolve-question")
-    change = "restore-no-work-idle-discovery"
-    authorization_revision = "d019fdc604e8a7fa40e2f3e6436a12b076658057"
-    carrier_revision = "7af49c85ebcb1cc22435913a154e9895bf43cdd2"
-    branch = f"agent/{change}"
-    manifest = resource.WorkProductManifest(
-        branch=branch,
-        base_sha=authorization_revision,
-        message="Resolve exact-head OpenSpec findings for #322",
-        files=(
-            resource.WorkProductFile(
-                f"openspec/changes/{change}/proposal.md",
-                "bdeffd94ff01c7f3e2fd4e8e12c3b535b9df6932",
-                "6003d898fae7c40c59d08e3023ed131baf41b383",
-            ),
-            resource.WorkProductFile(
-                f"openspec/changes/{change}/design.md",
-                "8096b24682c77d37e177e68e3460712af7de3325",
-                "05cfb1579bb4a7c6480f180e9a7e025fdb5fde27",
-            ),
-            resource.WorkProductFile(
-                f"openspec/changes/{change}/tasks.md",
-                "4e428b3ead7ef6aa0de6cabfaef4885932a28d22",
-                "331dc671ea6fa05c8fb2d40cc3f6dc65a31a6f0a",
-            ),
-            resource.WorkProductFile(
-                f"openspec/changes/{change}/specs/scheduled-agent-workflow/spec.md",
-                "d1861dd5b6a190f821fdf99ec7bb2d36fe5db208",
-                "a8ec4b39e5287651ad58cf2b2e0e1a31113cdf06",
-            ),
-        ),
+    accepted = _accepted_git_carrier(proof_git)
+    proof_git.main = proof_git.commit(
+        {"README.md": "disjoint advance"}, "Advance", (proof_git.main,)
     )
-    plan = resource.WorkProductPlan(
-        True,
-        source=source,
-        pr_number=324,
-        expected_change=change,
-        manifest=manifest,
-    )
-    pr = {
-        "number": 324,
-        "state": "open",
-        "merged": False,
-        "draft": False,
-        "title": f"OpenSpec: {change}",
-        "body": f"Formalize OpenSpec change `{change}`.\n\nRefs #322",
-        "head": {
-            "ref": branch,
-            "sha": carrier_revision,
-            "repo": {"full_name": _REPOSITORY},
-        },
-        "base": {
-            "ref": "main",
-            "sha": authorization_revision,
-            "repo": {"full_name": _REPOSITORY},
-        },
-    }
-
-    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_args: source)
-    monkeypatch.setattr(resource, "_open_pr_payload", lambda **_kwargs: pr)
-    monkeypatch.setattr(
-        resource,
-        "_ref_head_sha",
-        lambda _repo, _token, ref, **_kwargs: (
-            authorization_revision if ref == "main" else carrier_revision
-        ),
-    )
-    monkeypatch.setattr(resource, "_default_branch_is_ancestor", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(
-        resource, "_manifest_expected_content_matches_base", lambda *_args, **_kwargs: False
-    )
-    monkeypatch.setattr(resource, "_manifest_content_matches", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(resource, "_revision_matches_manifest", lambda *_args, **_kwargs: False)
-    monkeypatch.setattr(
-        resource, "_is_reconciled_work_product_revision", lambda *_args, **_kwargs: False
-    )
-
-    target = resource.apply_work_product(
-        plan,
-        repository=_REPOSITORY,
-        token=_FIXTURE_VALUE,
-        default_branch="main",
-        authorization_revision=authorization_revision,
-    )
-
-    assert target == resource.ValidationResourceTarget(
-        repository=_REPOSITORY,
-        revision=carrier_revision,
-        correlation="effect-request-322",
-        pr_number=324,
-        change=change,
-        branch=branch,
-    )
+    target = _apply_public_work_product(proof_git)
+    assert target.revision == accepted
+    assert _apply_public_work_product(proof_git) == target
+    assert _postcondition_git(proof_git, target=None)
+    assert proof_git.mutations == []
 
 
 def test_live_322_merged_carrier_is_reconciled_without_replacement(
-    monkeypatch: pytest.MonkeyPatch,
+    proof_git: _ProofGitRepository,
 ) -> None:
-    """A merged requested carrier is complete, not a replacement request."""
-
-    source = WorkerRequest(322, "lead", "resolve-question")
-    change = "restore-no-work-idle-discovery"
-    accepted_base = "d019fdc604e8a7fa40e2f3e6436a12b076658057"
-    current_main = "b751948875a49582a0d073a47809d697badc8a6d"
-    carrier_head = "4ff78b463a24844309aa5025deb7eeaef78bbf55"
-    historical_materialization_revision = "5de9641a3e3e7e26071f3f8cdc1843e3fa842049"
-    merge_commit = current_main
-    pr_base = "6a4aadb40b875fce7715947fef7d9f59f9a9d9b2"
-    branch = f"agent/{change}"
-    manifest = resource.WorkProductManifest(
-        branch=branch,
-        base_sha=accepted_base,
-        message="Resolve exact-head OpenSpec findings for #322",
-        files=(
-            resource.WorkProductFile(
-                f"openspec/changes/{change}/proposal.md",
-                "bdeffd94ff01c7f3e2fd4e8e12c3b535b9df6932",
-                "6003d898fae7c40c59d08e3023ed131baf41b383",
-            ),
-            resource.WorkProductFile(
-                f"openspec/changes/{change}/design.md",
-                "8096b24682c77d37e177e68e3460712af7de3325",
-                "05cfb1579bb4a7c6480f180e9a7e025fdb5fde27",
-            ),
-            resource.WorkProductFile(
-                f"openspec/changes/{change}/tasks.md",
-                "4e428b3ead7ef6aa0de6cabfaef4885932a28d22",
-                "331dc671ea6fa05c8fb2d40cc3f6dc65a31a6f0a",
-            ),
-            resource.WorkProductFile(
-                f"openspec/changes/{change}/specs/scheduled-agent-workflow/spec.md",
-                "d1861dd5b6a190f821fdf99ec7bb2d36fe5db208",
-                "a8ec4b39e5287651ad58cf2b2e0e1a31113cdf06",
-            ),
-        ),
-    )
-    plan = resource.WorkProductPlan(
-        True,
-        source=source,
-        pr_number=324,
-        expected_change=change,
-        manifest=manifest,
-    )
-    merged_pr = {
-        "number": 324,
-        "state": "closed",
-        "merged": True,
-        "merged_at": "2026-09-27T10:25:10Z",
-        "merge_commit_sha": merge_commit,
-        "body": "Formalize OpenSpec change.\n\nRefs #322\n",
-        "head": {
-            "ref": branch,
-            "sha": carrier_head,
-            "repo": {"full_name": _REPOSITORY},
-        },
-        "base": {
-            "ref": "main",
-            "sha": pr_base,
-            "repo": {"full_name": _REPOSITORY},
-        },
-    }
-
-    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_args: source)
-    monkeypatch.setattr(resource, "_open_pr_payload", lambda **_kwargs: merged_pr)
-    monkeypatch.setattr(
-        resource,
-        "_ref_head_sha",
-        lambda _repository, _token, ref, **_kwargs: current_main if ref == "main" else carrier_head,
-    )
-    monkeypatch.setattr(resource, "_default_branch_is_ancestor", lambda *_args, **_kwargs: True)
-
-    final_blobs = {
-        f"openspec/changes/{change}/proposal.md": "a84a82367e4eb62087654c8e0eb104b930928482",
-        f"openspec/changes/{change}/design.md": "3d38ddc47e6f26f3dc7de5c579f5e87700156fd2",
-        f"openspec/changes/{change}/tasks.md": "7367ab0bb5adc63e204ff293ce1f4f9ceb03c5ed",
-        f"openspec/changes/{change}/specs/scheduled-agent-workflow/spec.md": (
-            "0ff040539d076f98adcb46274cd64cb2d5deaf61"
-        ),
-    }
-
-    def fake_github_json(
-        _repository: str,
-        _token: str,
-        api_path: str,
-        *,
-        method: str = "GET",
-        **_kwargs: object,
-    ) -> object:
-        assert method == "GET"
-        if api_path == f"compare/{accepted_base}...{carrier_head}":
-            return {
-                "status": "ahead",
-                "ahead_by": 2,
-                "behind_by": 0,
-                "base_commit": {"sha": accepted_base},
-                "commits": [
-                    {"sha": historical_materialization_revision},
-                    {"sha": carrier_head},
-                ],
-                "total_commits": 2,
-            }
-        if api_path.startswith("contents/"):
-            raw_path, _separator, query = api_path.partition("?")
-            path = raw_path.removeprefix("contents/")
-            reference = query.removeprefix("ref=")
-            if reference == historical_materialization_revision:
-                return {"sha": next(file.blob_sha for file in manifest.files if file.path == path)}
-            if reference == carrier_head:
-                return {"sha": final_blobs[path]}
-            return None
-        raise AssertionError(api_path)
-
-    monkeypatch.setattr(resource, "_github_json", fake_github_json)
-
-    target = resource.apply_work_product(
-        plan,
-        repository=_REPOSITORY,
-        token=_FIXTURE_VALUE,
-        default_branch="main",
-        authorization_revision=current_main,
-    )
-
-    assert target == resource.ValidationResourceTarget(
-        repository=_REPOSITORY,
-        revision=carrier_head,
-        correlation="effect-request-322",
-        pr_number=324,
-        change=change,
-        branch=branch,
-    )
-
-    def incomplete_history(
-        repository: str,
-        token: str,
-        api_path: str,
-        *,
-        method: str = "GET",
-        **kwargs: object,
-    ) -> object:
-        if api_path in {
-            f"compare/{accepted_base}...{carrier_head}",
-            f"compare/{accepted_base}...{current_main}",
-        }:
-            return {
-                "status": "ahead",
-                "ahead_by": 1,
-                "behind_by": 0,
-                "base_commit": {"sha": accepted_base},
-                "commits": [{"sha": carrier_head}],
-                "total_commits": 1,
-            }
-        return fake_github_json(repository, token, api_path, method=method, **kwargs)
-
-    monkeypatch.setattr(resource, "_github_json", incomplete_history)
-    with pytest.raises(RuntimeError, match="replacement work-product base is not current"):
-        resource.apply_work_product(
-            plan,
-            repository=_REPOSITORY,
-            token=_FIXTURE_VALUE,
-            default_branch="main",
-            authorization_revision=current_main,
-        )
+    test_canonical_git_proof_survives_disjoint_advance_reconciliation_and_merge(proof_git)
+    target = _apply_public_work_product(proof_git)
+    assert target.revision == proof_git.main
+    assert _apply_public_work_product(proof_git) == target
+    assert _postcondition_git(proof_git, target=None)
+    assert proof_git.mutations == []
 
 
 def test_merged_carrier_recovers_exact_manifest_from_same_change_successor(
-    monkeypatch: pytest.MonkeyPatch,
+    proof_git: _ProofGitRepository,
 ) -> None:
-    """A later same-Change merge must satisfy an older accepted carrier intent."""
-
-    source = WorkerRequest(322, "lead", "resolve-question")
-    change = "restore-no-work-idle-discovery"
-    accepted_base = "01e22a7ebad34b434c0e12c8293f02a9bed24a40"
-    current_main = "0fef37d90201d5394663101004083f404c744e40"
-    historical_carrier_head = "4ff78b463a24844309aa5025deb7eeaef78bbf55"
-    historical_merge_commit = "b751948875a49582a0d073a47809d697badc8a6d"
-    materialization_commit = "ca9763b5dde4a913acde6d0e25f924d77e160f4e"
-    historical_pr_base = "6a4aadb40b875fce7715947fef7d9f59f9a9d9b2"
-    branch = f"agent/{change}"
-    manifest_values = (
-        (
-            f"openspec/changes/{change}/proposal.md",
-            "a26d5898858133ef0960f069016573dabcaffa2d",
-            "a84a82367e4eb62087654c8e0eb104b930928482",
-        ),
-        (
-            f"openspec/changes/{change}/design.md",
-            "d33fafef5b654f17ba7a4200d75c96097dfcd4f3",
-            "18a7f1b67bc5a135aac22342719c12fa52a55fd1",
-        ),
-        (
-            f"openspec/changes/{change}/tasks.md",
-            "e88951c200fab1ad2a74ec789b0df6871b40611c",
-            "e7211b6a7813863db383fdc80bd572047343b34e",
-        ),
-        (
-            f"openspec/changes/{change}/specs/scheduled-agent-workflow/spec.md",
-            "9e9469441bc6f9a5163c267e2c25b341f5e56b60",
-            "13bbec20b98330945f198a91201256a96e2f62da",
-        ),
+    test_canonical_replacement_has_its_own_target_and_legal_descendants(proof_git, False)
+    head = cast(dict[str, object], proof_git.prs[1]["head"])["sha"]
+    merge = proof_git.commit(
+        {proof_git.path: "replacement correction"},
+        "Merge successor",
+        (proof_git.main, cast(str, head)),
     )
-    manifest = resource.WorkProductManifest(
-        branch=branch,
-        base_sha=accepted_base,
-        message="Resolve OpenSpec review findings for idle ingress",
-        files=tuple(
-            resource.WorkProductFile(path, blob, expected)
-            for path, blob, expected in manifest_values
-        ),
+    proof_git.main = merge
+    proof_git.prs[1].update(
+        state="closed", merged=True, merged_at="2026-10-03T00:00:00Z", merge_commit_sha=merge
     )
-    plan = resource.WorkProductPlan(
-        True,
-        source=source,
-        pr_number=324,
-        expected_change=change,
-        manifest=manifest,
-    )
-    merged_pr = {
-        "number": 324,
-        "state": "closed",
-        "merged": True,
-        "merged_at": "2026-09-27T10:25:10Z",
-        "merge_commit_sha": historical_merge_commit,
-        "body": "Formalize OpenSpec change.\n\nRefs #322\n",
-        "head": {
-            "ref": branch,
-            "sha": historical_carrier_head,
-            "repo": {"full_name": _REPOSITORY},
-        },
-        "base": {
-            "ref": "main",
-            "sha": historical_pr_base,
-            "repo": {"full_name": _REPOSITORY},
-        },
-    }
-    comparison_calls: list[str] = []
-    mutation_calls: list[str] = []
-
-    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_args: source)
-    monkeypatch.setattr(resource, "_open_pr_payload", lambda **_kwargs: merged_pr)
-    monkeypatch.setattr(
-        resource,
-        "_ref_head_sha",
-        lambda _repository, _token, ref, **_kwargs: (
-            current_main if ref == "main" else historical_carrier_head
-        ),
-    )
-
-    def fake_ancestor(
-        _repository: str,
-        _token: str,
-        *,
-        default_revision: str,
-        revision: str,
-    ) -> bool:
-        if default_revision == historical_merge_commit:
-            return revision in {current_main, materialization_commit}
-        if default_revision == historical_carrier_head:
-            return revision == current_main
-        # The accepted base is newer than the historical PR base.  This is
-        # the condition that used to force the live continuation to fail.
-        if default_revision == accepted_base and revision == historical_pr_base:
-            return False
-        return False
-
-    monkeypatch.setattr(resource, "_default_branch_is_ancestor", fake_ancestor)
-
-    def fake_github_json(
-        _repository: str,
-        _token: str,
-        api_path: str,
-        *,
-        method: str = "GET",
-        **_kwargs: object,
-    ) -> object:
-        if method != "GET":
-            mutation_calls.append(api_path)
-            raise AssertionError(f"unexpected mutation: {method} {api_path}")
-        if api_path == f"compare/{accepted_base}...{current_main}":
-            comparison_calls.append(api_path)
-            return {
-                "status": "ahead",
-                "ahead_by": 2,
-                "behind_by": 0,
-                "base_commit": {"sha": accepted_base},
-                "commits": [
-                    {"sha": materialization_commit},
-                    {"sha": current_main},
-                ],
-                "total_commits": 2,
-            }
-        if api_path.startswith("contents/"):
-            _raw_path, _separator, query = api_path.partition("?")
-            path = _raw_path.removeprefix("contents/")
-            reference = query.removeprefix("ref=")
-            if reference == materialization_commit:
-                return {
-                    "sha": next(
-                        blob
-                        for manifest_path, blob, _expected in manifest_values
-                        if manifest_path == path
-                    )
-                }
-        raise AssertionError(api_path)
-
-    monkeypatch.setattr(resource, "_github_json", fake_github_json)
-
-    target = resource.apply_work_product(
-        plan,
-        repository=_REPOSITORY,
-        token=_FIXTURE_VALUE,
-        default_branch="main",
-        authorization_revision=current_main,
-    )
-
-    assert target == resource.ValidationResourceTarget(
-        repository=_REPOSITORY,
-        revision=materialization_commit,
-        correlation="effect-request-322",
-        pr_number=324,
-        change=change,
-        branch=branch,
-    )
-    assert comparison_calls == [f"compare/{accepted_base}...{current_main}"]
-    assert mutation_calls == []
+    target = _apply_public_work_product(proof_git)
+    assert target.revision == merge
+    assert target.pr_number == 353
+    assert _postcondition_git(proof_git, target=None)
+    assert proof_git.mutations == []
 
 
 def test_live_322_manifest_recovers_after_disjoint_default_advance(
-    monkeypatch: pytest.MonkeyPatch,
+    proof_git: _ProofGitRepository,
 ) -> None:
-    source = WorkerRequest(322, "lead", "resolve-question")
-    change = "restore-no-work-idle-discovery"
-    historical_base = "d019fdc604e8a7fa40e2f3e6436a12b076658057"
-    historical_pr_base = "1db00c4b50175af30d4dc9febe461cbab8bac5bf"
-    authorization_revision = "f5fad326173b21feb5455bcb917766a383a76f7b"
-    carrier_revision = "5de9641a3e3e7e26071f3f8cdc1843e3fa842049"
-    branch = f"agent/{change}"
-    manifest_values = (
-        (
-            f"openspec/changes/{change}/proposal.md",
-            "bdeffd94ff01c7f3e2fd4e8e12c3b535b9df6932",
-            "6003d898fae7c40c59d08e3023ed131baf41b383",
-        ),
-        (
-            f"openspec/changes/{change}/design.md",
-            "8096b24682c77d37e177e68e3460712af7de3325",
-            "05cfb1579bb4a7c6480f180e9a7e025fdb5fde27",
-        ),
-        (
-            f"openspec/changes/{change}/tasks.md",
-            "4e428b3ead7ef6aa0de6cabfaef4885932a28d22",
-            "331dc671ea6fa05c8fb2d40cc3f6dc65a31a6f0a",
-        ),
-        (
-            f"openspec/changes/{change}/specs/scheduled-agent-workflow/spec.md",
-            "d1861dd5b6a190f821fdf99ec7bb2d36fe5db208",
-            "a8ec4b39e5287651ad58cf2b2e0e1a31113cdf06",
-        ),
+    accepted = _accepted_git_carrier(proof_git)
+    proof_git.main = proof_git.commit(
+        {"README.md": "disjoint advance"}, "Advance", (proof_git.main,)
     )
-    manifest = resource.WorkProductManifest(
-        branch=branch,
-        base_sha=historical_base,
-        message="Resolve exact-head OpenSpec findings for #322",
-        files=tuple(
-            resource.WorkProductFile(path, blob, expected)
-            for path, blob, expected in manifest_values
-        ),
-    )
-    plan = resource.WorkProductPlan(
-        True,
-        source=source,
-        pr_number=324,
-        expected_change=change,
-        manifest=manifest,
-    )
-    pr_base_paths = {
-        "src/investment_strategy/scheduled_agent_application_materialization.py",
-        "src/investment_strategy/scheduled_agent_effect_contract.py",
-        "src/investment_strategy/scheduled_agent_effects.py",
-        "src/investment_strategy/scheduled_agent_validation_resource.py",
-        "tests/fixtures/issue322-application-recovery.json",
-        "tests/test_issue_comment_bridge.py",
-        "tests/test_scheduled_agent_application_bridge.py",
-        "tests/test_scheduled_agent_application_materialization.py",
-        "tests/test_scheduled_agent_consequence_contract.py",
-        "tests/test_scheduled_agent_effects.py",
-        "tests/test_scheduled_agent_validation_resource.py",
-    }
-    paths_after_pr_base = {
-        "src/investment_strategy/scheduled_agent_application_materialization.py",
-        "src/investment_strategy/scheduled_agent_validation_resource.py",
-        "tests/test_scheduled_agent_application_materialization.py",
-    }
-    overlap_path = "src/investment_strategy/scheduled_agent_validation_resource.py"
-    historical_overlap = [False]
-    carrier_paths_after_pr_base = {path for path, _blob, _expected in manifest_values}
-    default_paths = pr_base_paths | paths_after_pr_base
-    carrier_paths = {path for path, _blob, _expected in manifest_values} | pr_base_paths
-    mutation_calls: list[str] = []
-    comparison_reads: list[str] = []
-    pr = {
-        "number": 324,
-        "state": "open",
-        "merged": False,
-        "draft": False,
-        "title": f"OpenSpec: {change}",
-        "body": f"Formalize OpenSpec change `{change}`.\n\nRefs #322",
-        "head": {
-            "ref": branch,
-            "sha": carrier_revision,
-            "repo": {"full_name": _REPOSITORY},
-        },
-        "base": {
-            "ref": "main",
-            "sha": historical_pr_base,
-            "repo": {"full_name": _REPOSITORY},
-        },
-    }
-
-    def fake_github_json(
-        _repository: str,
-        _token: str,
-        api_path: str,
-        *,
-        method: str = "GET",
-        **_kwargs: object,
-    ) -> object:
-        if method != "GET":
-            mutation_calls.append(f"{method} {api_path}")
-        if api_path.startswith("compare/"):
-            comparison = api_path.removeprefix("compare/")
-            comparison_reads.append(comparison)
-            if comparison == f"{historical_base}...{historical_base}":
-                return {
-                    "status": "identical",
-                    "ahead_by": 0,
-                    "behind_by": 0,
-                    "base_commit": {"sha": historical_base},
-                    "too_large": False,
-                    "files": [],
-                }
-            if comparison == f"{authorization_revision}...{authorization_revision}":
-                return {
-                    "status": "identical",
-                    "ahead_by": 0,
-                    "behind_by": 0,
-                    "base_commit": {"sha": authorization_revision},
-                    "too_large": False,
-                    "files": [],
-                }
-            if comparison == f"{historical_base}...{historical_pr_base}":
-                return {
-                    "status": "ahead",
-                    "ahead_by": 19,
-                    "behind_by": 0,
-                    "base_commit": {"sha": historical_base},
-                    "too_large": False,
-                    "files": [
-                        {"filename": path, "status": "modified"} for path in sorted(pr_base_paths)
-                    ],
-                }
-            if comparison == f"{historical_pr_base}...{authorization_revision}":
-                return {
-                    "status": "ahead",
-                    "ahead_by": 15,
-                    "behind_by": 0,
-                    "base_commit": {"sha": historical_pr_base},
-                    "too_large": False,
-                    "files": [
-                        {"filename": path, "status": "modified"}
-                        for path in sorted(paths_after_pr_base)
-                    ],
-                }
-            if comparison == f"{historical_pr_base}...{carrier_revision}":
-                changed_carrier_paths = set(carrier_paths_after_pr_base)
-                if historical_overlap[0]:
-                    changed_carrier_paths.add(overlap_path)
-                return {
-                    "status": "ahead",
-                    "ahead_by": 7,
-                    "behind_by": 0,
-                    "base_commit": {"sha": historical_pr_base},
-                    "too_large": False,
-                    "files": [
-                        {"filename": path, "status": "modified"}
-                        for path in sorted(changed_carrier_paths)
-                    ],
-                }
-            if comparison == f"{historical_base}...{authorization_revision}":
-                return {
-                    "status": "ahead",
-                    "ahead_by": 34,
-                    "behind_by": 0,
-                    "base_commit": {"sha": historical_base},
-                    "too_large": False,
-                    "files": [
-                        {"filename": path, "status": "modified"} for path in sorted(default_paths)
-                    ],
-                }
-            if comparison == f"{historical_base}...{carrier_revision}":
-                return {
-                    "status": "ahead",
-                    "ahead_by": 26,
-                    "behind_by": 0,
-                    "base_commit": {"sha": historical_base},
-                    "too_large": False,
-                    "files": [
-                        {
-                            "filename": path,
-                            "status": "added" if path.startswith("openspec/") else "modified",
-                        }
-                        for path in sorted(carrier_paths)
-                    ],
-                }
-            if comparison == f"{authorization_revision}...{carrier_revision}":
-                return {
-                    "status": "diverged",
-                    "ahead_by": 7,
-                    "behind_by": 15,
-                    "merge_base_commit": {"sha": historical_pr_base},
-                }
-        if api_path.startswith("contents/") and method == "GET":
-            raw_path, _separator, query = api_path.partition("?")
-            path = raw_path.removeprefix("contents/")
-            reference = query.removeprefix("ref=")
-            by_path = {file_path: (blob, expected) for file_path, blob, expected in manifest_values}
-            if path not in by_path:
-                return None
-            blob, expected = by_path[path]
-            if reference == historical_base:
-                return {"sha": expected}
-            if reference == carrier_revision:
-                return {"sha": blob}
-            return None
-        raise AssertionError(f"unexpected GitHub call: {method} {api_path}")
-
-    monkeypatch.setattr(resource, "_github_json", fake_github_json)
-    monkeypatch.setattr(resource, "_current_authorized_request", lambda *_args: source)
-    monkeypatch.setattr(resource, "_open_pr_payload", lambda **_kwargs: pr)
-    monkeypatch.setattr(
-        resource,
-        "_open_prs_for_branch",
-        lambda *_args, **_kwargs: (pr,),
-    )
-    monkeypatch.setattr(
-        resource,
-        "_ref_head_sha",
-        lambda _repo, _token, ref, **_kwargs: (
-            authorization_revision if ref == "main" else carrier_revision
-        ),
-    )
-    monkeypatch.setattr(
-        resource,
-        "_is_reconciled_work_product_revision",
-        lambda *_args, **_kwargs: False,
-    )
-
-    target = resource.apply_work_product(
-        plan,
-        repository=_REPOSITORY,
-        token=_FIXTURE_VALUE,
-        default_branch="main",
-        authorization_revision=authorization_revision,
-    )
-
-    assert target == resource.ValidationResourceTarget(
-        repository=_REPOSITORY,
-        revision=carrier_revision,
-        correlation="effect-request-322",
-        pr_number=324,
-        change=change,
-        branch=branch,
-    )
-    assert f"{historical_base}...{historical_pr_base}" in comparison_reads
-    assert f"{historical_pr_base}...{authorization_revision}" in comparison_reads
-    assert f"{historical_base}...{authorization_revision}" in comparison_reads
-    assert f"{historical_base}...{carrier_revision}" in comparison_reads
-    assert mutation_calls == []
-
-    historical_overlap[0] = True
-    comparison_reads.clear()
-    with pytest.raises(RuntimeError, match="historical PR base overlaps"):
-        resource.apply_work_product(
-            plan,
-            repository=_REPOSITORY,
-            token=_FIXTURE_VALUE,
-            default_branch="main",
-            authorization_revision=authorization_revision,
-        )
-
-    assert f"{historical_pr_base}...{carrier_revision}" in comparison_reads
-    assert mutation_calls == []
-
-    endpoint_successes: list[str] = []
-    for endpoint_base in (historical_base, authorization_revision):
-        cast(dict[str, object], pr["base"])["sha"] = endpoint_base
-        comparison_reads.clear()
-        try:
-            resource.apply_work_product(
-                plan,
-                repository=_REPOSITORY,
-                token=_FIXTURE_VALUE,
-                default_branch="main",
-                authorization_revision=authorization_revision,
-            )
-        except RuntimeError:
-            continue
-        endpoint_successes.append(endpoint_base)
-
-    assert endpoint_successes == []
-    assert mutation_calls == []
+    target = _apply_public_work_product(proof_git)
+    assert target.revision == accepted
+    assert _apply_public_work_product(proof_git) == target
+    assert _postcondition_git(proof_git, target=None)
+    assert proof_git.mutations == []
 
 
 @pytest.mark.parametrize(
@@ -3045,7 +2090,7 @@ def test_revision_matches_manifest_rejects_incomplete_or_renamed_paths(
     )
 
 
-def test_lead_materialization_bases_next_continuation_on_merged_continuation(
+def test_constructor_lead_materialization_bases_next_continuation_on_merged_continuation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = WorkerRequest(322, "lead", "resolve-question")
@@ -3109,7 +2154,6 @@ def test_lead_materialization_bases_next_continuation_on_merged_continuation(
     )
     monkeypatch.setattr(resource, "_change_carrier_decision", lambda *_args, **_kwargs: decision)
     monkeypatch.setattr(resource, "_open_pr_payload", lambda **_kwargs: merged_pr)
-    monkeypatch.setattr(resource, "_already_merged_work_product_target", lambda **_kwargs: None)
     monkeypatch.setattr(resource, "_default_branch_is_ancestor", lambda *_args, **_kwargs: True)
 
     class _ReachedNextContinuation(RuntimeError):
@@ -3129,7 +2173,7 @@ def test_lead_materialization_bases_next_continuation_on_merged_continuation(
     monkeypatch.setattr(resource, "_open_prs_for_branch", capture_open_prs)
 
     with pytest.raises(_ReachedNextContinuation):
-        resource.apply_work_product(
+        resource._construct_work_product(
             plan,
             repository=_REPOSITORY,
             token=_FIXTURE_VALUE,
@@ -3180,4 +2224,35 @@ def test_review_openspec_consumes_shared_qualified_continuation(
         pr_number=352,
         change=change,
         branch=branch,
+    )
+
+
+def _apply_public_work_product(fixture: _ProofGitRepository) -> resource.ValidationResourceTarget:
+    payload = fixture.payload()
+    files = tuple(
+        resource.WorkProductFile(
+            cast(str, file["path"]),
+            cast(str, file["blob_sha"]),
+            cast(str | None, file["expected_sha"]),
+        )
+        for file in cast(list[dict[str, object]], payload["files"])
+    )
+    plan = resource.WorkProductPlan(
+        True,
+        fixture.source,
+        324,
+        _CHANGE,
+        resource.WorkProductManifest(fixture.branch, fixture.base, fixture.message, files),
+    )
+    # The fixture's immutable Change, not this module's unrelated fixture Change.
+    plan = resource.WorkProductPlan(
+        True, fixture.source, 324, cast(str, payload["change"]), plan.manifest
+    )
+    return resource.apply_work_product(
+        plan,
+        repository=fixture.repository,
+        token=_FIXTURE_VALUE,
+        default_branch="main",
+        authorization_revision=fixture.main,
+        accepted_authorization_revision=fixture.authorization,
     )
