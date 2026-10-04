@@ -386,6 +386,7 @@ def test_first_activation_promotes_change_and_successor_in_one_issue_patch(
         repository="royhsu-work/investment-strategy",
         token=_REVISION,
         current_revision=_REVISION,
+        accepted_authorization_revision=_REVISION,
         default_branch="main",
         request_comment_id=901,
     )

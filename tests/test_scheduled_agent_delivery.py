@@ -258,7 +258,7 @@ def test_old_review_cannot_replace_historical_head_current_default_review(
     )
 
 
-def test_completed_historical_checkpoint_is_read_only_for_rereview(
+def test_historical_checkpoint_qualification_primitive_is_read_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pr = _continuation_pr()
@@ -299,24 +299,21 @@ def test_completed_historical_checkpoint_is_read_only_for_rereview(
         ],
     }
     request = materialization.parse_materialization_payload(payload, source)
-    target = materialization._materialize_implementation_target(
+    decision = materialization._qualified_implementation_decision(
         request,
         source,
         repository=REPOSITORY,
         token=TEST_VALUE,
-        default_branch="main",
         current_revision=MAIN,
     )
-    assert target.revision == HEAD and target.pr_number == 236
-    assert (
-        materialization._observe_implementation_target(
-            request,
-            source,
-            repository=REPOSITORY,
-            token=TEST_VALUE,
-            current_revision=MAIN,
-        )
-        == target
+    assert decision.disposition == "HISTORICAL_MERGED"
+    assert decision.head_sha == HEAD and decision.pr_number == 236
+    materialization._verify_implementation_manifest_freshness(
+        request,
+        repository=REPOSITORY,
+        token=TEST_VALUE,
+        current_revision=MAIN,
+        carrier_head=HEAD,
     )
 
 

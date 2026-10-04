@@ -10,7 +10,7 @@ import re
 import subprocess
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
@@ -1353,65 +1353,6 @@ def _ancestor_comparison_paths(
     )
 
 
-def _validate_historical_pr_base(
-    repository: str,
-    token: str,
-    *,
-    request_base_sha: str,
-    pr_base_sha: str,
-    authorization_revision: str,
-    carrier_revision: str,
-    requested_paths: set[str],
-) -> None:
-    """Verify historical ancestry and reject paths changed on both descendants."""
-
-    if (
-        not _valid_sha(request_base_sha)
-        or not _valid_sha(pr_base_sha)
-        or not _valid_sha(authorization_revision)
-        or not _valid_sha(carrier_revision)
-        or request_base_sha == authorization_revision
-    ):
-        raise RuntimeError("work-product historical PR base identity is invalid")
-    try:
-        changed_before_pr_base = _ancestor_comparison_paths(
-            repository,
-            token,
-            base_sha=request_base_sha,
-            revision=pr_base_sha,
-        )
-        if pr_base_sha == authorization_revision:
-            # The current-main snapshot is not necessarily an ancestor of a
-            # historical carrier. Use the immutable request base as the
-            # common ancestor and prove both descendant path sets are disjoint.
-            default_branch_paths = changed_before_pr_base
-            carrier_comparison_base = request_base_sha
-        else:
-            default_branch_paths = _ancestor_comparison_paths(
-                repository,
-                token,
-                base_sha=pr_base_sha,
-                revision=authorization_revision,
-            )
-            carrier_comparison_base = pr_base_sha
-        carrier_paths = _ancestor_comparison_paths(
-            repository,
-            token,
-            base_sha=carrier_comparison_base,
-            revision=carrier_revision,
-        )
-    except RuntimeError as exc:
-        raise RuntimeError(
-            f"work-product historical PR base ancestry evidence is incomplete: {exc}"
-        ) from exc
-    if changed_before_pr_base.intersection(requested_paths):
-        raise RuntimeError("work-product historical PR base overlaps requested manifest")
-    if default_branch_paths.intersection(carrier_paths):
-        raise RuntimeError(
-            "work-product historical PR base overlaps default-branch and carrier changes"
-        )
-
-
 def _safe_historical_carrier_reconciliation(
     repository: str,
     token: str,
@@ -1600,281 +1541,8 @@ def _manifest_content_matches(
     )
 
 
-def _manifest_expected_content_matches_base(
-    repository: str,
-    token: str,
-    *,
-    base_sha: str,
-    manifest: WorkProductManifest,
-) -> bool:
-    """Verify every supplied expected SHA still describes the requested base."""
-
-    return bool(manifest.files) and all(
-        file.expected_sha is None
-        or _content_sha_at(repository, token, path=file.path, revision=base_sha)
-        == file.expected_sha
-        for file in manifest.files
-    )
-
-
-def _historical_manifest_materialization_commit(
-    repository: str,
-    token: str,
-    *,
-    base_sha: str,
-    revision: str,
-    manifest: WorkProductManifest,
-) -> str | None:
-    """Find one authoritative carrier commit containing the exact manifest.
-
-    A merged PR may legitimately have later commits that update the same
-    OpenSpec files.  The durable consequence of the original application is
-    therefore proved from the PR's complete compare history, not from the
-    final tree alone.  GitHub's compare/commit/content identities are all
-    content-addressed and read-only; any incomplete or truncated observation
-    fails closed.
-    """
-
-    if (
-        not _valid_sha(base_sha)
-        or not _valid_sha(revision)
-        or not manifest.files
-        or base_sha == revision
-    ):
-        return None
-    comparison = _as_mapping(
-        cast(object, _github_json(repository, token, f"compare/{base_sha}...{revision}"))
-    )
-    base_commit = None if comparison is None else _as_mapping(comparison.get("base_commit"))
-    commits = None if comparison is None else comparison.get("commits")
-    ahead_by = None if comparison is None else comparison.get("ahead_by")
-    behind_by = None if comparison is None else comparison.get("behind_by")
-    total_commits = None if comparison is None else comparison.get("total_commits")
-    if (
-        comparison is None
-        or comparison.get("status") != "ahead"
-        or comparison.get("too_large") is True
-        or base_commit is None
-        or base_commit.get("sha") != base_sha
-        or not isinstance(ahead_by, int)
-        or isinstance(ahead_by, bool)
-        or ahead_by <= 0
-        or not isinstance(behind_by, int)
-        or isinstance(behind_by, bool)
-        or behind_by != 0
-        or not isinstance(commits, list)
-        or len(commits) != ahead_by
-        or (
-            total_commits is not None
-            and (
-                not isinstance(total_commits, int)
-                or isinstance(total_commits, bool)
-                or total_commits != len(commits)
-            )
-        )
-        or not commits
-    ):
-        return None
-
-    commit_shas: list[str] = []
-    seen_commits: set[str] = set()
-    for raw_commit in commits:
-        commit = _as_mapping(raw_commit)
-        commit_sha = None if commit is None else commit.get("sha")
-        if not _valid_sha(commit_sha) or cast(str, commit_sha) in seen_commits:
-            return None
-        seen_commits.add(cast(str, commit_sha))
-        commit_shas.append(cast(str, commit_sha))
-    if commit_shas[-1] != revision:
-        return None
-
-    requested_paths = {file.path for file in manifest.files}
-    if len(requested_paths) != len(manifest.files):
-        return None
-
-    for commit_sha in commit_shas:
-        if _manifest_content_matches(
-            repository,
-            token,
-            revision=commit_sha,
-            manifest=manifest,
-        ):
-            return commit_sha
-    return None
-
-
-def _already_merged_work_product_target(
-    *,
-    repository: str,
-    token: str,
-    default_branch: str,
-    authorization_revision: str,
-    pr: Mapping[str, object],
-    issue_number: int,
-    pr_number: int,
-    expected_change: str,
-    expected_branch: str,
-    manifest: WorkProductManifest,
-) -> ValidationResourceTarget | None:
-    """Recognize a requested carrier whose exact content is already merged.
-
-    A completed carrier is a durable consequence, not a request to create a
-    same-Change replacement.  This observer is intentionally narrow: the PR
-    must be a historical merged carrier, its merge commit must be in the
-    current default-branch history, and every requested blob must be present
-    in one complete historical PR snapshot.  The snapshot normally comes
-    from the recorded head; after a same-Change successor has merged, it may
-    instead come from the complete accepted-base-to-main history, but only
-    when the historical merge commit is an ancestor of that exact snapshot.
-    Later same-Change descendants may update those files legitimately; if the
-    historical exact effect or its ancestry is not provable, callers retain
-    the existing replacement/fail-closed path.
-    """
-
-    if not _is_historical_merged_carrier(pr):
-        return None
-    head = _as_mapping(pr.get("head"))
-    base = _as_mapping(pr.get("base"))
-    pr_head_sha = None if head is None else head.get("sha")
-    pr_base_sha = None if base is None else base.get("sha")
-    merge_commit_sha = pr.get("merge_commit_sha")
-    if (
-        pr.get("number") != pr_number
-        or head is None
-        or base is None
-        or head.get("ref") != expected_branch
-        or base.get("ref") != default_branch
-        or not _valid_sha(pr_head_sha)
-        or not _valid_sha(pr_base_sha)
-        or not _valid_sha(merge_commit_sha)
-    ):
-        return None
-
-    if not _default_branch_is_ancestor(
-        repository,
-        token,
-        default_revision=cast(str, merge_commit_sha),
-        revision=authorization_revision,
-    ):
-        return None
-    # The usual case is that the accepted base is an ancestor of the
-    # historical PR base and the exact manifest can be found in the PR head's
-    # complete compare history.  A resumed accepted application can instead
-    # observe a later same-Change successor already merged on main: the
-    # accepted base is then newer than the recorded carrier base, while the
-    # immutable manifest was materialized by that successor.  Do not reject
-    # that durable consequence merely because the old carrier's base cannot
-    # be compared in the forward direction.  The successor path is still
-    # narrow: the exact manifest must be found in the complete compare history
-    # from the accepted base to current main, and the historical carrier's
-    # merge commit must be an ancestor of that exact materialization commit.
-    direct_materialization = None
-    if _default_branch_is_ancestor(
-        repository,
-        token,
-        default_revision=cast(str, pr_head_sha),
-        revision=authorization_revision,
-    ) and (
-        pr_base_sha == manifest.base_sha
-        or _default_branch_is_ancestor(
-            repository,
-            token,
-            default_revision=manifest.base_sha,
-            revision=cast(str, pr_base_sha),
-        )
-    ):
-        direct_materialization = _historical_manifest_materialization_commit(
-            repository,
-            token,
-            base_sha=manifest.base_sha,
-            revision=cast(str, pr_head_sha),
-            manifest=manifest,
-        )
-    if direct_materialization is not None:
-        return ValidationResourceTarget(
-            repository=repository,
-            revision=cast(str, pr_head_sha),
-            correlation=f"effect-request-{issue_number}",
-            pr_number=pr_number,
-            change=expected_change,
-            branch=expected_branch,
-        )
-
-    successor_materialization = _historical_manifest_materialization_commit(
-        repository,
-        token,
-        base_sha=manifest.base_sha,
-        revision=authorization_revision,
-        manifest=manifest,
-    )
-    if successor_materialization is None or not _default_branch_is_ancestor(
-        repository,
-        token,
-        default_revision=cast(str, merge_commit_sha),
-        revision=successor_materialization,
-    ):
-        return None
-    return ValidationResourceTarget(
-        repository=repository,
-        revision=successor_materialization,
-        correlation=f"effect-request-{issue_number}",
-        pr_number=pr_number,
-        change=expected_change,
-        branch=expected_branch,
-    )
-
-
 def _reconciliation_message(change: str) -> str:
     return f"Reconcile default-branch ancestry for {change}"
-
-
-def _historical_manifest_observation_matches(
-    repository: str,
-    token: str,
-    *,
-    historical_base_sha: str,
-    authorization_revision: str,
-    carrier_revision: str,
-    manifest: WorkProductManifest,
-) -> bool:
-    """Prove an exact already-materialized manifest across a disjoint main advance.
-
-    This read-only completion predicate uses the requested blob SHAs as the
-    durable postcondition. Expected preimage SHAs constrain a write/replay;
-    they need not still exist once the exact manifest is already on the carrier.
-    """
-
-    if (
-        not _valid_sha(historical_base_sha)
-        or historical_base_sha != manifest.base_sha
-        or historical_base_sha == authorization_revision
-        or not _valid_sha(authorization_revision)
-        or not _valid_sha(carrier_revision)
-    ):
-        raise RuntimeError("work-product historical manifest identity is invalid")
-    default_paths = _ancestor_comparison_paths(
-        repository,
-        token,
-        base_sha=historical_base_sha,
-        revision=authorization_revision,
-    )
-    carrier_paths = _ancestor_comparison_paths(
-        repository,
-        token,
-        base_sha=historical_base_sha,
-        revision=carrier_revision,
-    )
-    manifest_paths = {file.path for file in manifest.files}
-    if default_paths.intersection(manifest_paths):
-        raise RuntimeError("work-product historical manifest overlaps default-branch changes")
-    if not manifest_paths.issubset(carrier_paths):
-        return False
-    return _manifest_content_matches(
-        repository,
-        token,
-        revision=carrier_revision,
-        manifest=manifest,
-    )
 
 
 def _is_reconciled_work_product_revision(
@@ -2080,7 +1748,7 @@ def _replacement_carrier_plan(
     )
 
 
-def apply_work_product(
+def _construct_work_product(
     plan: WorkProductPlan,
     *,
     repository: str,
@@ -2088,6 +1756,7 @@ def apply_work_product(
     default_branch: str,
     authorization_revision: str,
     allow_pending_continuation: bool = False,
+    before_write: Callable[[], None] | None = None,
 ) -> ValidationResourceTarget:
     """Construct one exact commit and hand open-PR head movement to a carrier."""
 
@@ -2198,21 +1867,6 @@ def apply_work_product(
     if base is None or base.get("ref") != default_branch:
         raise RuntimeError("work-product PR base identity is stale")
     historical_merged_carrier = _is_historical_merged_carrier(pr)
-    if historical_merged_carrier:
-        completed_target = _already_merged_work_product_target(
-            repository=repository,
-            token=token,
-            default_branch=default_branch,
-            authorization_revision=authorization_revision,
-            pr=pr,
-            issue_number=plan.source.issue_number,
-            pr_number=plan.pr_number,
-            expected_change=plan.expected_change,
-            expected_branch=expected_branch,
-            manifest=plan.manifest,
-        )
-        if completed_target is not None:
-            return completed_target
     replacement_branch: str | None = None
     replacement_ref_exists = False
     replacement_pr: Mapping[str, object] | None = None
@@ -2220,8 +1874,6 @@ def apply_work_product(
     replacement_reconciliation_required = False
     replacement_base_requires_reconciliation = False
     safe_historical_reconciliation = False
-    current_carrier_is_materialized = replacement_branch is None
-    current_target_pr_number: int | None = plan.pr_number
     if historical_merged_carrier:
         merge_commit_sha = pr.get("merge_commit_sha")
         if not _valid_sha(merge_commit_sha) or not _default_branch_is_ancestor(
@@ -2303,15 +1955,6 @@ def apply_work_product(
                     authorization_revision=authorization_revision,
                 )
             )
-            if replacement_matches_manifest and not replacement_base_requires_reconciliation:
-                return ValidationResourceTarget(
-                    repository=repository,
-                    revision=cast(str, replacement_revision),
-                    correlation=f"effect-request-{plan.source.issue_number}",
-                    pr_number=replacement_pr_number,
-                    change=plan.expected_change,
-                    branch=replacement_branch,
-                )
             if replacement_base_requires_reconciliation and not (
                 replacement_matches_manifest or replacement_is_reconciled
             ):
@@ -2371,12 +2014,6 @@ def apply_work_product(
             default_revision=authorization_revision,
             revision=current_head,
         )
-        current_carrier_is_materialized = (
-            replacement_pr is not None
-            and replacement_pr_number is not None
-            and replacement_ref_exists
-        )
-        current_target_pr_number = replacement_pr_number
     else:
         current_ref_head = _ref_head_sha(repository, token, expected_branch)
         if current_ref_head != pr_head_sha:
@@ -2409,134 +2046,21 @@ def apply_work_product(
                 manifest=plan.manifest,
             )
             safe_historical_reconciliation = True
-    if (
-        current_carrier_is_materialized
-        and current_target_pr_number is not None
-        and _manifest_content_matches(
-            repository,
-            token,
-            revision=current_head,
-            manifest=plan.manifest,
-        )
-        and (
-            default_branch_is_ancestor
-            or (
-                replacement_branch is not None
-                and not replacement_base_requires_reconciliation
-                and _manifest_expected_content_matches_base(
-                    repository,
-                    token,
-                    base_sha=plan.manifest.base_sha,
-                    manifest=plan.manifest,
-                )
-            )
-        )
+    # COMPLETE is handled only by the public proof. This primitive plans
+    # missing writes and checks expected content at its actual first parent.
+    if current_head != plan.manifest.base_sha and not (
+        replacement_branch is not None
+        or safe_historical_reconciliation
+        or plan.manifest.base_sha == authorization_revision
     ):
-        return ValidationResourceTarget(
-            repository=repository,
-            revision=current_head,
-            correlation=f"effect-request-{plan.source.issue_number}",
-            pr_number=current_target_pr_number,
-            change=plan.expected_change,
-            branch=replacement_branch if replacement_branch is not None else expected_branch,
-        )
-    replay_manifest = False
-    if current_head != plan.manifest.base_sha:
-        manifest_applied = _revision_matches_manifest(
+        advance_paths = _ancestor_comparison_paths(
             repository,
             token,
             base_sha=plan.manifest.base_sha,
             revision=current_head,
-            manifest=plan.manifest,
         )
-        reconciled = _is_reconciled_work_product_revision(
-            repository,
-            token,
-            base_sha=plan.manifest.base_sha,
-            revision=current_head,
-            manifest=plan.manifest,
-            expected_change=plan.expected_change,
-            authorization_revision=authorization_revision,
-        )
-        if (
-            replacement_branch is None
-            and not default_branch_is_ancestor
-            and plan.manifest.base_sha != authorization_revision
-        ):
-            historical_pr_base = base.get("sha")
-            if not _valid_sha(historical_pr_base):
-                raise RuntimeError("work-product historical PR base identity is incomplete")
-            _validate_historical_pr_base(
-                repository,
-                token,
-                request_base_sha=plan.manifest.base_sha,
-                pr_base_sha=cast(str, historical_pr_base),
-                authorization_revision=authorization_revision,
-                carrier_revision=current_head,
-                requested_paths={file.path for file in plan.manifest.files},
-            )
-            observed_prs = _open_prs_for_branch(
-                repository,
-                token,
-                branch=expected_branch,
-                default_branch=default_branch,
-            )
-            if len(observed_prs) != 1 or observed_prs[0].get("number") != plan.pr_number:
-                raise RuntimeError("work-product historical carrier identity is ambiguous")
-            if _historical_manifest_observation_matches(
-                repository,
-                token,
-                historical_base_sha=plan.manifest.base_sha,
-                authorization_revision=authorization_revision,
-                carrier_revision=current_head,
-                manifest=plan.manifest,
-            ):
-                return ValidationResourceTarget(
-                    repository=repository,
-                    revision=current_head,
-                    correlation=f"effect-request-{plan.source.issue_number}",
-                    pr_number=plan.pr_number,
-                    change=plan.expected_change,
-                    branch=expected_branch,
-                )
-        if default_branch_is_ancestor and (manifest_applied or reconciled):
-            if replacement_branch is not None and (
-                replacement_pr is None or replacement_pr_number is None
-            ):
-                raise CarrierRequired(
-                    _replacement_carrier_plan(
-                        repository=repository,
-                        issue_number=plan.source.issue_number,
-                        change=plan.expected_change,
-                        action=plan.source.action,
-                        authorization_revision=authorization_revision,
-                        branch=replacement_branch,
-                        revision=current_head,
-                        default_branch=default_branch,
-                        historical_pr_number=plan.pr_number,
-                    )
-                )
-            return ValidationResourceTarget(
-                repository=repository,
-                revision=current_head,
-                correlation=f"effect-request-{plan.source.issue_number}",
-                pr_number=(
-                    cast(int, replacement_pr_number)
-                    if replacement_branch is not None
-                    else plan.pr_number
-                ),
-                change=plan.expected_change,
-                branch=replacement_branch if replacement_branch is not None else expected_branch,
-            )
-        if (
-            not manifest_applied
-            and not reconciled
-            and not replacement_reconciliation_required
-            and not safe_historical_reconciliation
-        ):
+        if advance_paths.intersection(file.path for file in plan.manifest.files):
             raise RuntimeError("work-product PR head/base identity is stale")
-        if manifest_applied or reconciled:
-            replay_manifest = True
     needs_default_reconciliation = not default_branch_is_ancestor
     reconcile_replacement_from_default = (
         needs_default_reconciliation
@@ -2554,40 +2078,33 @@ def apply_work_product(
             manifest=plan.manifest,
         )
 
-    if not replay_manifest:
-        expected_content_revision = (
-            current_head if safe_historical_reconciliation else plan.manifest.base_sha
+    expected_content_revision = current_head
+    for file in plan.manifest.files:
+        current_sha = _content_sha_at(
+            repository,
+            token,
+            path=file.path,
+            revision=expected_content_revision,
         )
-        for file in plan.manifest.files:
-            current_sha = _content_sha_at(
+        if current_sha != file.expected_sha:
+            raise RuntimeError("work-product expected content SHA is stale")
+        task_file = _executor_task_file(
+            plan.source,
+            plan.expected_change,
+            plan.manifest.files,
+        )
+        if task_file is not None and file.path == task_file.path:
+            current = _content_text_at(
                 repository,
                 token,
                 path=file.path,
                 revision=expected_content_revision,
             )
-            if current_sha != file.expected_sha and not (
-                safe_historical_reconciliation and current_sha == file.blob_sha
-            ):
-                raise RuntimeError("work-product expected content SHA is stale")
-            task_file = _executor_task_file(
-                plan.source,
-                plan.expected_change,
-                plan.manifest.files,
-            )
-            if task_file is not None and file.path == task_file.path:
-                current = _content_text_at(
-                    repository,
-                    token,
-                    path=file.path,
-                    revision=expected_content_revision,
+            candidate = _blob_text(repository, token, file.blob_sha)
+            if current != candidate and not _task_marker_update_is_monotonic(current, candidate):
+                raise RuntimeError(
+                    "work-product task marker update must be a monotonic checkbox-only update"
                 )
-                candidate = _blob_text(repository, token, file.blob_sha)
-                if current != candidate and not _task_marker_update_is_monotonic(
-                    current, candidate
-                ):
-                    raise RuntimeError(
-                        "work-product task marker update must be a monotonic checkbox-only update"
-                    )
 
     tree_base_revision = (
         authorization_revision if reconcile_replacement_from_default else current_head
@@ -2614,37 +2131,32 @@ def apply_work_product(
             for file in plan.manifest.files
         ]
     )
-    if (
-        not replay_manifest
-        or reconciliation_tree_elements is not None
-        or reconcile_replacement_from_default
-    ):
-        try:
-            tree_response = _as_mapping(
-                cast(
-                    object,
-                    _github_json(
-                        repository,
-                        token,
-                        "git/trees",
-                        method="POST",
-                        payload={
-                            "base_tree": cast(str, base_tree_sha),
-                            "tree": tree_elements,
-                        },
-                    ),
-                )
+    try:
+        tree_response = _as_mapping(
+            cast(
+                object,
+                _github_json(
+                    repository,
+                    token,
+                    "git/trees",
+                    method="POST",
+                    payload={
+                        "base_tree": cast(str, base_tree_sha),
+                        "tree": tree_elements,
+                    },
+                ),
             )
-        except HTTPError as exc:
-            if exc.code in {404, 422}:
-                raise RuntimeError(
-                    "work-product referenced blob is unavailable to application tree construction"
-                ) from exc
-            raise
-        observed_tree_sha = None if tree_response is None else tree_response.get("sha")
-        if not _valid_sha(observed_tree_sha):
-            raise RuntimeError("work-product tree creation returned no SHA")
-        tree_sha = cast(str, observed_tree_sha)
+        )
+    except HTTPError as exc:
+        if exc.code in {404, 422}:
+            raise RuntimeError(
+                "work-product referenced blob is unavailable to application tree construction"
+            ) from exc
+        raise
+    observed_tree_sha = None if tree_response is None else tree_response.get("sha")
+    if not _valid_sha(observed_tree_sha):
+        raise RuntimeError("work-product tree creation returned no SHA")
+    tree_sha = cast(str, observed_tree_sha)
 
     observed_tree = _as_mapping(
         cast(
@@ -2664,25 +2176,18 @@ def apply_work_product(
         or not isinstance(tree_entries, list)
     ):
         raise RuntimeError("work-product tree postcondition is incomplete")
-    if (
-        not replay_manifest
-        or reconciliation_tree_elements is not None
-        or reconcile_replacement_from_default
-    ):
-        for file in plan.manifest.files:
-            matches = [
-                entry
-                for raw_entry in tree_entries
-                if (entry := _as_mapping(raw_entry)) is not None and entry.get("path") == file.path
-            ]
-            if (
-                len(matches) != 1
-                or matches[0].get("type") != "blob"
-                or matches[0].get("sha") != file.blob_sha
-            ):
-                raise RuntimeError(
-                    "work-product referenced blob was not resolved into exact tree path"
-                )
+    for file in plan.manifest.files:
+        matches = [
+            entry
+            for raw_entry in tree_entries
+            if (entry := _as_mapping(raw_entry)) is not None and entry.get("path") == file.path
+        ]
+        if (
+            len(matches) != 1
+            or matches[0].get("type") != "blob"
+            or matches[0].get("sha") != file.blob_sha
+        ):
+            raise RuntimeError("work-product referenced blob was not resolved into exact tree path")
 
     materialization_branch = (
         plan.manifest.branch if replacement_branch is None else replacement_branch
@@ -2743,18 +2248,9 @@ def apply_work_product(
         and task_file.expected_sha is not None
         and task_file.blob_sha == task_file.expected_sha
     ):
-        return ValidationResourceTarget(
-            repository=repository,
-            revision=current_head,
-            correlation=f"effect-request-{plan.source.issue_number}",
-            pr_number=plan.pr_number,
-            change=plan.expected_change,
-            branch=replacement_branch if replacement_branch is not None else expected_branch,
-        )
+        raise RuntimeError("unchanged task bookkeeping must be consumed by canonical proof")
 
-    commit_message = (
-        _reconciliation_message(plan.expected_change) if replay_manifest else plan.manifest.message
-    )
+    commit_message = plan.manifest.message
     commit_parents = [current_head]
     if needs_default_reconciliation:
         commit_parents.append(authorization_revision)
@@ -2780,21 +2276,31 @@ def apply_work_product(
         raise RuntimeError("work-product commit creation returned no SHA")
 
     if replacement_branch is not None and not replacement_ref_exists:
-        created_ref = _as_mapping(
-            cast(
-                object,
+        if before_write is not None:
+            before_write()
+        existing_ref = _as_mapping(
+            _github_json(
+                repository,
+                token,
+                f"git/ref/heads/{quote(replacement_branch, safe='')}",
+                allow_not_found=True,
+            )
+        )
+        if existing_ref is not None:
+            existing_object = _as_mapping(existing_ref.get("object"))
+            if existing_object is None or existing_object.get("sha") != revision:
+                raise RuntimeError("replacement branch changed before ref creation")
+            created_ref: Mapping[str, object] | None = existing_ref
+        else:
+            created_ref = _as_mapping(
                 _github_json(
                     repository,
                     token,
                     "git/refs",
                     method="POST",
-                    payload={
-                        "ref": f"refs/heads/{replacement_branch}",
-                        "sha": cast(str, revision),
-                    },
-                ),
+                    payload={"ref": f"refs/heads/{replacement_branch}", "sha": cast(str, revision)},
+                )
             )
-        )
         created_object = None if created_ref is None else _as_mapping(created_ref.get("object"))
         if (
             created_object is None
@@ -3023,3 +2529,52 @@ def apply_work_product(
         },
     )
     raise CarrierRequired(plan_id)
+
+
+def apply_work_product(
+    plan: WorkProductPlan,
+    *,
+    repository: str,
+    token: str,
+    default_branch: str,
+    authorization_revision: str,
+    accepted_authorization_revision: str | None = None,
+    allow_pending_continuation: bool = False,
+) -> ValidationResourceTarget:
+    """Use the materialization proof owner for every public work-product apply."""
+    from investment_strategy.scheduled_agent_application_materialization import (
+        apply_materialization,
+    )
+
+    if (
+        not plan.should_apply
+        or plan.source is None
+        or plan.manifest is None
+        or plan.pr_number is None
+        or plan.expected_change is None
+    ):
+        raise RuntimeError("work-product plan is incomplete")
+    payload: dict[str, object] = {
+        "operation": "application-materialize",
+        "issue_number": plan.source.issue_number,
+        "expected_change": plan.expected_change,
+        "change": plan.expected_change,
+        "branch": plan.manifest.branch,
+        "base_sha": plan.manifest.base_sha,
+        "message": plan.manifest.message,
+        "pr_number": plan.pr_number,
+        "files": [
+            {"path": file.path, "blob_sha": file.blob_sha, "expected_sha": file.expected_sha}
+            for file in plan.manifest.files
+        ],
+    }
+    return apply_materialization(
+        payload,
+        plan.source,
+        repository=repository,
+        token=token,
+        default_branch=default_branch,
+        current_revision=authorization_revision,
+        accepted_authorization_revision=accepted_authorization_revision,
+        allow_pending_continuation=allow_pending_continuation,
+    )
