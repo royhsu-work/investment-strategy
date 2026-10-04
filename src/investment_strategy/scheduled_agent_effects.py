@@ -183,12 +183,10 @@ def semantic_intent_payload(raw_worker_result: str) -> str:
     retained_effects: list[dict[str, str]] = []
     requested_effects = decoded.get("requested_effects")
     if isinstance(requested_effects, list):
-        # Materialization is the one application-owned mechanical consequence
-        # that must survive an ACCEPT/retry boundary.  Keep its immutable
-        # content-addressed manifest while discarding invocation-local formal
-        # projections and every other requested effect.
+        # Retain the immutable materialization and its verified semantic slice
+        # evidence. Formal result/routing projections are rebuilt from fresh truth.
         for effect in requested_effects:
-            if not isinstance(effect, Mapping) or effect.get("kind") != GITHUB_MUTATION_KIND:
+            if not isinstance(effect, Mapping):
                 continue
             payload_json = effect.get("payload_json")
             if not isinstance(payload_json, str):
@@ -197,16 +195,22 @@ def semantic_intent_payload(raw_worker_result: str) -> str:
                 payload = json.loads(payload_json)
             except json.JSONDecodeError:
                 continue
-            if (
-                isinstance(payload, Mapping)
+            if not isinstance(payload, Mapping):
+                continue
+            kind = effect.get("kind")
+            materialization = (
+                kind == GITHUB_MUTATION_KIND
                 and payload.get("operation") == "application-materialize"
-            ):
-                retained_effects.append(
-                    {
-                        "kind": GITHUB_MUTATION_KIND,
-                        "payload_json": payload_json,
-                    }
-                )
+            )
+            checkpoint = (
+                kind == "issue-comment"
+                and decoded.get("role") == "executor"
+                and decoded.get("action") == "implement-change"
+                and isinstance(payload.get("body"), str)
+                and cast(str, payload["body"]).splitlines()[:1] == ["SLICE_CHECKPOINT"]
+            )
+            if materialization or checkpoint:
+                retained_effects.append({"kind": cast(str, kind), "payload_json": payload_json})
     decoded["requested_effects"] = retained_effects
     return json.dumps(decoded, sort_keys=True, separators=(",", ":"))
 
@@ -620,6 +624,7 @@ def _pending_continuation_is_eligible(
     return (
         decision.disposition == "FAIL_CLOSED"
         and decision.reason == "observations-unqualified"
+        and all(number == source.issue_number for number in decision.formal_issue_ids)
         and preflight.human_authorized is True
         and not enumeration.incomplete_results
         and enumeration.exhausted
@@ -2707,6 +2712,7 @@ class GitHubEffectAdapter:
                 token=self.token,
                 current_revision=self.current_revision,
                 default_branch=default_branch,
+                accepted_authorization_revision=self.authorization_revision,
                 promote_change=self.materialization_promote_change,
                 validated_revision=self.validated_materialization_revision,
                 allow_pending_continuation=self.allow_pending_continuation,
@@ -3158,6 +3164,7 @@ class GitHubEffectAdapter:
                     token=self.token,
                     current_revision=self.current_revision,
                     default_branch=default_branch,
+                    accepted_authorization_revision=self.authorization_revision,
                     target=self._materialization_targets.get(effect),
                     allow_pending_continuation=self.allow_pending_continuation,
                 )
@@ -3475,6 +3482,7 @@ def _fresh_materialization_target(
                 token=adapter.token,
                 current_revision=current_revision,
                 default_branch=default_branch,
+                accepted_authorization_revision=adapter.authorization_revision,
                 allow_pending_continuation=allow_pending_continuation,
             )
         else:
@@ -3485,6 +3493,7 @@ def _fresh_materialization_target(
                 token=adapter.token,
                 current_revision=current_revision,
                 default_branch=default_branch,
+                accepted_authorization_revision=adapter.authorization_revision,
                 allow_pending_continuation=allow_pending_continuation,
                 accepted_successor_routing=accepted_successor_routing,
             )
@@ -3493,9 +3502,7 @@ def _fresh_materialization_target(
     if (
         target.repository != adapter.repository
         or target.change != request.change
-        or target.branch != request.branch
         or target.correlation != f"effect-request-{source.issue_number}"
-        or (request.pr_number is not None and target.pr_number != request.pr_number)
     ):
         return None
     return target
@@ -3511,6 +3518,7 @@ def consequence_postconditions_complete(
     authorized_change: str | None = None,
     request_comment_id: int | None = None,
     allow_pending_continuation: bool = False,
+    accepted_authorization_revision: str | None = None,
     allow_accepted_successor: bool = False,
 ) -> bool:
     """Prove the affirmative consequence contract from fresh repository state.
@@ -3571,6 +3579,7 @@ def consequence_postconditions_complete(
                 source,
                 authorized_change=change,
                 current_revision=current_revision,
+                authorization_revision=accepted_authorization_revision,
                 expected_result_kind=batch.typed_result.result.kind.value,
                 request_comment_id=request_comment_id,
             )
@@ -3605,6 +3614,7 @@ def consequence_postconditions_complete(
             source,
             authorized_change=change,
             current_revision=current_revision,
+            authorization_revision=accepted_authorization_revision,
             expected_result_kind=batch.typed_result.result.kind.value,
             request_comment_id=request_comment_id,
         )

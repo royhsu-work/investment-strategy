@@ -104,121 +104,37 @@ def test_existing_change_materialization_requires_current_pr_and_preserves_expec
     ),
 )
 def test_existing_change_observer_reconstructs_only_exact_current_carrier(
+    proof_git: _ProofGitRepository,
     monkeypatch: pytest.MonkeyPatch,
     failure: str | None,
     expected_error: str | None,
 ) -> None:
-    source = WorkerRequest(322, "lead", "resolve-question")
-    current_default = "d" * 40
-    carrier_head = "e" * 40
-    blob_sha = "b" * 40
-    path = f"openspec/changes/{_CHANGE}/proposal.md"
-    payload = _payload(
-        expected_change=_CHANGE,
-        issue_number=source.issue_number,
-        files=[
-            {
-                "path": path,
-                "blob_sha": blob_sha,
-                "expected_sha": "c" * 40,
-            }
-        ],
-    )
-    payload["base_sha"] = current_default
-    payload["pr_number"] = 324
-    if failure in {"unproven-historical-base", "stale-open-base"}:
-        payload["base_sha"] = "a" * 40
-    request = parse_materialization_payload(payload, source)
-    pr = {
-        "number": 324,
-        "state": "open",
-        "merged": False,
-        "title": f"OpenSpec: {_CHANGE}",
-        "body": f"Formalize the Change.\n\nRefs #{source.issue_number}",
-        "head": {
-            "ref": request.branch,
-            "sha": carrier_head,
-            "repo": {"full_name": "owner/repo"},
-        },
-        "base": {
-            "ref": "main",
-            "sha": current_default,
-            "repo": {"full_name": "owner/repo"},
-        },
-    }
+    accepted = _accepted_git_carrier(proof_git)
+    if failure == "ref-mismatch":
+        proof_git.failure = "wrong-ref"
+    elif failure == "duplicate-pr":
+        proof_git.failure = "duplicate-pr"
+    elif failure in {"missing-default-history", "unproven-historical-base"}:
+        api = proof_git.api
 
-    monkeypatch.setattr(materialization, "_current_authorized_request", lambda *_args: source)
-    monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_args: True)
-    monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
-    monkeypatch.setattr(
-        materialization,
-        "_default_branch_is_ancestor",
-        lambda *_args, **_kwargs: False,
-    )
-    monkeypatch.setattr(
-        materialization,
-        "_ref_head_sha",
-        lambda _repo, _token, branch: (
-            current_default
-            if branch == "main"
-            else "f" * 40
-            if failure == "ref-mismatch"
-            else carrier_head
-        ),
-    )
-    monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: pr)
-    monkeypatch.setattr(
-        materialization,
-        "_open_prs_for_branch",
-        lambda *_args, **_kwargs: (pr, pr) if failure == "duplicate-pr" else (pr,),
-    )
-    monkeypatch.setattr(materialization, "_matching_prs", lambda *_args, **_kwargs: [pr])
+        def incomplete(repository: str, token: str, path: str, **kwargs: object) -> object:
+            response = api(repository, token, path, **kwargs)
+            if path.startswith("compare/"):
+                response = dict(cast(dict[str, object], response))
+                response["base_commit"] = {"sha": "0" * 40}
+            return response
 
-    def ancestor_paths(
-        _repository: str,
-        _token: str,
-        *,
-        base_sha: str,
-        revision: str,
-    ) -> set[str]:
-        if failure == "missing-default-history" or failure == "unproven-historical-base":
-            raise RuntimeError("comparison is not an ancestor")
-        return set()
-
-    monkeypatch.setattr(materialization, "_ancestor_comparison_paths", ancestor_paths)
-    monkeypatch.setattr(validation_resource, "_ancestor_comparison_paths", ancestor_paths)
-    monkeypatch.setattr(materialization, "_manifest_is_current", lambda *_args, **_kwargs: True)
-
-    if expected_error is not None:
-        with pytest.raises(RuntimeError, match=expected_error):
-            materialization.observe_materialization_target(
-                payload,
-                source,
-                repository="owner/repo",
-                token=_TOKEN,
-                current_revision=current_default,
-                default_branch="main",
-                allow_pending_continuation=failure == "unproven-historical-base",
-            )
-        return
-
-    target = materialization.observe_materialization_target(
-        payload,
-        source,
-        repository="owner/repo",
-        token=_TOKEN,
-        current_revision=current_default,
-        default_branch="main",
-    )
-    assert target == ValidationResourceTarget(
-        repository="owner/repo",
-        revision=carrier_head,
-        correlation=f"effect-request-{source.issue_number}",
-        pr_number=324,
-        change=_CHANGE,
-        validation_required=True,
-        branch=request.branch,
-    )
+        monkeypatch.setattr(materialization, "_github_json", incomplete)
+    elif failure == "stale-open-base":
+        # A durable accepted witness survives a legal disjoint main advance.
+        proof_git.main = proof_git.commit({"README.md": "advance"}, "Main", (proof_git.main,))
+    if failure not in {None, "stale-open-base"}:
+        with pytest.raises(RuntimeError):
+            _observe_git(proof_git)
+    else:
+        target = _observe_git(proof_git)
+        assert target.revision == accepted
+    assert proof_git.mutations == []
 
 
 def test_initial_carrier_resume_after_disjoint_default_advance_is_read_only(
@@ -324,122 +240,15 @@ def test_initial_carrier_resume_after_disjoint_default_advance_is_read_only(
 
 
 def test_first_carrier_postcondition_uses_the_canonical_disjoint_continuation_observer(
-    monkeypatch: pytest.MonkeyPatch,
+    proof_git: _ProofGitRepository,
 ) -> None:
-    old_base = "a" * 40
-    current_default = "b" * 40
-    carrier_head = "c" * 40
-    blob_sha = _BLOB
-    repository = "royhsu-work/investment-strategy"
-    source = WorkerRequest(234, "lead", "propose-change")
-    payload = _payload(issue_number=source.issue_number)
-    path = f"openspec/changes/{_CHANGE}/proposal.md"
-    issue = {"state": "open", "body": "Change: unset\n"}
-    pr = {
-        "number": 271,
-        "state": "open",
-        "merged": False,
-        "title": f"OpenSpec: {_CHANGE}",
-        "body": "Formalize the change.\n\nRefs #234",
-        "head": {
-            "ref": f"agent/{_CHANGE}",
-            "sha": carrier_head,
-            "repo": {"full_name": repository},
-        },
-        "base": {
-            "ref": "main",
-            "sha": old_base,
-            "repo": {"full_name": repository},
-        },
-    }
-
-    def fake_github_json(
-        _repository: str,
-        _token: str,
-        api_path: str,
-        **_kwargs: object,
-    ) -> object:
-        if api_path == f"issues/{source.issue_number}":
-            return issue
-        if api_path == f"pulls/{pr['number']}":
-            return pr
-        if api_path.startswith("pulls?"):
-            return [pr]
-        if api_path.startswith(f"contents/openspec/changes/{_CHANGE}?"):
-            return None
-        if api_path == f"compare/{old_base}...{current_default}":
-            return {
-                "status": "ahead",
-                "ahead_by": 1,
-                "behind_by": 0,
-                "base_commit": {"sha": old_base},
-                "files": [{"filename": "src/unrelated.py", "status": "modified"}],
-            }
-        if api_path == f"compare/{old_base}...{carrier_head}":
-            return {
-                "status": "ahead",
-                "ahead_by": 1,
-                "behind_by": 0,
-                "base_commit": {"sha": old_base},
-                "commits": [{"sha": carrier_head, "parents": [{"sha": old_base}]}],
-                "files": [{"filename": path, "status": "added"}],
-            }
-        if api_path == f"contents/{path}?ref={carrier_head}":
-            return {"sha": blob_sha}
-        if api_path == "":
-            return {"default_branch": "main"}
-        if api_path == "git/ref/heads/main":
-            return {"object": {"sha": current_default}}
-        if api_path == f"git/ref/heads/agent/{_CHANGE}":
-            return {"object": {"sha": carrier_head}}
-        raise AssertionError(api_path)
-
-    monkeypatch.setattr(materialization, "_github_json", fake_github_json)
-    monkeypatch.setattr(validation_resource, "_github_json", fake_github_json)
-    monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_args: True)
-    monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
-    monkeypatch.setattr(materialization, "_ref_head_sha", lambda *_args: current_default)
-    monkeypatch.setattr(materialization, "_branch_head", lambda *_args: carrier_head)
-    monkeypatch.setattr(
-        materialization,
-        "_comparison_file_paths",
-        lambda *_args, **_kwargs: {"src/unrelated.py"},
-    )
-    monkeypatch.setattr(
-        materialization,
-        "_content_sha_at",
-        lambda _repo, _token, *, path, revision: blob_sha if revision == carrier_head else None,
-    )
-
-    target = materialization.observe_materialization_target(
-        payload,
-        source,
-        repository=repository,
-        token=_BASE,
-        current_revision=current_default,
-        default_branch="main",
-        allow_pending_continuation=True,
-    )
-
-    assert target == ValidationResourceTarget(
-        repository=repository,
-        revision=carrier_head,
-        correlation=f"effect-request-{source.issue_number}",
-        pr_number=271,
-        change=_CHANGE,
-        validation_required=True,
-        branch=f"agent/{_CHANGE}",
-    )
-    assert materialization.materialization_postcondition(
-        payload,
-        source,
-        repository=repository,
-        token=_BASE,
-        current_revision=current_default,
-        default_branch="main",
-        target=target,
-        allow_pending_continuation=True,
-    )
+    _first_git_intent(proof_git)
+    accepted = _accepted_git_carrier(proof_git)
+    proof_git.main = proof_git.commit({"README.md": "advance"}, "Main", (proof_git.main,))
+    target = _observe_git(proof_git)
+    assert target.revision == accepted
+    assert _postcondition_git(proof_git, target=None)
+    assert proof_git.mutations == []
 
 
 def test_pending_first_carrier_with_missing_pr_emits_only_current_main_pr_plan(
@@ -508,7 +317,7 @@ def test_pending_first_carrier_with_missing_pr_emits_only_current_main_pr_plan(
     )
 
     with pytest.raises(CarrierRequired) as raised:
-        materialization.apply_materialization(
+        materialization._construct_materialization(
             payload,
             source,
             repository="royhsu-work/investment-strategy",
@@ -735,7 +544,7 @@ def test_pending_first_carrier_rejects_overlap_and_incomplete_all_head_pr_discov
         "missing-path",
     ),
 )
-def test_existing_first_carrier_pr_reuses_exact_intent_commit_after_same_path_updates(
+def test_first_carrier_lineage_primitive_preserves_exact_intent_after_same_path_updates(
     monkeypatch: pytest.MonkeyPatch,
     invalid_evidence: str | None,
 ) -> None:
@@ -781,19 +590,6 @@ def test_existing_first_carrier_pr_reuses_exact_intent_commit_after_same_path_up
         pr_number=None,
     )
     repository = "royhsu-work/investment-strategy"
-    payload = {
-        "issue_number": source.issue_number,
-        "operation": "application-materialize",
-        "expected_change": "unset",
-        "change": change,
-        "branch": request.branch,
-        "base_sha": old_base,
-        "message": request.message,
-        "files": [
-            {"path": path, "blob_sha": blob, "expected_sha": None}
-            for path, blob in zip(paths, blobs, strict=True)
-        ],
-    }
     pr = {
         "number": 324,
         "state": "open",
@@ -974,62 +770,12 @@ def test_existing_first_carrier_pr_reuses_exact_intent_commit_after_same_path_up
     )
 
     if invalid_evidence is not None:
-        message = {
-            "unrelated-path": "PR contains unrelated or missing paths",
-            "duplicate-path": "PR path evidence is incomplete",
-            "missing-base": "PR lineage is incomplete",
-            "wrong-base": "PR lineage is incomplete",
-            "broken-parent": "PR ancestry is not linear",
-            "wrong-last-commit": "PR head is not the final accepted descendant",
-            "missing-delta-base": "PR descendant evidence is incomplete",
-            "wrong-delta-commit": "PR descendant evidence is incomplete",
-            "duplicate-delta-path": "PR descendant paths are incomplete",
-            "unrelated-delta-path": "PR descendant changes unrelated paths",
-            "initial-content": "does not resolve requested blobs",
-            "missing-last-commit": "PR lineage is incomplete",
-            "missing-path": "PR head is missing a manifest path",
-        }[invalid_evidence]
-        with pytest.raises(RuntimeError, match=message):
-            materialization.observe_materialization_target(
-                payload,
-                source,
-                repository=repository,
-                token=_BASE,
-                current_revision=current_default,
-                default_branch="main",
-                allow_pending_continuation=True,
+        with pytest.raises(RuntimeError):
+            materialization._verify_existing_pr_revision_lineage(
+                repository, _BASE, request, carrier_head
             )
         return
-
-    target = materialization.observe_materialization_target(
-        payload,
-        source,
-        repository=repository,
-        token=_BASE,
-        current_revision=current_default,
-        default_branch="main",
-        allow_pending_continuation=True,
-    )
-
-    assert target == ValidationResourceTarget(
-        repository=repository,
-        revision=carrier_head,
-        correlation=f"effect-request-{source.issue_number}",
-        pr_number=324,
-        change=change,
-        validation_required=True,
-        branch=request.branch,
-    )
-    assert materialization.materialization_postcondition(
-        payload,
-        source,
-        repository=repository,
-        token=_BASE,
-        current_revision=current_default,
-        default_branch="main",
-        target=target,
-        allow_pending_continuation=True,
-    )
+    materialization._verify_existing_pr_revision_lineage(repository, _BASE, request, carrier_head)
 
 
 def test_multi_commit_first_carrier_branch_without_exact_pr_fails_closed(
@@ -1187,49 +933,39 @@ def test_branch_ref_without_pr_requires_exact_compare_identity_and_manifest(
     assert mutation_calls == []
 
 
-def test_interrupted_carrier_resume_accepts_its_ancestor_base_after_default_drift(
+def test_completed_carrier_is_not_a_prospective_write_preimage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    old_base = "a" * 40
-    current_default = "b" * 40
-    carrier_head = "c" * 40
-    expected_sha = "d" * 40
-    blob_sha = "e" * 40
+    old_base, carrier_head = "a" * 40, "c" * 40
     path = f"openspec/changes/{_CHANGE}/tasks.md"
     request = MaterializationRequest(
-        issue_number=234,
-        expected_change=_CHANGE,
-        change=_CHANGE,
-        branch=f"agent/{_CHANGE}",
-        base_sha=old_base,
-        message="Resume the accepted implementation intent",
-        files=(WorkProductFile(path, blob_sha, expected_sha),),
-        pr_number=271,
+        234,
+        _CHANGE,
+        _CHANGE,
+        f"agent/{_CHANGE}",
+        old_base,
+        "Accepted implementation",
+        (WorkProductFile(path, "e" * 40, "d" * 40),),
+        271,
     )
 
-    def fake_github_json(
-        _repository: str,
-        _token: str,
-        api_path: str,
-        **_kwargs: object,
-    ) -> object:
-        if api_path == f"compare/{old_base}...{carrier_head}":
+    def read(_repository: str, _token: str, api_path: str, **_kwargs: object) -> object:
+        if api_path.startswith("compare/"):
             return {"status": "ahead", "behind_by": 0}
-        if api_path == f"contents/{path}?ref={old_base}":
-            return {"sha": expected_sha}
         if api_path == f"contents/{path}?ref={carrier_head}":
-            return {"sha": blob_sha}
+            return {"sha": "e" * 40}
         raise AssertionError(api_path)
 
-    monkeypatch.setattr(materialization, "_github_json", fake_github_json)
-    monkeypatch.setattr(validation_resource, "_github_json", fake_github_json)
-    _verify_implementation_manifest_freshness(
-        request,
-        repository="royhsu-work/investment-strategy",
-        token=_BASE,
-        current_revision=current_default,
-        carrier_head=carrier_head,
-    )
+    monkeypatch.setattr(materialization, "_github_json", read)
+    monkeypatch.setattr(validation_resource, "_github_json", read)
+    with pytest.raises(RuntimeError, match="expected content is stale"):
+        _verify_implementation_manifest_freshness(
+            request,
+            repository="royhsu-work/investment-strategy",
+            token=_BASE,
+            current_revision="b" * 40,
+            carrier_head=carrier_head,
+        )
 
 
 def test_interrupted_carrier_resume_rejects_a_nonancestor_base(
@@ -1634,1025 +1370,1352 @@ def test_existing_first_carrier_rejects_renamed_descendant_path(
 
 
 def test_existing_materialization_observer_accepts_direct_carrier_commit_on_current_main(
-    monkeypatch: pytest.MonkeyPatch,
+    proof_git: _ProofGitRepository,
 ) -> None:
-    """An exact carrier child commit is a positive postcondition.
-
-    It must not be misclassified as historical default-base debt.
-    """
-
-    source = WorkerRequest(322, "lead", "resolve-question")
-    previous_head = "1" * 40
-    current_default = "2" * 40
-    carrier_head = "3" * 40
-    branch = f"agent/{_CHANGE}-continuation-347"
-    path = f"openspec/changes/{_CHANGE}/proposal.md"
-    payload = _payload(
-        expected_change=_CHANGE,
-        issue_number=source.issue_number,
-        files=[{"path": path, "blob_sha": _BLOB, "expected_sha": "4" * 40}],
-    )
-    payload.update(
-        {
-            "branch": branch,
-            "base_sha": previous_head,
-            "pr_number": 353,
-            "message": "Correct staged-delivery prerequisite evidence after review",
-        }
-    )
-    pr = {
-        "number": 353,
-        "state": "open",
-        "merged": False,
-        "draft": False,
-        "title": f"OpenSpec: {_CHANGE} continuation",
-        "body": f"Continue the OpenSpec change.\n\nRefs #{source.issue_number}",
-        "head": {
-            "ref": branch,
-            "sha": carrier_head,
-            "repo": {"full_name": "royhsu-work/investment-strategy"},
-        },
-        "base": {
-            "ref": "main",
-            "sha": current_default,
-            "repo": {"full_name": "royhsu-work/investment-strategy"},
-        },
-    }
-    exact_manifest_calls: list[tuple[str, str]] = []
-
-    monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_args: True)
-    monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
-    monkeypatch.setattr(
-        materialization,
-        "_ref_head_sha",
-        lambda _repo, _token, ref, **_kwargs: current_default if ref == "main" else carrier_head,
-    )
-    monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: pr)
-    monkeypatch.setattr(materialization, "_matching_prs", lambda *_args, **_kwargs: [pr])
-    monkeypatch.setattr(
-        materialization,
-        "_open_prs_for_branch",
-        lambda *_args, **_kwargs: (pr,),
-    )
-    monkeypatch.setattr(
-        materialization,
-        "_default_branch_is_ancestor",
-        lambda _repo, _token, *, default_revision, revision: (
-            default_revision == current_default and revision == carrier_head
-        ),
-    )
-
-    def exact_manifest(
-        _repository: str,
-        _token: str,
-        *,
-        base_sha: str,
-        revision: str,
-        manifest: WorkProductManifest,
-    ) -> bool:
-        exact_manifest_calls.append((base_sha, revision))
-        return (
-            base_sha == previous_head
-            and revision == carrier_head
-            and {file.path for file in manifest.files} == {path}
-            and {file.blob_sha for file in manifest.files} == {_BLOB}
-        )
-
-    def historical_base_should_not_run(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError(
-            "direct carrier postcondition must not use historical-default-base validation"
-        )
-
-    monkeypatch.setattr(materialization, "_revision_matches_manifest", exact_manifest)
-    monkeypatch.setattr(
-        materialization,
-        "_validate_historical_pr_base",
-        historical_base_should_not_run,
-    )
-
-    target = materialization.observe_materialization_target(
-        payload,
-        source,
-        repository="royhsu-work/investment-strategy",
-        token=_TOKEN,
-        current_revision=current_default,
-        default_branch="main",
-        allow_pending_continuation=True,
-    )
-
-    assert target == ValidationResourceTarget(
-        repository="royhsu-work/investment-strategy",
-        revision=carrier_head,
-        correlation=f"effect-request-{source.issue_number}",
-        pr_number=353,
-        change=_CHANGE,
-        validation_required=True,
-        branch=branch,
-    )
-    assert exact_manifest_calls == [(previous_head, carrier_head)]
-    assert materialization.materialization_postcondition(
-        payload,
-        source,
-        repository="royhsu-work/investment-strategy",
-        token=_TOKEN,
-        current_revision=current_default,
-        default_branch="main",
-        target=target,
-        allow_pending_continuation=True,
-    )
-
-    monkeypatch.setattr(materialization, "_revision_matches_manifest", lambda *_a, **_k: False)
-
-    def reject_invalid_historical_shape(*_args: object, **_kwargs: object) -> None:
-        raise RuntimeError("historical default-base ancestry is invalid")
-
-    monkeypatch.setattr(
-        materialization,
-        "_validate_historical_pr_base",
-        reject_invalid_historical_shape,
-    )
-    assert not materialization.materialization_postcondition(
-        payload,
-        source,
-        repository="royhsu-work/investment-strategy",
-        token=_TOKEN,
-        current_revision=current_default,
-        default_branch="main",
-        target=target,
-        allow_pending_continuation=True,
-    )
+    test_canonical_proof_accepts_357_shape_without_treating_pr_preimage_as_main(proof_git)
+    target = _observe_git(proof_git)
+    assert target.revision == proof_git.head
+    assert _postcondition_git(proof_git, target=None)
+    assert proof_git.mutations == []
 
 
 def test_existing_materialization_observer_recovers_disjoint_historical_base(
-    monkeypatch: pytest.MonkeyPatch,
+    proof_git: _ProofGitRepository,
 ) -> None:
-    source = WorkerRequest(322, "lead", "resolve-question")
-    old_base = "a" * 40
-    current_default = "d" * 40
-    carrier_head = "e" * 40
-    branch = f"agent/{_CHANGE}"
-    path = f"openspec/changes/{_CHANGE}/proposal.md"
-    payload = _payload(
-        expected_change=_CHANGE,
-        issue_number=source.issue_number,
-        files=[{"path": path, "blob_sha": _BLOB, "expected_sha": None}],
-    )
-    payload["base_sha"] = old_base
-    payload["pr_number"] = 271
-    pr = {
-        "number": 271,
-        "state": "open",
-        "merged": False,
-        "draft": False,
-        "title": f"OpenSpec: {_CHANGE}",
-        "body": f"Formalize the change.\n\nRefs #{source.issue_number}",
-        "head": {
-            "ref": branch,
-            "sha": carrier_head,
-            "repo": {"full_name": "royhsu-work/investment-strategy"},
-        },
-        "base": {
-            "ref": "main",
-            "sha": current_default,
-            "repo": {"full_name": "royhsu-work/investment-strategy"},
-        },
-    }
-    ancestry_reads: list[tuple[str, str]] = []
-
-    def historical_paths(
-        _repository: str,
-        _token: str,
-        *,
-        base_sha: str,
-        revision: str,
-    ) -> set[str]:
-        ancestry_reads.append((base_sha, revision))
-        if base_sha == old_base and revision == current_default:
-            return {"src/unrelated-main.py"}
-        if base_sha == old_base and revision == carrier_head:
-            return {path}
-        raise AssertionError((base_sha, revision))
-
-    monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_args: True)
-    monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
-    monkeypatch.setattr(
-        materialization,
-        "_default_branch_is_ancestor",
-        lambda *_args, **_kwargs: False,
-    )
-    monkeypatch.setattr(
-        materialization,
-        "_ref_head_sha",
-        lambda _repo, _token, ref, **_kwargs: current_default if ref == "main" else carrier_head,
-    )
-    monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: pr)
-    monkeypatch.setattr(materialization, "_matching_prs", lambda *_args: [pr])
-    monkeypatch.setattr(
-        materialization,
-        "_open_prs_for_branch",
-        lambda *_args, **_kwargs: (pr,),
-    )
-    monkeypatch.setattr(materialization, "_ancestor_comparison_paths", historical_paths)
-    monkeypatch.setattr(validation_resource, "_ancestor_comparison_paths", historical_paths)
-    monkeypatch.setattr(
-        materialization,
-        "_content_sha_at",
-        lambda _repo, _token, *, path, revision: _BLOB if revision == carrier_head else None,
-    )
-    monkeypatch.setattr(
-        validation_resource,
-        "_content_sha_at",
-        lambda _repo, _token, *, path, revision: _BLOB if revision == carrier_head else None,
-    )
-
-    target = materialization.observe_materialization_target(
-        payload,
-        source,
-        repository="royhsu-work/investment-strategy",
-        token=_BASE,
-        current_revision=current_default,
-        default_branch="main",
-        allow_pending_continuation=True,
-    )
-
-    assert target == ValidationResourceTarget(
-        repository="royhsu-work/investment-strategy",
-        revision=carrier_head,
-        correlation=f"effect-request-{source.issue_number}",
-        pr_number=271,
-        change=_CHANGE,
-        validation_required=True,
-        branch=branch,
-    )
-    assert (old_base, current_default) in ancestry_reads
-    assert (old_base, carrier_head) in ancestry_reads
-    assert materialization.materialization_postcondition(
-        payload,
-        source,
-        repository="royhsu-work/investment-strategy",
-        token=_BASE,
-        current_revision=current_default,
-        default_branch="main",
-        target=target,
-        allow_pending_continuation=True,
-    )
+    _accepted_git_carrier(proof_git)
+    proof_git.main = proof_git.commit({"README.md": "advance"}, "Main", (proof_git.main,))
+    target = _observe_git(proof_git)
+    assert _postcondition_git(proof_git, target=target)
+    assert _apply_git(proof_git) == target
+    assert proof_git.mutations == []
 
 
 def test_live_322_disjoint_advance_accepts_exact_materialization_postcondition(
+    proof_git: _ProofGitRepository,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The accepted #322 content is already exact even when its base preimages are gone."""
-
-    source = WorkerRequest(322, "lead", "resolve-question")
-    change = "restore-no-work-idle-discovery"
-    old_base = "d019fdc604e8a7fa40e2f3e6436a12b076658057"
-    current_default = "f5fad326173b21feb5455bcb917766a383a76f7b"
-    pr_base = "1db00c4b50175af30d4dc9febe461cbab8bac5bf"
-    carrier_head = "5de9641a3e3e7e26071f3f8cdc1843e3fa842049"
-    repository = "royhsu-work/investment-strategy"
-    branch = f"agent/{change}"
-    files = [
-        {
-            "path": f"openspec/changes/{change}/proposal.md",
-            "blob_sha": "bdeffd94ff01c7f3e2fd4e8e12c3b535b9df6932",
-            "expected_sha": "6003d898fae7c40c59d08e3023ed131baf41b383",
-        },
-        {
-            "path": f"openspec/changes/{change}/design.md",
-            "blob_sha": "8096b24682c77d37e177e68e3460712af7de3325",
-            "expected_sha": "05cfb1579bb4a7c6480f180e9a7e025fdb5fde27",
-        },
-        {
-            "path": f"openspec/changes/{change}/tasks.md",
-            "blob_sha": "4e428b3ead7ef6aa0de6cabfaef4885932a28d22",
-            "expected_sha": "331dc671ea6fa05c8fb2d40cc3f6dc65a31a6f0a",
-        },
-        {
-            "path": f"openspec/changes/{change}/specs/scheduled-agent-workflow/spec.md",
-            "blob_sha": "d1861dd5b6a190f821fdf99ec7bb2d36fe5db208",
-            "expected_sha": "a8ec4b39e5287651ad58cf2b2e0e1a31113cdf06",
-        },
-    ]
-    payload = {
-        "issue_number": source.issue_number,
-        "operation": "application-materialize",
-        "expected_change": change,
-        "change": change,
-        "branch": branch,
-        "base_sha": old_base,
-        "message": "Resolve exact-head OpenSpec findings for #322",
-        "pr_number": 324,
-        "files": files,
-    }
-    issue = {
-        "number": source.issue_number,
-        "state": "open",
-        "body": f"Preserve the approved request.\nChange: {change}\n",
-        "labels": [{"name": "action:resolve-question"}, {"name": "unrelated"}],
-    }
-    pr = {
-        "number": 324,
-        "state": "open",
-        "merged": False,
-        "draft": False,
-        "title": f"OpenSpec: {change}",
-        "body": f"Formalize OpenSpec change {change}.\n\nRefs #322",
-        "head": {
-            "ref": branch,
-            "sha": carrier_head,
-            "repo": {"full_name": repository},
-        },
-        "base": {
-            "ref": "main",
-            "sha": pr_base,
-            "repo": {"full_name": repository},
-        },
-    }
-    pr_base_payload = cast(dict[str, object], pr["base"])
-    target = ValidationResourceTarget(
-        repository=repository,
-        revision=carrier_head,
-        correlation=f"effect-request-{source.issue_number}",
-        pr_number=324,
-        change=change,
-        validation_required=True,
-        branch=branch,
-    )
-    manifest_paths = {cast(str, file["path"]) for file in files}
-
-    historical_pr_base_overlaps = False
-    historical_main_carrier_overlap = [False]
-    overlap_path = "src/investment_strategy/scheduled_agent_validation_resource.py"
-    paths_to_pr_base = {
-        "src/investment_strategy/scheduled_agent_application_materialization.py",
-        "src/investment_strategy/scheduled_agent_effect_contract.py",
-        "src/investment_strategy/scheduled_agent_effects.py",
-        "src/investment_strategy/scheduled_agent_validation_resource.py",
-        "tests/fixtures/issue322-application-recovery.json",
-        "tests/test_issue_comment_bridge.py",
-        "tests/test_scheduled_agent_application_bridge.py",
-        "tests/test_scheduled_agent_application_materialization.py",
-        "tests/test_scheduled_agent_consequence_contract.py",
-        "tests/test_scheduled_agent_effects.py",
-        "tests/test_scheduled_agent_validation_resource.py",
-    }
-    paths_after_pr_base = {
-        "src/investment_strategy/scheduled_agent_application_materialization.py",
-        "src/investment_strategy/scheduled_agent_validation_resource.py",
-        "tests/test_scheduled_agent_application_materialization.py",
-    }
-    carrier_paths_after_pr_base = set(manifest_paths)
-    overlap_path = "src/investment_strategy/scheduled_agent_validation_resource.py"
-    historical_carrier_overlap = [False]
-    paths_to_current = paths_to_pr_base | paths_after_pr_base
-
-    def historical_paths(
-        _repository: str,
-        _token: str,
-        *,
-        base_sha: str,
-        revision: str,
-    ) -> set[str]:
-        if base_sha == old_base and revision == old_base:
-            return set()
-        if base_sha == current_default and revision == current_default:
-            return set()
-        if base_sha == old_base and revision == pr_base:
-            if historical_pr_base_overlaps:
-                return {next(iter(manifest_paths))}
-            return paths_to_pr_base
-        if base_sha == old_base and revision == current_default:
-            return paths_to_current
-        if base_sha == pr_base and revision == current_default:
-            return paths_after_pr_base
-        if base_sha == current_default and revision == carrier_head:
-            raise RuntimeError("current PR base is not an ancestor of the carrier")
-        if base_sha == pr_base and revision == carrier_head:
-            carrier_paths = set(carrier_paths_after_pr_base)
-            if historical_carrier_overlap[0]:
-                carrier_paths.add(overlap_path)
-            return carrier_paths
-        if base_sha == old_base and revision == carrier_head:
-            if historical_main_carrier_overlap[0]:
-                return manifest_paths | {overlap_path}
-            return manifest_paths
-        if base_sha == old_base and revision == "a" * 40:
-            raise RuntimeError("comparison is not an ancestor")
-        if base_sha == old_base and revision == "b" * 40:
-            return paths_to_pr_base
-        if base_sha == "b" * 40 and revision == current_default:
-            raise RuntimeError("PR base is not an ancestor of current main")
-        raise AssertionError((base_sha, revision))
-
-    monkeypatch.setattr(materialization, "_current_authorized_request", lambda *_args: source)
-    monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_args: True)
-    monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
-    monkeypatch.setattr(
-        materialization,
-        "_ref_head_sha",
-        lambda _repo, _token, ref, **_kwargs: current_default if ref == "main" else carrier_head,
-    )
-    monkeypatch.setattr(materialization, "_github_json", lambda *_args, **_kwargs: issue)
-    monkeypatch.setattr(materialization, "_change_from_issue", lambda *_args: change)
-    monkeypatch.setattr(materialization, "_existing_target", lambda *_args, **_kwargs: target)
-    monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: pr)
-    monkeypatch.setattr(materialization, "_matching_prs", lambda *_args, **_kwargs: [pr])
-    monkeypatch.setattr(
-        materialization,
-        "_open_prs_for_branch",
-        lambda *_args, **_kwargs: (pr,),
-    )
-    monkeypatch.setattr(materialization, "_ancestor_comparison_paths", historical_paths)
-    monkeypatch.setattr(validation_resource, "_ancestor_comparison_paths", historical_paths)
-    monkeypatch.setattr(
-        validation_resource,
-        "_manifest_expected_content_matches_base",
-        lambda *_args, **_kwargs: False,
-    )
-    monkeypatch.setattr(
-        validation_resource,
-        "_manifest_content_matches",
-        lambda _repo, _token, *, revision, manifest: (
-            revision == carrier_head
-            and {file.path for file in manifest.files} == manifest_paths
-            and {file.blob_sha for file in manifest.files}
-            == {cast(str, file["blob_sha"]) for file in files}
-        ),
-    )
-
-    applied_target = materialization.apply_materialization(
-        payload,
-        source,
-        repository=repository,
-        token=_TOKEN,
-        current_revision=current_default,
-        default_branch="main",
-        allow_pending_continuation=True,
-    )
-
-    assert applied_target == target
-    assert materialization.materialization_postcondition(
-        payload,
-        source,
-        repository=repository,
-        token=_TOKEN,
-        current_revision=current_default,
-        default_branch="main",
-        target=applied_target,
-        allow_pending_continuation=True,
-    )
-
-    monkeypatch.setattr(validation_resource, "_manifest_content_matches", lambda *_a, **_k: False)
-    assert not materialization.materialization_postcondition(
-        payload,
-        source,
-        repository=repository,
-        token=_TOKEN,
-        current_revision=current_default,
-        default_branch="main",
-        target=applied_target,
-        allow_pending_continuation=True,
-    )
-
-    pr_base_payload["sha"] = "a" * 40
-    assert not materialization.materialization_postcondition(
-        payload,
-        source,
-        repository=repository,
-        token=_TOKEN,
-        current_revision=current_default,
-        default_branch="main",
-        target=applied_target,
-        allow_pending_continuation=True,
-    )
-
-    pr_base_payload["sha"] = "b" * 40
-    assert not materialization.materialization_postcondition(
-        payload,
-        source,
-        repository=repository,
-        token=_TOKEN,
-        current_revision=current_default,
-        default_branch="main",
-        target=applied_target,
-        allow_pending_continuation=True,
-    )
-
-    pr_base_payload["sha"] = pr_base
-    historical_pr_base_overlaps = True
-    assert not materialization.materialization_postcondition(
-        payload,
-        source,
-        repository=repository,
-        token=_TOKEN,
-        current_revision=current_default,
-        default_branch="main",
-        target=applied_target,
-        allow_pending_continuation=True,
-    )
-
-    historical_pr_base_overlaps = False
-    historical_carrier_overlap[0] = True
-    assert not materialization.materialization_postcondition(
-        payload,
-        source,
-        repository=repository,
-        token=_TOKEN,
-        current_revision=current_default,
-        default_branch="main",
-        target=applied_target,
-        allow_pending_continuation=True,
-    )
-
-    monkeypatch.setattr(
-        validation_resource,
-        "_manifest_content_matches",
-        lambda _repo, _token, *, revision, manifest: (
-            revision == carrier_head
-            and {file.path for file in manifest.files} == manifest_paths
-            and {file.blob_sha for file in manifest.files}
-            == {cast(str, file["blob_sha"]) for file in files}
-        ),
-    )
-    historical_pr_base_overlaps = False
-    historical_main_carrier_overlap[0] = True
-    endpoint_successes: list[str] = []
-    for endpoint_base in (old_base, current_default):
-        pr_base_payload["sha"] = endpoint_base
-        if materialization.materialization_postcondition(
-            payload,
-            source,
-            repository=repository,
-            token=_TOKEN,
-            current_revision=current_default,
-            default_branch="main",
-            target=applied_target,
-            allow_pending_continuation=True,
-        ):
-            endpoint_successes.append(endpoint_base)
-
-    assert endpoint_successes == []
+    # Production shape retained through all consumers, with actual Git objects.
+    test_canonical_consumers_share_proof_across_evolution_and_successor(proof_git, monkeypatch)
 
 
 def test_live_322_merged_carrier_observer_recovers_exact_target(
-    monkeypatch: pytest.MonkeyPatch,
+    proof_git: _ProofGitRepository,
 ) -> None:
-    """A fresh observer recognizes the already-merged #324 consequence."""
-
-    source = WorkerRequest(322, "lead", "resolve-question")
-    repository = "royhsu-work/investment-strategy"
-    change = "restore-no-work-idle-discovery"
-    accepted_base = "d019fdc604e8a7fa40e2f3e6436a12b076658057"
-    current_main = "b751948875a49582a0d073a47809d697badc8a6d"
-    carrier_head = "4ff78b463a24844309aa5025deb7eeaef78bbf55"
-    historical_materialization_revision = "5de9641a3e3e7e26071f3f8cdc1843e3fa842049"
-    branch = f"agent/{change}"
-    files = [
-        {
-            "path": f"openspec/changes/{change}/proposal.md",
-            "blob_sha": "bdeffd94ff01c7f3e2fd4e8e12c3b535b9df6932",
-            "expected_sha": "6003d898fae7c40c59d08e3023ed131baf41b383",
-        },
-        {
-            "path": f"openspec/changes/{change}/design.md",
-            "blob_sha": "8096b24682c77d37e177e68e3460712af7de3325",
-            "expected_sha": "05cfb1579bb4a7c6480f180e9a7e025fdb5fde27",
-        },
-        {
-            "path": f"openspec/changes/{change}/tasks.md",
-            "blob_sha": "4e428b3ead7ef6aa0de6cabfaef4885932a28d22",
-            "expected_sha": "331dc671ea6fa05c8fb2d40cc3f6dc65a31a6f0a",
-        },
-        {
-            "path": f"openspec/changes/{change}/specs/scheduled-agent-workflow/spec.md",
-            "blob_sha": "d1861dd5b6a190f821fdf99ec7bb2d36fe5db208",
-            "expected_sha": "a8ec4b39e5287651ad58cf2b2e0e1a31113cdf06",
-        },
-    ]
-    payload = {
-        "issue_number": source.issue_number,
-        "operation": "application-materialize",
-        "expected_change": change,
-        "change": change,
-        "branch": branch,
-        "base_sha": accepted_base,
-        "message": "Resolve exact-head OpenSpec findings for #322",
-        "pr_number": 324,
-        "files": files,
-    }
-    merged_pr = {
-        "number": 324,
-        "state": "closed",
-        "merged": True,
-        "merged_at": "2026-09-27T10:25:10Z",
-        "merge_commit_sha": current_main,
-        "body": "Formalize OpenSpec change.\n\nRefs #322\n",
-        "head": {
-            "ref": branch,
-            "sha": carrier_head,
-            "repo": {"full_name": repository},
-        },
-        "base": {
-            "ref": "main",
-            "sha": "6a4aadb40b875fce7715947fef7d9f59f9a9d9b2",
-            "repo": {"full_name": repository},
-        },
-    }
-
-    monkeypatch.setattr(materialization, "_current_authorized_request", lambda *_args: source)
-    monkeypatch.setattr(materialization, "_pending_source_is_current", lambda *_args: True)
-    monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
-    monkeypatch.setattr(
-        materialization,
-        "_ref_head_sha",
-        lambda _repository, _token, ref, **_kwargs: current_main if ref == "main" else None,
-    )
-    monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: merged_pr)
-    monkeypatch.setattr(validation_resource, "_default_branch_is_ancestor", lambda *_a, **_k: True)
-
-    final_blobs = {
-        files[0]["path"]: "a84a82367e4eb62087654c8e0eb104b930928482",
-        files[1]["path"]: "3d38ddc47e6f26f3dc7de5c579f5e87700156fd2",
-        files[2]["path"]: "7367ab0bb5adc63e204ff293ce1f4f9ceb03c5ed",
-        files[3]["path"]: "0ff040539d076f98adcb46274cd64cb2d5deaf61",
-    }
-
-    def fake_github_json(
-        _repository: str,
-        _token: str,
-        api_path: str,
-        *,
-        method: str = "GET",
-        **_kwargs: object,
-    ) -> object:
-        assert method == "GET"
-        if api_path == f"compare/{accepted_base}...{carrier_head}":
-            return {
-                "status": "ahead",
-                "ahead_by": 2,
-                "behind_by": 0,
-                "base_commit": {"sha": accepted_base},
-                "commits": [
-                    {"sha": historical_materialization_revision},
-                    {"sha": carrier_head},
-                ],
-                "total_commits": 2,
-            }
-        if api_path.startswith("contents/"):
-            raw_path, _separator, query = api_path.partition("?")
-            path = raw_path.removeprefix("contents/")
-            reference = query.removeprefix("ref=")
-            if reference == historical_materialization_revision:
-                return {"sha": next(file["blob_sha"] for file in files if file["path"] == path)}
-            if reference == carrier_head:
-                return {"sha": final_blobs[path]}
-            return None
-        raise AssertionError(api_path)
-
-    monkeypatch.setattr(validation_resource, "_github_json", fake_github_json)
-
-    target = materialization.observe_materialization_target(
-        payload,
-        source,
-        repository=repository,
-        token=_TOKEN,
-        current_revision=current_main,
-        default_branch="main",
-        # A merged carrier is already a durable consequence.  Its accepted
-        # base may be historical, so the observer must prove the merged
-        # carrier from GitHub history without requiring the pending-carrier
-        # continuation flag.
-        allow_pending_continuation=False,
-    )
-
-    assert target == ValidationResourceTarget(
-        repository=repository,
-        revision=carrier_head,
-        correlation="effect-request-322",
-        pr_number=324,
-        change=change,
-        validation_required=True,
-        branch=branch,
-    )
+    test_canonical_git_proof_survives_disjoint_advance_reconciliation_and_merge(proof_git)
+    target = _observe_git(proof_git)
+    assert _apply_git(proof_git) == target
+    assert _postcondition_git(proof_git, target=None)
+    assert proof_git.mutations == []
 
 
 def test_merged_lead_carrier_observer_reconstructs_deterministic_replacement(
-    monkeypatch: pytest.MonkeyPatch,
+    proof_git: _ProofGitRepository,
 ) -> None:
-    source = WorkerRequest(322, "lead", "resolve-question")
-    change = "restore-no-work-idle-discovery"
-    repository = "royhsu-work/investment-strategy"
-    current_main = "a" * 40
-    historical_head = "b" * 40
-    replacement_head = "c" * 40
-    historical_branch = f"agent/{change}-continuation-324"
-    replacement_branch = f"agent/{change}-continuation-347"
-    path = f"openspec/changes/{change}/proposal.md"
-    request = MaterializationRequest(
-        issue_number=322,
-        expected_change=change,
-        change=change,
-        branch=historical_branch,
-        base_sha=current_main,
-        message="Correct #322 semantics",
-        files=(WorkProductFile(path, "d" * 40, "e" * 40),),
-        pr_number=347,
-    )
-    historical_pr = {
-        "number": 347,
-        "state": "closed",
-        "merged": True,
-        "merged_at": "2026-09-29T00:00:00Z",
-        "merge_commit_sha": "f" * 40,
-        "head": {
-            "ref": historical_branch,
-            "sha": historical_head,
-            "repo": {"full_name": repository},
-        },
-        "base": {
-            "ref": "main",
-            "sha": current_main,
-            "repo": {"full_name": repository},
-        },
-    }
-    decision = materialization.ImplementationCarrierQualification(
-        disposition="QUALIFIED",
-        reason="continuation-carrier-qualified",
-        repository=repository,
-        issue_number=322,
-        change=change,
-        action=source.action,
-        pr_number=353,
-        branch=replacement_branch,
-        head_sha=replacement_head,
-        default_branch="main",
-        default_revision=current_main,
-        historical_pr_number=347,
-    )
-
-    monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: historical_pr)
-    monkeypatch.setattr(
-        materialization,
-        "_already_merged_work_product_target",
-        lambda **_kwargs: None,
-    )
-    monkeypatch.setattr(
-        materialization,
-        "_open_prs_for_branch",
-        lambda _repository, _token, *, branch, default_branch: (
-            ({"number": 353, "head": {"ref": branch}, "base": {"ref": default_branch}},)
-            if branch == replacement_branch
-            else ()
-        ),
-    )
-    monkeypatch.setattr(
-        materialization,
-        "_change_carrier_decision",
-        lambda *_args, **_kwargs: decision,
-    )
-    monkeypatch.setattr(
-        materialization,
-        "_revision_matches_manifest",
-        lambda _repository, _token, *, base_sha, revision, manifest: (
-            base_sha == current_main
-            and revision == replacement_head
-            and manifest.branch == historical_branch
-            and {file.path for file in manifest.files} == {path}
-        ),
-    )
-
-    assert materialization._observe_nonimplementation_existing_target(
-        request,
-        source,
-        repository=repository,
-        token=_TOKEN,
-        default_branch="main",
-        current_revision=current_main,
-    ) == ValidationResourceTarget(
-        repository=repository,
-        revision=replacement_head,
-        correlation="effect-request-322",
-        pr_number=353,
-        change=change,
-        validation_required=True,
-        branch=replacement_branch,
-    )
+    test_canonical_replacement_has_its_own_target_and_legal_descendants(proof_git, False)
+    target = _observe_git(proof_git)
+    assert target.pr_number == 353
+    assert _apply_git(proof_git) == target
+    assert _postcondition_git(proof_git, target=None)
+    assert proof_git.mutations == []
 
 
 def test_merged_lead_carrier_observer_rejects_ambiguous_replacement(
-    monkeypatch: pytest.MonkeyPatch,
+    proof_git: _ProofGitRepository,
 ) -> None:
-    source = WorkerRequest(322, "lead", "resolve-question")
-    change = "restore-no-work-idle-discovery"
-    repository = "royhsu-work/investment-strategy"
-    current_main = "a" * 40
-    historical_branch = f"agent/{change}-continuation-324"
-    replacement_branch = f"agent/{change}-continuation-347"
-    request = MaterializationRequest(
-        issue_number=322,
-        expected_change=change,
-        change=change,
-        branch=historical_branch,
-        base_sha=current_main,
-        message="Correct #322 semantics",
-        files=(
-            WorkProductFile(
-                f"openspec/changes/{change}/proposal.md",
-                "d" * 40,
-                "e" * 40,
-            ),
-        ),
-        pr_number=347,
-    )
-    historical_pr = {
-        "number": 347,
-        "state": "closed",
-        "merged": True,
-        "merged_at": "2026-09-29T00:00:00Z",
-        "merge_commit_sha": "f" * 40,
-        "head": {
-            "ref": historical_branch,
-            "sha": "b" * 40,
-            "repo": {"full_name": repository},
-        },
-        "base": {
-            "ref": "main",
-            "sha": current_main,
-            "repo": {"full_name": repository},
-        },
-    }
-
-    monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: historical_pr)
-    monkeypatch.setattr(
-        materialization,
-        "_already_merged_work_product_target",
-        lambda **_kwargs: None,
-    )
-    monkeypatch.setattr(
-        materialization,
-        "_open_prs_for_branch",
-        lambda *_args, **_kwargs: (
-            {"number": 353, "head": {"ref": replacement_branch}},
-            {"number": 354, "head": {"ref": replacement_branch}},
-        ),
-    )
-
-    with pytest.raises(RuntimeError, match="replacement carrier is ambiguous"):
-        materialization._observe_nonimplementation_existing_target(
-            request,
-            source,
-            repository=repository,
-            token=_TOKEN,
-            default_branch="main",
-            current_revision=current_main,
-        )
+    test_canonical_replacement_has_its_own_target_and_legal_descendants(proof_git, False)
+    proof_git.prs.append(dict(proof_git.prs[1], number=777))
+    with pytest.raises(RuntimeError, match="ambiguous"):
+        _observe_git(proof_git)
+    assert proof_git.mutations == []
 
 
 def test_merged_lead_carrier_observer_accepts_reconciled_stale_replacement(
+    proof_git: _ProofGitRepository,
+) -> None:
+    test_canonical_replacement_has_its_own_target_and_legal_descendants(proof_git, True)
+    target = _observe_git(proof_git)
+    assert target.pr_number == 353
+    assert _apply_git(proof_git) == target
+    assert _postcondition_git(proof_git, target=None)
+    assert proof_git.mutations == []
+
+
+class _ProofGitRepository:
+    """Expose actual Git objects through the read-only GitHub response contract."""
+
+    repository = "proof-owner/proof-repository"
+    branch = f"agent/{_CHANGE}"
+    path = f"openspec/changes/{_CHANGE}/proposal.md"
+    message = "Materialize accepted proof fixture"
+    source = WorkerRequest(322, "lead", "resolve-question")
+
+    def __init__(self, directory: Path) -> None:
+        import subprocess
+
+        self.directory = directory
+        self.directory.mkdir()
+        subprocess.run(["git", "init", "-q", str(directory)], check=True)  # noqa: S603, S607 - fixed fixture command
+        self.git("config", "user.name", "Proof fixture")
+        self.git("config", "user.email", "proof@example.test")
+        self.base = self.commit({self.path: "preimage", "README.md": "baseline"}, "Initial", ())
+        self.authorization = self.base
+        self.main = self.base
+        self.head = self.base
+        self.prs: list[dict[str, object]] = []
+        self.mutations: list[str] = []
+        self.desired = self.blob("accepted content")
+        self.failure: str | None = None
+        self.issue_change = _CHANGE
+        self.first_create = False
+        self.allow_writes = False
+        self.interrupt_after: str | None = None
+        self.created_objects: dict[str, str] = {}
+        self.routing = self.source.action
+        self.install_pr(324, self.branch, self.base)
+
+    def git(self, *args: str, stdin: str | None = None) -> str:
+        import subprocess
+
+        completed = subprocess.run(  # noqa: S603 - fixed fixture Git argument array
+            ["git", "-C", str(self.directory), *args],  # noqa: S607 - Git fixture executable
+            input=stdin,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        return completed.stdout.strip()
+
+    def blob(self, content: str) -> str:
+        return self.git("hash-object", "-w", "--stdin", stdin=content)
+
+    def entries(self, revision: str) -> dict[str, dict[str, object]]:
+        entries: dict[str, dict[str, object]] = {}
+        for line in self.git("ls-tree", "-r", revision).splitlines():
+            metadata, path = line.split("\t")
+            mode, kind, sha = metadata.split()
+            entries[path] = {"path": path, "mode": mode, "type": kind, "sha": sha}
+        return entries
+
+    def commit(self, content: dict[str, str], message: str, parents: tuple[str, ...]) -> str:
+        import os
+        import subprocess
+
+        index = self.directory / "temporary-index"
+        index.unlink(missing_ok=True)
+        environment = dict(os.environ, GIT_INDEX_FILE=str(index))
+
+        def run(*args: str, stdin: str | None = None) -> str:
+            result = subprocess.run(  # noqa: S603 - fixed fixture Git argument array
+                ["git", "-C", str(self.directory), *args],  # noqa: S607 - Git fixture executable
+                env=environment,
+                input=stdin,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            return result.stdout.strip()
+
+        if parents:
+            run("read-tree", parents[0])
+        for path, value in content.items():
+            run("update-index", "--add", "--cacheinfo", f"100644,{self.blob(value)},{path}")
+        tree = run("write-tree")
+        args = ["commit-tree", tree]
+        for parent in parents:
+            args.extend(("-p", parent))
+        return run(*args, stdin=message)
+
+    def install_pr(self, number: int, branch: str, head: str, *, merged: bool = False) -> None:
+        self.git("update-ref", f"refs/heads/{branch}", head)
+        self.prs.append(
+            {
+                "number": number,
+                "state": "closed" if merged else "open",
+                "merged": merged,
+                "merged_at": "2026-10-03T00:00:00Z" if merged else None,
+                "title": f"OpenSpec: {_CHANGE}",
+                "body": "Refs #322",
+                "head": {"ref": branch, "sha": head, "repo": {"full_name": self.repository}},
+                "base": {"ref": "main", "sha": self.main, "repo": {"full_name": self.repository}},
+            }
+        )
+
+    def set_head(self, revision: str) -> None:
+        self.head = revision
+        self.git("update-ref", f"refs/heads/{self.branch}", revision)
+        cast(dict[str, object], self.prs[0]["head"])["sha"] = revision
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "issue_number": 322,
+            "operation": "application-materialize",
+            "expected_change": self.issue_change,
+            "change": _CHANGE,
+            "branch": self.branch,
+            "base_sha": self.base,
+            "message": self.message,
+            "pr_number": None if self.first_create else 324,
+            "files": [
+                {
+                    "path": self.path,
+                    "blob_sha": self.desired,
+                    "expected_sha": self.entries(self.base).get(self.path, {}).get("sha"),
+                }
+            ],
+        }
+
+    def comparison(self, base: str, revision: str) -> dict[str, object]:
+        merge_base = self.git("merge-base", base, revision)
+        ahead = int(self.git("rev-list", "--count", f"{base}..{revision}"))
+        behind = int(self.git("rev-list", "--count", f"{revision}..{base}"))
+        commits = self.git(
+            "rev-list", "--reverse", "--topo-order", f"{base}..{revision}"
+        ).splitlines()
+        files: list[dict[str, object]] = []
+        for line in self.git("diff", "--name-status", merge_base, revision).splitlines():
+            status, path = line.split("\t")
+            files.append(
+                {"filename": path, "status": {"A": "added", "D": "removed"}.get(status, "modified")}
+            )
+        result: dict[str, object] = {
+            "base_commit": {"sha": base},
+            "merge_base_commit": {"sha": merge_base},
+            "ahead_by": ahead,
+            "behind_by": behind,
+            "total_commits": ahead,
+            "status": "diverged"
+            if ahead and behind
+            else "ahead"
+            if ahead
+            else "behind"
+            if behind
+            else "identical",
+            "commits": [
+                {
+                    "sha": sha,
+                    "parents": [
+                        {"sha": parent}
+                        for parent in self.git("show", "-s", "--format=%P", sha).split()
+                    ],
+                }
+                for sha in commits
+            ],
+            "files": files,
+        }
+        if self.failure == "incomplete-compare":
+            result["commits"] = []
+        return result
+
+    def api(self, repository: str, token: str, path: str, **kwargs: object) -> object:
+        import base64
+        from urllib.parse import parse_qs, unquote, urlsplit
+
+        assert repository == self.repository
+        if kwargs.get("method", "GET") != "GET":
+            self.mutations.append(path)
+            if not self.allow_writes:
+                raise AssertionError("proof must not write")
+            return self.write(path, cast(dict[str, object], kwargs["payload"]))
+        if path == "":
+            return {"default_branch": "main"}
+        if path == "issues/322":
+            return {
+                "number": 322,
+                "state": "open",
+                "body": f"Change: {self.issue_change}",
+                "created_at": "2026-09-01T00:00:00Z",
+                "closed_at": None,
+                "labels": [{"name": f"action:{self.routing}"}],
+            }
+        if path.startswith("git/ref/heads/"):
+            branch = unquote(path.removeprefix("git/ref/heads/"))
+            if branch == "main":
+                revision = self.main
+            else:
+                try:
+                    revision = self.git("rev-parse", "--verify", f"refs/heads/{branch}")
+                except Exception:
+                    if kwargs.get("allow_not_found"):
+                        return None
+                    raise
+            if self.failure == "wrong-ref" and branch == self.branch:
+                revision = self.base
+            return {"object": {"sha": revision}}
+        if path.startswith("pulls?"):
+            query = parse_qs(urlsplit(path).query)
+            filter_branch = None if "head" not in query else query["head"][0].split(":", 1)[1]
+            state = query.get("state", ["all"])[0]
+            matches = [
+                pr
+                for pr in self.prs
+                if (
+                    (
+                        filter_branch is None
+                        or cast(dict[str, object], pr["head"])["ref"] == filter_branch
+                    )
+                    and (state == "all" or pr["state"] == state)
+                )
+            ]
+            return matches * 2 if self.failure == "duplicate-pr" else matches
+        if path.startswith("pulls/"):
+            segments = path.split("/")
+            if len(segments) > 2:
+                return [{"filename": self.path, "status": "modified"}]
+            return next(pr for pr in self.prs if pr["number"] == int(segments[1]))
+        if path.startswith("compare/"):
+            base, revision = path.removeprefix("compare/").split("...")
+            return self.comparison(base, revision)
+        if path.startswith("git/blobs/"):
+            sha = path.removeprefix("git/blobs/")
+            return {
+                "sha": sha,
+                "encoding": "base64",
+                "content": base64.b64encode(self.git("cat-file", "blob", sha).encode()).decode(),
+            }
+        if path.startswith("git/commits/"):
+            revision = path.removeprefix("git/commits/")
+            return {
+                "sha": revision,
+                "tree": {"sha": self.git("rev-parse", f"{revision}^{{tree}}")},
+                "message": self.git("show", "-s", "--format=%B", revision),
+                "parents": [
+                    {"sha": sha} for sha in self.git("show", "-s", "--format=%P", revision).split()
+                ],
+            }
+        if path.startswith("git/trees/"):
+            tree = path.removeprefix("git/trees/").split("?")[0]
+            return {"sha": tree, "truncated": False, "tree": list(self.entries(tree).values())}
+        if path.startswith("contents/"):
+            parsed = urlsplit(path)
+            filename = unquote(parsed.path.removeprefix("contents/"))
+            revision = parse_qs(parsed.query)["ref"][0]
+            entries = self.entries(revision)
+            content_entry = entries.get(filename)
+            if content_entry is None:
+                directory_entries = [
+                    value for key, value in entries.items() if key.startswith(filename + "/")
+                ]
+                return directory_entries or None
+            return {
+                "sha": content_entry["sha"],
+                "type": "file",
+                "encoding": "base64",
+                "content": base64.b64encode(
+                    self.git("show", f"{revision}:{filename}").encode()
+                ).decode(),
+            }
+
+        raise AssertionError(f"unimplemented read {path}")
+
+    def write(self, path: str, payload: dict[str, object]) -> object:
+        import os
+        import subprocess
+
+        if path == "git/trees":
+            index = self.directory / "construction-index"
+            index.unlink(missing_ok=True)
+            environment = dict(os.environ, GIT_INDEX_FILE=str(index))
+
+            def run(*args: str) -> str:
+                result = subprocess.run(  # noqa: S603 - application fixture arguments
+                    ["git", "-C", str(self.directory), *args],  # noqa: S607
+                    env=environment,
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                )
+                return result.stdout.strip()
+
+            run("read-tree", cast(str, payload["base_tree"]))
+            for element in cast(list[dict[str, object]], payload["tree"]):
+                filename = cast(str, element["path"])
+                sha = element["sha"]
+                if sha is None:
+                    run("update-index", "--force-remove", filename)
+                else:
+                    run(
+                        "update-index",
+                        "--add",
+                        "--cacheinfo",
+                        f"{element['mode']},{sha},{filename}",
+                    )
+            sha = run("write-tree")
+        elif path == "git/commits":
+            args = ["commit-tree", cast(str, payload["tree"])]
+            for parent in cast(list[str], payload["parents"]):
+                args.extend(("-p", parent))
+            sha = self.git(*args, stdin=cast(str, payload["message"]))
+        elif path == "git/refs":
+            ref, sha = cast(str, payload["ref"]), cast(str, payload["sha"])
+            self.git("update-ref", ref, sha)
+            self.created_objects[path] = sha
+            if self.interrupt_after == path:
+                raise RuntimeError(f"fixture interruption after {path}")
+            return {"ref": ref, "object": {"sha": sha}}
+        else:
+            raise AssertionError(f"unimplemented fixture mutation {path}")
+        self.created_objects[path] = sha
+        if self.interrupt_after == path:
+            raise RuntimeError(f"fixture interruption after {path}")
+        return {"sha": sha}
+
+
+@pytest.fixture
+def proof_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _ProofGitRepository:
+    fixture = _ProofGitRepository(tmp_path / "proof-git")
+    monkeypatch.setattr(materialization, "_github_json", fixture.api)
+    monkeypatch.setattr(validation_resource, "_github_json", fixture.api)
+    monkeypatch.setattr(
+        materialization, "_current_authorized_request", lambda *_args: fixture.source
+    )
+    monkeypatch.setattr(
+        validation_resource, "_current_authorized_request", lambda *_args: fixture.source
+    )
+    return fixture
+
+
+def _prove_git(fixture: _ProofGitRepository) -> materialization.MaterializationProof:
+    return materialization.prove_materialization(
+        fixture.payload(),
+        fixture.source,
+        repository=fixture.repository,
+        token=_TOKEN,
+        current_revision=fixture.main,
+        default_branch="main",
+        accepted_authorization_revision=fixture.authorization,
+    )
+
+
+def test_canonical_proof_separates_current_target_from_immutable_git_witness(
+    proof_git: _ProofGitRepository,
+) -> None:
+    initial = _prove_git(proof_git)
+    assert initial.disposition == "INCOMPLETE", initial
+    accepted = proof_git.commit(
+        {proof_git.path: "accepted content"}, proof_git.message, (proof_git.base,)
+    )
+    proof_git.set_head(accepted)
+    complete = _prove_git(proof_git)
+    assert complete.disposition == "COMPLETE", complete
+    assert complete.witness is not None and complete.witness.revision == accepted
+    later = proof_git.commit(
+        {proof_git.path: "legal correction"}, "Correct same Change", (accepted,)
+    )
+    proof_git.set_head(later)
+    evolved = _prove_git(proof_git)
+    assert evolved.disposition == "COMPLETE", evolved
+    assert evolved.target is not None and evolved.target.revision == later
+    assert evolved.witness is not None and evolved.witness.revision == accepted
+    assert proof_git.mutations == []
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "wrong-blob",
+        "wrong-ref",
+        "duplicate-pr",
+        "overlap",
+        "incomplete-compare",
+        "unrelated-overwrite",
+    ],
+)
+def test_canonical_git_proof_preserves_conflicts(
+    proof_git: _ProofGitRepository,
+    failure: str,
+) -> None:
+    value = "wrong content" if failure == "wrong-blob" else "accepted content"
+    accepted = proof_git.commit({proof_git.path: value}, proof_git.message, (proof_git.base,))
+    proof_git.set_head(accepted)
+    if failure == "overlap":
+        proof_git.main = proof_git.commit(
+            {proof_git.path: "conflicting main"}, "Main overlap", (proof_git.base,)
+        )
+    elif failure == "unrelated-overwrite":
+        proof_git.set_head(
+            proof_git.commit(
+                {"README.md": "lost unrelated baseline"}, "Bad descendant", (accepted,)
+            )
+        )
+    else:
+        proof_git.failure = failure
+    proof = _prove_git(proof_git)
+    assert proof.disposition == "CONTRADICTORY", proof
+    assert proof.reason
+    assert proof_git.mutations == []
+
+
+def test_canonical_git_proof_survives_disjoint_advance_reconciliation_and_merge(
+    proof_git: _ProofGitRepository,
+) -> None:
+    accepted = proof_git.commit(
+        {proof_git.path: "accepted content"}, proof_git.message, (proof_git.base,)
+    )
+    proof_git.set_head(accepted)
+    proof_git.main = proof_git.commit(
+        {"README.md": "disjoint advance"}, "Main advance", (proof_git.base,)
+    )
+    assert _prove_git(proof_git).disposition == "COMPLETE"
+    reconciliation = proof_git.commit(
+        {"README.md": "disjoint advance"},
+        f"Reconcile default-branch ancestry for {_CHANGE}",
+        (accepted, proof_git.main),
+    )
+    proof_git.set_head(reconciliation)
+    reconciled = _prove_git(proof_git)
+    assert reconciled.disposition == "COMPLETE", reconciled
+    assert reconciled.witness is not None and reconciled.witness.revision == accepted
+    correction = proof_git.commit(
+        {proof_git.path: "later one parent correction"}, "Correction", (reconciliation,)
+    )
+    proof_git.set_head(correction)
+    assert _prove_git(proof_git).disposition == "COMPLETE"
+    merge = proof_git.commit(
+        {proof_git.path: "later one parent correction"}, "Merge", (proof_git.main, correction)
+    )
+    proof_git.main = merge
+    proof_git.prs[0].update(
+        state="closed", merged=True, merged_at="2026-10-03T00:00:00Z", merge_commit_sha=merge
+    )
+    merged = _prove_git(proof_git)
+    assert merged.disposition == "COMPLETE", merged
+    assert merged.target is not None and merged.target.revision == merge
+    assert merged.witness is not None and merged.witness.revision == accepted
+    assert proof_git.mutations == []
+
+
+def _first_git_intent(fixture: _ProofGitRepository) -> None:
+    fixture.first_create = True
+    fixture.issue_change = "unset"
+    fixture.source = WorkerRequest(322, "lead", "propose-change")
+    fixture.routing = fixture.source.action
+    fixture.base = fixture.commit({"README.md": "baseline"}, "Empty Change baseline", ())
+    fixture.authorization = fixture.base
+    fixture.main = fixture.base
+    fixture.set_head(fixture.base)
+    cast(dict[str, object], fixture.prs[0]["base"])["sha"] = fixture.base
+
+
+@pytest.mark.parametrize("lifecycle", ["open", "closed", "draft"])
+def test_canonical_first_carrier_requires_original_qualified_lifecycle(
+    proof_git: _ProofGitRepository,
+    lifecycle: str,
+) -> None:
+    _first_git_intent(proof_git)
+    accepted = proof_git.commit(
+        {proof_git.path: "accepted content"}, proof_git.message, (proof_git.base,)
+    )
+    proof_git.set_head(accepted)
+    if lifecycle == "closed":
+        proof_git.prs[0]["state"] = "closed"
+    if lifecycle == "draft":
+        proof_git.prs[0]["draft"] = True
+    proof = _prove_git(proof_git)
+    assert proof.disposition == ("COMPLETE" if lifecycle == "open" else "CONTRADICTORY"), proof
+    assert proof_git.mutations == []
+
+
+def test_canonical_first_create_rejects_existing_accepted_preimage(
+    proof_git: _ProofGitRepository,
+) -> None:
+    proof_git.first_create = True
+    proof_git.issue_change = "unset"
+    proof_git.source = WorkerRequest(322, "lead", "propose-change")
+    payload = proof_git.payload()
+    cast(list[dict[str, object]], payload["files"])[0]["expected_sha"] = None
+    accepted = proof_git.commit(
+        {proof_git.path: "accepted content"}, proof_git.message, (proof_git.base,)
+    )
+    proof_git.set_head(accepted)
+    proof = materialization.prove_materialization(
+        payload,
+        proof_git.source,
+        repository=proof_git.repository,
+        token=_TOKEN,
+        current_revision=proof_git.main,
+        default_branch="main",
+        accepted_authorization_revision=proof_git.base,
+    )
+    assert proof.disposition == "CONTRADICTORY", proof
+    assert proof_git.mutations == []
+
+
+def test_canonical_missing_first_carrier_does_not_authorize_known_overlap(
+    proof_git: _ProofGitRepository,
+) -> None:
+    _first_git_intent(proof_git)
+    proof_git.prs.clear()
+    proof_git.git("update-ref", "-d", f"refs/heads/{proof_git.branch}")
+    proof_git.main = proof_git.commit(
+        {proof_git.path: "overlapping main"}, "Overlap", (proof_git.base,)
+    )
+    proof = _prove_git(proof_git)
+    assert proof.disposition == "CONTRADICTORY", proof
+    assert proof_git.mutations == []
+
+
+@pytest.mark.parametrize("advance_before_materialization", [False, True])
+def test_canonical_replacement_has_its_own_target_and_legal_descendants(
+    proof_git: _ProofGitRepository,
+    advance_before_materialization: bool,
+) -> None:
+    original_head = proof_git.commit(
+        {proof_git.path: "preimage"}, "Earlier Change", (proof_git.base,)
+    )
+    proof_git.set_head(original_head)
+    merged_original = proof_git.commit(
+        {proof_git.path: "preimage"}, "Merge earlier Change", (proof_git.main, original_head)
+    )
+    proof_git.main = merged_original
+    proof_git.prs[0].update(
+        state="closed",
+        merged=True,
+        merged_at="2026-10-03T00:00:00Z",
+        merge_commit_sha=merged_original,
+    )
+    proof_git.base = merged_original
+    if advance_before_materialization:
+        proof_git.main = proof_git.commit(
+            {"README.md": "safe advance"}, "Advance", (proof_git.main,)
+        )
+    replacement = validation_resource._replacement_branch(_CHANGE, 324)
+    accepted = proof_git.commit(
+        {proof_git.path: "accepted content"}, proof_git.message, (proof_git.main,)
+    )
+    proof_git.install_pr(353, replacement, accepted)
+    proof = _prove_git(proof_git)
+    assert proof.disposition == "COMPLETE", proof
+    assert proof.target is not None and proof.target.pr_number == 353
+    assert proof.witness is not None and proof.witness.revision == accepted
+    correction = proof_git.commit(
+        {proof_git.path: "replacement correction"}, "Correct replacement", (accepted,)
+    )
+    cast(dict[str, object], proof_git.prs[1]["head"])["sha"] = correction
+    proof_git.git("update-ref", f"refs/heads/{replacement}", correction)
+    evolved = _prove_git(proof_git)
+    assert evolved.disposition == "COMPLETE", evolved
+    assert evolved.target is not None and evolved.target.revision == correction
+    assert evolved.witness is not None and evolved.witness.revision == accepted
+    assert proof_git.mutations == []
+
+
+def test_canonical_proof_accepts_357_shape_without_treating_pr_preimage_as_main(
+    proof_git: _ProofGitRepository,
+) -> None:
+    branch_preimage = proof_git.commit(
+        {proof_git.path: "preimage"}, "Earlier branch work", (proof_git.base,)
+    )
+    proof_git.main = proof_git.commit(
+        {"README.md": "current default"}, "Default advance", (proof_git.base,)
+    )
+    reconciliation = proof_git.commit(
+        {"README.md": "current default"},
+        f"Reconcile default-branch ancestry for {_CHANGE}",
+        (branch_preimage, proof_git.main),
+    )
+    proof_git.base = reconciliation
+    proof_git.authorization = proof_git.main
+    accepted = proof_git.commit(
+        {proof_git.path: "accepted content"}, proof_git.message, (reconciliation,)
+    )
+    proof_git.set_head(accepted)
+    proof = _prove_git(proof_git)
+    assert proof.disposition == "COMPLETE", proof
+    assert proof.witness is not None
+    assert proof.witness.revisions.accepted_authorization == proof_git.main
+    assert proof.witness.revisions.mutation_preimage == reconciliation
+    assert proof.witness.revisions.current_default == proof_git.main
+    assert proof_git.mutations == []
+
+
+def test_canonical_correction_then_reconciliation_keeps_old_witness_without_replay(
+    proof_git: _ProofGitRepository,
+) -> None:
+    accepted = proof_git.commit(
+        {proof_git.path: "accepted content"}, proof_git.message, (proof_git.base,)
+    )
+    correction = proof_git.commit(
+        {proof_git.path: "qualified later content"}, "Correction", (accepted,)
+    )
+    proof_git.set_head(correction)
+    assert _prove_git(proof_git).disposition == "COMPLETE"
+    proof_git.main = proof_git.commit(
+        {"README.md": "disjoint advance"}, "Advance", (proof_git.main,)
+    )
+    reconciled = proof_git.commit(
+        {"README.md": "disjoint advance"},
+        f"Reconcile default-branch ancestry for {_CHANGE}",
+        (correction, proof_git.main),
+    )
+    proof_git.set_head(reconciled)
+    proof = _prove_git(proof_git)
+    assert proof.disposition == "COMPLETE", proof
+    assert proof.target is not None and proof.target.revision == reconciled
+    assert proof.witness is not None and proof.witness.revision == accepted
+    assert proof_git.entries(reconciled)[proof_git.path]["sha"] != proof_git.desired
+    assert proof_git.mutations == []
+
+
+def test_canonical_missing_replacement_stays_incomplete_after_disjoint_main_advance(
+    proof_git: _ProofGitRepository,
+) -> None:
+    original_head = proof_git.commit(
+        {proof_git.path: "preimage"}, "Earlier Change", (proof_git.base,)
+    )
+    proof_git.set_head(original_head)
+    merged_original = proof_git.commit(
+        {proof_git.path: "preimage"}, "Merge", (proof_git.main, original_head)
+    )
+    proof_git.main = merged_original
+    proof_git.base = merged_original
+    proof_git.authorization = merged_original
+    proof_git.prs[0].update(
+        state="closed",
+        merged=True,
+        merged_at="2026-10-03T00:00:00Z",
+        merge_commit_sha=merged_original,
+    )
+    assert _prove_git(proof_git).disposition == "INCOMPLETE"
+    proof_git.main = proof_git.commit(
+        {"README.md": "disjoint advance"}, "Advance", (proof_git.main,)
+    )
+    incomplete = _prove_git(proof_git)
+    assert incomplete.disposition == "INCOMPLETE", incomplete
+    proof_git.main = proof_git.commit(
+        {proof_git.path: "conflicting default"}, "Overlap", (proof_git.main,)
+    )
+    conflict = _prove_git(proof_git)
+    assert conflict.disposition == "CONTRADICTORY", conflict
+    assert proof_git.mutations == []
+
+
+def _apply_git(fixture: _ProofGitRepository) -> ValidationResourceTarget:
+    return materialization.apply_materialization(
+        fixture.payload(),
+        fixture.source,
+        repository=fixture.repository,
+        token=_TOKEN,
+        current_revision=fixture.main,
+        default_branch="main",
+        accepted_authorization_revision=fixture.authorization,
+    )
+
+
+def test_apply_then_fresh_proof_and_every_read_consumer_reuses_git_consequence(
+    proof_git: _ProofGitRepository,
+) -> None:
+    proof_git.allow_writes = True
+    with pytest.raises(CarrierRequired) as raised:
+        _apply_git(proof_git)
+    plan = raised.value.plan
+    revision = cast(str, plan.requested["sha"])
+    assert plan.force is False
+    assert plan.expected["ref_sha"] == proof_git.base
+    assert plan.expected["commit_parents"] == [proof_git.base]
+    assert proof_git.mutations == ["git/trees", "git/commits"]
+    # The actuator uses only the immutable application plan after observing
+    # its exact preconditions. No worker makes a target or successor choice.
+    assert proof_git.head == plan.expected["ref_sha"]
+    proof_git.set_head(revision)
+    completed = _prove_git(proof_git)
+    assert completed.disposition == "COMPLETE", completed
+    before = list(proof_git.mutations)
+    assert _apply_git(proof_git) == completed.target
+    observed = materialization.observe_materialization_target(
+        proof_git.payload(),
+        proof_git.source,
+        repository=proof_git.repository,
+        token=_TOKEN,
+        current_revision=proof_git.main,
+        default_branch="main",
+        accepted_authorization_revision=proof_git.authorization,
+    )
+    assert observed == completed.target
+    assert materialization.materialization_postcondition(
+        proof_git.payload(),
+        proof_git.source,
+        repository=proof_git.repository,
+        token=_TOKEN,
+        current_revision=proof_git.main,
+        default_branch="main",
+        target=None,
+        accepted_authorization_revision=proof_git.authorization,
+    )
+    assert proof_git.mutations == before
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "accepted-decision",
+        "blob",
+        "git/trees",
+        "git/commits",
+        "CarrierRequired",
+        "branch-ref",
+        "PR-carrier",
+        "successor-routing",
+    ],
+)
+def test_first_materialization_interruption_prefixes_reconstruct_from_fresh_git(
+    proof_git: _ProofGitRepository,
+    prefix: str,
+) -> None:
+    _first_git_intent(proof_git)
+    proof_git.prs.clear()
+    proof_git.git("update-ref", "-d", f"refs/heads/{proof_git.branch}")
+    payload = proof_git.payload()
+    proof_git.allow_writes = True
+    proof_git.interrupt_after = prefix if prefix in {"git/trees", "git/commits"} else None
+    if prefix in {"accepted-decision", "blob"}:
+        pass
+    elif prefix in {"git/trees", "git/commits"}:
+        with pytest.raises(RuntimeError, match="fixture interruption"):
+            _apply_git(proof_git)
+    else:
+        with pytest.raises(CarrierRequired) as raised:
+            _apply_git(proof_git)
+        revision = cast(str, raised.value.plan.requested["head_sha"])
+        assert proof_git.git("rev-parse", f"refs/heads/{proof_git.branch}") == revision
+        if prefix not in {"CarrierRequired", "branch-ref"}:
+            proof_git.install_pr(324, proof_git.branch, revision)
+        if prefix == "successor-routing":
+            proof_git.issue_change = _CHANGE
+            proof_git.routing = "review-openspec"
+    expected = (
+        "INCOMPLETE"
+        if prefix
+        in {
+            "accepted-decision",
+            "blob",
+            "git/trees",
+            "git/commits",
+            "CarrierRequired",
+            "branch-ref",
+        }
+        else "COMPLETE"
+    )
+    before = list(proof_git.mutations)
+    # Recreate proof with a new invocation and only durable repository reads.
+    proof = materialization.prove_materialization(
+        payload,
+        proof_git.source,
+        repository=proof_git.repository,
+        token=_TOKEN,
+        current_revision=proof_git.main,
+        default_branch="main",
+        accepted_authorization_revision=proof_git.authorization,
+        allow_pending_continuation=True,
+        accepted_successor_routing=("reviewer", "review-openspec")
+        if prefix == "successor-routing"
+        else None,
+    )
+    assert proof.disposition == expected, proof
+    assert proof_git.mutations == before
+    if prefix in {"CarrierRequired", "branch-ref"}:
+        proof_git.interrupt_after = None
+        with pytest.raises(CarrierRequired) as missing_pr:
+            _apply_git(proof_git)
+        assert missing_pr.value.plan.operation == "pull-request-create"
+        assert proof_git.mutations == before
+
+
+def _git_worker_result(fixture: _ProofGitRepository, payload: dict[str, object]) -> str:
+    return json.dumps(
+        {
+            "issue_number": 322,
+            "role": fixture.source.role,
+            "action": fixture.source.action,
+            "change": _CHANGE,
+            "result_kind": "ready-for-openspec-review",
+            "evidence_ref": "accepted-intent-proof",
+            "result_content": "Bounded accepted Change",
+            "requested_effects": [{"kind": "github-mutation", "payload_json": json.dumps(payload)}],
+        }
+    )
+
+
+def test_canonical_consumers_share_proof_across_evolution_and_successor(
+    proof_git: _ProofGitRepository,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = WorkerRequest(322, "lead", "resolve-question")
-    change = "restore-no-work-idle-discovery"
-    repository = "royhsu-work/investment-strategy"
-    accepted_base = "1" * 40
-    current_main = "2" * 40
-    historical_head = "3" * 40
-    reconciled_head = "4" * 40
-    historical_branch = f"agent/{change}-continuation-324"
-    replacement_branch = f"agent/{change}-continuation-347"
-    path = f"openspec/changes/{change}/proposal.md"
-    request = MaterializationRequest(
-        issue_number=322,
-        expected_change=change,
-        change=change,
-        branch=historical_branch,
-        base_sha=accepted_base,
-        message="Correct #322 semantics",
-        files=(WorkProductFile(path, "5" * 40, "6" * 40),),
-        pr_number=347,
-    )
-    historical_pr = {
-        "number": 347,
-        "state": "closed",
-        "merged": True,
-        "merged_at": "2026-10-01T00:00:00Z",
-        "merge_commit_sha": "7" * 40,
-        "head": {
-            "ref": historical_branch,
-            "sha": historical_head,
-            "repo": {"full_name": repository},
-        },
-        "base": {
-            "ref": "main",
-            "sha": accepted_base,
-            "repo": {"full_name": repository},
-        },
-    }
-    decision = materialization.ImplementationCarrierQualification(
-        disposition="QUALIFIED",
-        reason="continuation-carrier-qualified-after-reconciliation",
-        repository=repository,
-        issue_number=322,
-        change=change,
-        action=source.action,
-        pr_number=353,
-        branch=replacement_branch,
-        head_sha=reconciled_head,
-        default_branch="main",
-        default_revision=current_main,
-        historical_pr_number=347,
-    )
-    default_paths = [{"README.md"}]
-    reconciled_calls: list[str] = []
+    import investment_strategy.scheduled_agent_effects as effects
 
-    monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_kwargs: historical_pr)
-    monkeypatch.setattr(
-        materialization,
-        "_already_merged_work_product_target",
-        lambda **_kwargs: None,
+    monkeypatch.setattr(effects, "_github_json", proof_git.api)
+    payload = proof_git.payload()
+    accepted = proof_git.commit(
+        {proof_git.path: "accepted content"}, proof_git.message, (proof_git.base,)
     )
-    monkeypatch.setattr(
-        materialization,
-        "_open_prs_for_branch",
-        lambda _repository, _token, *, branch, default_branch: (
-            ({"number": 353, "head": {"ref": branch}, "base": {"ref": default_branch}},)
-            if branch == replacement_branch
-            else ()
-        ),
+    proof_git.set_head(accepted)
+    initial_target = _apply_git(proof_git)
+    correction = proof_git.commit(
+        {proof_git.path: "later corrected content"}, "Correction", (accepted,)
     )
-    monkeypatch.setattr(
-        materialization,
-        "_change_carrier_decision",
-        lambda *_args, **_kwargs: decision,
-    )
-    monkeypatch.setattr(
-        materialization,
-        "_ancestor_comparison_paths",
-        lambda _repository, _token, *, base_sha, revision: (
-            set(default_paths[0])
-            if base_sha == accepted_base and revision == current_main
-            else set()
-        ),
-    )
-
-    def is_reconciled(
-        _repository: str,
-        _token: str,
-        *,
-        base_sha: str,
-        revision: str,
-        manifest: WorkProductManifest,
-        expected_change: str,
-        authorization_revision: str,
-        **_kwargs: object,
-    ) -> bool:
-        reconciled_calls.append(revision)
-        return (
-            base_sha == accepted_base
-            and revision == reconciled_head
-            and manifest.files[0].path == path
-            and expected_change == change
-            and authorization_revision == current_main
-        )
-
-    monkeypatch.setattr(
-        materialization,
-        "_is_reconciled_work_product_revision",
-        is_reconciled,
-    )
-    monkeypatch.setattr(
-        materialization,
-        "_revision_matches_manifest",
-        lambda *_args, **_kwargs: False,
-    )
-
-    assert materialization._observe_nonimplementation_existing_target(
-        request,
-        source,
-        repository=repository,
-        token=_TOKEN,
-        default_branch="main",
-        current_revision=current_main,
-    ) == ValidationResourceTarget(
-        repository=repository,
-        revision=reconciled_head,
-        correlation="effect-request-322",
-        pr_number=353,
-        change=change,
-        validation_required=True,
-        branch=replacement_branch,
-    )
-    assert reconciled_calls == [reconciled_head]
-
-    default_paths[0] = {path}
-    reconciled_calls.clear()
-    with pytest.raises(RuntimeError, match="requested paths overlap default-branch changes"):
-        materialization._observe_nonimplementation_existing_target(
-            request,
-            source,
-            repository=repository,
+    proof_git.set_head(correction)
+    proof_git.main = proof_git.commit({"README.md": "disjoint advance"}, "Main", (proof_git.main,))
+    raw = _git_worker_result(proof_git, payload)
+    for successor in (False, True):
+        if successor:
+            proof_git.routing = "review-openspec"
+        assert materialization.materialization_postcondition(
+            payload,
+            proof_git.source,
+            repository=proof_git.repository,
             token=_TOKEN,
+            current_revision=proof_git.main,
             default_branch="main",
-            current_revision=current_main,
+            target=initial_target,
+            accepted_authorization_revision=proof_git.authorization,
+            allow_pending_continuation=True,
+        ) is (not successor)
+        assert effects.consequence_postconditions_complete(
+            raw,
+            source=proof_git.source,
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            authorized_change=_CHANGE,
+            accepted_authorization_revision=proof_git.authorization,
+            allow_pending_continuation=True,
+            allow_accepted_successor=successor,
         )
-    assert reconciled_calls == []
+    assert proof_git.mutations == []
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "wrong-blob",
+        "wrong-ref",
+        "duplicate-pr",
+        "overlap",
+        "incomplete-compare",
+        "unrelated-overwrite",
+    ],
+)
+def test_contradictory_proof_blocks_apply_without_repository_mutation(
+    proof_git: _ProofGitRepository,
+    failure: str,
+) -> None:
+    accepted = proof_git.commit(
+        {proof_git.path: "wrong content" if failure == "wrong-blob" else "accepted content"},
+        proof_git.message,
+        (proof_git.base,),
+    )
+    proof_git.set_head(accepted)
+    if failure == "overlap":
+        proof_git.main = proof_git.commit(
+            {proof_git.path: "overlapping main"}, "Conflict", (proof_git.main,)
+        )
+    elif failure == "unrelated-overwrite":
+        proof_git.set_head(
+            proof_git.commit({"README.md": "overwrite"}, "Bad correction", (accepted,))
+        )
+    else:
+        proof_git.failure = failure
+    proof_git.allow_writes = True
+    with pytest.raises(RuntimeError):
+        _apply_git(proof_git)
+    assert proof_git.mutations == []
+
+
+def test_canonical_proof_rejects_competing_active_change_carrier(
+    proof_git: _ProofGitRepository,
+) -> None:
+    accepted = proof_git.commit(
+        {proof_git.path: "accepted content"}, proof_git.message, (proof_git.base,)
+    )
+    proof_git.set_head(accepted)
+    competing = validation_resource._replacement_branch(_CHANGE, 123)
+    proof_git.install_pr(777, competing, accepted)
+    proof = _prove_git(proof_git)
+    assert proof.disposition == "CONTRADICTORY", proof
+    assert proof_git.mutations == []
+
+
+def test_canonical_main_snapshot_requires_qualified_same_change_carrier_witness(
+    proof_git: _ProofGitRepository,
+) -> None:
+    original = proof_git.commit({proof_git.path: "preimage"}, "Earlier Change", (proof_git.base,))
+    proof_git.set_head(original)
+    merged = proof_git.commit(
+        {proof_git.path: "preimage"}, "Merge earlier Change", (proof_git.main, original)
+    )
+    proof_git.main = merged
+    proof_git.base = merged
+    proof_git.authorization = merged
+    proof_git.prs[0].update(
+        state="closed", merged=True, merged_at="2026-10-03T00:00:00Z", merge_commit_sha=merged
+    )
+    # Exact accepted-looking content on main alone does not bind a PR carrier.
+    proof_git.main = proof_git.commit(
+        {proof_git.path: "accepted content"}, proof_git.message, (merged,)
+    )
+    proof = _prove_git(proof_git)
+    assert proof.disposition == "CONTRADICTORY", proof
+    assert proof_git.mutations == []
+
+
+def _accepted_git_carrier(fixture: _ProofGitRepository) -> str:
+    accepted = fixture.commit({fixture.path: "accepted content"}, fixture.message, (fixture.base,))
+    fixture.set_head(accepted)
+    return accepted
+
+
+def _observe_git(fixture: _ProofGitRepository) -> ValidationResourceTarget:
+    return materialization.observe_materialization_target(
+        fixture.payload(),
+        fixture.source,
+        repository=fixture.repository,
+        token=_TOKEN,
+        current_revision=fixture.main,
+        default_branch="main",
+        accepted_authorization_revision=fixture.authorization,
+    )
+
+
+def _postcondition_git(
+    fixture: _ProofGitRepository, *, target: ValidationResourceTarget | None
+) -> bool:
+    return materialization.materialization_postcondition(
+        fixture.payload(),
+        fixture.source,
+        repository=fixture.repository,
+        token=_TOKEN,
+        current_revision=fixture.main,
+        default_branch="main",
+        accepted_authorization_revision=fixture.authorization,
+        target=target,
+    )
+
+
+def test_declared_main_base_uses_actual_branch_write_preimage(
+    proof_git: _ProofGitRepository,
+) -> None:
+    branch_parent = proof_git.commit(
+        {proof_git.path: "branch preimage"}, "Earlier correction", (proof_git.base,)
+    )
+    proof_git.main = proof_git.commit(
+        {"README.md": "disjoint main"}, "Default advance", (proof_git.base,)
+    )
+    proof_git.base = proof_git.main
+    proof_git.authorization = proof_git.main
+    accepted = proof_git.commit(
+        {proof_git.path: "accepted content", "README.md": "disjoint main"},
+        proof_git.message,
+        (branch_parent, proof_git.main),
+    )
+    proof_git.set_head(accepted)
+    payload = proof_git.payload()
+    cast(list[dict[str, object]], payload["files"])[0]["expected_sha"] = proof_git.entries(
+        branch_parent
+    )[proof_git.path]["sha"]
+    result = materialization.prove_materialization(
+        payload,
+        proof_git.source,
+        repository=proof_git.repository,
+        token=_TOKEN,
+        current_revision=proof_git.main,
+        default_branch="main",
+        accepted_authorization_revision=proof_git.authorization,
+    )
+    assert result.disposition == "COMPLETE", result
+    assert result.witness is not None
+    assert result.witness.revisions.carrier_base == proof_git.main
+    assert result.witness.revisions.mutation_preimage == branch_parent
+    cast(list[dict[str, object]], payload["files"])[0]["expected_sha"] = proof_git.entries(
+        proof_git.main
+    )[proof_git.path]["sha"]
+    stale = materialization.prove_materialization(
+        payload,
+        proof_git.source,
+        repository=proof_git.repository,
+        token=_TOKEN,
+        current_revision=proof_git.main,
+        default_branch="main",
+        accepted_authorization_revision=proof_git.authorization,
+    )
+    assert stale.disposition == "CONTRADICTORY", stale
+    assert proof_git.mutations == []
+
+
+def test_missing_first_branch_recovers_after_disjoint_default_advance(
+    proof_git: _ProofGitRepository,
+) -> None:
+    proof_git.source = WorkerRequest(322, "lead", "propose-change")
+    proof_git.routing = proof_git.source.action
+    proof_git.issue_change = "unset"
+    proof_git.first_create = True
+    proof_git.prs.clear()
+    proof_git.git("update-ref", "-d", f"refs/heads/{proof_git.branch}")
+    proof_git.base = proof_git.commit({"README.md": "baseline"}, "Empty Change base", ())
+    proof_git.authorization = proof_git.base
+    proof_git.main = proof_git.commit(
+        {"README.md": "disjoint advance"}, "Main advance", (proof_git.base,)
+    )
+    proof_git.allow_writes = True
+    assert _prove_git(proof_git).disposition == "INCOMPLETE"
+    with pytest.raises(CarrierRequired) as raised:
+        materialization.apply_materialization(
+            proof_git.payload(),
+            proof_git.source,
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            default_branch="main",
+            accepted_authorization_revision=proof_git.authorization,
+            allow_pending_continuation=True,
+        )
+    assert raised.value.plan.operation == "pull-request-create"
+    assert proof_git.mutations == ["git/trees", "git/commits", "git/refs"]
+
+
+def test_missing_reconciliation_constructs_on_exact_actual_branch_parent(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    branch_parent = proof_git.commit(
+        {proof_git.path: "branch preimage"},
+        "Earlier correction",
+        (proof_git.base,),
+    )
+    proof_git.set_head(branch_parent)
+    proof_git.main = proof_git.commit(
+        {"README.md": "disjoint main"},
+        "Main advance",
+        (proof_git.base,),
+    )
+    proof_git.base = proof_git.main
+    proof_git.authorization = proof_git.main
+    payload = proof_git.payload()
+    cast(list[dict[str, object]], payload["files"])[0]["expected_sha"] = proof_git.entries(
+        branch_parent
+    )[proof_git.path]["sha"]
+    monkeypatch.setattr(proof_git, "payload", lambda: payload)
+    proof_git.allow_writes = True
+    assert _prove_git(proof_git).disposition == "INCOMPLETE"
+    with pytest.raises(CarrierRequired) as raised:
+        _apply_git(proof_git)
+    plan = raised.value.plan
+    assert plan.expected["ref_sha"] == branch_parent
+    assert plan.requested["commit_parents"] == [branch_parent, proof_git.main]
+    proof_git.set_head(cast(str, plan.requested["sha"]))
+    result = _prove_git(proof_git)
+    assert result.disposition == "COMPLETE", result
+    assert result.witness is not None
+    assert result.witness.revisions.mutation_preimage == branch_parent
+    assert (
+        proof_git.entries(proof_git.head)["README.md"]["sha"]
+        == (proof_git.entries(proof_git.main)["README.md"]["sha"])
+    )
+    written = list(proof_git.mutations)
+    _apply_git(proof_git)
+    assert proof_git.mutations == written
+
+
+def test_actual_implementation_constructor_is_proved_by_fresh_consumers(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import investment_strategy.scheduled_agent_application_carrier as carrier
+
+    proof_git.source = WorkerRequest(322, "executor", "implement-change")
+    proof_git.routing = proof_git.source.action
+    proof_git.path = f"openspec/changes/{_CHANGE}/tasks.md"
+    proof_git.base = proof_git.commit(
+        {proof_git.path: "## Slice\n- [ ] 1.1 Implement the slice\n"},
+        "Approved tasks",
+        (proof_git.base,),
+    )
+    proof_git.main = proof_git.base
+    proof_git.authorization = proof_git.base
+    proof_git.set_head(proof_git.base)
+    proof_git.desired = proof_git.blob("## Slice\n- [x] 1.1 Implement the slice\n")
+    proof_git.allow_writes = True
+    monkeypatch.setattr(carrier, "_github_json", proof_git.api)
+    with pytest.raises(CarrierRequired) as raised:
+        _apply_git(proof_git)
+    assert raised.value.plan.requested["commit_parents"] == [proof_git.base]
+    proof_git.set_head(cast(str, raised.value.plan.requested["sha"]))
+    proof = _prove_git(proof_git)
+    assert proof.disposition == "COMPLETE", proof
+    before = list(proof_git.mutations)
+    _apply_git(proof_git)
+    assert _postcondition_git(proof_git, target=None)
+    assert proof_git.mutations == before
+
+
+@pytest.mark.parametrize("prefix", ["decision", "tree", "commit", "ref", "pr", "merge"])
+def test_separate_process_reconstructs_only_persisted_git_evidence(
+    proof_git: _ProofGitRepository,
+    prefix: str,
+) -> None:
+    import json
+    import os
+    import subprocess
+    import sys
+
+    proof_git.source = WorkerRequest(322, "lead", "propose-change")
+    proof_git.routing = proof_git.source.action
+    proof_git.issue_change = "unset"
+    proof_git.first_create = True
+    proof_git.base = proof_git.commit({"README.md": "baseline"}, "Empty first base", ())
+    proof_git.main = proof_git.authorization = proof_git.base
+    accepted = proof_git.commit(
+        {proof_git.path: "accepted content"},
+        proof_git.message,
+        (proof_git.base,),
+    )
+    proof_git.prs.clear()
+    if prefix in {"pr", "merge"}:
+        proof_git.install_pr(324, proof_git.branch, accepted)
+    elif prefix == "ref":
+        proof_git.git("update-ref", f"refs/heads/{proof_git.branch}", accepted)
+    else:
+        proof_git.git("update-ref", "-d", f"refs/heads/{proof_git.branch}")
+    if prefix == "merge":
+        proof_git.main = proof_git.commit({}, "Merge", (proof_git.main, accepted))
+        proof_git.prs[0].update(
+            state="closed",
+            merged=True,
+            merged_at="2026-10-04T00:00:00Z",
+            merge_commit_sha=proof_git.main,
+        )
+    snapshot = {
+        "directory": str(proof_git.directory),
+        "base": proof_git.base,
+        "authorization": proof_git.authorization,
+        "main": proof_git.main,
+        "head": proof_git.head,
+        "prs": proof_git.prs,
+        "desired": proof_git.desired,
+        "issue_change": proof_git.issue_change,
+        "first_create": proof_git.first_create,
+        "routing": proof_git.routing,
+    }
+    script = """
+import json, sys
+from pathlib import Path
+import investment_strategy.scheduled_agent_application_materialization as owner
+import investment_strategy.scheduled_agent_validation_resource as resource
+from tests.test_scheduled_agent_application_materialization import _ProofGitRepository
+snapshot = json.loads(sys.stdin.read())
+remote = object.__new__(_ProofGitRepository)
+remote.__dict__.update(snapshot)
+remote.directory = Path(remote.directory)
+remote.failure = None
+remote.mutations = []
+remote.allow_writes = False
+from investment_strategy.scheduled_agent_runtime import WorkerRequest
+remote.source = WorkerRequest(322, "lead", "propose-change")
+owner._github_json = resource._github_json = remote.api
+owner._current_authorized_request = lambda *args: remote.source
+resource._current_authorized_request = owner._current_authorized_request
+proof = owner.prove_materialization(remote.payload(), remote.source,
+    repository=remote.repository, token="fixture", current_revision=remote.main,
+    default_branch="main", accepted_authorization_revision=remote.authorization)
+print(json.dumps({"status": proof.disposition, "reason": proof.reason, "writes": remote.mutations}))
+"""
+    result = subprocess.run(  # noqa: S603 - isolated fresh proof process, fixed script
+        [sys.executable, "-c", script],
+        input=json.dumps(snapshot),
+        text=True,
+        capture_output=True,
+        check=False,
+        env={**os.environ, "PYTHONPATH": str(Path.cwd() / "src")},
+    )
+    assert result.returncode == 0, result.stderr
+    observed = json.loads(result.stdout)
+    expected = "COMPLETE" if prefix in {"pr", "merge"} else "INCOMPLETE"
+    assert observed["status"] == expected, observed
+    assert observed["writes"] == []
+
+
+@pytest.mark.parametrize("advance", [False, True])
+def test_actual_missing_replacement_constructor_and_fresh_proof(
+    proof_git: _ProofGitRepository,
+    advance: bool,
+) -> None:
+    original_head = proof_git.commit({}, "Earlier Change", (proof_git.base,))
+    proof_git.set_head(original_head)
+    merged = proof_git.commit({}, "Merge earlier Change", (proof_git.main, original_head))
+    proof_git.main = proof_git.base = proof_git.authorization = merged
+    proof_git.prs[0].update(
+        state="closed", merged=True, merged_at="2026-10-04T00:00:00Z", merge_commit_sha=merged
+    )
+    if advance:
+        proof_git.main = proof_git.commit({"README.md": "later main"}, "Advance", (merged,))
+    proof_git.allow_writes = True
+    assert _prove_git(proof_git).disposition == "INCOMPLETE"
+    with pytest.raises(CarrierRequired) as raised:
+        _apply_git(proof_git)
+    plan = raised.value.plan
+    assert plan.operation == "pull-request-create"
+    replacement = cast(str, plan.target["head_ref"])
+    revision = cast(str, plan.requested["head_sha"])
+    assert proof_git.git("show", "-s", "--format=%P", revision) == proof_git.main
+    proof_git.install_pr(353, replacement, revision)
+    proof = _prove_git(proof_git)
+    assert proof.disposition == "COMPLETE", proof
+    assert proof.target is not None and proof.target.pr_number == 353
+    assert proof.witness is not None and proof.witness.revision == revision
+    writes = list(proof_git.mutations)
+    assert _apply_git(proof_git) == proof.target
+    assert proof_git.mutations == writes
+
+
+@pytest.mark.parametrize("carrier", ["first", "replacement"])
+@pytest.mark.parametrize("changed", ["main", "issue", "source", "ref"])
+def test_concurrent_change_after_commit_rejects_direct_ref_creation(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    carrier: str,
+    changed: str,
+) -> None:
+    if carrier == "first":
+        _first_git_intent(proof_git)
+        proof_git.prs.clear()
+        proof_git.git("update-ref", "-d", f"refs/heads/{proof_git.branch}")
+    else:
+        previous = proof_git.commit({}, "Earlier Change", (proof_git.base,))
+        proof_git.set_head(previous)
+        merged = proof_git.commit({}, "Merge earlier Change", (proof_git.main, previous))
+        proof_git.main = proof_git.base = proof_git.authorization = merged
+        proof_git.prs[0].update(
+            state="closed", merged=True, merged_at="2026-10-04T00:00:00Z", merge_commit_sha=merged
+        )
+    proof_git.allow_writes = True
+    original_api = proof_git.api
+
+    def concurrent_api(repository: str, token: str, path: str = "", **kwargs: object) -> object:
+        result = original_api(repository, token, path, **kwargs)
+        if path == "git/commits" and kwargs.get("method") == "POST":
+            if changed == "main":
+                proof_git.main = proof_git.commit(
+                    {"README.md": "Concurrent"}, "Advance", (proof_git.main,)
+                )
+            elif changed == "issue":
+                proof_git.issue_change = "different-change"
+            elif changed == "ref":
+                branch = (
+                    proof_git.branch
+                    if carrier == "first"
+                    else validation_resource._replacement_branch(_CHANGE, 324)
+                )
+                proof_git.git(
+                    "update-ref", f"refs/heads/{branch}", cast(dict[str, str], result)["sha"]
+                )
+            else:
+                monkeypatch.setattr(materialization, "_current_authorized_request", lambda *_: None)
+        return result
+
+    monkeypatch.setattr(materialization, "_github_json", concurrent_api)
+    monkeypatch.setattr(validation_resource, "_github_json", concurrent_api)
+    if changed == "ref":
+        with pytest.raises(CarrierRequired):
+            _apply_git(proof_git)
+    else:
+        with pytest.raises(RuntimeError, match="changed|stale"):
+            _apply_git(proof_git)
+    assert "git/commits" in proof_git.mutations
+    assert "git/refs" not in proof_git.mutations

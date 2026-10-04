@@ -617,6 +617,7 @@ def _fresh_completion_postconditions(
     repository: str,
     token: str,
     current_revision: str,
+    accepted_authorization_revision: str,
     authorized_change: str,
     request_comment_id: int,
 ) -> bool:
@@ -628,6 +629,7 @@ def _fresh_completion_postconditions(
         repository=repository,
         token=token,
         current_revision=current_revision,
+        accepted_authorization_revision=accepted_authorization_revision,
         authorized_change=authorized_change,
         request_comment_id=request_comment_id,
         # This read follows accepted-intent and formal-correlation qualification.
@@ -783,6 +785,7 @@ def _formal_consequence(
         current_revision=current_revision,
         authorized_change=record.change,
         request_comment_id=record.request_comment_id,
+        accepted_authorization_revision=record.authorization_revision,
     ):
         return False
     return (
