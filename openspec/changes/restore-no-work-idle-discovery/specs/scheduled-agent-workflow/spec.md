@@ -328,6 +328,61 @@ The accepted authorization revision `A`, declared carrier base `B`, actual prosp
 
 Application/apply-side already-complete checks, materialization observation/postcondition, fresh interruption recovery, and consequence completion classification SHALL all consume that same proof owner. Existing exact-manifest, historical-ancestry, merged-witness, reconciliation, and replacement-carrier helpers MAY remain as proof primitives or witness finders, but MUST NOT independently define top-level completion. After any consequential mutation the application SHALL discard local success as authority, fresh-read repository state, and use the same proof; only fresh `COMPLETE` permits completion to proceed.
 
+The existing application-completion owner SHALL reconstruct pending carrier work before selecting a producer continuation. It SHALL qualify one immutable accepted intent and the unique current necessary CarrierPlan from complete source request, application run/attempt, artifact identity/digest/content, plan correlation, and fresh repository evidence. It SHALL preserve current Human disposition, governance, Issue/Change/Role/Action, exact branch/ref/PR/head/base, commit parents/tree/manifest/content, actual preimage, lineage, overlap, and cardinality guards. A saved plan SHALL NOT grant semantic, successor, routing, or terminal authority to the external actuator.
+
+When the canonical proof returns `COMPLETE(T, W)`, recovery SHALL execute zero duplicate materialization mutation and satisfy only missing qualified evidence, exact-target validation, or derived consequence. When a valid current plan exists and the exact physical effect remains missing under fresh authorization, a later fresh external boundary SHALL perform only that plan's allowed non-force operation. The owner SHALL reconstruct a producer only when necessary plan absence or invalidation requiring a legal current reconstruction is proven; an unconsumed valid plan alone MUST NOT trigger another producer run. Stale, conflicting, duplicate, expired, superseded, incomplete, ambiguous, or contradictory evidence SHALL fail closed with its precise reason, never guessed selection, rewind, force-update, substitute carrier, or semantic replay. Safe disjoint evolution MAY qualify through the existing proof; unconditional revision equality SHALL NOT erase that existing capability.
+
+Normal `CarrierRequired` SHALL remain an application invocation exit and normal external handoff, distinct from actual actuator rejection/error and unknown write response. Catchable external outcomes SHALL preserve exact source request/run/attempt/artifact/plan, operation/tool, target versions/preimage, platform-redacted raw observable error, separately justified classification, whether mutation is proven complete, proven not complete, or unknown, and the unfinished boundary. The legal repository-owned evidence/application path SHALL fresh-qualify and deduplicate this bounded evidence against immutable accepted intent and actual GitHub truth. It SHALL reuse canonical `EXECUTION_EXCEPTION` for exceptions without adding a lifecycle Action, ResultKind, state, queue, lease, cursor, retry registry, or progress database. External reports MUST NOT overwrite accepted intent, authorize routing/termination, or manufacture Human approval. A report's claimed success SHALL NOT substitute for the canonical postcondition.
+
+After a lost or ambiguous write response, recovery SHALL observe/reconcile the exact target before any further write and SHALL fail closed when unique identity or completion cannot be proven. When reporting itself fails, the invocation SHALL retain the observable platform/run error and its evidence limits wherever a legal path remains, without claiming an absent GitHub record. A later wake SHALL recover solely from actual durable truth; uncatchable termination SHALL not produce fabricated prior observations. Exceptions SHALL obey existing disposition and unchanged-denial retry rules; the Human limit of three attempts for one substantive failed operation is an upper bound, not permission to retry unchanged refusal.
+
+#### Scenario: Valid pending plan selects the consumer rather than the producer
+
+- GIVEN one accepted current intent has one fully qualified saved CarrierPlan and the canonical proof is `INCOMPLETE` solely because its external operation has not occurred
+- WHEN a later fresh wake reconstructs pending application work
+- THEN the repository exposes that exact plan for fresh qualification and external actuation
+- AND it does not rerun semantic work or rerun the producer merely to regenerate that saved plan
+- AND only a still later fresh application boundary proves the consequence and performs missing validation or handoff
+
+#### Scenario: Completed effect and missing plan select different missing work
+
+- GIVEN complete current evidence either proves the desired consequence or proves a necessary plan is absent
+- WHEN application-completion selects recovery
+- THEN proven completion permits only missing evidence, validation, or derived consequence with zero duplicate mutation
+- AND proven plan absence permits only the existing owner's legally required reconstruction
+- AND absent or incomplete observations alone do not prove either case
+
+#### Scenario: Carrier qualification rejects ambiguous or conflicting plans
+
+- GIVEN a plan has stale/expired/superseded identity, overlap, wrong content/lineage, duplicate current ownership, wrong request/run/attempt/artifact digest, or incomplete observations
+- WHEN the current repository-owned boundary qualifies it
+- THEN it records the precise fail-closed reason and performs zero connector mutation
+- AND it does not force-update, rewind, choose a substitute carrier, or replay semantic intent
+
+#### Scenario: External outcome evidence cannot grant completion authority
+
+- GIVEN a qualified carrier operation returns explicit refusal, a catchable error, or an ambiguous response
+- WHEN the invocation captures and reports its observable outcome
+- THEN raw platform-redacted evidence and exact source/operation/version identity remain separate from classification and mutation status
+- AND the repository-owned consumer qualifies and deduplicates that evidence without changing accepted intent
+- AND only fresh canonical proof establishes completed mutation; the report cannot route or terminate work
+
+#### Scenario: Write and evidence interruptions reconstruct only missing effects
+
+- GIVEN execution interrupts before write, after successful write before response, before evidence persistence, or before/after continuation or validation
+- WHEN a later fresh wake reconstructs actual durable GitHub truth
+- THEN it identifies proven complete, proven missing, or unknown boundaries through the same owners
+- AND completed writes, semantic results, and qualified evidence are not duplicated
+- AND unknown writes receive read-only reconciliation before any new write
+
+#### Scenario: Reporting denial preserves an explicit evidence limit
+
+- GIVEN an observable external operation outcome exists and the legal result-reporting path returns a catchable rejection or error
+- WHEN the invocation retains the remaining legal platform/run evidence
+- THEN it records the observable reporting error and that repository persistence is unproven
+- AND it does not fabricate a successful comment, approval, completion, or prior error
+- AND later recovery uses actual GitHub truth rather than conversation memory
+
 #### Scenario: Accepted application resumes without semantic replay
 
 - GIVEN an `APPLICATION_DECISION: ACCEPTED` is durable for one exact request

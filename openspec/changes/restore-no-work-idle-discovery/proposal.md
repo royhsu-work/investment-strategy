@@ -8,6 +8,7 @@ The original Explore reconstruction used default-branch revision `2e00e236f24ba4
 
 ## What Changes
 
+- Close the Human-approved refinement in source comment 5986774520 and independent FINDINGS 5987083136: later wakes must discover and consume the unique qualified pending CarrierPlan, distinguish a missing plan from a missing physical effect, and return qualified durable execution evidence through existing application ownership. The synchronous F3 carrier write to `ccfb3560571ca8d32d5d6217aaf0e9d45b4eb087`, application run `37254331790` attempt 2, exact-head strict validation, and review handoff are delivered evidence for that bounded effect only; native Scheduled Task consumption and the parent outcome remain unproven.
 - Define one exact, run-scoped `NO_WORK` handoff from normal Action-only dispatch to bounded Lead idle semantic execution.
 - Keep `AUTHORIZE`, `FAIL_CLOSED`, and all existing formal/pre-activation ordering authoritative; only true `NO_WORK` may reach idle semantics.
 - Add a typed, evidence-bound idle request/result contract that is not an Action, normal routing state, queue, cursor, lease, heartbeat, registry, or recovery workflow.
@@ -21,10 +22,12 @@ The original Explore reconstruction used default-branch revision `2e00e236f24ba4
 
 ### REUSE
 
+For carrier closure, reuse immutable accepted intent, content-addressed CarrierPlan, exact Actions request/run/attempt/artifact identities, canonical `COMPLETE(T, W)` proof, application-completion qualification, the configured connector actuator, existing exception evidence, and `APPLICATION_CONTINUATION`. The saved plan is a handoff, not completed mutation or permission to replay its producer.
 Reuse the current Action-only dispatcher and disposition contract, the existing bounded Lead idle semantics from the canonical workflow, the current application-owned exact-effect/postcondition machinery, the existing canonical `Change: unset + action:explore-change` tuple, and the current fresh-revision/run-scoped evidence model.
 
 ### CONSOLIDATE
 
+The existing application-completion owner selects missing plan versus missing external effect versus missing validation/consequence. The same owner qualifies and deduplicates external execution evidence; external bootstrap performs only the exact freshly qualified connector operation. Remove recovery behavior that needlessly reruns a plan producer when a valid pending plan already exists.
 Place idle handoff validation, admission preconditions, and reconciliation in the existing repository-owned bridge/application boundary. Consolidate materialized-consequence completion into one canonical read-only proof owner in the existing application/materialization layer; every positive completion consumer delegates to it, while topology-specific helpers remain subordinate witness/identity/safety primitives. Use one minimal ephemeral serialization boundary only for the final GitHub admission mutation. Keep semantic discovery with Lead and physical mutation with the application owner.
 
 ### NO-DELTA
@@ -33,6 +36,7 @@ Do not change normal Action-only dispatch, Role derivation, formal WIP/finish-fi
 
 ### ADD
 
+At these existing owners, minimally extend the run-bound dispatch/artifact handoff and continuation evidence transport only as necessary to expose the unique eligible plan and preserve catchable actuator/reporting outcomes. This addition is required by the demonstrated saved-plan/unperformed-write boundary and missing qualified evidence; it introduces no Action, ResultKind, control state, registry, or external orchestrator. Canonical `EXECUTION_EXCEPTION` remains evidence with zero routing or terminal authority.
 Add only the typed non-Action `NO_WORK` handoff and the repository-owned candidate admission/reconciliation primitive required to make the retained capability executable and safe under overlap, interruption, stale evidence, and ambiguous GitHub writes.
 
 ## Scope
@@ -69,6 +73,8 @@ The shared application recovery is a prerequisite for the idle path. No idle adm
 3. **Safe admission boundary — partially delivered on current main** — Existing/new Explore admission, fresh `NO_WORK` reauthorization, interruption reconciliation, and the typed idle substrate are already present. Bounded advisory admission and the derived unchanged-Human-decision wait remain implementation work and MUST be independently reviewed and merged before this stage is complete.
 4. **Governed lifecycle, then production acceptance** — N-1 is the remaining repository implementation merged on the default branch. Complete independent implementation review, exact-head merge, finalize/archive review and merge, and legal terminal lifecycle first; while #322 remains routed formal work, normal dispatch cannot truthfully produce `NO_WORK`. After formal routing is gone, use a later real Scheduled Task wake to prove exact `NO_WORK` idle execution, no-finding silence or safe advisory/Explore admission, and—when a Formal Explore is admitted—a still later ordinary wake authorizing `Lead / explore-change`. No special dispatcher exception or validation-hold state is introduced. Human-defined completion requires both the legal lifecycle terminal state and this post-terminal production acceptance evidence.
 
+**Carrier refinement delivery before production cutover.** Preserve the approved parent outcome and all Stage 0–4 coverage. Insert two atomic stages after the verified canonical-proof prerequisite: (a) unique pending-carrier discovery/consumer selection and exact connector execution, then (b) qualified execution-evidence/reporting/interruption closure. Both reuse then-current N-1 accepted-intent/CarrierPlan/canonical-proof/application-completion owners, are independently executable/testable/reviewable/mergeable, and require exact-head review and merge before the next stage consumes them. Their exits close the demonstrated carrier gaps only; bounded advisory, derived Human-wait, native activation, full lifecycle and post-terminal NO_WORK remain mandatory. Continue through the existing MORE_IMPLEMENTATION_REQUIRED/later fresh dispatch path when any mandatory repository work remains.
+
 The repository-visible cutover uses the existing `scheduled-agent-application.yml` carrier with one
 typed `IDLE_ADMISSION_REQUEST` Issue-comment RPC on the current daily runtime shard. The comment is
 only a trigger/staging transport, not a mailbox or accepted-intent record; no-finding remains silent.
@@ -76,7 +82,7 @@ The same boundary carries an exact `APPLICATION_CONTINUATION` body for an accept
 needs a fresh GitHub workflow run after an exhausted attempt. A real external Scheduled Task must
 still be configured to read the exact successful bridge artifact, invoke bounded Lead idle semantics,
 and post the exact typed body only when a candidate or continuation is present; that external setting
-is not available through repository access.
+is an external product boundary. The available automation capability can inspect/update the saved prompt and request an immediate run, but its acknowledgement and last-run metadata do not expose a complete execution trace or prove GitHub effects. Use actual native output and durable repository correlation where available; explicitly retain unknown links and capability limits.
 
 Every stage must have a fresh exact-head review, required validation, and an exact-head merge before the next stage uses it as N-1. Stages are independently testable and deployable while preserving the full parent outcome; their exit criteria do not replace the parent completion evidence below. A merged stage, including the bootstrap prerequisite, is not completion until Stage 4 proves the production wake path and normal Action handoff.
 
@@ -84,6 +90,10 @@ Every stage must have a fresh exact-head review, required validation, and an exa
 
 The parent Change is complete only when fresh evidence proves:
 
+- a later ordinary fresh wake discovers the unique eligible carrier, qualifies immutable intent and the exact plan from current GitHub truth, executes only a genuinely missing operation, and reaches canonical postcondition proof, application continuation, exact-target validation, and derived handoff;
+- completed effects cause zero duplicate mutation; missing plans alone permit owner-selected producer reconstruction; stale, conflicting, duplicated, superseded, incomplete, ambiguous, or contradictory plans fail closed;
+- normal CarrierRequired, actual rejection/error, unknown write response, and blocked result reporting remain distinguishable with exact request/run/attempt/artifact/plan and target/preimage identity, platform-redacted raw evidence, known mutation status, and unfinished boundary; legal application qualification deduplicates evidence without rewriting accepted intent or creating routing authority;
+- real native Scheduled Task evidence establishes request -> run/attempt -> artifact/log -> fresh repository postcondition independently of this conversation. Run-now acceptance and fixtures that manually mutate simulated GitHub state do not satisfy external handoff acceptance;
 - exact `AUTHORIZE` and `FAIL_CLOSED` never invoke idle;
 - exact normal `NO_WORK` invokes bounded Lead idle semantics;
 - no-finding creates no repository noise;
@@ -108,4 +118,5 @@ This change does not reopen #322's approved architecture. Normal dispatch stays 
 
 ## Skill maintenance
 
+The carrier extension affects shared bootstrap/application procedural guidance at its existing owner. Preserve existing Role and Skill responsibilities; declare REUSE for openspec-change/review/delivery and current application procedures, CONSOLIDATE for duplicated bootstrap handoff instructions, and NO-DELTA for all unrelated Skills. No Skill creation, removal, or rename is planned. If implementation needs a material Skill change, it must follow the current skill-maintenance procedure and obtain independent review of that declared scope.
 No Role or Skill semantic responsibility change is intended. `Lead / explore-change` and `Lead / propose-change` continue to use their existing procedures. Implementation must load the repository skill-maintenance procedure only if fresh evidence shows that a Skill itself changes.
