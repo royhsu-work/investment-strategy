@@ -220,11 +220,16 @@ def test_materialization_preimage_proof_rejects_before_acceptance_record(
     monkeypatch.setattr(effects, "prove_materialization", stale_proof)
     persisted: list[tuple[object, ...]] = []
     applied: list[StagedEffect] = []
+
+    def persist_application_decision(*args: object) -> bool:
+        persisted.append(args)
+        return True
+
     result = apply_effect_batch(
         batch,
         fresh_preflight=lambda: _preflight(
             issue_number=source.issue_number,
-            action=source.action,
+            action="resolve-question",
             change=_CHANGE,
         ),
         effect_guard=adapter.guard,
@@ -232,7 +237,7 @@ def test_materialization_preimage_proof_rejects_before_acceptance_record(
         observe_postcondition=lambda _effect: True,
         current_revision=_REVISION,
         effect_rejection=adapter.effect_rejection,
-        persist_application_decision=lambda *args: persisted.append(args) or True,
+        persist_application_decision=persist_application_decision,
     )
 
     assert not result.applied
