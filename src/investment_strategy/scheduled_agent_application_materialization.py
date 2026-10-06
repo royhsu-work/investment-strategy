@@ -1477,7 +1477,7 @@ def _existing_target(
 
 
 def _construct_materialization(
-    request: MaterializationRequest,
+    request: MaterializationRequest | Mapping[str, object],
     source: WorkerRequest,
     *,
     repository: str,
@@ -1491,6 +1491,8 @@ def _construct_materialization(
 ) -> ValidationResourceTarget:
     """Freshly authorize and apply one generic carrier/materialization effect."""
 
+    if isinstance(request, Mapping):
+        request = parse_materialization_payload(request, source)
     if not materialization_message_is_safe(
         request.message,
         repository=repository,
