@@ -1774,7 +1774,11 @@ def proof_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _ProofGitRepos
     return fixture
 
 
-def _prove_git(fixture: _ProofGitRepository) -> materialization.MaterializationProof:
+def _prove_git(
+    fixture: _ProofGitRepository,
+    *,
+    accepted_intent: bool = False,
+) -> materialization.MaterializationProof:
     return materialization.prove_materialization(
         fixture.payload(),
         fixture.source,
@@ -1783,6 +1787,7 @@ def _prove_git(fixture: _ProofGitRepository) -> materialization.MaterializationP
         current_revision=fixture.main,
         default_branch="main",
         accepted_authorization_revision=fixture.authorization,
+        accepted_intent=accepted_intent,
     )
 
 
@@ -2089,15 +2094,39 @@ def test_canonical_missing_replacement_stays_incomplete_after_disjoint_main_adva
     assert proof_git.mutations == []
 
 
-def _apply_git(fixture: _ProofGitRepository) -> ValidationResourceTarget:
+def _apply_git(
+    fixture: _ProofGitRepository,
+    *,
+    payload: dict[str, object] | None = None,
+    accepted_intent: bool = False,
+) -> ValidationResourceTarget:
     return materialization.apply_materialization(
-        fixture.payload(),
+        fixture.payload() if payload is None else payload,
         fixture.source,
         repository=fixture.repository,
         token=_TOKEN,
         current_revision=fixture.main,
         default_branch="main",
         accepted_authorization_revision=fixture.authorization,
+        accepted_intent=accepted_intent,
+    )
+
+
+def _prove_payload_git(
+    fixture: _ProofGitRepository,
+    payload: dict[str, object],
+    *,
+    accepted_intent: bool = False,
+) -> materialization.MaterializationProof:
+    return materialization.prove_materialization(
+        payload,
+        fixture.source,
+        repository=fixture.repository,
+        token=_TOKEN,
+        current_revision=fixture.main,
+        default_branch="main",
+        accepted_authorization_revision=fixture.authorization,
+        accepted_intent=accepted_intent,
     )
 
 
@@ -2436,6 +2465,98 @@ def test_declared_main_base_uses_actual_branch_write_preimage(
         accepted_authorization_revision=proof_git.authorization,
     )
     assert stale.disposition == "CONTRADICTORY", stale
+    assert proof_git.mutations == []
+
+
+def test_new_materialization_rejects_wrong_preimage_before_acceptance(
+    proof_git: _ProofGitRepository,
+) -> None:
+    payload = proof_git.payload()
+    raw_files = cast(list[dict[str, object]], payload["files"])
+    raw_files[0]["expected_sha"] = "f" * 40
+
+    proof = _prove_payload_git(proof_git, payload)
+
+    assert proof.disposition == "CONTRADICTORY", proof
+    assert proof.reason == "materialization missing work preimage is stale"
+    assert proof_git.mutations == []
+
+
+def test_accepted_zero_write_failure_recovers_only_exact_declared_base_preimage(
+    proof_git: _ProofGitRepository,
+) -> None:
+    payload = proof_git.payload()
+    raw_files = cast(list[dict[str, object]], payload["files"])
+    accepted_raw_preimage = "f" * 40
+    raw_files[0]["expected_sha"] = accepted_raw_preimage
+
+    unaccepted = _prove_payload_git(proof_git, payload)
+    assert unaccepted.disposition == "CONTRADICTORY", unaccepted
+
+    proof = _prove_payload_git(proof_git, payload, accepted_intent=True)
+    assert proof.disposition == "INCOMPLETE", proof
+    assert proof.application_request is not None
+    expected_preimage = proof_git.entries(proof_git.base)[proof_git.path]["sha"]
+    assert proof.application_request.files[0].expected_sha == expected_preimage
+    assert cast(list[dict[str, object]], payload["files"])[0]["expected_sha"] == (
+        accepted_raw_preimage
+    )
+
+    proof_git.allow_writes = True
+    with pytest.raises(CarrierRequired) as raised:
+        _apply_git(proof_git, payload=payload, accepted_intent=True)
+    plan = raised.value.plan
+    assert plan.force is False
+    assert plan.expected["ref_sha"] == proof_git.base
+    revision = cast(str, plan.requested["sha"])
+    proof_git.set_head(revision)
+
+    completed = _prove_payload_git(proof_git, payload, accepted_intent=True)
+    assert completed.disposition == "COMPLETE", completed
+    assert completed.witness is not None and completed.witness.revision == revision
+    assert cast(list[dict[str, object]], payload["files"])[0]["expected_sha"] == (
+        accepted_raw_preimage
+    )
+
+
+def test_accepted_preimage_recovery_rejects_changed_carrier_path(
+    proof_git: _ProofGitRepository,
+) -> None:
+    payload = proof_git.payload()
+    cast(list[dict[str, object]], payload["files"])[0]["expected_sha"] = "f" * 40
+    changed = proof_git.commit(
+        {proof_git.path: "unaccepted path change"},
+        "Unaccepted path change",
+        (proof_git.base,),
+    )
+    proof_git.set_head(changed)
+
+    proof = _prove_payload_git(proof_git, payload, accepted_intent=True)
+
+    assert proof.disposition == "CONTRADICTORY", proof
+    assert proof.reason == "materialization missing work preimage is stale"
+    assert proof_git.mutations == []
+
+
+def test_accepted_write_commit_recovers_exact_parent_preimage(
+    proof_git: _ProofGitRepository,
+) -> None:
+    payload = proof_git.payload()
+    cast(list[dict[str, object]], payload["files"])[0]["expected_sha"] = "f" * 40
+    accepted = proof_git.commit(
+        {proof_git.path: "accepted content"}, proof_git.message, (proof_git.base,)
+    )
+    proof_git.set_head(accepted)
+
+    proof = _prove_payload_git(proof_git, payload, accepted_intent=True)
+
+    assert proof.disposition == "COMPLETE", proof
+    assert proof.witness is not None and proof.witness.revision == accepted
+    assert proof.application_request is not None
+    assert proof.application_request.files[0].expected_sha == proof_git.entries(
+        proof_git.base
+    )[proof_git.path]["sha"]
+    assert cast(list[dict[str, object]], payload["files"])[0]["expected_sha"] == "f" * 40
     assert proof_git.mutations == []
 
 
