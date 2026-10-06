@@ -2682,13 +2682,12 @@ class GitHubEffectAdapter:
         if effect.kind == "issue-comment":
             return True
         guarded = payload is not None and self._guard_github_mutation(payload)
-        if not guarded:
-            if self._last_rejection is None:
-                self._last_rejection = ApplicationRejection(
-                    ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
-                    expected="fresh application-owned effect postcondition",
-                    observed=effect.payload_json,
-                )
+        if not guarded and self._last_rejection is None:
+            self._last_rejection = ApplicationRejection(
+                ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+                expected="fresh application-owned effect postcondition",
+                observed=effect.payload_json,
+            )
         return guarded
 
     def _apply_terminal_transition(
