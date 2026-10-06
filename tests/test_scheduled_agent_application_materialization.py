@@ -2553,9 +2553,10 @@ def test_accepted_write_commit_recovers_exact_parent_preimage(
     assert proof.disposition == "COMPLETE", proof
     assert proof.witness is not None and proof.witness.revision == accepted
     assert proof.application_request is not None
-    assert proof.application_request.files[0].expected_sha == proof_git.entries(
-        proof_git.base
-    )[proof_git.path]["sha"]
+    assert (
+        proof.application_request.files[0].expected_sha
+        == proof_git.entries(proof_git.base)[proof_git.path]["sha"]
+    )
     assert cast(list[dict[str, object]], payload["files"])[0]["expected_sha"] == "f" * 40
     assert proof_git.mutations == []
 
