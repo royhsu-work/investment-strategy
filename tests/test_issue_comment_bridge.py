@@ -1110,7 +1110,19 @@ def test_predecessor_is_not_resumed_after_merged_successor_consumes_carrier(
     )
 
 
-def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier() -> None:
+@pytest.mark.parametrize(
+    ("predecessor_disposition", "disposition"),
+    [
+        ("ACCEPTED", "ACCEPTED"),
+        ("ACCEPTED", "REJECTED"),
+        ("REJECTED", "REJECTED"),
+        (None, "REJECTED"),
+    ],
+)
+def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier(
+    disposition: str,
+    predecessor_disposition: str | None,
+) -> None:
     source = bridge.WorkerRequest(138, "executor", "implement-change")
     change = "recurrence-a-a-new-occurrence"
     predecessor_request = _effect_request_comment(
@@ -1122,7 +1134,9 @@ def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier() -
         issue_number=138,
         change=change,
     )
-    predecessor_decision = _application_decision_comment(predecessor_request, comment_id=71)
+    predecessor_decision = _application_decision_comment(
+        predecessor_request, comment_id=71, disposition=predecessor_disposition or "ACCEPTED"
+    )
     predecessor_frontier = _formal_frontier_comment(
         80,
         action="implement-change",
@@ -1141,7 +1155,9 @@ def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier() -
         issue_number=138,
         change=change,
     )
-    current_decision = _application_decision_comment(current_request, comment_id=91)
+    current_decision = _application_decision_comment(
+        current_request, comment_id=91, disposition=disposition
+    )
     issue = {
         **_current_source_issue(),
         "labels": [{"name": "action:implement-change"}],
@@ -1152,7 +1168,11 @@ def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier() -
         if path.startswith("issues/comments?"):
             return [predecessor_request, current_request]
         if path.startswith("issues/138/comments?"):
-            return [predecessor_decision, predecessor_frontier, current_decision]
+            return [
+                *([] if predecessor_disposition is None else [predecessor_decision]),
+                predecessor_frontier,
+                current_decision,
+            ]
         if path == "issues/138":
             return issue
         if path.startswith("issues/138/timeline?"):
@@ -1182,10 +1202,19 @@ def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier() -
         now=datetime(2026, 9, 18, 4, 0, tzinfo=UTC),
     )
 
-    assert completion.state == "RESUMABLE"
-    assert completion.reason == "application-completion-resuming"
+    if predecessor_disposition != "ACCEPTED":
+        # A missing or explicitly rejected owner cannot prove a consequence.
+        assert completion.state == "INVALID"
+        assert completion.reason == "application-completion-consequence-without-acceptance"
+        return
+    assert completion.state == ("RESUMABLE" if disposition == "ACCEPTED" else "REJECTED")
+    assert completion.reason == (
+        "application-completion-resuming"
+        if disposition == "ACCEPTED"
+        else "application-completion-rejected"
+    )
     assert completion.request_comment_id == 90
-    assert completion.job_id == 888
+    assert completion.job_id == (888 if disposition == "ACCEPTED" else None)
 
 
 def test_current_frontier_reuses_formal_ancestry_after_main_advances() -> None:
