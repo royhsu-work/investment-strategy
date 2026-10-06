@@ -640,6 +640,7 @@ def _fresh_completion_postconditions(
         # Let the postcondition observer bind that same immutable intent after
         # the normal routing transition, without widening source authority.
         allow_accepted_successor=True,
+        accepted_intent=True,
     )
 
 

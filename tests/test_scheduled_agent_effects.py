@@ -161,6 +161,94 @@ def test_semantic_intent_retains_only_application_materialization() -> None:
     assert json.loads(retained["requested_effects"][0]["payload_json"]) == materialization
 
 
+def test_materialization_preimage_proof_rejects_before_acceptance_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import investment_strategy.scheduled_agent_application_materialization as materialization
+
+    source = WorkerRequest(322, "lead", "resolve-question")
+    payload = {
+        "issue_number": source.issue_number,
+        "operation": "application-materialize",
+        "expected_change": _CHANGE,
+        "change": _CHANGE,
+        "branch": f"agent/{_CHANGE}",
+        "base_sha": _REVISION,
+        "message": "Materialize accepted content",
+        "files": [
+            {
+                "path": f"openspec/changes/{_CHANGE}/proposal.md",
+                "blob_sha": "b" * 40,
+                "expected_sha": "f" * 40,
+            }
+        ],
+        "pr_number": 324,
+    }
+    effect = StagedEffect("github-mutation", json.dumps(payload, sort_keys=True))
+    batch = EffectBatch(
+        source,
+        (effect,),
+        BoundedActionResult(
+            source.issue_number,
+            _CHANGE,
+            Action.RESOLVE_QUESTION,
+            TypedResult(ResultKind.READY_FOR_OPENSPEC_REVIEW, "issuecomment-result"),
+        ),
+    )
+    adapter = GitHubEffectAdapter(
+        "owner/repo",
+        _TEST_TOKEN,
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        authorization_revision=_REVISION,
+    )
+    monkeypatch.setattr(adapter, "_source_still_current", lambda: True)
+    monkeypatch.setattr(adapter, "_default_branch_still_current", lambda: True)
+    monkeypatch.setattr(adapter, "_authorized_issue_observation", lambda *_args: object())
+    monkeypatch.setattr(adapter, "_default_branch", lambda: "main")
+    monkeypatch.setattr(adapter, "_default_branch_revision", lambda _branch: _REVISION)
+    proof_calls: list[dict[str, object]] = []
+
+    def stale_proof(*_args: object, **kwargs: object) -> materialization.MaterializationProof:
+        proof_calls.append(kwargs)
+        return materialization.MaterializationProof(
+            "CONTRADICTORY",
+            reason="materialization missing work preimage is stale",
+        )
+
+    monkeypatch.setattr(effects, "prove_materialization", stale_proof)
+    persisted: list[tuple[object, ...]] = []
+    applied: list[StagedEffect] = []
+
+    def persist_application_decision(*args: object) -> bool:
+        persisted.append(args)
+        return True
+
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=lambda: _preflight(
+            issue_number=source.issue_number,
+            action="resolve-question",
+            change=_CHANGE,
+        ),
+        effect_guard=adapter.guard,
+        apply_effect=applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        effect_rejection=adapter.effect_rejection,
+        persist_application_decision=persist_application_decision,
+    )
+
+    assert not result.applied
+    assert result.reason == "effect precondition rejected"
+    assert proof_calls and proof_calls[0]["accepted_intent"] is False
+    assert persisted == []
+    assert applied == []
+    assert result.rejection is not None
+    assert "materialization missing work preimage is stale" in result.rejection.observed
+
+
 def test_application_decision_is_exactly_bound() -> None:
     request_body = "EFFECT_REQUEST\nAuthorization-Revision: " + _REVISION
     raw = _raw()
@@ -3890,7 +3978,7 @@ def test_fresh_process_reconstructs_lead_materialization_from_canonical_observer
         validation_required=True,
         branch=f"agent/{_CHANGE}",
     )
-    observed: list[tuple[Mapping[str, object], WorkerRequest, str, str]] = []
+    observed: list[tuple[Mapping[str, object], WorkerRequest, str, str, bool]] = []
 
     def observe(
         observed_payload: Mapping[str, object],
@@ -3902,10 +3990,13 @@ def test_fresh_process_reconstructs_lead_materialization_from_canonical_observer
         default_branch: str,
         allow_pending_continuation: bool = False,
         accepted_authorization_revision: str | None = None,
+        accepted_intent: bool = False,
     ) -> ValidationResourceTarget:
         assert not allow_pending_continuation
         assert default_branch == "main"
-        observed.append((observed_payload, observed_source, repository, current_revision))
+        observed.append(
+            (observed_payload, observed_source, repository, current_revision, accepted_intent)
+        )
         assert token == _TEST_TOKEN
         return target
 
@@ -3924,11 +4015,12 @@ def test_fresh_process_reconstructs_lead_materialization_from_canonical_observer
         current_revision=_REVISION,
         authorized_change=_CHANGE,
         request_comment_id=_REQUEST_COMMENT_ID,
+        accepted_intent=True,
     )
 
     assert complete
     assert len(observed) == 1
-    assert observed[0] == (payload, source, "owner/repo", _REVISION)
+    assert observed[0] == (payload, source, "owner/repo", _REVISION, True)
 
 
 def test_accepted_materialization_reconciles_after_successor_route(
@@ -3986,6 +4078,7 @@ def test_accepted_materialization_reconciles_after_successor_route(
         allow_pending_continuation: bool = False,
         accepted_authorization_revision: str | None = None,
         accepted_successor_routing: tuple[str, str] | None = None,
+        accepted_intent: bool = False,
     ) -> ValidationResourceTarget:
         assert (repository, token, current_revision, default_branch) == (
             "owner/repo",
@@ -4015,6 +4108,7 @@ def test_accepted_materialization_reconciles_after_successor_route(
         request_comment_id=_REQUEST_COMMENT_ID,
         allow_pending_continuation=True,
         allow_accepted_successor=True,
+        accepted_intent=True,
     )
     assert observed == [(True, ("reviewer", "review-openspec"))]
 
