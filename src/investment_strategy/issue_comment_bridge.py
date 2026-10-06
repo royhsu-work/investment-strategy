@@ -28,6 +28,13 @@ from investment_strategy.scheduled_agent_application_bridge import (
     parse_application_request,
     render_application_continuation_request,
 )
+from investment_strategy.scheduled_agent_carrier import (
+    QualifiedCarrierPlan,
+    parse_carrier_plan_document,
+    parse_qualified_carrier_document,
+    qualified_carrier_document,
+    read_github_artifact_bytes,
+)
 from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
 from investment_strategy.scheduled_agent_effects import (
     ApplicationDecisionRecord,
@@ -92,6 +99,7 @@ class MachineDispatchDecision:
     action: str | None = None
     reason: str | None = None
     application_continuation: str | None = None
+    qualified_carrier: QualifiedCarrierPlan | None = None
 
 
 @dataclass(frozen=True)
@@ -109,6 +117,7 @@ class ApplicationCompletion:
     reason: str
     request_comment_id: int | None = None
     job_id: int | None = None
+    qualified_carrier: QualifiedCarrierPlan | None = None
 
 
 PreacceptClassification = Literal[
@@ -316,15 +325,119 @@ def _formal_result_records(
     return tuple(records)
 
 
+def _qualified_carrier_for_application_run(
+    repository: str,
+    token: str,
+    request_comment_id: int,
+    *,
+    run: Mapping[str, object],
+    run_id: int,
+    run_attempt: int,
+    job: Mapping[str, object],
+    record: ApplicationDecisionRecord,
+    read: GitHubReader,
+) -> QualifiedCarrierPlan | None:
+    """Recover one current-attempt carrier Artifact without replaying its producer."""
+
+    artifacts_payload = read(repository, token, f"actions/runs/{run_id}/artifacts?per_page=100")
+    if not isinstance(artifacts_payload, Mapping):
+        raise RuntimeError("application carrier artifact listing is incomplete")
+    raw_artifacts = artifacts_payload.get("artifacts")
+    total_count = artifacts_payload.get("total_count")
+    if (
+        not isinstance(raw_artifacts, list)
+        or isinstance(total_count, bool)
+        or not isinstance(total_count, int)
+        or total_count != len(raw_artifacts)
+    ):
+        raise RuntimeError("application carrier artifact listing is incomplete")
+    artifacts = [
+        cast(Mapping[str, object], item)
+        for item in raw_artifacts
+        if isinstance(item, Mapping) and item.get("name") == "carrier-plan.json"
+    ]
+    if not artifacts:
+        return None
+    if len(artifacts) != 1:
+        raise RuntimeError("application carrier artifact identity is ambiguous")
+
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        raise RuntimeError("application carrier job steps are incomplete")
+    upload_steps = [
+        cast(Mapping[str, object], step)
+        for step in steps
+        if isinstance(step, Mapping) and step.get("name") == "Upload exact external carrier plan"
+    ]
+    if len(upload_steps) != 1:
+        raise RuntimeError("application carrier upload step identity is ambiguous")
+    upload_conclusion = upload_steps[0].get("conclusion")
+    if upload_conclusion == "skipped" and run_attempt > 1:
+        return None
+    if upload_conclusion != "success":
+        raise RuntimeError("application carrier Artifact is not current-attempt evidence")
+
+    artifact = artifacts[0]
+    artifact_id = _positive_int(artifact.get("id"))
+    digest = artifact.get("digest")
+    workflow_run = artifact.get("workflow_run")
+    if (
+        artifact_id is None
+        or artifact.get("expired") is not False
+        or not isinstance(digest, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
+        or not isinstance(workflow_run, Mapping)
+        or workflow_run.get("id") != run_id
+        or workflow_run.get("head_sha") != run.get("head_sha")
+    ):
+        raise RuntimeError("application carrier Artifact identity is invalid")
+
+    raw = read_github_artifact_bytes(repository, token, f"actions/artifacts/{artifact_id}/zip")
+    if f"sha256:{hashlib.sha256(raw).hexdigest()}" != digest:
+        raise RuntimeError("application carrier Artifact digest is invalid")
+    try:
+        document = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("application carrier Artifact content is invalid") from exc
+    try:
+        plan = parse_carrier_plan_document(document)
+    except ValueError as exc:
+        raise RuntimeError("application carrier plan is invalid") from exc
+    if (
+        plan.repository != repository
+        or plan.issue_number != record.issue_number
+        or plan.change != record.change
+        or plan.action != record.action
+        or _authorization_ancestry(
+            repository,
+            token,
+            authorization_revision=record.authorization_revision,
+            current_revision=plan.authorization_revision,
+            read=read,
+        )
+        is None
+    ):
+        raise RuntimeError("application carrier plan does not match accepted intent")
+    return QualifiedCarrierPlan(
+        request_comment_id=request_comment_id,
+        run_id=run_id,
+        run_attempt=run_attempt,
+        artifact_id=artifact_id,
+        artifact_digest=digest,
+        plan=plan,
+    )
+
+
 def _application_job(
     repository: str,
     token: str,
     request_comment_id: int,
     *,
     read: GitHubReader,
+    record: ApplicationDecisionRecord | None = None,
     transport_comment_ids: tuple[int, ...] = (),
 ) -> ApplicationCompletion:
-    """Locate the one exact application run for an accepted intent."""
+    """Locate one exact application run and prefer its durable carrier handoff."""
 
     runs = _application_runs(
         repository,
@@ -386,20 +499,43 @@ def _application_job(
             "application-completion-job-identity-ambiguous",
             request_comment_id=request_comment_id,
         )
-    job_id = _positive_int(cast(Mapping[str, object], jobs[0]).get("id"))
+    job = cast(Mapping[str, object], jobs[0])
+    job_id = _positive_int(job.get("id"))
     if job_id is None:
         return ApplicationCompletion(
             "INVALID",
             "application-completion-job-identity-incomplete",
             request_comment_id=request_comment_id,
         )
+
+    if record is not None:
+        try:
+            qualified_carrier = _qualified_carrier_for_application_run(
+                repository,
+                token,
+                request_comment_id,
+                run=run,
+                run_id=run_id,
+                run_attempt=run_attempt,
+                job=job,
+                record=record,
+                read=read,
+            )
+        except (OSError, RuntimeError, ValueError):
+            return ApplicationCompletion(
+                "INVALID",
+                "application-completion-carrier-evidence-invalid",
+                request_comment_id=request_comment_id,
+            )
+        if qualified_carrier is not None:
+            return ApplicationCompletion(
+                "RESUMABLE",
+                "application-completion-carrier-required",
+                request_comment_id=request_comment_id,
+                qualified_carrier=qualified_carrier,
+            )
+
     if run_attempt > 1:
-        # A completed run has already crossed the one continuation boundary
-        # owned by this accepted intent.  Re-running the same immutable
-        # application from every scheduled wake blindly replays the same
-        # consequence and can never make progress without a new authoritative
-        # application boundary.  The run-attempt is GitHub-owned evidence;
-        # no repository retry state is introduced here.
         return ApplicationCompletion(
             "INVALID",
             "application-completion-rerun-limit",
@@ -918,6 +1054,7 @@ def _accepted_application_state(
             token,
             record.request_comment_id,
             read=read,
+            record=record,
             transport_comment_ids=continuation_transport_comment_ids,
         )
         if resumed.state == "RESUMABLE":
@@ -985,6 +1122,7 @@ def _accepted_application_state(
             token,
             record.request_comment_id,
             read=read,
+            record=record,
             transport_comment_ids=continuation_transport_comment_ids,
         )
     if successor is not None and observation.routing == expected_routing:
@@ -1949,11 +2087,14 @@ def qualify_application_completion(
     }
     if (
         not accepted
+        and not frontier_owner_decisions
         and frontier_request_id is not None
         and frontier_request_id in current_ingress_ids
     ):
         # A formal consequence tied to this ingress without Phase-A ACCEPT is
         # contradictory evidence, not proof that source ownership is free.
+        # The exact frontier owner above has already been reconciled COMPLETE;
+        # retiring it from this occurrence does not erase its acceptance.
         return ApplicationCompletion(
             "INVALID",
             "application-completion-consequence-without-acceptance",
@@ -2073,6 +2214,7 @@ def render_dispatch_result_document(
     default_branch_revision: str,
     decision: DispatchDecision,
     application_continuation: str | None = None,
+    qualified_carrier: QualifiedCarrierPlan | None = None,
 ) -> str:
     """Render the one canonical plaintext JSON result owned by an exact bridge run."""
 
@@ -2088,8 +2230,8 @@ def render_dispatch_result_document(
         "disposition": decision.disposition,
     }
     if decision.disposition == "AUTHORIZE":
-        if application_continuation is not None:
-            raise ValueError("AUTHORIZE cannot carry an application continuation")
+        if application_continuation is not None or qualified_carrier is not None:
+            raise ValueError("AUTHORIZE cannot carry application completion transport")
         issue_number = decision.selected_issue_id
         if (
             isinstance(issue_number, bool)
@@ -2112,15 +2254,28 @@ def render_dispatch_result_document(
         if not _valid_reason(decision.reason):
             raise ValueError("dispatch reason is invalid")
         payload["reason"] = decision.reason
-        if application_continuation is not None:
+        if qualified_carrier is not None:
             if (
                 decision.disposition != "FAIL_CLOSED"
-                or decision.reason != "application-completion-rerun-limit"
+                or decision.reason != "application-completion-carrier-required"
             ):
-                raise ValueError("application continuation is only valid for the retry limit")
+                raise ValueError("qualified carrier is only valid for carrier-required")
+            payload["qualified_carrier"] = qualified_carrier_document(qualified_carrier)
+        if application_continuation is not None:
+            if decision.disposition != "FAIL_CLOSED" or decision.reason not in {
+                "application-completion-rerun-limit",
+                "application-completion-carrier-required",
+            }:
+                raise ValueError(
+                    "application continuation is only valid for application completion"
+                )
             if parse_application_continuation_request(application_continuation) is None:
                 raise ValueError("application continuation is invalid")
             payload["application_continuation"] = application_continuation
+        if decision.reason == "application-completion-carrier-required" and (
+            qualified_carrier is None or application_continuation is None
+        ):
+            raise ValueError("carrier-required result is missing exact handoff evidence")
 
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
@@ -2167,8 +2322,11 @@ def parse_dispatch_result_document(raw: bytes | str) -> MachineDispatchDecision:
         valid_keys = set(expected_keys)
         payload_keys_valid = set(payload) == valid_keys
         if disposition == "FAIL_CLOSED":
-            payload_keys_valid = payload_keys_valid or set(payload) == (
-                valid_keys | {"application_continuation"}
+            optional_keys = set(payload) - valid_keys
+            payload_keys_valid = optional_keys in (
+                set(),
+                {"application_continuation"},
+                {"application_continuation", "qualified_carrier"},
             )
     if not payload_keys_valid or payload.get("schema") != DISPATCH_RESULT_SCHEMA:
         raise RuntimeError("exact dispatch result schema is invalid")
@@ -2209,12 +2367,30 @@ def parse_dispatch_result_document(raw: bytes | str) -> MachineDispatchDecision:
             raise RuntimeError("exact application continuation is invalid")
         if parse_application_continuation_request(application_continuation) is None:
             raise RuntimeError("exact application continuation is invalid")
+    qualified_carrier_raw = payload.get("qualified_carrier")
+    qualified_carrier = None
+    if qualified_carrier_raw is not None:
+        if (
+            disposition != "FAIL_CLOSED"
+            or reason != "application-completion-carrier-required"
+            or application_continuation is None
+        ):
+            raise RuntimeError("exact qualified carrier is invalid")
+        try:
+            qualified_carrier = parse_qualified_carrier_document(qualified_carrier_raw)
+        except ValueError as exc:
+            raise RuntimeError("exact qualified carrier is invalid") from exc
+    if reason == "application-completion-carrier-required" and (
+        application_continuation is None or qualified_carrier is None
+    ):
+        raise RuntimeError("carrier-required dispatch result is incomplete")
     return MachineDispatchDecision(
         request_comment_id=request_comment_id,
         default_branch_revision=revision,
         disposition=disposition,
         reason=cast(str, reason),
         application_continuation=application_continuation,
+        qualified_carrier=qualified_carrier,
     )
 
 
@@ -2251,6 +2427,7 @@ def plan_dispatch_decision(
     decision: DispatchDecision,
     application_resume_job_id: int | None = None,
     application_continuation: str | None = None,
+    qualified_carrier: QualifiedCarrierPlan | None = None,
 ) -> BridgePlan:
     identity = _request_identity(event)
     if identity is None:
@@ -2265,6 +2442,7 @@ def plan_dispatch_decision(
             default_branch_revision=default_branch_revision,
             decision=decision,
             application_continuation=application_continuation,
+            qualified_carrier=qualified_carrier,
         ),
         application_resume_job_id=application_resume_job_id,
     )
@@ -2334,7 +2512,11 @@ def main() -> int:
         continuation_body = None
         if completion.state in {"RESUMABLE", "INVALID", "AMBIGUOUS"}:
             if (
-                completion.reason == "application-completion-rerun-limit"
+                completion.reason
+                in {
+                    "application-completion-rerun-limit",
+                    "application-completion-carrier-required",
+                }
                 and source is not None
                 and completion.request_comment_id is not None
             ):
@@ -2363,6 +2545,7 @@ def main() -> int:
             decision=decision,
             application_resume_job_id=resume_job_id,
             application_continuation=continuation_body,
+            qualified_carrier=completion.qualified_carrier,
         )
     _write_outputs(args.github_output, plan)
     _write_result_payload(args.result_payload, plan)

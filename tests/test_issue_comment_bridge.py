@@ -10,6 +10,7 @@ from typing import Literal, cast
 import pytest
 
 from investment_strategy import issue_comment_bridge as bridge
+from investment_strategy import scheduled_agent_carrier as carrier
 from investment_strategy.scheduled_agent_checkin import checkin_title
 from investment_strategy.scheduled_agent_idle_admission import (
     IdleCandidate,
@@ -954,6 +955,8 @@ def test_accepted_formal_result_waits_for_consequence_postconditions(
                     }
                 ]
             }
+        if path.endswith("/artifacts?per_page=100"):
+            return {"total_count": 0, "artifacts": []}
         if path == "actions/runs/777/jobs":
             return {
                 "jobs": [
@@ -1110,7 +1113,19 @@ def test_predecessor_is_not_resumed_after_merged_successor_consumes_carrier(
     )
 
 
-def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier() -> None:
+@pytest.mark.parametrize(
+    ("predecessor_disposition", "disposition"),
+    [
+        ("ACCEPTED", "ACCEPTED"),
+        ("ACCEPTED", "REJECTED"),
+        ("REJECTED", "REJECTED"),
+        (None, "REJECTED"),
+    ],
+)
+def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier(
+    disposition: str,
+    predecessor_disposition: str | None,
+) -> None:
     source = bridge.WorkerRequest(138, "executor", "implement-change")
     change = "recurrence-a-a-new-occurrence"
     predecessor_request = _effect_request_comment(
@@ -1122,7 +1137,9 @@ def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier() -
         issue_number=138,
         change=change,
     )
-    predecessor_decision = _application_decision_comment(predecessor_request, comment_id=71)
+    predecessor_decision = _application_decision_comment(
+        predecessor_request, comment_id=71, disposition=predecessor_disposition or "ACCEPTED"
+    )
     predecessor_frontier = _formal_frontier_comment(
         80,
         action="implement-change",
@@ -1141,7 +1158,9 @@ def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier() -
         issue_number=138,
         change=change,
     )
-    current_decision = _application_decision_comment(current_request, comment_id=91)
+    current_decision = _application_decision_comment(
+        current_request, comment_id=91, disposition=disposition
+    )
     issue = {
         **_current_source_issue(),
         "labels": [{"name": "action:implement-change"}],
@@ -1152,7 +1171,11 @@ def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier() -
         if path.startswith("issues/comments?"):
             return [predecessor_request, current_request]
         if path.startswith("issues/138/comments?"):
-            return [predecessor_decision, predecessor_frontier, current_decision]
+            return [
+                *([] if predecessor_disposition is None else [predecessor_decision]),
+                predecessor_frontier,
+                current_decision,
+            ]
         if path == "issues/138":
             return issue
         if path.startswith("issues/138/timeline?"):
@@ -1169,6 +1192,8 @@ def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier() -
                     }
                 ]
             }
+        if path.endswith("/artifacts?per_page=100"):
+            return {"total_count": 0, "artifacts": []}
         if path == "actions/runs/777/jobs":
             return {"jobs": [{"id": 888, "name": "apply"}]}
         raise AssertionError(path)
@@ -1182,10 +1207,19 @@ def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier() -
         now=datetime(2026, 9, 18, 4, 0, tzinfo=UTC),
     )
 
-    assert completion.state == "RESUMABLE"
-    assert completion.reason == "application-completion-resuming"
+    if predecessor_disposition != "ACCEPTED":
+        # A missing or explicitly rejected owner cannot prove a consequence.
+        assert completion.state == "INVALID"
+        assert completion.reason == "application-completion-consequence-without-acceptance"
+        return
+    assert completion.state == ("RESUMABLE" if disposition == "ACCEPTED" else "REJECTED")
+    assert completion.reason == (
+        "application-completion-resuming"
+        if disposition == "ACCEPTED"
+        else "application-completion-rejected"
+    )
     assert completion.request_comment_id == 90
-    assert completion.job_id == 888
+    assert completion.job_id == (888 if disposition == "ACCEPTED" else None)
 
 
 def test_current_frontier_reuses_formal_ancestry_after_main_advances() -> None:
@@ -1319,6 +1353,8 @@ def _completion_matrix_reader(
             return _preactivation_admission()
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": runs}
+        if path.startswith("actions/runs/") and path.endswith("/artifacts?per_page=100"):
+            return {"total_count": 0, "artifacts": []}
         if path.startswith("actions/runs/") and path.endswith("/jobs"):
             run_id = int(path.split("/")[2])
             return {
@@ -1390,6 +1426,8 @@ def test_terminal_preactcept_candidate_survives_archived_authorization_revision(
                     }
                 ]
             }
+        if path.endswith("/artifacts?per_page=100"):
+            return {"total_count": 0, "artifacts": []}
         if path == "actions/runs/9000/jobs":
             return {
                 "jobs": [
@@ -1861,6 +1899,8 @@ def test_unbound_terminal_transport_is_inert_history() -> None:
                     }
                 ]
             }
+        if path.endswith("/artifacts?per_page=100"):
+            return {"total_count": 0, "artifacts": []}
         if path == "actions/runs/9654/jobs":
             return {
                 "jobs": [
@@ -1971,6 +2011,8 @@ def test_raw_current_source_request_is_classified_after_source_binding() -> None
                     }
                 ]
             }
+        if path.endswith("/artifacts?per_page=100"):
+            return {"total_count": 0, "artifacts": []}
         if path == "actions/runs/9656/jobs":
             return {
                 "jobs": [
@@ -2156,6 +2198,8 @@ def test_preprotocol_inert_request_is_retired_without_semantic_replay() -> None:
                     }
                 ]
             }
+        if path.endswith("/artifacts?per_page=100"):
+            return {"total_count": 0, "artifacts": []}
         if path == "actions/runs/777/jobs":
             return {
                 "jobs": [
@@ -2215,6 +2259,8 @@ def test_one_accepted_intent_is_resumed_before_semantic_replay() -> None:
                     }
                 ]
             }
+        if path.endswith("/artifacts?per_page=100"):
+            return {"total_count": 0, "artifacts": []}
         if path == "actions/runs/777/jobs":
             return {"jobs": [{"id": 888, "name": "apply"}]}
         raise AssertionError(path)
@@ -2458,6 +2504,8 @@ def test_current_accepted_application_stops_replaying_after_repeated_failed_atte
                     for index in range(application_run_count)
                 ]
             }
+        if path.endswith("/artifacts?per_page=100"):
+            return {"total_count": 0, "artifacts": []}
         if path == "actions/runs/35762997171/jobs":
             return {"jobs": [{"id": 107028234822, "name": "apply"}]}
         raise AssertionError(path)
@@ -2526,6 +2574,8 @@ def test_live_322_accepted_request_does_not_resume_completed_failed_application_
             return comparisons[base]
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": [run]}
+        if path.endswith("/artifacts?per_page=100"):
+            return {"total_count": 0, "artifacts": []}
         if path == f"actions/runs/{run_id}/jobs":
             return {"jobs": [job]}
         raise AssertionError(path)
@@ -2747,3 +2797,299 @@ def test_completed_formal_result_uses_fresh_revision_for_postconditions(
         "application-completion-none",
     )
     assert observed_revisions == [advanced_revision]
+
+
+def _carrier_plan_fixture(authorization_revision: str = REVISION) -> carrier.CarrierPlan:
+    return carrier.make_carrier_plan(
+        repository="owner/repo",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+        action="implement-change",
+        authorization_revision=authorization_revision,
+        operation="pull-request-head-update",
+        target={
+            "repository": "owner/repo",
+            "pull_request_number": 353,
+            "ref": "refs/heads/agent/change",
+        },
+        expected={"ref_sha": "a" * 40},
+        requested={
+            "ref": "refs/heads/agent/change",
+            "sha": "b" * 40,
+            "force": False,
+        },
+        expected_postcondition={
+            "ref": "refs/heads/agent/change",
+            "ref_sha": "b" * 40,
+            "pull_request_number": 353,
+            "pull_request_head_sha": "b" * 40,
+        },
+    )
+
+
+def _accepted_carrier_record() -> bridge.ApplicationDecisionRecord:
+    return bridge.ApplicationDecisionRecord(
+        request_comment_id=90,
+        request_body_sha256="1" * 64,
+        authorization_revision=REVISION,
+        issue_number=322,
+        role="executor",
+        action="implement-change",
+        change="restore-no-work-idle-discovery",
+        result_kind="more-implementation-required",
+        disposition="ACCEPTED",
+        worker_result_sha256="2" * 64,
+        raw_worker_result="{}",
+        reason="application accepted",
+    )
+
+
+@pytest.mark.parametrize(
+    ("plan_revision", "ancestry_status", "eligible"),
+    [
+        (REVISION, "ahead", True),
+        ("d" * 40, "ahead", True),
+        ("d" * 40, "behind", False),
+        ("d" * 40, None, False),
+    ],
+)
+def test_completed_application_prefers_saved_qualified_carrier_over_producer_resume(
+    monkeypatch: pytest.MonkeyPatch,
+    plan_revision: str,
+    ancestry_status: str | None,
+    eligible: bool,
+) -> None:
+    plan = _carrier_plan_fixture(plan_revision)
+    raw = json.dumps(
+        carrier.carrier_plan_document(plan),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    digest = f"sha256:{hashlib.sha256(raw).hexdigest()}"
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path == f"compare/{REVISION}...{plan_revision}":
+            return {"status": ancestry_status, "base_commit": {"sha": REVISION}}
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 777,
+                        "display_title": "Scheduled Agent Application 90",
+                        "status": "completed",
+                        "run_attempt": 1,
+                        "head_sha": REVISION,
+                    }
+                ]
+            }
+        if path == "actions/runs/777/jobs":
+            return {
+                "jobs": [
+                    {
+                        "id": 888,
+                        "name": "apply",
+                        "steps": [
+                            {
+                                "name": "Upload exact external carrier plan",
+                                "conclusion": "success",
+                            }
+                        ],
+                    }
+                ]
+            }
+        if path == "actions/runs/777/artifacts?per_page=100":
+            return {
+                "total_count": 1,
+                "artifacts": [
+                    {
+                        "id": 999,
+                        "name": "carrier-plan.json",
+                        "expired": False,
+                        "digest": digest,
+                        "workflow_run": {"id": 777, "head_sha": REVISION},
+                    }
+                ],
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "read_github_artifact_bytes", lambda *_args: raw)
+    completion = bridge._application_job(
+        "owner/repo",
+        "token",
+        90,
+        read=fake_read,
+        record=_accepted_carrier_record(),
+    )
+
+    if not eligible:
+        assert completion.state == "INVALID"
+        assert completion.reason == "application-completion-carrier-evidence-invalid"
+        assert completion.qualified_carrier is None
+        assert completion.job_id is None
+        return
+    assert completion.state == "RESUMABLE"
+    assert completion.reason == "application-completion-carrier-required"
+    assert completion.job_id is None
+    assert completion.qualified_carrier is not None
+    assert completion.qualified_carrier.plan == plan
+    assert completion.qualified_carrier.artifact_digest == digest
+
+
+def test_completed_application_distinguishes_absent_from_incomplete_carrier_listing() -> None:
+    record = _accepted_carrier_record()
+
+    def reader(total_count: int) -> bridge.GitHubReader:
+        def fake_read(_repository: str, _token: str, path: str) -> object:
+            if path.startswith("actions/workflows/"):
+                return {
+                    "workflow_runs": [
+                        {
+                            "id": 777,
+                            "display_title": "Scheduled Agent Application 90",
+                            "status": "completed",
+                            "run_attempt": 1,
+                            "head_sha": REVISION,
+                        }
+                    ]
+                }
+            if path == "actions/runs/777/jobs":
+                return {"jobs": [{"id": 888, "name": "apply"}]}
+            if path == "actions/runs/777/artifacts?per_page=100":
+                return {"total_count": total_count, "artifacts": []}
+            raise AssertionError(path)
+
+        return fake_read
+
+    absent = bridge._application_job(
+        "owner/repo",
+        "token",
+        90,
+        read=reader(0),
+        record=record,
+    )
+    incomplete = bridge._application_job(
+        "owner/repo",
+        "token",
+        90,
+        read=reader(1),
+        record=record,
+    )
+
+    assert (absent.state, absent.reason, absent.job_id) == (
+        "RESUMABLE",
+        "application-completion-resuming",
+        888,
+    )
+    assert (incomplete.state, incomplete.reason) == (
+        "INVALID",
+        "application-completion-carrier-evidence-invalid",
+    )
+
+
+def test_qualified_carrier_consumer_executes_connector_and_skips_complete() -> None:
+    plan = _carrier_plan_fixture()
+    qualified = carrier.QualifiedCarrierPlan(
+        request_comment_id=90,
+        run_id=777,
+        run_attempt=1,
+        artifact_id=999,
+        artifact_digest="sha256:" + "3" * 64,
+        plan=plan,
+    )
+    remote = {"sha": "a" * 40}
+    calls: list[str] = []
+
+    def qualify(_qualified: carrier.QualifiedCarrierPlan) -> carrier.CarrierQualification:
+        return "COMPLETE" if remote["sha"] == "b" * 40 else "ELIGIBLE"
+
+    def connector(exact_plan: carrier.CarrierPlan) -> None:
+        calls.append(exact_plan.plan_id)
+        remote["sha"] = cast(str, exact_plan.requested["sha"])
+
+    assert (
+        carrier.consume_qualified_carrier(qualified, qualify=qualify, connector=connector)
+        == "executed-complete"
+    )
+    assert calls == [plan.plan_id]
+    assert (
+        carrier.consume_qualified_carrier(qualified, qualify=qualify, connector=connector)
+        == "already-complete"
+    )
+    assert calls == [plan.plan_id]
+
+
+def test_qualified_carrier_consumer_reconciles_lost_response_without_resend() -> None:
+    plan = _carrier_plan_fixture()
+    qualified = carrier.QualifiedCarrierPlan(
+        request_comment_id=90,
+        run_id=777,
+        run_attempt=1,
+        artifact_id=999,
+        artifact_digest="sha256:" + "4" * 64,
+        plan=plan,
+    )
+    remote = {"sha": "a" * 40}
+    calls = 0
+
+    def qualify(_qualified: carrier.QualifiedCarrierPlan) -> carrier.CarrierQualification:
+        return "COMPLETE" if remote["sha"] == "b" * 40 else "ELIGIBLE"
+
+    def connector(exact_plan: carrier.CarrierPlan) -> None:
+        nonlocal calls
+        calls += 1
+        remote["sha"] = cast(str, exact_plan.requested["sha"])
+        raise TimeoutError("response lost after server write")
+
+    assert (
+        carrier.consume_qualified_carrier(qualified, qualify=qualify, connector=connector)
+        == "reconciled-complete"
+    )
+    assert calls == 1
+
+
+def test_carrier_documents_reject_tampering_and_dispatch_round_trips_handoff() -> None:
+    plan = _carrier_plan_fixture()
+    document = carrier.carrier_plan_document(plan)
+    tampered = dict(document)
+    tampered_requested = dict(cast(dict[str, object], document["requested"]))
+    tampered_requested["sha"] = "c" * 40
+    tampered["requested"] = tampered_requested
+    with pytest.raises(ValueError, match="content address"):
+        carrier.parse_carrier_plan_document(tampered)
+
+    qualified = carrier.QualifiedCarrierPlan(
+        request_comment_id=90,
+        run_id=777,
+        run_attempt=1,
+        artifact_id=999,
+        artifact_digest="sha256:" + "5" * 64,
+        plan=plan,
+    )
+    continuation = bridge.render_application_continuation_request(
+        repository="owner/repo",
+        issue_number=322,
+        original_request_comment_id=90,
+        accepted_decision_sha256="6" * 64,
+    )
+    failed = _decision("FAIL_CLOSED")
+    failed = DispatchDecision(
+        completeness=failed.completeness,
+        observation_provenance=failed.observation_provenance,
+        formal_issue_ids=failed.formal_issue_ids,
+        preactivation_candidate_ids=failed.preactivation_candidate_ids,
+        selected_issue_id=None,
+        selected_routing=None,
+        disposition="FAIL_CLOSED",
+        reason="application-completion-carrier-required",
+    )
+    rendered = bridge.render_dispatch_result_document(
+        request_comment_id=987,
+        default_branch_revision=REVISION,
+        decision=failed,
+        application_continuation=continuation,
+        qualified_carrier=qualified,
+    )
+    parsed = bridge.parse_dispatch_result_document(rendered)
+
+    assert parsed.application_continuation == continuation
+    assert parsed.qualified_carrier == qualified
