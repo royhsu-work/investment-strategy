@@ -1949,11 +1949,14 @@ def qualify_application_completion(
     }
     if (
         not accepted
+        and not frontier_owner_decisions
         and frontier_request_id is not None
         and frontier_request_id in current_ingress_ids
     ):
         # A formal consequence tied to this ingress without Phase-A ACCEPT is
         # contradictory evidence, not proof that source ownership is free.
+        # The exact frontier owner above has already been reconciled COMPLETE;
+        # retiring it from this occurrence does not erase its acceptance.
         return ApplicationCompletion(
             "INVALID",
             "application-completion-consequence-without-acceptance",
