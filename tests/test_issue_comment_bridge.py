@@ -1046,10 +1046,12 @@ def test_completed_formal_result_at_safe_ancestor_is_not_resumed(
         "body": f"Change: {change}",
     }
     observed_revisions: list[str] = []
+    observed_accepted_intent: list[bool] = []
 
     def fake_postconditions(*_args: object, **kwargs: object) -> bool:
         revision = cast(str, kwargs["current_revision"])
         observed_revisions.append(revision)
+        observed_accepted_intent.append(cast(bool, kwargs["accepted_intent"]))
         return revision == formal_revision
 
     monkeypatch.setattr(bridge, "consequence_postconditions_complete", fake_postconditions)
@@ -1085,6 +1087,7 @@ def test_completed_formal_result_at_safe_ancestor_is_not_resumed(
         "application-completion-none",
     )
     assert observed_revisions == [advanced_revision]
+    assert observed_accepted_intent == [True]
 
 
 def test_predecessor_is_not_resumed_after_merged_successor_consumes_carrier(
