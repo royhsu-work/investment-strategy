@@ -258,5 +258,6 @@ jobs:
           --revision "${{ steps.revision.outputs.sha }}"
           --default-branch "${{ github.event.repository.default_branch }}"
           --run-attempt "${{ github.run_attempt }}"
+          --recovery-evidence-path "$RUNNER_TEMP/application-recovery-evidence.json"
           --validation-passed
           --validated-revision "${{ steps.validation.outputs.validation_target_revision }}"
