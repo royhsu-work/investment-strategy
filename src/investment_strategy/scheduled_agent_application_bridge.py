@@ -4024,7 +4024,7 @@ def _write_application_recovery_evidence(
                 "accepted_decision_sha256": accepted_sha256,
             }
         )
-        recovery_attempt = run_attempt
+        recovery_attempt = 1
         prior_failures: list[str] = []
         predecessor_document = None
     else:
@@ -4045,7 +4045,7 @@ def _write_application_recovery_evidence(
         }
     # A failed precondition is evidence, not permission to retry its frozen effect.
     # Only a qualified carrier handoff may create a fresh continuation here.
-    continuation_eligible = result.carrier_plan is not None and run_attempt == 1
+    continuation_eligible = result.carrier_plan is not None
     document = {
         "schema": _APPLICATION_RECOVERY_SCHEMA,
         "repository": repository,
