@@ -438,9 +438,7 @@ class GitHubSequence:
                 )
                 + "\n"
             )
-            artifact_digest = "sha256:" + hashlib.sha256(
-                recovery_raw.encode("utf-8")
-            ).hexdigest()
+            artifact_digest = "sha256:" + hashlib.sha256(recovery_raw.encode("utf-8")).hexdigest()
             self.recovery_predecessor = {
                 "raw": recovery_raw,
                 "run": {
