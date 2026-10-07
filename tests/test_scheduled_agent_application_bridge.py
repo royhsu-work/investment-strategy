@@ -416,6 +416,7 @@ def test_recovery_artifact_uses_chain_ordinal_after_a_workflow_rerun(
     assert document["predecessor"] is None
     assert document["continuation_eligible"] is True
 
+
 def test_main_accepts_only_a_fresh_continuation_transport(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
