@@ -199,9 +199,9 @@ def test_retry_limit_dispatch_result_carries_one_content_addressed_continuation(
         predecessor_run_attempt=1,
         predecessor_job_id=7002,
         predecessor_artifact_id=7003,
-        predecessor_artifact_digest='sha256:' + '1' * 64,
-        failure_evidence_sha256='2' * 64,
-        recovery_episode_sha256='3' * 64,
+        predecessor_artifact_digest="sha256:" + "1" * 64,
+        failure_evidence_sha256="2" * 64,
+        recovery_episode_sha256="3" * 64,
     )
     decision = _decision("FAIL_CLOSED")
     decision = DispatchDecision(
@@ -212,7 +212,7 @@ def test_retry_limit_dispatch_result_carries_one_content_addressed_continuation(
         selected_issue_id=decision.selected_issue_id,
         selected_routing=decision.selected_routing,
         disposition=decision.disposition,
-        reason="application-completion-rerun-limit",
+        reason="application-completion-continuation-required",
     )
 
     rendered = bridge.render_dispatch_result_document(
@@ -2547,6 +2547,7 @@ def test_current_accepted_application_stops_replaying_after_repeated_failed_atte
     elif expected[1] in {
         "application-completion-run-identity-ambiguous",
         "application-completion-rerun-limit",
+        "application-completion-continuation-required",
         "application-completion-recovery-evidence-missing",
     }:
         assert application_run_reads > 0
@@ -2624,7 +2625,7 @@ def test_live_322_accepted_request_does_not_resume_completed_failed_application_
     assert f"actions/runs/{run_id}/jobs" in observed
 
 
-def test_rerun_limit_has_a_fresh_transport_bound_to_the_exact_decision() -> None:
+def test_new_evidence_continues_past_the_former_attempt_threshold() -> None:
     source = bridge.WorkerRequest(322, "lead", "resolve-question")
     request = _effect_request_comment(
         comment_id=5810765007,
@@ -2652,9 +2653,11 @@ def test_rerun_limit_has_a_fresh_transport_bound_to_the_exact_decision() -> None
         accepted_decision_sha256=accepted_sha256,
         failure_evidence_sha256="2" * 64,
         recovery_episode_sha256="3" * 64,
-        recovery_attempt=1,
+        recovery_attempt=4,
         continuation_eligible=True,
-        document={"prior_failure_evidence_sha256": []},
+        document={
+            "prior_failure_evidence_sha256": ["6" * 64, "7" * 64, "8" * 64]
+        },
     )
     body = bridge._application_continuation_body(
         repository="owner/repo",
@@ -2674,6 +2677,31 @@ def test_rerun_limit_has_a_fresh_transport_bound_to_the_exact_decision() -> None
         parsed.accepted_decision_sha256
         == hashlib.sha256(cast(str, decision["body"]).encode("utf-8")).hexdigest()
     )
+
+    repeated = bridge.ApplicationRecoveryArtifact(
+        run_id=7002,
+        run_attempt=1,
+        job_id=7003,
+        artifact_id=7004,
+        artifact_digest="sha256:" + "4" * 64,
+        request_comment_id=5810765007,
+        accepted_decision_sha256=accepted_sha256,
+        failure_evidence_sha256="2" * 64,
+        recovery_episode_sha256="3" * 64,
+        recovery_attempt=5,
+        continuation_eligible=True,
+        document={
+            "prior_failure_evidence_sha256": ["6" * 64, "7" * 64, "8" * 64, "2" * 64]
+        },
+    )
+    assert bridge._application_continuation_body(
+        repository="owner/repo",
+        token=REVISION,
+        source=source,
+        request_comment_id=5810765007,
+        predecessor_evidence=repeated,
+        read=fake_read,
+    ) is None
 
 
 def test_rejected_intent_returns_ownership_to_later_semantic_dispatch() -> None:
@@ -3012,7 +3040,10 @@ def test_completed_application_distinguishes_absent_from_incomplete_carrier_list
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     record = _accepted_carrier_record()
-    recovery = _qualified_recovery_fixture()
+    recovery = _qualified_recovery_fixture(
+        recovery_attempt=4,
+        prior_failures=("6" * 64, "7" * 64, "8" * 64),
+    )
     monkeypatch.setattr(
         bridge,
         "read_application_recovery_artifact",
@@ -3060,7 +3091,7 @@ def test_completed_application_distinguishes_absent_from_incomplete_carrier_list
 
     assert (absent.state, absent.reason, absent.job_id) == (
         "RESUMABLE",
-        "application-completion-rerun-limit",
+        "application-completion-continuation-required",
         None,
     )
     assert (incomplete.state, incomplete.reason) == (
@@ -3226,12 +3257,10 @@ def test_application_continuation_binds_exact_failure_transition() -> None:
 
     assert next_body != first
     assert next_parsed is not None
-    assert (
-        getattr(next_parsed, "recovery_episode_sha256", None)
-        == getattr(parsed, "recovery_episode_sha256", None)
+    assert getattr(next_parsed, "recovery_episode_sha256", None) == getattr(
+        parsed, "recovery_episode_sha256", None
     )
-    assert (
-        getattr(next_parsed, "continuation_correlation", None)
-        != getattr(parsed, "continuation_correlation", None)
+    assert getattr(next_parsed, "continuation_correlation", None) != getattr(
+        parsed, "continuation_correlation", None
     )
 
