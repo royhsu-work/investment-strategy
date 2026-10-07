@@ -355,6 +355,67 @@ def test_main_rehydrates_accepted_intent_before_transport_observation(
     assert seen == {"raw": raw, "source": source}
 
 
+def test_recovery_artifact_uses_chain_ordinal_after_a_workflow_rerun(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    worker = _worker_result(
+        action=source.action,
+        role=source.role,
+        result_kind="more-implementation-required",
+    )
+    worker["change"] = _CHANGE
+    raw = json.dumps(worker, sort_keys=True, separators=(",", ":"))
+    body = _effect_request(worker)
+    record = _accepted_record(
+        raw,
+        body,
+        source=source,
+        change=_CHANGE,
+        result_kind="more-implementation-required",
+    )
+    decision_body = "accepted decision"
+    monkeypatch.setattr(
+        bridge,
+        "_application_decision_comment_for_request",
+        lambda **_kwargs: (record, decision_body),
+    )
+    monkeypatch.setenv("GITHUB_RUN_ID", "7001")
+    carrier_plan = make_carrier_plan(
+        repository=_REPOSITORY,
+        issue_number=source.issue_number,
+        change=_CHANGE,
+        action=source.action,
+        authorization_revision=_REVISION,
+        operation="pull-request-ready",
+        target={"pull_request_number": 236},
+        expected={"head_sha": _REVISION},
+        requested={"head_sha": _REVISION, "draft": False},
+        expected_postcondition={"draft": False},
+    )
+    output = tmp_path / "recovery.json"
+    bridge._write_application_recovery_evidence(
+        str(output),
+        result=bridge.ApplyResult(False, "carrier-required", carrier_plan=carrier_plan),
+        repository=_REPOSITORY,
+        token="token",
+        source=source,
+        request_comment_id=record.request_comment_id,
+        trigger_comment_id=404,
+        authorization_revision=_REVISION,
+        current_revision=_REVISION,
+        run_attempt=2,
+        continuation=None,
+        predecessor=None,
+    )
+
+    document = json.loads(output.read_text(encoding="utf-8"))
+    assert document["run_attempt"] == 2
+    assert document["recovery_attempt"] == 1
+    assert document["predecessor"] is None
+    assert document["continuation_eligible"] is True
+
 def test_main_accepts_only_a_fresh_continuation_transport(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
