@@ -45,6 +45,7 @@ from investment_strategy.scheduled_agent_application_materialization import (
     find_materialization_payload,
     materialization_postcondition,
     observe_materialization_target,
+    prove_materialization,
 )
 from investment_strategy.scheduled_agent_carrier import (
     CarrierPlan,
@@ -2336,13 +2337,43 @@ class GitHubEffectAdapter:
             if request is None:
                 return False
             default_branch = self._default_branch()
-            return (
+            current_revision = self.current_revision
+            if not (
                 request.expected_change == self.authorized_change
                 and default_branch is not None
-                and self.current_revision is not None
-                and _valid_sha(self.current_revision)
-                and self._default_branch_revision(default_branch) == self.current_revision
+                and current_revision is not None
+                and _valid_sha(current_revision)
+                and self._default_branch_revision(default_branch) == current_revision
+            ):
+                return False
+            proof = prove_materialization(
+                payload,
+                self.source,
+                repository=self.repository,
+                token=self.token,
+                current_revision=current_revision,
+                default_branch=default_branch,
+                accepted_authorization_revision=self.authorization_revision,
+                allow_pending_continuation=self.allow_pending_continuation,
+                accepted_intent=self.accepted_intent,
             )
+            if proof.disposition == "CONTRADICTORY":
+                self._last_rejection = ApplicationRejection(
+                    ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+                    expected=json.dumps(
+                        {
+                            "materialization_proof": ["COMPLETE", "INCOMPLETE"],
+                            "accepted_intent": self.accepted_intent,
+                        },
+                        sort_keys=True,
+                    ),
+                    observed=json.dumps(
+                        {"disposition": proof.disposition, "reason": proof.reason},
+                        sort_keys=True,
+                    ),
+                )
+                return False
+            return proof.disposition in {"COMPLETE", "INCOMPLETE"}
         if operation == "issue-label-add":
             return True
         if operation == "workflow-dispatch":
@@ -2712,7 +2743,7 @@ class GitHubEffectAdapter:
         if effect.kind == "issue-comment":
             return True
         guarded = payload is not None and self._guard_github_mutation(payload)
-        if not guarded:
+        if not guarded and self._last_rejection is None:
             self._last_rejection = ApplicationRejection(
                 ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
                 expected="fresh application-owned effect postcondition",
@@ -2777,6 +2808,7 @@ class GitHubEffectAdapter:
                 promote_change=self.materialization_promote_change,
                 validated_revision=self.validated_materialization_revision,
                 allow_pending_continuation=self.allow_pending_continuation,
+                accepted_intent=self.accepted_intent,
             )
             self._materialization_targets[effect] = target
             if self.materialization_promote_change:
@@ -3228,6 +3260,7 @@ class GitHubEffectAdapter:
                     accepted_authorization_revision=self.authorization_revision,
                     target=self._materialization_targets.get(effect),
                     allow_pending_continuation=self.allow_pending_continuation,
+                    accepted_intent=self.accepted_intent,
                 )
             )
         if operation == "issue-update":
@@ -3545,6 +3578,7 @@ def _fresh_materialization_target(
                 default_branch=default_branch,
                 accepted_authorization_revision=adapter.authorization_revision,
                 allow_pending_continuation=allow_pending_continuation,
+                accepted_intent=adapter.accepted_intent,
             )
         else:
             target = observe_materialization_target(
@@ -3557,6 +3591,7 @@ def _fresh_materialization_target(
                 accepted_authorization_revision=adapter.authorization_revision,
                 allow_pending_continuation=allow_pending_continuation,
                 accepted_successor_routing=accepted_successor_routing,
+                accepted_intent=adapter.accepted_intent,
             )
     except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return None
@@ -3581,6 +3616,7 @@ def consequence_postconditions_complete(
     allow_pending_continuation: bool = False,
     accepted_authorization_revision: str | None = None,
     allow_accepted_successor: bool = False,
+    accepted_intent: bool = False,
 ) -> bool:
     """Prove the affirmative consequence contract from fresh repository state.
 
@@ -3643,6 +3679,7 @@ def consequence_postconditions_complete(
                 authorization_revision=accepted_authorization_revision,
                 expected_result_kind=batch.typed_result.result.kind.value,
                 request_comment_id=request_comment_id,
+                accepted_intent=accepted_intent,
             )
             payload = _effect_payload(materializations[0])
             return (
@@ -3678,6 +3715,7 @@ def consequence_postconditions_complete(
             authorization_revision=accepted_authorization_revision,
             expected_result_kind=batch.typed_result.result.kind.value,
             request_comment_id=request_comment_id,
+            accepted_intent=accepted_intent,
         )
         if spec.evidence_target is EvidenceTarget.IMPLEMENTATION_PR_HEAD:
             materializations = tuple(
