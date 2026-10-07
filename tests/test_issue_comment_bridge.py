@@ -3262,4 +3262,3 @@ def test_application_continuation_binds_exact_failure_transition() -> None:
     assert getattr(next_parsed, "continuation_correlation", None) != getattr(
         parsed, "continuation_correlation", None
     )
-
