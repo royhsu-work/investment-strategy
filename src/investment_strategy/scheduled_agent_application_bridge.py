@@ -77,6 +77,13 @@ DISPATCH_CORRELATION_PREFIX = "Dispatch-Correlation: "
 WORKER_RESULT_B64_PREFIX = "Worker-Result-B64: "
 ORIGINAL_REQUEST_COMMENT_PREFIX = "Original-Request-Comment: "
 ACCEPTED_DECISION_SHA256_PREFIX = "Accepted-Decision-SHA256: "
+PREDECESSOR_RUN_ID_PREFIX = "Predecessor-Run-ID: "
+PREDECESSOR_RUN_ATTEMPT_PREFIX = "Predecessor-Run-Attempt: "
+PREDECESSOR_JOB_ID_PREFIX = "Predecessor-Job-ID: "
+PREDECESSOR_ARTIFACT_ID_PREFIX = "Predecessor-Artifact-ID: "
+PREDECESSOR_ARTIFACT_DIGEST_PREFIX = "Predecessor-Artifact-Digest: "
+FAILURE_EVIDENCE_SHA256_PREFIX = "Failure-Evidence-SHA256: "
+RECOVERY_EPISODE_SHA256_PREFIX = "Recovery-Episode-SHA256: "
 CONTINUATION_CORRELATION_PREFIX = "Continuation-Correlation: "
 _CHATGPT_CONNECTOR_APP_SLUG = "chatgpt-codex-connector"
 _SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -103,11 +110,18 @@ class ApplicationRequest:
 
 @dataclass(frozen=True)
 class ApplicationContinuationRequest:
-    """A fresh transport trigger bound to one immutable accepted intent."""
+    """A fresh transport trigger bound to one exact recovery transition."""
 
     issue_number: int
     original_request_comment_id: int
     accepted_decision_sha256: str
+    predecessor_run_id: int
+    predecessor_run_attempt: int
+    predecessor_job_id: int
+    predecessor_artifact_id: int
+    predecessor_artifact_digest: str
+    failure_evidence_sha256: str
+    recovery_episode_sha256: str
     continuation_correlation: str
 
 
@@ -116,22 +130,43 @@ def application_continuation_correlation(
     issue_number: int,
     original_request_comment_id: int,
     accepted_decision_sha256: str,
+    predecessor_run_id: int,
+    predecessor_run_attempt: int,
+    predecessor_job_id: int,
+    predecessor_artifact_id: int,
+    predecessor_artifact_digest: str,
+    failure_evidence_sha256: str,
+    recovery_episode_sha256: str,
 ) -> str:
-    """Derive the content address for one accepted-intent continuation."""
+    """Content-address one qualified predecessor-to-recovery transition."""
 
     if (
         "/" not in repository
         or _positive_int(issue_number) is None
         or _positive_int(original_request_comment_id) is None
-        or not re.fullmatch(r"[0-9a-f]{64}", accepted_decision_sha256)
+        or _positive_int(predecessor_run_id) is None
+        or _positive_int(predecessor_run_attempt) is None
+        or _positive_int(predecessor_job_id) is None
+        or _positive_int(predecessor_artifact_id) is None
+        or re.fullmatch(r"[0-9a-f]{64}", accepted_decision_sha256) is None
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", predecessor_artifact_digest) is None
+        or re.fullmatch(r"[0-9a-f]{64}", failure_evidence_sha256) is None
+        or re.fullmatch(r"[0-9a-f]{64}", recovery_episode_sha256) is None
     ):
         raise ValueError("application continuation identity is invalid")
-    material = ":".join(
+    material = "\n".join(
         (
             repository,
             str(issue_number),
             str(original_request_comment_id),
             accepted_decision_sha256,
+            str(predecessor_run_id),
+            str(predecessor_run_attempt),
+            str(predecessor_job_id),
+            str(predecessor_artifact_id),
+            predecessor_artifact_digest,
+            failure_evidence_sha256,
+            recovery_episode_sha256,
         )
     )
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
@@ -143,12 +178,26 @@ def render_application_continuation_request(
     issue_number: int,
     original_request_comment_id: int,
     accepted_decision_sha256: str,
+    predecessor_run_id: int,
+    predecessor_run_attempt: int,
+    predecessor_job_id: int,
+    predecessor_artifact_id: int,
+    predecessor_artifact_digest: str,
+    failure_evidence_sha256: str,
+    recovery_episode_sha256: str,
 ) -> str:
     correlation = application_continuation_correlation(
         repository,
         issue_number,
         original_request_comment_id,
         accepted_decision_sha256,
+        predecessor_run_id,
+        predecessor_run_attempt,
+        predecessor_job_id,
+        predecessor_artifact_id,
+        predecessor_artifact_digest,
+        failure_evidence_sha256,
+        recovery_episode_sha256,
     )
     return "\n".join(
         (
@@ -156,6 +205,13 @@ def render_application_continuation_request(
             f"Issue: {issue_number}",
             f"{ORIGINAL_REQUEST_COMMENT_PREFIX}{original_request_comment_id}",
             f"{ACCEPTED_DECISION_SHA256_PREFIX}{accepted_decision_sha256}",
+            f"{PREDECESSOR_RUN_ID_PREFIX}{predecessor_run_id}",
+            f"{PREDECESSOR_RUN_ATTEMPT_PREFIX}{predecessor_run_attempt}",
+            f"{PREDECESSOR_JOB_ID_PREFIX}{predecessor_job_id}",
+            f"{PREDECESSOR_ARTIFACT_ID_PREFIX}{predecessor_artifact_id}",
+            f"{PREDECESSOR_ARTIFACT_DIGEST_PREFIX}{predecessor_artifact_digest}",
+            f"{FAILURE_EVIDENCE_SHA256_PREFIX}{failure_evidence_sha256}",
+            f"{RECOVERY_EPISODE_SHA256_PREFIX}{recovery_episode_sha256}",
             f"{CONTINUATION_CORRELATION_PREFIX}{correlation}",
         )
     )
@@ -164,37 +220,61 @@ def render_application_continuation_request(
 def parse_application_continuation_request(
     body: str,
 ) -> ApplicationContinuationRequest | None:
-    """Parse the strict transport-only continuation marker."""
+    """Parse a strict transport bound to one exact recovery evidence transition."""
 
     lines = body.splitlines()
-    if len(lines) != 5 or lines[0] != APPLICATION_CONTINUATION_MARKER:
+    if len(lines) != 12 or lines[0] != APPLICATION_CONTINUATION_MARKER:
         return None
-    if not lines[1].startswith("Issue: "):
-        return None
-    issue_value = lines[1][len("Issue: ") :]
+    prefixes = (
+        "Issue: ",
+        ORIGINAL_REQUEST_COMMENT_PREFIX,
+        ACCEPTED_DECISION_SHA256_PREFIX,
+        PREDECESSOR_RUN_ID_PREFIX,
+        PREDECESSOR_RUN_ATTEMPT_PREFIX,
+        PREDECESSOR_JOB_ID_PREFIX,
+        PREDECESSOR_ARTIFACT_ID_PREFIX,
+        PREDECESSOR_ARTIFACT_DIGEST_PREFIX,
+        FAILURE_EVIDENCE_SHA256_PREFIX,
+        RECOVERY_EPISODE_SHA256_PREFIX,
+        CONTINUATION_CORRELATION_PREFIX,
+    )
+    values: list[str] = []
+    for line, prefix in zip(lines[1:], prefixes, strict=True):
+        if not line.startswith(prefix):
+            return None
+        values.append(line[len(prefix) :])
     try:
-        issue_number = int(issue_value)
+        issue_number = int(values[0])
+        original_request_comment_id = int(values[1])
+        predecessor_run_id = int(values[3])
+        predecessor_run_attempt = int(values[4])
+        predecessor_job_id = int(values[5])
+        predecessor_artifact_id = int(values[6])
     except ValueError:
         return None
-    if (
-        _positive_int(issue_number) is None
-        or issue_value != str(issue_number)
-        or not lines[2].startswith(ORIGINAL_REQUEST_COMMENT_PREFIX)
-        or not lines[3].startswith(ACCEPTED_DECISION_SHA256_PREFIX)
-        or not lines[4].startswith(CONTINUATION_CORRELATION_PREFIX)
+    accepted_decision_sha256 = values[2]
+    predecessor_artifact_digest = values[7]
+    failure_evidence_sha256 = values[8]
+    recovery_episode_sha256 = values[9]
+    continuation_correlation = values[10]
+    integer_pairs = (
+        (values[0], issue_number),
+        (values[1], original_request_comment_id),
+        (values[3], predecessor_run_id),
+        (values[4], predecessor_run_attempt),
+        (values[5], predecessor_job_id),
+        (values[6], predecessor_artifact_id),
+    )
+    if any(
+        _positive_int(value) is None or raw != str(value)
+        for raw, value in integer_pairs
     ):
         return None
-    original_request_value = lines[2][len(ORIGINAL_REQUEST_COMMENT_PREFIX) :]
-    try:
-        original_request_comment_id = int(original_request_value)
-    except ValueError:
-        return None
-    accepted_decision_sha256 = lines[3][len(ACCEPTED_DECISION_SHA256_PREFIX) :]
-    continuation_correlation = lines[4][len(CONTINUATION_CORRELATION_PREFIX) :]
     if (
-        _positive_int(original_request_comment_id) is None
-        or original_request_value != str(original_request_comment_id)
-        or re.fullmatch(r"[0-9a-f]{64}", accepted_decision_sha256) is None
+        re.fullmatch(r"[0-9a-f]{64}", accepted_decision_sha256) is None
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", predecessor_artifact_digest) is None
+        or re.fullmatch(r"[0-9a-f]{64}", failure_evidence_sha256) is None
+        or re.fullmatch(r"[0-9a-f]{64}", recovery_episode_sha256) is None
         or re.fullmatch(r"[0-9a-f]{64}", continuation_correlation) is None
     ):
         return None
@@ -202,6 +282,13 @@ def parse_application_continuation_request(
         issue_number=issue_number,
         original_request_comment_id=original_request_comment_id,
         accepted_decision_sha256=accepted_decision_sha256,
+        predecessor_run_id=predecessor_run_id,
+        predecessor_run_attempt=predecessor_run_attempt,
+        predecessor_job_id=predecessor_job_id,
+        predecessor_artifact_id=predecessor_artifact_id,
+        predecessor_artifact_digest=predecessor_artifact_digest,
+        failure_evidence_sha256=failure_evidence_sha256,
+        recovery_episode_sha256=recovery_episode_sha256,
         continuation_correlation=continuation_correlation,
     )
 
@@ -3605,6 +3692,13 @@ def main() -> int:
             accepted_intent.issue_number,
             accepted_intent.request_comment_id,
             decision_sha256,
+            continuation.predecessor_run_id,
+            continuation.predecessor_run_attempt,
+            continuation.predecessor_job_id,
+            continuation.predecessor_artifact_id,
+            continuation.predecessor_artifact_digest,
+            continuation.failure_evidence_sha256,
+            continuation.recovery_episode_sha256,
         )
         if (
             decision_sha256 != continuation.accepted_decision_sha256
