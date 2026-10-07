@@ -1834,7 +1834,8 @@ def _continuation_leaf_comment_ids(
         comment_by_run[run_id] = comment_id
 
     children: dict[int, list[int]] = {comment_id: [] for comment_id in transport_ids}
-    for child_id, (predecessor_run_id, predecessor_run_attempt) in continuation_predecessors.items():
+    for child_id, predecessor_identity in continuation_predecessors.items():
+        predecessor_run_id, predecessor_run_attempt = predecessor_identity
         parent_id = comment_by_run.get(predecessor_run_id)
         if parent_id is None:
             return None
