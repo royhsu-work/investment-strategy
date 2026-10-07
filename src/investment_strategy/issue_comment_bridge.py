@@ -504,6 +504,42 @@ def _application_job(
             request_comment_id=request_comment_id,
         )
 
+    recovery_artifact = None
+    if record is not None:
+        try:
+            comments = _paged_list(
+                repository,
+                token,
+                f"issues/{record.issue_number}/comments?sort=created&direction=asc",
+                read=read,
+            )
+            accepted_bodies = [
+                cast(str, comment.get("body"))
+                for comment in comments
+                if is_github_actions_comment(comment)
+                and isinstance(comment.get("body"), str)
+                and (decision := parse_application_decision(comment.get("body")) is not None
+                and decision.request_comment_id == record.request_comment_id
+                and decision.disposition == "ACCEPTED"
+                and decision.issue_number == record.issue_number
+                and decision.role == record.role
+                and decision.action == record.action
+            ]
+            if len(accepted_bodies) == 1:
+                accepted_sha256 = hashlib.sha256(accepted_bodies[0].encode("utf-8")).hexdigest()
+                recovery_artifact = read_application_recovery_artifact(
+                    repository,
+                    token,
+                    run_id=run_id,
+                    run_attempt=run_attempt,
+                    job_id=job_id,
+                    request_comment_id=record.request_comment_id,
+                    accepted_decision_sha256=accepted_sha256,
+                    read=read,
+                )
+        except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
+            recovery_artifact = None
+
     if record is not None:
         try:
             qualified_carrier = _qualified_carrier_for_application_run(
