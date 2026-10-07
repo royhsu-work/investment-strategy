@@ -996,7 +996,7 @@ def test_accepted_formal_result_waits_for_consequence_postconditions(
     )
 
     assert completion.state == "RESUMABLE"
-    assert completion.reason == "application-completion-formal-result-pending"
+    assert completion.reason == "application-completion-successor-pending"
     assert completion.request_comment_id == 90
     assert completion.job_id is None
 
