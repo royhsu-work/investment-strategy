@@ -3909,6 +3909,8 @@ def qualify_application_continuation_predecessor(
         or evidence.recovery_episode_sha256 != continuation.recovery_episode_sha256
         or not evidence.continuation_eligible
         or evidence.recovery_attempt >= 3
+        or evidence.failure_evidence_sha256
+        in cast(list[str], evidence.document["prior_failure_evidence_sha256"])
     ):
         return None
     return evidence
@@ -4039,7 +4041,7 @@ def _write_application_recovery_evidence(
         }
     recovery = result.recovery_evidence
     continuation_eligible = bool(
-        result.carrier_plan is not None
+        (result.carrier_plan is not None and run_attempt == 1)
         or (
             recovery is not None
             and recovery.mutation_status == "not-complete"
