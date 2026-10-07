@@ -995,10 +995,10 @@ def test_accepted_formal_result_waits_for_consequence_postconditions(
         now=datetime(2026, 9, 18, 3, 0, tzinfo=UTC),
     )
 
-    assert completion.state == "RESUMABLE"
-    assert completion.reason == "application-completion-resuming"
+    assert completion.state == "INVALID"
+    assert completion.reason == "application-completion-recovery-evidence-missing"
     assert completion.request_comment_id == 90
-    assert completion.job_id == 888
+    assert completion.job_id is None
 
 
 def test_completed_formal_result_at_safe_ancestor_is_not_resumed(
@@ -1228,14 +1228,14 @@ def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier(
         assert completion.state == "INVALID"
         assert completion.reason == "application-completion-consequence-without-acceptance"
         return
-    assert completion.state == ("RESUMABLE" if disposition == "ACCEPTED" else "REJECTED")
+    assert completion.state == ("INVALID" if disposition == "ACCEPTED" else "REJECTED")
     assert completion.reason == (
-        "application-completion-resuming"
+        "application-completion-recovery-evidence-missing"
         if disposition == "ACCEPTED"
         else "application-completion-rejected"
     )
     assert completion.request_comment_id == 90
-    assert completion.job_id == (888 if disposition == "ACCEPTED" else None)
+    assert completion.job_id is None
 
 
 def test_current_frontier_reuses_formal_ancestry_after_main_advances() -> None:
@@ -1545,9 +1545,10 @@ def test_terminal_noise_plus_one_accepted_intent_owns_continuation() -> None:
         now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
     )
 
-    assert completion.state == "RESUMABLE"
-    assert completion.reason == "application-completion-resuming"
+    assert completion.state == "INVALID"
+    assert completion.reason == "application-completion-recovery-evidence-missing"
     assert completion.request_comment_id == 654
+    assert completion.job_id is None
 
 
 def test_deleted_ingress_after_accept_uses_immutable_intent() -> None:
@@ -2290,9 +2291,10 @@ def test_one_accepted_intent_is_resumed_before_semantic_replay() -> None:
         now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
     )
 
-    assert completion.state == "RESUMABLE"
+    assert completion.state == "INVALID"
+    assert completion.reason == "application-completion-recovery-evidence-missing"
     assert completion.request_comment_id == 654
-    assert completion.job_id == 888
+    assert completion.job_id is None
 
 
 @pytest.mark.parametrize(
@@ -2309,7 +2311,7 @@ def test_one_accepted_intent_is_resumed_before_semantic_replay() -> None:
             1,
             1,
             True,
-            ("INVALID", "application-completion-rerun-limit"),
+            ("INVALID", "application-completion-recovery-evidence-missing"),
         ),
         (
             "propose-change",
@@ -2542,6 +2544,7 @@ def test_current_accepted_application_stops_replaying_after_repeated_failed_atte
     elif expected[1] in {
         "application-completion-run-identity-ambiguous",
         "application-completion-rerun-limit",
+        "application-completion-recovery-evidence-missing",
     }:
         assert application_run_reads > 0
     else:
@@ -2607,7 +2610,7 @@ def test_live_322_accepted_request_does_not_resume_completed_failed_application_
 
     assert completion == bridge.ApplicationCompletion(
         "INVALID",
-        "application-completion-rerun-limit",
+        "application-completion-recovery-evidence-missing",
         request_comment_id=request_id,
     )
     assert request_id == 5810765007
@@ -2876,6 +2879,34 @@ def _accepted_carrier_record() -> bridge.ApplicationDecisionRecord:
     )
 
 
+def _qualified_recovery_fixture(
+    *,
+    accepted_decision_sha256: str = "a" * 64,
+    run_id: int = 777,
+    run_attempt: int = 1,
+    job_id: int = 888,
+    artifact_id: int = 999,
+    request_comment_id: int = 90,
+    recovery_attempt: int = 1,
+    continuation_eligible: bool = True,
+    prior_failures: tuple[str, ...] = (),
+) -> bridge.ApplicationRecoveryArtifact:
+    return bridge.ApplicationRecoveryArtifact(
+        run_id=run_id,
+        run_attempt=run_attempt,
+        job_id=job_id,
+        artifact_id=artifact_id,
+        artifact_digest="sha256:" + "3" * 64,
+        request_comment_id=request_comment_id,
+        accepted_decision_sha256=accepted_decision_sha256,
+        failure_evidence_sha256="4" * 64,
+        recovery_episode_sha256="5" * 64,
+        recovery_attempt=recovery_attempt,
+        continuation_eligible=continuation_eligible,
+        document={"prior_failure_evidence_sha256": list(prior_failures)},
+    )
+
+
 @pytest.mark.parametrize(
     ("plan_revision", "ancestry_status", "eligible"),
     [
@@ -2944,6 +2975,12 @@ def test_completed_application_prefers_saved_qualified_carrier_over_producer_res
             }
         raise AssertionError(path)
 
+    recovery = _qualified_recovery_fixture()
+    monkeypatch.setattr(
+        bridge,
+        "read_application_recovery_artifact",
+        lambda *_args, **_kwargs: recovery,
+    )
     monkeypatch.setattr(bridge, "read_github_artifact_bytes", lambda *_args: raw)
     completion = bridge._application_job(
         "owner/repo",
@@ -2951,6 +2988,7 @@ def test_completed_application_prefers_saved_qualified_carrier_over_producer_res
         90,
         read=fake_read,
         record=_accepted_carrier_record(),
+        accepted_decision_sha256="a" * 64,
     )
 
     if not eligible:
@@ -2967,8 +3005,16 @@ def test_completed_application_prefers_saved_qualified_carrier_over_producer_res
     assert completion.qualified_carrier.artifact_digest == digest
 
 
-def test_completed_application_distinguishes_absent_from_incomplete_carrier_listing() -> None:
+def test_completed_application_distinguishes_absent_from_incomplete_carrier_listing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     record = _accepted_carrier_record()
+    recovery = _qualified_recovery_fixture()
+    monkeypatch.setattr(
+        bridge,
+        "read_application_recovery_artifact",
+        lambda *_args, **_kwargs: recovery,
+    )
 
     def reader(total_count: int) -> bridge.GitHubReader:
         def fake_read(_repository: str, _token: str, path: str) -> object:
@@ -2998,6 +3044,7 @@ def test_completed_application_distinguishes_absent_from_incomplete_carrier_list
         90,
         read=reader(0),
         record=record,
+        accepted_decision_sha256="a" * 64,
     )
     incomplete = bridge._application_job(
         "owner/repo",
@@ -3005,12 +3052,13 @@ def test_completed_application_distinguishes_absent_from_incomplete_carrier_list
         90,
         read=reader(1),
         record=record,
+        accepted_decision_sha256="a" * 64,
     )
 
     assert (absent.state, absent.reason, absent.job_id) == (
         "RESUMABLE",
-        "application-completion-resuming",
-        888,
+        "application-completion-rerun-limit",
+        None,
     )
     assert (incomplete.state, incomplete.reason) == (
         "INVALID",
