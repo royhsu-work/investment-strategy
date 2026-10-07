@@ -28,7 +28,11 @@ from investment_strategy.scheduled_agent_application_materialization import (
     materialization_requires_validation,
     observe_materialization_target,
 )
-from investment_strategy.scheduled_agent_carrier import (CarrierRequired, carrier_plan_document, read_github_artifact_bytes)
+from investment_strategy.scheduled_agent_carrier import (
+    CarrierRequired,
+    carrier_plan_document,
+    read_github_artifact_bytes,
+)
 from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
 from investment_strategy.scheduled_agent_effect_contract import (
     EvidenceTarget,
@@ -3920,7 +3924,6 @@ def qualify_application_continuation_predecessor(
 
 
 def _recovery_failure_document(result: ApplyResult) -> dict[str, object]:
-    recovery = result.recovery_evidence
     if recovery is None:
         if result.carrier_plan is not None:
             return {
