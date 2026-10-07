@@ -3058,7 +3058,7 @@ def test_completed_application_distinguishes_absent_from_incomplete_carrier_list
                             "id": 777,
                             "display_title": "Scheduled Agent Application 90",
                             "status": "completed",
-                            "run_attempt": 1,
+                            "run_attempt": 50,
                             "head_sha": REVISION,
                         }
                     ]
@@ -3213,6 +3213,46 @@ def test_carrier_documents_reject_tampering_and_dispatch_round_trips_handoff() -
 
     assert parsed.application_continuation == continuation
     assert parsed.qualified_carrier == qualified
+
+
+def test_continuation_chain_selects_one_leaf_and_preserves_branches() -> None:
+    latest_runs = (
+        {
+            "id": 700,
+            "display_title": "Scheduled Agent Application 90",
+            "run_attempt": 50,
+        },
+        {
+            "id": 701,
+            "display_title": "Scheduled Agent Application 101",
+            "run_attempt": 1,
+        },
+        {
+            "id": 702,
+            "display_title": "Scheduled Agent Application 102",
+            "run_attempt": 1,
+        },
+    )
+    linear_leaf = bridge._continuation_leaf_comment_ids(
+        request_comment_id=90,
+        continuation_predecessors={101: (700, 1), 102: (701, 1)},
+        workflow_runs=latest_runs,
+    )
+    assert linear_leaf == (102,)
+
+    branched_leaves = bridge._continuation_leaf_comment_ids(
+        request_comment_id=90,
+        continuation_predecessors={101: (700, 50), 102: (700, 50)},
+        workflow_runs=latest_runs,
+    )
+    assert branched_leaves == (101, 102)
+
+    incomplete = bridge._continuation_leaf_comment_ids(
+        request_comment_id=90,
+        continuation_predecessors={101: (700, 1)},
+        workflow_runs=(latest_runs[0],),
+    )
+    assert incomplete is None
 
 
 def test_application_continuation_binds_exact_failure_transition() -> None:
