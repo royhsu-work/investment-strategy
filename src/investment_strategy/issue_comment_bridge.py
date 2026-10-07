@@ -21,6 +21,7 @@ from urllib.request import Request, urlopen
 from investment_strategy.scheduled_agent_action_model import Action as ModelAction
 from investment_strategy.scheduled_agent_action_model import next_action, role_for
 from investment_strategy.scheduled_agent_application_bridge import (
+    ApplicationContinuationRequest,
     ApplicationRecoveryArtifact,
     ApplicationRequest,
     application_continuation_correlation,
@@ -505,12 +506,6 @@ def _application_job(
             request_comment_id=request_comment_id,
         )
 
-    if run_attempt >= 50:
-        return ApplicationCompletion(
-            "INVALID",
-            "application-completion-rerun-limit",
-            request_comment_id=request_comment_id,
-        )
     recovery_artifact = None
     if (
         record is not None
@@ -1047,7 +1042,7 @@ def _accepted_application_state(
     current_issue: Mapping[str, object],
     current_revision: str,
     read: GitHubReader,
-    continuation_transport_comment_ids: tuple[int, ...] = (),
+    continuation_transport_comment_ids: tuple[int, ...] | None = (),
 ) -> ApplicationCompletion:
     worker = _application_worker_for_record(record, source)
     if worker is None or record.disposition != "ACCEPTED":
@@ -1122,6 +1117,18 @@ def _accepted_application_state(
     # semantic-intent marker so Phase B still resumes their job; historical
     # raw envelopes remain compatible with the old formal-only fixtures.
     if worker.requested_effects or semantic_intent:
+        if continuation_transport_comment_ids is None:
+            return ApplicationCompletion(
+                "INVALID",
+                "application-completion-continuation-chain-incomplete",
+                request_comment_id=record.request_comment_id,
+            )
+        if len(continuation_transport_comment_ids) > 1:
+            return ApplicationCompletion(
+                "INVALID",
+                "application-completion-continuation-chain-ambiguous",
+                request_comment_id=record.request_comment_id,
+            )
         resumed = _application_job(
             repository,
             token,
@@ -1691,7 +1698,9 @@ def _continuation_transport_comment_ids(
     record: ApplicationDecisionRecord,
     issue_comments: tuple[Mapping[str, object], ...],
     recent_comments: tuple[Mapping[str, object], ...],
-) -> tuple[int, ...]:
+    token: str,
+    read: GitHubReader,
+) -> tuple[int, ...] | None:
     """Find fresh transport comments for one immutable accepted intent.
 
     A continuation comment is deliberately not an application intent.  It is
@@ -1721,7 +1730,7 @@ def _continuation_transport_comment_ids(
     if len(decision_bodies) != 1:
         return ()
     decision_sha256 = hashlib.sha256(decision_bodies[0].encode("utf-8")).hexdigest()
-    matches: set[int] = set()
+    matches: dict[int, ApplicationContinuationRequest] = {}
     for comment in recent_comments:
         if not _trusted_connector_comment(comment, owner):
             continue
@@ -1754,8 +1763,107 @@ def _continuation_transport_comment_ids(
             and continuation.accepted_decision_sha256 == decision_sha256
             and continuation.continuation_correlation == expected_correlation
         ):
-            matches.add(comment_id)
-    return tuple(sorted(matches))
+            matches[comment_id] = continuation
+    if not matches:
+        return ()
+    workflow_runs = _application_runs(
+        repository,
+        token,
+        record.request_comment_id,
+        read=read,
+        transport_comment_ids=(record.request_comment_id, *sorted(matches)),
+    )
+    return _continuation_leaf_comment_ids(
+        request_comment_id=record.request_comment_id,
+        continuation_predecessors={
+            comment_id: (
+                continuation.predecessor_run_id,
+                continuation.predecessor_run_attempt,
+            )
+            for comment_id, continuation in matches.items()
+        },
+        workflow_runs=workflow_runs,
+    )
+
+
+def _continuation_leaf_comment_ids(
+    *,
+    request_comment_id: int,
+    continuation_predecessors: Mapping[int, tuple[int, int]],
+    workflow_runs: tuple[Mapping[str, object], ...] | None,
+) -> tuple[int, ...] | None:
+    """Reduce trusted continuation comments to the leaf of their observed run chain.
+
+    None means the Actions run lineage is incomplete or ambiguous, so the
+    caller must fail closed. Multiple leaf ids preserve a real branch for an
+    explicit ambiguity result.
+    """
+
+    if not continuation_predecessors:
+        return ()
+    if workflow_runs is None:
+        return None
+    transport_ids = set(continuation_predecessors)
+    if request_comment_id in transport_ids:
+        return None
+    transport_ids.add(request_comment_id)
+    run_by_comment: dict[int, tuple[int, int]] = {}
+    for run in workflow_runs:
+        title = run.get("display_title")
+        if not isinstance(title, str):
+            continue
+        comment_id = parse_application_run_name(title)
+        if comment_id is None or comment_id not in transport_ids:
+            continue
+        run_id = _positive_int(run.get("id"))
+        run_attempt = _positive_int(run.get("run_attempt"))
+        if run_id is None or run_attempt is None:
+            return None
+        identity = (run_id, run_attempt)
+        previous = run_by_comment.get(comment_id)
+        if previous is not None and previous != identity:
+            return None
+        run_by_comment[comment_id] = identity
+    if set(run_by_comment) != transport_ids:
+        return None
+
+    comment_by_run: dict[int, int] = {}
+    for comment_id, (run_id, _latest_attempt) in run_by_comment.items():
+        if run_id in comment_by_run:
+            return None
+        comment_by_run[run_id] = comment_id
+
+    children: dict[int, list[int]] = {comment_id: [] for comment_id in transport_ids}
+    for child_id, (predecessor_run_id, predecessor_run_attempt) in continuation_predecessors.items():
+        parent_id = comment_by_run.get(predecessor_run_id)
+        if parent_id is None:
+            return None
+        latest_attempt = run_by_comment[parent_id][1]
+        if predecessor_run_attempt > latest_attempt:
+            return None
+        children[parent_id].append(child_id)
+
+    leaves: set[int] = set()
+    visited: set[int] = set()
+    active: set[int] = set()
+
+    def visit(comment_id: int) -> bool:
+        if comment_id in active or comment_id in visited:
+            return False
+        active.add(comment_id)
+        visited.add(comment_id)
+        descendants = children[comment_id]
+        if not descendants and comment_id != request_comment_id:
+            leaves.add(comment_id)
+        for child_id in descendants:
+            if not visit(child_id):
+                return False
+        active.remove(comment_id)
+        return True
+
+    if not visit(request_comment_id) or visited != transport_ids:
+        return None
+    return tuple(sorted(leaves))
 
 
 def _application_continuation_body(
@@ -2033,6 +2141,8 @@ def qualify_application_completion(
                 continuation_transport_comment_ids=_continuation_transport_comment_ids(
                     repository=repository,
                     owner=owner,
+                    token=token,
+                    read=read,
                     source=source,
                     record=current_accepted[0],
                     issue_comments=issue_comments,
@@ -2125,6 +2235,8 @@ def qualify_application_completion(
             continuation_transport_comment_ids=_continuation_transport_comment_ids(
                 repository=repository,
                 owner=owner,
+                token=token,
+                read=read,
                 source=frontier_source,
                 record=frontier_owner,
                 issue_comments=issue_comments,
@@ -2317,6 +2429,8 @@ def qualify_application_completion(
         continuation_transport_comment_ids=_continuation_transport_comment_ids(
             repository=repository,
             owner=owner,
+            token=token,
+            read=read,
             source=source,
             record=record,
             issue_comments=issue_comments,
