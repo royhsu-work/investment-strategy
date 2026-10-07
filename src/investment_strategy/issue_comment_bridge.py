@@ -439,6 +439,7 @@ def _application_job(
     read: GitHubReader,
     record: ApplicationDecisionRecord | None = None,
     transport_comment_ids: tuple[int, ...] = (),
+    accepted_decision_sha256: str | None = None,
 ) -> ApplicationCompletion:
     """Locate one exact application run and prefer its durable carrier handoff."""
 
@@ -504,42 +505,6 @@ def _application_job(
             request_comment_id=request_comment_id,
         )
 
-    recovery_artifact = None
-    if record is not None:
-        try:
-            comments = _paged_list(
-                repository,
-                token,
-                f"issues/{record.issue_number}/comments?sort=created&direction=asc",
-                read=read,
-            )
-            accepted_bodies = [
-                cast(str, comment.get("body"))
-                for comment in comments
-                if is_github_actions_comment(comment)
-                and isinstance(comment.get("body"), str)
-                and (decision := parse_application_decision(comment.get("body"))) is not None
-                and decision.request_comment_id == record.request_comment_id
-                and decision.disposition == "ACCEPTED"
-                and decision.issue_number == record.issue_number
-                and decision.role == record.role
-                and decision.action == record.action
-            ]
-            if len(accepted_bodies) == 1:
-                accepted_sha256 = hashlib.sha256(accepted_bodies[0].encode("utf-8")).hexdigest()
-                recovery_artifact = read_application_recovery_artifact(
-                    repository,
-                    token,
-                    run_id=run_id,
-                    run_attempt=run_attempt,
-                    job_id=job_id,
-                    request_comment_id=record.request_comment_id,
-                    accepted_decision_sha256=accepted_sha256,
-                    read=read,
-                )
-        except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
-            recovery_artifact = None
-
     if record is not None:
         try:
             qualified_carrier = _qualified_carrier_for_application_run(
@@ -560,25 +525,33 @@ def _application_job(
                 request_comment_id=request_comment_id,
             )
         if qualified_carrier is not None:
-            if (
-                recovery_artifact is None
-                or not recovery_artifact.continuation_eligible
-                or recovery_artifact.recovery_attempt >= 3
-            ):
-                return ApplicationCompletion(
-                    "INVALID",
-                    "application-completion-carrier-recovery-evidence-incomplete",
-                    request_comment_id=request_comment_id,
-                    qualified_carrier=qualified_carrier,
-                    recovery_artifact=recovery_artifact,
-                )
+            # A saved, exact carrier plan is already an authorized handoff to
+            # the existing carrier consumer.  Recovery evidence governs a new
+            # continuation transport; it must not disable that independent
+            # canonical handoff.
             return ApplicationCompletion(
                 "RESUMABLE",
                 "application-completion-carrier-required",
                 request_comment_id=request_comment_id,
                 qualified_carrier=qualified_carrier,
-                recovery_artifact=recovery_artifact,
             )
+
+    recovery_artifact = None
+    if record is not None and accepted_decision_sha256 is not None:
+        try:
+            recovery_artifact = read_application_recovery_artifact(
+                repository,
+                token,
+                run_id=run_id,
+                run_attempt=run_attempt,
+                job_id=job_id,
+                request_comment_id=record.request_comment_id,
+                accepted_decision_sha256=accepted_decision_sha256,
+                read=read,
+                artifact_reader=read_github_artifact_bytes,
+            )
+        except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
+            recovery_artifact = None
 
     if recovery_artifact is None:
         return ApplicationCompletion(
@@ -746,6 +719,24 @@ def _preaccept_application_state(
         "application-completion-preaccept-terminal-no-accept",
         request_comment_id=request_comment_id,
     )
+
+
+def _accepted_decision_sha256(
+    record: ApplicationDecisionRecord,
+    comments: tuple[Mapping[str, object], ...],
+) -> str | None:
+    """Return the digest of the one exact accepted decision already observed."""
+
+    bodies = [
+        cast(str, comment.get("body"))
+        for comment in comments
+        if is_github_actions_comment(comment)
+        and isinstance(comment.get("body"), str)
+        and parse_application_decision(comment.get("body")) == record
+    ]
+    if len(bodies) != 1:
+        return None
+    return hashlib.sha256(bodies[0].encode("utf-8")).hexdigest()
 
 
 def _application_decisions(
@@ -1056,6 +1047,7 @@ def _accepted_application_state(
             "application-completion-accepted-intent-invalid",
             request_comment_id=record.request_comment_id,
         )
+    accepted_decision_sha256 = _accepted_decision_sha256(record, issue_comments)
     ancestry = _authorization_ancestry(
         repository,
         token,
@@ -1128,6 +1120,7 @@ def _accepted_application_state(
             read=read,
             record=record,
             transport_comment_ids=continuation_transport_comment_ids,
+            accepted_decision_sha256=accepted_decision_sha256,
         )
         if resumed.state == "RESUMABLE":
             return resumed
@@ -1196,6 +1189,7 @@ def _accepted_application_state(
             read=read,
             record=record,
             transport_comment_ids=continuation_transport_comment_ids,
+            accepted_decision_sha256=accepted_decision_sha256,
         )
     if successor is not None and observation.routing == expected_routing:
         return ApplicationCompletion(
