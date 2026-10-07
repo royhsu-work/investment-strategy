@@ -318,7 +318,7 @@ the same intent and semantic replay count remains zero.
 
 For first-carrier materialization, the apply-side already-complete check, immediate postcondition, and later fresh observer SHALL use one canonical durable-consequence proof for exact Issue, Change, branch, head, PR, manifest/content identity, lineage, and non-conflict. A pending continuation MAY remain valid after default-branch advancement only when the same proof classifies the consequence `INCOMPLETE` rather than complete or contradictory and the immutable original base is its ancestor with all carrier paths disjoint from intervening changes. Existing stale, overlap, identity, cardinality, and ambiguity guards remain mandatory. When an exact accepted intent has the verified branch ref and content but no matching PR, recovery SHALL emit only the missing application-owned PR consequence against fresh current main after the canonical proof plus ancestry, disjointness, exact branch/head/content, and complete all-head PR cardinality checks. It SHALL NOT rerun semantic work, recreate the branch, move the ref, or blindly create a duplicate PR.
 
-A fresh process SHALL reconstruct materialized-consequence completion from the existing `ConsequenceSpec.evidence_target` through the same canonical durable-consequence proof owner. It MUST NOT require invocation-local `_materialization_targets` to recognize an already durable consequence. Implementation-carrier qualification remains in its existing owner except where that owner supplies materialization proof primitives; it MUST NOT become a competing positive definition for the same materialized consequence. If an uncorrelated legacy result invalidates formal-frontier qualification while the exact source route remains current, recovery MAY resume only one accepted intent and its unique request-bound run/job after exact Issue/Change/Role/Action checks. For a completed request-bound run, that continuation is bounded to the first GitHub attempt; `run_attempt > 1` SHALL return the existing fail-closed `application-completion-rerun-limit` disposition and SHALL NOT emit a rerun job. The attempt number is GitHub-owned evidence and does not create repository retry state. Changed identity/routing, duplicate intent/run/job, or incomplete evidence SHALL fail closed. Existing correlation, formal qualification, source/frontier, carrier, validation, review, successor, and terminal gates remain in force.
+A fresh process SHALL reconstruct materialized-consequence completion from the existing `ConsequenceSpec.evidence_target` through the same canonical durable-consequence proof owner. It MUST NOT require invocation-local `_materialization_targets` to recognize an already durable consequence. Implementation-carrier qualification remains in its existing owner except where that owner supplies materialization proof primitives; it MUST NOT become a competing positive definition for the same materialized consequence. If an uncorrelated legacy result invalidates formal-frontier qualification while the exact source route remains current, recovery MAY resume only one accepted intent and its unique request-bound run/job after exact Issue/Change/Role/Action checks. For a completed request-bound run, `run_attempt` is GitHub-owned invocation evidence and is not the recovery budget. `run_attempt > 1` alone SHALL NOT permanently block recovery or authorize a rerun of that same run/job. A safe continuation MAY use the existing `APPLICATION_CONTINUATION` transport to start one fresh, separately identified run only after exact failure evidence, unique accepted intent/run/job, current authorization, and the bounded-recovery requirement below qualify it. Changed identity/routing, duplicate intent/run/job, or incomplete evidence SHALL fail closed. Existing correlation, formal qualification, source/frontier, carrier, validation, review, successor, and terminal gates remain in force.
 
 The materialized durable consequence itself SHALL have exactly one authoritative positive proof definition. Given one accepted intent and fresh repository state, the proof owner SHALL return exactly one of `COMPLETE(target, witness)`, `INCOMPLETE`, or `CONTRADICTORY(reason)`. `COMPLETE` SHALL require coherent Identity, Content, Lineage, and Non-conflict evidence together. Git topology labels such as historical, replacement, merged, reconciled, or direct SHALL be treated only as evidence/witness shapes and MUST NOT create separate top-level positive completion semantics.
 
@@ -490,14 +490,15 @@ After a lost or ambiguous write response, recovery SHALL observe/reconcile the e
 - AND the application still performs fresh authorization and exact postcondition checks before any remaining mutation
 - AND semantic work is not repeated
 
-#### Scenario: Repeated accepted-application attempt fails closed
+#### Scenario: A later run attempt does not permanently block bounded recovery
 
 - GIVEN one immutable accepted application intent still matches the current open Issue, Change, Role, and Action
 - AND its completed request-bound application run reports `run_attempt > 1`
+- AND qualified durable evidence proves a specific incomplete effect, no unresolved write ambiguity, and remaining recovery capacity
 - WHEN a fresh bridge invocation checks application completion
-- THEN it returns the machine-owned `application-completion-rerun-limit` fail-closed disposition
-- AND it emits no application job for another scheduled rerun
-- AND it does not replay semantic work or reapply the same consequence
+- THEN it does not rerun that same completed run/job
+- AND it MAY emit only the existing `APPLICATION_CONTINUATION` for a new fresh run bound to the same intent and exact evidence
+- AND semantic work is not replayed and fresh authorization/preconditions remain mandatory
 
 #### Scenario: Ambiguous accepted-application recovery remains fail closed
 
@@ -658,6 +659,67 @@ The derived wait SHALL be invalidated by a newer qualifying Human decision or ma
 - WHEN the next Scheduled Task wake reconstructs current state
 - THEN the derived wait no longer applies
 - AND ordinary fresh dispatch may invoke the mapped `Lead / resolve-question` Action
+
+### Requirement: Accepted-application rejection recovery is exact and bounded
+
+Accepted intent `I`, materialization/effect plan `P`, optional externally executable CarrierPlan `C` (which may be absent), and execution attempt `R` SHALL remain distinct. A failed effect SHALL NOT rewrite or replace `I`. Before an effect-precondition rejection is reduced to a generic batch outcome, the existing application/evidence owner SHALL preserve the exact failed effect and ordinal, operation/target, expected and observed preimage, guard reason, canonical completion proof, effects already proven complete, mutation status (`complete`, `not-complete`, or `unknown`), and unfinished boundary. Evidence SHALL bind the immutable accepted-decision digest and exact request/run/attempt/artifact and any plan ids that exist, and SHALL explicitly represent an absent CarrierPlan rather than guessing one. It SHALL not contain credentials or fabricate unobserved platform errors.
+
+Before any later write, recovery SHALL use current repository truth and fresh authorization. Unknown or lost write outcomes SHALL be reconciled read-only first. A complete canonical proof SHALL skip duplicate mutation. A stale/expired `P` or existing `C` MAY receive a `PLAN_SUPERSEDED` disposition only after its invalidation and already-completed effects are proven; this ends that plan's execution authority without changing `I`. A replacement `P` or `C` MAY be created only when the same accepted intent remains current and the canonical proof plus exact current preimages, lineage, authorization, and non-conflict checks prove the operation remains safe. Same-path overlap or an unresolvable expected/observed preimage conflict SHALL remain fail-closed with its exact blocker and the existing governed correction path; no automatic overwrite, force update, semantic replay, or guessed payload is allowed.
+
+A `run_attempt > 1` value alone SHALL neither permanently block a safe continuation nor authorize rerunning its completed run/job. A continuation SHALL use the existing `APPLICATION_CONTINUATION` path and create a fresh run only after unique intent/run/job, current Issue/Change/Role/Action, exact evidence, fresh authorization, and remaining recovery capacity are proven. No new Action, ResultKind, retry registry, counter, queue, cursor, lease, or progress database is introduced.
+
+One unresolved causal recovery episode SHALL allow at most three substantive recovery attempts across run attempts, fresh runs, wakes, continuations, and replacement plans. The limit SHALL be reconstructed from qualified durable accepted-intent and exception/effect evidence, keyed by the immutable intent plus normalized failing operation/guard/path. New run ids, plan ids, nonces, dates, or unrelated default-branch changes SHALL NOT reset the limit. An unchanged explicit refusal SHALL NOT be retried. Missing/ambiguous evidence, a failed evidence write, or exhaustion SHALL produce a precise fail-closed blocker and reopening condition. Only qualified causal repair or a newly governed correction may reopen evaluation.
+
+#### Scenario: Effect rejection preserves the exact failed guard
+
+- GIVEN an accepted application has three proposed effects and the second effect's expected preimage does not match the fresh observed target
+- WHEN the application rejects the effect batch
+- THEN durable qualified evidence names that exact effect, expected and observed preimage, guard reason, completed-effect set, mutation status, and unfinished boundary
+- AND the batch result is not reduced to `effect precondition rejected` alone
+
+#### Scenario: Same-path default advance remains a precise blocker
+
+- GIVEN an accepted plan is missing a desired materialization
+- AND fresh default-branch history changed the same requested path after the plan base
+- AND the canonical proof cannot prove the accepted desired consequence complete or safely project it
+- WHEN recovery reconciles the rejected plan
+- THEN it records `PLAN_SUPERSEDED` for that exact plan and reports the path conflict and expected/observed preimage
+- AND it performs no carrier or repository mutation
+- AND a new plan requires the existing governed correction path
+
+#### Scenario: Safe disjoint evolution permits a fresh plan
+
+- GIVEN the accepted materialization is incomplete
+- AND all intervening default-branch changes are proven disjoint from every requested path
+- AND exact identity, content, lineage, current authorization, and prospective-parent preimages remain valid
+- WHEN a fresh continuation reconstructs the necessary plan
+- THEN it may create one new plan bound to the same immutable accepted intent and current proof
+- AND it performs only the missing exact non-force operation
+- AND it creates no duplicate, rewind, or semantic request
+
+#### Scenario: Unknown write is reconciled before continuation
+
+- GIVEN a connector may have applied an operation but its response or evidence write was lost
+- WHEN a fresh recovery begins
+- THEN it performs read-only reconciliation against the exact target and accepted intent first
+- AND it does not issue another write until the outcome is proven incomplete and safe to continue
+- AND ambiguous evidence returns a precise blocker
+
+#### Scenario: The recovery cap spans new runs and plans
+
+- GIVEN one accepted intent has reached three substantive attempts for the same unresolved causal guard/path
+- AND later wakes use a new request correlation, run id, plan id, or date but show no qualified causal repair
+- WHEN the recovery owner evaluates the intent
+- THEN it emits no further continuation or mutation
+- AND it preserves the exact blocker and reopening condition
+
+#### Scenario: An unchanged refusal is not retried
+
+- GIVEN the last qualified attempt was explicitly refused by the same unchanged guard
+- AND no qualified causal repair or governed correction exists
+- WHEN a later scheduled wake evaluates the accepted intent
+- THEN it performs no application rerun or semantic replay
+- AND it returns the existing evidence-bound fail-closed disposition
 
 ### Requirement: Production idle acceptance follows legal formal termination
 
