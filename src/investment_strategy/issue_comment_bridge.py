@@ -505,39 +505,18 @@ def _application_job(
             request_comment_id=request_comment_id,
         )
 
-    if record is not None:
-        try:
-            qualified_carrier = _qualified_carrier_for_application_run(
-                repository,
-                token,
-                request_comment_id,
-                run=run,
-                run_id=run_id,
-                run_attempt=run_attempt,
-                job=job,
-                record=record,
-                read=read,
-            )
-        except (OSError, RuntimeError, ValueError):
-            return ApplicationCompletion(
-                "INVALID",
-                "application-completion-carrier-evidence-invalid",
-                request_comment_id=request_comment_id,
-            )
-        if qualified_carrier is not None:
-            # A saved, exact carrier plan is already an authorized handoff to
-            # the existing carrier consumer.  Recovery evidence governs a new
-            # continuation transport; it must not disable that independent
-            # canonical handoff.
-            return ApplicationCompletion(
-                "RESUMABLE",
-                "application-completion-carrier-required",
-                request_comment_id=request_comment_id,
-                qualified_carrier=qualified_carrier,
-            )
-
+    if run_attempt >= 50:
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-rerun-limit",
+            request_comment_id=request_comment_id,
+        )
     recovery_artifact = None
-    if record is not None and accepted_decision_sha256 is not None:
+    if (
+        record is not None
+        and accepted_decision_sha256 is not None
+        and isinstance(run.get("head_sha"), str)
+    ):
         try:
             recovery_artifact = read_application_recovery_artifact(
                 repository,
@@ -570,14 +549,54 @@ def _application_job(
             request_comment_id=request_comment_id,
             recovery_artifact=recovery_artifact,
         )
+
+    if record is not None:
+        try:
+            qualified_carrier = _qualified_carrier_for_application_run(
+                repository,
+                token,
+                request_comment_id,
+                run=run,
+                run_id=run_id,
+                run_attempt=run_attempt,
+                job=job,
+                record=record,
+                read=read,
+            )
+        except (OSError, RuntimeError, ValueError):
+            return ApplicationCompletion(
+                "INVALID",
+                "application-completion-carrier-evidence-invalid",
+                request_comment_id=request_comment_id,
+                recovery_artifact=recovery_artifact,
+            )
+        if qualified_carrier is not None:
+            if (
+                not recovery_artifact.continuation_eligible
+                or recovery_artifact.recovery_attempt >= 3
+            ):
+                return ApplicationCompletion(
+                    "INVALID",
+                    "application-completion-carrier-recovery-evidence-incomplete",
+                    request_comment_id=request_comment_id,
+                    qualified_carrier=qualified_carrier,
+                    recovery_artifact=recovery_artifact,
+                )
+            return ApplicationCompletion(
+                "RESUMABLE",
+                "application-completion-carrier-required",
+                request_comment_id=request_comment_id,
+                qualified_carrier=qualified_carrier,
+                recovery_artifact=recovery_artifact,
+            )
+
     if (
         not recovery_artifact.continuation_eligible
         or recovery_artifact.recovery_attempt >= 3
-        or run_attempt >= 50
     ):
         reason = (
             "application-completion-rerun-limit"
-            if recovery_artifact.recovery_attempt >= 3 or run_attempt >= 50
+            if recovery_artifact.recovery_attempt >= 3
             else "application-completion-recovery-boundary-unsafe"
         )
         return ApplicationCompletion(
