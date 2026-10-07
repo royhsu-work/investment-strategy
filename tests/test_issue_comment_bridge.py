@@ -29,6 +29,15 @@ from investment_strategy.workflow_dispatch import (
 WORKFLOW_PATH = Path(".github/workflows/scheduled-agent-bridge.yml")
 REQUEST_BODY = "DISPATCH_REQUEST\nRequested-At: 2026-09-03T03:45:00Z"
 REVISION = "cb8f9ec12d826e0d71897a4c73ece961d00df59e"
+_RECOVERY_TEST_FIELDS = {
+    "predecessor_run_id": 7001,
+    "predecessor_run_attempt": 1,
+    "predecessor_job_id": 7002,
+    "predecessor_artifact_id": 7003,
+    "predecessor_artifact_digest": "sha256:" + "1" * 64,
+    "failure_evidence_sha256": "2" * 64,
+    "recovery_episode_sha256": "3" * 64,
+}
 
 
 def _event(
@@ -186,6 +195,13 @@ def test_retry_limit_dispatch_result_carries_one_content_addressed_continuation(
         issue_number=138,
         original_request_comment_id=987,
         accepted_decision_sha256="a" * 64,
+        predecessor_run_id=7001,
+        predecessor_run_attempt=1,
+        predecessor_job_id=7002,
+        predecessor_artifact_id=7003,
+        predecessor_artifact_digest='sha256:' + '1' * 64,
+        failure_evidence_sha256='2' * 64,
+        recovery_episode_sha256='3' * 64,
     )
     decision = _decision("FAIL_CLOSED")
     decision = DispatchDecision(
@@ -2619,11 +2635,27 @@ def test_rerun_limit_has_a_fresh_transport_bound_to_the_exact_decision() -> None
             return [decision]
         raise AssertionError(path)
 
+    accepted_sha256 = hashlib.sha256(cast(str, decision["body"]).encode("utf-8")).hexdigest()
+    predecessor = bridge.ApplicationRecoveryArtifact(
+        run_id=7001,
+        run_attempt=1,
+        job_id=7002,
+        artifact_id=7003,
+        artifact_digest="sha256:" + "1" * 64,
+        request_comment_id=5810765007,
+        accepted_decision_sha256=accepted_sha256,
+        failure_evidence_sha256="2" * 64,
+        recovery_episode_sha256="3" * 64,
+        recovery_attempt=1,
+        continuation_eligible=True,
+        document={"prior_failure_evidence_sha256": []},
+    )
     body = bridge._application_continuation_body(
         repository="owner/repo",
         token=REVISION,
         source=source,
         request_comment_id=5810765007,
+        predecessor_evidence=predecessor,
         read=fake_read,
     )
 
@@ -3070,6 +3102,13 @@ def test_carrier_documents_reject_tampering_and_dispatch_round_trips_handoff() -
         issue_number=322,
         original_request_comment_id=90,
         accepted_decision_sha256="6" * 64,
+        predecessor_run_id=7001,
+        predecessor_run_attempt=1,
+        predecessor_job_id=7002,
+        predecessor_artifact_id=7003,
+        predecessor_artifact_digest='sha256:' + '1' * 64,
+        failure_evidence_sha256='2' * 64,
+        recovery_episode_sha256='3' * 64,
     )
     failed = _decision("FAIL_CLOSED")
     failed = DispatchDecision(
