@@ -1112,23 +1112,23 @@ def _accepted_application_state(
             "application-completion-successor-advanced",
             request_comment_id=record.request_comment_id,
         )
+    if continuation_transport_comment_ids is None:
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-continuation-chain-incomplete",
+            request_comment_id=record.request_comment_id,
+        )
+    if len(continuation_transport_comment_ids) > 1:
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-continuation-chain-ambiguous",
+            request_comment_id=record.request_comment_id,
+        )
     # An accepted semantic intent may intentionally have no worker-owned
     # requested effects.  New application-owned envelopes carry an explicit
     # semantic-intent marker so Phase B still resumes their job; historical
     # raw envelopes remain compatible with the old formal-only fixtures.
     if worker.requested_effects or semantic_intent:
-        if continuation_transport_comment_ids is None:
-            return ApplicationCompletion(
-                "INVALID",
-                "application-completion-continuation-chain-incomplete",
-                request_comment_id=record.request_comment_id,
-            )
-        if len(continuation_transport_comment_ids) > 1:
-            return ApplicationCompletion(
-                "INVALID",
-                "application-completion-continuation-chain-ambiguous",
-                request_comment_id=record.request_comment_id,
-            )
         resumed = _application_job(
             repository,
             token,
