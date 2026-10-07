@@ -666,7 +666,11 @@ Accepted intent `I`, materialization/effect plan `P`, optional externally execut
 
 Before any later write, recovery SHALL use current repository truth and fresh authorization. Unknown or lost write outcomes SHALL be reconciled read-only first. A complete canonical proof SHALL skip duplicate mutation. A stale/expired `P` or existing `C` MAY receive a `PLAN_SUPERSEDED` disposition only after its invalidation and already-completed effects are proven; this ends that plan's execution authority without changing `I`. A replacement `P` or `C` MAY be created only when the same accepted intent remains current and the canonical proof plus exact current preimages, lineage, authorization, and non-conflict checks prove the operation remains safe. Same-path overlap or an unresolvable expected/observed preimage conflict SHALL remain fail-closed with its exact blocker and the existing governed correction path; no automatic overwrite, force update, semantic replay, or guessed payload is allowed.
 
-A `run_attempt > 1` value alone SHALL neither permanently block a safe continuation nor authorize rerunning its completed run/job. A continuation SHALL use the existing `APPLICATION_CONTINUATION` path and create a fresh run only after unique intent/run/job, current Issue/Change/Role/Action, exact evidence, fresh authorization, and remaining recovery capacity are proven. No new Action, ResultKind, retry registry, counter, queue, cursor, lease, or progress database is introduced.
+A `run_attempt > 1` value alone SHALL neither permanently block a safe continuation nor authorize rerunning its completed run/job. A continuation SHALL use the existing `APPLICATION_CONTINUATION` path and create a fresh run only after unique intent/current predecessor, current Issue/Change/Role/Action, exact evidence chain, fresh authorization, and remaining recovery capacity are proven. No new Action, ResultKind, retry registry, counter, queue, cursor, lease, or progress database is introduced.
+
+The existing `APPLICATION_CONTINUATION` correlation SHALL be extended to bind the accepted-decision digest, one exact predecessor run/job/attempt and artifact id/digest, the structured rejection-evidence digest, and a stable causal-episode fingerprint. The per-transition correlation SHALL be deterministic from qualified evidence, not an arbitrary nonce; identical evidence SHALL map to the same correlation and at most one next continuation/run. Each new run SHALL have exactly one evidence-linked predecessor in one linear chain. Duplicate, branching, missing, or ambiguous continuation/run/artifact links SHALL fail closed. The stable episode fingerprint, which excludes run id, plan id, nonce, and date, SHALL carry the three-attempt cap across distinct transition correlations. Historical intent-only continuation comments do not count as qualified failure evidence or reset that cap. When a legacy attempt has only generic or incomplete failure evidence and a fresh canonical/safety proof cannot uniquely recover the remaining work and attempt history, the owner SHALL return a specific evidence-incomplete blocker without emitting a continuation.
+
+
 
 One unresolved causal recovery episode SHALL allow at most three substantive recovery attempts across run attempts, fresh runs, wakes, continuations, and replacement plans. The limit SHALL be reconstructed from qualified durable accepted-intent and exception/effect evidence, keyed by the immutable intent plus normalized failing operation/guard/path. New run ids, plan ids, nonces, dates, or unrelated default-branch changes SHALL NOT reset the limit. An unchanged explicit refusal SHALL NOT be retried. Missing/ambiguous evidence, a failed evidence write, or exhaustion SHALL produce a precise fail-closed blocker and reopening condition. Only qualified causal repair or a newly governed correction may reopen evaluation.
 
@@ -705,10 +709,19 @@ One unresolved causal recovery episode SHALL allow at most three substantive rec
 - AND it does not issue another write until the outcome is proven incomplete and safe to continue
 - AND ambiguous evidence returns a precise blocker
 
+#### Scenario: Legacy generic rejection is not guessed into a recovery attempt
+
+- GIVEN a historical accepted application has only a generic precondition-rejected result
+- AND no exact failed effect, evidence chain, or remaining attempt history can be reconstructed
+- WHEN the recovery owner evaluates the accepted intent
+- THEN it performs only the fresh read-only proof required to determine whether the consequence is already complete
+- AND if remaining work and attempt capacity are not uniquely provable, it returns an evidence-incomplete blocker
+- AND it emits no new continuation and fabricates no guard reason
+
 #### Scenario: The recovery cap spans new runs and plans
 
 - GIVEN one accepted intent has reached three substantive attempts for the same unresolved causal guard/path
-- AND later wakes use a new request correlation, run id, plan id, or date but show no qualified causal repair
+- AND later wakes use a new transition correlation, request correlation, run id, plan id, or date but show no qualified causal repair
 - WHEN the recovery owner evaluates the intent
 - THEN it emits no further continuation or mutation
 - AND it preserves the exact blocker and reopening condition
