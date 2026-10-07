@@ -4043,16 +4043,9 @@ def _write_application_recovery_evidence(
             "recovery_attempt": predecessor.recovery_attempt,
         }
     recovery = result.recovery_evidence
-    continuation_eligible = bool(
-        (result.carrier_plan is not None and run_attempt == 1)
-        or (
-            recovery is not None
-            and recovery.mutation_status == "not-complete"
-            and recovery.unfinished_boundary == "effect-precondition"
-            and not recovery.completed_effect_indexes
-            and run_attempt == 1
-        )
-    )
+    # A failed precondition is evidence, not permission to retry its frozen effect.
+    # Only a qualified carrier handoff may create a fresh continuation here.
+    continuation_eligible = result.carrier_plan is not None and run_attempt == 1
     document = {
         "schema": _APPLICATION_RECOVERY_SCHEMA,
         "repository": repository,
