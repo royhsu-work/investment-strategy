@@ -3924,6 +3924,7 @@ def qualify_application_continuation_predecessor(
 
 
 def _recovery_failure_document(result: ApplyResult) -> dict[str, object]:
+    recovery = result.recovery_evidence
     if recovery is None:
         if result.carrier_plan is not None:
             return {
