@@ -470,6 +470,11 @@ def test_main_accepts_only_a_fresh_continuation_transport(
         "_accepted_worker_result_for_continuation",
         lambda **_kwargs: raw,
     )
+    monkeypatch.setattr(
+        bridge,
+        "qualify_application_continuation_predecessor",
+        lambda *_args, **_kwargs: predecessor,
+    )
 
     def fake_apply(raw_result: str, **kwargs: object) -> tuple[EffectBatch, object]:
         seen["raw"] = raw_result
