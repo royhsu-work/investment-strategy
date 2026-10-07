@@ -50,6 +50,13 @@ from investment_strategy.workflow_dispatch import (
 _REPOSITORY = "royhsu-work/investment-strategy"
 _REVISION = "4e3241d7d84a64012bf3b6218442128a4cb48d7a"
 _CHANGE = "qualify-active-formal-consequences"
+_TEST_PREDECESSOR_RUN_ID = 9001
+_TEST_PREDECESSOR_RUN_ATTEMPT = 1
+_TEST_PREDECESSOR_JOB_ID = 9002
+_TEST_PREDECESSOR_ARTIFACT_ID = 9003
+_TEST_PREDECESSOR_ARTIFACT_DIGEST = "sha256:" + "1" * 64
+_TEST_FAILURE_EVIDENCE_SHA256 = "2" * 64
+_TEST_RECOVERY_EPISODE_SHA256 = "3" * 64
 
 
 def _worker_result(
@@ -317,6 +324,11 @@ def test_main_rehydrates_accepted_intent_before_transport_observation(
     )
     monkeypatch.setattr(
         bridge,
+        "qualify_application_continuation_predecessor",
+        lambda *_args, **_kwargs: predecessor,
+    )
+    monkeypatch.setattr(
+        bridge,
         "_fresh_event_observation",
         lambda *_args: pytest.fail("accepted recovery must not consult mutable transport"),
     )
@@ -375,6 +387,29 @@ def test_main_accepts_only_a_fresh_continuation_transport(
         issue_number=source.issue_number,
         original_request_comment_id=record.request_comment_id,
         accepted_decision_sha256=hashlib.sha256(decision_body.encode("utf-8")).hexdigest(),
+        predecessor_run_id=_TEST_PREDECESSOR_RUN_ID,
+        predecessor_run_attempt=_TEST_PREDECESSOR_RUN_ATTEMPT,
+        predecessor_job_id=_TEST_PREDECESSOR_JOB_ID,
+        predecessor_artifact_id=_TEST_PREDECESSOR_ARTIFACT_ID,
+        predecessor_artifact_digest=_TEST_PREDECESSOR_ARTIFACT_DIGEST,
+        failure_evidence_sha256=_TEST_FAILURE_EVIDENCE_SHA256,
+        recovery_episode_sha256=_TEST_RECOVERY_EPISODE_SHA256,
+    )
+    continuation = parse_application_continuation_request(continuation_body)
+    assert continuation is not None
+    predecessor = bridge.ApplicationRecoveryArtifact(
+        run_id=continuation.predecessor_run_id,
+        run_attempt=continuation.predecessor_run_attempt,
+        job_id=continuation.predecessor_job_id,
+        artifact_id=continuation.predecessor_artifact_id,
+        artifact_digest=continuation.predecessor_artifact_digest,
+        request_comment_id=continuation.original_request_comment_id,
+        accepted_decision_sha256=continuation.accepted_decision_sha256,
+        failure_evidence_sha256=continuation.failure_evidence_sha256,
+        recovery_episode_sha256=continuation.recovery_episode_sha256,
+        recovery_attempt=1,
+        continuation_eligible=True,
+        document={"prior_failure_evidence_sha256": []},
     )
     event_path = tmp_path / "continuation-event.json"
     event_path.write_text(
@@ -1008,6 +1043,13 @@ def test_application_continuation_is_content_addressed_and_strict() -> None:
         issue_number=138,
         original_request_comment_id=102,
         accepted_decision_sha256=decision_sha256,
+        predecessor_run_id=_TEST_PREDECESSOR_RUN_ID,
+        predecessor_run_attempt=_TEST_PREDECESSOR_RUN_ATTEMPT,
+        predecessor_job_id=_TEST_PREDECESSOR_JOB_ID,
+        predecessor_artifact_id=_TEST_PREDECESSOR_ARTIFACT_ID,
+        predecessor_artifact_digest=_TEST_PREDECESSOR_ARTIFACT_DIGEST,
+        failure_evidence_sha256=_TEST_FAILURE_EVIDENCE_SHA256,
+        recovery_episode_sha256=_TEST_RECOVERY_EPISODE_SHA256,
     )
 
     parsed = parse_application_continuation_request(rendered)
@@ -1017,7 +1059,17 @@ def test_application_continuation_is_content_addressed_and_strict() -> None:
     assert parsed.original_request_comment_id == 102
     assert parsed.accepted_decision_sha256 == decision_sha256
     assert parsed.continuation_correlation == application_continuation_correlation(
-        _REPOSITORY, 138, 102, decision_sha256
+        _REPOSITORY,
+        138,
+        102,
+        decision_sha256,
+        _TEST_PREDECESSOR_RUN_ID,
+        _TEST_PREDECESSOR_RUN_ATTEMPT,
+        _TEST_PREDECESSOR_JOB_ID,
+        _TEST_PREDECESSOR_ARTIFACT_ID,
+        _TEST_PREDECESSOR_ARTIFACT_DIGEST,
+        _TEST_FAILURE_EVIDENCE_SHA256,
+        _TEST_RECOVERY_EPISODE_SHA256,
     )
     assert parse_application_continuation_request(rendered + "\nextra") is None
     assert (
@@ -1045,6 +1097,13 @@ def test_accepted_continuation_binds_original_request_not_relay_comment() -> Non
         issue_number=source.issue_number,
         original_request_comment_id=record.request_comment_id,
         accepted_decision_sha256="b" * 64,
+        predecessor_run_id=_TEST_PREDECESSOR_RUN_ID,
+        predecessor_run_attempt=_TEST_PREDECESSOR_RUN_ATTEMPT,
+        predecessor_job_id=_TEST_PREDECESSOR_JOB_ID,
+        predecessor_artifact_id=_TEST_PREDECESSOR_ARTIFACT_ID,
+        predecessor_artifact_digest=_TEST_PREDECESSOR_ARTIFACT_DIGEST,
+        failure_evidence_sha256=_TEST_FAILURE_EVIDENCE_SHA256,
+        recovery_episode_sha256=_TEST_RECOVERY_EPISODE_SHA256,
     )
     continuation_request = ApplicationRequest(_REVISION, raw)
 
