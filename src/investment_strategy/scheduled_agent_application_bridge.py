@@ -3766,7 +3766,6 @@ def read_application_recovery_artifact(
         "trigger_comment_id",
         "run_id",
         "run_attempt",
-        "job_id",
         "current_revision",
         "authorization_revision",
         "recovery_attempt",
@@ -3789,7 +3788,6 @@ def read_application_recovery_artifact(
         set(document) != expected_keys
         or document.get("schema") != _APPLICATION_RECOVERY_SCHEMA
         or document.get("repository") != repository
-        or issue_number != document.get("issue_number")
         or isinstance(issue_number, bool)
         or not isinstance(issue_number, int)
         or issue_number <= 0
@@ -3797,7 +3795,6 @@ def read_application_recovery_artifact(
         or document.get("accepted_decision_sha256") != accepted_decision_sha256
         or document.get("run_id") != run_id
         or document.get("run_attempt") != run_attempt
-        or document.get("job_id") != job_id
         or document.get("current_revision") != run.get("head_sha")
         or not isinstance(document.get("role"), str)
         or not isinstance(document.get("action"), str)
@@ -3847,6 +3844,74 @@ def read_application_recovery_artifact(
         continuation_eligible=cast(bool, document.get("continuation_eligible")),
         document=document,
     )
+
+
+def qualify_application_continuation_predecessor(
+    repository: str,
+    token: str,
+    continuation: ApplicationContinuationRequest,
+    *,
+    current_comment_id: int,
+    read: Callable[[str, str, str], object] | None = None,
+    artifact_reader: Callable[[str, str, str], bytes] | None = None,
+) -> ApplicationRecoveryArtifact | None:
+    """Verify the exact prior artifact and reject duplicate continuation branches."""
+
+    api_read = _github_json if read is None else read
+    comments = _paged_github_list(
+        repository,
+        token,
+        f"issues/{continuation.issue_number}/comments?sort=created&direction=asc",
+    )
+    copies = []
+    accepted_bodies = []
+    for comment in comments:
+        if not isinstance(comment, Mapping):
+            continue
+        body = comment.get("body")
+        comment_id = _positive_int(comment.get("id"))
+        if is_github_actions_comment(comment) and isinstance(body, str):
+            record = parse_application_decision(body)
+            if (
+                record is not None
+                and record.request_comment_id == continuation.original_request_comment_id
+                and record.disposition == "ACCEPTED"
+            ):
+                accepted_bodies.append(body)
+        parsed = parse_application_continuation_request(body) if isinstance(body, str) else None
+        if (
+            parsed is not None
+            and parsed.continuation_correlation == continuation.continuation_correlation
+            and comment_id is not None
+        ):
+            copies.append(comment_id)
+    if len(copies) != 1 or copies[0] != current_comment_id or len(accepted_bodies) != 1:
+        return None
+    decision_sha256 = hashlib.sha256(accepted_bodies[0].encode("utf-8")).hexdigest()
+    if decision_sha256 != continuation.accepted_decision_sha256:
+        return None
+    evidence = read_application_recovery_artifact(
+        repository,
+        token,
+        run_id=continuation.predecessor_run_id,
+        run_attempt=continuation.predecessor_run_attempt,
+        job_id=continuation.predecessor_job_id,
+        request_comment_id=continuation.original_request_comment_id,
+        accepted_decision_sha256=decision_sha256,
+        read=api_read,
+        artifact_reader=artifact_reader,
+    )
+    if (
+        evidence is None
+        or evidence.artifact_id != continuation.predecessor_artifact_id
+        or evidence.artifact_digest != continuation.predecessor_artifact_digest
+        or evidence.failure_evidence_sha256 != continuation.failure_evidence_sha256
+        or evidence.recovery_episode_sha256 != continuation.recovery_episode_sha256
+        or not evidence.continuation_eligible
+        or evidence.recovery_attempt >= 3
+    ):
+        return None
+    return evidence
 
 
 def main() -> int:
