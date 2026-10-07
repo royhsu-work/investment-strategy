@@ -21,11 +21,13 @@ from urllib.request import Request, urlopen
 from investment_strategy.scheduled_agent_action_model import Action as ModelAction
 from investment_strategy.scheduled_agent_action_model import next_action, role_for
 from investment_strategy.scheduled_agent_application_bridge import (
+    ApplicationRecoveryArtifact,
     ApplicationRequest,
     application_continuation_correlation,
     dispatch_correlation_for,
     parse_application_continuation_request,
     parse_application_request,
+    read_application_recovery_artifact,
     render_application_continuation_request,
 )
 from investment_strategy.scheduled_agent_carrier import (
@@ -118,6 +120,7 @@ class ApplicationCompletion:
     request_comment_id: int | None = None
     job_id: int | None = None
     qualified_carrier: QualifiedCarrierPlan | None = None
+    recovery_artifact: ApplicationRecoveryArtifact | None = None
 
 
 PreacceptClassification = Literal[
@@ -1646,12 +1649,6 @@ def _continuation_transport_comment_ids(
     if len(decision_bodies) != 1:
         return ()
     decision_sha256 = hashlib.sha256(decision_bodies[0].encode("utf-8")).hexdigest()
-    expected_correlation = application_continuation_correlation(
-        repository,
-        source.issue_number,
-        record.request_comment_id,
-        decision_sha256,
-    )
     matches: set[int] = set()
     for comment in recent_comments:
         if not _trusted_connector_comment(comment, owner):
@@ -1661,9 +1658,26 @@ def _continuation_transport_comment_ids(
         if not isinstance(body, str) or comment_id is None:
             continue
         continuation = parse_application_continuation_request(body)
+        if continuation is None:
+            continue
+        try:
+            expected_correlation = application_continuation_correlation(
+                repository,
+                source.issue_number,
+                record.request_comment_id,
+                decision_sha256,
+                continuation.predecessor_run_id,
+                continuation.predecessor_run_attempt,
+                continuation.predecessor_job_id,
+                continuation.predecessor_artifact_id,
+                continuation.predecessor_artifact_digest,
+                continuation.failure_evidence_sha256,
+                continuation.recovery_episode_sha256,
+            )
+        except ValueError:
+            continue
         if (
-            continuation is not None
-            and continuation.issue_number == source.issue_number
+            continuation.issue_number == source.issue_number
             and continuation.original_request_comment_id == record.request_comment_id
             and continuation.accepted_decision_sha256 == decision_sha256
             and continuation.continuation_correlation == expected_correlation
@@ -1678,10 +1692,19 @@ def _application_continuation_body(
     token: str,
     source: WorkerRequest,
     request_comment_id: int,
+    predecessor_evidence: ApplicationRecoveryArtifact | None = None,
     read: GitHubReader = _github_json,
 ) -> str | None:
-    """Render one exact continuation transport for a completed retry limit."""
+    """Render one exact continuation transport for a qualified predecessor."""
 
+    if predecessor_evidence is None or not predecessor_evidence.continuation_eligible:
+        return None
+    if predecessor_evidence.recovery_attempt >= 3:
+        return None
+    if predecessor_evidence.failure_evidence_sha256 in cast(
+        list[str], predecessor_evidence.document["prior_failure_evidence_sha256"]
+    ):
+        return None
     comments = _paged_list(
         repository,
         token,
@@ -1708,12 +1731,36 @@ def _application_continuation_body(
     if len(matches) != 1:
         return None
     decision_sha256 = hashlib.sha256(matches[0].encode("utf-8")).hexdigest()
+    if predecessor_evidence.accepted_decision_sha256 != decision_sha256:
+        return None
     body = render_application_continuation_request(
         repository=repository,
         issue_number=source.issue_number,
         original_request_comment_id=request_comment_id,
         accepted_decision_sha256=decision_sha256,
+        predecessor_run_id=predecessor_evidence.run_id,
+        predecessor_run_attempt=predecessor_evidence.run_attempt,
+        predecessor_job_id=predecessor_evidence.job_id,
+        predecessor_artifact_id=predecessor_evidence.artifact_id,
+        predecessor_artifact_digest=predecessor_evidence.artifact_digest,
+        failure_evidence_sha256=predecessor_evidence.failure_evidence_sha256,
+        recovery_episode_sha256=predecessor_evidence.recovery_episode_sha256,
     )
+    parsed_body = parse_application_continuation_request(body)
+    if parsed_body is None:
+        raise RuntimeError("rendered application continuation is not parseable")
+    existing_correlations = {
+        comment_id
+        for item in comments
+        if isinstance(item, Mapping)
+        and isinstance(item.get("body"), str)
+        and (comment_id := _positive_int(item.get("id"))) is not None
+        and (existing := parse_application_continuation_request(cast(str, item.get("body"))))
+        is not None
+        and existing.continuation_correlation == parsed_body.continuation_correlation
+    }
+    if existing_correlations:
+        return None
     if parse_application_continuation_request(body) is None:
         raise RuntimeError("rendered application continuation is not parseable")
     return body
@@ -2526,6 +2573,7 @@ def main() -> int:
                         token=token,
                         source=source,
                         request_comment_id=completion.request_comment_id,
+                        predecessor_evidence=completion.recovery_artifact,
                     )
                 except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
                     # The accepted-decision evidence is not uniquely readable;
