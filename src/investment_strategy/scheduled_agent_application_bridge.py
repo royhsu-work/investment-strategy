@@ -3680,7 +3680,7 @@ def read_application_recovery_artifact(
         or not isinstance(run.get("head_sha"), str)
     ):
         return None
-    jobs_payload = api_read(repository, token, f"actions/runs/{run_id}/jobs?filter=all")
+    jobs_payload = api_read(repository, token, f"actions/runs/{run_id}/jobs")
     if not isinstance(jobs_payload, Mapping) or not isinstance(jobs_payload.get("jobs"), list):
         return None
     jobs = [
