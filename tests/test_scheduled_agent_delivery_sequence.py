@@ -60,6 +60,7 @@ class GitHubSequence:
         self.writes: list[tuple[str, str]] = []
         self.clock = 0
         self.requests: dict[int, dict[str, object]] = {}
+        self.recovery_predecessor: dict[str, object] | None = None
         self.interrupt_after: str | None = None
 
     def stamp(self) -> str:
@@ -198,6 +199,14 @@ class GitHubSequence:
             return paged(self.comments)
         if route == "issues/229/timeline":
             return paged(self.timeline)
+        if route.startswith("actions/runs/") and self.recovery_predecessor is not None:
+            predecessor = self.recovery_predecessor
+            if route == "actions/runs/8001":
+                return cast(dict[str, object], predecessor["run"])
+            if route == "actions/runs/8001/jobs":
+                return {"jobs": [cast(dict[str, object], predecessor["job"])]}
+            if route == "actions/runs/8001/artifacts":
+                return {"total_count": 1, "artifacts": [cast(dict[str, object], predecessor["artifact"])]}
         if route.startswith("issues/comments/"):
             number = int(route.rsplit("/", 1)[1])
             if number in self.requests:
@@ -336,6 +345,15 @@ class GitHubSequence:
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         for module in (bridge, native, carrier, materialization, effects, acceptance, resources):
             monkeypatch.setattr(module, "_github_json", self.read)
+        monkeypatch.setattr(
+            bridge,
+            "read_github_artifact_bytes",
+            lambda _repository, _token, _path: (
+                cast(str, self.recovery_predecessor["raw"]).encode("utf-8")
+                if self.recovery_predecessor is not None
+                else pytest.fail("unexpected artifact download")
+            ),
+        )
         prefix = f"https://api.github.com/repos/{REPO}"
         monkeypatch.setattr(
             runtime,
@@ -369,17 +387,98 @@ class GitHubSequence:
                 and record.disposition == "ACCEPTED"
             ]
             assert len(decisions) == 1
+            decision = decisions[0]
+            accepted_sha256 = hashlib.sha256(decision["body"].encode()).hexdigest()
+            record = effects.parse_application_decision(decision["body"])
+            assert record is not None
+            failure_evidence = {
+                "boundary": "fixture-effect-precondition",
+                "completed_effect_indexes": [],
+                "failed_effect_index": 0,
+                "reason": "fixture-only qualified predecessor",
+            }
+            failure_evidence_sha256 = hashlib.sha256(
+                json.dumps(
+                    failure_evidence,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ).encode("utf-8")
+            ).hexdigest()
+            recovery_document = {
+                "schema": "scheduled-agent-application-recovery/v1",
+                "repository": REPO,
+                "issue_number": record.issue_number,
+                "role": record.role,
+                "action": record.action,
+                "request_comment_id": request_id,
+                "accepted_decision_sha256": accepted_sha256,
+                "trigger_comment_id": request_id,
+                "run_id": 8001,
+                "run_attempt": 1,
+                "current_revision": HEAD,
+                "authorization_revision": record.authorization_revision,
+                "recovery_attempt": 1,
+                "recovery_episode_sha256": "3" * 64,
+                "prior_failure_evidence_sha256": [],
+                "predecessor": None,
+                "failure_evidence": failure_evidence,
+                "failure_evidence_sha256": failure_evidence_sha256,
+                "continuation_eligible": True,
+            }
+            recovery_raw = (
+                json.dumps(
+                    recovery_document,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+            artifact_digest = "sha256:" + hashlib.sha256(
+                recovery_raw.encode("utf-8")
+            ).hexdigest()
+            self.recovery_predecessor = {
+                "raw": recovery_raw,
+                "run": {
+                    "id": 8001,
+                    "run_attempt": 1,
+                    "status": "completed",
+                    "head_sha": HEAD,
+                    "display_title": f"Scheduled Agent Application {request_id}",
+                },
+                "job": {
+                    "id": 8002,
+                    "name": "apply",
+                    "run_attempt": 1,
+                    "status": "completed",
+                    "conclusion": "success",
+                    "steps": [
+                        {
+                            "name": "Upload exact application recovery evidence",
+                            "conclusion": "success",
+                        }
+                    ],
+                },
+                "artifact": {
+                    "id": 8003,
+                    "name": "application-recovery-evidence",
+                    "expired": False,
+                    "digest": artifact_digest,
+                    "workflow_run": {"id": 8001, "head_sha": HEAD},
+                },
+            }
             body = bridge.render_application_continuation_request(
                 repository=REPO,
-                issue_number=229,
+                issue_number=record.issue_number,
                 original_request_comment_id=request_id,
-                accepted_decision_sha256=hashlib.sha256(decisions[0]["body"].encode()).hexdigest(),
+                accepted_decision_sha256=accepted_sha256,
                 predecessor_run_id=8001,
                 predecessor_run_attempt=1,
                 predecessor_job_id=8002,
                 predecessor_artifact_id=8003,
-                predecessor_artifact_digest="sha256:" + "1" * 64,
-                failure_evidence_sha256="2" * 64,
+                predecessor_artifact_digest=artifact_digest,
+                failure_evidence_sha256=failure_evidence_sha256,
                 recovery_episode_sha256="3" * 64,
             )
             event_comment_id = request_id + 1000000
@@ -389,6 +488,7 @@ class GitHubSequence:
                 "user": {"login": "royhsu-work"},
                 "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
             }
+            self.comments.append(self.requests[event_comment_id])
         else:
             decision = classify_dispatch(runtime.acquire_current_github_preflight(REPO, "test"))
             assert decision.disposition == "AUTHORIZE", decision
