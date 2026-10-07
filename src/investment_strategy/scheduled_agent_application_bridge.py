@@ -3914,6 +3914,174 @@ def qualify_application_continuation_predecessor(
     return evidence
 
 
+def _recovery_failure_document(result: ApplyResult) -> dict[str, object]:
+    recovery = result.recovery_evidence
+    if recovery is None:
+        if result.carrier_plan is not None:
+            return {
+                "reason": result.reason,
+                "mutation_status": "not-complete",
+                "unfinished_boundary": "carrier-required",
+                "carrier_plan_id": result.carrier_plan.plan_id,
+                "completed_effect_indexes": [],
+                "completed_effect_sha256": [],
+            }
+        return {
+            "reason": result.reason,
+            "mutation_status": "unknown",
+            "unfinished_boundary": "application-result",
+            "completed_effect_indexes": [],
+            "completed_effect_sha256": [],
+        }
+    rejection_document = None
+    if recovery.rejection is not None:
+        classification = getattr(
+            recovery.rejection.classification,
+            "value",
+            recovery.rejection.classification,
+        )
+        rejection_document = {
+            "classification": str(classification),
+            "expected": recovery.rejection.expected,
+            "observed": recovery.rejection.observed,
+        }
+    return {
+        "reason": result.reason,
+        "failed_effect_index": recovery.failed_effect_index,
+        "failed_effect_kind": recovery.failed_effect_kind,
+        "failed_effect_sha256": recovery.failed_effect_sha256,
+        "completed_effect_indexes": list(recovery.completed_effect_indexes),
+        "completed_effect_sha256": list(recovery.completed_effect_sha256),
+        "mutation_status": recovery.mutation_status,
+        "unfinished_boundary": recovery.unfinished_boundary,
+        "rejection": rejection_document,
+    }
+
+
+def _write_application_recovery_evidence(
+    path: str | None,
+    *,
+    result: ApplyResult,
+    repository: str,
+    token: str,
+    source: WorkerRequest,
+    request_comment_id: int,
+    trigger_comment_id: int,
+    authorization_revision: str,
+    current_revision: str,
+    run_attempt: int,
+    continuation: ApplicationContinuationRequest | None,
+    predecessor: ApplicationRecoveryArtifact | None,
+) -> None:
+    """Persist a bounded, content-addressed application boundary for later reads."""
+
+    if path is None:
+        return
+    try:
+        decision = _application_decision_comment_for_request(
+            repository=repository,
+            token=token,
+            issue_number=source.issue_number,
+            request_comment_id=request_comment_id,
+        )
+    except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return
+    if decision is None:
+        return
+    accepted_record, accepted_body = decision
+    if (
+        accepted_record.disposition != "ACCEPTED"
+        or accepted_record.issue_number != source.issue_number
+        or accepted_record.role != source.role
+        or accepted_record.action != source.action
+    ):
+        return
+    accepted_sha256 = hashlib.sha256(accepted_body.encode("utf-8")).hexdigest()
+    if continuation is not None and continuation.accepted_decision_sha256 != accepted_sha256:
+        return
+    try:
+        run_id = int(os.environ.get("GITHUB_RUN_ID", ""))
+    except ValueError:
+        return
+    if _strict_positive_int(run_id) is None or _strict_positive_int(run_attempt) is None:
+        return
+
+    failure_evidence = _recovery_failure_document(result)
+    failure_evidence_sha256 = _canonical_sha256(failure_evidence)
+    if predecessor is None:
+        episode_sha256 = _canonical_sha256(
+            {
+                "schema": "scheduled-agent-recovery-episode/v1",
+                "repository": repository,
+                "issue_number": source.issue_number,
+                "request_comment_id": request_comment_id,
+                "accepted_decision_sha256": accepted_sha256,
+            }
+        )
+        recovery_attempt = run_attempt
+        prior_failures: list[str] = []
+        predecessor_document = None
+    else:
+        episode_sha256 = predecessor.recovery_episode_sha256
+        recovery_attempt = predecessor.recovery_attempt + 1
+        prior_failures = list(
+            cast(list[str], predecessor.document["prior_failure_evidence_sha256"])
+        )
+        prior_failures.append(predecessor.failure_evidence_sha256)
+        predecessor_document = {
+            "run_id": predecessor.run_id,
+            "run_attempt": predecessor.run_attempt,
+            "job_id": predecessor.job_id,
+            "artifact_id": predecessor.artifact_id,
+            "artifact_digest": predecessor.artifact_digest,
+            "failure_evidence_sha256": predecessor.failure_evidence_sha256,
+            "recovery_attempt": predecessor.recovery_attempt,
+        }
+    recovery = result.recovery_evidence
+    continuation_eligible = bool(
+        result.carrier_plan is not None
+        or (
+            recovery is not None
+            and recovery.mutation_status == "not-complete"
+            and recovery.unfinished_boundary == "effect-precondition"
+            and not recovery.completed_effect_indexes
+            and run_attempt == 1
+        )
+    )
+    document = {
+        "schema": _APPLICATION_RECOVERY_SCHEMA,
+        "repository": repository,
+        "issue_number": source.issue_number,
+        "role": source.role,
+        "action": source.action,
+        "request_comment_id": request_comment_id,
+        "accepted_decision_sha256": accepted_sha256,
+        "trigger_comment_id": trigger_comment_id,
+        "run_id": run_id,
+        "run_attempt": run_attempt,
+        "current_revision": current_revision,
+        "authorization_revision": authorization_revision,
+        "recovery_attempt": recovery_attempt,
+        "recovery_episode_sha256": episode_sha256,
+        "prior_failure_evidence_sha256": prior_failures,
+        "predecessor": predecessor_document,
+        "failure_evidence": failure_evidence,
+        "failure_evidence_sha256": failure_evidence_sha256,
+        "continuation_eligible": continuation_eligible,
+    }
+    try:
+        Path(path).write_text(
+            json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        return
+    output_path = os.environ.get("GITHUB_OUTPUT")
+    if output_path:
+        with Path(output_path).open("a", encoding="utf-8") as output:
+            output.write(f"recovery_evidence_path={path}\n")
+
+
 def main() -> int:
     """Apply one worker result after fresh repository authorization."""
 
@@ -3945,6 +4113,7 @@ def main() -> int:
     accepted_intent: ApplicationDecisionRecord | None = None
     accepted_raw_worker_result: str | None = None
     continuation: ApplicationContinuationRequest | None = None
+    predecessor_evidence: ApplicationRecoveryArtifact | None = None
     if isinstance(body, str):
         continuation = parse_application_continuation_request(body)
         if body.startswith(APPLICATION_CONTINUATION_MARKER) and continuation is None:
@@ -4007,6 +4176,14 @@ def main() -> int:
             or expected_correlation != continuation.continuation_correlation
         ):
             raise ValueError("application continuation correlation is invalid")
+        predecessor_evidence = qualify_application_continuation_predecessor(
+            repository,
+            token,
+            continuation,
+            current_comment_id=event_comment_id,
+        )
+        if predecessor_evidence is None:
+            raise ValueError("application continuation predecessor evidence is invalid")
 
     if (
         continuation is None
@@ -4327,6 +4504,21 @@ def main() -> int:
         carrier_result = ApplyResult(False, "carrier_required", carrier_plan=exc.plan)
         _write_carrier_outputs(carrier_result)
         _write_validation_outputs(None)
+        if plan.source is not None and plan.request_comment_id is not None:
+            _write_application_recovery_evidence(
+                args.recovery_evidence_path,
+                result=carrier_result,
+                repository=repository,
+                token=token,
+                source=plan.source,
+                request_comment_id=plan.request_comment_id,
+                trigger_comment_id=event_comment_id or plan.request_comment_id,
+                authorization_revision=request.authorization_revision,
+                current_revision=args.revision,
+                run_attempt=args.run_attempt,
+                continuation=continuation,
+                predecessor=predecessor_evidence,
+            )
         print(
             json.dumps(
                 {
@@ -4348,6 +4540,20 @@ def main() -> int:
         # result surface while enforcing the same invocation boundary.
         _write_carrier_outputs(result)
         _write_validation_outputs(None)
+        _write_application_recovery_evidence(
+            args.recovery_evidence_path,
+            result=result,
+            repository=repository,
+            token=token,
+            source=plan.source,
+            request_comment_id=plan.request_comment_id,
+            trigger_comment_id=event_comment_id or plan.request_comment_id,
+            authorization_revision=request.authorization_revision,
+            current_revision=args.revision,
+            run_attempt=args.run_attempt,
+            continuation=continuation,
+            predecessor=predecessor_evidence,
+        )
         print(
             json.dumps(
                 {
@@ -4380,6 +4586,20 @@ def main() -> int:
         target = None
     _write_carrier_outputs(result)
     _write_validation_outputs(target)
+    _write_application_recovery_evidence(
+        args.recovery_evidence_path,
+        result=result,
+        repository=repository,
+        token=token,
+        source=plan.source,
+        request_comment_id=plan.request_comment_id,
+        trigger_comment_id=event_comment_id or plan.request_comment_id,
+        authorization_revision=request.authorization_revision,
+        current_revision=args.revision,
+        run_attempt=args.run_attempt,
+        continuation=continuation,
+        predecessor=predecessor_evidence,
+    )
     print(
         json.dumps(
             {
