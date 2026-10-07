@@ -3186,7 +3186,7 @@ def test_carrier_documents_reject_tampering_and_dispatch_round_trips_handoff() -
 
 
 def test_application_continuation_binds_exact_failure_transition() -> None:
-    render = getattr(bridge, "render_application_continuation_request")
+    render = bridge.render_application_continuation_request
     common = {
         "repository": "owner/repo",
         "issue_number": 322,
