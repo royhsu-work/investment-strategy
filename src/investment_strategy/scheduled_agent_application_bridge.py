@@ -10,7 +10,7 @@ import json
 import os
 import re
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, cast
@@ -28,7 +28,7 @@ from investment_strategy.scheduled_agent_application_materialization import (
     materialization_requires_validation,
     observe_materialization_target,
 )
-from investment_strategy.scheduled_agent_carrier import CarrierRequired, carrier_plan_document
+from investment_strategy.scheduled_agent_carrier import (CarrierRequired, carrier_plan_document, read_github_artifact_bytes)
 from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
 from investment_strategy.scheduled_agent_effect_contract import (
     EvidenceTarget,
@@ -3623,6 +3623,7 @@ def main() -> int:
     parser.add_argument("--validation-passed", action="store_true")
     parser.add_argument("--validated-revision")
     parser.add_argument("--run-attempt", type=int, default=1)
+    parser.add_argument("--recovery-evidence-path")
     args = parser.parse_args()
     if args.run_attempt <= 0:
         raise ValueError("run attempt must be positive")
