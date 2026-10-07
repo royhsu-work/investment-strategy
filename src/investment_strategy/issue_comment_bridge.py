@@ -518,7 +518,7 @@ def _application_job(
                 for comment in comments
                 if is_github_actions_comment(comment)
                 and isinstance(comment.get("body"), str)
-                and (decision := parse_application_decision(comment.get("body")) is not None
+                and (decision := parse_application_decision(comment.get("body"))) is not None
                 and decision.request_comment_id == record.request_comment_id
                 and decision.disposition == "ACCEPTED"
                 and decision.issue_number == record.issue_number
