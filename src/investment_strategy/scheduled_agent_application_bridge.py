@@ -3801,7 +3801,7 @@ def read_application_recovery_artifact(
         or not isinstance(authorization_revision, str)
         or _SHA.fullmatch(authorization_revision) is None
         or recovery_attempt is None
-        or recovery_attempt > 3
+        or recovery_attempt > 50
         or not isinstance(episode_sha256, str)
         or re.fullmatch(r"[0-9a-f]{64}", episode_sha256) is None
         or not isinstance(evidence_sha256, str)
@@ -3821,6 +3821,9 @@ def read_application_recovery_artifact(
     predecessor = document.get("predecessor")
     if recovery_attempt == 1:
         if predecessor is not None or prior_failures:
+            return None
+    elif predecessor is None:
+        if cast(bool, document.get("continuation_eligible")) or prior_failures:
             return None
     elif (
         not isinstance(predecessor, Mapping)
