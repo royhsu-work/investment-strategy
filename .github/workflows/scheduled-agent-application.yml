@@ -127,7 +127,7 @@ jobs:
           path: ${{ steps.apply.outputs.recovery_evidence_path }}
           archive: false
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
 
       - name: Persist exact external carrier plan
         id: carrier
