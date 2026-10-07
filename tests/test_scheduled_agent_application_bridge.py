@@ -399,7 +399,7 @@ def test_recovery_artifact_uses_chain_ordinal_after_a_workflow_rerun(
         str(output),
         result=bridge.ApplyResult(False, "carrier-required", carrier_plan=carrier_plan),
         repository=_REPOSITORY,
-        token="token",
+        token=_REVISION,
         source=source,
         request_comment_id=record.request_comment_id,
         trigger_comment_id=404,
