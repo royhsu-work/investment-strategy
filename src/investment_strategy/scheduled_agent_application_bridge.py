@@ -125,6 +125,40 @@ class ApplicationContinuationRequest:
     continuation_correlation: str
 
 
+@dataclass(frozen=True)
+class ApplicationRecoveryArtifact:
+    """One exact run/job/artifact transition eligible for fresh continuation."""
+
+    run_id: int
+    run_attempt: int
+    job_id: int
+    artifact_id: int
+    artifact_digest: str
+    request_comment_id: int
+    accepted_decision_sha256: str
+    failure_evidence_sha256: str
+    recovery_episode_sha256: str
+    recovery_attempt: int
+    continuation_eligible: bool
+    document: Mapping[str, object]
+
+
+_APPLICATION_RECOVERY_ARTIFACT = "application-recovery-evidence"
+_APPLICATION_RECOVERY_SCHEMA = "scheduled-agent-application-recovery/v1"
+_MAX_APPLICATION_RECOVERY_BYTES = 65_536
+
+
+def _canonical_sha256(value: object) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _strict_positive_int(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
 def application_continuation_correlation(
     repository: str,
     issue_number: int,
