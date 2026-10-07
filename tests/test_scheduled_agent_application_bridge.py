@@ -324,11 +324,6 @@ def test_main_rehydrates_accepted_intent_before_transport_observation(
     )
     monkeypatch.setattr(
         bridge,
-        "qualify_application_continuation_predecessor",
-        lambda *_args, **_kwargs: predecessor,
-    )
-    monkeypatch.setattr(
-        bridge,
         "_fresh_event_observation",
         lambda *_args: pytest.fail("accepted recovery must not consult mutable transport"),
     )
