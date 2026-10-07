@@ -4364,4 +4364,3 @@ def test_effect_precondition_rejection_records_recovery_boundary() -> None:
     assert getattr(evidence, "mutation_status", None) == "not-complete"
     assert getattr(evidence, "unfinished_boundary", None) == "effect-precondition"
     assert getattr(evidence, "rejection", None) == rejection
-
