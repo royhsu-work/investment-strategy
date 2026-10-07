@@ -995,8 +995,8 @@ def test_accepted_formal_result_waits_for_consequence_postconditions(
         now=datetime(2026, 9, 18, 3, 0, tzinfo=UTC),
     )
 
-    assert completion.state == "INVALID"
-    assert completion.reason == "application-completion-recovery-evidence-missing"
+    assert completion.state == "RESUMABLE"
+    assert completion.reason == "application-completion-formal-result-pending"
     assert completion.request_comment_id == 90
     assert completion.job_id is None
 
