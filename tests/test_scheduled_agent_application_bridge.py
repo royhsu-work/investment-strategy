@@ -13,6 +13,10 @@ from typing import cast
 import pytest
 
 import investment_strategy.scheduled_agent_application_bridge as bridge
+from investment_strategy.scheduled_agent_action_model import (
+    ApplicationRejection,
+    ApplicationRejectionKind,
+)
 from investment_strategy.scheduled_agent_application_bridge import (
     APPLICATION_REQUEST_MARKER,
     AUTHORIZATION_REVISION_PREFIX,
@@ -28,6 +32,7 @@ from investment_strategy.scheduled_agent_checkin import checkin_title
 from investment_strategy.scheduled_agent_effects import (
     ApplicationDecisionRecord,
     EffectBatch,
+    EffectRecoveryEvidence,
     GitHubEffectAdapter,
     formal_application_correlation,
 )
@@ -415,6 +420,106 @@ def test_recovery_artifact_uses_chain_ordinal_after_a_workflow_rerun(
     assert document["recovery_attempt"] == 1
     assert document["predecessor"] is None
     assert document["continuation_eligible"] is True
+
+
+def test_recovery_evidence_continues_only_for_unwritten_precondition_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    worker = _worker_result(
+        action=source.action,
+        role=source.role,
+        result_kind="more-implementation-required",
+    )
+    worker["change"] = _CHANGE
+    raw = json.dumps(worker, sort_keys=True, separators=(",", ":"))
+    body = _effect_request(worker)
+    record = _accepted_record(
+        raw,
+        body,
+        source=source,
+        change=_CHANGE,
+        result_kind="more-implementation-required",
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_application_decision_comment_for_request",
+        lambda **_kwargs: (record, "accepted decision"),
+    )
+    monkeypatch.setenv("GITHUB_RUN_ID", "7001")
+    rejection = ApplicationRejection(
+        ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+        "target is at the expected revision",
+        "target revision changed",
+    )
+
+    def write_evidence(name: str, evidence: EffectRecoveryEvidence) -> dict[str, object]:
+        output = tmp_path / f"{name}.json"
+        bridge._write_application_recovery_evidence(
+            str(output),
+            result=bridge.ApplyResult(
+                False,
+                "effect precondition rejected",
+                rejection=rejection,
+                recovery_evidence=evidence,
+            ),
+            repository=_REPOSITORY,
+            token=_REVISION,
+            source=source,
+            request_comment_id=record.request_comment_id,
+            trigger_comment_id=404,
+            authorization_revision=_REVISION,
+            current_revision=_REVISION,
+            run_attempt=1,
+            continuation=None,
+            predecessor=None,
+        )
+        return json.loads(output.read_text(encoding="utf-8"))
+
+    safe = write_evidence(
+        "safe",
+        EffectRecoveryEvidence(
+            failed_effect_index=0,
+            failed_effect_kind="github-mutation",
+            failed_effect_sha256="a" * 64,
+            completed_effect_indexes=(),
+            completed_effect_sha256=(),
+            mutation_status="not-complete",
+            unfinished_boundary="effect-precondition",
+            rejection=rejection,
+        ),
+    )
+    partial = write_evidence(
+        "partial",
+        EffectRecoveryEvidence(
+            failed_effect_index=1,
+            failed_effect_kind="github-mutation",
+            failed_effect_sha256="b" * 64,
+            completed_effect_indexes=(0,),
+            completed_effect_sha256=("c" * 64,),
+            mutation_status="not-complete",
+            unfinished_boundary="effect-precondition",
+            rejection=rejection,
+        ),
+    )
+    unknown_postcondition = write_evidence(
+        "unknown-postcondition",
+        EffectRecoveryEvidence(
+            failed_effect_index=0,
+            failed_effect_kind="github-mutation",
+            failed_effect_sha256="d" * 64,
+            completed_effect_indexes=(),
+            completed_effect_sha256=(),
+            mutation_status="unknown",
+            unfinished_boundary="effect-postcondition",
+            rejection=rejection,
+        ),
+    )
+
+    assert safe["continuation_eligible"] is True
+    assert partial["continuation_eligible"] is False
+    assert unknown_postcondition["continuation_eligible"] is False
 
 
 def test_main_accepts_only_a_fresh_continuation_transport(
@@ -2291,6 +2396,22 @@ def test_application_boundary_does_not_replay_dispatch_artifacts() -> None:
     assert "FORMALIZE_CHANGE_REQUEST" not in workflow
     assert "End invocation at CarrierRequired boundary" in workflow
     assert workflow.count("steps.apply.outputs.carrier_required != 'true'") == 8
+    validation_apply_start = workflow.index(
+        "      - name: Persist the derived successor after exact validation"
+    )
+    final_evidence_upload = workflow.index(
+        "      - name: Upload final exact application recovery evidence"
+    )
+    final_evidence_step = workflow[final_evidence_upload:]
+    assert final_evidence_upload > validation_apply_start
+    assert (
+        "id: post_validation_apply"
+        in workflow[validation_apply_start:final_evidence_upload]
+    )
+    assert "if: always()" in final_evidence_step
+    assert "steps.post_validation_apply.outputs.recovery_evidence_path" in final_evidence_step
+    assert "name: application-recovery-evidence" in final_evidence_step
+    assert "overwrite: true" in final_evidence_step
 
 
 def test_main_exits_at_carrier_boundary_before_formal_continuation(
