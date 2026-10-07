@@ -374,6 +374,13 @@ class GitHubSequence:
                 issue_number=229,
                 original_request_comment_id=request_id,
                 accepted_decision_sha256=hashlib.sha256(decisions[0]["body"].encode()).hexdigest(),
+                predecessor_run_id=8001,
+                predecessor_run_attempt=1,
+                predecessor_job_id=8002,
+                predecessor_artifact_id=8003,
+                predecessor_artifact_digest="sha256:" + "1" * 64,
+                failure_evidence_sha256="2" * 64,
+                recovery_episode_sha256="3" * 64,
             )
             event_comment_id = request_id + 1000000
             self.requests[event_comment_id] = {
