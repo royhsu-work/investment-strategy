@@ -1771,7 +1771,7 @@ def _application_continuation_body(
 
     if predecessor_evidence is None or not predecessor_evidence.continuation_eligible:
         return None
-     if predecessor_evidence.failure_evidence_sha256 in cast(
+    if predecessor_evidence.failure_evidence_sha256 in cast(
         list[str], predecessor_evidence.document["prior_failure_evidence_sha256"]
     ):
         return None
