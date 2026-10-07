@@ -3217,21 +3217,32 @@ def test_carrier_documents_reject_tampering_and_dispatch_round_trips_handoff() -
 
 def test_application_continuation_binds_exact_failure_transition() -> None:
     render = bridge.render_application_continuation_request
-    common = {
-        "repository": "owner/repo",
-        "issue_number": 322,
-        "original_request_comment_id": 987,
-        "accepted_decision_sha256": "a" * 64,
-        "predecessor_run_id": 12345,
-        "predecessor_run_attempt": 2,
-        "predecessor_job_id": 23456,
-        "predecessor_artifact_id": 34567,
-        "predecessor_artifact_digest": "sha256:" + "b" * 64,
-        "failure_evidence_sha256": "c" * 64,
-        "recovery_episode_sha256": "d" * 64,
-    }
-    first = render(**common)
-    duplicate = render(**common)
+    first = render(
+        repository="owner/repo",
+        issue_number=322,
+        original_request_comment_id=987,
+        accepted_decision_sha256="a" * 64,
+        predecessor_run_id=12345,
+        predecessor_run_attempt=2,
+        predecessor_job_id=23456,
+        predecessor_artifact_id=34567,
+        predecessor_artifact_digest="sha256:" + "b" * 64,
+        failure_evidence_sha256="c" * 64,
+        recovery_episode_sha256="d" * 64,
+    )
+    duplicate = render(
+        repository="owner/repo",
+        issue_number=322,
+        original_request_comment_id=987,
+        accepted_decision_sha256="a" * 64,
+        predecessor_run_id=12345,
+        predecessor_run_attempt=2,
+        predecessor_job_id=23456,
+        predecessor_artifact_id=34567,
+        predecessor_artifact_digest="sha256:" + "b" * 64,
+        failure_evidence_sha256="c" * 64,
+        recovery_episode_sha256="d" * 64,
+    )
     parsed = bridge.parse_application_continuation_request(first)
 
     assert first == duplicate
@@ -3244,14 +3255,19 @@ def test_application_continuation_binds_exact_failure_transition() -> None:
     assert getattr(parsed, "failure_evidence_sha256", None) == "c" * 64
     assert getattr(parsed, "recovery_episode_sha256", None) == "d" * 64
 
-    next_transition = dict(common)
-    next_transition["predecessor_run_id"] = 12346
-    next_transition["predecessor_run_attempt"] = 1
-    next_transition["predecessor_job_id"] = 23457
-    next_transition["predecessor_artifact_id"] = 34568
-    next_transition["predecessor_artifact_digest"] = "sha256:" + "e" * 64
-    next_transition["failure_evidence_sha256"] = "f" * 64
-    next_body = render(**next_transition)
+    next_body = render(
+        repository="owner/repo",
+        issue_number=322,
+        original_request_comment_id=987,
+        accepted_decision_sha256="a" * 64,
+        predecessor_run_id=12346,
+        predecessor_run_attempt=1,
+        predecessor_job_id=23457,
+        predecessor_artifact_id=34568,
+        predecessor_artifact_digest="sha256:" + "e" * 64,
+        failure_evidence_sha256="f" * 64,
+        recovery_episode_sha256="d" * 64,
+    )
     next_parsed = bridge.parse_application_continuation_request(next_body)
 
     assert next_body != first
