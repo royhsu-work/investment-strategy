@@ -571,10 +571,7 @@ def _application_job(
                 recovery_artifact=recovery_artifact,
             )
         if qualified_carrier is not None:
-            if (
-                not recovery_artifact.continuation_eligible
-                or recovery_artifact.recovery_attempt >= 3
-            ):
+            if not recovery_artifact.continuation_eligible:
                 return ApplicationCompletion(
                     "INVALID",
                     "application-completion-carrier-recovery-evidence-incomplete",
@@ -590,24 +587,16 @@ def _application_job(
                 recovery_artifact=recovery_artifact,
             )
 
-    if (
-        not recovery_artifact.continuation_eligible
-        or recovery_artifact.recovery_attempt >= 3
-    ):
-        reason = (
-            "application-completion-rerun-limit"
-            if recovery_artifact.recovery_attempt >= 3
-            else "application-completion-recovery-boundary-unsafe"
-        )
+    if not recovery_artifact.continuation_eligible:
         return ApplicationCompletion(
             "INVALID",
-            reason,
+            "application-completion-recovery-boundary-unsafe",
             request_comment_id=request_comment_id,
             recovery_artifact=recovery_artifact,
         )
     return ApplicationCompletion(
         "RESUMABLE",
-        "application-completion-rerun-limit",
+        "application-completion-continuation-required",
         request_comment_id=request_comment_id,
         recovery_artifact=recovery_artifact,
     )
@@ -1782,9 +1771,7 @@ def _application_continuation_body(
 
     if predecessor_evidence is None or not predecessor_evidence.continuation_eligible:
         return None
-    if predecessor_evidence.recovery_attempt >= 3:
-        return None
-    if predecessor_evidence.failure_evidence_sha256 in cast(
+     if predecessor_evidence.failure_evidence_sha256 in cast(
         list[str], predecessor_evidence.document["prior_failure_evidence_sha256"]
     ):
         return None
@@ -2394,6 +2381,7 @@ def render_dispatch_result_document(
         if application_continuation is not None:
             if decision.disposition != "FAIL_CLOSED" or decision.reason not in {
                 "application-completion-rerun-limit",
+                "application-completion-continuation-required",
                 "application-completion-carrier-required",
             }:
                 raise ValueError(
@@ -2645,6 +2633,7 @@ def main() -> int:
                 completion.reason
                 in {
                     "application-completion-rerun-limit",
+                    "application-completion-continuation-required",
                     "application-completion-carrier-required",
                 }
                 and source is not None
