@@ -2655,9 +2655,7 @@ def test_new_evidence_continues_past_the_former_attempt_threshold() -> None:
         recovery_episode_sha256="3" * 64,
         recovery_attempt=4,
         continuation_eligible=True,
-        document={
-            "prior_failure_evidence_sha256": ["6" * 64, "7" * 64, "8" * 64]
-        },
+        document={"prior_failure_evidence_sha256": ["6" * 64, "7" * 64, "8" * 64]},
     )
     body = bridge._application_continuation_body(
         repository="owner/repo",
@@ -2690,18 +2688,19 @@ def test_new_evidence_continues_past_the_former_attempt_threshold() -> None:
         recovery_episode_sha256="3" * 64,
         recovery_attempt=5,
         continuation_eligible=True,
-        document={
-            "prior_failure_evidence_sha256": ["6" * 64, "7" * 64, "8" * 64, "2" * 64]
-        },
+        document={"prior_failure_evidence_sha256": ["6" * 64, "7" * 64, "8" * 64, "2" * 64]},
     )
-    assert bridge._application_continuation_body(
-        repository="owner/repo",
-        token=REVISION,
-        source=source,
-        request_comment_id=5810765007,
-        predecessor_evidence=repeated,
-        read=fake_read,
-    ) is None
+    assert (
+        bridge._application_continuation_body(
+            repository="owner/repo",
+            token=REVISION,
+            source=source,
+            request_comment_id=5810765007,
+            predecessor_evidence=repeated,
+            read=fake_read,
+        )
+        is None
+    )
 
 
 def test_rejected_intent_returns_ownership_to_later_semantic_dispatch() -> None:
@@ -3188,9 +3187,9 @@ def test_carrier_documents_reject_tampering_and_dispatch_round_trips_handoff() -
         predecessor_run_attempt=1,
         predecessor_job_id=7002,
         predecessor_artifact_id=7003,
-        predecessor_artifact_digest='sha256:' + '1' * 64,
-        failure_evidence_sha256='2' * 64,
-        recovery_episode_sha256='3' * 64,
+        predecessor_artifact_digest="sha256:" + "1" * 64,
+        failure_evidence_sha256="2" * 64,
+        recovery_episode_sha256="3" * 64,
     )
     failed = _decision("FAIL_CLOSED")
     failed = DispatchDecision(
