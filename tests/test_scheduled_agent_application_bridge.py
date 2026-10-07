@@ -2404,10 +2404,7 @@ def test_application_boundary_does_not_replay_dispatch_artifacts() -> None:
     )
     final_evidence_step = workflow[final_evidence_upload:]
     assert final_evidence_upload > validation_apply_start
-    assert (
-        "id: post_validation_apply"
-        in workflow[validation_apply_start:final_evidence_upload]
-    )
+    assert "id: post_validation_apply" in workflow[validation_apply_start:final_evidence_upload]
     assert "if: always()" in final_evidence_step
     assert "steps.post_validation_apply.outputs.recovery_evidence_path" in final_evidence_step
     assert "name: application-recovery-evidence" in final_evidence_step
