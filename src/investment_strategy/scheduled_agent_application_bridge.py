@@ -4419,6 +4419,7 @@ def main() -> int:
             default_branch=args.default_branch,
             accepted_authorization_revision=request.authorization_revision,
             allow_pending_continuation=pending_continuation,
+            accepted_intent=accepted_intent is not None,
         )
         if args.validated_revision is None or target.revision != args.validated_revision:
             raise RuntimeError("EFFECT_REQUEST validation proof is stale")
@@ -4579,6 +4580,7 @@ def main() -> int:
             default_branch=args.default_branch,
             accepted_authorization_revision=request.authorization_revision,
             allow_pending_continuation=pending_continuation,
+            accepted_intent=accepted_intent is not None,
         )
     else:
         target = None
