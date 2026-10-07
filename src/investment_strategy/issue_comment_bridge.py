@@ -560,24 +560,64 @@ def _application_job(
                 request_comment_id=request_comment_id,
             )
         if qualified_carrier is not None:
+            if (
+                recovery_artifact is None
+                or not recovery_artifact.continuation_eligible
+                or recovery_artifact.recovery_attempt >= 3
+            ):
+                return ApplicationCompletion(
+                    "INVALID",
+                    "application-completion-carrier-recovery-evidence-incomplete",
+                    request_comment_id=request_comment_id,
+                    qualified_carrier=qualified_carrier,
+                    recovery_artifact=recovery_artifact,
+                )
             return ApplicationCompletion(
                 "RESUMABLE",
                 "application-completion-carrier-required",
                 request_comment_id=request_comment_id,
                 qualified_carrier=qualified_carrier,
+                recovery_artifact=recovery_artifact,
             )
 
-    if run_attempt > 1:
+    if recovery_artifact is None:
         return ApplicationCompletion(
             "INVALID",
-            "application-completion-rerun-limit",
+            "application-completion-recovery-evidence-missing",
             request_comment_id=request_comment_id,
+        )
+    prior_failures = cast(
+        list[str],
+        recovery_artifact.document["prior_failure_evidence_sha256"],
+    )
+    if recovery_artifact.failure_evidence_sha256 in prior_failures:
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-recovery-evidence-repeated",
+            request_comment_id=request_comment_id,
+            recovery_artifact=recovery_artifact,
+        )
+    if (
+        not recovery_artifact.continuation_eligible
+        or recovery_artifact.recovery_attempt >= 3
+        or run_attempt >= 50
+    ):
+        reason = (
+            "application-completion-rerun-limit"
+            if recovery_artifact.recovery_attempt >= 3 or run_attempt >= 50
+            else "application-completion-recovery-boundary-unsafe"
+        )
+        return ApplicationCompletion(
+            "INVALID",
+            reason,
+            request_comment_id=request_comment_id,
+            recovery_artifact=recovery_artifact,
         )
     return ApplicationCompletion(
         "RESUMABLE",
-        "application-completion-resuming",
+        "application-completion-rerun-limit",
         request_comment_id=request_comment_id,
-        job_id=job_id,
+        recovery_artifact=recovery_artifact,
     )
 
 
