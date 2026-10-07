@@ -303,10 +303,7 @@ def parse_application_continuation_request(
         (values[5], predecessor_job_id),
         (values[6], predecessor_artifact_id),
     )
-    if any(
-        _positive_int(value) is None or raw != str(value)
-        for raw, value in integer_pairs
-    ):
+    if any(_positive_int(value) is None or raw != str(value) for raw, value in integer_pairs):
         return None
     if (
         re.fullmatch(r"[0-9a-f]{64}", accepted_decision_sha256) is None
@@ -3805,16 +3802,17 @@ def read_application_recovery_artifact(
         or not isinstance(authorization_revision, str)
         or _SHA.fullmatch(authorization_revision) is None
         or recovery_attempt is None
-        or recovery_attempt > 50
         or not isinstance(episode_sha256, str)
         or re.fullmatch(r"[0-9a-f]{64}", episode_sha256) is None
         or not isinstance(evidence_sha256, str)
         or re.fullmatch(r"[0-9a-f]{64}", evidence_sha256) is None
         or not isinstance(prior_failures, list)
+        or len(prior_failures) != recovery_attempt - 1
         or any(
             not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None
             for value in prior_failures
         )
+        or len(set(prior_failures)) != len(prior_failures)
         or not isinstance(failure_evidence, Mapping)
         or evidence_sha256 != _canonical_sha256(failure_evidence)
         or not isinstance(document.get("continuation_eligible"), bool)
@@ -3915,7 +3913,6 @@ def qualify_application_continuation_predecessor(
         or evidence.failure_evidence_sha256 != continuation.failure_evidence_sha256
         or evidence.recovery_episode_sha256 != continuation.recovery_episode_sha256
         or not evidence.continuation_eligible
-        or evidence.recovery_attempt >= 3
         or evidence.failure_evidence_sha256
         in cast(list[str], evidence.document["prior_failure_evidence_sha256"])
     ):
