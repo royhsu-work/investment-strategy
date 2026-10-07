@@ -206,7 +206,10 @@ class GitHubSequence:
             if route == "actions/runs/8001/jobs":
                 return {"jobs": [cast(dict[str, object], predecessor["job"])]}
             if route == "actions/runs/8001/artifacts":
-                return {"total_count": 1, "artifacts": [cast(dict[str, object], predecessor["artifact"])]}
+                return {
+                    "total_count": 1,
+                    "artifacts": [cast(dict[str, object], predecessor["artifact"])],
+                }
         if route.startswith("issues/comments/"):
             number = int(route.rsplit("/", 1)[1])
             if number in self.requests:
