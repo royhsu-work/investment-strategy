@@ -4043,9 +4043,25 @@ def _write_application_recovery_evidence(
             "failure_evidence_sha256": predecessor.failure_evidence_sha256,
             "recovery_attempt": predecessor.recovery_attempt,
         }
-    # A failed precondition is evidence, not permission to retry its frozen effect.
-    # Only a qualified carrier handoff may create a fresh continuation here.
-    continuation_eligible = result.carrier_plan is not None
+    recovery = result.recovery_evidence
+    rejection = None if recovery is None else recovery.rejection
+    rejection_classification = (
+        None
+        if rejection is None
+        else getattr(rejection.classification, "value", rejection.classification)
+    )
+    # Only a freshly observed, exact precondition rejection before any write is
+    # eligible for a fresh run. Partial writes and unknown postconditions need
+    # reconciliation at their owning effect boundary before continuation.
+    safe_precondition_rejection = (
+        recovery is not None
+        and rejection_classification == "effect-precondition-unsatisfied"
+        and recovery.mutation_status == "not-complete"
+        and recovery.unfinished_boundary == "effect-precondition"
+        and not recovery.completed_effect_indexes
+        and not recovery.completed_effect_sha256
+    )
+    continuation_eligible = result.carrier_plan is not None or safe_precondition_rejection
     document = {
         "schema": _APPLICATION_RECOVERY_SCHEMA,
         "repository": repository,
