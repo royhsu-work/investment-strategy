@@ -477,13 +477,6 @@ def _application_job(
             "application-completion-in-progress",
             request_comment_id=request_comment_id,
         )
-    if run_attempt >= 50:
-        return ApplicationCompletion(
-            "INVALID",
-            "application-completion-rerun-limit",
-            request_comment_id=request_comment_id,
-        )
-
     jobs_payload = read(repository, token, f"actions/runs/{run_id}/jobs")
     if not isinstance(jobs_payload, Mapping) or not isinstance(jobs_payload.get("jobs"), list):
         return ApplicationCompletion(
