@@ -3647,6 +3647,208 @@ def _write_carrier_outputs(result: ApplyResult) -> None:
         output.write("\n".join(lines) + "\n")
 
 
+def read_application_recovery_artifact(
+    repository: str,
+    token: str,
+    *,
+    run_id: int,
+    run_attempt: int,
+    job_id: int,
+    request_comment_id: int,
+    accepted_decision_sha256: str,
+    read: Callable[[str, str, str], object] | None = None,
+    artifact_reader: Callable[[str, str, str], bytes] | None = None,
+) -> ApplicationRecoveryArtifact | None:
+    """Qualify structured recovery evidence against one completed Actions job."""
+
+    api_read = _github_json if read is None else read
+    download = read_github_artifact_bytes if artifact_reader is None else artifact_reader
+    if (
+        _strict_positive_int(run_id) is None
+        or _strict_positive_int(run_attempt) is None
+        or _strict_positive_int(job_id) is None
+        or _strict_positive_int(request_comment_id) is None
+        or re.fullmatch(r"[0-9a-f]{64}", accepted_decision_sha256) is None
+    ):
+        return None
+    run = api_read(repository, token, f"actions/runs/{run_id}")
+    if (
+        not isinstance(run, Mapping)
+        or run.get("id") != run_id
+        or run.get("run_attempt") != run_attempt
+        or run.get("status") != "completed"
+        or not isinstance(run.get("head_sha"), str)
+    ):
+        return None
+    jobs_payload = api_read(repository, token, f"actions/runs/{run_id}/jobs?filter=all")
+    if not isinstance(jobs_payload, Mapping) or not isinstance(jobs_payload.get("jobs"), list):
+        return None
+    jobs = [
+        item
+        for item in cast(list[object], jobs_payload["jobs"])
+        if isinstance(item, Mapping) and item.get("id") == job_id and item.get("name") == "apply"
+    ]
+    if len(jobs) != 1:
+        return None
+    job = cast(Mapping[str, object], jobs[0])
+    if (
+        job.get("run_attempt") != run_attempt
+        or job.get("status") != "completed"
+        or job.get("conclusion") not in {"success", "failure"}
+    ):
+        return None
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        return None
+    uploads = [
+        step
+        for step in steps
+        if isinstance(step, Mapping)
+        and step.get("name") == "Upload exact application recovery evidence"
+    ]
+    if len(uploads) != 1 or uploads[0].get("conclusion") != "success":
+        return None
+    artifacts_payload = api_read(
+        repository,
+        token,
+        f"actions/runs/{run_id}/artifacts?per_page=100",
+    )
+    if not isinstance(artifacts_payload, Mapping) or not isinstance(
+        artifacts_payload.get("artifacts"), list
+    ):
+        return None
+    artifacts = [
+        item
+        for item in cast(list[object], artifacts_payload["artifacts"])
+        if isinstance(item, Mapping) and item.get("name") == _APPLICATION_RECOVERY_ARTIFACT
+    ]
+    if len(artifacts) != 1:
+        return None
+    artifact = cast(Mapping[str, object], artifacts[0])
+    artifact_id = _strict_positive_int(artifact.get("id"))
+    artifact_digest = artifact.get("digest")
+    workflow_run = artifact.get("workflow_run")
+    if (
+        artifact_id is None
+        or artifact.get("expired") is not False
+        or not isinstance(artifact_digest, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", artifact_digest) is None
+        or not isinstance(workflow_run, Mapping)
+        or workflow_run.get("id") != run_id
+        or workflow_run.get("head_sha") != run.get("head_sha")
+    ):
+        return None
+    try:
+        raw = download(repository, token, f"actions/artifacts/{artifact_id}/zip")
+    except (HTTPError, OSError, RuntimeError, ValueError):
+        return None
+    if (
+        not raw
+        or len(raw) > _MAX_APPLICATION_RECOVERY_BYTES
+        or f"sha256:{hashlib.sha256(raw).hexdigest()}" != artifact_digest
+    ):
+        return None
+    try:
+        decoded = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(decoded, Mapping):
+        return None
+    document = cast(Mapping[str, object], decoded)
+    expected_keys = {
+        "schema",
+        "repository",
+        "issue_number",
+        "role",
+        "action",
+        "request_comment_id",
+        "accepted_decision_sha256",
+        "trigger_comment_id",
+        "run_id",
+        "run_attempt",
+        "job_id",
+        "current_revision",
+        "authorization_revision",
+        "recovery_attempt",
+        "recovery_episode_sha256",
+        "prior_failure_evidence_sha256",
+        "predecessor",
+        "failure_evidence",
+        "failure_evidence_sha256",
+        "continuation_eligible",
+    }
+    failure_evidence = document.get("failure_evidence")
+    prior_failures = document.get("prior_failure_evidence_sha256")
+    trigger_comment_id = _strict_positive_int(document.get("trigger_comment_id"))
+    recovery_attempt = _strict_positive_int(document.get("recovery_attempt"))
+    episode_sha256 = document.get("recovery_episode_sha256")
+    evidence_sha256 = document.get("failure_evidence_sha256")
+    issue_number = document.get("issue_number")
+    authorization_revision = document.get("authorization_revision")
+    if (
+        set(document) != expected_keys
+        or document.get("schema") != _APPLICATION_RECOVERY_SCHEMA
+        or document.get("repository") != repository
+        or issue_number != document.get("issue_number")
+        or isinstance(issue_number, bool)
+        or not isinstance(issue_number, int)
+        or issue_number <= 0
+        or document.get("request_comment_id") != request_comment_id
+        or document.get("accepted_decision_sha256") != accepted_decision_sha256
+        or document.get("run_id") != run_id
+        or document.get("run_attempt") != run_attempt
+        or document.get("job_id") != job_id
+        or document.get("current_revision") != run.get("head_sha")
+        or not isinstance(document.get("role"), str)
+        or not isinstance(document.get("action"), str)
+        or not isinstance(authorization_revision, str)
+        or _SHA.fullmatch(authorization_revision) is None
+        or recovery_attempt is None
+        or recovery_attempt > 3
+        or not isinstance(episode_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", episode_sha256) is None
+        or not isinstance(evidence_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", evidence_sha256) is None
+        or not isinstance(prior_failures, list)
+        or any(
+            not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None
+            for value in prior_failures
+        )
+        or not isinstance(failure_evidence, Mapping)
+        or evidence_sha256 != _canonical_sha256(failure_evidence)
+        or not isinstance(document.get("continuation_eligible"), bool)
+        or trigger_comment_id is None
+        or run.get("display_title") != f"Scheduled Agent Application {trigger_comment_id}"
+    ):
+        return None
+    predecessor = document.get("predecessor")
+    if recovery_attempt == 1:
+        if predecessor is not None or prior_failures:
+            return None
+    elif (
+        not isinstance(predecessor, Mapping)
+        or predecessor.get("recovery_attempt") != recovery_attempt - 1
+        or predecessor.get("run_id") is None
+        or predecessor.get("artifact_id") is None
+        or predecessor.get("failure_evidence_sha256") not in prior_failures
+    ):
+        return None
+    return ApplicationRecoveryArtifact(
+        run_id=run_id,
+        run_attempt=run_attempt,
+        job_id=job_id,
+        artifact_id=artifact_id,
+        artifact_digest=artifact_digest,
+        request_comment_id=request_comment_id,
+        accepted_decision_sha256=accepted_decision_sha256,
+        failure_evidence_sha256=evidence_sha256,
+        recovery_episode_sha256=episode_sha256,
+        recovery_attempt=recovery_attempt,
+        continuation_eligible=cast(bool, document.get("continuation_eligible")),
+        document=document,
+    )
+
+
 def main() -> int:
     """Apply one worker result after fresh repository authorization."""
 
