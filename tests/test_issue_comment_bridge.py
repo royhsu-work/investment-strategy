@@ -3872,6 +3872,45 @@ def test_prior_dispatch_without_a_visible_run_fails_closed_before_carrier_reissu
 
 
 
+def test_carrier_outcome_consumer_blocks_duplicate_identical_reports() -> None:
+    plan = _carrier_plan_fixture()
+    recovery = _qualified_recovery_fixture(artifact_id=997)
+    carrier_digest = "sha256:" + "6" * 64
+    report_body = carrier.render_carrier_outcome_report(
+        _carrier_outcome_fixture(
+            plan,
+            recovery,
+            carrier_artifact_id=999,
+            carrier_artifact_digest=carrier_digest,
+        )
+    )
+    qualified = carrier.QualifiedCarrierPlan(
+        request_comment_id=90,
+        run_id=777,
+        run_attempt=1,
+        artifact_id=999,
+        artifact_digest=carrier_digest,
+        plan=plan,
+    )
+
+    outcome, reason = bridge._carrier_outcome_status(
+        recent_comments=(
+            _trusted_connector_comment(92, report_body),
+            _trusted_connector_comment(93, report_body),
+        ),
+        owner="owner",
+        repository="owner/repo",
+        source=bridge.WorkerRequest(322, "executor", "implement-change"),
+        record=_accepted_carrier_record(),
+        accepted_decision_sha256="a" * 64,
+        recovery_artifact=recovery,
+        qualified_carrier=qualified,
+    )
+
+    assert outcome == "BLOCKED"
+    assert reason == "application-completion-carrier-outcome-ambiguous"
+
+
 def test_carrier_outcome_consumer_rejects_repository_mismatch() -> None:
     plan = _carrier_plan_fixture()
     recovery = _qualified_recovery_fixture(artifact_id=997)

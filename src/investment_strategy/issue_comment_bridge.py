@@ -449,7 +449,9 @@ def _carrier_precondition_shape_matches(expected: object, observed: object) -> b
     if isinstance(expected, Mapping):
         if not isinstance(observed, Mapping) or set(expected) != set(observed):
             return False
-        return all(_carrier_precondition_shape_matches(expected[key], observed[key]) for key in expected)
+        return all(
+            _carrier_precondition_shape_matches(expected[key], observed[key]) for key in expected
+        )
     if isinstance(expected, list):
         return (
             isinstance(observed, list)
@@ -499,7 +501,7 @@ def _carrier_outcome_status(
     except ValueError:
         return "BLOCKED", "application-completion-carrier-outcome-invalid"
 
-    matching: dict[str, CarrierOutcomeReport] = {}
+    matching: list[CarrierOutcomeReport] = []
     for comment in recent_comments:
         if not _trusted_connector_comment(comment, owner):
             continue
@@ -561,12 +563,12 @@ def _carrier_outcome_status(
             return "BLOCKED", "application-completion-carrier-outcome-plan-reused"
         if not observation_matches_status:
             return "BLOCKED", "application-completion-carrier-outcome-invalid"
-        matching[body] = report
+        matching.append(report)
     if not matching:
         return "NONE", None
     if len(matching) != 1:
         return "BLOCKED", "application-completion-carrier-outcome-ambiguous"
-    report = next(iter(matching.values()))
+    report = matching[0]
     if report.outcome != "COMPLETE" or report.postcondition != "COMPLETE":
         return "BLOCKED", "application-completion-carrier-outcome-incomplete"
     return "COMPLETE", None

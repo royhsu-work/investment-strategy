@@ -815,6 +815,13 @@ Before emitting another carrier handoff, the bridge SHALL inspect every earlier 
 - THEN it emits only the exact repository-produced continuation once
 - AND the next Application run fresh-reauthorizes and verifies canonical postconditions
 
+#### Scenario: Duplicate carrier outcome reports remain ambiguous
+
+- GIVEN two trusted outcome comments match the same exact Plan-ID and lineage, including byte-identical report bodies
+- WHEN a fresh dispatcher evaluates the accepted intent
+- THEN it emits no continuation
+- AND it preserves the ambiguous carrier-outcome blocker
+
 #### Scenario: Missing or failed carrier outcome does not replay or continue
 
 - GIVEN any earlier dispatch artifact handed off the same Plan-ID
