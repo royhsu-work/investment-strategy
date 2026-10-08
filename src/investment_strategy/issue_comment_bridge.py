@@ -257,7 +257,6 @@ def _paged_list(
         page += 1
 
 
-
 def _runtime_shard_comments(
     repository: str,
     token: str,

@@ -3607,9 +3607,12 @@ def test_carrier_outcome_report_rejects_malformed_evidence_and_parses_shape_only
     assert base64.urlsafe_b64decode(encoded + padding) == base64.urlsafe_b64decode(
         noncanonical + padding
     )
-    assert carrier.parse_carrier_outcome_report(
-        short_body.replace(encoded_line, encoded_line.removesuffix(encoded) + noncanonical)
-    ) is None
+    assert (
+        carrier.parse_carrier_outcome_report(
+            short_body.replace(encoded_line, encoded_line.removesuffix(encoded) + noncanonical)
+        )
+        is None
+    )
 
 
 def test_carrier_documents_reject_tampering_and_dispatch_round_trips_handoff() -> None:
@@ -3932,9 +3935,7 @@ def test_qualifier_uses_full_runtime_shard_history_for_prior_handoff(
         return bridge.ApplicationCompletion("INVALID", "captured-runtime-history")
 
     monkeypatch.setattr(bridge, "_derive_frontier", no_frontier)
-    monkeypatch.setattr(
-        bridge, "_continuation_transport_comment_ids", no_continuations
-    )
+    monkeypatch.setattr(bridge, "_continuation_transport_comment_ids", no_continuations)
     monkeypatch.setattr(bridge, "_accepted_application_state", capture_runtime_comments)
 
     completion = bridge.qualify_application_completion(
@@ -4069,8 +4070,7 @@ def test_carrier_outcome_blocks_same_lineage_plan_conflict_even_with_complete_re
 
     outcome, reason = bridge._carrier_outcome_status(
         recent_comments=tuple(
-            _trusted_connector_comment(92 + index, body)
-            for index, body in enumerate(bodies)
+            _trusted_connector_comment(92 + index, body) for index, body in enumerate(bodies)
         ),
         owner="owner",
         repository="owner/repo",
