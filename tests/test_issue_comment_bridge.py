@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from collections.abc import Mapping
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Literal, cast
@@ -10,6 +12,7 @@ from typing import Literal, cast
 import pytest
 
 from investment_strategy import issue_comment_bridge as bridge
+from investment_strategy import scheduled_agent_carrier as carrier
 from investment_strategy.scheduled_agent_checkin import checkin_title
 from investment_strategy.scheduled_agent_idle_admission import (
     IdleCandidate,
@@ -28,6 +31,15 @@ from investment_strategy.workflow_dispatch import (
 WORKFLOW_PATH = Path(".github/workflows/scheduled-agent-bridge.yml")
 REQUEST_BODY = "DISPATCH_REQUEST\nRequested-At: 2026-09-03T03:45:00Z"
 REVISION = "cb8f9ec12d826e0d71897a4c73ece961d00df59e"
+_RECOVERY_TEST_FIELDS = {
+    "predecessor_run_id": 7001,
+    "predecessor_run_attempt": 1,
+    "predecessor_job_id": 7002,
+    "predecessor_artifact_id": 7003,
+    "predecessor_artifact_digest": "sha256:" + "1" * 64,
+    "failure_evidence_sha256": "2" * 64,
+    "recovery_episode_sha256": "3" * 64,
+}
 
 
 def _event(
@@ -185,6 +197,13 @@ def test_retry_limit_dispatch_result_carries_one_content_addressed_continuation(
         issue_number=138,
         original_request_comment_id=987,
         accepted_decision_sha256="a" * 64,
+        predecessor_run_id=7001,
+        predecessor_run_attempt=1,
+        predecessor_job_id=7002,
+        predecessor_artifact_id=7003,
+        predecessor_artifact_digest="sha256:" + "1" * 64,
+        failure_evidence_sha256="2" * 64,
+        recovery_episode_sha256="3" * 64,
     )
     decision = _decision("FAIL_CLOSED")
     decision = DispatchDecision(
@@ -195,7 +214,7 @@ def test_retry_limit_dispatch_result_carries_one_content_addressed_continuation(
         selected_issue_id=decision.selected_issue_id,
         selected_routing=decision.selected_routing,
         disposition=decision.disposition,
-        reason="application-completion-rerun-limit",
+        reason="application-completion-continuation-required",
     )
 
     rendered = bridge.render_dispatch_result_document(
@@ -954,6 +973,8 @@ def test_accepted_formal_result_waits_for_consequence_postconditions(
                     }
                 ]
             }
+        if path.endswith("/artifacts?per_page=100"):
+            return {"total_count": 0, "artifacts": []}
         if path == "actions/runs/777/jobs":
             return {
                 "jobs": [
@@ -977,9 +998,9 @@ def test_accepted_formal_result_waits_for_consequence_postconditions(
     )
 
     assert completion.state == "RESUMABLE"
-    assert completion.reason == "application-completion-resuming"
+    assert completion.reason == "application-completion-successor-pending"
     assert completion.request_comment_id == 90
-    assert completion.job_id == 888
+    assert completion.job_id is None
 
 
 def test_completed_formal_result_at_safe_ancestor_is_not_resumed(
@@ -1192,6 +1213,8 @@ def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier(
                     }
                 ]
             }
+        if path.endswith("/artifacts?per_page=100"):
+            return {"total_count": 0, "artifacts": []}
         if path == "actions/runs/777/jobs":
             return {"jobs": [{"id": 888, "name": "apply"}]}
         raise AssertionError(path)
@@ -1210,14 +1233,14 @@ def test_completed_predecessor_acceptance_does_not_compete_with_new_frontier(
         assert completion.state == "INVALID"
         assert completion.reason == "application-completion-consequence-without-acceptance"
         return
-    assert completion.state == ("RESUMABLE" if disposition == "ACCEPTED" else "REJECTED")
+    assert completion.state == ("INVALID" if disposition == "ACCEPTED" else "REJECTED")
     assert completion.reason == (
-        "application-completion-resuming"
+        "application-completion-recovery-evidence-missing"
         if disposition == "ACCEPTED"
         else "application-completion-rejected"
     )
     assert completion.request_comment_id == 90
-    assert completion.job_id == (888 if disposition == "ACCEPTED" else None)
+    assert completion.job_id is None
 
 
 def test_current_frontier_reuses_formal_ancestry_after_main_advances() -> None:
@@ -1351,6 +1374,8 @@ def _completion_matrix_reader(
             return _preactivation_admission()
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": runs}
+        if path.startswith("actions/runs/") and path.endswith("/artifacts?per_page=100"):
+            return {"total_count": 0, "artifacts": []}
         if path.startswith("actions/runs/") and path.endswith("/jobs"):
             run_id = int(path.split("/")[2])
             return {
@@ -1422,6 +1447,8 @@ def test_terminal_preactcept_candidate_survives_archived_authorization_revision(
                     }
                 ]
             }
+        if path.endswith("/artifacts?per_page=100"):
+            return {"total_count": 0, "artifacts": []}
         if path == "actions/runs/9000/jobs":
             return {
                 "jobs": [
@@ -1523,9 +1550,10 @@ def test_terminal_noise_plus_one_accepted_intent_owns_continuation() -> None:
         now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
     )
 
-    assert completion.state == "RESUMABLE"
-    assert completion.reason == "application-completion-resuming"
+    assert completion.state == "INVALID"
+    assert completion.reason == "application-completion-recovery-evidence-missing"
     assert completion.request_comment_id == 654
+    assert completion.job_id is None
 
 
 def test_deleted_ingress_after_accept_uses_immutable_intent() -> None:
@@ -1893,6 +1921,8 @@ def test_unbound_terminal_transport_is_inert_history() -> None:
                     }
                 ]
             }
+        if path.endswith("/artifacts?per_page=100"):
+            return {"total_count": 0, "artifacts": []}
         if path == "actions/runs/9654/jobs":
             return {
                 "jobs": [
@@ -2003,6 +2033,8 @@ def test_raw_current_source_request_is_classified_after_source_binding() -> None
                     }
                 ]
             }
+        if path.endswith("/artifacts?per_page=100"):
+            return {"total_count": 0, "artifacts": []}
         if path == "actions/runs/9656/jobs":
             return {
                 "jobs": [
@@ -2188,6 +2220,8 @@ def test_preprotocol_inert_request_is_retired_without_semantic_replay() -> None:
                     }
                 ]
             }
+        if path.endswith("/artifacts?per_page=100"):
+            return {"total_count": 0, "artifacts": []}
         if path == "actions/runs/777/jobs":
             return {
                 "jobs": [
@@ -2247,6 +2281,8 @@ def test_one_accepted_intent_is_resumed_before_semantic_replay() -> None:
                     }
                 ]
             }
+        if path.endswith("/artifacts?per_page=100"):
+            return {"total_count": 0, "artifacts": []}
         if path == "actions/runs/777/jobs":
             return {"jobs": [{"id": 888, "name": "apply"}]}
         raise AssertionError(path)
@@ -2260,9 +2296,10 @@ def test_one_accepted_intent_is_resumed_before_semantic_replay() -> None:
         now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
     )
 
-    assert completion.state == "RESUMABLE"
+    assert completion.state == "INVALID"
+    assert completion.reason == "application-completion-recovery-evidence-missing"
     assert completion.request_comment_id == 654
-    assert completion.job_id == 888
+    assert completion.job_id is None
 
 
 @pytest.mark.parametrize(
@@ -2279,7 +2316,7 @@ def test_one_accepted_intent_is_resumed_before_semantic_replay() -> None:
             1,
             1,
             True,
-            ("INVALID", "application-completion-rerun-limit"),
+            ("INVALID", "application-completion-recovery-evidence-missing"),
         ),
         (
             "propose-change",
@@ -2490,6 +2527,8 @@ def test_current_accepted_application_stops_replaying_after_repeated_failed_atte
                     for index in range(application_run_count)
                 ]
             }
+        if path.endswith("/artifacts?per_page=100"):
+            return {"total_count": 0, "artifacts": []}
         if path == "actions/runs/35762997171/jobs":
             return {"jobs": [{"id": 107028234822, "name": "apply"}]}
         raise AssertionError(path)
@@ -2510,6 +2549,8 @@ def test_current_accepted_application_stops_replaying_after_repeated_failed_atte
     elif expected[1] in {
         "application-completion-run-identity-ambiguous",
         "application-completion-rerun-limit",
+        "application-completion-continuation-required",
+        "application-completion-recovery-evidence-missing",
     }:
         assert application_run_reads > 0
     else:
@@ -2558,6 +2599,8 @@ def test_live_322_accepted_request_does_not_resume_completed_failed_application_
             return comparisons[base]
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": [run]}
+        if path.endswith("/artifacts?per_page=100"):
+            return {"total_count": 0, "artifacts": []}
         if path == f"actions/runs/{run_id}/jobs":
             return {"jobs": [job]}
         raise AssertionError(path)
@@ -2573,7 +2616,7 @@ def test_live_322_accepted_request_does_not_resume_completed_failed_application_
 
     assert completion == bridge.ApplicationCompletion(
         "INVALID",
-        "application-completion-rerun-limit",
+        "application-completion-recovery-evidence-missing",
         request_comment_id=request_id,
     )
     assert request_id == 5810765007
@@ -2584,7 +2627,7 @@ def test_live_322_accepted_request_does_not_resume_completed_failed_application_
     assert f"actions/runs/{run_id}/jobs" in observed
 
 
-def test_rerun_limit_has_a_fresh_transport_bound_to_the_exact_decision() -> None:
+def test_new_evidence_continues_past_the_former_attempt_threshold() -> None:
     source = bridge.WorkerRequest(322, "lead", "resolve-question")
     request = _effect_request_comment(
         comment_id=5810765007,
@@ -2601,11 +2644,27 @@ def test_rerun_limit_has_a_fresh_transport_bound_to_the_exact_decision() -> None
             return [decision]
         raise AssertionError(path)
 
+    accepted_sha256 = hashlib.sha256(cast(str, decision["body"]).encode("utf-8")).hexdigest()
+    predecessor = bridge.ApplicationRecoveryArtifact(
+        run_id=7001,
+        run_attempt=1,
+        job_id=7002,
+        artifact_id=7003,
+        artifact_digest="sha256:" + "1" * 64,
+        request_comment_id=5810765007,
+        accepted_decision_sha256=accepted_sha256,
+        failure_evidence_sha256="2" * 64,
+        recovery_episode_sha256="3" * 64,
+        recovery_attempt=4,
+        continuation_eligible=True,
+        document={"prior_failure_evidence_sha256": ["6" * 64, "7" * 64, "8" * 64]},
+    )
     body = bridge._application_continuation_body(
         repository="owner/repo",
         token=REVISION,
         source=source,
         request_comment_id=5810765007,
+        predecessor_evidence=predecessor,
         read=fake_read,
     )
 
@@ -2617,6 +2676,32 @@ def test_rerun_limit_has_a_fresh_transport_bound_to_the_exact_decision() -> None
     assert (
         parsed.accepted_decision_sha256
         == hashlib.sha256(cast(str, decision["body"]).encode("utf-8")).hexdigest()
+    )
+
+    repeated = bridge.ApplicationRecoveryArtifact(
+        run_id=7002,
+        run_attempt=1,
+        job_id=7003,
+        artifact_id=7004,
+        artifact_digest="sha256:" + "4" * 64,
+        request_comment_id=5810765007,
+        accepted_decision_sha256=accepted_sha256,
+        failure_evidence_sha256="2" * 64,
+        recovery_episode_sha256="3" * 64,
+        recovery_attempt=5,
+        continuation_eligible=True,
+        document={"prior_failure_evidence_sha256": ["6" * 64, "7" * 64, "8" * 64, "2" * 64]},
+    )
+    assert (
+        bridge._application_continuation_body(
+            repository="owner/repo",
+            token=REVISION,
+            source=source,
+            request_comment_id=5810765007,
+            predecessor_evidence=repeated,
+            read=fake_read,
+        )
+        is None
     )
 
 
@@ -2779,3 +2864,1332 @@ def test_completed_formal_result_uses_fresh_revision_for_postconditions(
         "application-completion-none",
     )
     assert observed_revisions == [advanced_revision]
+
+
+def _carrier_plan_fixture(authorization_revision: str = REVISION) -> carrier.CarrierPlan:
+    return carrier.make_carrier_plan(
+        repository="owner/repo",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+        action="implement-change",
+        authorization_revision=authorization_revision,
+        operation="pull-request-head-update",
+        target={
+            "repository": "owner/repo",
+            "pull_request_number": 353,
+            "ref": "refs/heads/agent/change",
+        },
+        expected={"ref_sha": "a" * 40},
+        requested={
+            "ref": "refs/heads/agent/change",
+            "sha": "b" * 40,
+            "force": False,
+        },
+        expected_postcondition={
+            "ref": "refs/heads/agent/change",
+            "ref_sha": "b" * 40,
+            "pull_request_number": 353,
+            "pull_request_head_sha": "b" * 40,
+        },
+    )
+
+
+def _accepted_carrier_record() -> bridge.ApplicationDecisionRecord:
+    return bridge.ApplicationDecisionRecord(
+        request_comment_id=90,
+        request_body_sha256="1" * 64,
+        authorization_revision=REVISION,
+        issue_number=322,
+        role="executor",
+        action="implement-change",
+        change="restore-no-work-idle-discovery",
+        result_kind="more-implementation-required",
+        disposition="ACCEPTED",
+        worker_result_sha256="2" * 64,
+        raw_worker_result="{}",
+        reason="application accepted",
+    )
+
+
+def _qualified_recovery_fixture(
+    *,
+    accepted_decision_sha256: str = "a" * 64,
+    run_id: int = 777,
+    run_attempt: int = 1,
+    job_id: int = 888,
+    artifact_id: int = 999,
+    request_comment_id: int = 90,
+    recovery_attempt: int = 1,
+    continuation_eligible: bool = True,
+    prior_failures: tuple[str, ...] = (),
+) -> bridge.ApplicationRecoveryArtifact:
+    return bridge.ApplicationRecoveryArtifact(
+        run_id=run_id,
+        run_attempt=run_attempt,
+        job_id=job_id,
+        artifact_id=artifact_id,
+        artifact_digest="sha256:" + "3" * 64,
+        request_comment_id=request_comment_id,
+        accepted_decision_sha256=accepted_decision_sha256,
+        failure_evidence_sha256="4" * 64,
+        recovery_episode_sha256="5" * 64,
+        recovery_attempt=recovery_attempt,
+        continuation_eligible=continuation_eligible,
+        document={"prior_failure_evidence_sha256": list(prior_failures)},
+    )
+
+
+def _trusted_connector_comment(comment_id: int, body: str) -> dict[str, object]:
+    return {
+        "id": comment_id,
+        "body": body,
+        "user": {"login": "owner"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+
+
+def _carrier_outcome_fixture(
+    plan: carrier.CarrierPlan,
+    recovery: bridge.ApplicationRecoveryArtifact,
+    *,
+    carrier_artifact_id: int,
+    carrier_artifact_digest: str,
+    outcome: Literal["COMPLETE", "REFUSED"] = "COMPLETE",
+) -> carrier.CarrierOutcomeReport:
+    complete = outcome == "COMPLETE"
+    return carrier.CarrierOutcomeReport(
+        repository="owner/repo",
+        issue_number=322,
+        request_comment_id=90,
+        accepted_decision_sha256=recovery.accepted_decision_sha256,
+        continuation_correlation=bridge.application_continuation_correlation(
+            "owner/repo",
+            322,
+            90,
+            recovery.accepted_decision_sha256,
+            recovery.run_id,
+            recovery.run_attempt,
+            recovery.job_id,
+            recovery.artifact_id,
+            recovery.artifact_digest,
+            recovery.failure_evidence_sha256,
+            recovery.recovery_episode_sha256,
+        ),
+        predecessor_run_id=recovery.run_id,
+        predecessor_run_attempt=recovery.run_attempt,
+        predecessor_job_id=recovery.job_id,
+        recovery_artifact_id=recovery.artifact_id,
+        recovery_artifact_digest=recovery.artifact_digest,
+        failure_evidence_sha256=recovery.failure_evidence_sha256,
+        recovery_episode_sha256=recovery.recovery_episode_sha256,
+        carrier_artifact_id=carrier_artifact_id,
+        carrier_artifact_digest=carrier_artifact_digest,
+        plan_id=plan.plan_id,
+        operation=plan.operation,
+        outcome=outcome,
+        mutation_status="COMPLETED" if complete else "NO_WRITE",
+        precondition="MATCH",
+        observed_precondition_json=json.dumps(
+            dict(plan.expected), sort_keys=True, separators=(",", ":")
+        ),
+        postcondition="COMPLETE" if complete else "INCOMPLETE",
+        unfinished_boundary="none" if complete else "carrier-operation",
+        failure_code="none" if complete else "connector-refused",
+        failure_summary="none" if complete else "connector refused",
+    )
+
+
+def _carrier_dispatch_result_bytes(
+    qualified: carrier.QualifiedCarrierPlan,
+    *,
+    request_comment_id: int = 91,
+) -> bytes:
+    continuation = bridge.render_application_continuation_request(
+        repository="owner/repo",
+        issue_number=322,
+        original_request_comment_id=90,
+        accepted_decision_sha256="a" * 64,
+        predecessor_run_id=777,
+        predecessor_run_attempt=1,
+        predecessor_job_id=888,
+        predecessor_artifact_id=997,
+        predecessor_artifact_digest="sha256:" + "3" * 64,
+        failure_evidence_sha256="4" * 64,
+        recovery_episode_sha256="5" * 64,
+    )
+    payload = {
+        "schema": bridge.DISPATCH_RESULT_SCHEMA,
+        "request_comment_id": request_comment_id,
+        "default_branch_revision": REVISION,
+        "disposition": "FAIL_CLOSED",
+        "reason": "application-completion-carrier-required",
+        "application_continuation": continuation,
+        "qualified_carrier": carrier.qualified_carrier_document(qualified),
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _carrier_completion_reader(
+    *,
+    carrier_digest: str,
+    dispatch_bytes: bytes | None = None,
+) -> bridge.GitHubReader:
+    dispatch_digest = (
+        None if dispatch_bytes is None else f"sha256:{hashlib.sha256(dispatch_bytes).hexdigest()}"
+    )
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path == f"compare/{REVISION}...{REVISION}":
+            return {"status": "identical", "base_commit": {"sha": REVISION}}
+        if path.startswith("actions/workflows/scheduled-agent-application.yml/runs?"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 777,
+                        "display_title": "Scheduled Agent Application 90",
+                        "status": "completed",
+                        "run_attempt": 1,
+                        "head_sha": REVISION,
+                    }
+                ]
+            }
+        if path == "actions/runs/777/jobs":
+            return {
+                "jobs": [
+                    {
+                        "id": 888,
+                        "name": "apply",
+                        "steps": [
+                            {
+                                "name": "Upload exact external carrier plan",
+                                "conclusion": "success",
+                            }
+                        ],
+                    }
+                ]
+            }
+        if path == "actions/runs/777/artifacts?per_page=100":
+            return {
+                "total_count": 1,
+                "artifacts": [
+                    {
+                        "id": 999,
+                        "name": "carrier-plan.json",
+                        "expired": False,
+                        "digest": carrier_digest,
+                        "workflow_run": {"id": 777, "head_sha": REVISION},
+                    }
+                ],
+            }
+        if path.startswith("actions/workflows/scheduled-agent-bridge.yml/runs?"):
+            if dispatch_bytes is None:
+                return {"workflow_runs": []}
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 555,
+                        "display_title": "Scheduled Agent Dispatch 91",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "head_sha": REVISION,
+                    }
+                ]
+            }
+        if path == "actions/runs/555/artifacts?per_page=100" and dispatch_bytes is not None:
+            return {
+                "total_count": 1,
+                "artifacts": [
+                    {
+                        "id": 556,
+                        "name": "dispatch-result.json",
+                        "expired": False,
+                        "digest": dispatch_digest,
+                        "workflow_run": {"id": 555, "head_sha": REVISION},
+                    }
+                ],
+            }
+        raise AssertionError(path)
+
+    return read
+
+
+@pytest.mark.parametrize(
+    ("plan_revision", "ancestry_status", "eligible"),
+    [
+        (REVISION, "ahead", True),
+        ("d" * 40, "ahead", True),
+        ("d" * 40, "behind", False),
+        ("d" * 40, None, False),
+    ],
+)
+def test_completed_application_prefers_saved_qualified_carrier_over_producer_resume(
+    monkeypatch: pytest.MonkeyPatch,
+    plan_revision: str,
+    ancestry_status: str | None,
+    eligible: bool,
+) -> None:
+    plan = _carrier_plan_fixture(plan_revision)
+    raw = json.dumps(
+        carrier.carrier_plan_document(plan),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    digest = f"sha256:{hashlib.sha256(raw).hexdigest()}"
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path == f"compare/{REVISION}...{plan_revision}":
+            return {"status": ancestry_status, "base_commit": {"sha": REVISION}}
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 777,
+                        "display_title": "Scheduled Agent Application 90",
+                        "status": "completed",
+                        "run_attempt": 1,
+                        "head_sha": REVISION,
+                    }
+                ]
+            }
+        if path == "actions/runs/777/jobs":
+            return {
+                "jobs": [
+                    {
+                        "id": 888,
+                        "name": "apply",
+                        "steps": [
+                            {
+                                "name": "Upload exact external carrier plan",
+                                "conclusion": "success",
+                            }
+                        ],
+                    }
+                ]
+            }
+        if path == "actions/runs/777/artifacts?per_page=100":
+            return {
+                "total_count": 1,
+                "artifacts": [
+                    {
+                        "id": 999,
+                        "name": "carrier-plan.json",
+                        "expired": False,
+                        "digest": digest,
+                        "workflow_run": {"id": 777, "head_sha": REVISION},
+                    }
+                ],
+            }
+        raise AssertionError(path)
+
+    recovery = _qualified_recovery_fixture()
+    monkeypatch.setattr(
+        bridge,
+        "read_application_recovery_artifact",
+        lambda *_args, **_kwargs: recovery,
+    )
+    monkeypatch.setattr(bridge, "read_github_artifact_bytes", lambda *_args: raw)
+    completion = bridge._application_job(
+        "owner/repo",
+        "token",
+        90,
+        read=fake_read,
+        record=_accepted_carrier_record(),
+        accepted_decision_sha256="a" * 64,
+    )
+
+    if not eligible:
+        assert completion.state == "INVALID"
+        assert completion.reason == "application-completion-carrier-evidence-invalid"
+        assert completion.qualified_carrier is None
+        assert completion.job_id is None
+        return
+    assert completion.state == "RESUMABLE"
+    assert completion.reason == "application-completion-carrier-required"
+    assert completion.job_id is None
+    assert completion.qualified_carrier is not None
+    assert completion.qualified_carrier.plan == plan
+    assert completion.qualified_carrier.artifact_digest == digest
+
+
+def test_completed_application_consumes_only_exact_complete_carrier_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _carrier_plan_fixture()
+    carrier_raw = json.dumps(
+        carrier.carrier_plan_document(plan),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    carrier_digest = f"sha256:{hashlib.sha256(carrier_raw).hexdigest()}"
+    recovery = _qualified_recovery_fixture(artifact_id=997)
+    report = _carrier_outcome_fixture(
+        plan,
+        recovery,
+        carrier_artifact_id=999,
+        carrier_artifact_digest=carrier_digest,
+    )
+    qualified = carrier.QualifiedCarrierPlan(
+        request_comment_id=90,
+        run_id=777,
+        run_attempt=1,
+        artifact_id=999,
+        artifact_digest=carrier_digest,
+        plan=plan,
+    )
+    previous_dispatch = _carrier_dispatch_result_bytes(qualified)
+    comments = (
+        _trusted_connector_comment(
+            91,
+            "DISPATCH_REQUEST\nRequested-At: 2026-10-08T05:49:00Z",
+        ),
+        _trusted_connector_comment(
+            92,
+            carrier.render_carrier_outcome_report(report),
+        ),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "read_application_recovery_artifact",
+        lambda *_args, **_kwargs: recovery,
+    )
+
+    def read_artifact(_repository: str, _token: str, path: str) -> bytes:
+        if path == "actions/artifacts/999/zip":
+            return carrier_raw
+        if path == "actions/artifacts/556/zip":
+            return previous_dispatch
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "read_github_artifact_bytes", read_artifact)
+    completion = bridge._application_job(
+        "owner/repo",
+        "token",
+        90,
+        read=_carrier_completion_reader(
+            carrier_digest=carrier_digest,
+            dispatch_bytes=previous_dispatch,
+        ),
+        record=_accepted_carrier_record(),
+        accepted_decision_sha256="a" * 64,
+        recent_comments=comments,
+        current_dispatch_request_comment_id=100,
+    )
+
+    assert completion.state == "RESUMABLE"
+    assert completion.reason == "application-completion-continuation-required"
+    assert completion.qualified_carrier is None
+    assert completion.recovery_artifact == recovery
+
+
+def test_completed_application_blocks_a_previous_unreported_carrier_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _carrier_plan_fixture()
+    carrier_raw = json.dumps(
+        carrier.carrier_plan_document(plan),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    carrier_digest = f"sha256:{hashlib.sha256(carrier_raw).hexdigest()}"
+    recovery = _qualified_recovery_fixture(artifact_id=997)
+    qualified = carrier.QualifiedCarrierPlan(
+        request_comment_id=90,
+        run_id=777,
+        run_attempt=1,
+        artifact_id=999,
+        artifact_digest=carrier_digest,
+        plan=plan,
+    )
+    previous_dispatch = _carrier_dispatch_result_bytes(qualified)
+    monkeypatch.setattr(
+        bridge,
+        "read_application_recovery_artifact",
+        lambda *_args, **_kwargs: recovery,
+    )
+
+    def read_artifact(_repository: str, _token: str, path: str) -> bytes:
+        if path == "actions/artifacts/999/zip":
+            return carrier_raw
+        if path == "actions/artifacts/556/zip":
+            return previous_dispatch
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "read_github_artifact_bytes", read_artifact)
+    completion = bridge._application_job(
+        "owner/repo",
+        "token",
+        90,
+        read=_carrier_completion_reader(
+            carrier_digest=carrier_digest,
+            dispatch_bytes=previous_dispatch,
+        ),
+        record=_accepted_carrier_record(),
+        accepted_decision_sha256="a" * 64,
+        recent_comments=(
+            _trusted_connector_comment(
+                91,
+                "DISPATCH_REQUEST\nRequested-At: 2026-10-08T05:49:00Z",
+            ),
+        ),
+        current_dispatch_request_comment_id=100,
+    )
+
+    assert completion.state == "INVALID"
+    assert completion.reason == "application-completion-carrier-outcome-missing"
+    assert completion.qualified_carrier is None
+
+
+def test_completed_application_blocks_refused_carrier_outcome_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _carrier_plan_fixture()
+    carrier_raw = json.dumps(
+        carrier.carrier_plan_document(plan),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    carrier_digest = f"sha256:{hashlib.sha256(carrier_raw).hexdigest()}"
+    recovery = _qualified_recovery_fixture(artifact_id=997)
+    report = _carrier_outcome_fixture(
+        plan,
+        recovery,
+        carrier_artifact_id=999,
+        carrier_artifact_digest=carrier_digest,
+        outcome="REFUSED",
+    )
+    monkeypatch.setattr(
+        bridge,
+        "read_application_recovery_artifact",
+        lambda *_args, **_kwargs: recovery,
+    )
+    monkeypatch.setattr(
+        bridge,
+        "read_github_artifact_bytes",
+        lambda *_args: carrier_raw,
+    )
+    completion = bridge._application_job(
+        "owner/repo",
+        "token",
+        90,
+        read=_carrier_completion_reader(carrier_digest=carrier_digest),
+        record=_accepted_carrier_record(),
+        accepted_decision_sha256="a" * 64,
+        recent_comments=(
+            _trusted_connector_comment(
+                92,
+                carrier.render_carrier_outcome_report(report),
+            ),
+        ),
+        current_dispatch_request_comment_id=100,
+    )
+
+    assert completion.state == "INVALID"
+    assert completion.reason == "application-completion-carrier-outcome-incomplete"
+    assert completion.qualified_carrier is None
+
+
+def test_completed_application_distinguishes_absent_from_incomplete_carrier_listing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = _accepted_carrier_record()
+    recovery = _qualified_recovery_fixture(
+        recovery_attempt=4,
+        prior_failures=("6" * 64, "7" * 64, "8" * 64),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "read_application_recovery_artifact",
+        lambda *_args, **_kwargs: recovery,
+    )
+
+    def reader(total_count: int) -> bridge.GitHubReader:
+        def fake_read(_repository: str, _token: str, path: str) -> object:
+            if path.startswith("actions/workflows/"):
+                return {
+                    "workflow_runs": [
+                        {
+                            "id": 777,
+                            "display_title": "Scheduled Agent Application 90",
+                            "status": "completed",
+                            "run_attempt": 50,
+                            "head_sha": REVISION,
+                        }
+                    ]
+                }
+            if path == "actions/runs/777/jobs":
+                return {"jobs": [{"id": 888, "name": "apply"}]}
+            if path == "actions/runs/777/artifacts?per_page=100":
+                return {"total_count": total_count, "artifacts": []}
+            raise AssertionError(path)
+
+        return fake_read
+
+    absent = bridge._application_job(
+        "owner/repo",
+        "token",
+        90,
+        read=reader(0),
+        record=record,
+        accepted_decision_sha256="a" * 64,
+    )
+    incomplete = bridge._application_job(
+        "owner/repo",
+        "token",
+        90,
+        read=reader(1),
+        record=record,
+        accepted_decision_sha256="a" * 64,
+    )
+
+    assert (absent.state, absent.reason, absent.job_id) == (
+        "RESUMABLE",
+        "application-completion-continuation-required",
+        None,
+    )
+    assert (incomplete.state, incomplete.reason) == (
+        "INVALID",
+        "application-completion-carrier-evidence-invalid",
+    )
+
+
+def test_qualified_carrier_consumer_executes_connector_and_skips_complete() -> None:
+    plan = _carrier_plan_fixture()
+    qualified = carrier.QualifiedCarrierPlan(
+        request_comment_id=90,
+        run_id=777,
+        run_attempt=1,
+        artifact_id=999,
+        artifact_digest="sha256:" + "3" * 64,
+        plan=plan,
+    )
+    remote = {"sha": "a" * 40}
+    calls: list[str] = []
+
+    def qualify(_qualified: carrier.QualifiedCarrierPlan) -> carrier.CarrierQualification:
+        return "COMPLETE" if remote["sha"] == "b" * 40 else "ELIGIBLE"
+
+    def connector(exact_plan: carrier.CarrierPlan) -> None:
+        calls.append(exact_plan.plan_id)
+        remote["sha"] = cast(str, exact_plan.requested["sha"])
+
+    assert (
+        carrier.consume_qualified_carrier(qualified, qualify=qualify, connector=connector)
+        == "executed-complete"
+    )
+    assert calls == [plan.plan_id]
+    assert (
+        carrier.consume_qualified_carrier(qualified, qualify=qualify, connector=connector)
+        == "already-complete"
+    )
+    assert calls == [plan.plan_id]
+
+
+def test_qualified_carrier_consumer_reconciles_lost_response_without_resend() -> None:
+    plan = _carrier_plan_fixture()
+    qualified = carrier.QualifiedCarrierPlan(
+        request_comment_id=90,
+        run_id=777,
+        run_attempt=1,
+        artifact_id=999,
+        artifact_digest="sha256:" + "4" * 64,
+        plan=plan,
+    )
+    remote = {"sha": "a" * 40}
+    calls = 0
+
+    def qualify(_qualified: carrier.QualifiedCarrierPlan) -> carrier.CarrierQualification:
+        return "COMPLETE" if remote["sha"] == "b" * 40 else "ELIGIBLE"
+
+    def connector(exact_plan: carrier.CarrierPlan) -> None:
+        nonlocal calls
+        calls += 1
+        remote["sha"] = cast(str, exact_plan.requested["sha"])
+        raise TimeoutError("response lost after server write")
+
+    assert (
+        carrier.consume_qualified_carrier(qualified, qualify=qualify, connector=connector)
+        == "reconciled-complete"
+    )
+    assert calls == 1
+
+
+def test_carrier_outcome_report_round_trips_exact_lineage() -> None:
+    report = carrier.CarrierOutcomeReport(
+        repository="owner/repo",
+        issue_number=322,
+        request_comment_id=90,
+        accepted_decision_sha256="a" * 64,
+        continuation_correlation="b" * 64,
+        predecessor_run_id=777,
+        predecessor_run_attempt=1,
+        predecessor_job_id=888,
+        recovery_artifact_id=997,
+        recovery_artifact_digest="sha256:" + "3" * 64,
+        failure_evidence_sha256="4" * 64,
+        recovery_episode_sha256="5" * 64,
+        carrier_artifact_id=999,
+        carrier_artifact_digest="sha256:" + "6" * 64,
+        plan_id=_carrier_plan_fixture().plan_id,
+        operation="pull-request-head-update",
+        outcome="COMPLETE",
+        mutation_status="COMPLETED",
+        precondition="MATCH",
+        observed_precondition_json=json.dumps(
+            dict(_carrier_plan_fixture().expected), sort_keys=True, separators=(",", ":")
+        ),
+        postcondition="COMPLETE",
+        unfinished_boundary="none",
+        failure_code="none",
+        failure_summary="none",
+    )
+
+    body = carrier.render_carrier_outcome_report(report)
+
+    assert body.splitlines()[0] == "APPLICATION_CARRIER_OUTCOME"
+    assert carrier.parse_carrier_outcome_report(body) == report
+
+
+def test_carrier_outcome_report_rejects_malformed_evidence_and_parses_shape_only() -> None:
+    report = carrier.CarrierOutcomeReport(
+        repository="owner/repo",
+        issue_number=322,
+        request_comment_id=90,
+        accepted_decision_sha256="a" * 64,
+        continuation_correlation="b" * 64,
+        predecessor_run_id=777,
+        predecessor_run_attempt=1,
+        predecessor_job_id=888,
+        recovery_artifact_id=997,
+        recovery_artifact_digest="sha256:" + "3" * 64,
+        failure_evidence_sha256="4" * 64,
+        recovery_episode_sha256="5" * 64,
+        carrier_artifact_id=999,
+        carrier_artifact_digest="sha256:" + "6" * 64,
+        plan_id=_carrier_plan_fixture().plan_id,
+        operation="pull-request-head-update",
+        outcome="COMPLETE",
+        mutation_status="COMPLETED",
+        precondition="MATCH",
+        observed_precondition_json=json.dumps(
+            dict(_carrier_plan_fixture().expected), sort_keys=True, separators=(",", ":")
+        ),
+        postcondition="COMPLETE",
+        unfinished_boundary="none",
+        failure_code="none",
+        failure_summary="none",
+    )
+    body = carrier.render_carrier_outcome_report(report)
+
+    assert carrier.parse_carrier_outcome_report(body + "\n") is None
+    assert (
+        carrier.parse_carrier_outcome_report(
+            body.replace("Postcondition: COMPLETE", "Postcondition: UNKNOWN")
+        )
+        is None
+    )
+    other_repository_body = body.replace("Repository: owner/repo", "Repository: other/repo")
+    assert carrier.parse_carrier_outcome_report(other_repository_body) is not None
+
+    short_report = replace(report, observed_precondition_json='{"a":1}')
+    short_body = carrier.render_carrier_outcome_report(short_report)
+    encoded_line = next(
+        line
+        for line in short_body.splitlines()
+        if line.startswith("Observed-Precondition-JSON-B64: ")
+    )
+    encoded = encoded_line.removeprefix("Observed-Precondition-JSON-B64: ")
+    assert len(encoded) % 4 == 2
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    final_index = alphabet.index(encoded[-1])
+    noncanonical_index = (final_index & 0b110000) | ((final_index + 1) & 0b001111)
+    noncanonical = encoded[:-1] + alphabet[noncanonical_index]
+    padding = "=" * (-len(encoded) % 4)
+    assert base64.urlsafe_b64decode(encoded + padding) == base64.urlsafe_b64decode(
+        noncanonical + padding
+    )
+    assert (
+        carrier.parse_carrier_outcome_report(
+            short_body.replace(encoded_line, encoded_line.removesuffix(encoded) + noncanonical)
+        )
+        is None
+    )
+
+
+def test_carrier_documents_reject_tampering_and_dispatch_round_trips_handoff() -> None:
+    plan = _carrier_plan_fixture()
+    document = carrier.carrier_plan_document(plan)
+    tampered = dict(document)
+    tampered_requested = dict(cast(dict[str, object], document["requested"]))
+    tampered_requested["sha"] = "c" * 40
+    tampered["requested"] = tampered_requested
+    with pytest.raises(ValueError, match="content address"):
+        carrier.parse_carrier_plan_document(tampered)
+
+    qualified = carrier.QualifiedCarrierPlan(
+        request_comment_id=90,
+        run_id=777,
+        run_attempt=1,
+        artifact_id=999,
+        artifact_digest="sha256:" + "5" * 64,
+        plan=plan,
+    )
+    continuation = bridge.render_application_continuation_request(
+        repository="owner/repo",
+        issue_number=322,
+        original_request_comment_id=90,
+        accepted_decision_sha256="6" * 64,
+        predecessor_run_id=7001,
+        predecessor_run_attempt=1,
+        predecessor_job_id=7002,
+        predecessor_artifact_id=7003,
+        predecessor_artifact_digest="sha256:" + "1" * 64,
+        failure_evidence_sha256="2" * 64,
+        recovery_episode_sha256="3" * 64,
+    )
+    failed = _decision("FAIL_CLOSED")
+    failed = DispatchDecision(
+        completeness=failed.completeness,
+        observation_provenance=failed.observation_provenance,
+        formal_issue_ids=failed.formal_issue_ids,
+        preactivation_candidate_ids=failed.preactivation_candidate_ids,
+        selected_issue_id=None,
+        selected_routing=None,
+        disposition="FAIL_CLOSED",
+        reason="application-completion-carrier-required",
+    )
+    rendered = bridge.render_dispatch_result_document(
+        request_comment_id=987,
+        default_branch_revision=REVISION,
+        decision=failed,
+        application_continuation=continuation,
+        qualified_carrier=qualified,
+    )
+    parsed = bridge.parse_dispatch_result_document(rendered)
+
+    assert parsed.application_continuation == continuation
+    assert parsed.qualified_carrier == qualified
+
+
+def test_continuation_chain_selects_one_leaf_and_preserves_branches() -> None:
+    latest_runs = (
+        {
+            "id": 700,
+            "display_title": "Scheduled Agent Application 90",
+            "run_attempt": 50,
+        },
+        {
+            "id": 701,
+            "display_title": "Scheduled Agent Application 101",
+            "run_attempt": 1,
+        },
+        {
+            "id": 702,
+            "display_title": "Scheduled Agent Application 102",
+            "run_attempt": 1,
+        },
+    )
+    linear_leaf = bridge._continuation_leaf_comment_ids(
+        request_comment_id=90,
+        continuation_predecessors={101: (700, 1), 102: (701, 1)},
+        workflow_runs=latest_runs,
+    )
+    assert linear_leaf == (102,)
+
+    branched_leaves = bridge._continuation_leaf_comment_ids(
+        request_comment_id=90,
+        continuation_predecessors={101: (700, 50), 102: (700, 50)},
+        workflow_runs=latest_runs,
+    )
+    assert branched_leaves == (101, 102)
+
+    incomplete = bridge._continuation_leaf_comment_ids(
+        request_comment_id=90,
+        continuation_predecessors={101: (700, 1)},
+        workflow_runs=(latest_runs[0],),
+    )
+    assert incomplete is None
+
+
+def test_application_continuation_binds_exact_failure_transition() -> None:
+    render = bridge.render_application_continuation_request
+    first = render(
+        repository="owner/repo",
+        issue_number=322,
+        original_request_comment_id=987,
+        accepted_decision_sha256="a" * 64,
+        predecessor_run_id=12345,
+        predecessor_run_attempt=2,
+        predecessor_job_id=23456,
+        predecessor_artifact_id=34567,
+        predecessor_artifact_digest="sha256:" + "b" * 64,
+        failure_evidence_sha256="c" * 64,
+        recovery_episode_sha256="d" * 64,
+    )
+    duplicate = render(
+        repository="owner/repo",
+        issue_number=322,
+        original_request_comment_id=987,
+        accepted_decision_sha256="a" * 64,
+        predecessor_run_id=12345,
+        predecessor_run_attempt=2,
+        predecessor_job_id=23456,
+        predecessor_artifact_id=34567,
+        predecessor_artifact_digest="sha256:" + "b" * 64,
+        failure_evidence_sha256="c" * 64,
+        recovery_episode_sha256="d" * 64,
+    )
+    parsed = bridge.parse_application_continuation_request(first)
+
+    assert first == duplicate
+    assert parsed is not None
+    assert getattr(parsed, "predecessor_run_id", None) == 12345
+    assert getattr(parsed, "predecessor_run_attempt", None) == 2
+    assert getattr(parsed, "predecessor_job_id", None) == 23456
+    assert getattr(parsed, "predecessor_artifact_id", None) == 34567
+    assert getattr(parsed, "predecessor_artifact_digest", None) == "sha256:" + "b" * 64
+    assert getattr(parsed, "failure_evidence_sha256", None) == "c" * 64
+    assert getattr(parsed, "recovery_episode_sha256", None) == "d" * 64
+
+    next_body = render(
+        repository="owner/repo",
+        issue_number=322,
+        original_request_comment_id=987,
+        accepted_decision_sha256="a" * 64,
+        predecessor_run_id=12346,
+        predecessor_run_attempt=1,
+        predecessor_job_id=23457,
+        predecessor_artifact_id=34568,
+        predecessor_artifact_digest="sha256:" + "e" * 64,
+        failure_evidence_sha256="f" * 64,
+        recovery_episode_sha256="d" * 64,
+    )
+    next_parsed = bridge.parse_application_continuation_request(next_body)
+
+    assert next_body != first
+    assert next_parsed is not None
+    assert getattr(next_parsed, "recovery_episode_sha256", None) == getattr(
+        parsed, "recovery_episode_sha256", None
+    )
+    assert getattr(next_parsed, "continuation_correlation", None) != getattr(
+        parsed, "continuation_correlation", None
+    )
+
+
+def test_unreported_carrier_handoff_is_found_before_later_noncarrier_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _carrier_plan_fixture()
+    carrier_raw = json.dumps(
+        carrier.carrier_plan_document(plan),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    carrier_digest = f"sha256:{hashlib.sha256(carrier_raw).hexdigest()}"
+    qualified = carrier.QualifiedCarrierPlan(
+        request_comment_id=90,
+        run_id=777,
+        run_attempt=1,
+        artifact_id=999,
+        artifact_digest=carrier_digest,
+        plan=plan,
+    )
+    older_result = _carrier_dispatch_result_bytes(
+        qualified,
+        request_comment_id=91,
+    )
+    newer_result = bridge.render_dispatch_result_document(
+        request_comment_id=98,
+        default_branch_revision=REVISION,
+        decision=_decision("FAIL_CLOSED"),
+    ).encode("utf-8")
+    artifacts = {
+        5601: older_result,
+        5602: newer_result,
+    }
+    digests = {
+        artifact_id: f"sha256:{hashlib.sha256(raw).hexdigest()}"
+        for artifact_id, raw in artifacts.items()
+    }
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/scheduled-agent-bridge.yml/runs?"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 555,
+                        "display_title": bridge.render_dispatch_run_name(91),
+                        "status": "completed",
+                        "head_sha": REVISION,
+                    },
+                    {
+                        "id": 558,
+                        "display_title": bridge.render_dispatch_run_name(98),
+                        "status": "completed",
+                        "head_sha": REVISION,
+                    },
+                ]
+            }
+        if path == "actions/runs/555/artifacts?per_page=100":
+            return {
+                "total_count": 1,
+                "artifacts": [
+                    {
+                        "id": 5601,
+                        "name": "dispatch-result.json",
+                        "expired": False,
+                        "digest": digests[5601],
+                        "workflow_run": {"id": 555, "head_sha": REVISION},
+                    }
+                ],
+            }
+        if path == "actions/runs/558/artifacts?per_page=100":
+            return {
+                "total_count": 1,
+                "artifacts": [
+                    {
+                        "id": 5602,
+                        "name": "dispatch-result.json",
+                        "expired": False,
+                        "digest": digests[5602],
+                        "workflow_run": {"id": 558, "head_sha": REVISION},
+                    }
+                ],
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(
+        bridge,
+        "read_github_artifact_bytes",
+        lambda _repository, _token, path: artifacts[int(path.split("/")[2])],
+    )
+    status = bridge._prior_dispatch_handoff_reason(
+        "owner/repo",
+        "token",
+        recent_comments=(
+            _trusted_connector_comment(91, REQUEST_BODY),
+            _trusted_connector_comment(98, REQUEST_BODY),
+        ),
+        owner="owner",
+        current_dispatch_request_comment_id=100,
+        plan_id=plan.plan_id,
+        read=read,
+    )
+
+    assert status == "application-completion-carrier-outcome-missing"
+
+
+def test_qualifier_uses_full_runtime_shard_history_for_prior_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    change = "runtime-shard-history-beyond-thirty-days"
+    request = _effect_request_comment(
+        comment_id=102,
+        created_at="2026-09-18T01:00:00Z",
+        action="explore-change",
+        role="lead",
+        issue_number=138,
+        change=change,
+    )
+    decision = _application_decision_comment(request, comment_id=103)
+    issue = {
+        **_current_source_issue(),
+        "labels": [{"name": "action:explore-change"}],
+        "body": f"Change: {change}",
+    }
+    first_page = [
+        {
+            "id": comment_id,
+            "body": "unrelated runtime comment",
+            "created_at": "2026-06-01T00:00:00Z",
+            "user": {"login": "human"},
+        }
+        for comment_id in range(1, 101)
+    ]
+    older_request = {
+        **_trusted_connector_comment(
+            101,
+            "DISPATCH_REQUEST\nRequested-At: 2026-07-01T00:00:00Z",
+        ),
+        "created_at": "2026-07-01T00:00:00Z",
+    }
+    current_request = _trusted_connector_comment(
+        104,
+        "DISPATCH_REQUEST\nRequested-At: 2026-10-08T00:00:00Z",
+    )
+    shard_query_paths: list[str] = []
+    captured_runtime_comments: list[tuple[Mapping[str, object], ...]] = []
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [request]
+        if path.startswith("issues/138/comments?"):
+            return [decision]
+        if path.startswith("issues/142/comments?"):
+            shard_query_paths.append(path)
+            assert "since=" not in path
+            if path.endswith("page=1"):
+                return first_page
+            if path.endswith("page=2"):
+                return [older_request, current_request]
+            raise AssertionError(path)
+        if path == "issues/138":
+            return issue
+        if path.startswith("issues/138/timeline?"):
+            return []
+        raise AssertionError(path)
+
+    def no_frontier(**_kwargs: object) -> tuple[None, bool]:
+        return None, False
+
+    def no_continuations(**_kwargs: object) -> tuple[int, ...]:
+        return ()
+
+    def capture_runtime_comments(
+        *,
+        recent_comments: tuple[Mapping[str, object], ...],
+        **_kwargs: object,
+    ) -> bridge.ApplicationCompletion:
+        captured_runtime_comments.append(recent_comments)
+        return bridge.ApplicationCompletion("INVALID", "captured-runtime-history")
+
+    monkeypatch.setattr(bridge, "_derive_frontier", no_frontier)
+    monkeypatch.setattr(bridge, "_continuation_transport_comment_ids", no_continuations)
+    monkeypatch.setattr(bridge, "_accepted_application_state", capture_runtime_comments)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=read,
+        current_dispatch_request_comment_id=104,
+        current_dispatch_issue_number=142,
+        now=datetime(2026, 10, 8, tzinfo=UTC),
+    )
+
+    assert completion.reason == "captured-runtime-history"
+    assert len(shard_query_paths) == 2
+    assert shard_query_paths[0].endswith("page=1")
+    assert shard_query_paths[1].endswith("page=2")
+    assert len(captured_runtime_comments) == 1
+    runtime_comments = captured_runtime_comments[0]
+    assert len(runtime_comments) == 102
+    assert tuple(comment["id"] for comment in runtime_comments[-2:]) == (101, 104)
+    assert runtime_comments[-2]["created_at"] == "2026-07-01T00:00:00Z"
+
+    status = bridge._prior_dispatch_handoff_reason(
+        "owner/repo",
+        "token",
+        recent_comments=runtime_comments,
+        owner="owner",
+        current_dispatch_request_comment_id=104,
+        plan_id=_carrier_plan_fixture().plan_id,
+        read=lambda _repository, _token, path: (
+            {"workflow_runs": []}
+            if path.startswith("actions/workflows/scheduled-agent-bridge.yml/runs?")
+            else (_ for _ in ()).throw(AssertionError(path))
+        ),
+    )
+    assert status == "application-completion-carrier-prior-dispatch-incomplete"
+
+
+def test_prior_dispatch_without_a_visible_run_fails_closed_before_carrier_reissue() -> None:
+    status = bridge._prior_dispatch_handoff_reason(
+        "owner/repo",
+        "token",
+        recent_comments=(_trusted_connector_comment(91, REQUEST_BODY),),
+        owner="owner",
+        current_dispatch_request_comment_id=100,
+        plan_id=_carrier_plan_fixture().plan_id,
+        read=lambda _repository, _token, path: (
+            {"workflow_runs": []}
+            if path.startswith("actions/workflows/scheduled-agent-bridge.yml/runs?")
+            else (_ for _ in ()).throw(AssertionError(path))
+        ),
+    )
+
+    assert status == "application-completion-carrier-prior-dispatch-incomplete"
+
+
+def test_carrier_outcome_consumer_blocks_duplicate_identical_reports() -> None:
+    plan = _carrier_plan_fixture()
+    recovery = _qualified_recovery_fixture(artifact_id=997)
+    carrier_digest = "sha256:" + "6" * 64
+    report_body = carrier.render_carrier_outcome_report(
+        _carrier_outcome_fixture(
+            plan,
+            recovery,
+            carrier_artifact_id=999,
+            carrier_artifact_digest=carrier_digest,
+        )
+    )
+    qualified = carrier.QualifiedCarrierPlan(
+        request_comment_id=90,
+        run_id=777,
+        run_attempt=1,
+        artifact_id=999,
+        artifact_digest=carrier_digest,
+        plan=plan,
+    )
+
+    outcome, reason = bridge._carrier_outcome_status(
+        recent_comments=(
+            _trusted_connector_comment(92, report_body),
+            _trusted_connector_comment(93, report_body),
+        ),
+        owner="owner",
+        repository="owner/repo",
+        source=bridge.WorkerRequest(322, "executor", "implement-change"),
+        record=_accepted_carrier_record(),
+        accepted_decision_sha256="a" * 64,
+        recovery_artifact=recovery,
+        qualified_carrier=qualified,
+    )
+
+    assert outcome == "BLOCKED"
+    assert reason == "application-completion-carrier-outcome-ambiguous"
+
+
+@pytest.mark.parametrize("missing_plan_id", [False, True])
+@pytest.mark.parametrize("contradictory_first", [False, True])
+def test_carrier_outcome_blocks_same_lineage_plan_conflict_even_with_complete_report(
+    missing_plan_id: bool,
+    contradictory_first: bool,
+) -> None:
+    plan = _carrier_plan_fixture()
+    recovery = _qualified_recovery_fixture(artifact_id=997)
+    carrier_digest = "sha256:" + "6" * 64
+    report = _carrier_outcome_fixture(
+        plan,
+        recovery,
+        carrier_artifact_id=999,
+        carrier_artifact_digest=carrier_digest,
+    )
+    valid_body = carrier.render_carrier_outcome_report(report)
+    if missing_plan_id:
+        contradictory_body = valid_body.replace(f"Plan-ID: {report.plan_id}\n", "")
+        expected_reason = "application-completion-carrier-outcome-invalid"
+    else:
+        contradictory_body = carrier.render_carrier_outcome_report(
+            replace(report, plan_id="carrier-plan-" + "f" * 64)
+        )
+        expected_reason = "application-completion-carrier-outcome-plan-reused"
+    assert contradictory_body != valid_body
+    bodies = (
+        (contradictory_body, valid_body)
+        if contradictory_first
+        else (valid_body, contradictory_body)
+    )
+    qualified = carrier.QualifiedCarrierPlan(
+        request_comment_id=90,
+        run_id=777,
+        run_attempt=1,
+        artifact_id=999,
+        artifact_digest=carrier_digest,
+        plan=plan,
+    )
+
+    outcome, reason = bridge._carrier_outcome_status(
+        recent_comments=tuple(
+            _trusted_connector_comment(92 + index, body) for index, body in enumerate(bodies)
+        ),
+        owner="owner",
+        repository="owner/repo",
+        source=bridge.WorkerRequest(322, "executor", "implement-change"),
+        record=_accepted_carrier_record(),
+        accepted_decision_sha256="a" * 64,
+        recovery_artifact=recovery,
+        qualified_carrier=qualified,
+    )
+
+    assert outcome == "BLOCKED"
+    assert reason == expected_reason
+
+
+def test_carrier_outcome_consumer_ignores_unrelated_repository_lineage() -> None:
+    plan = _carrier_plan_fixture()
+    recovery = _qualified_recovery_fixture(artifact_id=997)
+    carrier_digest = "sha256:" + "6" * 64
+    report = replace(
+        _carrier_outcome_fixture(
+            plan,
+            recovery,
+            carrier_artifact_id=999,
+            carrier_artifact_digest=carrier_digest,
+        ),
+        repository="other/repo",
+    )
+    qualified = carrier.QualifiedCarrierPlan(
+        request_comment_id=90,
+        run_id=777,
+        run_attempt=1,
+        artifact_id=999,
+        artifact_digest=carrier_digest,
+        plan=plan,
+    )
+
+    outcome, reason = bridge._carrier_outcome_status(
+        recent_comments=(
+            _trusted_connector_comment(
+                92,
+                carrier.render_carrier_outcome_report(report),
+            ),
+        ),
+        owner="owner",
+        repository="owner/repo",
+        source=bridge.WorkerRequest(322, "executor", "implement-change"),
+        record=_accepted_carrier_record(),
+        accepted_decision_sha256="a" * 64,
+        recovery_artifact=recovery,
+        qualified_carrier=qualified,
+    )
+
+    assert outcome == "NONE"
+    assert reason is None
+
+
+def test_carrier_outcome_cannot_claim_matching_precondition_with_other_observation() -> None:
+    plan = _carrier_plan_fixture()
+    recovery = _qualified_recovery_fixture(artifact_id=997)
+    report = _carrier_outcome_fixture(
+        plan,
+        recovery,
+        carrier_artifact_id=999,
+        carrier_artifact_digest="sha256:" + "6" * 64,
+    )
+    mismatched_report = replace(
+        report,
+        observed_precondition_json=json.dumps(
+            {"ref_sha": "c" * 40},
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+    )
+    qualified = carrier.QualifiedCarrierPlan(
+        request_comment_id=90,
+        run_id=777,
+        run_attempt=1,
+        artifact_id=999,
+        artifact_digest="sha256:" + "6" * 64,
+        plan=plan,
+    )
+
+    outcome, reason = bridge._carrier_outcome_status(
+        recent_comments=(
+            _trusted_connector_comment(
+                92,
+                carrier.render_carrier_outcome_report(mismatched_report),
+            ),
+        ),
+        owner="owner",
+        repository="owner/repo",
+        source=bridge.WorkerRequest(322, "executor", "implement-change"),
+        record=_accepted_carrier_record(),
+        accepted_decision_sha256="a" * 64,
+        recovery_artifact=recovery,
+        qualified_carrier=qualified,
+    )
+
+    assert outcome == "BLOCKED"
+    assert reason == "application-completion-carrier-outcome-invalid"

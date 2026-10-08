@@ -4317,3 +4317,50 @@ def test_other_actions_do_not_retain_implementation_checkpoint(role: str, action
     raw["_semantic_intent_version"] = 2
     retained = json.loads(effects.semantic_intent_payload(json.dumps(raw)))
     assert retained["requested_effects"] == []
+
+
+def test_effect_precondition_rejection_records_recovery_boundary() -> None:
+    source = WorkerRequest(138, "executor", "implement-change")
+    effect = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "pull-request-ready",
+                "number": 178,
+                "expected_head_sha": "b" * 40,
+            },
+            sort_keys=True,
+        ),
+    )
+    batch = parse_effect_batch(
+        _raw(
+            result_kind="spec-blocker",
+            requested_effects=[{"kind": effect.kind, "payload_json": effect.payload_json}],
+        ),
+        source,
+    )
+    rejection = effects.ApplicationRejection(
+        effects.ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+        expected='{"default_branch_revision":"expected"}',
+        observed='{"disposition":"CONTRADICTORY","reason":"same-path overlap"}',
+    )
+
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: False,
+        apply_effect=lambda _effect: pytest.fail("rejected effect mutated"),
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        effect_rejection=lambda: rejection,
+    )
+
+    assert not result.applied
+    evidence = getattr(result, "recovery_evidence", None)
+    assert evidence is not None
+    assert getattr(evidence, "failed_effect_index", None) == 0
+    assert getattr(evidence, "completed_effect_indexes", None) == ()
+    assert getattr(evidence, "mutation_status", None) == "not-complete"
+    assert getattr(evidence, "unfinished_boundary", None) == "effect-precondition"
+    assert getattr(evidence, "rejection", None) == rejection

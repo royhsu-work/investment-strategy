@@ -333,6 +333,20 @@ def parse_application_decision(body: object) -> ApplicationDecisionRecord | None
 
 
 @dataclass(frozen=True)
+class EffectRecoveryEvidence:
+    """Exact known boundary when one staged effect cannot be completed."""
+
+    failed_effect_index: int
+    failed_effect_kind: str
+    failed_effect_sha256: str
+    completed_effect_indexes: tuple[int, ...]
+    completed_effect_sha256: tuple[str, ...]
+    mutation_status: str
+    unfinished_boundary: str
+    rejection: ApplicationRejection | None = None
+
+
+@dataclass(frozen=True)
 class ApplyResult:
     """Application outcome for one wake; successors are persisted, never executed here."""
 
@@ -340,6 +354,7 @@ class ApplyResult:
     reason: str
     rejection: ApplicationRejection | None = None
     carrier_plan: CarrierPlan | None = None
+    recovery_evidence: EffectRecoveryEvidence | None = None
 
 
 FreshPreflight = Callable[[], DispatchPreflight]
@@ -1237,16 +1252,40 @@ def apply_effect_batch(
         if not (defer_issue_comments and effect.kind == "issue-comment")
     )
 
-    def rejected(reason: str) -> ApplyResult:
-        return ApplyResult(
-            False,
-            reason,
-            rejection=None if effect_rejection is None else effect_rejection(),
+    def rejected(
+        reason: str,
+        effect_index: int,
+        *,
+        completed_indexes: tuple[int, ...] = (),
+        unfinished_boundary: str = "effect-precondition",
+        mutation_status: str = "not-complete",
+    ) -> ApplyResult:
+        failed_effect = (
+            effects_to_apply[effect_index]
+            if effect_index < len(effects_to_apply)
+            else derived_effect
         )
+        rejection = None if effect_rejection is None else effect_rejection()
+        evidence = EffectRecoveryEvidence(
+            failed_effect_index=effect_index,
+            failed_effect_kind=failed_effect.kind,
+            failed_effect_sha256=hashlib.sha256(
+                failed_effect.payload_json.encode("utf-8")
+            ).hexdigest(),
+            completed_effect_indexes=completed_indexes,
+            completed_effect_sha256=tuple(
+                hashlib.sha256(effects_to_apply[index].payload_json.encode("utf-8")).hexdigest()
+                for index in completed_indexes
+            ),
+            mutation_status=mutation_status,
+            unfinished_boundary=unfinished_boundary,
+            rejection=rejection,
+        )
+        return ApplyResult(False, reason, rejection=rejection, recovery_evidence=evidence)
 
-    for effect in effects_to_apply:
+    for index, effect in enumerate(effects_to_apply):
         if not effect_guard(effect):
-            return rejected("effect precondition rejected")
+            return rejected("effect precondition rejected", index)
 
     if (
         not accepted_intent
@@ -1259,25 +1298,47 @@ def apply_effect_batch(
     ):
         return ApplyResult(False, "application decision postcondition not observed")
 
-    for effect in effects_to_apply:
+    completed_indexes: list[int] = []
+    for index, effect in enumerate(effects_to_apply):
         if not effect_guard(effect):
-            return rejected("effect precondition rejected")
+            return rejected(
+                "effect precondition rejected",
+                index,
+                completed_indexes=tuple(completed_indexes),
+            )
         try:
             apply_effect(effect)
         except CarrierRequired:
             raise
         if not observe_postcondition(effect):
-            return ApplyResult(False, "durable postcondition not observed")
+            return rejected(
+                "durable postcondition not observed",
+                index,
+                completed_indexes=tuple(completed_indexes),
+                unfinished_boundary="effect-postcondition",
+                mutation_status="unknown",
+            )
+        completed_indexes.append(index)
 
     if apply_derived:
         if not effect_guard(derived_effect):
-            return rejected("effect precondition rejected")
+            return rejected(
+                "effect precondition rejected",
+                len(effects_to_apply),
+                completed_indexes=tuple(completed_indexes),
+            )
         try:
             apply_effect(derived_effect)
         except CarrierRequired:
             raise
         if not observe_postcondition(derived_effect):
-            return ApplyResult(False, "durable postcondition not observed")
+            return rejected(
+                "durable postcondition not observed",
+                len(effects_to_apply),
+                completed_indexes=tuple(completed_indexes),
+                unfinished_boundary="derived-effect-postcondition",
+                mutation_status="unknown",
+            )
 
     return ApplyResult(True, "applied")
 

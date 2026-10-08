@@ -1920,6 +1920,50 @@ def test_canonical_first_carrier_requires_original_qualified_lifecycle(
     assert proof_git.mutations == []
 
 
+def test_every_materialization_consumer_uses_current_target_after_legal_correction(
+    proof_git: _ProofGitRepository,
+) -> None:
+    accepted = proof_git.commit(
+        {proof_git.path: "accepted content"}, proof_git.message, (proof_git.base,)
+    )
+    proof_git.set_head(accepted)
+    previous = _prove_git(proof_git)
+    assert previous.disposition == "COMPLETE", previous
+    corrected = proof_git.commit(
+        {proof_git.path: "later approved correction"}, "Same Change correction", (accepted,)
+    )
+    proof_git.set_head(corrected)
+    current = _prove_git(proof_git)
+    assert current.disposition == "COMPLETE", current
+    assert current.witness is not None and current.witness.revision == accepted
+    assert current.target is not None and current.target.revision == corrected
+    assert proof_git.entries(corrected)[proof_git.path]["sha"] != proof_git.desired
+    assert _apply_git(proof_git) == current.target
+    assert (
+        materialization.observe_materialization_target(
+            proof_git.payload(),
+            proof_git.source,
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            default_branch="main",
+            accepted_authorization_revision=proof_git.authorization,
+        )
+        == current.target
+    )
+    assert materialization.materialization_postcondition(
+        proof_git.payload(),
+        proof_git.source,
+        repository=proof_git.repository,
+        token=_TOKEN,
+        current_revision=proof_git.main,
+        default_branch="main",
+        target=previous.target,
+        accepted_authorization_revision=proof_git.authorization,
+    )
+    assert proof_git.mutations == []
+
+
 def test_canonical_first_create_rejects_existing_accepted_preimage(
     proof_git: _ProofGitRepository,
 ) -> None:
