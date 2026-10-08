@@ -2396,6 +2396,19 @@ def test_application_boundary_does_not_replay_dispatch_artifacts() -> None:
     assert "FORMALIZE_CHANGE_REQUEST" not in workflow
     assert "End invocation at CarrierRequired boundary" in workflow
     assert workflow.count("steps.apply.outputs.carrier_required != 'true'") == 8
+    recovery_name = "application-recovery-evidence"
+    recovery_path = f'$RUNNER_TEMP/{recovery_name}'
+    assert workflow.count(f'--recovery-evidence-path "{recovery_path}"') == 2
+    initial_evidence_upload = workflow.index(
+        "      - name: Upload exact application recovery evidence"
+    )
+    carrier_plan_upload = workflow.index("      - name: Persist exact external carrier plan")
+    initial_evidence_step = workflow[initial_evidence_upload:carrier_plan_upload]
+    assert f"name: {recovery_name}" in initial_evidence_step
+    assert "path: ${{ steps.apply.outputs.recovery_evidence_path }}" in initial_evidence_step
+    assert "archive: false" in initial_evidence_step
+    assert "overwrite: true" in initial_evidence_step
+
     validation_apply_start = workflow.index(
         "      - name: Persist the derived successor after exact validation"
     )
@@ -2407,7 +2420,8 @@ def test_application_boundary_does_not_replay_dispatch_artifacts() -> None:
     assert "id: post_validation_apply" in workflow[validation_apply_start:final_evidence_upload]
     assert "if: always()" in final_evidence_step
     assert "steps.post_validation_apply.outputs.recovery_evidence_path" in final_evidence_step
-    assert "name: application-recovery-evidence" in final_evidence_step
+    assert f"name: {recovery_name}" in final_evidence_step
+    assert "archive: false" in final_evidence_step
     assert "overwrite: true" in final_evidence_step
 
 

@@ -282,6 +282,8 @@ authorization SHALL durably persist one exact `APPLICATION_DECISION: ACCEPTED`
 bound to the request comment, source Issue, Role/Action, Change, authorization
 revision, result, and immutable worker intent.
 
+Whenever an application step emits recovery-evidence output, the scheduled-application workflow SHALL upload the JSON as one direct, unarchived file with canonical artifact name `application-recovery-evidence`; the uploaded file basename and configured artifact name MUST match exactly. The bridge consumer SHALL keep validating the exact run, attempt, job, artifact id, digest, and parsed content from those direct JSON bytes. Every step that uploads this artifact, including the initial and post-validation boundaries, SHALL set `overwrite: true` so a new workflow attempt can replace its predecessor's artifact and post-validation evidence can replace initial evidence without creating ambiguous duplicates. A basename/name mismatch, missing upload, or unsuccessful upload SHALL remain fail-closed; changing to an archive format requires a coordinated consumer change.
+
 After durable acceptance, interruption recovery SHALL use only that exact
 accepted intent and idempotently reconcile missing effects.  It SHALL never
 re-execute the semantic Action because mutable ingress was edited, deleted, or
@@ -335,6 +337,24 @@ When the canonical proof returns `COMPLETE(T, W)`, recovery SHALL execute zero d
 Normal `CarrierRequired` SHALL remain an application invocation exit and normal external handoff, distinct from actual actuator rejection/error and unknown write response. Catchable external outcomes SHALL preserve exact source request/run/attempt/artifact/plan, operation/tool, target versions/preimage, platform-redacted raw observable error, separately justified classification, whether mutation is proven complete, proven not complete, or unknown, and the unfinished boundary. The legal repository-owned evidence/application path SHALL fresh-qualify and deduplicate this bounded evidence against immutable accepted intent and actual GitHub truth. It SHALL reuse canonical `EXECUTION_EXCEPTION` for exceptions without adding a lifecycle Action, ResultKind, state, queue, lease, cursor, retry registry, or progress database. External reports MUST NOT overwrite accepted intent, authorize routing/termination, or manufacture Human approval. A report's claimed success SHALL NOT substitute for the canonical postcondition.
 
 After a lost or ambiguous write response, recovery SHALL observe/reconcile the exact target before any further write and SHALL fail closed when unique identity or completion cannot be proven. When reporting itself fails, the invocation SHALL retain the observable platform/run error and its evidence limits wherever a legal path remains, without claiming an absent GitHub record. A later wake SHALL recover solely from actual durable truth; uncatchable termination SHALL not produce fabricated prior observations. Exceptions SHALL obey existing disposition and unchanged-denial retry rules. No fixed numerical ceiling applies to new substantive recovery transitions; each later attempt SHALL require a new exact evidence digest, one uniquely linked predecessor, fresh authorization, and current canonical proof. An unchanged refusal or repeated evidence digest SHALL NOT be retried.
+
+#### Scenario: Recovery evidence remains named and replaceable
+
+
+
+- GIVEN the application publishes recovery evidence as a direct JSON artifact
+
+- WHEN the first upload, post-validation upload, or a later workflow attempt publishes that evidence
+
+- THEN the uploaded file basename and configured artifact name both equal `application-recovery-evidence`
+
+- AND every upload permits replacement while preserving one exact current run/attempt/job artifact
+
+- AND the consumer parses and digest-checks the same direct JSON bytes
+
+- AND missing, duplicate, stale, or mismatched artifact evidence fails closed
+
+
 
 #### Scenario: Valid pending plan selects the consumer rather than the producer
 

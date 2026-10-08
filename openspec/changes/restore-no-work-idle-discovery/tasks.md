@@ -67,10 +67,11 @@ Trace: #322 Step 1 execution record and current-source same-path refusal -> exac
 
 ## Slice 5 follow-up — 0F. Exact-head carrier review corrections
 
-- [ ] 0.36 RED/GREEN: reproduce a same-lineage report with a missing/different `Plan-ID` beside a valid complete report, and prove the contradiction blocks regardless of comment order while unrelated lineage is ignored.
-- [ ] 0.37 RED/GREEN: reject noncanonical unpadded URL-safe base64 for observed preconditions; prove alternate spellings that decode to the same bytes are invalid.
-- [ ] 0.38 VERIFY: read full paginated runtime-shard history without a 30-day/last-N cutoff for continuation, outcome, and prior-handoff evidence; prove an unresolved request older than 30 days still blocks and history/read absence fails closed. Retain the bounded repository-wide ingress scan.
+- [x] 0.36 RED/GREEN: reproduce a same-lineage report with a missing/different `Plan-ID` beside a valid complete report, and prove the contradiction blocks regardless of comment order while unrelated lineage is ignored.
+- [x] 0.37 RED/GREEN: reject noncanonical unpadded URL-safe base64 for observed preconditions; prove alternate spellings that decode to the same bytes are invalid.
+- [x] 0.38 VERIFY: read full paginated runtime-shard history without a 30-day/last-N cutoff for continuation, outcome, and prior-handoff evidence; prove an unresolved request older than 30 days still blocks and history/read absence fails closed. Retain the bounded repository-wide ingress scan.
 - [ ] 0.39 VERIFY: run integrated bridge regressions, remote Python Quality, strict OpenSpec validation, and an independent review on the exact final head.
+- [ ] 0.40 RED/GREEN: keep the unarchived application-recovery JSON consumer compatible while making artifact file basename and configured name match, and enable safe replacement on both initial/final uploads and workflow reruns; prove the exact artifact identity and workflow contract together.
 
 ## 1. Contract and typed NO_WORK handoff
 
