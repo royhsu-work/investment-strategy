@@ -244,3 +244,11 @@ The implementation must provide executable coverage for:
 ## Implementation note
 
 The exact module/file decomposition remains subject to implementation review and current default-branch conventions. The non-negotiable ownership boundaries and evidence properties above are normative.
+
+### Integrated carrier result contract (2026-10-08)
+
+The only executable carrier instruction is a repository-produced, schema-valid `qualified_carrier` in the exact successful dispatch artifact. The enabled Chat Task reads the immutable carrier artifact, checks exact lineage and current main's parser/consumer, fresh-reads the operation target, and either skips an already-complete effect or invokes the exact requested connector operation after a matching precondition. It then fresh-reads the postcondition and writes one ordered `APPLICATION_CARRIER_OUTCOME` report. The report carries the plan-bound expected precondition observation, outcome, mutation status, postcondition, unfinished boundary, and redacted error; it grants no authority.
+
+The dispatch bridge verifies every report identity against the current accepted intent, recovery artifact, carrier artifact and plan. It releases only the exact `APPLICATION_CONTINUATION` after one complete report. A refusal, error, unknown result, malformed/duplicate report, or missing result remains fail-closed. Every earlier dispatch request is checked for a same-plan handoff so an intervening fail-closed artifact cannot hide a lost report. An earlier request with no unique completed run/artifact also blocks reissue.
+
+This recovers the success path without a new workflow, queue, lease, or state store. Missing native Task transcripts, legacy application runs without failure artifacts, same-path conflicts, and unobservable result-reporting failures remain explicit blockers; they are not inferred complete.

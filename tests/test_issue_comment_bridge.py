@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Literal, cast
@@ -2946,6 +2947,181 @@ def _qualified_recovery_fixture(
         ("d" * 40, None, False),
     ],
 )
+
+def _trusted_connector_comment(comment_id: int, body: str) -> dict[str, object]:
+    return {
+        "id": comment_id,
+        "body": body,
+        "user": {"login": "owner"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+
+
+def _carrier_outcome_fixture(
+    plan: carrier.CarrierPlan,
+    recovery: bridge.ApplicationRecoveryArtifact,
+    *,
+    carrier_artifact_id: int,
+    carrier_artifact_digest: str,
+    outcome: Literal["COMPLETE", "REFUSED"] = "COMPLETE",
+) -> carrier.CarrierOutcomeReport:
+    complete = outcome == "COMPLETE"
+    return carrier.CarrierOutcomeReport(
+        repository="owner/repo",
+        issue_number=322,
+        request_comment_id=90,
+        accepted_decision_sha256=recovery.accepted_decision_sha256,
+        continuation_correlation=bridge.application_continuation_correlation(
+            "owner/repo",
+            322,
+            90,
+            recovery.accepted_decision_sha256,
+            recovery.run_id,
+            recovery.run_attempt,
+            recovery.job_id,
+            recovery.artifact_id,
+            recovery.artifact_digest,
+            recovery.failure_evidence_sha256,
+            recovery.recovery_episode_sha256,
+        ),
+        predecessor_run_id=recovery.run_id,
+        predecessor_run_attempt=recovery.run_attempt,
+        predecessor_job_id=recovery.job_id,
+        recovery_artifact_id=recovery.artifact_id,
+        recovery_artifact_digest=recovery.artifact_digest,
+        failure_evidence_sha256=recovery.failure_evidence_sha256,
+        recovery_episode_sha256=recovery.recovery_episode_sha256,
+        carrier_artifact_id=carrier_artifact_id,
+        carrier_artifact_digest=carrier_artifact_digest,
+        plan_id=plan.plan_id,
+        operation=plan.operation,
+        outcome=outcome,
+        mutation_status="COMPLETED" if complete else "NO_WRITE",
+        precondition="MATCH",
+        observed_precondition_json=json.dumps(
+            dict(plan.expected), sort_keys=True, separators=(",", ":")
+        ),
+        postcondition="COMPLETE" if complete else "INCOMPLETE",
+        unfinished_boundary="none" if complete else "carrier-operation",
+        failure_code="none" if complete else "connector-refused",
+        failure_summary="none" if complete else "connector refused",
+    )
+
+
+def _carrier_dispatch_result_bytes(
+    qualified: carrier.QualifiedCarrierPlan,
+    *,
+    request_comment_id: int = 91,
+) -> bytes:
+    continuation = bridge.render_application_continuation_request(
+        repository="owner/repo",
+        issue_number=322,
+        original_request_comment_id=90,
+        accepted_decision_sha256="a" * 64,
+        predecessor_run_id=777,
+        predecessor_run_attempt=1,
+        predecessor_job_id=888,
+        predecessor_artifact_id=997,
+        predecessor_artifact_digest="sha256:" + "3" * 64,
+        failure_evidence_sha256="4" * 64,
+        recovery_episode_sha256="5" * 64,
+    )
+    payload = {
+        "schema": bridge.DISPATCH_RESULT_SCHEMA,
+        "request_comment_id": request_comment_id,
+        "default_branch_revision": REVISION,
+        "disposition": "FAIL_CLOSED",
+        "reason": "application-completion-carrier-required",
+        "application_continuation": continuation,
+        "qualified_carrier": carrier.qualified_carrier_document(qualified),
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _carrier_completion_reader(
+    *,
+    carrier_digest: str,
+    dispatch_bytes: bytes | None = None,
+) -> bridge.GitHubReader:
+    dispatch_digest = (
+        None if dispatch_bytes is None else f"sha256:{hashlib.sha256(dispatch_bytes).hexdigest()}"
+    )
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path == f"compare/{REVISION}...{REVISION}":
+            return {"status": "identical", "base_commit": {"sha": REVISION}}
+        if path.startswith("actions/workflows/scheduled-agent-application.yml/runs?"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 777,
+                        "display_title": "Scheduled Agent Application 90",
+                        "status": "completed",
+                        "run_attempt": 1,
+                        "head_sha": REVISION,
+                    }
+                ]
+            }
+        if path == "actions/runs/777/jobs":
+            return {
+                "jobs": [
+                    {
+                        "id": 888,
+                        "name": "apply",
+                        "steps": [
+                            {
+                                "name": "Upload exact external carrier plan",
+                                "conclusion": "success",
+                            }
+                        ],
+                    }
+                ]
+            }
+        if path == "actions/runs/777/artifacts?per_page=100":
+            return {
+                "total_count": 1,
+                "artifacts": [
+                    {
+                        "id": 999,
+                        "name": "carrier-plan.json",
+                        "expired": False,
+                        "digest": carrier_digest,
+                        "workflow_run": {"id": 777, "head_sha": REVISION},
+                    }
+                ],
+            }
+        if path.startswith("actions/workflows/scheduled-agent-bridge.yml/runs?"):
+            if dispatch_bytes is None:
+                return {"workflow_runs": []}
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 555,
+                        "display_title": "Scheduled Agent Dispatch 91",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "head_sha": REVISION,
+                    }
+                ]
+            }
+        if path == "actions/runs/555/artifacts?per_page=100" and dispatch_bytes is not None:
+            return {
+                "total_count": 1,
+                "artifacts": [
+                    {
+                        "id": 556,
+                        "name": "dispatch-result.json",
+                        "expired": False,
+                        "digest": dispatch_digest,
+                        "workflow_run": {"id": 555, "head_sha": REVISION},
+                    }
+                ],
+            }
+        raise AssertionError(path)
+
+    return read
+
+
 def test_completed_application_prefers_saved_qualified_carrier_over_producer_resume(
     monkeypatch: pytest.MonkeyPatch,
     plan_revision: str,
@@ -3033,6 +3209,184 @@ def test_completed_application_prefers_saved_qualified_carrier_over_producer_res
     assert completion.qualified_carrier is not None
     assert completion.qualified_carrier.plan == plan
     assert completion.qualified_carrier.artifact_digest == digest
+
+
+
+def test_completed_application_consumes_only_exact_complete_carrier_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _carrier_plan_fixture()
+    carrier_raw = json.dumps(
+        carrier.carrier_plan_document(plan),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    carrier_digest = f"sha256:{hashlib.sha256(carrier_raw).hexdigest()}"
+    recovery = _qualified_recovery_fixture(artifact_id=997)
+    report = _carrier_outcome_fixture(
+        plan,
+        recovery,
+        carrier_artifact_id=999,
+        carrier_artifact_digest=carrier_digest,
+    )
+    qualified = carrier.QualifiedCarrierPlan(
+        request_comment_id=90,
+        run_id=777,
+        run_attempt=1,
+        artifact_id=999,
+        artifact_digest=carrier_digest,
+        plan=plan,
+    )
+    previous_dispatch = _carrier_dispatch_result_bytes(qualified)
+    comments = (
+        _trusted_connector_comment(
+            91,
+            "DISPATCH_REQUEST\nRequested-At: 2026-10-08T05:49:00Z",
+        ),
+        _trusted_connector_comment(
+            92,
+            carrier.render_carrier_outcome_report(report),
+        ),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "read_application_recovery_artifact",
+        lambda *_args, **_kwargs: recovery,
+    )
+
+    def read_artifact(_repository: str, _token: str, path: str) -> bytes:
+        if path == "actions/artifacts/999/zip":
+            return carrier_raw
+        if path == "actions/artifacts/556/zip":
+            return previous_dispatch
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "read_github_artifact_bytes", read_artifact)
+    completion = bridge._application_job(
+        "owner/repo",
+        "token",
+        90,
+        read=_carrier_completion_reader(
+            carrier_digest=carrier_digest,
+            dispatch_bytes=previous_dispatch,
+        ),
+        record=_accepted_carrier_record(),
+        accepted_decision_sha256="a" * 64,
+        recent_comments=comments,
+        current_dispatch_request_comment_id=100,
+    )
+
+    assert completion.state == "RESUMABLE"
+    assert completion.reason == "application-completion-continuation-required"
+    assert completion.qualified_carrier is None
+    assert completion.recovery_artifact == recovery
+
+
+def test_completed_application_blocks_a_previous_unreported_carrier_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _carrier_plan_fixture()
+    carrier_raw = json.dumps(
+        carrier.carrier_plan_document(plan),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    carrier_digest = f"sha256:{hashlib.sha256(carrier_raw).hexdigest()}"
+    recovery = _qualified_recovery_fixture(artifact_id=997)
+    qualified = carrier.QualifiedCarrierPlan(
+        request_comment_id=90,
+        run_id=777,
+        run_attempt=1,
+        artifact_id=999,
+        artifact_digest=carrier_digest,
+        plan=plan,
+    )
+    previous_dispatch = _carrier_dispatch_result_bytes(qualified)
+    monkeypatch.setattr(
+        bridge,
+        "read_application_recovery_artifact",
+        lambda *_args, **_kwargs: recovery,
+    )
+
+    def read_artifact(_repository: str, _token: str, path: str) -> bytes:
+        if path == "actions/artifacts/999/zip":
+            return carrier_raw
+        if path == "actions/artifacts/556/zip":
+            return previous_dispatch
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "read_github_artifact_bytes", read_artifact)
+    completion = bridge._application_job(
+        "owner/repo",
+        "token",
+        90,
+        read=_carrier_completion_reader(
+            carrier_digest=carrier_digest,
+            dispatch_bytes=previous_dispatch,
+        ),
+        record=_accepted_carrier_record(),
+        accepted_decision_sha256="a" * 64,
+        recent_comments=(
+            _trusted_connector_comment(
+                91,
+                "DISPATCH_REQUEST\nRequested-At: 2026-10-08T05:49:00Z",
+            ),
+        ),
+        current_dispatch_request_comment_id=100,
+    )
+
+    assert completion.state == "INVALID"
+    assert completion.reason == "application-completion-carrier-outcome-missing"
+    assert completion.qualified_carrier is None
+
+
+def test_completed_application_blocks_refused_carrier_outcome_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _carrier_plan_fixture()
+    carrier_raw = json.dumps(
+        carrier.carrier_plan_document(plan),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    carrier_digest = f"sha256:{hashlib.sha256(carrier_raw).hexdigest()}"
+    recovery = _qualified_recovery_fixture(artifact_id=997)
+    report = _carrier_outcome_fixture(
+        plan,
+        recovery,
+        carrier_artifact_id=999,
+        carrier_artifact_digest=carrier_digest,
+        outcome="REFUSED",
+    )
+    monkeypatch.setattr(
+        bridge,
+        "read_application_recovery_artifact",
+        lambda *_args, **_kwargs: recovery,
+    )
+    monkeypatch.setattr(
+        bridge,
+        "read_github_artifact_bytes",
+        lambda *_args: carrier_raw,
+    )
+    completion = bridge._application_job(
+        "owner/repo",
+        "token",
+        90,
+        read=_carrier_completion_reader(carrier_digest=carrier_digest),
+        record=_accepted_carrier_record(),
+        accepted_decision_sha256="a" * 64,
+        recent_comments=(
+            _trusted_connector_comment(
+                92,
+                carrier.render_carrier_outcome_report(report),
+            ),
+        ),
+        current_dispatch_request_comment_id=100,
+    )
+
+    assert completion.state == "INVALID"
+    assert completion.reason == "application-completion-carrier-outcome-incomplete"
+    assert completion.qualified_carrier is None
 
 
 def test_completed_application_distinguishes_absent_from_incomplete_carrier_listing(
@@ -3180,7 +3534,12 @@ def test_carrier_outcome_report_round_trips_exact_lineage() -> None:
         operation="pull-request-head-update",
         outcome="COMPLETE",
         mutation_status="COMPLETED",
+        precondition="MATCH",
+        observed_precondition_json=json.dumps(
+            dict(_carrier_plan_fixture().expected), sort_keys=True, separators=(",", ":")
+        ),
         postcondition="COMPLETE",
+        unfinished_boundary="none",
         failure_code="none",
         failure_summary="none",
     )
@@ -3211,7 +3570,12 @@ def test_carrier_outcome_report_rejects_incomplete_or_unbound_evidence() -> None
         operation="pull-request-head-update",
         outcome="COMPLETE",
         mutation_status="COMPLETED",
+        precondition="MATCH",
+        observed_precondition_json=json.dumps(
+            dict(_carrier_plan_fixture().expected), sort_keys=True, separators=(",", ":")
+        ),
         postcondition="COMPLETE",
+        unfinished_boundary="none",
         failure_code="none",
         failure_summary="none",
     )
@@ -3384,3 +3748,172 @@ def test_application_continuation_binds_exact_failure_transition() -> None:
     assert getattr(next_parsed, "continuation_correlation", None) != getattr(
         parsed, "continuation_correlation", None
     )
+
+
+def test_unreported_carrier_handoff_is_found_before_later_noncarrier_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _carrier_plan_fixture()
+    carrier_raw = json.dumps(
+        carrier.carrier_plan_document(plan),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    carrier_digest = f"sha256:{hashlib.sha256(carrier_raw).hexdigest()}"
+    qualified = carrier.QualifiedCarrierPlan(
+        request_comment_id=90,
+        run_id=777,
+        run_attempt=1,
+        artifact_id=999,
+        artifact_digest=carrier_digest,
+        plan=plan,
+    )
+    older_result = _carrier_dispatch_result_bytes(
+        qualified,
+        request_comment_id=91,
+    )
+    newer_result = bridge.render_dispatch_result_document(
+        request_comment_id=98,
+        default_branch_revision=REVISION,
+        decision=_decision("FAIL_CLOSED"),
+    ).encode("utf-8")
+    artifacts = {
+        5601: older_result,
+        5602: newer_result,
+    }
+    digests = {
+        artifact_id: f"sha256:{hashlib.sha256(raw).hexdigest()}"
+        for artifact_id, raw in artifacts.items()
+    }
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/scheduled-agent-bridge.yml/runs?"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 555,
+                        "display_title": bridge.render_dispatch_run_name(91),
+                        "status": "completed",
+                        "head_sha": REVISION,
+                    },
+                    {
+                        "id": 558,
+                        "display_title": bridge.render_dispatch_run_name(98),
+                        "status": "completed",
+                        "head_sha": REVISION,
+                    },
+                ]
+            }
+        if path == "actions/runs/555/artifacts?per_page=100":
+            return {
+                "total_count": 1,
+                "artifacts": [
+                    {
+                        "id": 5601,
+                        "name": "dispatch-result.json",
+                        "expired": False,
+                        "digest": digests[5601],
+                        "workflow_run": {"id": 555, "head_sha": REVISION},
+                    }
+                ],
+            }
+        if path == "actions/runs/558/artifacts?per_page=100":
+            return {
+                "total_count": 1,
+                "artifacts": [
+                    {
+                        "id": 5602,
+                        "name": "dispatch-result.json",
+                        "expired": False,
+                        "digest": digests[5602],
+                        "workflow_run": {"id": 558, "head_sha": REVISION},
+                    }
+                ],
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(
+        bridge,
+        "read_github_artifact_bytes",
+        lambda _repository, _token, path: artifacts[int(path.split("/")[2])],
+    )
+    status = bridge._prior_dispatch_handoff_reason(
+        "owner/repo",
+        "token",
+        recent_comments=(
+            _trusted_connector_comment(91, REQUEST_BODY),
+            _trusted_connector_comment(98, REQUEST_BODY),
+        ),
+        owner="owner",
+        current_dispatch_request_comment_id=100,
+        plan_id=plan.plan_id,
+        read=read,
+    )
+
+    assert status == "application-completion-carrier-outcome-missing"
+
+
+def test_prior_dispatch_without_a_visible_run_fails_closed_before_carrier_reissue() -> None:
+    status = bridge._prior_dispatch_handoff_reason(
+        "owner/repo",
+        "token",
+        recent_comments=(
+            _trusted_connector_comment(91, REQUEST_BODY),
+        ),
+        owner="owner",
+        current_dispatch_request_comment_id=100,
+        plan_id=_carrier_plan_fixture().plan_id,
+        read=lambda _repository, _token, path: (
+            {"workflow_runs": []}
+            if path.startswith("actions/workflows/scheduled-agent-bridge.yml/runs?")
+            else (_ for _ in ()).throw(AssertionError(path))
+        ),
+    )
+
+    assert status == "application-completion-carrier-prior-dispatch-incomplete"
+
+
+def test_carrier_outcome_cannot_claim_matching_precondition_with_other_observation() -> None:
+    plan = _carrier_plan_fixture()
+    recovery = _qualified_recovery_fixture(artifact_id=997)
+    report = _carrier_outcome_fixture(
+        plan,
+        recovery,
+        carrier_artifact_id=999,
+        carrier_artifact_digest="sha256:" + "6" * 64,
+    )
+    mismatched_report = replace(
+        report,
+        observed_precondition_json=json.dumps(
+            {"ref_sha": "c" * 40},
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+    )
+    qualified = carrier.QualifiedCarrierPlan(
+        request_comment_id=90,
+        run_id=777,
+        run_attempt=1,
+        artifact_id=999,
+        artifact_digest="sha256:" + "6" * 64,
+        plan=plan,
+    )
+
+    outcome, reason = bridge._carrier_outcome_status(
+        recent_comments=(
+            _trusted_connector_comment(
+                92,
+                carrier.render_carrier_outcome_report(mismatched_report),
+            ),
+        ),
+        owner="owner",
+        repository="owner/repo",
+        source=bridge.WorkerRequest(322, "executor", "implement-change"),
+        record=_accepted_carrier_record(),
+        accepted_decision_sha256="a" * 64,
+        recovery_artifact=recovery,
+        qualified_carrier=qualified,
+    )
+
+    assert outcome == "BLOCKED"
+    assert reason == "application-completion-carrier-outcome-invalid"

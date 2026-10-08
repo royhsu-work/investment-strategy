@@ -32,7 +32,9 @@ from investment_strategy.scheduled_agent_application_bridge import (
     render_application_continuation_request,
 )
 from investment_strategy.scheduled_agent_carrier import (
+    CarrierOutcomeReport,
     QualifiedCarrierPlan,
+    parse_carrier_outcome_report,
     parse_carrier_plan_document,
     parse_qualified_carrier_document,
     qualified_carrier_document,
@@ -74,6 +76,7 @@ RUN_NAME_PREFIX = "Scheduled Agent Dispatch "
 APPLICATION_RUN_NAME_PREFIX = "Scheduled Agent Application "
 DISPATCH_RESULT_SCHEMA = "scheduled-agent-dispatch-result/v1"
 _APPLICATION_WORKFLOW = "scheduled-agent-application.yml"
+_DISPATCH_WORKFLOW = "scheduled-agent-bridge.yml"
 _APPLICATION_DECISION_PROTOCOL_REVISION = "e874b4bdfc866649c0e7e61c151991d124d5c0c6"
 _CHATGPT_CONNECTOR_APP_SLUG = "chatgpt-codex-connector"
 _FORMAL_RESULT_MARKERS = frozenset({"ACTION_RESULT", "REVIEW_RESULT", "MERGE_RESULT"})
@@ -432,6 +435,276 @@ def _qualified_carrier_for_application_run(
     )
 
 
+
+def _carrier_outcome_field(body: str, field: str) -> str | None:
+    prefix = f"{field}: "
+    for line in body.split("\n")[1:]:
+        if line.startswith(prefix):
+            return line[len(prefix) :]
+    return None
+
+
+def _carrier_precondition_shape_matches(expected: object, observed: object) -> bool:
+    """Require the observation to carry exactly the plan's precondition fields."""
+
+    if isinstance(expected, Mapping):
+        if not isinstance(observed, Mapping) or set(expected) != set(observed):
+            return False
+        return all(
+            _carrier_precondition_shape_matches(expected[key], observed[key])
+            for key in expected
+        )
+    if isinstance(expected, list):
+        return (
+            isinstance(observed, list)
+            and len(expected) == len(observed)
+            and all(
+                _carrier_precondition_shape_matches(left, right)
+                for left, right in zip(expected, observed, strict=True)
+            )
+        )
+    return type(expected) is type(observed)
+
+
+def _carrier_outcome_status(
+    *,
+    recent_comments: tuple[Mapping[str, object], ...],
+    owner: str,
+    repository: str,
+    source: WorkerRequest,
+    record: ApplicationDecisionRecord,
+    accepted_decision_sha256: str,
+    recovery_artifact: ApplicationRecoveryArtifact,
+    qualified_carrier: QualifiedCarrierPlan,
+) -> tuple[Literal["NONE", "COMPLETE", "BLOCKED"], str | None]:
+    """Bind trusted carrier reports to the exact accepted and artifact lineage."""
+
+    if (
+        qualified_carrier.run_id != recovery_artifact.run_id
+        or qualified_carrier.run_attempt != recovery_artifact.run_attempt
+        or recovery_artifact.request_comment_id != record.request_comment_id
+        or recovery_artifact.accepted_decision_sha256 != accepted_decision_sha256
+    ):
+        return "BLOCKED", "application-completion-carrier-outcome-invalid"
+    try:
+        expected_correlation = application_continuation_correlation(
+            repository,
+            source.issue_number,
+            record.request_comment_id,
+            accepted_decision_sha256,
+            recovery_artifact.run_id,
+            recovery_artifact.run_attempt,
+            recovery_artifact.job_id,
+            recovery_artifact.artifact_id,
+            recovery_artifact.artifact_digest,
+            recovery_artifact.failure_evidence_sha256,
+            recovery_artifact.recovery_episode_sha256,
+        )
+    except ValueError:
+        return "BLOCKED", "application-completion-carrier-outcome-invalid"
+
+    matching: dict[str, CarrierOutcomeReport] = {}
+    for comment in recent_comments:
+        if not _trusted_connector_comment(comment, owner):
+            continue
+        body = comment.get("body")
+        if not isinstance(body, str) or body.split("\n", 1)[0] != "APPLICATION_CARRIER_OUTCOME":
+            continue
+        if _carrier_outcome_field(body, "Plan-ID") != qualified_carrier.plan.plan_id:
+            continue
+        report = parse_carrier_outcome_report(body)
+        if report is None:
+            return "BLOCKED", "application-completion-carrier-outcome-invalid"
+        exact_identity = (
+            report.repository == repository
+            and report.issue_number == source.issue_number
+            and report.request_comment_id == record.request_comment_id
+            and report.accepted_decision_sha256 == accepted_decision_sha256
+            and report.continuation_correlation == expected_correlation
+            and report.predecessor_run_id == recovery_artifact.run_id
+            and report.predecessor_run_attempt == recovery_artifact.run_attempt
+            and report.predecessor_job_id == recovery_artifact.job_id
+            and report.recovery_artifact_id == recovery_artifact.artifact_id
+            and report.recovery_artifact_digest == recovery_artifact.artifact_digest
+            and report.failure_evidence_sha256 == recovery_artifact.failure_evidence_sha256
+            and report.recovery_episode_sha256 == recovery_artifact.recovery_episode_sha256
+            and report.carrier_artifact_id == qualified_carrier.artifact_id
+            and report.carrier_artifact_digest == qualified_carrier.artifact_digest
+            and report.plan_id == qualified_carrier.plan.plan_id
+            and report.operation == qualified_carrier.plan.operation
+        )
+        expected_precondition_json = json.dumps(
+            dict(qualified_carrier.plan.expected), sort_keys=True, separators=(",", ":")
+        )
+        observed_precondition = (
+            None
+            if report.observed_precondition_json is None
+            else json.loads(report.observed_precondition_json)
+        )
+        observation_matches_status = (
+            report.precondition == "MATCH"
+            and report.observed_precondition_json == expected_precondition_json
+            and _carrier_precondition_shape_matches(
+                dict(qualified_carrier.plan.expected), observed_precondition
+            )
+        ) or (
+            report.precondition == "MISMATCH"
+            and report.observed_precondition_json != expected_precondition_json
+            and _carrier_precondition_shape_matches(
+                dict(qualified_carrier.plan.expected), observed_precondition
+            )
+        ) or (
+            report.precondition in {"UNKNOWN", "NOT_REQUIRED"}
+            and report.observed_precondition_json is None
+        )
+        if not exact_identity:
+            return "BLOCKED", "application-completion-carrier-outcome-plan-reused"
+        if not observation_matches_status:
+            return "BLOCKED", "application-completion-carrier-outcome-invalid"
+        matching[body] = report
+    if not matching:
+        return "NONE", None
+    if len(matching) != 1:
+        return "BLOCKED", "application-completion-carrier-outcome-ambiguous"
+    report = next(iter(matching.values()))
+    if report.outcome != "COMPLETE" or report.postcondition != "COMPLETE":
+        return "BLOCKED", "application-completion-carrier-outcome-incomplete"
+    return "COMPLETE", None
+
+
+def _dispatch_runs_for_request(
+    repository: str,
+    token: str,
+    request_comment_id: int,
+    *,
+    read: GitHubReader,
+) -> tuple[Mapping[str, object], ...] | None:
+    """Read all bridge runs for one earlier transport comment."""
+
+    title = render_dispatch_run_name(request_comment_id)
+    page = 1
+    matches: list[Mapping[str, object]] = []
+    while True:
+        query = urlencode({"event": "issue_comment", "per_page": 100, "page": page})
+        payload = read(
+            repository,
+            token,
+            f"actions/workflows/{quote(_DISPATCH_WORKFLOW, safe='')}/runs?{query}",
+        )
+        if not isinstance(payload, Mapping):
+            return None
+        raw_runs = payload.get("workflow_runs")
+        if not isinstance(raw_runs, list):
+            return None
+        for raw in raw_runs:
+            if isinstance(raw, Mapping) and raw.get("display_title") == title:
+                matches.append(cast(Mapping[str, object], raw))
+        if len(raw_runs) < 100:
+            return tuple(matches)
+        page += 1
+
+
+def _prior_dispatch_handoff_reason(
+    repository: str,
+    token: str,
+    *,
+    recent_comments: tuple[Mapping[str, object], ...],
+    owner: str,
+    current_dispatch_request_comment_id: int | None,
+    plan_id: str,
+    read: GitHubReader,
+) -> str | None:
+    """Do not repeat any earlier plan handoff without its exact durable outcome."""
+
+    if current_dispatch_request_comment_id is None:
+        return None
+    prior_ids = []
+    for comment in recent_comments:
+        comment_id = _positive_int(comment.get("id"))
+        body = comment.get("body")
+        if (
+            comment_id is not None
+            and comment_id < current_dispatch_request_comment_id
+            and _trusted_connector_comment(comment, owner)
+            and isinstance(body, str)
+            and parse_dispatch_request(body) is not None
+        ):
+            prior_ids.append(comment_id)
+    for prior_comment_id in sorted(prior_ids, reverse=True):
+        runs = _dispatch_runs_for_request(
+            repository,
+            token,
+            prior_comment_id,
+            read=read,
+        )
+        if runs is None:
+            return "application-completion-carrier-prior-dispatch-unavailable"
+        if not runs:
+            return "application-completion-carrier-prior-dispatch-incomplete"
+        if len(runs) != 1:
+            return "application-completion-carrier-prior-dispatch-ambiguous"
+        run = runs[0]
+        run_id = _positive_int(run.get("id"))
+        if run_id is None or run.get("status") != "completed":
+            return "application-completion-carrier-prior-dispatch-incomplete"
+        artifacts_payload = read(
+            repository,
+            token,
+            f"actions/runs/{run_id}/artifacts?per_page=100",
+        )
+        if not isinstance(artifacts_payload, Mapping):
+            return "application-completion-carrier-prior-dispatch-artifact-unavailable"
+        raw_artifacts = artifacts_payload.get("artifacts")
+        total_count = artifacts_payload.get("total_count")
+        if (
+            not isinstance(raw_artifacts, list)
+            or isinstance(total_count, bool)
+            or not isinstance(total_count, int)
+            or total_count != len(raw_artifacts)
+        ):
+            return "application-completion-carrier-prior-dispatch-artifact-unavailable"
+        artifacts = [
+            cast(Mapping[str, object], item)
+            for item in raw_artifacts
+            if isinstance(item, Mapping) and item.get("name") == "dispatch-result.json"
+        ]
+        if len(artifacts) != 1:
+            return "application-completion-carrier-prior-dispatch-artifact-unavailable"
+        artifact = artifacts[0]
+        artifact_id = _positive_int(artifact.get("id"))
+        digest = artifact.get("digest")
+        workflow_run = artifact.get("workflow_run")
+        if (
+            artifact_id is None
+            or artifact.get("expired") is not False
+            or not isinstance(digest, str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
+            or not isinstance(workflow_run, Mapping)
+            or workflow_run.get("id") != run_id
+            or workflow_run.get("head_sha") != run.get("head_sha")
+        ):
+            return "application-completion-carrier-prior-dispatch-artifact-unavailable"
+        try:
+            raw = read_github_artifact_bytes(
+                repository,
+                token,
+                f"actions/artifacts/{artifact_id}/zip",
+            )
+        except (HTTPError, OSError, RuntimeError, ValueError):
+            return "application-completion-carrier-prior-dispatch-artifact-unavailable"
+        if f"sha256:{hashlib.sha256(raw).hexdigest()}" != digest:
+            return "application-completion-carrier-prior-dispatch-artifact-unavailable"
+        try:
+            prior_result = parse_dispatch_result_document(raw)
+        except (RuntimeError, ValueError, json.JSONDecodeError):
+            return "application-completion-carrier-prior-dispatch-artifact-unavailable"
+        if prior_result.request_comment_id != prior_comment_id:
+            return "application-completion-carrier-prior-dispatch-artifact-unavailable"
+        prior_carrier = prior_result.qualified_carrier
+        if prior_carrier is not None and prior_carrier.plan.plan_id == plan_id:
+            return "application-completion-carrier-outcome-missing"
+    return None
+
 def _application_job(
     repository: str,
     token: str,
@@ -441,6 +714,8 @@ def _application_job(
     record: ApplicationDecisionRecord | None = None,
     transport_comment_ids: tuple[int, ...] = (),
     accepted_decision_sha256: str | None = None,
+    recent_comments: tuple[Mapping[str, object], ...] = (),
+    current_dispatch_request_comment_id: int | None = None,
 ) -> ApplicationCompletion:
     """Locate one exact application run and prefer its durable carrier handoff."""
 
@@ -572,6 +847,51 @@ def _application_job(
                     "application-completion-carrier-recovery-evidence-incomplete",
                     request_comment_id=request_comment_id,
                     qualified_carrier=qualified_carrier,
+                    recovery_artifact=recovery_artifact,
+                )
+            outcome_source = WorkerRequest(
+                record.issue_number,
+                record.role,
+                record.action,
+            )
+            outcome_state, outcome_reason = _carrier_outcome_status(
+                recent_comments=recent_comments,
+                owner=repository.split("/", 1)[0],
+                repository=repository,
+                source=outcome_source,
+                record=record,
+                accepted_decision_sha256=accepted_decision_sha256,
+                recovery_artifact=recovery_artifact,
+                qualified_carrier=qualified_carrier,
+            )
+            if outcome_state == "BLOCKED":
+                return ApplicationCompletion(
+                    "INVALID",
+                    outcome_reason or "application-completion-carrier-outcome-invalid",
+                    request_comment_id=request_comment_id,
+                    recovery_artifact=recovery_artifact,
+                )
+            if outcome_state == "COMPLETE":
+                return ApplicationCompletion(
+                    "RESUMABLE",
+                    "application-completion-continuation-required",
+                    request_comment_id=request_comment_id,
+                    recovery_artifact=recovery_artifact,
+                )
+            prior_handoff_reason = _prior_dispatch_handoff_reason(
+                repository,
+                token,
+                recent_comments=recent_comments,
+                owner=repository.split("/", 1)[0],
+                current_dispatch_request_comment_id=current_dispatch_request_comment_id,
+                plan_id=qualified_carrier.plan.plan_id,
+                read=read,
+            )
+            if prior_handoff_reason is not None:
+                return ApplicationCompletion(
+                    "INVALID",
+                    prior_handoff_reason,
+                    request_comment_id=request_comment_id,
                     recovery_artifact=recovery_artifact,
                 )
             return ApplicationCompletion(
@@ -1043,6 +1363,8 @@ def _accepted_application_state(
     current_revision: str,
     read: GitHubReader,
     continuation_transport_comment_ids: tuple[int, ...] | None = (),
+    recent_comments: tuple[Mapping[str, object], ...] = (),
+    current_dispatch_request_comment_id: int | None = None,
 ) -> ApplicationCompletion:
     worker = _application_worker_for_record(record, source)
     if worker is None or record.disposition != "ACCEPTED":
@@ -1137,6 +1459,8 @@ def _accepted_application_state(
             record=record,
             transport_comment_ids=continuation_transport_comment_ids,
             accepted_decision_sha256=accepted_decision_sha256,
+            recent_comments=recent_comments,
+            current_dispatch_request_comment_id=current_dispatch_request_comment_id,
         )
         if resumed.state == "RESUMABLE":
             return resumed
@@ -1206,6 +1530,8 @@ def _accepted_application_state(
             record=record,
             transport_comment_ids=continuation_transport_comment_ids,
             accepted_decision_sha256=accepted_decision_sha256,
+            recent_comments=recent_comments,
+            current_dispatch_request_comment_id=current_dispatch_request_comment_id,
         )
     if successor is not None and observation.routing == expected_routing:
         return ApplicationCompletion(
@@ -1957,6 +2283,7 @@ def qualify_application_completion(
     source: WorkerRequest,
     current_revision: str,
     read: GitHubReader = _github_json,
+    current_dispatch_request_comment_id: int | None = None,
     now: datetime | None = None,
 ) -> ApplicationCompletion:
     """Return one exhaustive consequence disposition from durable evidence."""
@@ -2139,6 +2466,8 @@ def qualify_application_completion(
                 current_issue=cast(Mapping[str, object], issue),
                 current_revision=current_revision,
                 read=read,
+                recent_comments=recent,
+                current_dispatch_request_comment_id=current_dispatch_request_comment_id,
                 continuation_transport_comment_ids=_continuation_transport_comment_ids(
                     repository=repository,
                     owner=owner,
@@ -2233,6 +2562,8 @@ def qualify_application_completion(
             current_issue=cast(Mapping[str, object], issue),
             current_revision=current_revision,
             read=read,
+            recent_comments=recent,
+            current_dispatch_request_comment_id=current_dispatch_request_comment_id,
             continuation_transport_comment_ids=_continuation_transport_comment_ids(
                 repository=repository,
                 owner=owner,
@@ -2427,6 +2758,8 @@ def qualify_application_completion(
         current_issue=cast(Mapping[str, object], issue),
         current_revision=current_revision,
         read=read,
+        recent_comments=recent,
+        current_dispatch_request_comment_id=current_dispatch_request_comment_id,
         continuation_transport_comment_ids=_continuation_transport_comment_ids(
             repository=repository,
             owner=owner,
@@ -2739,6 +3072,7 @@ def main() -> int:
                 token,
                 source=source,
                 current_revision=args.revision,
+                current_dispatch_request_comment_id=identity[1],
             )
         )
         resume_job_id = None

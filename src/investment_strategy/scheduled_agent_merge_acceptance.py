@@ -846,6 +846,9 @@ def run_effect_application(
             carrier_plan_for_effect=carrier_plan_provider,
             effect_rejection=effect_rejection_provider,
             accepted_intent=accepted_intent,
+            durable_checkpoint_revision=(
+                validated_materialization_revision if accepted_intent else None
+            ),
             persist_application_decision=application_decision_persister,
         )
     except _EffectPreconditionStale:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import re
@@ -109,6 +110,310 @@ class QualifiedCarrierPlan:
     artifact_id: int
     artifact_digest: str
     plan: CarrierPlan
+
+
+
+CarrierOutcomeKind = Literal["COMPLETE", "REFUSED", "ERROR", "UNKNOWN"]
+CarrierMutationStatus = Literal["NO_WRITE", "COMPLETED", "UNKNOWN"]
+CarrierPrecondition = Literal["MATCH", "MISMATCH", "UNKNOWN", "NOT_REQUIRED"]
+CarrierPostcondition = Literal["COMPLETE", "INCOMPLETE", "UNKNOWN"]
+CarrierUnfinishedBoundary = Literal["none", "precondition-read", "carrier-operation", "postcondition-read"]
+
+_CARRIER_OUTCOME_SCHEMA = "application-carrier-outcome/v1"
+_CARRIER_OUTCOME_MARKER = "APPLICATION_CARRIER_OUTCOME"
+_CARRIER_OUTCOME_OPERATIONS = frozenset(
+    {
+        "pull-request-create",
+        "pull-request-update",
+        "pull-request-ready",
+        "pull-request-merge",
+        "pull-request-head-update",
+    }
+)
+_CARRIER_OUTCOME_FAILURE_CODES = frozenset(
+    {
+        "none",
+        "precondition-mismatch",
+        "connector-unavailable",
+        "connector-refused",
+        "write-outcome-unknown",
+        "postcondition-mismatch",
+        "postcondition-unavailable",
+    }
+)
+_CARRIER_OUTCOME_FIELDS = (
+    ("Schema", "schema"),
+    ("Repository", "repository"),
+    ("Issue", "issue_number"),
+    ("Request-Comment", "request_comment_id"),
+    ("Accepted-Decision-SHA256", "accepted_decision_sha256"),
+    ("Continuation-Correlation", "continuation_correlation"),
+    ("Predecessor-Run-ID", "predecessor_run_id"),
+    ("Predecessor-Run-Attempt", "predecessor_run_attempt"),
+    ("Predecessor-Job-ID", "predecessor_job_id"),
+    ("Recovery-Artifact-ID", "recovery_artifact_id"),
+    ("Recovery-Artifact-Digest", "recovery_artifact_digest"),
+    ("Failure-Evidence-SHA256", "failure_evidence_sha256"),
+    ("Recovery-Episode-SHA256", "recovery_episode_sha256"),
+    ("Carrier-Artifact-ID", "carrier_artifact_id"),
+    ("Carrier-Artifact-Digest", "carrier_artifact_digest"),
+    ("Plan-ID", "plan_id"),
+    ("Operation", "operation"),
+    ("Outcome", "outcome"),
+    ("Mutation-Status", "mutation_status"),
+    ("Precondition", "precondition"),
+    ("Observed-Precondition-JSON-B64", "observed_precondition_json_b64"),
+    ("Postcondition", "postcondition"),
+    ("Unfinished-Boundary", "unfinished_boundary"),
+    ("Failure-Code", "failure_code"),
+    ("Failure-Summary", "failure_summary"),
+)
+
+
+@dataclass(frozen=True)
+class CarrierOutcomeReport:
+    """Durable, non-authorizing result of one exact external carrier handoff."""
+
+    repository: str
+    issue_number: int
+    request_comment_id: int
+    accepted_decision_sha256: str
+    continuation_correlation: str
+    predecessor_run_id: int
+    predecessor_run_attempt: int
+    predecessor_job_id: int
+    recovery_artifact_id: int
+    recovery_artifact_digest: str
+    failure_evidence_sha256: str
+    recovery_episode_sha256: str
+    carrier_artifact_id: int
+    carrier_artifact_digest: str
+    plan_id: str
+    operation: str
+    outcome: CarrierOutcomeKind
+    mutation_status: CarrierMutationStatus
+    precondition: CarrierPrecondition
+    observed_precondition_json: str | None
+    postcondition: CarrierPostcondition
+    unfinished_boundary: CarrierUnfinishedBoundary
+    failure_code: str
+    failure_summary: str
+
+
+def render_carrier_outcome_report(report: CarrierOutcomeReport) -> str:
+    """Render the exact transport evidence schema consumed by the dispatcher."""
+
+    observed_precondition_b64 = (
+        "none"
+        if report.observed_precondition_json is None
+        else base64.urlsafe_b64encode(
+            report.observed_precondition_json.encode("utf-8")
+        ).decode("ascii").rstrip("=")
+    )
+    body = "\n".join(
+        (
+            _CARRIER_OUTCOME_MARKER,
+            f"Schema: {_CARRIER_OUTCOME_SCHEMA}",
+            f"Repository: {report.repository}",
+            f"Issue: {report.issue_number}",
+            f"Request-Comment: {report.request_comment_id}",
+            f"Accepted-Decision-SHA256: {report.accepted_decision_sha256}",
+            f"Continuation-Correlation: {report.continuation_correlation}",
+            f"Predecessor-Run-ID: {report.predecessor_run_id}",
+            f"Predecessor-Run-Attempt: {report.predecessor_run_attempt}",
+            f"Predecessor-Job-ID: {report.predecessor_job_id}",
+            f"Recovery-Artifact-ID: {report.recovery_artifact_id}",
+            f"Recovery-Artifact-Digest: {report.recovery_artifact_digest}",
+            f"Failure-Evidence-SHA256: {report.failure_evidence_sha256}",
+            f"Recovery-Episode-SHA256: {report.recovery_episode_sha256}",
+            f"Carrier-Artifact-ID: {report.carrier_artifact_id}",
+            f"Carrier-Artifact-Digest: {report.carrier_artifact_digest}",
+            f"Plan-ID: {report.plan_id}",
+            f"Operation: {report.operation}",
+            f"Outcome: {report.outcome}",
+            f"Mutation-Status: {report.mutation_status}",
+            f"Precondition: {report.precondition}",
+            f"Observed-Precondition-JSON-B64: {observed_precondition_b64}",
+            f"Postcondition: {report.postcondition}",
+            f"Unfinished-Boundary: {report.unfinished_boundary}",
+            f"Failure-Code: {report.failure_code}",
+            f"Failure-Summary: {report.failure_summary}",
+        )
+    )
+    if parse_carrier_outcome_report(body) != report:
+        raise ValueError("carrier outcome report identity or status is invalid")
+    return body
+
+
+def parse_carrier_outcome_report(body: object) -> CarrierOutcomeReport | None:
+    """Parse one exact, bounded carrier result without granting it authority."""
+
+    if not isinstance(body, str) or "\r" in body:
+        return None
+    lines = body.split("\n")
+    if len(lines) != len(_CARRIER_OUTCOME_FIELDS) + 1 or lines[0] != _CARRIER_OUTCOME_MARKER:
+        return None
+    values: dict[str, str] = {}
+    for line, (header, field) in zip(lines[1:], _CARRIER_OUTCOME_FIELDS, strict=True):
+        prefix = f"{header}: "
+        if not line.startswith(prefix):
+            return None
+        value = line[len(prefix) :]
+        if not value or value.strip() != value:
+            return None
+        values[field] = value
+    if values.get("schema") != _CARRIER_OUTCOME_SCHEMA:
+        return None
+    repository = values["repository"]
+    if _REPOSITORY.fullmatch(repository) is None:
+        return None
+    decimal_fields = (
+        "issue_number",
+        "request_comment_id",
+        "predecessor_run_id",
+        "predecessor_run_attempt",
+        "predecessor_job_id",
+        "recovery_artifact_id",
+        "carrier_artifact_id",
+    )
+    parsed_ids: dict[str, int] = {}
+    for field in decimal_fields:
+        raw = values[field]
+        if re.fullmatch(r"[1-9][0-9]*", raw) is None:
+            return None
+        parsed_ids[field] = int(raw)
+    for field in (
+        "accepted_decision_sha256",
+        "continuation_correlation",
+        "failure_evidence_sha256",
+        "recovery_episode_sha256",
+    ):
+        if _SHA256.fullmatch(values[field]) is None:
+            return None
+    for field in ("recovery_artifact_digest", "carrier_artifact_digest"):
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", values[field]) is None:
+            return None
+    plan_id = values["plan_id"]
+    if not plan_id.startswith("carrier-plan-") or _SHA256.fullmatch(
+        plan_id.removeprefix("carrier-plan-")
+    ) is None:
+        return None
+    operation = values["operation"]
+    if operation not in _CARRIER_OUTCOME_OPERATIONS:
+        return None
+    outcome = values["outcome"]
+    mutation_status = values["mutation_status"]
+    precondition = values["precondition"]
+    observed_encoded = values["observed_precondition_json_b64"]
+    postcondition = values["postcondition"]
+    unfinished_boundary = values["unfinished_boundary"]
+    failure_code = values["failure_code"]
+    failure_summary = values["failure_summary"]
+    if precondition not in {"MATCH", "MISMATCH", "UNKNOWN", "NOT_REQUIRED"}:
+        return None
+    if unfinished_boundary not in {
+        "none",
+        "precondition-read",
+        "carrier-operation",
+        "postcondition-read",
+    }:
+        return None
+    observed_precondition_json = None
+    if observed_encoded != "none":
+        if (
+            len(observed_encoded) > 21846
+            or re.fullmatch(r"[A-Za-z0-9_-]+", observed_encoded) is None
+        ):
+            return None
+        try:
+            observed_raw = base64.urlsafe_b64decode(
+                observed_encoded + "=" * (-len(observed_encoded) % 4)
+            )
+            observed_value = json.loads(observed_raw)
+        except (UnicodeError, ValueError, json.JSONDecodeError):
+            return None
+        if (
+            len(observed_raw) > 16_384
+            or not isinstance(observed_value, dict)
+            or any(not isinstance(key, str) for key in observed_value)
+        ):
+            return None
+        observed_precondition_json = json.dumps(
+            observed_value, sort_keys=True, separators=(",", ":")
+        )
+        if observed_raw.decode("utf-8") != observed_precondition_json:
+            return None
+    if (precondition in {"MATCH", "MISMATCH"}) != (
+        observed_precondition_json is not None
+    ) or (outcome != "COMPLETE" and unfinished_boundary == "none"):
+        return None
+    if (
+        outcome not in {"COMPLETE", "REFUSED", "ERROR", "UNKNOWN"}
+        or mutation_status not in {"NO_WRITE", "COMPLETED", "UNKNOWN"}
+        or postcondition not in {"COMPLETE", "INCOMPLETE", "UNKNOWN"}
+        or failure_code not in _CARRIER_OUTCOME_FAILURE_CODES
+        or re.fullmatch(r"(?:none|[A-Za-z0-9][A-Za-z0-9 .,;:/_-]{0,159})", failure_summary)
+        is None
+        or re.search(r"(?i)(?:bearer\s|token[:=]|authorization[:=]|https?://)", failure_summary)
+        is not None
+    ):
+        return None
+    if outcome == "COMPLETE":
+        if (
+            mutation_status not in {"NO_WRITE", "COMPLETED"}
+            or postcondition != "COMPLETE"
+            or failure_code != "none"
+            or failure_summary != "none"
+            or unfinished_boundary != "none"
+            or precondition not in {"MATCH", "NOT_REQUIRED"}
+            or (mutation_status == "COMPLETED" and precondition != "MATCH")
+        ):
+            return None
+    elif failure_code == "none" or failure_summary == "none" or postcondition == "COMPLETE":
+        return None
+    elif outcome == "REFUSED" and (
+        mutation_status != "NO_WRITE" or postcondition not in {"INCOMPLETE", "UNKNOWN"}
+    ):
+        return None
+    elif precondition in {"MISMATCH", "UNKNOWN"} and mutation_status != "NO_WRITE":
+        return None
+    elif precondition == "NOT_REQUIRED" and (
+        outcome != "COMPLETE" or mutation_status != "NO_WRITE" or postcondition != "COMPLETE"
+    ):
+        return None
+    elif outcome == "ERROR" and mutation_status == "COMPLETED":
+        return None
+    elif outcome == "UNKNOWN" and (
+        mutation_status != "UNKNOWN" or postcondition != "UNKNOWN"
+    ):
+        return None
+    return CarrierOutcomeReport(
+        repository=repository,
+        issue_number=parsed_ids["issue_number"],
+        request_comment_id=parsed_ids["request_comment_id"],
+        accepted_decision_sha256=values["accepted_decision_sha256"],
+        continuation_correlation=values["continuation_correlation"],
+        predecessor_run_id=parsed_ids["predecessor_run_id"],
+        predecessor_run_attempt=parsed_ids["predecessor_run_attempt"],
+        predecessor_job_id=parsed_ids["predecessor_job_id"],
+        recovery_artifact_id=parsed_ids["recovery_artifact_id"],
+        recovery_artifact_digest=values["recovery_artifact_digest"],
+        failure_evidence_sha256=values["failure_evidence_sha256"],
+        recovery_episode_sha256=values["recovery_episode_sha256"],
+        carrier_artifact_id=parsed_ids["carrier_artifact_id"],
+        carrier_artifact_digest=values["carrier_artifact_digest"],
+        plan_id=plan_id,
+        operation=operation,
+        outcome=cast(CarrierOutcomeKind, outcome),
+        mutation_status=cast(CarrierMutationStatus, mutation_status),
+        precondition=cast(CarrierPrecondition, precondition),
+        observed_precondition_json=observed_precondition_json,
+        postcondition=cast(CarrierPostcondition, postcondition),
+        unfinished_boundary=cast(CarrierUnfinishedBoundary, unfinished_boundary),
+        failure_code=failure_code,
+        failure_summary=failure_summary,
+    )
+
 
 
 CarrierQualification = Literal["COMPLETE", "ELIGIBLE", "BLOCKED", "UNKNOWN"]
@@ -380,6 +685,12 @@ def carrier_pr_identity(payload: Mapping[str, object]) -> dict[str, object]:
 
 __all__ = [
     "CarrierConsumeResult",
+    "CarrierOutcomeKind",
+    "CarrierOutcomeReport",
+    "CarrierPrecondition",
+    "CarrierUnfinishedBoundary",
+    "CarrierMutationStatus",
+    "CarrierPostcondition",
     "CarrierPlan",
     "CarrierQualification",
     "CarrierRequired",

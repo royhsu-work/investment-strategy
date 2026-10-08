@@ -715,7 +715,7 @@ A substantive recovery transition SHALL be eligible without a fixed numerical at
 - AND no exact failed effect, evidence chain, or remaining attempt history can be reconstructed
 - WHEN the recovery owner evaluates the accepted intent
 - THEN it performs only the fresh read-only proof required to determine whether the consequence is already complete
-- AND if remaining work and attempt capacity are not uniquely provable, it returns an evidence-incomplete blocker
+- AND if remaining work, a unique predecessor, and safe effect state are not provable, it returns an evidence-incomplete blocker
 - AND it emits no new continuation and fabricates no guard reason
 
 #### Scenario: New evidence continues after the former numeric threshold
@@ -727,8 +727,10 @@ A substantive recovery transition SHALL be eligible without a fixed numerical at
 - THEN it may emit exactly one continuation for the new transition
 - AND an unchanged refusal or repeated evidence digest still emits no continuation or mutation
 
-- GIVEN one accepted intent has reached three substantive attempts for the same unresolved causal guard/path
-- AND later wakes use a new transition correlation, request correlation, run id, plan id, or date but show no qualified causal repair
+#### Scenario: Transport identity alone never creates another attempt
+
+- GIVEN one accepted intent has any number of substantive recovery transitions for one unresolved causal guard/path
+- AND later wakes change only a transition correlation, request correlation, run id, plan id, or date without new qualified failure evidence or causal repair
 - WHEN the recovery owner evaluates the intent
 - THEN it emits no further continuation or mutation
 - AND it preserves the exact blocker and reopening condition
@@ -764,3 +766,67 @@ After #322 formal routing is legally gone, a later real Scheduled Task wake SHAL
 - AND if a Formal Explore is admitted, a still later ordinary Action-only wake owns `Lead / explore-change`
 - AND only this lifecycle-plus-production evidence satisfies Human-defined completion
 
+
+### Requirement: Durable qualified carrier outcome gates continuation
+
+The external Scheduled Task consumes only a repository-produced, schema-valid dispatch artifact. It does not invent a target, plan, operation, or successor. Before any connector write it fresh-reads the exact target and verifies the plan precondition; after a connector call or exception it fresh-reads and compares the exact expected postcondition.
+
+An `APPLICATION_CARRIER_OUTCOME` comment is evidence only and SHALL use this exact ordered schema:
+
+1. `APPLICATION_CARRIER_OUTCOME`
+2. `Schema: application-carrier-outcome/v1`
+3. `Repository`
+4. `Issue`
+5. `Request-Comment`
+6. `Accepted-Decision-SHA256`
+7. `Continuation-Correlation`
+8. `Predecessor-Run-ID`
+9. `Predecessor-Run-Attempt`
+10. `Predecessor-Job-ID`
+11. `Recovery-Artifact-ID`
+12. `Recovery-Artifact-Digest`
+13. `Failure-Evidence-SHA256`
+14. `Recovery-Episode-SHA256`
+15. `Carrier-Artifact-ID`
+16. `Carrier-Artifact-Digest`
+17. `Plan-ID`
+18. `Operation`
+19. `Outcome`
+20. `Mutation-Status`
+21. `Precondition`
+22. `Observed-Precondition-JSON-B64`
+23. `Postcondition`
+24. `Unfinished-Boundary`
+25. `Failure-Code`
+26. `Failure-Summary`
+
+The observed precondition is canonical JSON containing exactly the fields checked against the carrier plan, URL-safe base64 encoded without padding; use `none` only when the precondition was not observed or was unnecessary because the expected postcondition already held. Outcome is `COMPLETE|REFUSED|ERROR|UNKNOWN`; mutation status is `NO_WRITE|COMPLETED|UNKNOWN`; precondition is `MATCH|MISMATCH|UNKNOWN|NOT_REQUIRED`; postcondition is `COMPLETE|INCOMPLETE|UNKNOWN`. `COMPLETE` requires an exact complete postcondition and no failure. A mismatch/unknown precondition never authorizes a write. Failure summaries are one-line and redacted.
+
+The bridge SHALL match every report field to the exact accepted intent, continuation, application recovery artifact, carrier artifact, Plan-ID and operation. It releases one exact continuation only for one valid `COMPLETE` report whose observed precondition agrees with the qualified plan. It then reauthorizes and rechecks canonical postconditions. Other report outcomes do not continue or retry the same plan.
+
+Before emitting another carrier handoff, the bridge SHALL inspect every earlier trusted `DISPATCH_REQUEST` comment on the runtime shard. A same-plan handoff without one exact durable outcome, an orphan request, an incomplete run, an ambiguous run, or an unreadable artifact fails closed. A later fail-closed dispatch cannot erase an older unresolved plan. The bridge never merges legacy application runs by shared accepted-decision hash or continuation correlation.
+
+#### Scenario: One exact complete outcome resumes the application
+
+- GIVEN one completed Application run produced an exact qualified carrier and continuation
+- AND one valid outcome report matches the full request/run/artifact/plan/operation lineage
+- AND the report proves the expected postcondition
+- WHEN a fresh dispatcher evaluates the accepted intent
+- THEN it emits only the exact repository-produced continuation once
+- AND the next Application run fresh-reauthorizes and verifies canonical postconditions
+
+#### Scenario: Missing or failed carrier outcome does not replay or continue
+
+- GIVEN any earlier dispatch artifact handed off the same Plan-ID
+- AND its outcome report is absent, invalid, refused, error, unknown, or ambiguous
+- WHEN a later dispatch evaluates the accepted intent
+- THEN it emits no carrier write and no continuation
+- AND it preserves the precise carrier-outcome blocker
+
+#### Scenario: A later fail-closed request does not hide an earlier plan
+
+- GIVEN an older dispatch artifact handed off a Plan-ID without a report
+- AND one or more newer dispatch requests produced no carrier plan
+- WHEN another fresh dispatch evaluates the accepted intent
+- THEN it searches the complete earlier request chain
+- AND it still fails closed on the older unreported Plan-ID
