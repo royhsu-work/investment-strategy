@@ -435,7 +435,6 @@ def _qualified_carrier_for_application_run(
     )
 
 
-
 def _carrier_outcome_field(body: str, field: str) -> str | None:
     prefix = f"{field}: "
     for line in body.split("\n")[1:]:
@@ -450,10 +449,7 @@ def _carrier_precondition_shape_matches(expected: object, observed: object) -> b
     if isinstance(expected, Mapping):
         if not isinstance(observed, Mapping) or set(expected) != set(observed):
             return False
-        return all(
-            _carrier_precondition_shape_matches(expected[key], observed[key])
-            for key in expected
-        )
+        return all(_carrier_precondition_shape_matches(expected[key], observed[key]) for key in expected)
     if isinstance(expected, list):
         return (
             isinstance(observed, list)
@@ -542,20 +538,24 @@ def _carrier_outcome_status(
             else json.loads(report.observed_precondition_json)
         )
         observation_matches_status = (
-            report.precondition == "MATCH"
-            and report.observed_precondition_json == expected_precondition_json
-            and _carrier_precondition_shape_matches(
-                dict(qualified_carrier.plan.expected), observed_precondition
+            (
+                report.precondition == "MATCH"
+                and report.observed_precondition_json == expected_precondition_json
+                and _carrier_precondition_shape_matches(
+                    dict(qualified_carrier.plan.expected), observed_precondition
+                )
             )
-        ) or (
-            report.precondition == "MISMATCH"
-            and report.observed_precondition_json != expected_precondition_json
-            and _carrier_precondition_shape_matches(
-                dict(qualified_carrier.plan.expected), observed_precondition
+            or (
+                report.precondition == "MISMATCH"
+                and report.observed_precondition_json != expected_precondition_json
+                and _carrier_precondition_shape_matches(
+                    dict(qualified_carrier.plan.expected), observed_precondition
+                )
             )
-        ) or (
-            report.precondition in {"UNKNOWN", "NOT_REQUIRED"}
-            and report.observed_precondition_json is None
+            or (
+                report.precondition in {"UNKNOWN", "NOT_REQUIRED"}
+                and report.observed_precondition_json is None
+            )
         )
         if not exact_identity:
             return "BLOCKED", "application-completion-carrier-outcome-plan-reused"
@@ -704,6 +704,7 @@ def _prior_dispatch_handoff_reason(
         if prior_carrier is not None and prior_carrier.plan.plan_id == plan_id:
             return "application-completion-carrier-outcome-missing"
     return None
+
 
 def _application_job(
     repository: str,

@@ -112,7 +112,6 @@ class QualifiedCarrierPlan:
     plan: CarrierPlan
 
 
-
 CarrierOutcomeKind = Literal["COMPLETE", "REFUSED", "ERROR", "UNKNOWN"]
 CarrierMutationStatus = Literal["NO_WRITE", "COMPLETED", "UNKNOWN"]
 CarrierPrecondition = Literal["MATCH", "MISMATCH", "UNKNOWN", "NOT_REQUIRED"]
@@ -211,9 +210,9 @@ def render_carrier_outcome_report(report: CarrierOutcomeReport) -> str:
     observed_precondition_b64 = (
         "none"
         if report.observed_precondition_json is None
-        else base64.urlsafe_b64encode(
-            report.observed_precondition_json.encode("utf-8")
-        ).decode("ascii").rstrip("=")
+        else base64.urlsafe_b64encode(report.observed_precondition_json.encode("utf-8"))
+        .decode("ascii")
+        .rstrip("=")
     )
     body = "\n".join(
         (
@@ -299,9 +298,10 @@ def parse_carrier_outcome_report(body: object) -> CarrierOutcomeReport | None:
         if re.fullmatch(r"sha256:[0-9a-f]{64}", values[field]) is None:
             return None
     plan_id = values["plan_id"]
-    if not plan_id.startswith("carrier-plan-") or _SHA256.fullmatch(
-        plan_id.removeprefix("carrier-plan-")
-    ) is None:
+    if (
+        not plan_id.startswith("carrier-plan-")
+        or _SHA256.fullmatch(plan_id.removeprefix("carrier-plan-")) is None
+    ):
         return None
     operation = values["operation"]
     if operation not in _CARRIER_OUTCOME_OPERATIONS:
@@ -348,17 +348,16 @@ def parse_carrier_outcome_report(body: object) -> CarrierOutcomeReport | None:
         )
         if observed_raw.decode("utf-8") != observed_precondition_json:
             return None
-    if (precondition in {"MATCH", "MISMATCH"}) != (
-        observed_precondition_json is not None
-    ) or (outcome != "COMPLETE" and unfinished_boundary == "none"):
+    if (precondition in {"MATCH", "MISMATCH"}) != (observed_precondition_json is not None) or (
+        outcome != "COMPLETE" and unfinished_boundary == "none"
+    ):
         return None
     if (
         outcome not in {"COMPLETE", "REFUSED", "ERROR", "UNKNOWN"}
         or mutation_status not in {"NO_WRITE", "COMPLETED", "UNKNOWN"}
         or postcondition not in {"COMPLETE", "INCOMPLETE", "UNKNOWN"}
         or failure_code not in _CARRIER_OUTCOME_FAILURE_CODES
-        or re.fullmatch(r"(?:none|[A-Za-z0-9][A-Za-z0-9 .,;:/_-]{0,159})", failure_summary)
-        is None
+        or re.fullmatch(r"(?:none|[A-Za-z0-9][A-Za-z0-9 .,;:/_-]{0,159})", failure_summary) is None
         or re.search(r"(?i)(?:bearer\s|token[:=]|authorization[:=]|https?://)", failure_summary)
         is not None
     ):
@@ -380,15 +379,9 @@ def parse_carrier_outcome_report(body: object) -> CarrierOutcomeReport | None:
         or postcondition == "COMPLETE"
         or (
             outcome == "REFUSED"
-            and (
-                mutation_status != "NO_WRITE"
-                or postcondition not in {"INCOMPLETE", "UNKNOWN"}
-            )
+            and (mutation_status != "NO_WRITE" or postcondition not in {"INCOMPLETE", "UNKNOWN"})
         )
-        or (
-            precondition in {"MISMATCH", "UNKNOWN"}
-            and mutation_status != "NO_WRITE"
-        )
+        or (precondition in {"MISMATCH", "UNKNOWN"} and mutation_status != "NO_WRITE")
         or (
             precondition == "NOT_REQUIRED"
             and (
@@ -398,13 +391,7 @@ def parse_carrier_outcome_report(body: object) -> CarrierOutcomeReport | None:
             )
         )
         or (outcome == "ERROR" and mutation_status == "COMPLETED")
-        or (
-            outcome == "UNKNOWN"
-            and (
-                mutation_status != "UNKNOWN"
-                or postcondition != "UNKNOWN"
-            )
-        )
+        or (outcome == "UNKNOWN" and (mutation_status != "UNKNOWN" or postcondition != "UNKNOWN"))
     ):
         return None
     return CarrierOutcomeReport(
@@ -433,7 +420,6 @@ def parse_carrier_outcome_report(body: object) -> CarrierOutcomeReport | None:
         failure_code=failure_code,
         failure_summary=failure_summary,
     )
-
 
 
 CarrierQualification = Literal["COMPLETE", "ELIGIBLE", "BLOCKED", "UNKNOWN"]

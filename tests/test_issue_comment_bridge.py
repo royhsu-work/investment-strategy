@@ -3121,7 +3121,6 @@ def _carrier_completion_reader(
         ("d" * 40, None, False),
     ],
 )
-
 def test_completed_application_prefers_saved_qualified_carrier_over_producer_resume(
     monkeypatch: pytest.MonkeyPatch,
     plan_revision: str,
@@ -3209,7 +3208,6 @@ def test_completed_application_prefers_saved_qualified_carrier_over_producer_res
     assert completion.qualified_carrier is not None
     assert completion.qualified_carrier.plan == plan
     assert completion.qualified_carrier.artifact_digest == digest
-
 
 
 def test_completed_application_consumes_only_exact_complete_carrier_outcome(
@@ -3582,12 +3580,13 @@ def test_carrier_outcome_report_rejects_malformed_evidence_and_parses_shape_only
     body = carrier.render_carrier_outcome_report(report)
 
     assert carrier.parse_carrier_outcome_report(body + "\n") is None
-    assert carrier.parse_carrier_outcome_report(
-        body.replace("Postcondition: COMPLETE", "Postcondition: UNKNOWN")
-    ) is None
-    other_repository_body = body.replace(
-        "Repository: owner/repo", "Repository: other/repo"
+    assert (
+        carrier.parse_carrier_outcome_report(
+            body.replace("Postcondition: COMPLETE", "Postcondition: UNKNOWN")
+        )
+        is None
     )
+    other_repository_body = body.replace("Repository: owner/repo", "Repository: other/repo")
     assert carrier.parse_carrier_outcome_report(other_repository_body) is not None
 
 
@@ -3858,9 +3857,7 @@ def test_prior_dispatch_without_a_visible_run_fails_closed_before_carrier_reissu
     status = bridge._prior_dispatch_handoff_reason(
         "owner/repo",
         "token",
-        recent_comments=(
-            _trusted_connector_comment(91, REQUEST_BODY),
-        ),
+        recent_comments=(_trusted_connector_comment(91, REQUEST_BODY),),
         owner="owner",
         current_dispatch_request_comment_id=100,
         plan_id=_carrier_plan_fixture().plan_id,
