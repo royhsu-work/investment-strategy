@@ -374,22 +374,37 @@ def parse_carrier_outcome_report(body: object) -> CarrierOutcomeReport | None:
             or (mutation_status == "COMPLETED" and precondition != "MATCH")
         ):
             return None
-    elif failure_code == "none" or failure_summary == "none" or postcondition == "COMPLETE":
-        return None
-    elif outcome == "REFUSED" and (
-        mutation_status != "NO_WRITE" or postcondition not in {"INCOMPLETE", "UNKNOWN"}
-    ):
-        return None
-    elif precondition in {"MISMATCH", "UNKNOWN"} and mutation_status != "NO_WRITE":
-        return None
-    elif precondition == "NOT_REQUIRED" and (
-        outcome != "COMPLETE" or mutation_status != "NO_WRITE" or postcondition != "COMPLETE"
-    ):
-        return None
-    elif outcome == "ERROR" and mutation_status == "COMPLETED":
-        return None
-    elif outcome == "UNKNOWN" and (
-        mutation_status != "UNKNOWN" or postcondition != "UNKNOWN"
+    elif (
+        failure_code == "none"
+        or failure_summary == "none"
+        or postcondition == "COMPLETE"
+        or (
+            outcome == "REFUSED"
+            and (
+                mutation_status != "NO_WRITE"
+                or postcondition not in {"INCOMPLETE", "UNKNOWN"}
+            )
+        )
+        or (
+            precondition in {"MISMATCH", "UNKNOWN"}
+            and mutation_status != "NO_WRITE"
+        )
+        or (
+            precondition == "NOT_REQUIRED"
+            and (
+                outcome != "COMPLETE"
+                or mutation_status != "NO_WRITE"
+                or postcondition != "COMPLETE"
+            )
+        )
+        or (outcome == "ERROR" and mutation_status == "COMPLETED")
+        or (
+            outcome == "UNKNOWN"
+            and (
+                mutation_status != "UNKNOWN"
+                or postcondition != "UNKNOWN"
+            )
+        )
     ):
         return None
     return CarrierOutcomeReport(
