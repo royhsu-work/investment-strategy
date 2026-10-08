@@ -3871,7 +3871,6 @@ def test_prior_dispatch_without_a_visible_run_fails_closed_before_carrier_reissu
     assert status == "application-completion-carrier-prior-dispatch-incomplete"
 
 
-
 def test_carrier_outcome_consumer_blocks_duplicate_identical_reports() -> None:
     plan = _carrier_plan_fixture()
     recovery = _qualified_recovery_fixture(artifact_id=997)
