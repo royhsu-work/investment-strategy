@@ -2938,16 +2938,6 @@ def _qualified_recovery_fixture(
     )
 
 
-@pytest.mark.parametrize(
-    ("plan_revision", "ancestry_status", "eligible"),
-    [
-        (REVISION, "ahead", True),
-        ("d" * 40, "ahead", True),
-        ("d" * 40, "behind", False),
-        ("d" * 40, None, False),
-    ],
-)
-
 def _trusted_connector_comment(comment_id: int, body: str) -> dict[str, object]:
     return {
         "id": comment_id,
@@ -3121,6 +3111,16 @@ def _carrier_completion_reader(
 
     return read
 
+
+@pytest.mark.parametrize(
+    ("plan_revision", "ancestry_status", "eligible"),
+    [
+        (REVISION, "ahead", True),
+        ("d" * 40, "ahead", True),
+        ("d" * 40, "behind", False),
+        ("d" * 40, None, False),
+    ],
+)
 
 def test_completed_application_prefers_saved_qualified_carrier_over_producer_resume(
     monkeypatch: pytest.MonkeyPatch,
@@ -3550,7 +3550,7 @@ def test_carrier_outcome_report_round_trips_exact_lineage() -> None:
     assert carrier.parse_carrier_outcome_report(body) == report
 
 
-def test_carrier_outcome_report_rejects_incomplete_or_unbound_evidence() -> None:
+def test_carrier_outcome_report_rejects_malformed_evidence_and_parses_shape_only() -> None:
     report = carrier.CarrierOutcomeReport(
         repository="owner/repo",
         issue_number=322,
@@ -3585,9 +3585,10 @@ def test_carrier_outcome_report_rejects_incomplete_or_unbound_evidence() -> None
     assert carrier.parse_carrier_outcome_report(
         body.replace("Postcondition: COMPLETE", "Postcondition: UNKNOWN")
     ) is None
-    assert carrier.parse_carrier_outcome_report(
-        body.replace("Repository: owner/repo", "Repository: other/repo")
-    ) is None
+    other_repository_body = body.replace(
+        "Repository: owner/repo", "Repository: other/repo"
+    )
+    assert carrier.parse_carrier_outcome_report(other_repository_body) is not None
 
 
 def test_carrier_documents_reject_tampering_and_dispatch_round_trips_handoff() -> None:
@@ -3871,6 +3872,49 @@ def test_prior_dispatch_without_a_visible_run_fails_closed_before_carrier_reissu
     )
 
     assert status == "application-completion-carrier-prior-dispatch-incomplete"
+
+
+
+def test_carrier_outcome_consumer_rejects_repository_mismatch() -> None:
+    plan = _carrier_plan_fixture()
+    recovery = _qualified_recovery_fixture(artifact_id=997)
+    carrier_digest = "sha256:" + "6" * 64
+    report = replace(
+        _carrier_outcome_fixture(
+            plan,
+            recovery,
+            carrier_artifact_id=999,
+            carrier_artifact_digest=carrier_digest,
+        ),
+        repository="other/repo",
+    )
+    qualified = carrier.QualifiedCarrierPlan(
+        request_comment_id=90,
+        run_id=777,
+        run_attempt=1,
+        artifact_id=999,
+        artifact_digest=carrier_digest,
+        plan=plan,
+    )
+
+    outcome, reason = bridge._carrier_outcome_status(
+        recent_comments=(
+            _trusted_connector_comment(
+                92,
+                carrier.render_carrier_outcome_report(report),
+            ),
+        ),
+        owner="owner",
+        repository="owner/repo",
+        source=bridge.WorkerRequest(322, "executor", "implement-change"),
+        record=_accepted_carrier_record(),
+        accepted_decision_sha256="a" * 64,
+        recovery_artifact=recovery,
+        qualified_carrier=qualified,
+    )
+
+    assert outcome == "BLOCKED"
+    assert reason == "application-completion-carrier-outcome-plan-reused"
 
 
 def test_carrier_outcome_cannot_claim_matching_precondition_with_other_observation() -> None:

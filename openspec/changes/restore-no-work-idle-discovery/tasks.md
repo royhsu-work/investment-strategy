@@ -44,6 +44,8 @@ Trace: Human refinement 5986774520 / findings 5987083136 -> proposal carrier clo
 
 Whole-system review on 2026-10-08 keeps 0.25–0.26 open: the external Chat Task is the physical connector consumer; repository code supplies the qualified plan and must parse its exact durable outcome before allowing continuation. Its prompt and repository parser must agree on the line-ordered schema. Exact-head CI and fake-connector tests do not prove a native wake; production evidence remains separate.
 
+The first exact implementation head `6635bc1` then reported five failures plus one setup error (912 passed). Whole-system diagnosis: one exact-preimage legacy merge-acceptance transplant called an unsupported current effects parameter; one test assigned accepted-repository binding to the context-free parser instead of the bridge consumer; and the intended lineage test parameterization was detached during insertion. Revert the legacy transplant, keep syntax and contextual binding at their respective layers, and rerun the full exact-head gate. These findings do not close 0.25–0.26 or native acceptance.
+
 ## Slice 4 — 0D. Qualified execution evidence and interruption recovery
 
 Trace: same source -> proposal durable evidence closure -> modified application-consequence requirement -> design continuation/evidence staging. N-1 includes the independently reviewed/merged carrier-consumer slice. This stage is independently executable/testable/reviewable/mergeable; its exit closes producer/parser/qualification/dedup/consumer evidence at existing owners. Native activation, remaining idle implementation and the complete parent lifecycle remain mandatory continuation; no exception record or green test reduces that outcome.
