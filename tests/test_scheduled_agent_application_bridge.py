@@ -2397,7 +2397,7 @@ def test_application_boundary_does_not_replay_dispatch_artifacts() -> None:
     assert "End invocation at CarrierRequired boundary" in workflow
     assert workflow.count("steps.apply.outputs.carrier_required != 'true'") == 8
     recovery_name = "application-recovery-evidence"
-    recovery_path = f'$RUNNER_TEMP/{recovery_name}'
+    recovery_path = f"$RUNNER_TEMP/{recovery_name}"
     assert workflow.count(f'--recovery-evidence-path "{recovery_path}"') == 2
     initial_evidence_upload = workflow.index(
         "      - name: Upload exact application recovery evidence"
