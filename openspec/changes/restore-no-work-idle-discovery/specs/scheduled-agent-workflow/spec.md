@@ -800,11 +800,11 @@ An `APPLICATION_CARRIER_OUTCOME` comment is evidence only and SHALL use this exa
 25. `Failure-Code`
 26. `Failure-Summary`
 
-The observed precondition is canonical JSON containing exactly the fields checked against the carrier plan, URL-safe base64 encoded without padding; use `none` only when the precondition was not observed or was unnecessary because the expected postcondition already held. Outcome is `COMPLETE|REFUSED|ERROR|UNKNOWN`; mutation status is `NO_WRITE|COMPLETED|UNKNOWN`; precondition is `MATCH|MISMATCH|UNKNOWN|NOT_REQUIRED`; postcondition is `COMPLETE|INCOMPLETE|UNKNOWN`. `COMPLETE` requires an exact complete postcondition and no failure. A mismatch/unknown precondition never authorizes a write. Failure summaries are one-line and redacted.
+The observed precondition is canonical JSON containing exactly the fields checked against the carrier plan, URL-safe base64 encoded without padding; use `none` only when the precondition was not observed or was unnecessary because the expected postcondition already held. The parser MUST decode and re-encode the value and require byte-for-byte equality with that canonical unpadded URL-safe encoding. Outcome is `COMPLETE|REFUSED|ERROR|UNKNOWN`; mutation status is `NO_WRITE|COMPLETED|UNKNOWN`; precondition is `MATCH|MISMATCH|UNKNOWN|NOT_REQUIRED`; postcondition is `COMPLETE|INCOMPLETE|UNKNOWN`. `COMPLETE` requires an exact complete postcondition and no failure. A mismatch/unknown precondition never authorizes a write. Failure summaries are one-line and redacted.
 
 The bridge SHALL match every report field to the exact accepted intent, continuation, application recovery artifact, carrier artifact, Plan-ID and operation. It releases one exact continuation only for one valid `COMPLETE` report whose observed precondition agrees with the qualified plan. It then reauthorizes and rechecks canonical postconditions. Other report outcomes do not continue or retry the same plan.
 
-Before emitting another carrier handoff, the bridge SHALL inspect every earlier trusted `DISPATCH_REQUEST` comment on the runtime shard. A same-plan handoff without one exact durable outcome, an orphan request, an incomplete run, an ambiguous run, or an unreadable artifact fails closed. A later fail-closed dispatch cannot erase an older unresolved plan. The bridge never merges legacy application runs by shared accepted-decision hash or continuation correlation.
+Before emitting another carrier handoff, the bridge SHALL inspect every earlier trusted `DISPATCH_REQUEST` comment on the runtime shard. A same-plan handoff without one exact durable outcome, an orphan request, an incomplete run, an ambiguous run, or an unreadable artifact fails closed. A later fail-closed dispatch cannot erase an older unresolved plan. The bridge never merges legacy application runs by shared accepted-decision hash or continuation correlation. The runtime shard is the issue from the current `DISPATCH_REQUEST` event. Evidence lookup SHALL paginate that issue's complete comment history without a `since` date or fixed recent-comment window; it SHALL use that complete history for continuation transports, carrier outcome reports, and prior dispatches. The repository-wide 30-day scan MAY remain for recent ingress discovery, but it is not an evidence-retention boundary. If the current request is absent from the complete shard history or any page cannot be read, the bridge SHALL fail closed.
 
 #### Scenario: One exact complete outcome resumes the application
 
@@ -829,6 +829,21 @@ Before emitting another carrier handoff, the bridge SHALL inspect every earlier 
 - WHEN a later dispatch evaluates the accepted intent
 - THEN it emits no carrier write and no continuation
 - AND it preserves the precise carrier-outcome blocker
+
+#### Scenario: Same-lineage plan conflicts cannot be hidden by a valid report
+
+- GIVEN a complete outcome report and another trusted report with the same accepted-request/run/recovery/carrier lineage but a missing or different `Plan-ID`
+- WHEN a fresh dispatcher evaluates the accepted intent
+- THEN it blocks the contradictory lineage even if the valid report is present
+- AND it ignores reports whose exact lineage belongs to another request or carrier artifact
+
+#### Scenario: Runtime-shard evidence remains visible beyond thirty days
+
+- GIVEN an earlier runtime-shard dispatch handed off a Plan-ID more than thirty days ago without one exact durable outcome
+- AND newer dispatches produced no carrier plan
+- WHEN a fresh dispatcher evaluates the accepted intent
+- THEN it paginates the complete runtime-shard comment history without an age cutoff
+- AND it fails closed on the old unresolved handoff without reissuing the carrier
 
 #### Scenario: A later fail-closed request does not hide an earlier plan
 

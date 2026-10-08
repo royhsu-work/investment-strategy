@@ -3589,6 +3589,27 @@ def test_carrier_outcome_report_rejects_malformed_evidence_and_parses_shape_only
     other_repository_body = body.replace("Repository: owner/repo", "Repository: other/repo")
     assert carrier.parse_carrier_outcome_report(other_repository_body) is not None
 
+    short_report = replace(report, observed_precondition_json='{"a":1}')
+    short_body = carrier.render_carrier_outcome_report(short_report)
+    encoded_line = next(
+        line
+        for line in short_body.splitlines()
+        if line.startswith("Observed-Precondition-JSON-B64: ")
+    )
+    encoded = encoded_line.removeprefix("Observed-Precondition-JSON-B64: ")
+    assert len(encoded) % 4 == 2
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    final_index = alphabet.index(encoded[-1])
+    noncanonical_index = (final_index & 0b110000) | ((final_index + 1) & 0b001111)
+    noncanonical = encoded[:-1] + alphabet[noncanonical_index]
+    padding = "=" * (-len(encoded) % 4)
+    assert base64.urlsafe_b64decode(encoded + padding) == base64.urlsafe_b64decode(
+        noncanonical + padding
+    )
+    assert carrier.parse_carrier_outcome_report(
+        short_body.replace(encoded_line, encoded_line.removesuffix(encoded) + noncanonical)
+    ) is None
+
 
 def test_carrier_documents_reject_tampering_and_dispatch_round_trips_handoff() -> None:
     plan = _carrier_plan_fixture()
@@ -3853,6 +3874,50 @@ def test_unreported_carrier_handoff_is_found_before_later_noncarrier_dispatch(
     assert status == "application-completion-carrier-outcome-missing"
 
 
+def test_runtime_shard_history_keeps_unreported_handoff_after_30_days() -> None:
+    older_request = {
+        **_trusted_connector_comment(91, REQUEST_BODY),
+        "created_at": "2026-07-01T00:00:00Z",
+    }
+    current_request = _trusted_connector_comment(100, REQUEST_BODY)
+    comment_query_paths: list[str] = []
+
+    def read_comments(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/142/comments?"):
+            comment_query_paths.append(path)
+            assert "since=" not in path
+            return [older_request, current_request]
+        raise AssertionError(path)
+
+    runtime_comments = bridge._runtime_shard_comments(
+        "owner/repo",
+        "token",
+        runtime_shard_issue_number=142,
+        source_issue_number=322,
+        source_issue_comments=(),
+        read=read_comments,
+    )
+
+    def read_dispatch(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/scheduled-agent-bridge.yml/runs?"):
+            return {"workflow_runs": []}
+        raise AssertionError(path)
+
+    status = bridge._prior_dispatch_handoff_reason(
+        "owner/repo",
+        "token",
+        recent_comments=runtime_comments,
+        owner="owner",
+        current_dispatch_request_comment_id=100,
+        plan_id=_carrier_plan_fixture().plan_id,
+        read=read_dispatch,
+    )
+
+    assert len(comment_query_paths) == 1
+    assert runtime_comments[0]["created_at"] == "2026-07-01T00:00:00Z"
+    assert status == "application-completion-carrier-prior-dispatch-incomplete"
+
+
 def test_prior_dispatch_without_a_visible_run_fails_closed_before_carrier_reissue() -> None:
     status = bridge._prior_dispatch_handoff_reason(
         "owner/repo",
@@ -3910,7 +3975,64 @@ def test_carrier_outcome_consumer_blocks_duplicate_identical_reports() -> None:
     assert reason == "application-completion-carrier-outcome-ambiguous"
 
 
-def test_carrier_outcome_consumer_rejects_repository_mismatch() -> None:
+@pytest.mark.parametrize("missing_plan_id", [False, True])
+@pytest.mark.parametrize("contradictory_first", [False, True])
+def test_carrier_outcome_blocks_same_lineage_plan_conflict_even_with_complete_report(
+    missing_plan_id: bool,
+    contradictory_first: bool,
+) -> None:
+    plan = _carrier_plan_fixture()
+    recovery = _qualified_recovery_fixture(artifact_id=997)
+    carrier_digest = "sha256:" + "6" * 64
+    report = _carrier_outcome_fixture(
+        plan,
+        recovery,
+        carrier_artifact_id=999,
+        carrier_artifact_digest=carrier_digest,
+    )
+    valid_body = carrier.render_carrier_outcome_report(report)
+    if missing_plan_id:
+        contradictory_body = valid_body.replace(f"Plan-ID: {report.plan_id}\n", "")
+        expected_reason = "application-completion-carrier-outcome-invalid"
+    else:
+        contradictory_body = carrier.render_carrier_outcome_report(
+            replace(report, plan_id="carrier-plan-" + "f" * 64)
+        )
+        expected_reason = "application-completion-carrier-outcome-plan-reused"
+    assert contradictory_body != valid_body
+    bodies = (
+        (contradictory_body, valid_body)
+        if contradictory_first
+        else (valid_body, contradictory_body)
+    )
+    qualified = carrier.QualifiedCarrierPlan(
+        request_comment_id=90,
+        run_id=777,
+        run_attempt=1,
+        artifact_id=999,
+        artifact_digest=carrier_digest,
+        plan=plan,
+    )
+
+    outcome, reason = bridge._carrier_outcome_status(
+        recent_comments=tuple(
+            _trusted_connector_comment(92 + index, body)
+            for index, body in enumerate(bodies)
+        ),
+        owner="owner",
+        repository="owner/repo",
+        source=bridge.WorkerRequest(322, "executor", "implement-change"),
+        record=_accepted_carrier_record(),
+        accepted_decision_sha256="a" * 64,
+        recovery_artifact=recovery,
+        qualified_carrier=qualified,
+    )
+
+    assert outcome == "BLOCKED"
+    assert reason == expected_reason
+
+
+def test_carrier_outcome_consumer_ignores_unrelated_repository_lineage() -> None:
     plan = _carrier_plan_fixture()
     recovery = _qualified_recovery_fixture(artifact_id=997)
     carrier_digest = "sha256:" + "6" * 64
@@ -3948,8 +4070,8 @@ def test_carrier_outcome_consumer_rejects_repository_mismatch() -> None:
         qualified_carrier=qualified,
     )
 
-    assert outcome == "BLOCKED"
-    assert reason == "application-completion-carrier-outcome-plan-reused"
+    assert outcome == "NONE"
+    assert reason is None
 
 
 def test_carrier_outcome_cannot_claim_matching_precondition_with_other_observation() -> None:

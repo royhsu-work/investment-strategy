@@ -334,6 +334,11 @@ def parse_carrier_outcome_report(body: object) -> CarrierOutcomeReport | None:
             observed_raw = base64.urlsafe_b64decode(
                 observed_encoded + "=" * (-len(observed_encoded) % 4)
             )
+            canonical_observed_encoded = (
+                base64.urlsafe_b64encode(observed_raw).decode("ascii").rstrip("=")
+            )
+            if observed_encoded != canonical_observed_encoded:
+                return None
             observed_value = json.loads(observed_raw)
         except (UnicodeError, ValueError, json.JSONDecodeError):
             return None

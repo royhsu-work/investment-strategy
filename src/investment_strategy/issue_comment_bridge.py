@@ -257,6 +257,30 @@ def _paged_list(
         page += 1
 
 
+
+def _runtime_shard_comments(
+    repository: str,
+    token: str,
+    *,
+    runtime_shard_issue_number: int,
+    source_issue_number: int,
+    source_issue_comments: tuple[Mapping[str, object], ...],
+    read: GitHubReader,
+) -> tuple[Mapping[str, object], ...]:
+    """Read complete dispatch evidence from the current runtime shard."""
+
+    if _positive_int(runtime_shard_issue_number) is None:
+        raise ValueError("runtime shard issue number is invalid")
+    if runtime_shard_issue_number == source_issue_number:
+        return source_issue_comments
+    return _paged_list(
+        repository,
+        token,
+        f"issues/{runtime_shard_issue_number}/comments?sort=created&direction=asc",
+        read=read,
+    )
+
+
 def _comment_time(comment: Mapping[str, object]) -> str | None:
     value = comment.get("created_at")
     return value if isinstance(value, str) and value else None
@@ -501,6 +525,22 @@ def _carrier_outcome_status(
     except ValueError:
         return "BLOCKED", "application-completion-carrier-outcome-invalid"
 
+    expected_lineage_fields = {
+        "Repository": repository,
+        "Issue": str(source.issue_number),
+        "Request-Comment": str(record.request_comment_id),
+        "Accepted-Decision-SHA256": accepted_decision_sha256,
+        "Continuation-Correlation": expected_correlation,
+        "Predecessor-Run-ID": str(recovery_artifact.run_id),
+        "Predecessor-Run-Attempt": str(recovery_artifact.run_attempt),
+        "Predecessor-Job-ID": str(recovery_artifact.job_id),
+        "Recovery-Artifact-ID": str(recovery_artifact.artifact_id),
+        "Recovery-Artifact-Digest": recovery_artifact.artifact_digest,
+        "Failure-Evidence-SHA256": recovery_artifact.failure_evidence_sha256,
+        "Recovery-Episode-SHA256": recovery_artifact.recovery_episode_sha256,
+        "Carrier-Artifact-ID": str(qualified_carrier.artifact_id),
+        "Carrier-Artifact-Digest": qualified_carrier.artifact_digest,
+    }
     matching: list[CarrierOutcomeReport] = []
     for comment in recent_comments:
         if not _trusted_connector_comment(comment, owner):
@@ -508,12 +548,16 @@ def _carrier_outcome_status(
         body = comment.get("body")
         if not isinstance(body, str) or body.split("\n", 1)[0] != "APPLICATION_CARRIER_OUTCOME":
             continue
-        if _carrier_outcome_field(body, "Plan-ID") != qualified_carrier.plan.plan_id:
-            continue
         report = parse_carrier_outcome_report(body)
+        raw_lineage_matches = all(
+            _carrier_outcome_field(body, field) == expected
+            for field, expected in expected_lineage_fields.items()
+        )
         if report is None:
-            return "BLOCKED", "application-completion-carrier-outcome-invalid"
-        exact_identity = (
+            if raw_lineage_matches:
+                return "BLOCKED", "application-completion-carrier-outcome-invalid"
+            continue
+        exact_lineage = (
             report.repository == repository
             and report.issue_number == source.issue_number
             and report.request_comment_id == record.request_comment_id
@@ -528,9 +572,14 @@ def _carrier_outcome_status(
             and report.recovery_episode_sha256 == recovery_artifact.recovery_episode_sha256
             and report.carrier_artifact_id == qualified_carrier.artifact_id
             and report.carrier_artifact_digest == qualified_carrier.artifact_digest
-            and report.plan_id == qualified_carrier.plan.plan_id
-            and report.operation == qualified_carrier.plan.operation
         )
+        if not exact_lineage:
+            continue
+        if (
+            report.plan_id != qualified_carrier.plan.plan_id
+            or report.operation != qualified_carrier.plan.operation
+        ):
+            return "BLOCKED", "application-completion-carrier-outcome-plan-reused"
         expected_precondition_json = json.dumps(
             dict(qualified_carrier.plan.expected), sort_keys=True, separators=(",", ":")
         )
@@ -559,8 +608,6 @@ def _carrier_outcome_status(
                 and report.observed_precondition_json is None
             )
         )
-        if not exact_identity:
-            return "BLOCKED", "application-completion-carrier-outcome-plan-reused"
         if not observation_matches_status:
             return "BLOCKED", "application-completion-carrier-outcome-invalid"
         matching.append(report)
@@ -2287,6 +2334,7 @@ def qualify_application_completion(
     current_revision: str,
     read: GitHubReader = _github_json,
     current_dispatch_request_comment_id: int | None = None,
+    current_dispatch_issue_number: int | None = None,
     now: datetime | None = None,
 ) -> ApplicationCompletion:
     """Return one exhaustive consequence disposition from durable evidence."""
@@ -2306,6 +2354,43 @@ def qualify_application_completion(
         f"issues/{source.issue_number}/comments?sort=created&direction=asc",
         read=read,
     )
+    runtime_comments = recent
+    if current_dispatch_request_comment_id is not None:
+        runtime_issue_number = _positive_int(current_dispatch_issue_number)
+        current_request_id = _positive_int(current_dispatch_request_comment_id)
+        if runtime_issue_number is None or current_request_id is None:
+            return ApplicationCompletion(
+                "INVALID",
+                "application-completion-carrier-history-unavailable",
+            )
+        try:
+            runtime_comments = _runtime_shard_comments(
+                repository,
+                token,
+                runtime_shard_issue_number=runtime_issue_number,
+                source_issue_number=source.issue_number,
+                source_issue_comments=issue_comments,
+                read=read,
+            )
+        except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
+            return ApplicationCompletion(
+                "INVALID",
+                "application-completion-carrier-history-unavailable",
+            )
+        current_request_comments = []
+        for comment in runtime_comments:
+            body = comment.get("body")
+            if (
+                _positive_int(comment.get("id")) == current_request_id
+                and isinstance(body, str)
+                and parse_dispatch_request(body) is not None
+            ):
+                current_request_comments.append(comment)
+        if len(current_request_comments) != 1:
+            return ApplicationCompletion(
+                "INVALID",
+                "application-completion-carrier-history-incomplete",
+            )
     decisions = _application_decisions(issue_comments)
     relevant_decisions = [
         record
@@ -2469,7 +2554,7 @@ def qualify_application_completion(
                 current_issue=cast(Mapping[str, object], issue),
                 current_revision=current_revision,
                 read=read,
-                recent_comments=recent,
+                recent_comments=runtime_comments,
                 current_dispatch_request_comment_id=current_dispatch_request_comment_id,
                 continuation_transport_comment_ids=_continuation_transport_comment_ids(
                     repository=repository,
@@ -2479,7 +2564,7 @@ def qualify_application_completion(
                     source=source,
                     record=current_accepted[0],
                     issue_comments=issue_comments,
-                    recent_comments=recent,
+                    recent_comments=runtime_comments,
                 ),
             )
             if resumed.state != "NONE":
@@ -2565,7 +2650,7 @@ def qualify_application_completion(
             current_issue=cast(Mapping[str, object], issue),
             current_revision=current_revision,
             read=read,
-            recent_comments=recent,
+            recent_comments=runtime_comments,
             current_dispatch_request_comment_id=current_dispatch_request_comment_id,
             continuation_transport_comment_ids=_continuation_transport_comment_ids(
                 repository=repository,
@@ -2575,7 +2660,7 @@ def qualify_application_completion(
                 source=frontier_source,
                 record=frontier_owner,
                 issue_comments=issue_comments,
-                recent_comments=recent,
+                recent_comments=runtime_comments,
             ),
         )
         if frontier_completion.state != "COMPLETE":
@@ -2761,7 +2846,7 @@ def qualify_application_completion(
         current_issue=cast(Mapping[str, object], issue),
         current_revision=current_revision,
         read=read,
-        recent_comments=recent,
+        recent_comments=runtime_comments,
         current_dispatch_request_comment_id=current_dispatch_request_comment_id,
         continuation_transport_comment_ids=_continuation_transport_comment_ids(
             repository=repository,
@@ -2771,7 +2856,7 @@ def qualify_application_completion(
             source=source,
             record=record,
             issue_comments=issue_comments,
-            recent_comments=recent,
+            recent_comments=runtime_comments,
         ),
     )
 
@@ -3076,6 +3161,7 @@ def main() -> int:
                 source=source,
                 current_revision=args.revision,
                 current_dispatch_request_comment_id=identity[1],
+                current_dispatch_issue_number=identity[0],
             )
         )
         resume_job_id = None

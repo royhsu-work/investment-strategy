@@ -65,6 +65,13 @@ Trace: #322 Step 1 execution record and current-source same-path refusal -> exac
 - [ ] 0.34 RED/GREEN: remove `run_attempt > 1` as a permanent recovery ban while prohibiting rerun of the same completed run/job; allow a new substantive transition only for a unique, new evidence digest in the exact linear predecessor chain, without a fixed numeric attempt ceiling. Prove identical evidence, unchanged refusals, and changed run/plan/nonce without new evidence emit no continuation; prove a fourth distinct transition can continue.
 - [ ] 0.35 VERIFY: cover safe disjoint re-plan, same-path blocker, partial effects, ambiguous/lost writes, failed evidence persistence, interruption, duplicate/branching continuation history, legacy generic records, and continuation beyond the former numeric threshold only for new qualified evidence; each case ends in canonical completion or a precise blocker. Run focused/full regression and required quality checks.
 
+## Slice 5 follow-up — 0F. Exact-head carrier review corrections
+
+- [ ] 0.36 RED/GREEN: reproduce a same-lineage report with a missing/different `Plan-ID` beside a valid complete report, and prove the contradiction blocks regardless of comment order while unrelated lineage is ignored.
+- [ ] 0.37 RED/GREEN: reject noncanonical unpadded URL-safe base64 for observed preconditions; prove alternate spellings that decode to the same bytes are invalid.
+- [ ] 0.38 VERIFY: read full paginated runtime-shard history without a 30-day/last-N cutoff for continuation, outcome, and prior-handoff evidence; prove an unresolved request older than 30 days still blocks and history/read absence fails closed. Retain the bounded repository-wide ingress scan.
+- [ ] 0.39 VERIFY: run integrated bridge regressions, remote Python Quality, strict OpenSpec validation, and an independent review on the exact final head.
+
 ## 1. Contract and typed NO_WORK handoff
 
 - [x] 1.1 RED/GREEN: add contract tests proving `AUTHORIZE` and `FAIL_CLOSED` never enter idle, while one exact completed `NO_WORK` artifact can invoke one bounded Lead idle semantic request.
