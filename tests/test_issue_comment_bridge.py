@@ -3884,24 +3884,39 @@ def test_qualifier_uses_full_runtime_shard_history_for_prior_handoff(
     source = bridge.WorkerRequest(138, "lead", "explore-change")
     change = "runtime-shard-history-beyond-thirty-days"
     request = _effect_request_comment(
-        comment_id=90,
+        comment_id=102,
         created_at="2026-09-18T01:00:00Z",
         action="explore-change",
         role="lead",
         issue_number=138,
         change=change,
     )
-    decision = _application_decision_comment(request, comment_id=92)
+    decision = _application_decision_comment(request, comment_id=103)
     issue = {
         **_current_source_issue(),
         "labels": [{"name": "action:explore-change"}],
         "body": f"Change: {change}",
     }
+    first_page = [
+        {
+            "id": comment_id,
+            "body": "unrelated runtime comment",
+            "created_at": "2026-06-01T00:00:00Z",
+            "user": {"login": "human"},
+        }
+        for comment_id in range(1, 101)
+    ]
     older_request = {
-        **_trusted_connector_comment(91, REQUEST_BODY),
+        **_trusted_connector_comment(
+            101,
+            "DISPATCH_REQUEST\nRequested-At: 2026-07-01T00:00:00Z",
+        ),
         "created_at": "2026-07-01T00:00:00Z",
     }
-    current_request = _trusted_connector_comment(100, REQUEST_BODY)
+    current_request = _trusted_connector_comment(
+        104,
+        "DISPATCH_REQUEST\nRequested-At: 2026-10-08T00:00:00Z",
+    )
     shard_query_paths: list[str] = []
     captured_runtime_comments: list[tuple[Mapping[str, object], ...]] = []
 
@@ -3913,7 +3928,11 @@ def test_qualifier_uses_full_runtime_shard_history_for_prior_handoff(
         if path.startswith("issues/142/comments?"):
             shard_query_paths.append(path)
             assert "since=" not in path
-            return [older_request, current_request]
+            if path.endswith("page=1"):
+                return first_page
+            if path.endswith("page=2"):
+                return [older_request, current_request]
+            raise AssertionError(path)
         if path == "issues/138":
             return issue
         if path.startswith("issues/138/timeline?"):
@@ -3944,24 +3963,27 @@ def test_qualifier_uses_full_runtime_shard_history_for_prior_handoff(
         source=source,
         current_revision=REVISION,
         read=read,
-        current_dispatch_request_comment_id=100,
+        current_dispatch_request_comment_id=104,
         current_dispatch_issue_number=142,
         now=datetime(2026, 10, 8, tzinfo=UTC),
     )
 
     assert completion.reason == "captured-runtime-history"
-    assert len(shard_query_paths) == 1
+    assert len(shard_query_paths) == 2
+    assert shard_query_paths[0].endswith("page=1")
+    assert shard_query_paths[1].endswith("page=2")
     assert len(captured_runtime_comments) == 1
     runtime_comments = captured_runtime_comments[0]
-    assert tuple(comment["id"] for comment in runtime_comments) == (91, 100)
-    assert runtime_comments[0]["created_at"] == "2026-07-01T00:00:00Z"
+    assert len(runtime_comments) == 102
+    assert tuple(comment["id"] for comment in runtime_comments[-2:]) == (101, 104)
+    assert runtime_comments[-2]["created_at"] == "2026-07-01T00:00:00Z"
 
     status = bridge._prior_dispatch_handoff_reason(
         "owner/repo",
         "token",
         recent_comments=runtime_comments,
         owner="owner",
-        current_dispatch_request_comment_id=100,
+        current_dispatch_request_comment_id=104,
         plan_id=_carrier_plan_fixture().plan_id,
         read=lambda _repository, _token, path: (
             {"workflow_runs": []}
