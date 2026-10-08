@@ -3160,6 +3160,72 @@ def test_qualified_carrier_consumer_reconciles_lost_response_without_resend() ->
     assert calls == 1
 
 
+def test_carrier_outcome_report_round_trips_exact_lineage() -> None:
+    report = carrier.CarrierOutcomeReport(
+        repository="owner/repo",
+        issue_number=322,
+        request_comment_id=90,
+        accepted_decision_sha256="a" * 64,
+        continuation_correlation="b" * 64,
+        predecessor_run_id=777,
+        predecessor_run_attempt=1,
+        predecessor_job_id=888,
+        recovery_artifact_id=997,
+        recovery_artifact_digest="sha256:" + "3" * 64,
+        failure_evidence_sha256="4" * 64,
+        recovery_episode_sha256="5" * 64,
+        carrier_artifact_id=999,
+        carrier_artifact_digest="sha256:" + "6" * 64,
+        plan_id=_carrier_plan_fixture().plan_id,
+        operation="pull-request-head-update",
+        outcome="COMPLETE",
+        mutation_status="COMPLETED",
+        postcondition="COMPLETE",
+        failure_code="none",
+        failure_summary="none",
+    )
+
+    body = carrier.render_carrier_outcome_report(report)
+
+    assert body.splitlines()[0] == "APPLICATION_CARRIER_OUTCOME"
+    assert carrier.parse_carrier_outcome_report(body) == report
+
+
+def test_carrier_outcome_report_rejects_incomplete_or_unbound_evidence() -> None:
+    report = carrier.CarrierOutcomeReport(
+        repository="owner/repo",
+        issue_number=322,
+        request_comment_id=90,
+        accepted_decision_sha256="a" * 64,
+        continuation_correlation="b" * 64,
+        predecessor_run_id=777,
+        predecessor_run_attempt=1,
+        predecessor_job_id=888,
+        recovery_artifact_id=997,
+        recovery_artifact_digest="sha256:" + "3" * 64,
+        failure_evidence_sha256="4" * 64,
+        recovery_episode_sha256="5" * 64,
+        carrier_artifact_id=999,
+        carrier_artifact_digest="sha256:" + "6" * 64,
+        plan_id=_carrier_plan_fixture().plan_id,
+        operation="pull-request-head-update",
+        outcome="COMPLETE",
+        mutation_status="COMPLETED",
+        postcondition="COMPLETE",
+        failure_code="none",
+        failure_summary="none",
+    )
+    body = carrier.render_carrier_outcome_report(report)
+
+    assert carrier.parse_carrier_outcome_report(body + "\n") is None
+    assert carrier.parse_carrier_outcome_report(
+        body.replace("Postcondition: COMPLETE", "Postcondition: UNKNOWN")
+    ) is None
+    assert carrier.parse_carrier_outcome_report(
+        body.replace("Repository: owner/repo", "Repository: other/repo")
+    ) is None
+
+
 def test_carrier_documents_reject_tampering_and_dispatch_round_trips_handoff() -> None:
     plan = _carrier_plan_fixture()
     document = carrier.carrier_plan_document(plan)
