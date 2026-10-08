@@ -117,7 +117,12 @@ CarrierOutcomeKind = Literal["COMPLETE", "REFUSED", "ERROR", "UNKNOWN"]
 CarrierMutationStatus = Literal["NO_WRITE", "COMPLETED", "UNKNOWN"]
 CarrierPrecondition = Literal["MATCH", "MISMATCH", "UNKNOWN", "NOT_REQUIRED"]
 CarrierPostcondition = Literal["COMPLETE", "INCOMPLETE", "UNKNOWN"]
-CarrierUnfinishedBoundary = Literal["none", "precondition-read", "carrier-operation", "postcondition-read"]
+CarrierUnfinishedBoundary = Literal[
+    "none",
+    "precondition-read",
+    "carrier-operation",
+    "postcondition-read",
+]
 
 _CARRIER_OUTCOME_SCHEMA = "application-carrier-outcome/v1"
 _CARRIER_OUTCOME_MARKER = "APPLICATION_CARRIER_OUTCOME"
