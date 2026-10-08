@@ -805,7 +805,7 @@ def _application_job(
         except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
             recovery_artifact = None
 
-    if recovery_artifact is None:
+    if recovery_artifact is None or accepted_decision_sha256 is None:
         return ApplicationCompletion(
             "INVALID",
             "application-completion-recovery-evidence-missing",
