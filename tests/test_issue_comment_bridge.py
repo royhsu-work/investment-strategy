@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import base64
 import hashlib
 import json
@@ -3874,34 +3875,85 @@ def test_unreported_carrier_handoff_is_found_before_later_noncarrier_dispatch(
     assert status == "application-completion-carrier-outcome-missing"
 
 
-def test_runtime_shard_history_keeps_unreported_handoff_after_30_days() -> None:
+def test_qualifier_uses_full_runtime_shard_history_for_prior_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    change = "runtime-shard-history-beyond-thirty-days"
+    request = _effect_request_comment(
+        comment_id=90,
+        created_at="2026-09-18T01:00:00Z",
+        action="explore-change",
+        role="lead",
+        issue_number=138,
+        change=change,
+    )
+    decision = _application_decision_comment(request, comment_id=92)
+    issue = {
+        **_current_source_issue(),
+        "labels": [{"name": "action:explore-change"}],
+        "body": f"Change: {change}",
+    }
     older_request = {
         **_trusted_connector_comment(91, REQUEST_BODY),
         "created_at": "2026-07-01T00:00:00Z",
     }
     current_request = _trusted_connector_comment(100, REQUEST_BODY)
-    comment_query_paths: list[str] = []
+    shard_query_paths: list[str] = []
+    captured_runtime_comments: list[tuple[Mapping[str, object], ...]] = []
 
-    def read_comments(_repository: str, _token: str, path: str) -> object:
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [request]
+        if path.startswith("issues/138/comments?"):
+            return [decision]
         if path.startswith("issues/142/comments?"):
-            comment_query_paths.append(path)
+            shard_query_paths.append(path)
             assert "since=" not in path
             return [older_request, current_request]
+        if path == "issues/138":
+            return issue
+        if path.startswith("issues/138/timeline?"):
+            return []
         raise AssertionError(path)
 
-    runtime_comments = bridge._runtime_shard_comments(
+    def no_frontier(**_kwargs: object) -> tuple[None, bool]:
+        return None, False
+
+    def no_continuations(**_kwargs: object) -> tuple[int, ...]:
+        return ()
+
+    def capture_runtime_comments(
+        *,
+        recent_comments: tuple[Mapping[str, object], ...],
+        **_kwargs: object,
+    ) -> bridge.ApplicationCompletion:
+        captured_runtime_comments.append(recent_comments)
+        return bridge.ApplicationCompletion("INVALID", "captured-runtime-history")
+
+    monkeypatch.setattr(bridge, "_derive_frontier", no_frontier)
+    monkeypatch.setattr(
+        bridge, "_continuation_transport_comment_ids", no_continuations
+    )
+    monkeypatch.setattr(bridge, "_accepted_application_state", capture_runtime_comments)
+
+    completion = bridge.qualify_application_completion(
         "owner/repo",
         "token",
-        runtime_shard_issue_number=142,
-        source_issue_number=322,
-        source_issue_comments=(),
-        read=read_comments,
+        source=source,
+        current_revision=REVISION,
+        read=read,
+        current_dispatch_request_comment_id=100,
+        current_dispatch_issue_number=142,
+        now=datetime(2026, 10, 8, tzinfo=UTC),
     )
 
-    def read_dispatch(_repository: str, _token: str, path: str) -> object:
-        if path.startswith("actions/workflows/scheduled-agent-bridge.yml/runs?"):
-            return {"workflow_runs": []}
-        raise AssertionError(path)
+    assert completion.reason == "captured-runtime-history"
+    assert len(shard_query_paths) == 1
+    assert len(captured_runtime_comments) == 1
+    runtime_comments = captured_runtime_comments[0]
+    assert tuple(comment["id"] for comment in runtime_comments) == (91, 100)
+    assert runtime_comments[0]["created_at"] == "2026-07-01T00:00:00Z"
 
     status = bridge._prior_dispatch_handoff_reason(
         "owner/repo",
@@ -3910,11 +3962,12 @@ def test_runtime_shard_history_keeps_unreported_handoff_after_30_days() -> None:
         owner="owner",
         current_dispatch_request_comment_id=100,
         plan_id=_carrier_plan_fixture().plan_id,
-        read=read_dispatch,
+        read=lambda _repository, _token, path: (
+            {"workflow_runs": []}
+            if path.startswith("actions/workflows/scheduled-agent-bridge.yml/runs?")
+            else (_ for _ in ()).throw(AssertionError(path))
+        ),
     )
-
-    assert len(comment_query_paths) == 1
-    assert runtime_comments[0]["created_at"] == "2026-07-01T00:00:00Z"
     assert status == "application-completion-carrier-prior-dispatch-incomplete"
 
 
