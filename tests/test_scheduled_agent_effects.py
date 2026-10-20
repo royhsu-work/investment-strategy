@@ -4406,3 +4406,60 @@ def test_deferred_comment_keeps_original_accepted_effect_index_on_rejection() ->
     assert result.recovery_evidence.failed_effect_index == 1
     assert result.recovery_evidence.failed_effect_kind == "github-mutation"
     assert result.recovery_evidence.completed_effect_indexes == ()
+
+
+def test_deferred_comment_preserves_original_completed_effect_ordinals() -> None:
+    """A partial prefix uses accepted-batch indexes across both guard passes."""
+    source = WorkerRequest(138, "executor", "implement-change")
+    requested = [
+        {
+            "kind": "issue-comment",
+            "payload_json": json.dumps({"issue_number": 138, "body": "checkpoint"}),
+        }
+    ]
+    requested.extend(
+        {
+            "kind": "github-mutation",
+            "payload_json": json.dumps(
+                {
+                    "issue_number": 138,
+                    "operation": "pull-request-ready",
+                    "number": number,
+                    "expected_head_sha": "b" * 40,
+                },
+                sort_keys=True,
+            ),
+        }
+        for number in (178, 179)
+    )
+    batch = parse_effect_batch(
+        _raw(result_kind="spec-blocker", requested_effects=requested), source
+    )
+    guard_calls = 0
+    applied: list[str] = []
+
+    def guard(_effect: StagedEffect) -> bool:
+        nonlocal guard_calls
+        guard_calls += 1
+        return guard_calls != 4
+
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=guard,
+        apply_effect=lambda effect: applied.append(effect.payload_json),
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        defer_issue_comments=True,
+        apply_derived=False,
+    )
+
+    assert result.reason == "effect precondition rejected"
+    assert len(applied) == 1
+    assert result.recovery_evidence is not None
+    evidence = result.recovery_evidence
+    assert evidence.failed_effect_index == 2
+    assert evidence.completed_effect_indexes == (1,)
+    assert evidence.completed_effect_sha256 == (
+        effects.hashlib.sha256(requested[1]["payload_json"].encode("utf-8")).hexdigest(),
+    )
