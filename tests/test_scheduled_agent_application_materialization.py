@@ -2988,9 +2988,7 @@ def test_six_file_322_shape_preserves_witness_after_second_legal_commit(
             "blob_sha": proof_git.blob(desired[path]),
             # The final incorrect expected value models the real historical
             # mismatch; the actual Git tree remains the only preimage authority.
-            "expected_sha": "a84065b222bb18b8adb56113b866484743f0e1a2"
-            if index == 5
-            else None,
+            "expected_sha": "a84065b222bb18b8adb56113b866484743f0e1a2" if index == 5 else None,
         }
         for index, path in enumerate(paths)
     ]
