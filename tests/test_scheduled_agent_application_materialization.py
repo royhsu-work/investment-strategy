@@ -2960,14 +2960,20 @@ def test_partial_manifest_blob_match_is_not_a_complete_materialization_witness(
 
 def test_six_file_322_shape_preserves_witness_after_second_legal_commit(
     proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Full six-path witness must survive a qualified later same-Change edit.
+    """A six-file Executor shape must retain W after a fresh later commit.
 
-    Paths model the exact accepted #322 manifest, but synthetic blob contents
-    deliberately do NOT assert that the real historical six-blob intent completed.
+    The task path is namespaced to the test Change; other five paths model the
+    accepted #322 manifest. Synthetic blobs do not prove historical completion.
     """
+    proof_git.source = WorkerRequest(322, "executor", "implement-change")
+    proof_git.routing = "implement-change"
+    monkeypatch.setattr(
+        materialization, "_qualified_implementation_decision", lambda *_args, **_kwargs: None
+    )
     paths = (
-        "openspec/changes/restore-no-work-idle-discovery/tasks.md",
+        f"openspec/changes/{_CHANGE}/tasks.md",
         "src/investment_strategy/scheduled_agent_application_bridge.py",
         "src/investment_strategy/scheduled_agent_effects.py",
         "src/investment_strategy/scheduled_agent_merge_acceptance.py",
