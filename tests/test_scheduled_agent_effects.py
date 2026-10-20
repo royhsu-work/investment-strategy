@@ -4461,3 +4461,42 @@ def test_deferred_comment_preserves_original_completed_effect_ordinals() -> None
     assert evidence.completed_effect_sha256 == (
         effects.hashlib.sha256(requested[1]["payload_json"].encode("utf-8")).hexdigest(),
     )
+
+
+@pytest.mark.parametrize(
+    ("checkpoint_revision", "expected_applied"),
+    [("d" * 40, True), (_REVISION, False)],
+)
+def test_accepted_implementation_checkpoint_uses_verified_materialized_revision(
+    checkpoint_revision: str, expected_applied: bool
+) -> None:
+    """Phase B binds checkpoint to proven target, not its obsolete accepted base."""
+    materialized = "d" * 40
+    requested = _implementation_checkpoint_effects()
+    checkpoint = json.loads(requested[1]["payload_json"])
+    checkpoint["body"] = checkpoint["body"].replace(
+        f"Revision: {_REVISION}", f"Revision: {checkpoint_revision}"
+    )
+    requested[1]["payload_json"] = json.dumps(checkpoint)
+    batch = parse_effect_batch(
+        _raw(result_kind="more-implementation-required", requested_effects=requested),
+        WorkerRequest(138, "executor", "implement-change"),
+    )
+    applied: list[StagedEffect] = []
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: True,
+        apply_effect=applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        apply_derived=False,
+        accepted_intent=True,
+        durable_checkpoint_revision=materialized,
+    )
+    assert result.applied is expected_applied, result
+    if expected_applied:
+        assert len(applied) == 3
+    else:
+        assert result.reason == "typed application rejected:implementation-checkpoint-incomplete"
+        assert applied == []
