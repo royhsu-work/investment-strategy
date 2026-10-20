@@ -2580,3 +2580,50 @@ def test_application_failed_effect_is_not_lost_from_actions_log_contract() -> No
 
     main_source = inspect.getsource(bridge.main)
     assert '"failure_evidence": _public_failure_diagnostics(result)' in main_source
+
+
+def test_public_failure_diagnostics_keeps_ordinal_and_redacts_raw_payload() -> None:
+    """An artifact upload failure still leaves a nonauthoritative, safe log hint."""
+    secret = "NEVER_PRINT_A_RAW_SECRET"
+    rejection = ApplicationRejection(
+        ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+        expected=json.dumps({"token": secret}),
+        observed=json.dumps(
+            {
+                "disposition": "CONTRADICTORY",
+                "reason": "materialization missing work preimage is stale",
+            }
+        ),
+    )
+    evidence = EffectRecoveryEvidence(
+        failed_effect_index=1,
+        failed_effect_kind="github-mutation",
+        failed_effect_sha256="b" * 64,
+        completed_effect_indexes=(0,),
+        completed_effect_sha256=("a" * 64,),
+        mutation_status="not-complete",
+        unfinished_boundary="effect-precondition",
+        rejection=rejection,
+    )
+    result = bridge.ApplyResult(
+        False,
+        "effect precondition rejected",
+        rejection=rejection,
+        recovery_evidence=evidence,
+    )
+    logged = bridge._public_failure_diagnostics(result)
+    assert logged is not None
+    assert logged["failed_effect_index"] == 1
+    assert logged["failed_effect_kind"] == "github-mutation"
+    assert logged["failed_effect_sha256"] == "b" * 64
+    assert logged["completed_effect_indexes"] == [0]
+    assert logged["completed_effect_sha256"] == ["a" * 64]
+    assert logged["mutation_status"] == "not-complete"
+    assert logged["unfinished_boundary"] == "effect-precondition"
+    assert logged["rejection_classification"] == "effect-precondition-unsatisfied"
+    assert logged["guard_reason"] == "materialization missing work preimage is stale"
+    assert logged["failure_evidence_sha256"] == bridge._canonical_sha256(
+        bridge._recovery_failure_document(result)
+    )
+    assert secret not in json.dumps(logged)
+    assert bridge._public_failure_diagnostics(bridge.ApplyResult(True, "applied")) is None
