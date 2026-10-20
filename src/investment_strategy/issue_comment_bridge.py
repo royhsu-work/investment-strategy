@@ -852,10 +852,44 @@ def _application_job(
             recovery_artifact = None
 
     if recovery_artifact is None or accepted_decision_sha256 is None:
+        # The pre-recovery-protocol job can be identified from its *actual*
+        # completed Actions step list.  This is missing historical evidence,
+        # never a proof of zero writes or permission to rerun the old job.
+        steps = job.get("steps")
+        legacy_no_upload_step = (
+            record is not None
+            and accepted_decision_sha256 is not None
+            and job.get("status") == "completed"
+            and job.get("conclusion") == "failure"
+            and isinstance(steps, list)
+            and any(
+                isinstance(step, Mapping)
+                and step.get("name") == "Freshly authorize and apply repository-owned effects"
+                and step.get("conclusion") == "failure"
+                for step in steps
+            )
+            and not any(
+                isinstance(step, Mapping)
+                and step.get("name") in {
+                    "Upload exact application recovery evidence",
+                    "Upload final exact application recovery evidence",
+                }
+                for step in steps
+            )
+            and any(
+                isinstance(step, Mapping) and step.get("name") == "Complete job"
+                for step in steps
+            )
+        )
         return ApplicationCompletion(
             "INVALID",
-            "application-completion-recovery-evidence-missing",
+            (
+                "application-completion-legacy-recovery-upload-unavailable"
+                if legacy_no_upload_step
+                else "application-completion-recovery-evidence-missing"
+            ),
             request_comment_id=request_comment_id,
+            job_id=job_id if legacy_no_upload_step else None,
         )
     prior_failures = cast(
         list[str],
