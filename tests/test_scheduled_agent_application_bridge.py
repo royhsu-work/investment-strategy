@@ -2792,6 +2792,9 @@ def test_cli_checkpoint_revision_is_bound_to_fresh_proven_target_not_unverified_
 
     main_source = inspect.getsource(bridge.main)
     assert "validated_materialization_revision=args.validated_revision" not in main_source
-    assert main_source.count(
-        "validated_materialization_revision=(None if target is None else target.revision)"
-    ) == 2
+    assert (
+        main_source.count(
+            "validated_materialization_revision=(None if target is None else target.revision)"
+        )
+        == 2
+    )
