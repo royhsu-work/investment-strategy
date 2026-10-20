@@ -634,21 +634,17 @@ def _implementation_checkpoint_effects_complete(
     ):
         return False
     if accepted_intent:
-        # A prior effect can survive a lost response. Without a new qualified
-        # target, require fresh proof of BOTH materialization and checkpoint.
-        if (
-            not defer_issue_comments
-            and durable_checkpoint_revision is None
-            and (
-                observe_postcondition is None
-                or not (
-                    observe_postcondition(batch.effects[task_index])
-                    and observe_postcondition(batch.effects[checkpoint_indexes[0]])
-                )
+        # On lost response, completed materialization and checkpoint effects
+        # may be proven by fresh reads without replaying their physical plan.
+        return (
+            defer_issue_comments
+            or durable_checkpoint_revision is not None
+            or (
+                observe_postcondition is not None
+                and observe_postcondition(batch.effects[task_index])
+                and observe_postcondition(batch.effects[checkpoint_indexes[0]])
             )
-        ):
-            return False
-        return True
+        )
     if validate_implementation_checkpoint is None:
         return False
     return validate_implementation_checkpoint(request, completed_task_ids)
