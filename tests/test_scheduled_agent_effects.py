@@ -4502,6 +4502,7 @@ def test_accepted_implementation_checkpoint_uses_verified_materialized_revision(
         assert result.reason == "typed application rejected:implementation-checkpoint-incomplete"
         assert applied == []
 
+
 def test_accepted_checkpoint_requires_proven_revision_before_comment_application() -> None:
     """A resumed accepted batch must not commit an obsolete-base checkpoint."""
     source = WorkerRequest(138, "executor", "implement-change")
