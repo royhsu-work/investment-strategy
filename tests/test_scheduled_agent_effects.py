@@ -4371,9 +4371,7 @@ def test_deferred_comment_keeps_original_accepted_effect_index_on_rejection() ->
     source = WorkerRequest(138, "executor", "implement-change")
     comment = {
         "kind": "issue-comment",
-        "payload_json": json.dumps(
-            {"issue_number": 138, "body": "diagnostic checkpoint"}
-        ),
+        "payload_json": json.dumps({"issue_number": 138, "body": "diagnostic checkpoint"}),
     }
     mutation = {
         "kind": "github-mutation",
