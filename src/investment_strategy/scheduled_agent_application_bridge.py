@@ -3663,7 +3663,7 @@ def read_application_recovery_artifact(
 ) -> ApplicationRecoveryArtifact | None:
     """Qualify structured recovery evidence against one completed Actions job."""
 
-    def unavailable() -> None:
+    def unavailable() -> ApplicationRecoveryArtifact | None:
         # A missing, contradictory, expired or unreadable current-protocol
         # artifact is NOT observed legacy absence.
         if strict_read:
