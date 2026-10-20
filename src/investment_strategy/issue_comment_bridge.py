@@ -114,7 +114,6 @@ class BridgePlan:
     issue_number: int | None = None
     request_comment_id: int | None = None
     result_body: str | None = None
-    application_resume_job_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -3112,7 +3111,6 @@ def plan_dispatch_decision(
     event: Mapping[str, object],
     default_branch_revision: str,
     decision: DispatchDecision,
-    application_resume_job_id: int | None = None,
     application_continuation: str | None = None,
     qualified_carrier: QualifiedCarrierPlan | None = None,
 ) -> BridgePlan:
@@ -3131,7 +3129,6 @@ def plan_dispatch_decision(
             application_continuation=application_continuation,
             qualified_carrier=qualified_carrier,
         ),
-        application_resume_job_id=application_resume_job_id,
     )
 
 
@@ -3155,8 +3152,6 @@ def _write_outputs(path: Path, plan: BridgePlan) -> None:
         lines.append(f"issue_number={plan.issue_number}")
     if plan.request_comment_id is not None:
         lines.append(f"request_comment_id={plan.request_comment_id}")
-    if plan.application_resume_job_id is not None:
-        lines.append(f"application_resume_job_id={plan.application_resume_job_id}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -3197,7 +3192,6 @@ def main() -> int:
                 current_dispatch_issue_number=identity[0],
             )
         )
-        resume_job_id = None
         continuation_body = None
         if completion.state in {"RESUMABLE", "INVALID", "AMBIGUOUS"}:
             if (
@@ -3229,12 +3223,10 @@ def main() -> int:
                 disposition="FAIL_CLOSED",
                 reason=completion.reason,
             )
-            resume_job_id = completion.job_id
         plan = plan_dispatch_decision(
             event=event,
             default_branch_revision=args.revision,
             decision=decision,
-            application_resume_job_id=resume_job_id,
             application_continuation=continuation_body,
             qualified_carrier=completion.qualified_carrier,
         )
