@@ -4364,3 +4364,45 @@ def test_effect_precondition_rejection_records_recovery_boundary() -> None:
     assert getattr(evidence, "mutation_status", None) == "not-complete"
     assert getattr(evidence, "unfinished_boundary", None) == "effect-precondition"
     assert getattr(evidence, "rejection", None) == rejection
+
+
+def test_deferred_comment_keeps_original_accepted_effect_index_on_rejection() -> None:
+    """Recovery evidence addresses the immutable batch, not the filtered apply list."""
+    source = WorkerRequest(138, "executor", "implement-change")
+    comment = {
+        "kind": "issue-comment",
+        "payload_json": json.dumps(
+            {"issue_number": 138, "body": "diagnostic checkpoint"}
+        ),
+    }
+    mutation = {
+        "kind": "github-mutation",
+        "payload_json": json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "pull-request-ready",
+                "number": 178,
+                "expected_head_sha": "b" * 40,
+            },
+            sort_keys=True,
+        ),
+    }
+    batch = parse_effect_batch(
+        _raw(result_kind="spec-blocker", requested_effects=[comment, mutation]),
+        source,
+    )
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: False,
+        apply_effect=lambda _effect: pytest.fail("failed guard performed a write"),
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        defer_issue_comments=True,
+    )
+
+    assert result.reason == "effect precondition rejected"
+    assert result.recovery_evidence is not None
+    assert result.recovery_evidence.failed_effect_index == 1
+    assert result.recovery_evidence.failed_effect_kind == "github-mutation"
+    assert result.recovery_evidence.completed_effect_indexes == ()
