@@ -380,6 +380,7 @@ def test_accepted_intent_does_not_reverify_candidate_during_phase_b() -> None:
         current_revision=_REVISION,
         validate_implementation_checkpoint=forbidden_verification,
         accepted_intent=True,
+        durable_checkpoint_revision=_REVISION,
     )
 
     assert result.applied
