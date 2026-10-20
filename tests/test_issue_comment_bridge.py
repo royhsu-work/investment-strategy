@@ -4195,6 +4195,7 @@ def test_carrier_outcome_cannot_claim_matching_precondition_with_other_observati
     assert outcome == "BLOCKED"
     assert reason == "application-completion-carrier-outcome-invalid"
 
+
 @pytest.mark.parametrize(
     ("run_id", "job_id"),
     [
