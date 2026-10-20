@@ -4518,7 +4518,7 @@ def test_accepted_checkpoint_requires_proven_revision_before_comment_application
         fresh_preflight=_preflight,
         effect_guard=lambda _effect: True,
         apply_effect=applied.append,
-        observe_postcondition=lambda _effect: True,
+        observe_postcondition=lambda effect: effect.kind != "issue-comment",
         current_revision=_REVISION,
         apply_derived=False,
         accepted_intent=True,
