@@ -3945,17 +3945,28 @@ def _public_failure_diagnostics(result: ApplyResult) -> dict[str, object] | None
             getattr(rejection.classification, "value", rejection.classification)
         )
         try:
+            expected = json.loads(rejection.expected)
             observed = json.loads(rejection.observed)
         except (TypeError, ValueError, json.JSONDecodeError):
-            observed = None
-        if isinstance(observed, Mapping) and observed.get("disposition") == "CONTRADICTORY":
-            reason = observed.get("reason")
-            if (
-                isinstance(reason, str)
-                and reason.startswith("materialization ")
-                and re.fullmatch(r"[A-Za-z0-9 ._:/-]{1,160}", reason) is not None
-            ):
-                summary["guard_reason"] = reason
+            expected = observed = None
+        # Both the exact internal proof envelope and a known reason must match:
+        # a generic guard rejection carries untrusted effect.payload_json in
+        # observed and must never be promoted to public diagnostic text.
+        if (
+            isinstance(expected, Mapping)
+            and set(expected) == {"materialization_proof", "accepted_intent"}
+            and expected.get("materialization_proof") == ["COMPLETE", "INCOMPLETE"]
+            and isinstance(expected.get("accepted_intent"), bool)
+            and isinstance(observed, Mapping)
+            and set(observed) == {"disposition", "reason"}
+            and observed.get("disposition") == "CONTRADICTORY"
+            and observed.get("reason")
+            in {
+                "materialization missing work preimage is stale",
+                "materialization missing work overlaps default advance",
+            }
+        ):
+            summary["guard_reason"] = observed["reason"]
     return summary
 
 
