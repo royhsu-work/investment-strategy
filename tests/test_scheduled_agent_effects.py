@@ -3015,7 +3015,12 @@ def test_issue_comment_recovery_rejects_duplicate_bot_matches_across_pages(
     first = [
         {"id": 991, "body": body, "user": bot, "performed_via_github_app": via_app},
         *[
-            {"id": n + 1000, "body": f"unrelated-{n}", "user": bot, "performed_via_github_app": via_app}
+            {
+                "id": n + 1000,
+                "body": f"unrelated-{n}",
+                "user": bot,
+                "performed_via_github_app": via_app,
+            }
             for n in range(99)
         ],
     ]
