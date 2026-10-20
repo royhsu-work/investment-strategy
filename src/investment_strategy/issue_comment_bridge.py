@@ -848,7 +848,13 @@ def _application_job(
                 artifact_reader=read_github_artifact_bytes,
             )
         except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
-            recovery_artifact = None
+            # A failed/incomplete evidence read is not an observed absent
+            # legacy artifact. Never reclassify source failure as NO_WRITE.
+            return ApplicationCompletion(
+                "INVALID",
+                "application-completion-recovery-evidence-unavailable",
+                request_comment_id=request_comment_id,
+            )
 
     if recovery_artifact is None or accepted_decision_sha256 is None:
         # The pre-recovery-protocol job can be identified from its *actual*
