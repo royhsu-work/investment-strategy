@@ -2885,3 +2885,47 @@ def test_concurrent_change_after_commit_rejects_direct_ref_creation(
             _apply_git(proof_git)
     assert "git/commits" in proof_git.mutations
     assert "git/refs" not in proof_git.mutations
+
+
+def test_bad_accepted_preimage_preserves_witness_across_legal_second_commit(
+    proof_git: _ProofGitRepository,
+) -> None:
+    """A historical manifest error and a later legal commit are distinct identities."""
+    payload = proof_git.payload()
+    files = cast(list[dict[str, object]], payload["files"])
+    historical_bad_sha = "f" * 40
+    files[0]["expected_sha"] = historical_bad_sha
+    first_parent = proof_git.base
+    first_commit = proof_git.commit(
+        {proof_git.path: "accepted content"},
+        proof_git.message,
+        (first_parent,),
+    )
+    proof_git.set_head(first_commit)
+    first_proof = _prove_payload_git(proof_git, payload, accepted_intent=True)
+    assert first_proof.disposition == "COMPLETE", first_proof
+    assert first_proof.witness is not None
+    assert first_proof.witness.revision == first_commit
+    assert first_proof.witness.revisions.mutation_preimage == first_parent
+
+    # A disjoint default-branch revision and a second, same-Change edit cannot
+    # invalidate the first immutable witness or reuse the old physical preimage.
+    proof_git.main = proof_git.commit(
+        {"README.md": "a newer default-branch revision"},
+        "Disjoint default advance",
+        (proof_git.main,),
+    )
+    second_parent = proof_git.head
+    second_commit = proof_git.commit(
+        {proof_git.path: "qualified later correction"},
+        "Correct same Change",
+        (second_parent,),
+    )
+    proof_git.set_head(second_commit)
+    evolved = _prove_payload_git(proof_git, payload, accepted_intent=True)
+    assert evolved.disposition == "COMPLETE", evolved
+    assert evolved.target is not None and evolved.target.revision == second_commit
+    assert evolved.witness is not None and evolved.witness.revision == first_commit
+    assert evolved.witness.revisions.mutation_preimage == first_parent
+    assert files[0]["expected_sha"] == historical_bad_sha
+    assert proof_git.mutations == []
