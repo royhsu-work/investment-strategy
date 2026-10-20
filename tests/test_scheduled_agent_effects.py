@@ -4500,3 +4500,55 @@ def test_accepted_implementation_checkpoint_uses_verified_materialized_revision(
     else:
         assert result.reason == "typed application rejected:implementation-checkpoint-incomplete"
         assert applied == []
+
+def test_accepted_checkpoint_requires_proven_revision_before_comment_application() -> None:
+    """A resumed accepted batch must not commit an obsolete-base checkpoint."""
+    source = WorkerRequest(138, "executor", "implement-change")
+    batch = parse_effect_batch(
+        _raw(
+            result_kind="more-implementation-required",
+            requested_effects=_implementation_checkpoint_effects(),
+        ),
+        source,
+    )
+    applied: list[StagedEffect] = []
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: True,
+        apply_effect=applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        apply_derived=False,
+        accepted_intent=True,
+    )
+    assert not result.applied
+    assert result.reason == "typed application rejected:implementation-checkpoint-incomplete"
+    assert applied == []
+
+
+def test_accepted_checkpoint_can_defer_comments_until_target_is_proven() -> None:
+    """Phase-A materialization can proceed without issuing its future checkpoint."""
+    source = WorkerRequest(138, "executor", "implement-change")
+    batch = parse_effect_batch(
+        _raw(
+            result_kind="more-implementation-required",
+            requested_effects=_implementation_checkpoint_effects(),
+        ),
+        source,
+    )
+    applied: list[StagedEffect] = []
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: True,
+        apply_effect=applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        apply_derived=False,
+        defer_issue_comments=True,
+        accepted_intent=True,
+    )
+    assert result.applied, result
+    assert len(applied) == 1
+    assert applied[0].kind == effects.GITHUB_MUTATION_KIND
