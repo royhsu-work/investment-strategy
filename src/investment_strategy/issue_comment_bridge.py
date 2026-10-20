@@ -870,15 +870,15 @@ def _application_job(
             )
             and not any(
                 isinstance(step, Mapping)
-                and step.get("name") in {
+                and step.get("name")
+                in {
                     "Upload exact application recovery evidence",
                     "Upload final exact application recovery evidence",
                 }
                 for step in steps
             )
             and any(
-                isinstance(step, Mapping) and step.get("name") == "Complete job"
-                for step in steps
+                isinstance(step, Mapping) and step.get("name") == "Complete job" for step in steps
             )
         )
         return ApplicationCompletion(
