@@ -4280,3 +4280,60 @@ def test_completed_legacy_application_job_preserves_historical_identity_without_
     ]
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
     assert "/rerun" not in workflow
+
+
+def test_recovery_artifact_read_failure_is_not_legacy_missing_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed authoritative evidence read is not proof that the artifact never existed."""
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 37563005754,
+                        "display_title": "Scheduled Agent Application 90",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "run_attempt": 1,
+                        "head_sha": REVISION,
+                    }
+                ]
+            }
+        if path == "actions/runs/37563005754/jobs":
+            return {
+                "jobs": [
+                    {
+                        "id": 112607809410,
+                        "name": "apply",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "steps": [
+                            {
+                                "name": "Freshly authorize and apply repository-owned effects",
+                                "conclusion": "failure",
+                            },
+                            {"name": "Complete job", "conclusion": "success"},
+                        ],
+                    }
+                ]
+            }
+        raise AssertionError(f"unexpected read: {path}")
+
+    def failed_evidence_read(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("incomplete GitHub artifact listing")
+
+    monkeypatch.setattr(bridge, "read_application_recovery_artifact", failed_evidence_read)
+    completion = bridge._application_job(
+        "royhsu-work/investment-strategy",
+        "test-token",
+        90,
+        read=read,
+        record=_accepted_carrier_record(),
+        accepted_decision_sha256="a" * 64,
+    )
+
+    assert completion.state == "INVALID"
+    assert completion.reason == "application-completion-recovery-evidence-unavailable"
+    assert completion.job_id is None
