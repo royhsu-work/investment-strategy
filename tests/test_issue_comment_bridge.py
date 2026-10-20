@@ -4194,3 +4194,87 @@ def test_carrier_outcome_cannot_claim_matching_precondition_with_other_observati
 
     assert outcome == "BLOCKED"
     assert reason == "application-completion-carrier-outcome-invalid"
+
+@pytest.mark.parametrize(
+    ("run_id", "job_id"),
+    [
+        (37563005754, 112607809410),
+        (37693412638, 113038961936),
+    ],
+)
+@pytest.mark.parametrize("upload_step_present", [False, True])
+def test_completed_legacy_application_job_preserves_historical_identity_without_replay(
+    monkeypatch: pytest.MonkeyPatch,
+    run_id: int,
+    job_id: int,
+    upload_step_present: bool,
+) -> None:
+    """Missing older evidence cannot imply zero writes or authorize a completed-job rerun."""
+    steps = [
+        {"name": "Set up job", "conclusion": "success"},
+        {
+            "name": "Freshly authorize and apply repository-owned effects",
+            "conclusion": "failure",
+        },
+    ]
+    if upload_step_present:
+        steps.append(
+            {"name": "Upload exact application recovery evidence", "conclusion": "skipped"}
+        )
+    steps.append({"name": "Complete job", "conclusion": "success"})
+    requested: list[str] = []
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        requested.append(path)
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": run_id,
+                        "display_title": "Scheduled Agent Application 90",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "run_attempt": 1,
+                        "head_sha": REVISION,
+                    }
+                ]
+            }
+        if path == f"actions/runs/{run_id}/jobs":
+            return {
+                "jobs": [
+                    {
+                        "id": job_id,
+                        "name": "apply",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "steps": steps,
+                    }
+                ]
+            }
+        raise AssertionError(f"unexpected read: {path}")
+
+    monkeypatch.setattr(
+        bridge, "read_application_recovery_artifact", lambda *_args, **_kwargs: None
+    )
+    completion = bridge._application_job(
+        "royhsu-work/investment-strategy",
+        "test-token",
+        90,
+        read=read,
+        record=_accepted_carrier_record(),
+        accepted_decision_sha256="a" * 64,
+    )
+
+    assert completion.state == "INVALID"
+    if upload_step_present:
+        assert completion.reason == "application-completion-recovery-evidence-missing"
+        assert completion.job_id is None
+    else:
+        assert completion.reason == "application-completion-legacy-recovery-upload-unavailable"
+        assert completion.job_id == job_id
+    assert requested == [
+        "actions/workflows/scheduled-agent-application.yml/runs?event=issue_comment&per_page=100&page=1",
+        f"actions/runs/{run_id}/jobs",
+    ]
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert "/rerun" not in workflow
