@@ -88,6 +88,7 @@ def test_bridge_is_run_scoped_transport_without_mailbox_semantics() -> None:
     assert "run-name: Scheduled Agent Dispatch ${{ github.event.comment.id }}" in workflow
     assert "issues: read" in workflow
     assert "actions: write" in workflow
+    assert "application_resume_job_id" not in bridge.BridgePlan.__dataclass_fields__
     assert "Resume exact incomplete application before semantic dispatch" not in workflow
     assert "/rerun" not in workflow  # completed application jobs are never re-executed
     assert "ref: ${{ github.event.repository.default_branch }}" in workflow
