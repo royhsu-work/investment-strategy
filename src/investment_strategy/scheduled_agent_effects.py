@@ -45,6 +45,7 @@ from investment_strategy.scheduled_agent_application_materialization import (
     find_materialization_payload,
     materialization_postcondition,
     observe_materialization_target,
+    prove_materialization,
 )
 from investment_strategy.scheduled_agent_carrier import (
     CarrierPlan,
@@ -183,12 +184,10 @@ def semantic_intent_payload(raw_worker_result: str) -> str:
     retained_effects: list[dict[str, str]] = []
     requested_effects = decoded.get("requested_effects")
     if isinstance(requested_effects, list):
-        # Materialization is the one application-owned mechanical consequence
-        # that must survive an ACCEPT/retry boundary.  Keep its immutable
-        # content-addressed manifest while discarding invocation-local formal
-        # projections and every other requested effect.
+        # Retain the immutable materialization and its verified semantic slice
+        # evidence. Formal result/routing projections are rebuilt from fresh truth.
         for effect in requested_effects:
-            if not isinstance(effect, Mapping) or effect.get("kind") != GITHUB_MUTATION_KIND:
+            if not isinstance(effect, Mapping):
                 continue
             payload_json = effect.get("payload_json")
             if not isinstance(payload_json, str):
@@ -197,16 +196,22 @@ def semantic_intent_payload(raw_worker_result: str) -> str:
                 payload = json.loads(payload_json)
             except json.JSONDecodeError:
                 continue
-            if (
-                isinstance(payload, Mapping)
+            if not isinstance(payload, Mapping):
+                continue
+            kind = effect.get("kind")
+            materialization = (
+                kind == GITHUB_MUTATION_KIND
                 and payload.get("operation") == "application-materialize"
-            ):
-                retained_effects.append(
-                    {
-                        "kind": GITHUB_MUTATION_KIND,
-                        "payload_json": payload_json,
-                    }
-                )
+            )
+            checkpoint = (
+                kind == "issue-comment"
+                and decoded.get("role") == "executor"
+                and decoded.get("action") == "implement-change"
+                and isinstance(payload.get("body"), str)
+                and cast(str, payload["body"]).splitlines()[:1] == ["SLICE_CHECKPOINT"]
+            )
+            if materialization or checkpoint:
+                retained_effects.append({"kind": cast(str, kind), "payload_json": payload_json})
     decoded["requested_effects"] = retained_effects
     return json.dumps(decoded, sort_keys=True, separators=(",", ":"))
 
@@ -328,6 +333,20 @@ def parse_application_decision(body: object) -> ApplicationDecisionRecord | None
 
 
 @dataclass(frozen=True)
+class EffectRecoveryEvidence:
+    """Exact known boundary when one staged effect cannot be completed."""
+
+    failed_effect_index: int
+    failed_effect_kind: str
+    failed_effect_sha256: str
+    completed_effect_indexes: tuple[int, ...]
+    completed_effect_sha256: tuple[str, ...]
+    mutation_status: str
+    unfinished_boundary: str
+    rejection: ApplicationRejection | None = None
+
+
+@dataclass(frozen=True)
 class ApplyResult:
     """Application outcome for one wake; successors are persisted, never executed here."""
 
@@ -335,6 +354,7 @@ class ApplyResult:
     reason: str
     rejection: ApplicationRejection | None = None
     carrier_plan: CarrierPlan | None = None
+    recovery_evidence: EffectRecoveryEvidence | None = None
 
 
 FreshPreflight = Callable[[], DispatchPreflight]
@@ -620,6 +640,7 @@ def _pending_continuation_is_eligible(
     return (
         decision.disposition == "FAIL_CLOSED"
         and decision.reason == "observations-unqualified"
+        and all(number == source.issue_number for number in decision.formal_issue_ids)
         and preflight.human_authorized is True
         and not enumeration.incomplete_results
         and enumeration.exhausted
@@ -1231,16 +1252,40 @@ def apply_effect_batch(
         if not (defer_issue_comments and effect.kind == "issue-comment")
     )
 
-    def rejected(reason: str) -> ApplyResult:
-        return ApplyResult(
-            False,
-            reason,
-            rejection=None if effect_rejection is None else effect_rejection(),
+    def rejected(
+        reason: str,
+        effect_index: int,
+        *,
+        completed_indexes: tuple[int, ...] = (),
+        unfinished_boundary: str = "effect-precondition",
+        mutation_status: str = "not-complete",
+    ) -> ApplyResult:
+        failed_effect = (
+            effects_to_apply[effect_index]
+            if effect_index < len(effects_to_apply)
+            else derived_effect
         )
+        rejection = None if effect_rejection is None else effect_rejection()
+        evidence = EffectRecoveryEvidence(
+            failed_effect_index=effect_index,
+            failed_effect_kind=failed_effect.kind,
+            failed_effect_sha256=hashlib.sha256(
+                failed_effect.payload_json.encode("utf-8")
+            ).hexdigest(),
+            completed_effect_indexes=completed_indexes,
+            completed_effect_sha256=tuple(
+                hashlib.sha256(effects_to_apply[index].payload_json.encode("utf-8")).hexdigest()
+                for index in completed_indexes
+            ),
+            mutation_status=mutation_status,
+            unfinished_boundary=unfinished_boundary,
+            rejection=rejection,
+        )
+        return ApplyResult(False, reason, rejection=rejection, recovery_evidence=evidence)
 
-    for effect in effects_to_apply:
+    for index, effect in enumerate(effects_to_apply):
         if not effect_guard(effect):
-            return rejected("effect precondition rejected")
+            return rejected("effect precondition rejected", index)
 
     if (
         not accepted_intent
@@ -1253,25 +1298,47 @@ def apply_effect_batch(
     ):
         return ApplyResult(False, "application decision postcondition not observed")
 
-    for effect in effects_to_apply:
+    completed_indexes: list[int] = []
+    for index, effect in enumerate(effects_to_apply):
         if not effect_guard(effect):
-            return rejected("effect precondition rejected")
+            return rejected(
+                "effect precondition rejected",
+                index,
+                completed_indexes=tuple(completed_indexes),
+            )
         try:
             apply_effect(effect)
         except CarrierRequired:
             raise
         if not observe_postcondition(effect):
-            return ApplyResult(False, "durable postcondition not observed")
+            return rejected(
+                "durable postcondition not observed",
+                index,
+                completed_indexes=tuple(completed_indexes),
+                unfinished_boundary="effect-postcondition",
+                mutation_status="unknown",
+            )
+        completed_indexes.append(index)
 
     if apply_derived:
         if not effect_guard(derived_effect):
-            return rejected("effect precondition rejected")
+            return rejected(
+                "effect precondition rejected",
+                len(effects_to_apply),
+                completed_indexes=tuple(completed_indexes),
+            )
         try:
             apply_effect(derived_effect)
         except CarrierRequired:
             raise
         if not observe_postcondition(derived_effect):
-            return ApplyResult(False, "durable postcondition not observed")
+            return rejected(
+                "durable postcondition not observed",
+                len(effects_to_apply),
+                completed_indexes=tuple(completed_indexes),
+                unfinished_boundary="derived-effect-postcondition",
+                mutation_status="unknown",
+            )
 
     return ApplyResult(True, "applied")
 
@@ -2270,13 +2337,43 @@ class GitHubEffectAdapter:
             if request is None:
                 return False
             default_branch = self._default_branch()
-            return (
+            current_revision = self.current_revision
+            if not (
                 request.expected_change == self.authorized_change
                 and default_branch is not None
-                and self.current_revision is not None
-                and _valid_sha(self.current_revision)
-                and self._default_branch_revision(default_branch) == self.current_revision
+                and current_revision is not None
+                and _valid_sha(current_revision)
+                and self._default_branch_revision(default_branch) == current_revision
+            ):
+                return False
+            proof = prove_materialization(
+                payload,
+                self.source,
+                repository=self.repository,
+                token=self.token,
+                current_revision=current_revision,
+                default_branch=default_branch,
+                accepted_authorization_revision=self.authorization_revision,
+                allow_pending_continuation=self.allow_pending_continuation,
+                accepted_intent=self.accepted_intent,
             )
+            if proof.disposition == "CONTRADICTORY":
+                self._last_rejection = ApplicationRejection(
+                    ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+                    expected=json.dumps(
+                        {
+                            "materialization_proof": ["COMPLETE", "INCOMPLETE"],
+                            "accepted_intent": self.accepted_intent,
+                        },
+                        sort_keys=True,
+                    ),
+                    observed=json.dumps(
+                        {"disposition": proof.disposition, "reason": proof.reason},
+                        sort_keys=True,
+                    ),
+                )
+                return False
+            return proof.disposition in {"COMPLETE", "INCOMPLETE"}
         if operation == "issue-label-add":
             return True
         if operation == "workflow-dispatch":
@@ -2646,7 +2743,7 @@ class GitHubEffectAdapter:
         if effect.kind == "issue-comment":
             return True
         guarded = payload is not None and self._guard_github_mutation(payload)
-        if not guarded:
+        if not guarded and self._last_rejection is None:
             self._last_rejection = ApplicationRejection(
                 ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
                 expected="fresh application-owned effect postcondition",
@@ -2707,9 +2804,11 @@ class GitHubEffectAdapter:
                 token=self.token,
                 current_revision=self.current_revision,
                 default_branch=default_branch,
+                accepted_authorization_revision=self.authorization_revision,
                 promote_change=self.materialization_promote_change,
                 validated_revision=self.validated_materialization_revision,
                 allow_pending_continuation=self.allow_pending_continuation,
+                accepted_intent=self.accepted_intent,
             )
             self._materialization_targets[effect] = target
             if self.materialization_promote_change:
@@ -3158,8 +3257,10 @@ class GitHubEffectAdapter:
                     token=self.token,
                     current_revision=self.current_revision,
                     default_branch=default_branch,
+                    accepted_authorization_revision=self.authorization_revision,
                     target=self._materialization_targets.get(effect),
                     allow_pending_continuation=self.allow_pending_continuation,
+                    accepted_intent=self.accepted_intent,
                 )
             )
         if operation == "issue-update":
@@ -3475,7 +3576,9 @@ def _fresh_materialization_target(
                 token=adapter.token,
                 current_revision=current_revision,
                 default_branch=default_branch,
+                accepted_authorization_revision=adapter.authorization_revision,
                 allow_pending_continuation=allow_pending_continuation,
+                accepted_intent=adapter.accepted_intent,
             )
         else:
             target = observe_materialization_target(
@@ -3485,17 +3588,17 @@ def _fresh_materialization_target(
                 token=adapter.token,
                 current_revision=current_revision,
                 default_branch=default_branch,
+                accepted_authorization_revision=adapter.authorization_revision,
                 allow_pending_continuation=allow_pending_continuation,
                 accepted_successor_routing=accepted_successor_routing,
+                accepted_intent=adapter.accepted_intent,
             )
     except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return None
     if (
         target.repository != adapter.repository
         or target.change != request.change
-        or target.branch != request.branch
         or target.correlation != f"effect-request-{source.issue_number}"
-        or (request.pr_number is not None and target.pr_number != request.pr_number)
     ):
         return None
     return target
@@ -3511,7 +3614,9 @@ def consequence_postconditions_complete(
     authorized_change: str | None = None,
     request_comment_id: int | None = None,
     allow_pending_continuation: bool = False,
+    accepted_authorization_revision: str | None = None,
     allow_accepted_successor: bool = False,
+    accepted_intent: bool = False,
 ) -> bool:
     """Prove the affirmative consequence contract from fresh repository state.
 
@@ -3571,8 +3676,10 @@ def consequence_postconditions_complete(
                 source,
                 authorized_change=change,
                 current_revision=current_revision,
+                authorization_revision=accepted_authorization_revision,
                 expected_result_kind=batch.typed_result.result.kind.value,
                 request_comment_id=request_comment_id,
+                accepted_intent=accepted_intent,
             )
             payload = _effect_payload(materializations[0])
             return (
@@ -3605,8 +3712,10 @@ def consequence_postconditions_complete(
             source,
             authorized_change=change,
             current_revision=current_revision,
+            authorization_revision=accepted_authorization_revision,
             expected_result_kind=batch.typed_result.result.kind.value,
             request_comment_id=request_comment_id,
+            accepted_intent=accepted_intent,
         )
         if spec.evidence_target is EvidenceTarget.IMPLEMENTATION_PR_HEAD:
             materializations = tuple(

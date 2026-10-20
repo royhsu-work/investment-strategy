@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -44,6 +45,10 @@ BRANCH = f"agent/{CHANGE}-continuation-232"
 TASK_BLOB = "f" * 40
 
 
+class SequenceInterruption(RuntimeError):
+    """Fixture process exits after the remote mutation becomes durable."""
+
+
 class GitHubSequence:
     def __init__(self) -> None:
         fixtures = Path(__file__).parent / "fixtures"
@@ -55,6 +60,8 @@ class GitHubSequence:
         self.writes: list[tuple[str, str]] = []
         self.clock = 0
         self.requests: dict[int, dict[str, object]] = {}
+        self.recovery_predecessor: dict[str, object] | None = None
+        self.interrupt_after: str | None = None
 
     def stamp(self) -> str:
         self.clock += 1
@@ -125,6 +132,11 @@ class GitHubSequence:
                 self.timeline.append(
                     {"id": comment["id"], "event": "commented", "created_at": stamp}
                 )
+                if self.interrupt_after == "formal-result" and str(payload["body"]).startswith(
+                    "ACTION_RESULT"
+                ):
+                    self.interrupt_after = None
+                    raise SequenceInterruption("after durable formal result")
                 return comment
             if route == "issues/229" and method == "PATCH" and payload is not None:
                 labels = cast(list[str], payload["labels"])
@@ -140,6 +152,9 @@ class GitHubSequence:
                         }
                     )
                 self.action = target.removeprefix("action:")
+                if self.interrupt_after == "routing":
+                    self.interrupt_after = None
+                    raise SequenceInterruption("after durable successor routing")
                 return self.issue()
             if "/labels" in route:
                 stamp = self.stamp()
@@ -184,6 +199,17 @@ class GitHubSequence:
             return paged(self.comments)
         if route == "issues/229/timeline":
             return paged(self.timeline)
+        if route.startswith("actions/runs/") and self.recovery_predecessor is not None:
+            predecessor = self.recovery_predecessor
+            if route == "actions/runs/8001":
+                return cast(dict[str, object], predecessor["run"])
+            if route == "actions/runs/8001/jobs":
+                return {"jobs": [cast(dict[str, object], predecessor["job"])]}
+            if route == "actions/runs/8001/artifacts":
+                return {
+                    "total_count": 1,
+                    "artifacts": [cast(dict[str, object], predecessor["artifact"])],
+                }
         if route.startswith("issues/comments/"):
             number = int(route.rsplit("/", 1)[1])
             if number in self.requests:
@@ -229,11 +255,89 @@ class GitHubSequence:
                 return {"object": {"sha": HEAD}}
             assert allow_not_found
             return None
+        graph = {
+            "a" * 40: (),
+            "d" * 40: ("a" * 40,),
+            "c" * 40: ("a" * 40, "d" * 40),
+            MAIN: ("c" * 40,),
+            HEAD: (MAIN,),
+            NEW: (MAIN, HEAD),
+        }
+
+        def lineage(revision: str) -> list[str]:
+            ordered: list[str] = []
+
+            def visit(sha: str) -> None:
+                for parent in graph[sha]:
+                    visit(parent)
+                if sha not in ordered:
+                    ordered.append(sha)
+
+            visit(revision)
+            return ordered
+
         if route.startswith("compare/"):
-            return {"status": "ahead", "behind_by": 0}
+            old, new = route.removeprefix("compare/").split("...")
+            historical_baseline = old not in graph
+            if historical_baseline:
+                # Historical formal fixture authorizations precede this sequence's main.
+                graph[old] = ("a" * 40,)
+                graph[MAIN] = (*graph[MAIN], old)
+            before, after = lineage(old), lineage(new)
+            commits = [sha for sha in after if sha not in before]
+            behind = len([sha for sha in before if sha not in after])
+            return {
+                "base_commit": {"sha": old},
+                "merge_base_commit": {"sha": next(sha for sha in reversed(after) if sha in before)},
+                "ahead_by": len(commits),
+                "behind_by": behind,
+                "total_commits": len(commits),
+                "status": "diverged"
+                if commits and behind
+                else "ahead"
+                if commits
+                else "behind"
+                if behind
+                else "identical",
+                "commits": [
+                    {"sha": sha, "parents": [{"sha": p} for p in graph[sha]]} for sha in commits
+                ],
+                "files": [
+                    {
+                        "filename": (
+                            "src/investment_strategy/scheduled_agent_formal_qualification.py"
+                        ),
+                        "status": "modified",
+                    }
+                ]
+                if historical_baseline
+                else [],
+            }
+        if route.startswith("git/commits/"):
+            sha = route.removeprefix("git/commits/")
+            return {
+                "sha": sha,
+                "message": "Observed fixture commit",
+                "tree": {"sha": "9" * 40},
+                "parents": [{"sha": p} for p in graph[sha]],
+            }
+        if route.startswith("git/trees/"):
+            return {
+                "sha": "9" * 40,
+                "truncated": False,
+                "tree": [
+                    {
+                        "path": f"openspec/changes/{CHANGE}/tasks.md",
+                        "mode": "100644",
+                        "type": "blob",
+                        "sha": TASK_BLOB,
+                    }
+                ],
+            }
         if route.startswith("contents/") or route.startswith("git/blobs/"):
             return {
                 "sha": TASK_BLOB,
+                "type": "file",
                 "encoding": "base64",
                 "content": base64.b64encode(
                     b"## Slice 2\n- [x] 2.1 Verified implementation\n"
@@ -244,6 +348,15 @@ class GitHubSequence:
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         for module in (bridge, native, carrier, materialization, effects, acceptance, resources):
             monkeypatch.setattr(module, "_github_json", self.read)
+        monkeypatch.setattr(
+            bridge,
+            "read_github_artifact_bytes",
+            lambda _repository, _token, _path: (
+                cast(str, self.recovery_predecessor["raw"]).encode("utf-8")
+                if self.recovery_predecessor is not None
+                else pytest.fail("unexpected artifact download")
+            ),
+        )
         prefix = f"https://api.github.com/repos/{REPO}"
         monkeypatch.setattr(
             runtime,
@@ -268,63 +381,174 @@ class GitHubSequence:
         extra: list[dict[str, str]] | None = None,
         validation_passed: bool = False,
     ) -> effects.ApplyResult:
-        decision = classify_dispatch(runtime.acquire_current_github_preflight(REPO, "test"))
-        assert decision.disposition == "AUTHORIZE", decision
-        assert decision.selected_routing is not None
-        role, action = decision.selected_routing
-        model_action = Action(action)
-        successor = next_action(model_action, TypedResult(ResultKind(kind)))
-        marker = (
-            "REVIEW_RESULT"
-            if action.startswith("review-")
-            else "MERGE_RESULT"
-            if action.startswith("merge-")
-            else "ACTION_RESULT"
-        )
-        body = (
-            f"{marker}\nWorkflow: #229\nChange: {CHANGE}\nAction: {action}\nRole: {role}"
-            f"\nResult: {kind.upper().replace('-', '_')}\nRevision: {HEAD}"
-            f"\nDefault-Branch-Revision: {self.main}"
-        )
-        body += "\nApplication-Correlation: pending"
-        if successor is not None:
-            body += (
-                f"\nRepository-derived successor: {role_for(successor).value.title()}"
-                f" / {successor.value}"
+        if kind == "continue-accepted":
+            decisions = [
+                c
+                for c in self.comments
+                if (record := effects.parse_application_decision(c["body"])) is not None
+                and record.request_comment_id == request_id
+                and record.disposition == "ACCEPTED"
+            ]
+            assert len(decisions) == 1
+            decision = decisions[0]
+            accepted_sha256 = hashlib.sha256(decision["body"].encode()).hexdigest()
+            record = effects.parse_application_decision(decision["body"])
+            assert record is not None
+            failure_evidence = {
+                "boundary": "fixture-effect-precondition",
+                "completed_effect_indexes": [],
+                "failed_effect_index": 0,
+                "reason": "fixture-only qualified predecessor",
+            }
+            failure_evidence_sha256 = hashlib.sha256(
+                json.dumps(
+                    failure_evidence,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ).encode("utf-8")
+            ).hexdigest()
+            recovery_document = {
+                "schema": "scheduled-agent-application-recovery/v1",
+                "repository": REPO,
+                "issue_number": record.issue_number,
+                "role": record.role,
+                "action": record.action,
+                "request_comment_id": request_id,
+                "accepted_decision_sha256": accepted_sha256,
+                "trigger_comment_id": request_id,
+                "run_id": 8001,
+                "run_attempt": 1,
+                "current_revision": HEAD,
+                "authorization_revision": record.authorization_revision,
+                "recovery_attempt": 1,
+                "recovery_episode_sha256": "3" * 64,
+                "prior_failure_evidence_sha256": [],
+                "predecessor": None,
+                "failure_evidence": failure_evidence,
+                "failure_evidence_sha256": failure_evidence_sha256,
+                "continuation_eligible": True,
+            }
+            recovery_raw = (
+                json.dumps(
+                    recovery_document,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                )
+                + "\n"
             )
-        requested = [] if extra is None else list(extra)
-        requested.append(
-            {
-                "kind": "issue-comment",
-                "payload_json": json.dumps({"issue_number": 229, "body": body}),
+            artifact_digest = "sha256:" + hashlib.sha256(recovery_raw.encode("utf-8")).hexdigest()
+            self.recovery_predecessor = {
+                "raw": recovery_raw,
+                "run": {
+                    "id": 8001,
+                    "run_attempt": 1,
+                    "status": "completed",
+                    "head_sha": HEAD,
+                    "display_title": f"Scheduled Agent Application {request_id}",
+                },
+                "job": {
+                    "id": 8002,
+                    "name": "apply",
+                    "run_attempt": 1,
+                    "status": "completed",
+                    "conclusion": "success",
+                    "steps": [
+                        {
+                            "name": "Upload exact application recovery evidence",
+                            "conclusion": "success",
+                        }
+                    ],
+                },
+                "artifact": {
+                    "id": 8003,
+                    "name": "application-recovery-evidence",
+                    "expired": False,
+                    "digest": artifact_digest,
+                    "workflow_run": {"id": 8001, "head_sha": HEAD},
+                },
             }
-        )
-        raw = json.dumps(
-            {
-                "issue_number": 229,
-                "role": role,
-                "action": action,
-                "change": CHANGE,
-                "result_kind": kind,
-                "result_content": body,
-                "evidence_ref": "sequence-test",
-                "requested_effects": requested,
+            body = bridge.render_application_continuation_request(
+                repository=REPO,
+                issue_number=record.issue_number,
+                original_request_comment_id=request_id,
+                accepted_decision_sha256=accepted_sha256,
+                predecessor_run_id=8001,
+                predecessor_run_attempt=1,
+                predecessor_job_id=8002,
+                predecessor_artifact_id=8003,
+                predecessor_artifact_digest=artifact_digest,
+                failure_evidence_sha256=failure_evidence_sha256,
+                recovery_episode_sha256="3" * 64,
+            )
+            event_comment_id = request_id + 1000000
+            self.requests[event_comment_id] = {
+                "id": event_comment_id,
+                "body": body,
+                "user": {"login": "royhsu-work"},
+                "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
             }
-        )
-        request_body = (
-            f"EFFECT_REQUEST\nAuthorization-Revision: {self.main}\nWorker-Result-B64: "
-            + base64.b64encode(raw.encode()).decode()
-        )
-        self.requests[request_id] = {
-            "id": request_id,
-            "body": request_body,
-            "user": {"login": "royhsu-work"},
-            "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
-        }
+            self.comments.append(self.requests[event_comment_id])
+        else:
+            decision = classify_dispatch(runtime.acquire_current_github_preflight(REPO, "test"))
+            assert decision.disposition == "AUTHORIZE", decision
+            assert decision.selected_routing is not None
+            role, action = decision.selected_routing
+            model_action = Action(action)
+            successor = next_action(model_action, TypedResult(ResultKind(kind)))
+            marker = (
+                "REVIEW_RESULT"
+                if action.startswith("review-")
+                else "MERGE_RESULT"
+                if action.startswith("merge-")
+                else "ACTION_RESULT"
+            )
+            body = (
+                f"{marker}\nWorkflow: #229\nChange: {CHANGE}\nAction: {action}\nRole: {role}"
+                f"\nResult: {kind.upper().replace('-', '_')}\nRevision: {HEAD}"
+                f"\nDefault-Branch-Revision: {self.main}"
+            )
+            body += "\nApplication-Correlation: pending"
+            if successor is not None:
+                body += (
+                    f"\nRepository-derived successor: {role_for(successor).value.title()}"
+                    f" / {successor.value}"
+                )
+            requested = [] if extra is None else list(extra)
+            requested.append(
+                {
+                    "kind": "issue-comment",
+                    "payload_json": json.dumps({"issue_number": 229, "body": body}),
+                }
+            )
+            raw = json.dumps(
+                {
+                    "issue_number": 229,
+                    "role": role,
+                    "action": action,
+                    "change": CHANGE,
+                    "result_kind": kind,
+                    "result_content": body,
+                    "evidence_ref": "sequence-test",
+                    "requested_effects": requested,
+                }
+            )
+            request_body = (
+                f"EFFECT_REQUEST\nAuthorization-Revision: {self.main}\nWorker-Result-B64: "
+                + base64.b64encode(raw.encode()).decode()
+            )
+            self.requests[request_id] = {
+                "id": request_id,
+                "body": request_body,
+                "user": {"login": "royhsu-work"},
+                "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+            }
+            event_comment_id = request_id
         event = {
             "action": "created",
             "issue": self.read(REPO, "test", "issues/243"),
-            "comment": self.requests[request_id],
+            "comment": self.requests[event_comment_id],
         }
         with tempfile.TemporaryDirectory() as directory, pytest.MonkeyPatch.context() as patch:
             self.install(patch)
@@ -402,8 +626,10 @@ class GitHubSequence:
         return effects.ApplyResult(value["applied"], value["reason"], carrier_plan=plan)
 
 
+@pytest.mark.parametrize("interruption", [None, "formal-result", "routing"])
 def test_merge_delivery_and_rereview_use_one_evolving_rest_sequence(
     monkeypatch: pytest.MonkeyPatch,
+    interruption: str | None,
 ) -> None:
     github = GitHubSequence()
     github.install(monkeypatch)
@@ -430,14 +656,13 @@ def test_merge_delivery_and_rereview_use_one_evolving_rest_sequence(
     assert first.carrier_plan.requested["expected_head_sha"] == HEAD
     github.merged = True
     github.main = NEW
-    # A new adapter and fresh current-main dispatch must survive activation.
-    stale_review = github.apply("merged", 101, [merge_effect])
-    assert not stale_review.applied and stale_review.carrier_plan is None
-    assert github.writes == [["POST", "issues/229/comments"]]
-    # Existing lifecycle correction is the lawful route to current-default review.
-    assert github.apply("lifecycle-violation", 102).applied
-    assert github.action == "resolve-question"
-    assert github.apply("ready", 103).applied
+    # Complete current graph evidence proves the exact already-accepted merge;
+    # the fresh process persists only its missing formal result and successor.
+    completed_merge = github.apply("merged", 101, [merge_effect])
+    assert completed_merge.applied and completed_merge.carrier_plan is None
+    assert github.action == "finalize-change"
+    assert not any(method == "PUT" for method, _path in github.writes)
+    assert github.apply("more-implementation-required", 102).applied
     assert github.action == "implement-change"
     manifest = {
         "operation": "application-materialize",
@@ -462,19 +687,38 @@ def test_merge_delivery_and_rereview_use_one_evolving_rest_sequence(
         "\nApplication-Correlation: pending\nGate-Evidence: sequence-test"
         "\nRemaining-Approved-Boundary: current-default independent review"
     )
-    result = github.apply(
-        "ready",
-        104,
-        [
-            {"kind": "github-mutation", "payload_json": json.dumps(manifest)},
-            {
-                "kind": "issue-comment",
-                "payload_json": json.dumps({"issue_number": 229, "body": checkpoint}),
-            },
-        ],
-    )
-    assert result.applied, result
+    checkpoint_effects = [
+        {"kind": "github-mutation", "payload_json": json.dumps(manifest)},
+        {
+            "kind": "issue-comment",
+            "payload_json": json.dumps({"issue_number": 229, "body": checkpoint}),
+        },
+    ]
+    github.interrupt_after = interruption
+    result = github.apply("ready", 104, checkpoint_effects)
+    if interruption is not None:
+        assert not result.applied and "after durable" in str(result.reason)
+        if interruption == "formal-result":
+            assert github.action == "implement-change"
+            result = github.apply("continue-accepted", 104)
+            assert result.applied, result
+        formal_results = [
+            c
+            for c in github.comments
+            if c["id"] >= 10000000000
+            and c["body"].startswith("ACTION_RESULT")
+            and "Action: implement-change" in c["body"]
+        ]
+        assert len(formal_results) == 1
+    else:
+        assert result.applied, result
     assert github.action == "review-implementation"
+    checkpoints = [
+        comment
+        for comment in github.comments
+        if comment["id"] >= 10000000000 and comment["body"].startswith("SLICE_CHECKPOINT")
+    ]
+    assert len(checkpoints) == 1
     assert github.apply("pass", 105).applied
     assert github.action == "merge-implementation-pr"
     result = github.apply("merged", 106, [merge_effect])
@@ -492,10 +736,13 @@ if __name__ == "__main__":
     remote.requests = {int(key): value for key, value in remote.requests.items()}
     with pytest.MonkeyPatch.context() as patch:
         remote.install(patch)
-        result = remote.apply_local(
-            request["kind"],
-            request["request_id"],
-            request["extra"],
-            request.get("validation_passed", False),
-        )
+        try:
+            result = remote.apply_local(
+                request["kind"],
+                request["request_id"],
+                request["extra"],
+                request.get("validation_passed", False),
+            )
+        except SequenceInterruption as error:
+            result = effects.ApplyResult(False, str(error))
     print(json.dumps({"state": remote.__dict__, "result": asdict(result)}))
