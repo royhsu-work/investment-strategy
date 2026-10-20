@@ -1602,11 +1602,7 @@ def _observe_historical_replacement_target(
     if not replacement_prs:
         return None
     raw_number = replacement_prs[0].get("number")
-    if (
-        isinstance(raw_number, bool)
-        or not isinstance(raw_number, int)
-        or raw_number <= 0
-    ):
+    if isinstance(raw_number, bool) or not isinstance(raw_number, int) or raw_number <= 0:
         raise RuntimeError("application materialization replacement carrier number is incomplete")
     decision = _change_carrier_decision(
         source,
