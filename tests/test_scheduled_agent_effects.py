@@ -3006,6 +3006,70 @@ def test_issue_comment_reuses_existing_bot_comment_on_later_page(
     assert adapter.observe_postcondition(effect)
 
 
+def test_issue_comment_recovery_rejects_duplicate_bot_matches_across_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = "SLICE_CHECKPOINT\\nWorkflow: #322\\nChange: restore-no-work-idle-discovery"
+    bot = {"login": "github-actions[bot]"}
+    via_app = {"slug": "github-actions"}
+    first = [
+        {"id": 991, "body": body, "user": bot, "performed_via_github_app": via_app},
+        *[
+            {"id": n + 1000, "body": f"unrelated-{n}", "user": bot, "performed_via_github_app": via_app}
+            for n in range(99)
+        ],
+    ]
+    second = [
+        {"id": 992, "body": body, "user": bot, "performed_via_github_app": via_app}
+    ]
+
+    def read(_repo: str, _token: str, api_path: str, **_kwargs: object) -> object:
+        if api_path == "issues/322/comments?per_page=100&sort=created&direction=desc":
+            return first
+        if api_path == "issues/322/comments?per_page=100&sort=created&direction=desc&page=2":
+            return second
+        raise AssertionError(f"unexpected request: {api_path}")
+
+    monkeypatch.setattr(effects, "_github_json", read)
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        WorkerRequest(322, "executor", "implement-change"),
+        authorized_change="restore-no-work-idle-discovery",
+    )
+    with pytest.raises(RuntimeError, match="duplicated"):
+        adapter._existing_issue_comment(body)
+
+
+@pytest.mark.parametrize("incomplete_on_second_page", [False, True])
+def test_issue_comment_recovery_fails_closed_when_listing_is_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+    incomplete_on_second_page: bool,
+) -> None:
+    body = "SLICE_CHECKPOINT\\nWorkflow: #322"
+    page_one = [
+        {"id": n + 100, "body": f"other-{n}"}
+        for n in range(100)
+    ]
+
+    def read(_repo: str, _token: str, api_path: str, **_kwargs: object) -> object:
+        if api_path == "issues/322/comments?per_page=100&sort=created&direction=desc":
+            return page_one if incomplete_on_second_page else None
+        if api_path == "issues/322/comments?per_page=100&sort=created&direction=desc&page=2":
+            return None
+        raise AssertionError(f"unexpected request: {api_path}")
+
+    monkeypatch.setattr(effects, "_github_json", read)
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        WorkerRequest(322, "executor", "implement-change"),
+        authorized_change="restore-no-work-idle-discovery",
+    )
+    with pytest.raises(RuntimeError, match="incomplete"):
+        adapter._existing_issue_comment(body)
+
+
 def test_archive_pull_request_create_binds_exact_branch_head(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
