@@ -3422,9 +3422,17 @@ class GitHubEffectAdapter:
 
     def observe_postcondition(self, effect: StagedEffect) -> bool:
         if effect.kind == "issue-comment":
-            comment_id = self._comment_ids.get(effect)
             payload = _effect_payload(effect)
-            if comment_id is None or payload is None:
+            if payload is None:
+                return False
+            bound_body = self._application_bound_comment_body(cast(str, payload["body"]))
+            comment_id = self._comment_ids.get(effect)
+            if comment_id is None:
+                # An interrupted application has no process-local receipt.
+                # Reconstruct the exact durable comment by read-only GitHub
+                # observation, then verify its individual source object.
+                comment_id = self._existing_issue_comment(bound_body)
+            if comment_id is None:
                 return False
             response = _github_json(
                 self.repository,
@@ -3433,8 +3441,7 @@ class GitHubEffectAdapter:
             )
             return bool(
                 isinstance(response, Mapping)
-                and response.get("body")
-                == self._application_bound_comment_body(cast(str, payload["body"]))
+                and response.get("body") == bound_body
                 and response.get("id") == comment_id
                 and is_github_actions_comment(response)
             )
