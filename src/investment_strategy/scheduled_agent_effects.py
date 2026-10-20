@@ -541,6 +541,7 @@ def _implementation_checkpoint_effects_complete(
     validate_implementation_checkpoint: ImplementationCheckpointValidator | None,
     accepted_intent: bool,
     durable_checkpoint_revision: str | None = None,
+    defer_issue_comments: bool = False,
 ) -> bool:
     """Require exact task/checkpoint effects before a new intent advances.
 
@@ -559,6 +560,10 @@ def _implementation_checkpoint_effects_complete(
     if durable_checkpoint_revision is not None and (
         not accepted_intent or not _valid_sha(durable_checkpoint_revision)
     ):
+        return False
+    # Phase A may defer the checkpoint; Phase B must have a proven target
+    # before it can apply that comment, never the immutable accepted base.
+    if accepted_intent and not defer_issue_comments and durable_checkpoint_revision is None:
         return False
 
     materializations: list[tuple[int, MaterializationRequest]] = []
@@ -682,6 +687,7 @@ def _typed_application_plan(
     allow_pending_continuation: bool,
     accepted_intent: bool,
     durable_checkpoint_revision: str | None = None,
+    defer_issue_comments: bool = False,
 ) -> tuple[ActionApplicationDecision | None, StagedEffect | None, ApplyResult | None]:
     typed_result = batch.typed_result
     if typed_result is None:
@@ -781,6 +787,7 @@ def _typed_application_plan(
         validate_implementation_checkpoint,
         accepted_intent,
         durable_checkpoint_revision,
+        defer_issue_comments,
     ):
         return (
             decision,
@@ -1238,6 +1245,7 @@ def apply_effect_batch(
         allow_pending_continuation,
         accepted_intent,
         durable_checkpoint_revision,
+        defer_issue_comments,
     )
     if typed_rejection is not None:
         if (
@@ -3840,6 +3848,9 @@ def run_effect_application(
         carrier_plan_for_effect=adapter.carrier_plan_if_required,
         effect_rejection=adapter.effect_rejection,
         accepted_intent=accepted_intent,
+        durable_checkpoint_revision=(
+            validated_materialization_revision if accepted_intent else None
+        ),
     )
     return batch, result
 
