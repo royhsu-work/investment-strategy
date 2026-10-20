@@ -542,6 +542,7 @@ def _implementation_checkpoint_effects_complete(
     accepted_intent: bool,
     durable_checkpoint_revision: str | None = None,
     defer_issue_comments: bool = False,
+    observe_postcondition: PostconditionObserver | None = None,
 ) -> bool:
     """Require exact task/checkpoint effects before a new intent advances.
 
@@ -561,11 +562,6 @@ def _implementation_checkpoint_effects_complete(
         not accepted_intent or not _valid_sha(durable_checkpoint_revision)
     ):
         return False
-    # Phase A may defer the checkpoint; Phase B must have a proven target
-    # before it can apply that comment, never the immutable accepted base.
-    if accepted_intent and not defer_issue_comments and durable_checkpoint_revision is None:
-        return False
-
     materializations: list[tuple[int, MaterializationRequest]] = []
     issue_comment_indexes: list[int] = []
     checkpoint_indexes: list[int] = []
@@ -638,6 +634,16 @@ def _implementation_checkpoint_effects_complete(
     ):
         return False
     if accepted_intent:
+        if not defer_issue_comments and durable_checkpoint_revision is None:
+            # A prior effect can survive a lost response. With no newly
+            # qualified target, proceed only when fresh canonical observation
+            # proves the materialization AND the exact checkpoint already
+            # durable. Nothing is reconstructed from the obsolete base.
+            if observe_postcondition is None or not (
+                observe_postcondition(batch.effects[task_index])
+                and observe_postcondition(batch.effects[checkpoint_indexes[0]])
+            ):
+                return False
         return True
     if validate_implementation_checkpoint is None:
         return False
@@ -688,6 +694,7 @@ def _typed_application_plan(
     accepted_intent: bool,
     durable_checkpoint_revision: str | None = None,
     defer_issue_comments: bool = False,
+    observe_postcondition: PostconditionObserver | None = None,
 ) -> tuple[ActionApplicationDecision | None, StagedEffect | None, ApplyResult | None]:
     typed_result = batch.typed_result
     if typed_result is None:
@@ -788,6 +795,7 @@ def _typed_application_plan(
         accepted_intent,
         durable_checkpoint_revision,
         defer_issue_comments,
+        observe_postcondition,
     ):
         return (
             decision,
@@ -1246,6 +1254,7 @@ def apply_effect_batch(
         accepted_intent,
         durable_checkpoint_revision,
         defer_issue_comments,
+        observe_postcondition,
     )
     if typed_rejection is not None:
         if (
