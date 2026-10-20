@@ -2175,6 +2175,7 @@ def test_live_322_merged_carrier_observer_recovers_exact_target(
         branch=branch,
     )
 
+
 def test_merged_lead_carrier_observer_reconstructs_deterministic_replacement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2239,10 +2240,10 @@ def test_merged_lead_carrier_observer_reconstructs_deterministic_replacement(
         materialization,
         "_open_prs_for_branch",
         lambda _repository, _token, *, branch, default_branch: (
-            {"number": 353, "head": {"ref": branch}, "base": {"ref": default_branch}},
-        )
-        if branch == replacement_branch
-        else (),
+            ({"number": 353, "head": {"ref": branch}, "base": {"ref": default_branch}},)
+            if branch == replacement_branch
+            else ()
+        ),
     )
     monkeypatch.setattr(
         materialization,
@@ -2345,4 +2346,3 @@ def test_merged_lead_carrier_observer_rejects_ambiguous_replacement(
             default_branch="main",
             current_revision=current_main,
         )
-
