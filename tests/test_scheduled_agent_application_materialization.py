@@ -2929,3 +2929,30 @@ def test_bad_accepted_preimage_preserves_witness_across_legal_second_commit(
     assert evolved.witness.revisions.mutation_preimage == first_parent
     assert files[0]["expected_sha"] == historical_bad_sha
     assert proof_git.mutations == []
+
+
+def test_partial_manifest_blob_match_is_not_a_complete_materialization_witness(
+    proof_git: _ProofGitRepository,
+) -> None:
+    """One later matching blob does not prove a multi-file accepted effect."""
+    payload = proof_git.payload()
+    files = cast(list[dict[str, object]], payload["files"])
+    files.append(
+        {
+            "path": f"openspec/changes/{_CHANGE}/tasks.md",
+            "blob_sha": proof_git.blob("accepted tasks"),
+            "expected_sha": None,
+        }
+    )
+    partial = proof_git.commit(
+        {proof_git.path: "accepted content"},
+        "Later legal correction of one file",
+        (proof_git.base,),
+    )
+    proof_git.set_head(partial)
+
+    proof = _prove_payload_git(proof_git, payload, accepted_intent=True)
+
+    assert proof.disposition != "COMPLETE", proof
+    assert proof.witness is None
+    assert proof_git.mutations == []
