@@ -2627,3 +2627,32 @@ def test_public_failure_diagnostics_keeps_ordinal_and_redacts_raw_payload() -> N
     )
     assert marker_value not in json.dumps(logged)
     assert bridge._public_failure_diagnostics(bridge.ApplyResult(True, "applied")) is None
+
+
+def test_public_failure_diagnostics_never_exposes_untrusted_guard_reason() -> None:
+    """Review regression: effect payloads cannot spoof proof-classified log details."""
+    untrusted_value = "NONPUBLIC_PAYLOAD_MARKER"
+    rejection = ApplicationRejection(
+        ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+        expected=json.dumps({"source": {"issue_number": 322}}),
+        observed=json.dumps(
+            {"disposition": "CONTRADICTORY", "reason": f"materialization {untrusted_value}"}
+        ),
+    )
+    evidence = EffectRecoveryEvidence(
+        failed_effect_index=0,
+        failed_effect_kind="github-mutation",
+        failed_effect_sha256="a" * 64,
+        completed_effect_indexes=(),
+        completed_effect_sha256=(),
+        mutation_status="not-complete",
+        unfinished_boundary="effect-precondition",
+        rejection=rejection,
+    )
+    result = bridge.ApplyResult(False, "effect precondition rejected", recovery_evidence=evidence)
+    diagnostics = bridge._public_failure_diagnostics(result)
+
+    assert diagnostics is not None
+    assert diagnostics["rejection_classification"] == "effect-precondition-unsatisfied"
+    assert "guard_reason" not in diagnostics
+    assert untrusted_value not in json.dumps(diagnostics)
