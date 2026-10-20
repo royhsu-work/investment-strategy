@@ -2784,3 +2784,14 @@ def test_strict_recovery_reader_distinguishes_legacy_absence_from_missing_upload
     else:
         assert qualify() is None
         assert f"actions/runs/{run_id}/artifacts?per_page=100" not in seen
+
+
+def test_cli_checkpoint_revision_is_bound_to_fresh_proven_target_not_unverified_argument() -> None:
+    """CLI echo is evidence transport, never the materialized checkpoint authority."""
+    import inspect
+
+    main_source = inspect.getsource(bridge.main)
+    assert "validated_materialization_revision=args.validated_revision" not in main_source
+    assert main_source.count(
+        "validated_materialization_revision=(None if target is None else target.revision)"
+    ) == 2
