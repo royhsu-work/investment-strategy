@@ -2584,10 +2584,10 @@ def test_application_failed_effect_is_not_lost_from_actions_log_contract() -> No
 
 def test_public_failure_diagnostics_keeps_ordinal_and_redacts_raw_payload() -> None:
     """An artifact upload failure still leaves a nonauthoritative, safe log hint."""
-    secret = "NEVER_PRINT_A_RAW_SECRET"
+    marker_value = "NEVER_PRINT_A_RAW_SECRET"
     rejection = ApplicationRejection(
         ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
-        expected=json.dumps({"token": secret}),
+        expected=json.dumps({"token": marker_value}),
         observed=json.dumps(
             {
                 "disposition": "CONTRADICTORY",
@@ -2625,5 +2625,5 @@ def test_public_failure_diagnostics_keeps_ordinal_and_redacts_raw_payload() -> N
     assert logged["failure_evidence_sha256"] == bridge._canonical_sha256(
         bridge._recovery_failure_document(result)
     )
-    assert secret not in json.dumps(logged)
+    assert marker_value not in json.dumps(logged)
     assert bridge._public_failure_diagnostics(bridge.ApplyResult(True, "applied")) is None
