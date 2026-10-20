@@ -2723,3 +2723,64 @@ def test_recovery_artifact_reader_propagates_transient_download_failure() -> Non
             read=read,
             artifact_reader=failed_download,
         )
+
+
+@pytest.mark.parametrize("has_upload_step", [False, True])
+def test_strict_recovery_reader_distinguishes_legacy_absence_from_missing_uploaded_artifact(
+    has_upload_step: bool,
+) -> None:
+    """No upload is historical absence; a successful upload with missing listing is unknown."""
+    run_id, job_id = 8101, 8102
+    seen: list[str] = []
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        seen.append(path)
+        if path == f"actions/runs/{run_id}":
+            return {
+                "id": run_id,
+                "run_attempt": 1,
+                "status": "completed",
+                "head_sha": _REVISION,
+            }
+        if path == f"actions/runs/{run_id}/jobs":
+            steps = (
+                [{"name": "Upload exact application recovery evidence", "conclusion": "success"}]
+                if has_upload_step
+                else [{"name": "Complete job", "conclusion": "success"}]
+            )
+            return {
+                "jobs": [
+                    {
+                        "id": job_id,
+                        "name": "apply",
+                        "run_attempt": 1,
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "steps": steps,
+                    }
+                ]
+            }
+        if path == f"actions/runs/{run_id}/artifacts?per_page=100":
+            return {"artifacts": []}
+        raise AssertionError(f"unexpected read: {path}")
+
+    def qualify() -> object:
+        return bridge.read_application_recovery_artifact(
+            _REPOSITORY,
+            "test-token",
+            run_id=run_id,
+            run_attempt=1,
+            job_id=job_id,
+            request_comment_id=90,
+            accepted_decision_sha256="b" * 64,
+            read=read,
+            strict_read=True,
+        )
+
+    if has_upload_step:
+        with pytest.raises(RuntimeError, match="application recovery evidence unavailable"):
+            qualify()
+        assert f"actions/runs/{run_id}/artifacts?per_page=100" in seen
+    else:
+        assert qualify() is None
+        assert f"actions/runs/{run_id}/artifacts?per_page=100" not in seen
