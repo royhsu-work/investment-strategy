@@ -2658,3 +2658,68 @@ def test_public_failure_diagnostics_never_exposes_untrusted_guard_reason() -> No
     assert diagnostics["rejection_classification"] == "effect-precondition-unsatisfied"
     assert "guard_reason" not in diagnostics
     assert untrusted_value not in json.dumps(diagnostics)
+
+
+def test_recovery_artifact_reader_propagates_transient_download_failure() -> None:
+    """An observed upload followed by a failed download is unavailable, not absent."""
+    run_id, job_id, artifact_id = 7001, 7002, 7003
+    run_head = _REVISION
+    digest = "sha256:" + "a" * 64
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path == f"actions/runs/{run_id}":
+            return {
+                "id": run_id,
+                "run_attempt": 1,
+                "status": "completed",
+                "head_sha": run_head,
+                "display_title": "Scheduled Agent Application 90",
+            }
+        if path == f"actions/runs/{run_id}/jobs":
+            return {
+                "jobs": [
+                    {
+                        "id": job_id,
+                        "name": "apply",
+                        "run_attempt": 1,
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "steps": [
+                            {
+                                "name": "Upload exact application recovery evidence",
+                                "conclusion": "success",
+                            }
+                        ],
+                    }
+                ]
+            }
+        if path == f"actions/runs/{run_id}/artifacts?per_page=100":
+            return {
+                "artifacts": [
+                    {
+                        "id": artifact_id,
+                        "name": "application-recovery-evidence",
+                        "digest": digest,
+                        "expired": False,
+                        "workflow_run": {"id": run_id, "head_sha": run_head},
+                    }
+                ]
+            }
+        raise AssertionError(f"unexpected read: {path}")
+
+    def failed_download(_repository: str, _token: str, path: str) -> bytes:
+        assert path == f"actions/artifacts/{artifact_id}/zip"
+        raise OSError("transient artifact read refusal")
+
+    with pytest.raises(OSError, match="transient artifact read refusal"):
+        bridge.read_application_recovery_artifact(
+            _REPOSITORY,
+            "test-token",
+            run_id=run_id,
+            run_attempt=1,
+            job_id=job_id,
+            request_comment_id=90,
+            accepted_decision_sha256="b" * 64,
+            read=read,
+            artifact_reader=failed_download,
+        )
