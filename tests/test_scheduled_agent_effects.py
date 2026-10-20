@@ -2958,7 +2958,7 @@ def test_issue_comment_reuses_existing_bot_comment_on_later_page(
     }
     first_page = [
         {
-            "id": index,
+            "id": index + 1,
             "body": f"unrelated-{index}",
             "user": {"login": "github-actions[bot]"},
             "performed_via_github_app": {"slug": "github-actions"},
@@ -3013,7 +3013,7 @@ def test_issue_comment_recovery_rejects_duplicate_bot_matches_across_pages(
     bot = {"login": "github-actions[bot]"}
     via_app = {"slug": "github-actions"}
     first = [{"id": 991, "body": body, "user": bot, "performed_via_github_app": via_app}]
-    first.extend({"id": n, "body": "unrelated"} for n in range(99))
+    first.extend({"id": n + 1000, "body": "unrelated"} for n in range(99))
     second = [{"id": 992, "body": body, "user": bot, "performed_via_github_app": via_app}]
 
     def read(_repo: str, _token: str, api_path: str, **_kwargs: object) -> object:
