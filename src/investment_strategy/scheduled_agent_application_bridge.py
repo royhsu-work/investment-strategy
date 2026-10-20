@@ -3659,8 +3659,16 @@ def read_application_recovery_artifact(
     accepted_decision_sha256: str,
     read: Callable[[str, str, str], object] | None = None,
     artifact_reader: Callable[[str, str, str], bytes] | None = None,
+    strict_read: bool = False,
 ) -> ApplicationRecoveryArtifact | None:
     """Qualify structured recovery evidence against one completed Actions job."""
+
+    def unavailable() -> None:
+        # A missing, contradictory, expired or unreadable current-protocol
+        # artifact is NOT observed legacy absence.
+        if strict_read:
+            raise RuntimeError("application recovery evidence unavailable")
+        return None
 
     api_read = _github_json if read is None else read
     download = read_github_artifact_bytes if artifact_reader is None else artifact_reader
@@ -3671,7 +3679,7 @@ def read_application_recovery_artifact(
         or _strict_positive_int(request_comment_id) is None
         or re.fullmatch(r"[0-9a-f]{64}", accepted_decision_sha256) is None
     ):
-        return None
+        return unavailable()
     run = api_read(repository, token, f"actions/runs/{run_id}")
     if (
         not isinstance(run, Mapping)
@@ -3680,27 +3688,27 @@ def read_application_recovery_artifact(
         or run.get("status") != "completed"
         or not isinstance(run.get("head_sha"), str)
     ):
-        return None
+        return unavailable()
     jobs_payload = api_read(repository, token, f"actions/runs/{run_id}/jobs")
     if not isinstance(jobs_payload, Mapping) or not isinstance(jobs_payload.get("jobs"), list):
-        return None
+        return unavailable()
     jobs = [
         item
         for item in cast(list[object], jobs_payload["jobs"])
         if isinstance(item, Mapping) and item.get("id") == job_id and item.get("name") == "apply"
     ]
     if len(jobs) != 1:
-        return None
+        return unavailable()
     job = cast(Mapping[str, object], jobs[0])
     if (
         job.get("run_attempt") != run_attempt
         or job.get("status") != "completed"
         or job.get("conclusion") not in {"success", "failure"}
     ):
-        return None
+        return unavailable()
     steps = job.get("steps")
     if not isinstance(steps, list):
-        return None
+        return unavailable()
     uploads = [
         step
         for step in steps
@@ -3708,7 +3716,16 @@ def read_application_recovery_artifact(
         and step.get("name") == "Upload exact application recovery evidence"
     ]
     if len(uploads) != 1 or uploads[0].get("conclusion") != "success":
-        return None
+        if not uploads and not any(
+            isinstance(step, Mapping)
+            and step.get("name") == "Upload final exact application recovery evidence"
+            for step in steps
+        ):
+            # A completed legacy job without an upload step really cannot
+            # supply this artifact. Its separate caller still proves legacy
+            # identity and does not infer zero writes.
+            return None
+        return unavailable()
     artifacts_payload = api_read(
         repository,
         token,
@@ -3717,14 +3734,14 @@ def read_application_recovery_artifact(
     if not isinstance(artifacts_payload, Mapping) or not isinstance(
         artifacts_payload.get("artifacts"), list
     ):
-        return None
+        return unavailable()
     artifacts = [
         item
         for item in cast(list[object], artifacts_payload["artifacts"])
         if isinstance(item, Mapping) and item.get("name") == _APPLICATION_RECOVERY_ARTIFACT
     ]
     if len(artifacts) != 1:
-        return None
+        return unavailable()
     artifact = cast(Mapping[str, object], artifacts[0])
     artifact_id = _strict_positive_int(artifact.get("id"))
     artifact_digest = artifact.get("digest")
@@ -3738,23 +3755,25 @@ def read_application_recovery_artifact(
         or workflow_run.get("id") != run_id
         or workflow_run.get("head_sha") != run.get("head_sha")
     ):
-        return None
+        return unavailable()
     try:
         raw = download(repository, token, f"actions/artifacts/{artifact_id}/zip")
     except (HTTPError, OSError, RuntimeError, ValueError):
-        return None
+        # The exact artifact was observed; read refusal must survive through
+        # the application-completion consumer, not be flattened into absence.
+        raise
     if (
         not raw
         or len(raw) > _MAX_APPLICATION_RECOVERY_BYTES
         or f"sha256:{hashlib.sha256(raw).hexdigest()}" != artifact_digest
     ):
-        return None
+        return unavailable()
     try:
         decoded = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
-        return None
+        return unavailable()
     if not isinstance(decoded, Mapping):
-        return None
+        return unavailable()
     document = cast(Mapping[str, object], decoded)
     expected_keys = {
         "schema",
@@ -3819,14 +3838,14 @@ def read_application_recovery_artifact(
         or trigger_comment_id is None
         or run.get("display_title") != f"Scheduled Agent Application {trigger_comment_id}"
     ):
-        return None
+        return unavailable()
     predecessor = document.get("predecessor")
     if recovery_attempt == 1:
         if predecessor is not None or prior_failures:
-            return None
+            return unavailable()
     elif predecessor is None:
         if cast(bool, document.get("continuation_eligible")) or prior_failures:
-            return None
+            return unavailable()
     elif (
         not isinstance(predecessor, Mapping)
         or predecessor.get("recovery_attempt") != recovery_attempt - 1
@@ -3834,7 +3853,7 @@ def read_application_recovery_artifact(
         or predecessor.get("artifact_id") is None
         or predecessor.get("failure_evidence_sha256") not in prior_failures
     ):
-        return None
+        return unavailable()
     return ApplicationRecoveryArtifact(
         run_id=run_id,
         run_attempt=run_attempt,
