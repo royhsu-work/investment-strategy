@@ -3060,6 +3060,33 @@ def test_issue_comment_recovery_fails_closed_when_listing_is_incomplete(
         adapter._existing_issue_comment(body)
 
 
+@pytest.mark.parametrize("invalid", ["missing_id", "duplicate_id"])
+def test_issue_comment_recovery_rejects_unrelated_malformed_page_identities(
+    monkeypatch: pytest.MonkeyPatch,
+    invalid: str,
+) -> None:
+    body = "SLICE_CHECKPOINT\\nWorkflow: #322"
+    page_one = [{"id": n + 100, "body": f"unrelated-{n}"} for n in range(100)]
+    page_two = [{"body": "other"} if invalid == "missing_id" else {"id": 100, "body": "other"}]
+
+    def read(_repo: str, _token: str, api_path: str, **_kwargs: object) -> object:
+        if api_path == "issues/322/comments?per_page=100&sort=created&direction=desc":
+            return page_one
+        if api_path == "issues/322/comments?per_page=100&sort=created&direction=desc&page=2":
+            return page_two
+        raise AssertionError(f"unexpected request: {api_path}")
+
+    monkeypatch.setattr(effects, "_github_json", read)
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        WorkerRequest(322, "executor", "implement-change"),
+        authorized_change="restore-no-work-idle-discovery",
+    )
+    with pytest.raises(RuntimeError, match="identity|duplicated"):
+        adapter._existing_issue_comment(body)
+
+
 def test_archive_pull_request_create_binds_exact_branch_head(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
