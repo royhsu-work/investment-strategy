@@ -3074,7 +3074,11 @@ class GitHubEffectAdapter:
         return "\n".join(lines) + suffix
 
     def _existing_issue_comment(self, body: str) -> int | None:
+        # A lost write response must not become a duplicate POST.  Exhaust the
+        # entire paginated issue history before treating one match as unique or
+        # the absence of a match as proven.  A failed read is not absence.
         page = 1
+        matching_id: int | None = None
         while True:
             page_suffix = "" if page == 1 else f"&page={page}"
             payload = _github_json(
@@ -3085,17 +3089,20 @@ class GitHubEffectAdapter:
                 f"&direction=desc{page_suffix}",
             )
             if not isinstance(payload, list):
-                return None
+                raise RuntimeError("issue-comment recovery listing is incomplete")
             for item in payload:
-                if not isinstance(item, Mapping) or item.get("body") != body:
+                if not isinstance(item, Mapping):
+                    raise RuntimeError("issue-comment recovery listing is malformed")
+                if item.get("body") != body or not is_github_actions_comment(item):
                     continue
-                comment_id = item.get("id")
-                if not isinstance(comment_id, int) or isinstance(comment_id, bool):
-                    continue
-                if is_github_actions_comment(item):
-                    return comment_id
+                comment_id = _positive_comment_id(item.get("id"))
+                if comment_id is None:
+                    raise RuntimeError("issue-comment recovery matching identity is invalid")
+                if matching_id is not None:
+                    raise RuntimeError("issue-comment recovery evidence is duplicated")
+                matching_id = comment_id
             if len(payload) < 100:
-                return None
+                return matching_id
             page += 1
 
     def _persist_application_evidence_comment(
