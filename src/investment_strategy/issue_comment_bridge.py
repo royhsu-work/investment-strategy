@@ -846,6 +846,7 @@ def _application_job(
                 accepted_decision_sha256=accepted_decision_sha256,
                 read=read,
                 artifact_reader=read_github_artifact_bytes,
+                strict_read=True,
             )
         except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
             # A failed/incomplete evidence read is not an observed absent
