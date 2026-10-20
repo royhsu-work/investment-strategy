@@ -3920,6 +3920,45 @@ def qualify_application_continuation_predecessor(
     return evidence
 
 
+def _public_failure_diagnostics(result: ApplyResult) -> dict[str, object] | None:
+    """Expose bounded effect failure identity in run logs, without raw payloads.
+
+    Logs aid diagnosis if artifact persistence fails, but cannot serve as a
+    qualified recovery artifact or authorize replay of a completed job.
+    """
+    evidence = result.recovery_evidence
+    if result.applied or evidence is None:
+        return None
+    summary: dict[str, object] = {
+        "failed_effect_index": evidence.failed_effect_index,
+        "failed_effect_kind": evidence.failed_effect_kind,
+        "failed_effect_sha256": evidence.failed_effect_sha256,
+        "completed_effect_indexes": list(evidence.completed_effect_indexes),
+        "completed_effect_sha256": list(evidence.completed_effect_sha256),
+        "mutation_status": evidence.mutation_status,
+        "unfinished_boundary": evidence.unfinished_boundary,
+        "failure_evidence_sha256": _canonical_sha256(_recovery_failure_document(result)),
+    }
+    rejection = evidence.rejection
+    if rejection is not None:
+        summary["rejection_classification"] = str(
+            getattr(rejection.classification, "value", rejection.classification)
+        )
+        try:
+            observed = json.loads(rejection.observed)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            observed = None
+        if isinstance(observed, Mapping) and observed.get("disposition") == "CONTRADICTORY":
+            reason = observed.get("reason")
+            if (
+                isinstance(reason, str)
+                and reason.startswith("materialization ")
+                and re.fullmatch(r"[A-Za-z0-9 ._:/-]{1,160}", reason) is not None
+            ):
+                summary["guard_reason"] = reason
+    return summary
+
+
 def _recovery_failure_document(result: ApplyResult) -> dict[str, object]:
     recovery = result.recovery_evidence
     if recovery is None:
@@ -4628,6 +4667,7 @@ def main() -> int:
                 "carrier_plan_id": None
                 if result.carrier_plan is None
                 else result.carrier_plan.plan_id,
+                "failure_evidence": _public_failure_diagnostics(result),
             },
             sort_keys=True,
         )
