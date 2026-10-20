@@ -2587,7 +2587,9 @@ def test_public_failure_diagnostics_keeps_ordinal_and_redacts_raw_payload() -> N
     marker_value = "NEVER_PRINT_A_RAW_SECRET"
     rejection = ApplicationRejection(
         ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
-        expected=json.dumps({"token": marker_value}),
+        expected=json.dumps(
+            {"materialization_proof": ["COMPLETE", "INCOMPLETE"], "accepted_intent": True}
+        ),
         observed=json.dumps(
             {
                 "disposition": "CONTRADICTORY",
@@ -2607,7 +2609,7 @@ def test_public_failure_diagnostics_keeps_ordinal_and_redacts_raw_payload() -> N
     )
     result = bridge.ApplyResult(
         False,
-        "effect precondition rejected",
+        f"effect precondition rejected {marker_value}",
         rejection=rejection,
         recovery_evidence=evidence,
     )
