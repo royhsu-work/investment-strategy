@@ -2572,3 +2572,11 @@ def test_rerun_reauthorizes_exact_request_on_descendant_main(
     assert plan.should_apply
     assert plan.source == WorkerRequest(138, "lead", "explore-change")
     assert plan.request_comment_id == 102
+
+
+def test_application_failed_effect_is_not_lost_from_actions_log_contract() -> None:
+    """The normal application failure summary must preserve bounded effect identity."""
+    import inspect
+
+    main_source = inspect.getsource(bridge.main)
+    assert '"failure_evidence": _public_failure_diagnostics(result)' in main_source
