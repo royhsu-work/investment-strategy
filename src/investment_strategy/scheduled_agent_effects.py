@@ -430,6 +430,7 @@ def _slice_checkpoint_completed_task_ids(
     source: WorkerRequest,
     change: str,
     request: MaterializationRequest,
+    expected_checkpoint_revision: str | None = None,
 ) -> tuple[str, ...] | None:
     """Parse the bounded checkpoint envelope and return its task IDs."""
 
@@ -470,7 +471,14 @@ def _slice_checkpoint_completed_task_ids(
     ):
         return None
     revision = values["Revision"]
-    if not re.fullmatch(r"[0-9a-f]{40}", revision) or revision != request.base_sha:
+    expected_revision = (
+        request.base_sha if expected_checkpoint_revision is None else expected_checkpoint_revision
+    )
+    if (
+        not re.fullmatch(r"[0-9a-f]{40}", expected_revision)
+        or not re.fullmatch(r"[0-9a-f]{40}", revision)
+        or revision != expected_revision
+    ):
         return None
     if not values["Gate-Evidence"] or not values["Remaining-Approved-Boundary"]:
         return None
@@ -532,6 +540,7 @@ def _implementation_checkpoint_effects_complete(
     decision: ActionApplicationDecision,
     validate_implementation_checkpoint: ImplementationCheckpointValidator | None,
     accepted_intent: bool,
+    durable_checkpoint_revision: str | None = None,
 ) -> bool:
     """Require exact task/checkpoint effects before a new intent advances.
 
@@ -547,6 +556,10 @@ def _implementation_checkpoint_effects_complete(
         or decision.result.result.kind not in _IMPLEMENTATION_COMPLETION_RESULTS
     ):
         return True
+    if durable_checkpoint_revision is not None and (
+        not accepted_intent or not _valid_sha(durable_checkpoint_revision)
+    ):
+        return False
 
     materializations: list[tuple[int, MaterializationRequest]] = []
     issue_comment_indexes: list[int] = []
@@ -606,6 +619,7 @@ def _implementation_checkpoint_effects_complete(
         source=batch.source,
         change=decision.source.change,
         request=request,
+        expected_checkpoint_revision=durable_checkpoint_revision,
     )
     if (
         request.expected_change != decision.source.change
@@ -667,6 +681,7 @@ def _typed_application_plan(
     validate_implementation_checkpoint: ImplementationCheckpointValidator | None,
     allow_pending_continuation: bool,
     accepted_intent: bool,
+    durable_checkpoint_revision: str | None = None,
 ) -> tuple[ActionApplicationDecision | None, StagedEffect | None, ApplyResult | None]:
     typed_result = batch.typed_result
     if typed_result is None:
@@ -765,6 +780,7 @@ def _typed_application_plan(
         decision,
         validate_implementation_checkpoint,
         accepted_intent,
+        durable_checkpoint_revision,
     ):
         return (
             decision,
@@ -1206,6 +1222,7 @@ def apply_effect_batch(
     carrier_plan_for_effect: CarrierPlanProvider | None = None,
     effect_rejection: EffectRejectionProvider | None = None,
     accepted_intent: bool = False,
+    durable_checkpoint_revision: str | None = None,
     persist_application_decision: (
         Callable[[ActionApplicationDecision, str, str], bool] | None
     ) = None,
@@ -1220,6 +1237,7 @@ def apply_effect_batch(
         validate_implementation_checkpoint,
         allow_pending_continuation,
         accepted_intent,
+        durable_checkpoint_revision,
     )
     if typed_rejection is not None:
         if (
