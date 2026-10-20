@@ -1246,11 +1246,15 @@ def apply_effect_batch(
         ):
             return ApplyResult(False, "typed application rejected:terminal-effect")
 
-    effects_to_apply = tuple(
-        effect
-        for effect in batch.effects
+    # Recovery indexes address the immutable accepted effect batch, even when
+    # comments are held back until exact materialization validation completes.
+    # The filtered execution order is never a second durable effect identity.
+    indexed_effects_to_apply = tuple(
+        (index, effect)
+        for index, effect in enumerate(batch.effects)
         if not (defer_issue_comments and effect.kind == "issue-comment")
     )
+    effects_to_apply = tuple(effect for _, effect in indexed_effects_to_apply)
 
     def rejected(
         reason: str,
@@ -1267,12 +1271,18 @@ def apply_effect_batch(
         )
         rejection = None if effect_rejection is None else effect_rejection()
         evidence = EffectRecoveryEvidence(
-            failed_effect_index=effect_index,
+            failed_effect_index=(
+                indexed_effects_to_apply[effect_index][0]
+                if effect_index < len(indexed_effects_to_apply)
+                else len(batch.effects)
+            ),
             failed_effect_kind=failed_effect.kind,
             failed_effect_sha256=hashlib.sha256(
                 failed_effect.payload_json.encode("utf-8")
             ).hexdigest(),
-            completed_effect_indexes=completed_indexes,
+            completed_effect_indexes=tuple(
+                indexed_effects_to_apply[index][0] for index in completed_indexes
+            ),
             completed_effect_sha256=tuple(
                 hashlib.sha256(effects_to_apply[index].payload_json.encode("utf-8")).hexdigest()
                 for index in completed_indexes
