@@ -3079,6 +3079,7 @@ class GitHubEffectAdapter:
         # the absence of a match as proven.  A failed read is not absence.
         page = 1
         matching_id: int | None = None
+        seen_ids: set[int] = set()
         while True:
             page_suffix = "" if page == 1 else f"&page={page}"
             payload = _github_json(
@@ -3093,11 +3094,14 @@ class GitHubEffectAdapter:
             for item in payload:
                 if not isinstance(item, Mapping):
                     raise RuntimeError("issue-comment recovery listing is malformed")
-                if item.get("body") != body or not is_github_actions_comment(item):
-                    continue
                 comment_id = _positive_comment_id(item.get("id"))
                 if comment_id is None:
-                    raise RuntimeError("issue-comment recovery matching identity is invalid")
+                    raise RuntimeError("issue-comment recovery listing identity is invalid")
+                if comment_id in seen_ids:
+                    raise RuntimeError("issue-comment recovery listing identity is duplicated")
+                seen_ids.add(comment_id)
+                if item.get("body") != body or not is_github_actions_comment(item):
+                    continue
                 if matching_id is not None:
                     raise RuntimeError("issue-comment recovery evidence is duplicated")
                 matching_id = comment_id
