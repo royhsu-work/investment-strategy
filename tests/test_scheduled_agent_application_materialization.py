@@ -2956,3 +2956,52 @@ def test_partial_manifest_blob_match_is_not_a_complete_materialization_witness(
     assert proof.disposition != "COMPLETE", proof
     assert proof.witness is None
     assert proof_git.mutations == []
+
+
+def test_six_file_322_shape_preserves_witness_after_second_legal_commit(
+    proof_git: _ProofGitRepository,
+) -> None:
+    """Full six-path witness must survive a qualified later same-Change edit.
+
+    Paths model the exact accepted #322 manifest, but synthetic blob contents
+    deliberately do NOT assert that the real historical six-blob intent completed.
+    """
+    paths = (
+        "openspec/changes/restore-no-work-idle-discovery/tasks.md",
+        "src/investment_strategy/scheduled_agent_application_bridge.py",
+        "src/investment_strategy/scheduled_agent_effects.py",
+        "src/investment_strategy/scheduled_agent_merge_acceptance.py",
+        "tests/test_scheduled_agent_application_bridge.py",
+        "tests/test_scheduled_agent_effects.py",
+    )
+    desired = {path: f"accepted content for {index}" for index, path in enumerate(paths)}
+    payload = proof_git.payload()
+    payload["files"] = [
+        {
+            "path": path,
+            "blob_sha": proof_git.blob(desired[path]),
+            # The final incorrect expected value models the real historical
+            # mismatch; the actual Git tree remains the only preimage authority.
+            "expected_sha": "a84065b222bb18b8adb56113b866484743f0e1a2"
+            if index == 5
+            else None,
+        }
+        for index, path in enumerate(paths)
+    ]
+    initial_parent = proof_git.base
+    first_commit = proof_git.commit(desired, proof_git.message, (initial_parent,))
+    proof_git.set_head(first_commit)
+    first = _prove_payload_git(proof_git, payload, accepted_intent=True)
+    assert first.disposition == "COMPLETE", first
+    assert first.witness is not None and first.witness.revision == first_commit
+
+    second_commit = proof_git.commit(
+        {paths[0]: "later legal task checkpoint"}, "Next Action", (first_commit,)
+    )
+    proof_git.set_head(second_commit)
+    successor = _prove_payload_git(proof_git, payload, accepted_intent=True)
+    assert successor.disposition == "COMPLETE", successor
+    assert successor.target is not None and successor.target.revision == second_commit
+    assert successor.witness is not None and successor.witness.revision == first_commit
+    assert successor.witness.revisions.mutation_preimage == initial_parent
+    assert proof_git.mutations == []
