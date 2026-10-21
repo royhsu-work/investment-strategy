@@ -3073,9 +3073,7 @@ def test_incomplete_source_shaped_materialization_proof_is_unknown(
     proof_git.set_head(accepted)
     original_api = proof_git.api
 
-    def incomplete_source(
-        repository: str, token: str, path: str, **kwargs: object
-    ) -> object:
+    def incomplete_source(repository: str, token: str, path: str, **kwargs: object) -> object:
         observed = original_api(repository, token, path, **kwargs)
         if (
             broken_source == "carrier-pr-list"
