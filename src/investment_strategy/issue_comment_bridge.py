@@ -1117,7 +1117,7 @@ def _preaccept_application_state(
         ]
         if (
             conclusion in {"cancelled", "timed_out", "skipped"}
-            and run.get("run_attempt") == 1
+            and _positive_int(run.get("run_attempt")) == 1
             and type(total_count) is int
             and total_count == len(raw_jobs)
             and all(job_id is not None for job_id in job_ids)
