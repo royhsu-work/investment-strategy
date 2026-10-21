@@ -78,9 +78,6 @@ jobs:
       github.event_name == 'issue_comment' &&
       (startsWith(github.event.comment.body, 'EFFECT_REQUEST') ||
       startsWith(github.event.comment.body, 'APPLICATION_CONTINUATION'))
-    concurrency:
-      group: scheduled-agent-effect-apply-${{ github.repository }}
-      cancel-in-progress: false
     permissions:
       actions: write
       contents: write
