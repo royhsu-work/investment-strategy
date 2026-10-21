@@ -4431,3 +4431,76 @@ def test_capacity_run_unobservable_fails_closed_not_false_no_accept() -> None:
     assert result is not None
     assert result.state == "INVALID"
     assert result.reason == "application-completion-run-not-yet-observable"
+
+
+@pytest.mark.parametrize("conclusion", ("cancelled", "timed_out", "skipped"))
+def test_preactcept_cancel_before_apply_job_is_terminal_no_accept(
+    conclusion: str,
+) -> None:
+    """A uniquely canceled first run with conclusively zero jobs did not apply."""
+    request_id = 67891
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 90021,
+                        "display_title": f"Scheduled Agent Application {request_id}",
+                        "run_attempt": 1,
+                        "status": "completed",
+                        "conclusion": conclusion,
+                    }
+                ]
+            }
+        if path == "actions/runs/90021/jobs":
+            return {"total_count": 0, "jobs": []}
+        raise AssertionError(path)
+
+    result = bridge._preaccept_application_state(
+        "royhsu-work/investment-strategy",
+        "token",
+        request_id,
+        read=read,
+    )
+    assert result is not None
+    assert result.state == "REJECTED"
+    assert result.reason == "application-completion-preaccept-terminal-no-accept"
+
+
+@pytest.mark.parametrize(
+    ("run_attempt", "conclusion", "total_count"),
+    [
+        (1, "failure", 0),
+        (2, "cancelled", 0),
+        (1, "cancelled", None),
+        (1, "cancelled", 1),
+    ],
+)
+def test_unqualified_no_apply_job_never_proves_terminal_no_accept(
+    run_attempt: int,
+    conclusion: str,
+    total_count: int | None,
+) -> None:
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 90021,
+                        "display_title": "Scheduled Agent Application 67891",
+                        "run_attempt": run_attempt,
+                        "status": "completed",
+                        "conclusion": conclusion,
+                    }
+                ]
+            }
+        if path == "actions/runs/90021/jobs":
+            return {"total_count": total_count, "jobs": []}
+        raise AssertionError(path)
+
+    result = bridge._preaccept_application_state(
+        "royhsu-work/investment-strategy", "token", 67891, read=read
+    )
+    assert result is not None
+    assert result.state == "INVALID"
