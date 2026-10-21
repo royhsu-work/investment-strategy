@@ -694,41 +694,6 @@ The existing `APPLICATION_CONTINUATION` correlation SHALL be extended to bind th
 
 A substantive recovery transition SHALL be eligible without a fixed numerical attempt ceiling only when its failure-evidence digest is new within the same stable causal episode and its exact predecessor is unique. The recovery ordinal SHALL be derived from the complete artifact chain for audit and structural validation; it SHALL NOT be used as a retry budget. New run ids, plan ids, nonces, dates, or unrelated default-branch changes SHALL NOT qualify as new evidence. An unchanged explicit refusal or repeated evidence digest SHALL NOT be retried. Missing/ambiguous evidence or a failed evidence write SHALL produce a precise fail-closed blocker and reopening condition. Only a newly qualified evidence transition or a newly governed correction may reopen evaluation.
 
-### Requirement: Legacy accepted-application Forward Correction preserves safety and liveness
-
-The existing application-completion and accepted-intent owners SHALL distinguish (1) inability of a legacy historical workflow to produce a subsequently introduced recovery artifact, (2) current incomplete/unavailable GitHub observations, and (3) a proven conflicting current target. The first condition SHALL NOT by itself require permanent replay of the old physical plan or prohibit a separately qualified read-only semantic correction; it SHALL NOT establish NO_WRITE, a completed frontier, `PLAN_SUPERSEDED`, a positive postcondition, or write authorization. The original accepted intent `I`, old authorization `A`, base `B`, physical plan, run history, and historical `UNKNOWN` SHALL remain immutable evidence.
-
-The application SHALL make a **read-only correction assessment** eligible only after exact current repository/Issue/Change/Action/dispatch qualification; unique old accepted intent and completed run/job reconstruction; absence of competing live carrier/write; and proof that the old stale physical operation is non-executable and cannot be replayed. Any source incompleteness, divergent accepted intent, uncertain active mutation, cardinality or lineage conflict fails closed. Such admission grants no mutation or successor authority. The already mapped Executor `implement-change` semantic worker MAY then submit a genuine `SPEC_BLOCKER` result through the normal repository-owned application, whose executable `next_action` derives the later `Lead / resolve-question` successor; neither bridge nor Issue prose may synthesize the result or route directly. This narrow read-only admission is distinct from completing or superseding the old accepted plan.
-
-A **new prospective correction write** SHALL remain ineligible until Lead-authored meaning is strictly validated and independently reviewed, the repository application grants a distinct current operation, and canonical proof establishes unique current target, genuine unmet outcome, safe side-effect isolation for the historical non-idempotent Issue comment, no competing in-flight effects, complete Identity/Content/Lineage/Non-conflict and exact new `P/D` fresh preimage. Apply only with non-force/CAS and observe `COMPLETE(T,W)` through the existing canonical owner. Old `expected_sha` remains the guard for its old operation only and SHALL NOT be rewritten into a fresh write. A remaining historical UNKNOWN may persist while a safe *separate* correction proceeds; it SHALL never be reclassified as NO_WRITE or COMPLETE solely to gain liveness. If exact non-idempotent/overlap risk cannot be isolated, that requested write remains NO_WRITE with its precise reopening condition. No new lifecycle Action, ResultKind, registry, queue, retry state, dispatcher, PR, or hidden recovery authority is introduced.
-
-#### Scenario: Legacy artifact impossible but read-only semantic correction is safe
-
-- GIVEN one immutable accepted application from a completed historical workflow without the later recovery-upload step
-- AND its original materialization/Issue-comment frontier remains UNKNOWN and no current complete witness is proven
-- AND current GitHub evidence qualifies the unique decision and completed jobs, absence of active competing effect, and old plan as non-executable
-- WHEN the existing application-completion owner evaluates fresh normal dispatch
-- THEN it may permit only a newly fresh-authorized **read-only** mapped Executor semantic assessment
-- AND a real Executor `SPEC_BLOCKER` may transition to a later Lead Action only via the existing application/model, without presenting the old application as completed/superseded or authorizing any write
-- AND missing or contradictory current source evidence still fails closed
-
-#### Scenario: Old non-idempotent effects stay unknown while correction is reviewed
-
-- GIVEN the old accepted batch includes a checkpoint Issue comment whose historical write outcome cannot be proven
-- WHEN a newly reviewed Forward Correction requests future work
-- THEN it must independently prove whether that new exact Issue-comment effect is necessary and deduplicated, or omit that effect
-- AND it must preserve the old comment outcome as UNKNOWN rather than asserting no previous write
-- AND it cannot send a duplicate old effect or use the old expected SHA as a future write preimage
-
-#### Scenario: Two fresh Action witnesses remain valid across evolution
-
-- GIVEN a distinct newly authorized correction has produced a verified commit `C1` with durable witness `W1`
-- AND a subsequent legitimate default-branch evolution or other safe commit changes current `D`
-- WHEN a later independent normal wake authorizes a successor Action and new preimage `P2`
-- THEN the next necessary non-force commit `C2` is observed as `W2` without requiring `P2=P1` or replaying `C1`
-- AND `W1` remains a valid historical witness under canonical Identity/Content/Lineage/Non-conflict proof
-- AND conflicts still perform NO_WRITE, while normal successor derivation and terminal lifecycle remain governed
-
 #### Scenario: Effect rejection preserves the exact failed guard
 
 - GIVEN an accepted application has three proposed effects and the second effect's expected preimage does not match the fresh observed target
@@ -797,6 +762,41 @@ A **new prospective correction write** SHALL remain ineligible until Lead-author
 - WHEN a later scheduled wake evaluates the accepted intent
 - THEN it performs no application rerun or semantic replay
 - AND it returns the existing evidence-bound fail-closed disposition
+
+### Requirement: Legacy accepted-application Forward Correction preserves safety and liveness
+
+The existing application-completion and accepted-intent owners SHALL distinguish (1) inability of a legacy historical workflow to produce a subsequently introduced recovery artifact, (2) current incomplete/unavailable GitHub observations, and (3) a proven conflicting current target. The first condition SHALL NOT by itself require permanent replay of the old physical plan or prohibit a separately qualified read-only semantic correction; it SHALL NOT establish NO_WRITE, a completed frontier, `PLAN_SUPERSEDED`, a positive postcondition, or write authorization. The original accepted intent `I`, old authorization `A`, base `B`, physical plan, run history, and historical `UNKNOWN` SHALL remain immutable evidence.
+
+The application SHALL make a **read-only correction assessment** eligible only after exact current repository/Issue/Change/Action/dispatch qualification; unique old accepted intent and completed run/job reconstruction; absence of competing live carrier/write; and proof that the old stale physical operation is non-executable and cannot be replayed. Any source incompleteness, divergent accepted intent, uncertain active mutation, cardinality or lineage conflict fails closed. Such admission grants no mutation or successor authority. The already mapped Executor `implement-change` semantic worker MAY then submit a genuine `SPEC_BLOCKER` result through the normal repository-owned application, whose executable `next_action` derives the later `Lead / resolve-question` successor; neither bridge nor Issue prose may synthesize the result or route directly. This narrow read-only admission is distinct from completing or superseding the old accepted plan.
+
+A **new prospective correction write** SHALL remain ineligible until Lead-authored meaning is strictly validated and independently reviewed, the repository application grants a distinct current operation, and canonical proof establishes unique current target, genuine unmet outcome, safe side-effect isolation for the historical non-idempotent Issue comment, no competing in-flight effects, complete Identity/Content/Lineage/Non-conflict and exact new `P/D` fresh preimage. Apply only with non-force/CAS and observe `COMPLETE(T,W)` through the existing canonical owner. Old `expected_sha` remains the guard for its old operation only and SHALL NOT be rewritten into a fresh write. A remaining historical UNKNOWN may persist while a safe *separate* correction proceeds; it SHALL never be reclassified as NO_WRITE or COMPLETE solely to gain liveness. If exact non-idempotent/overlap risk cannot be isolated, that requested write remains NO_WRITE with its precise reopening condition. No new lifecycle Action, ResultKind, registry, queue, retry state, dispatcher, PR, or hidden recovery authority is introduced.
+
+#### Scenario: Legacy artifact impossible but read-only semantic correction is safe
+
+- GIVEN one immutable accepted application from a completed historical workflow without the later recovery-upload step
+- AND its original materialization/Issue-comment frontier remains UNKNOWN and no current complete witness is proven
+- AND current GitHub evidence qualifies the unique decision and completed jobs, absence of active competing effect, and old plan as non-executable
+- WHEN the existing application-completion owner evaluates fresh normal dispatch
+- THEN it may permit only a newly fresh-authorized **read-only** mapped Executor semantic assessment
+- AND a real Executor `SPEC_BLOCKER` may transition to a later Lead Action only via the existing application/model, without presenting the old application as completed/superseded or authorizing any write
+- AND missing or contradictory current source evidence still fails closed
+
+#### Scenario: Old non-idempotent effects stay unknown while correction is reviewed
+
+- GIVEN the old accepted batch includes a checkpoint Issue comment whose historical write outcome cannot be proven
+- WHEN a newly reviewed Forward Correction requests future work
+- THEN it must independently prove whether that new exact Issue-comment effect is necessary and deduplicated, or omit that effect
+- AND it must preserve the old comment outcome as UNKNOWN rather than asserting no previous write
+- AND it cannot send a duplicate old effect or use the old expected SHA as a future write preimage
+
+#### Scenario: Two fresh Action witnesses remain valid across evolution
+
+- GIVEN a distinct newly authorized correction has produced a verified commit `C1` with durable witness `W1`
+- AND a subsequent legitimate default-branch evolution or other safe commit changes current `D`
+- WHEN a later independent normal wake authorizes a successor Action and new preimage `P2`
+- THEN the next necessary non-force commit `C2` is observed as `W2` without requiring `P2=P1` or replaying `C1`
+- AND `W1` remains a valid historical witness under canonical Identity/Content/Lineage/Non-conflict proof
+- AND conflicts still perform NO_WRITE, while normal successor derivation and terminal lifecycle remain governed
 
 ### Requirement: Production idle acceptance follows legal formal termination
 
