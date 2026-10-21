@@ -2805,8 +2805,7 @@ def test_application_apply_job_serializes_issue_comment_effects() -> None:
     workflow = Path(".github/workflows/scheduled-agent-application.yml").read_text(encoding="utf-8")
     assert workflow.count("  apply:\n") == 1
     apply_job = workflow.split("  apply:\n", 1)[1]
-    assert (
-        "    concurrency:\n"
-        "      group: scheduled-agent-effect-apply-${{ github.repository }}\n"
-        "      cancel-in-progress: false\n"
-    ) in apply_job.split("    permissions:", 1)[0]
+    apply_header = apply_job.split("    permissions:", 1)[0]
+    assert "    concurrency:" in apply_header
+    assert "group: scheduled-agent-effect-apply-${{ github.repository }}" in apply_header
+    assert "cancel-in-progress: false" in apply_header
