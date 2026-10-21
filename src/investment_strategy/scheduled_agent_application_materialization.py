@@ -138,6 +138,10 @@ class MaterializationProof:
             raise ValueError("unproved materialization requires a reason")
 
 
+class _IncompleteGitHubObservation(RuntimeError):
+    """An authoritative GitHub source is insufficient to decide effect truth."""
+
+
 def _positive_int(value: object) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         return None
@@ -295,7 +299,7 @@ def _branch_head(repository: str, token: str, branch: str) -> str | None:
     obj = _as_mapping(payload.get("object"))
     sha = None if obj is None else obj.get("sha")
     if not _valid_sha(sha):
-        raise RuntimeError("application materialization branch observation is incomplete")
+        raise _IncompleteGitHubObservation("application materialization branch observation is incomplete")
     return cast(str, sha)
 
 
@@ -308,12 +312,12 @@ def _matching_prs(
     query = urlencode({"state": "all", "head": f"{owner}:{branch}", "per_page": 100})
     raw = _github_json(repository, token, f"pulls?{query}")
     if not isinstance(raw, list) or len(raw) >= 100:
-        raise RuntimeError("application materialization PR discovery is incomplete")
+        raise _IncompleteGitHubObservation("application materialization PR discovery is incomplete")
     result: list[Mapping[str, object]] = []
     for item in raw:
         payload = _as_mapping(item)
         if payload is None:
-            raise RuntimeError("application materialization PR discovery is malformed")
+            raise _IncompleteGitHubObservation("application materialization PR discovery is malformed")
         result.append(payload)
     return result
 
@@ -965,7 +969,7 @@ def _revision_tree_snapshot(
     tree = None if commit is None else _as_mapping(commit.get("tree"))
     tree_sha = None if tree is None else tree.get("sha")
     if not _valid_sha(tree_sha):
-        raise RuntimeError("implementation carrier tree identity is incomplete")
+        raise _IncompleteGitHubObservation("implementation carrier tree identity is incomplete")
     payload = _as_mapping(
         cast(
             object,
@@ -983,7 +987,7 @@ def _revision_tree_snapshot(
         or payload.get("truncated") is True
         or not isinstance(raw_entries, list)
     ):
-        raise RuntimeError("implementation carrier tree observation is incomplete")
+        raise _IncompleteGitHubObservation("implementation carrier tree observation is incomplete")
     entries: dict[str, Mapping[str, object]] = {}
     for raw_entry in raw_entries:
         entry = _as_mapping(raw_entry)
@@ -998,7 +1002,7 @@ def _revision_tree_snapshot(
             or not isinstance(sha, str)
             or path in entries
         ):
-            raise RuntimeError("implementation carrier tree entry is malformed")
+            raise _IncompleteGitHubObservation("implementation carrier tree entry is malformed")
         entries[cast(str, path)] = cast(Mapping[str, object], entry)
     return cast(str, tree_sha), entries
 
@@ -1693,7 +1697,7 @@ def _proof_comparison(
         or not isinstance(raw_files, list)
         or len(raw_files) >= 300
     ):
-        raise RuntimeError("materialization graph observation is incomplete")
+        raise _IncompleteGitHubObservation("materialization graph observation is incomplete")
     expected_status = (
         "diverged"
         if ahead and behind
@@ -1703,6 +1707,8 @@ def _proof_comparison(
         if behind
         else "identical"
     )
+    if comparison.get("status") not in {"diverged", "ahead", "behind", "identical"}:
+        raise _IncompleteGitHubObservation("materialization graph status is incomplete")
     if comparison.get("status") != expected_status:
         raise RuntimeError("materialization graph observations contradict")
     commits: list[str] = []
@@ -1710,15 +1716,20 @@ def _proof_comparison(
         commit = _as_mapping(raw)
         sha = None if commit is None else commit.get("sha")
         if not _valid_sha(sha) or sha in commits:
-            raise RuntimeError("materialization graph commit enumeration is incomplete")
+            raise _IncompleteGitHubObservation("materialization graph commit enumeration is incomplete")
         commits.append(cast(str, sha))
     if commits and commits[-1] != revision:
         raise RuntimeError("materialization graph terminal revision contradicts target")
     if not ahead and not behind and base_revision != revision:
         raise RuntimeError("materialization identical graph revisions contradict")
-    paths = _comparison_paths_from_file_entries(
-        raw_files, malformed_error="materialization graph paths are incomplete"
-    )
+    try:
+        paths = _comparison_paths_from_file_entries(
+            raw_files, malformed_error="materialization graph paths are incomplete"
+        )
+    except RuntimeError as error:
+        if str(error) != "materialization graph paths are incomplete":
+            raise
+        raise _IncompleteGitHubObservation(str(error)) from error
     return comparison, tuple(commits), frozenset(paths)
 
 
@@ -1744,13 +1755,13 @@ def _proof_commit(
         or not raw_parents
         or not isinstance(commit.get("message"), str)
     ):
-        raise RuntimeError("materialization commit observation is incomplete")
+        raise _IncompleteGitHubObservation("materialization commit observation is incomplete")
     parents: list[str] = []
     for raw in raw_parents:
         parent = _as_mapping(raw)
         sha = None if parent is None else parent.get("sha")
         if not _valid_sha(sha) or sha in parents:
-            raise RuntimeError("materialization commit parent observation is incomplete")
+            raise _IncompleteGitHubObservation("materialization commit parent observation is incomplete")
         parents.append(cast(str, sha))
     return commit, tuple(parents)
 
@@ -2064,14 +2075,24 @@ def prove_materialization(
         branch = request.branch
         number = request.pr_number
         missing_replacement = False
-        claimed = _claimed_open_carriers(
-            repository,
-            token,
-            issue_number=source.issue_number,
-            change=request.change,
-            default_branch=default_branch,
-            read=_github_json,
-        )
+        try:
+            claimed = _claimed_open_carriers(
+                repository,
+                token,
+                issue_number=source.issue_number,
+                change=request.change,
+                default_branch=default_branch,
+                read=_github_json,
+            )
+        except RuntimeError as error:
+            # The shared carrier source enumerator signals incomplete pages
+            # as RuntimeError. Translate only its explicit observation errors.
+            if str(error) not in {
+                "implementation carrier evidence list is incomplete",
+                "implementation carrier evidence list is malformed",
+            }:
+                raise
+            raise _IncompleteGitHubObservation(str(error)) from error
         if len(claimed) > 1:
             raise RuntimeError("materialization competing Change carriers are ambiguous")
         head = _branch_head(repository, token, branch)
@@ -2101,7 +2122,7 @@ def prove_materialization(
                 return MaterializationProof("INCOMPLETE", application_request=request)
             number = _positive_int(prs[0].get("number"))
             if number is None:
-                raise RuntimeError("materialization carrier number is incomplete")
+                raise _IncompleteGitHubObservation("materialization carrier number is incomplete")
             pr = prs[0]
         else:
             if len(prs) != 1 or prs[0].get("number") != number:
@@ -2147,7 +2168,7 @@ def prove_materialization(
         if merged:
             merge_revision = pr.get("merge_commit_sha")
             if not _valid_sha(merge_revision):
-                raise RuntimeError("materialization merge identity is incomplete")
+                raise _IncompleteGitHubObservation("materialization merge identity is incomplete")
             _proof_ancestry(repository, token, cast(str, merge_revision), current_revision)
             _proof_ancestry(repository, token, cast(str, revision), cast(str, merge_revision))
             replacement = _replacement_branch(request.change, number)
@@ -2157,7 +2178,7 @@ def prove_materialization(
             if replacements:
                 replacement_number = _positive_int(replacements[0].get("number"))
                 if replacement_number is None:
-                    raise RuntimeError("materialization replacement identity is incomplete")
+                    raise _IncompleteGitHubObservation("materialization replacement identity is incomplete")
                 decision = _change_carrier_decision(
                     source,
                     repository=repository,
@@ -2426,9 +2447,8 @@ def prove_materialization(
             witness=immutable_witness,
             application_request=request,
         )
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as error:
-        # An unavailable or undecodable source response proves neither
-        # missing work nor a conflicting Git consequence.
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, _IncompleteGitHubObservation) as error:
+        # Unreadable or structurally incomplete source is not a proven effect.
         return MaterializationProof("UNKNOWN", reason=str(error) or "GitHub read unavailable")
     except (RuntimeError, ValueError, TypeError) as error:
         return MaterializationProof("CONTRADICTORY", reason=str(error))
