@@ -20,6 +20,7 @@ from investment_strategy.scheduled_agent_action_model import (
     TypedResult,
     role_for,
 )
+from investment_strategy.scheduled_agent_application_materialization import MaterializationProof
 from investment_strategy.scheduled_agent_carrier import CarrierRequired, make_carrier_plan
 from investment_strategy.scheduled_agent_effect_contract import (
     allowed_github_mutation_operations,
@@ -4726,7 +4727,7 @@ def test_unknown_materialization_guard_preserves_unqualified_source_rejection(
     )
     monkeypatch.setattr(
         effects, "prove_materialization",
-        lambda *_args, **_kwargs: effects.MaterializationProof(
+        lambda *_args, **_kwargs: MaterializationProof(
             "UNKNOWN", reason="authoritative GitHub read unavailable"
         ),
     )
