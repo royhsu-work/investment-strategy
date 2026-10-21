@@ -1105,11 +1105,30 @@ def _preaccept_application_state(
             "application-completion-terminal-job-evidence-incomplete",
             request_comment_id=request_comment_id,
         )
+    raw_jobs = cast(list[object], jobs_payload["jobs"])
     jobs = [
         item
-        for item in cast(list[object], jobs_payload["jobs"])
+        for item in raw_jobs
         if isinstance(item, Mapping) and item.get("name") == "apply"
     ]
+    if not jobs:
+        # Capacity cancellation can finish before GitHub creates an apply job.
+        # Only a complete first-attempt inventory proves zero apply executions.
+        total_count = jobs_payload.get("total_count")
+        if (
+            run.get("run_attempt") == 1
+            and type(total_count) is int
+            and total_count == len(raw_jobs)
+            and all(
+                isinstance(item, Mapping) and isinstance(item.get("name"), str)
+                for item in raw_jobs
+            )
+        ):
+            return ApplicationCompletion(
+                "REJECTED",
+                "application-completion-preaccept-terminal-no-accept",
+                request_comment_id=request_comment_id,
+            )
     if len(jobs) != 1:
         return ApplicationCompletion(
             "INVALID",
