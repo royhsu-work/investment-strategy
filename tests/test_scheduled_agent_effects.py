@@ -4691,3 +4691,48 @@ def test_issue_comment_recovery_refuses_shifted_history_before_post(
         adapter.apply(effect)
     assert first_page_reads >= 2
     assert not any(method == "POST" for _, method in requests)
+
+
+def test_unknown_materialization_guard_preserves_unqualified_source_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing authoritative read must never become retryable missing work."""
+    source = WorkerRequest(138, "executor", "implement-change")
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        _TEST_TOKEN,
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        accepted_intent=True,
+    )
+    observation = GitHubIssueObservation(
+        issue_number=138,
+        change=_CHANGE,
+        routing=("executor", "implement-change"),
+        state="open",
+        created_order=1,
+        authoritative=True,
+    )
+    monkeypatch.setattr(adapter, "_authorized_issue_observation", lambda: observation)
+    monkeypatch.setattr(adapter, "_default_branch", lambda: "main")
+    monkeypatch.setattr(adapter, "_default_branch_revision", lambda _name: _REVISION)
+    monkeypatch.setattr(
+        effects, "find_materialization_payload",
+        lambda *_args: effects.MaterializationRequest(
+            138, _CHANGE, _CHANGE, f"agent/{_CHANGE}", _REVISION,
+            "Immutable accepted intent", (), 353,
+        ),
+    )
+    monkeypatch.setattr(
+        effects, "prove_materialization",
+        lambda *_args, **_kwargs: effects.MaterializationProof(
+            "UNKNOWN", reason="authoritative GitHub read unavailable"
+        ),
+    )
+
+    assert not adapter._guard_github_mutation({"operation": "application-materialize"})
+    rejection = adapter.effect_rejection()
+    assert rejection is not None
+    assert rejection.classification == effects.ApplicationRejectionKind.OBSERVATION_UNQUALIFIED
+    assert json.loads(rejection.observed)["disposition"] == "UNKNOWN"
