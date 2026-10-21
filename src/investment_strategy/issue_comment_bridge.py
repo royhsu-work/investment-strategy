@@ -1111,11 +1111,17 @@ def _preaccept_application_state(
         # Capacity cancellation can finish before GitHub creates an apply job.
         # Only a complete first-attempt inventory proves zero apply executions.
         total_count = jobs_payload.get("total_count")
+        job_ids = [
+            _positive_int(item.get("id")) if isinstance(item, Mapping) else None
+            for item in raw_jobs
+        ]
         if (
             conclusion in {"cancelled", "timed_out", "skipped"}
             and run.get("run_attempt") == 1
             and type(total_count) is int
             and total_count == len(raw_jobs)
+            and all(job_id is not None for job_id in job_ids)
+            and len(set(job_ids)) == len(raw_jobs)
             and all(
                 isinstance(item, Mapping) and isinstance(item.get("name"), str) for item in raw_jobs
             )
