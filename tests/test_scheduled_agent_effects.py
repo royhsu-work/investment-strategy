@@ -4812,7 +4812,7 @@ def test_legacy_322_completed_materialization_does_not_launder_unknown_checkpoin
             correlation="effect-request-322",
             pr_number=353,
             change=change,
-            branch=materialize["branch"],
+            branch="agent/restore-no-work-idle-discovery-continuation-347",
             validation_required=True,
         ),
     )
