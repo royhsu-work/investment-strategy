@@ -4505,6 +4505,7 @@ def test_unqualified_no_apply_job_never_proves_terminal_no_accept(
     assert result is not None
     assert result.state == "INVALID"
 
+
 @pytest.mark.parametrize(
     ("job_ids", "expected_state"),
     [
@@ -4548,4 +4549,3 @@ def test_no_apply_job_inventory_requires_unique_positive_ids(
     )
     assert result is not None
     assert result.state == expected_state
-
