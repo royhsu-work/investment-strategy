@@ -4640,6 +4640,7 @@ def test_accepted_checkpoint_can_defer_comments_until_target_is_proven() -> None
     assert len(applied) == 1
     assert applied[0].kind == effects.GITHUB_MUTATION_KIND
 
+
 def test_issue_comment_recovery_refuses_shifted_history_before_post(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
