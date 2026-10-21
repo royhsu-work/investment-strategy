@@ -3849,7 +3849,20 @@ def consequence_postconditions_complete(
                     "pull-request-merge",
                 } and not adapter._observe_github_mutation(effect, payload):
                     return False
-        return True
+        # READY and MORE_IMPLEMENTATION_REQUIRED use IMPLEMENTATION_PR_HEAD,
+        # not MATERIALIZED_REVISION. The PR witness cannot silently satisfy
+        # a separately accepted, non-idempotent SLICE_CHECKPOINT comment.
+        checkpoints = tuple(
+            effect
+            for effect in batch.effects
+            if effect.kind == "issue-comment"
+            and isinstance((_effect_payload(effect) or {}).get("body"), str)
+            and cast(str, (_effect_payload(effect) or {})["body"]).splitlines()[:1]
+            == ["SLICE_CHECKPOINT"]
+        )
+        if len(checkpoints) > 1:
+            return False
+        return all(adapter.observe_postcondition(effect) for effect in checkpoints)
     except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return False
 
