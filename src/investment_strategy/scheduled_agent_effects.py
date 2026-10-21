@@ -3766,14 +3766,18 @@ def consequence_postconditions_complete(
                 accepted_intent=accepted_intent,
             )
             payload = _effect_payload(materializations[0])
-            if payload is None or _fresh_materialization_target(
-                payload,
-                adapter=adapter,
-                source=source,
-                current_revision=current_revision,
-                allow_pending_continuation=allow_pending_continuation,
-                accepted_successor_routing=accepted_successor_routing,
-            ) is None:
+            if (
+                payload is None
+                or _fresh_materialization_target(
+                    payload,
+                    adapter=adapter,
+                    source=source,
+                    current_revision=current_revision,
+                    allow_pending_continuation=allow_pending_continuation,
+                    accepted_successor_routing=accepted_successor_routing,
+                )
+                is None
+            ):
                 return False
             # Materialization and the non-idempotent SLICE_CHECKPOINT are
             # distinct obligations of one immutable accepted result. The
