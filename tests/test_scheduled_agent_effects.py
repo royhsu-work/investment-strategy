@@ -4719,14 +4719,22 @@ def test_unknown_materialization_guard_preserves_unqualified_source_rejection(
     monkeypatch.setattr(adapter, "_default_branch", lambda: "main")
     monkeypatch.setattr(adapter, "_default_branch_revision", lambda _name: _REVISION)
     monkeypatch.setattr(
-        effects, "find_materialization_payload",
+        effects,
+        "find_materialization_payload",
         lambda *_args: effects.MaterializationRequest(
-            138, _CHANGE, _CHANGE, f"agent/{_CHANGE}", _REVISION,
-            "Immutable accepted intent", (), 353,
+            138,
+            _CHANGE,
+            _CHANGE,
+            f"agent/{_CHANGE}",
+            _REVISION,
+            "Immutable accepted intent",
+            (),
+            353,
         ),
     )
     monkeypatch.setattr(
-        effects, "prove_materialization",
+        effects,
+        "prove_materialization",
         lambda *_args, **_kwargs: MaterializationProof(
             "UNKNOWN", reason="authoritative GitHub read unavailable"
         ),
