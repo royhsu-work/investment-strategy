@@ -1338,6 +1338,7 @@ def _completion_matrix_reader(
     live_ids: set[int] | None = None,
     accepted_ids: set[int] | None = None,
     rejected_ids: set[int] | None = None,
+    terminal_conclusion: str = "failure",
 ) -> bridge.GitHubReader:
     live_ids = set() if live_ids is None else live_ids
     accepted_ids = set() if accepted_ids is None else accepted_ids
@@ -1359,7 +1360,7 @@ def _completion_matrix_reader(
             "id": run_by_request[cast(int, request["id"])],
             "display_title": f"Scheduled Agent Application {request['id']}",
             "status": "in_progress" if request["id"] in live_ids else "completed",
-            "conclusion": None if request["id"] in live_ids else "failure",
+            "conclusion": None if request["id"] in live_ids else terminal_conclusion,
             "run_attempt": 1,
         }
         for request in requests
@@ -1386,7 +1387,7 @@ def _completion_matrix_reader(
                         "id": run_id + 100,
                         "name": "apply",
                         "status": "completed",
-                        "conclusion": "failure",
+                        "conclusion": terminal_conclusion,
                     }
                 ]
             }
@@ -1396,7 +1397,10 @@ def _completion_matrix_reader(
 
 
 @pytest.mark.parametrize("count", (1, 2, 3))
-def test_terminal_preactcept_candidates_do_not_compete_by_raw_cardinality(count: int) -> None:
+@pytest.mark.parametrize("terminal_conclusion", ("failure", "cancelled", "timed_out", "skipped"))
+def test_terminal_preactcept_candidates_do_not_compete_by_raw_cardinality(
+    count: int, terminal_conclusion: str
+) -> None:
     source = bridge.WorkerRequest(138, "lead", "explore-change")
     requests = [
         _effect_request_comment(
@@ -1412,7 +1416,7 @@ def test_terminal_preactcept_candidates_do_not_compete_by_raw_cardinality(count:
         "token",
         source=source,
         current_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
-        read=_completion_matrix_reader(requests),
+        read=_completion_matrix_reader(requests, terminal_conclusion=terminal_conclusion),
         now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
     )
 
