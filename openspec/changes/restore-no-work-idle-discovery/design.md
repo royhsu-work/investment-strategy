@@ -138,7 +138,10 @@ For one accepted materialization intent `I` and fresh repository state `S`, one 
 COMPLETE(target, witness)
 INCOMPLETE
 CONTRADICTORY(reason)
+UNKNOWN(reason)
 ```
+
+`UNKNOWN` is an epistemic read failure, not an observed contradictory effect or proof that the historical application wrote nothing. It carries no target or witness, authorizes no mutation or continuation, and can be reconsidered only after a complete new authoritative read. A missing legacy run artifact never by itself proves either a completed or absent write.
 
 `target` (`T`) is the exact currently qualified carrier/consumer revision for the requested evidence target, including any review or validation that consumes it. `witness` (`W`) is immutable Git evidence that the exact accepted desired content was legally produced. The same proof may therefore return `COMPLETE(T, W)` with `T != W`: a legal same-Change descendant can become the current target and change accepted paths while the ancestor witness still proves the older accepted consequence. Content is proved at `W`; exact-head review/validation remains bound to `T`. Identity, complete lineage from `W` to the qualified current target, and Non-conflict must still hold. Neither `T == W` nor equality with an invocation-local apply target defines durable completion; local target memory supplies no independent authority.
 
@@ -163,7 +166,8 @@ The mutation protocol is:
 fresh observe
 → canonical proof
    COMPLETE       → zero materialization mutation; return current target T and durable witness W
-   CONTRADICTORY  → fail closed
+   CONTRADICTORY  → fail closed on proved conflict
+   UNKNOWN        → fail closed; await a new qualified source observation
    INCOMPLETE     → plan only the narrow missing mutation
 → consequential mutation
 → discard local success as authority
