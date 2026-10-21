@@ -1992,7 +1992,7 @@ def prove_materialization(
     Carrier qualification supplies identity, topology supplies graph/witness
     facts. Neither can independently manufacture a positive completion result.
     Only fully observed missing work returns INCOMPLETE; read failures and
-    incomplete/contradictory observations return CONTRADICTORY.
+    unreadable authoritative sources return UNKNOWN, distinct from proven conflicts.
     """
     try:
         request = parse_materialization_payload(payload, source)
@@ -2426,11 +2426,11 @@ def prove_materialization(
             witness=immutable_witness,
             application_request=request,
         )
-    except OSError as error:
-        # A failed source read cannot establish either a missing effect or a
-        # contradictory Git consequence. Never authorize a write from it.
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as error:
+        # An unavailable or undecodable source response proves neither
+        # missing work nor a conflicting Git consequence.
         return MaterializationProof("UNKNOWN", reason=str(error) or "GitHub read unavailable")
-    except (RuntimeError, ValueError, TypeError, json.JSONDecodeError) as error:
+    except (RuntimeError, ValueError, TypeError) as error:
         return MaterializationProof("CONTRADICTORY", reason=str(error))
 
 
