@@ -3011,9 +3011,18 @@ def test_six_file_322_shape_preserves_witness_after_second_legal_commit(
     assert proof_git.mutations == []
 
 
+@pytest.mark.parametrize(
+    "read_error",
+    [
+        OSError("authoritative issue observation unavailable"),
+        json.JSONDecodeError("source response JSON truncated", "{", 0),
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid response bytes"),
+    ],
+)
 def test_canonical_unavailable_github_observation_is_unknown_not_conflict(
     proof_git: _ProofGitRepository,
     monkeypatch: pytest.MonkeyPatch,
+    read_error: Exception,
 ) -> None:
     """An unknown read is neither a safe missing effect nor a proven conflict."""
     accepted = proof_git.commit(
@@ -3024,7 +3033,7 @@ def test_canonical_unavailable_github_observation_is_unknown_not_conflict(
 
     def unavailable(repository: str, token: str, path: str, **kwargs: object) -> object:
         if path == "issues/322":
-            raise OSError("authoritative issue observation unavailable")
+            raise read_error
         return api(repository, token, path, **kwargs)
 
     monkeypatch.setattr(materialization, "_github_json", unavailable)
@@ -3032,7 +3041,7 @@ def test_canonical_unavailable_github_observation_is_unknown_not_conflict(
     assert proof.disposition == "UNKNOWN", proof
     assert proof.witness is None
     assert proof.target is None
-    assert proof.reason == "authoritative issue observation unavailable"
-    with pytest.raises(RuntimeError, match="authoritative issue observation unavailable"):
+    assert proof.reason == str(read_error)
+    with pytest.raises(RuntimeError):
         _apply_git(proof_git)
     assert proof_git.mutations == []
