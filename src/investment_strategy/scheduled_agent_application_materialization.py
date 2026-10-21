@@ -299,7 +299,9 @@ def _branch_head(repository: str, token: str, branch: str) -> str | None:
     obj = _as_mapping(payload.get("object"))
     sha = None if obj is None else obj.get("sha")
     if not _valid_sha(sha):
-        raise _IncompleteGitHubObservation("application materialization branch observation is incomplete")
+        raise _IncompleteGitHubObservation(
+            "application materialization branch observation is incomplete"
+        )
     return cast(str, sha)
 
 
@@ -317,7 +319,9 @@ def _matching_prs(
     for item in raw:
         payload = _as_mapping(item)
         if payload is None:
-            raise _IncompleteGitHubObservation("application materialization PR discovery is malformed")
+            raise _IncompleteGitHubObservation(
+                "application materialization PR discovery is malformed"
+            )
         result.append(payload)
     return result
 
@@ -1716,7 +1720,9 @@ def _proof_comparison(
         commit = _as_mapping(raw)
         sha = None if commit is None else commit.get("sha")
         if not _valid_sha(sha) or sha in commits:
-            raise _IncompleteGitHubObservation("materialization graph commit enumeration is incomplete")
+            raise _IncompleteGitHubObservation(
+                "materialization graph commit enumeration is incomplete"
+            )
         commits.append(cast(str, sha))
     if commits and commits[-1] != revision:
         raise RuntimeError("materialization graph terminal revision contradicts target")
@@ -1761,7 +1767,9 @@ def _proof_commit(
         parent = _as_mapping(raw)
         sha = None if parent is None else parent.get("sha")
         if not _valid_sha(sha) or sha in parents:
-            raise _IncompleteGitHubObservation("materialization commit parent observation is incomplete")
+            raise _IncompleteGitHubObservation(
+                "materialization commit parent observation is incomplete"
+            )
         parents.append(cast(str, sha))
     return commit, tuple(parents)
 
@@ -2178,7 +2186,9 @@ def prove_materialization(
             if replacements:
                 replacement_number = _positive_int(replacements[0].get("number"))
                 if replacement_number is None:
-                    raise _IncompleteGitHubObservation("materialization replacement identity is incomplete")
+                    raise _IncompleteGitHubObservation(
+                        "materialization replacement identity is incomplete"
+                    )
                 decision = _change_carrier_decision(
                     source,
                     repository=repository,
@@ -2447,7 +2457,12 @@ def prove_materialization(
             witness=immutable_witness,
             application_request=request,
         )
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError, _IncompleteGitHubObservation) as error:
+    except (
+        OSError,
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+        _IncompleteGitHubObservation,
+    ) as error:
         # Unreadable or structurally incomplete source is not a proven effect.
         return MaterializationProof("UNKNOWN", reason=str(error) or "GitHub read unavailable")
     except (RuntimeError, ValueError, TypeError) as error:
