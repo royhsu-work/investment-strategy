@@ -4337,3 +4337,93 @@ def test_recovery_artifact_read_failure_is_not_legacy_missing_evidence(
     assert completion.state == "INVALID"
     assert completion.reason == "application-completion-recovery-evidence-unavailable"
     assert completion.job_id is None
+
+
+@pytest.mark.parametrize("terminal", ["cancelled", "timed_out", "skipped"])
+def test_pending_capacity_cancel_before_accept_recovers_on_fresh_dispatch(
+    terminal: str,
+) -> None:
+    """A cancelled pending apply job is not ACCEPT; later selection stays executable."""
+    request_comment_id = 56789
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 90001,
+                        "display_title": f"Scheduled Agent Application {request_comment_id}",
+                        "run_attempt": 1,
+                        "status": "completed",
+                        "conclusion": terminal,
+                    }
+                ]
+            }
+        if path == "actions/runs/90001/jobs":
+            return {
+                "jobs": [
+                    {"id": 90002, "name": "apply", "status": "completed", "conclusion": terminal}
+                ]
+            }
+        raise AssertionError(path)
+
+    incomplete = bridge._preaccept_application_state(
+        "royhsu-work/investment-strategy",
+        "token",
+        request_comment_id,
+        read=read,
+    )
+    assert incomplete is not None
+    assert incomplete.state == "REJECTED"
+    assert incomplete.reason == "application-completion-preaccept-terminal-no-accept"
+
+    from investment_strategy.scheduled_agent_runtime import (
+        GitHubIssueObservation,
+        acquire_dispatch_preflight,
+    )
+    from investment_strategy.workflow_dispatch import classify_dispatch
+
+    preflight = acquire_dispatch_preflight(
+        observations=(
+            GitHubIssueObservation(
+                issue_number=322,
+                change="restore-no-work-idle-discovery",
+                routing=("executor", "implement-change"),
+                state="open",
+                created_order=1,
+                authoritative=True,
+            ),
+        ),
+        source_total_count=1,
+        incomplete_results=False,
+        exhausted=True,
+        human_authorized=True,
+    )
+    decision = classify_dispatch(preflight)
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.selected_issue_id == 322
+    assert decision.selected_routing == ("executor", "implement-change")
+    fresh = bridge.plan_dispatch_decision(
+        event=_event(),
+        default_branch_revision=REVISION,
+        decision=decision,
+    )
+    assert fresh.should_emit and fresh.result_body is not None
+    rendered = json.loads(fresh.result_body)
+    assert rendered["disposition"] == "AUTHORIZE"
+    assert rendered["action"] == "implement-change"
+    assert rendered["request_comment_id"] == 987
+
+
+def test_capacity_run_unobservable_fails_closed_not_false_no_accept() -> None:
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/"):
+            return {"workflow_runs": []}
+        raise AssertionError(path)
+
+    result = bridge._preaccept_application_state(
+        "royhsu-work/investment-strategy", "token", 56789, read=read
+    )
+    assert result is not None
+    assert result.state == "INVALID"
+    assert result.reason == "application-completion-run-not-yet-observable"
