@@ -75,6 +75,17 @@ Trace: #322 Step 1 execution record and current-source same-path refusal -> exac
 
 - [ ] 0.41 VERIFY source-read UNKNOWN: preserve `UNKNOWN(reason)` separately from observed `CONTRADICTORY(reason)` at the canonical materialization proof, prove read-failure NO_WRITE and no false COMPLETE/INCOMPLETE, verify every effect/completion consumer, and obtain the applicable formal Lead-owned OpenSpec semantic gate and independent exact-revision review before integration/merge. Existing approved Recovery Exit and later unattended gates remain mandatory.
 
+### 0G. Legacy Forward Recovery / eventual-correctness admission (2026-10-21 Human decision)
+
+The first G0 diagnostic is case B (contract conflict), **not** demonstrated G0-A correction or a historical-plan completion. This material contract revision is pending exact-head strict validation and **independent Lead/Reviewer semantic authorization** before implementation. It may not make the old application silently complete.
+
+- [ ] 0.42 G1: reconcile `PLAN_SUPERSEDED` proof and same-path scenario; define read-only legacy Forward Correction entry that does not require impossible historical artifacts, preserve UNKNOWN and unresolved non-idempotent effects, and identify the existing owner plus ordinary `Executor SPEC_BLOCKER -> Lead resolve-question` transition; prove current authoritative state and review this exact revision independently.
+- [ ] 0.43 G2 RED: source-shaped original request/accepted decision, both completed run/job shapes, six-file historical expected/desired/current blobs, absent upload, prior `SLICE_CHECKPOINT`, PR #363/#353 history and current Issue/PR; prove current application-completion deadlock and prohibit legacy replay, duplicate effect, same-path conflict, missing/ambiguous source and fake Review/Action authority.
+- [ ] 0.44 G2 GREEN: minimally change existing application-completion, canonical effects/materialization and bridge owners to permit only a qualified read-only correction admission; subsequent genuinely new mutation requires fresh reviewed operation `P/D`, CAS, uniqueness, isolated comment side effects and verified `T/W`. No new Action/result/registry/queue/PR.
+- [ ] 0.45 G3 VERIFY: execute two real repository-authorized Action/Commit effects on independent fresh wakes `P1 -> C1 -> W1` and `P2 -> C2 -> W2` across an intervening commit; preserve W1, test interruption/no-replay, conflicts/NO_WRITE, and show no legacy-artifact or stale-SHA deadlock. CI/one commit/one wake is insufficient.
+- [ ] 0.46 G4 VERIFY: finish original tasks, exact-head formal reviews and merge, finalize/archive, then observe genuine native unattended Scheduled Task `NO_WORK -> bounded Lead idle discovery -> no-finding/admission -> later normal Action-only dispatch`. No synthetic NO_WORK or scheduler change without separate Human authority.
+
+
 ## 1. Contract and typed NO_WORK handoff
 
 - [x] 1.1 RED/GREEN: add contract tests proving `AUTHORIZE` and `FAIL_CLOSED` never enter idle, while one exact completed `NO_WORK` artifact can invoke one bounded Lead idle semantic request.
