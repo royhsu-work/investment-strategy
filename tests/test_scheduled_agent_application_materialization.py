@@ -3045,3 +3045,58 @@ def test_canonical_unavailable_github_observation_is_unknown_not_conflict(
     with pytest.raises(RuntimeError):
         _apply_git(proof_git)
     assert proof_git.mutations == []
+
+
+@pytest.mark.parametrize(
+    "broken_source",
+    (
+        "carrier-pr-list",
+        "matching-pr-list",
+        "malformed-pr-entry",
+        "commit-comparison",
+        "commit-enumeration",
+        "git-commit",
+        "branch-ref",
+    ),
+)
+def test_incomplete_source_shaped_materialization_proof_is_unknown(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    broken_source: str,
+) -> None:
+    """Truncated GitHub observations cannot become a proven semantic conflict."""
+    accepted = proof_git.commit(
+        {proof_git.path: "accepted content"}, proof_git.message, (proof_git.base,)
+    )
+    proof_git.set_head(accepted)
+    original_api = proof_git.api
+
+    def incomplete_source(
+        repository: str, token: str, path: str, **kwargs: object
+    ) -> object:
+        observed = original_api(repository, token, path, **kwargs)
+        if broken_source == "carrier-pr-list" and path.startswith("pulls?") and "state=open" in path:
+            return {"unexpected": "incomplete pagination"}
+        if broken_source == "matching-pr-list" and path.startswith("pulls?") and "state=all" in path:
+            return {"unexpected": "incomplete pagination"}
+        if broken_source == "malformed-pr-entry" and path.startswith("pulls?") and "state=all" in path:
+            return [None]
+        if broken_source == "commit-comparison" and path.startswith("compare/"):
+            assert isinstance(observed, dict)
+            return {key: value for key, value in observed.items() if key != "files"}
+        if broken_source == "commit-enumeration" and path.startswith("compare/"):
+            assert isinstance(observed, dict)
+            return {**observed, "commits": []} if observed["ahead_by"] else observed
+        if broken_source == "git-commit" and path == f"git/commits/{accepted}":
+            assert isinstance(observed, dict)
+            return {key: value for key, value in observed.items() if key != "parents"}
+        if broken_source == "branch-ref" and path == f"git/ref/heads/{proof_git.branch}":
+            return {"object": {}}
+        return observed
+
+    monkeypatch.setattr(materialization, "_github_json", incomplete_source)
+    proof = _prove_git(proof_git)
+    assert proof.disposition == "UNKNOWN", (broken_source, proof)
+    assert proof.target is None and proof.witness is None
+    assert proof.reason
+    assert not proof_git.mutations
