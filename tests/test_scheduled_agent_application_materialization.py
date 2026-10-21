@@ -3077,11 +3077,23 @@ def test_incomplete_source_shaped_materialization_proof_is_unknown(
         repository: str, token: str, path: str, **kwargs: object
     ) -> object:
         observed = original_api(repository, token, path, **kwargs)
-        if broken_source == "carrier-pr-list" and path.startswith("pulls?") and "state=open" in path:
+        if (
+            broken_source == "carrier-pr-list"
+            and path.startswith("pulls?")
+            and "state=open" in path
+        ):
             return {"unexpected": "incomplete pagination"}
-        if broken_source == "matching-pr-list" and path.startswith("pulls?") and "state=all" in path:
+        if (
+            broken_source == "matching-pr-list"
+            and path.startswith("pulls?")
+            and "state=all" in path
+        ):
             return {"unexpected": "incomplete pagination"}
-        if broken_source == "malformed-pr-entry" and path.startswith("pulls?") and "state=all" in path:
+        if (
+            broken_source == "malformed-pr-entry"
+            and path.startswith("pulls?")
+            and "state=all" in path
+        ):
             return [None]
         if broken_source == "commit-comparison" and path.startswith("compare/"):
             assert isinstance(observed, dict)
