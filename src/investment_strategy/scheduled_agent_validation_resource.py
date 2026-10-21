@@ -42,6 +42,10 @@ from investment_strategy.scheduled_agent_runtime import (
 )
 from investment_strategy.workflow_dispatch import classify_dispatch
 
+class IncompleteGitHubObservation(RuntimeError):
+    """An authoritative GitHub source is structurally incomplete, not a conflict."""
+
+
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _TASK_LINE = re.compile(r"^- \[(?P<state>[ x])\] (?P<id>\d+(?:\.\d+)+)\b")
@@ -394,7 +398,9 @@ def _open_pr_payload(
         raise RuntimeError("validation resource source Issue/Change identity changed")
 
     pr = _as_mapping(cast(object, _github_json(repository, token, f"pulls/{pr_number}")))
-    if pr is None or not (
+    if pr is None:
+        raise IncompleteGitHubObservation("validation resource target PR observation is incomplete")
+    if not (
         (pr.get("state") == "open" and pr.get("merged") is not True)
         or (allow_historical_merged_carrier and _is_historical_merged_carrier(pr))
     ):
@@ -404,11 +410,17 @@ def _open_pr_payload(
     head_repo = None if head is None else _as_mapping(head.get("repo"))
     base_repo = None if base is None else _as_mapping(base.get("repo"))
     if (
-        pr.get("number") != pr_number
-        or head is None
+        head is None
         or base is None
         or head_repo is None
         or base_repo is None
+        or not _valid_sha(head.get("sha"))
+        or not _valid_sha(base.get("sha"))
+        or not isinstance(pr.get("body"), str)
+    ):
+        raise IncompleteGitHubObservation("validation resource target PR linkage is incomplete")
+    if (
+        pr.get("number") != pr_number
         or head_repo.get("full_name") != repository
         or base_repo.get("full_name") != repository
         or head.get("ref") != branch
@@ -880,7 +892,7 @@ def _content_sha_at(
     payload = _as_mapping(state)
     sha = None if payload is None else payload.get("sha")
     if not _valid_sha(sha):
-        raise RuntimeError("work-product current content identity is incomplete")
+        raise IncompleteGitHubObservation("work-product current content identity is incomplete")
     return cast(str, sha)
 
 
