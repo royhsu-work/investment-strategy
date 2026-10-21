@@ -4635,3 +4635,54 @@ def test_accepted_checkpoint_can_defer_comments_until_target_is_proven() -> None
     assert result.applied, result
     assert len(applied) == 1
     assert applied[0].kind == effects.GITHUB_MUTATION_KIND
+
+def test_issue_comment_recovery_refuses_shifted_history_before_post(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deletion between offset pages must not hide an older exact comment."""
+    body = "SLICE_CHECKPOINT\\nWorkflow: #322\\nChange: restore-no-work-idle-discovery"
+    existing = {
+        "id": 999,
+        "body": body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    original_first_page = [{"id": n + 1000, "body": "unrelated"} for n in range(100)]
+    shifted_first_page = original_first_page[1:] + [existing]
+    first_page_reads = 0
+    requests: list[tuple[str, str]] = []
+
+    def read(
+        _repo: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        **_kwargs: object,
+    ) -> object:
+        nonlocal first_page_reads
+        requests.append((api_path, method))
+        if method != "GET":
+            pytest.fail("changing page boundary must not permit duplicate comment POST")
+        if api_path == "issues/322/comments?per_page=100&sort=created&direction=desc":
+            first_page_reads += 1
+            return original_first_page if first_page_reads == 1 else shifted_first_page
+        if api_path == "issues/322/comments?per_page=100&sort=created&direction=desc&page=2":
+            return []
+        raise AssertionError(f"unexpected request: {method} {api_path}")
+
+    monkeypatch.setattr(effects, "_github_json", read)
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        WorkerRequest(322, "executor", "implement-change"),
+        authorized_change="restore-no-work-idle-discovery",
+    )
+    effect = StagedEffect(
+        kind="issue-comment",
+        payload_json=json.dumps({"issue_number": 322, "body": body}),
+    )
+    with pytest.raises(RuntimeError, match="changed"):
+        adapter.apply(effect)
+    assert first_page_reads >= 2
+    assert not any(method == "POST" for _, method in requests)
