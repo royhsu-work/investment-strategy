@@ -122,7 +122,7 @@ class MaterializationWitness:
 
 @dataclass(frozen=True)
 class MaterializationProof:
-    disposition: Literal["COMPLETE", "INCOMPLETE", "CONTRADICTORY"]
+    disposition: Literal["COMPLETE", "INCOMPLETE", "CONTRADICTORY", "UNKNOWN"]
     target: ValidationResourceTarget | None = None
     witness: MaterializationWitness | None = None
     reason: str | None = None
@@ -134,8 +134,8 @@ class MaterializationProof:
                 raise ValueError("complete materialization requires target and witness")
         elif self.target is not None or self.witness is not None:
             raise ValueError("unproved materialization cannot carry a target or witness")
-        elif self.disposition == "CONTRADICTORY" and not self.reason:
-            raise ValueError("contradictory materialization requires a reason")
+        elif self.disposition in {"CONTRADICTORY", "UNKNOWN"} and not self.reason:
+            raise ValueError("unproved materialization requires a reason")
 
 
 def _positive_int(value: object) -> int | None:
@@ -1600,7 +1600,7 @@ def apply_materialization(
         allow_pending_continuation=allow_pending_continuation,
         accepted_intent=accepted_intent,
     )
-    if proof.disposition == "CONTRADICTORY":
+    if proof.disposition in {"CONTRADICTORY", "UNKNOWN"}:
         raise RuntimeError(proof.reason)
 
     def before_write() -> None:
@@ -2426,7 +2426,11 @@ def prove_materialization(
             witness=immutable_witness,
             application_request=request,
         )
-    except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError) as error:
+    except OSError as error:
+        # A failed source read cannot establish either a missing effect or a
+        # contradictory Git consequence. Never authorize a write from it.
+        return MaterializationProof("UNKNOWN", reason=str(error) or "GitHub read unavailable")
+    except (RuntimeError, ValueError, TypeError, json.JSONDecodeError) as error:
         return MaterializationProof("CONTRADICTORY", reason=str(error))
 
 
