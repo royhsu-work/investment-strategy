@@ -31,6 +31,8 @@ from investment_strategy.scheduled_agent_carrier import (
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 from investment_strategy.scheduled_agent_validation_resource import (
     IncompleteGitHubObservation as _IncompleteGitHubObservation,
+)
+from investment_strategy.scheduled_agent_validation_resource import (
     ValidationResourcePlan,
     ValidationResourceTarget,
     WorkProductFile,
