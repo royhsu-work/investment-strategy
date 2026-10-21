@@ -539,10 +539,9 @@ def test_recovery_evidence_continues_only_for_unwritten_precondition_rejection(
     assert partial["continuation_eligible"] is False
     assert unknown_postcondition["continuation_eligible"] is False
     assert unknown_source["continuation_eligible"] is False
-    assert (
-        unknown_source["failure_evidence"]["rejection"]["classification"]
-        == "observation-unqualified"
-    )
+    failure = cast(dict[str, object], unknown_source["failure_evidence"])
+    rejected = cast(dict[str, object], failure["rejection"])
+    assert rejected["classification"] == "observation-unqualified"
 
 
 def test_main_accepts_only_a_fresh_continuation_transport(
