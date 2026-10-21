@@ -1845,7 +1845,9 @@ def test_canonical_git_proof_preserves_conflicts(
     else:
         proof_git.failure = failure
     proof = _prove_git(proof_git)
-    assert proof.disposition == "CONTRADICTORY", proof
+    # Truncated comparison data proves neither missing work nor a conflict.
+    expected = "UNKNOWN" if failure == "incomplete-compare" else "CONTRADICTORY"
+    assert proof.disposition == expected, proof
     assert proof.reason
     assert proof_git.mutations == []
 
