@@ -3112,3 +3112,35 @@ def test_incomplete_source_shaped_materialization_proof_is_unknown(
     assert proof.target is None and proof.witness is None
     assert proof.reason
     assert not proof_git.mutations
+
+
+@pytest.mark.parametrize("broken_source", ("pr-head", "pr-base", "content-sha"))
+def test_imported_reader_incomplete_github_observation_is_unknown(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    broken_source: str,
+) -> None:
+    """Imported readers must not turn missing authoritative source fields into conflicts."""
+    accepted = proof_git.commit(
+        {proof_git.path: "accepted content"}, proof_git.message, (proof_git.base,)
+    )
+    proof_git.set_head(accepted)
+    original_api = proof_git.api
+
+    def incomplete(repository: str, token: str, path: str, **kwargs: object) -> object:
+        observed = original_api(repository, token, path, **kwargs)
+        if broken_source in {"pr-head", "pr-base"} and path == "pulls/324":
+            assert isinstance(observed, dict)
+            missing = "head" if broken_source == "pr-head" else "base"
+            return {key: value for key, value in observed.items() if key != missing}
+        if broken_source == "content-sha" and path.startswith("contents/"):
+            return {"type": "file", "encoding": "base64"}
+        return observed
+
+    monkeypatch.setattr(materialization, "_github_json", incomplete)
+    monkeypatch.setattr(validation_resource, "_github_json", incomplete)
+    proof = _prove_git(proof_git)
+    assert proof.disposition == "UNKNOWN", (broken_source, proof)
+    assert proof.target is None and proof.witness is None
+    assert proof.reason
+    assert proof_git.mutations == []
