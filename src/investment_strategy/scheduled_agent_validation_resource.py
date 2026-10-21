@@ -42,6 +42,7 @@ from investment_strategy.scheduled_agent_runtime import (
 )
 from investment_strategy.workflow_dispatch import classify_dispatch
 
+
 class IncompleteGitHubObservation(RuntimeError):
     """An authoritative GitHub source is structurally incomplete, not a conflict."""
 
