@@ -771,6 +771,8 @@ After a durable `APPLICATION_DECISION: ACCEPTED`, the same normal Action/worker 
 
 The prospective correction SHALL have one stable, source-derived identity from `(accepted_decision_digest, qualified Human decision comment ID, Change, normalized corrective target and desired effect)` and preserve one unique compatible reviewed version/PR, current head and non-conflicting intended operation. Revision changes alone SHALL NOT multiply this identity or reset recovery attempts. All identity, read completeness, unique existing PR/ref/carrier, in-flight effects, historical non-idempotent Issue comment isolation, current Human authority, fresh `P/D`, non-force CAS, full path overlap/content/lineage and canonical `COMPLETE(T_new,W_new)` postcondition MUST be qualified independently of the original old-plan proof. An old `expected_sha` is never adopted for a new write. This uses the **existing canonical proof owner** with a distinct correction evidence target: `COMPLETE(T_new,W_new)` SHALL NOT imply the original physical `COMPLETE(T_old,W_old)`. The original effect frontier remains UNKNOWN unless independently proven. Unsupported effects remain NO_WRITE.
 
+The current formal consumer's `_fresh_completion_postconditions(record.raw_worker_result)` is bound to the original `MATERIALIZED_REVISION` effect. A separate `COMPLETE(T_new,W_new)` correction witness SHALL NOT automatically satisfy that old materialization predicate, bypass the normal formal consequence, or become a competing positive completion authority. The **same existing canonical consequence owner** and application-completion caller MUST be changed together, after independent semantic review, to verify one **source-bound, read-only approved satisfaction mapping** from each original required semantic effect to either: (a) its own independently proven canonical completion, or (b) an explicitly Human-approved semantically equivalent corrected outcome with canonical `COMPLETE(T_new,W_new)`, exact reviewed correction identity, no-force history and isolated non-idempotent effects. The old physical outcome stays UNKNOWN; such a mapping NEVER asserts `COMPLETE(T_old,W_old)`, `PLAN_SUPERSEDED` or that an old write did not occur. Any old effect whose required obligation or non-idempotent side-effect safety remains unresolved SHALL prevent successor projection. This is a derived proof, not a new registry, Action, or formal result.
+
 Only when the unique new corrective consequence is proven, the original accepted *semantic* result remains applicable to the current approved Change/tasks, no competing accepted application or unobserved side effect exists, and all normal postcondition/review/handoff gates pass, MAY the existing repository-owned application **once** project the already accepted result's legal successor via `next_action`. The projection SHALL have source-bound durable evidence, shall not fabricate the original physical-plan completion or rewrite `I`, and shall not call a second semantic worker or create a second result. If any predicate is incomplete, retain a precise blocker and do not route. A correction PR merge, green CI, or a read-only assessment by itself is NOT Recovery Exit.
 
 #### Scenario: Legacy recovery upload was never produced
@@ -800,11 +802,13 @@ Only when the unique new corrective consequence is proven, the original accepted
 
 #### Scenario: Two fresh Action witnesses remain valid across evolution
 
-- GIVEN independently authorized correction has established a unique new `W1` and a later normal fresh wake has legally made `C1`
-- AND the default-branch revision evolves without contradicting `W1`
-- WHEN a second independently fresh wake authorizes the next Action against new `P2/D2`
-- THEN its necessary non-force `C2` establishes `W2`, not by replaying `C1` or using its old expected SHA
-- AND `W1` remains a valid historical canonical witness; true conflicts still remain NO_WRITE
+- GIVEN a separately reviewed maintenance correction has its **own correction witness**, which is not `W1` and does not count as either normal Action
+- AND a **first later fresh repository-dispatched Action wake** authorizes exact `P1/D1`, produces necessary non-force commit `C1`, and fresh canonical proof establishes **`W1` for `C1`**
+- AND an unrelated legal intervening commit/default-branch advance changes the prospective preimage without contradicting `W1`
+- WHEN a **second distinct later fresh repository-dispatched Action wake** authorizes `P2/D2`
+- THEN its separate necessary non-force commit `C2` is independently verified as **`W2` for `C2`**, without stale preimage reuse or semantic replay
+- AND both wake/request identities, actual commit parents, postconditions, and next legal Action are recorded and `W1` remains valid
+- AND no maintenance commit, CI, synthetic wake or single normal Action can substitute for either of the **two** real Action/Commit/witness chains; conflicts remain NO_WRITE
 
 ### Requirement: Production idle acceptance follows legal formal termination
 
