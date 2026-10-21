@@ -2058,6 +2058,7 @@ def test_issue_comment_reuses_existing_bot_comment_without_post(
 
     assert calls == [
         ("issues/138/comments?per_page=100&sort=created&direction=desc", "GET"),
+        ("issues/138/comments?per_page=100&sort=created&direction=desc", "GET"),
         ("issues/comments/991", "GET"),
     ]
 
@@ -2117,6 +2118,7 @@ def test_issue_comment_does_not_reuse_connector_authored_formal_body(
     assert adapter.observe_postcondition(effect)
 
     assert calls == [
+        ("issues/138/comments?per_page=100&sort=created&direction=desc", "GET"),
         ("issues/138/comments?per_page=100&sort=created&direction=desc", "GET"),
         ("issues/138/comments", "POST"),
         ("issues/comments/992", "GET"),
@@ -3000,6 +3002,8 @@ def test_issue_comment_reuses_existing_bot_comment_on_later_page(
 
     adapter.apply(effect)
     assert calls == [
+        "issues/138/comments?per_page=100&sort=created&direction=desc",
+        "issues/138/comments?per_page=100&sort=created&direction=desc&page=2",
         "issues/138/comments?per_page=100&sort=created&direction=desc",
         "issues/138/comments?per_page=100&sort=created&direction=desc&page=2",
     ]
