@@ -3766,18 +3766,30 @@ def consequence_postconditions_complete(
                 accepted_intent=accepted_intent,
             )
             payload = _effect_payload(materializations[0])
-            return (
-                payload is not None
-                and _fresh_materialization_target(
-                    payload,
-                    adapter=adapter,
-                    source=source,
-                    current_revision=current_revision,
-                    allow_pending_continuation=allow_pending_continuation,
-                    accepted_successor_routing=accepted_successor_routing,
-                )
-                is not None
+            if payload is None or _fresh_materialization_target(
+                payload,
+                adapter=adapter,
+                source=source,
+                current_revision=current_revision,
+                allow_pending_continuation=allow_pending_continuation,
+                accepted_successor_routing=accepted_successor_routing,
+            ) is None:
+                return False
+            # Materialization and the non-idempotent SLICE_CHECKPOINT are
+            # distinct obligations of one immutable accepted result. The
+            # carrier's positive witness alone must not complete a checkpoint
+            # whose exact trusted Issue comment has not been observed.
+            checkpoints = tuple(
+                effect
+                for effect in batch.effects
+                if effect.kind == "issue-comment"
+                and isinstance((_effect_payload(effect) or {}).get("body"), str)
+                and cast(str, (_effect_payload(effect) or {})["body"]).splitlines()[:1]
+                == ["SLICE_CHECKPOINT"]
             )
+            if len(checkpoints) > 1:
+                return False
+            return all(adapter.observe_postcondition(effect) for effect in checkpoints)
         if spec.evidence_target is EvidenceTarget.MERGED_PR_HEAD:
             return merged_pr_readiness_complete(
                 repository=repository,
