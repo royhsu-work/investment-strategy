@@ -4745,3 +4745,92 @@ def test_unknown_materialization_guard_preserves_unqualified_source_rejection(
     assert rejection is not None
     assert rejection.classification == effects.ApplicationRejectionKind.OBSERVATION_UNQUALIFIED
     assert json.loads(rejection.observed)["disposition"] == "UNKNOWN"
+
+
+def test_legacy_322_completed_materialization_does_not_launder_unknown_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An independently proven Git witness cannot satisfy an unobserved non-idempotent comment."""
+
+    source = WorkerRequest(322, "executor", "implement-change")
+    change = "restore-no-work-idle-discovery"
+    base = "82d5fc44d3ce2838c2dedd77b2440d5bce3ee5dc"
+    materialize = {
+        "issue_number": 322,
+        "operation": "application-materialize",
+        "expected_change": change,
+        "change": change,
+        "branch": "agent/restore-no-work-idle-discovery-continuation-347",
+        "base_sha": base,
+        "message": "Bind slice checkpoints to materialized revision",
+        "files": [
+            {
+                "path": "tests/test_scheduled_agent_effects.py",
+                "blob_sha": "06a50d199f655af8fa082cd9352bf6c883dad35e",
+                "expected_sha": "a84065b222bb18b8adb56113b866484743f0e1a2",
+            }
+        ],
+        "pr_number": 353,
+    }
+    checkpoint = "\n".join(
+        (
+            "SLICE_CHECKPOINT",
+            "Workflow: #322",
+            f"Change: {change}",
+            "Action: implement-change",
+            "Role: executor",
+            "Completed-Tasks: 0.23, 0.24, 0.25, 0.26",
+            f"Revision: {base}",
+            "Application-Correlation: pending-application-binding",
+            "Gate-Evidence: Original accepted implementation slice",
+            "Remaining-Approved-Boundary: Follow-up implementation",
+        )
+    )
+    raw = _raw(
+        issue_number=322,
+        change=change,
+        result_kind="ready",
+        requested_effects=[
+            {
+                "kind": effects.GITHUB_MUTATION_KIND,
+                "payload_json": json.dumps(materialize, sort_keys=True),
+            },
+            {
+                "kind": "issue-comment",
+                "payload_json": json.dumps({"issue_number": 322, "body": checkpoint}),
+            },
+        ],
+    )
+    observed: list[str] = []
+
+    monkeypatch.setattr(
+        effects,
+        "_fresh_materialization_target",
+        lambda *_args, **_kwargs: ValidationResourceTarget(
+            repository="royhsu-work/investment-strategy",
+            revision="b" * 40,
+            correlation="effect-request-322",
+            pr_number=353,
+            change=change,
+            branch=materialize["branch"],
+            validation_required=True,
+        ),
+    )
+
+    def missing_checkpoint(self: GitHubEffectAdapter, effect: StagedEffect) -> bool:
+        observed.append(effect.kind)
+        return False
+
+    monkeypatch.setattr(GitHubEffectAdapter, "observe_postcondition", missing_checkpoint)
+    assert not effects.consequence_postconditions_complete(
+        raw,
+        source=source,
+        repository="royhsu-work/investment-strategy",
+        token=_TEST_TOKEN,
+        current_revision=_REVISION,
+        authorized_change=change,
+        request_comment_id=6019133874,
+        accepted_authorization_revision="ac7aebd7c2ac81b3227986350544307cadb221cc",
+        accepted_intent=True,
+    )
+    assert observed == ["issue-comment"]
