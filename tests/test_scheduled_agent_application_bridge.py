@@ -517,9 +517,32 @@ def test_recovery_evidence_continues_only_for_unwritten_precondition_rejection(
         ),
     )
 
+    unknown_source = write_evidence(
+        "unknown-source",
+        EffectRecoveryEvidence(
+            failed_effect_index=0,
+            failed_effect_kind="github-mutation",
+            failed_effect_sha256="e" * 64,
+            completed_effect_indexes=(),
+            completed_effect_sha256=(),
+            mutation_status="not-complete",
+            unfinished_boundary="effect-precondition",
+            rejection=ApplicationRejection(
+                ApplicationRejectionKind.OBSERVATION_UNQUALIFIED,
+                '{"materialization_proof":["COMPLETE","INCOMPLETE"],"accepted_intent":true}',
+                '{"disposition":"UNKNOWN","reason":"GitHub source unreadable"}',
+            ),
+        ),
+    )
+
     assert safe["continuation_eligible"] is True
     assert partial["continuation_eligible"] is False
     assert unknown_postcondition["continuation_eligible"] is False
+    assert unknown_source["continuation_eligible"] is False
+    assert (
+        unknown_source["failure_evidence"]["rejection"]["classification"]
+        == "observation-unqualified"
+    )
 
 
 def test_main_accepts_only_a_fresh_continuation_transport(
