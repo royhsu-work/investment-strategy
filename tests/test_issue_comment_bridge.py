@@ -4475,10 +4475,12 @@ def test_preactcept_cancel_before_apply_job_is_terminal_no_accept(
         (2, "cancelled", 0),
         (1, "cancelled", None),
         (1, "cancelled", 1),
+        (True, "cancelled", 0),
+        (1.0, "cancelled", 0),
     ],
 )
 def test_unqualified_no_apply_job_never_proves_terminal_no_accept(
-    run_attempt: int,
+    run_attempt: int | float | bool,
     conclusion: str,
     total_count: int | None,
 ) -> None:
