@@ -1106,11 +1106,7 @@ def _preaccept_application_state(
             request_comment_id=request_comment_id,
         )
     raw_jobs = cast(list[object], jobs_payload["jobs"])
-    jobs = [
-        item
-        for item in raw_jobs
-        if isinstance(item, Mapping) and item.get("name") == "apply"
-    ]
+    jobs = [item for item in raw_jobs if isinstance(item, Mapping) and item.get("name") == "apply"]
     if not jobs:
         # Capacity cancellation can finish before GitHub creates an apply job.
         # Only a complete first-attempt inventory proves zero apply executions.
@@ -1121,8 +1117,7 @@ def _preaccept_application_state(
             and type(total_count) is int
             and total_count == len(raw_jobs)
             and all(
-                isinstance(item, Mapping) and isinstance(item.get("name"), str)
-                for item in raw_jobs
+                isinstance(item, Mapping) and isinstance(item.get("name"), str) for item in raw_jobs
             )
         ):
             return ApplicationCompletion(
