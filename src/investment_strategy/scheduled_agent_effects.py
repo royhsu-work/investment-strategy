@@ -3074,40 +3074,54 @@ class GitHubEffectAdapter:
         return "\n".join(lines) + suffix
 
     def _existing_issue_comment(self, body: str) -> int | None:
-        # A lost write response must not become a duplicate POST.  Exhaust the
-        # entire paginated issue history before treating one match as unique or
-        # the absence of a match as proven.  A failed read is not absence.
-        page = 1
-        matching_id: int | None = None
-        seen_ids: set[int] = set()
-        while True:
-            page_suffix = "" if page == 1 else f"&page={page}"
-            payload = _github_json(
-                self.repository,
-                self.token,
-                "issues/"
-                f"{self.source.issue_number}/comments?per_page=100&sort=created"
-                f"&direction=desc{page_suffix}",
-            )
-            if not isinstance(payload, list):
-                raise RuntimeError("issue-comment recovery listing is incomplete")
-            for item in payload:
-                if not isinstance(item, Mapping):
-                    raise RuntimeError("issue-comment recovery listing is malformed")
-                comment_id = _positive_comment_id(item.get("id"))
-                if comment_id is None:
-                    raise RuntimeError("issue-comment recovery listing identity is invalid")
-                if comment_id in seen_ids:
-                    raise RuntimeError("issue-comment recovery listing identity is duplicated")
-                seen_ids.add(comment_id)
-                if item.get("body") != body or not is_github_actions_comment(item):
-                    continue
-                if matching_id is not None:
-                    raise RuntimeError("issue-comment recovery evidence is duplicated")
-                matching_id = comment_id
-            if len(payload) < 100:
-                return matching_id
-            page += 1
+        # Offset pagination is not a snapshot.  Compare two exhaustive
+        # enumerations before treating absence/uniqueness as durable evidence.
+        # The application write job is serialized with sibling applications;
+        # without that boundary a successful read alone cannot authorize POST.
+        def snapshot() -> tuple[tuple[tuple[int, str, bool], ...], int | None]:
+            page = 1
+            matching_id: int | None = None
+            seen_ids: set[int] = set()
+            observed: list[tuple[int, str, bool]] = []
+            while True:
+                page_suffix = "" if page == 1 else f"&page={page}"
+                payload = _github_json(
+                    self.repository,
+                    self.token,
+                    "issues/"
+                    f"{self.source.issue_number}/comments?per_page=100&sort=created"
+                    f"&direction=desc{page_suffix}",
+                )
+                if not isinstance(payload, list):
+                    raise RuntimeError("issue-comment recovery listing is incomplete")
+                for item in payload:
+                    if not isinstance(item, Mapping):
+                        raise RuntimeError("issue-comment recovery listing is malformed")
+                    comment_id = _positive_comment_id(item.get("id"))
+                    if comment_id is None:
+                        raise RuntimeError("issue-comment recovery listing identity is invalid")
+                    if comment_id in seen_ids:
+                        raise RuntimeError("issue-comment recovery listing identity is duplicated")
+                    seen_ids.add(comment_id)
+                    comment_body = item.get("body")
+                    if not isinstance(comment_body, str):
+                        raise RuntimeError("issue-comment recovery listing body is invalid")
+                    trusted = is_github_actions_comment(item)
+                    observed.append((comment_id, comment_body, trusted))
+                    if comment_body != body or not trusted:
+                        continue
+                    if matching_id is not None:
+                        raise RuntimeError("issue-comment recovery evidence is duplicated")
+                    matching_id = comment_id
+                if len(payload) < 100:
+                    return tuple(observed), matching_id
+                page += 1
+
+        first, match = snapshot()
+        second, second_match = snapshot()
+        if first != second or match != second_match:
+            raise RuntimeError("issue-comment recovery listing changed during read")
+        return match
 
     def _persist_application_evidence_comment(
         self,
