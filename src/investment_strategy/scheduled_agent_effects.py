@@ -2402,9 +2402,16 @@ class GitHubEffectAdapter:
                 allow_pending_continuation=self.allow_pending_continuation,
                 accepted_intent=self.accepted_intent,
             )
-            if proof.disposition == "CONTRADICTORY":
+            if proof.disposition in {"CONTRADICTORY", "UNKNOWN"}:
+                # Unavailable source evidence is not an observed failed
+                # precondition; it must not authorize a fresh continuation.
+                classification = (
+                    ApplicationRejectionKind.OBSERVATION_UNQUALIFIED
+                    if proof.disposition == "UNKNOWN"
+                    else ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED
+                )
                 self._last_rejection = ApplicationRejection(
-                    ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+                    classification,
                     expected=json.dumps(
                         {
                             "materialization_proof": ["COMPLETE", "INCOMPLETE"],
