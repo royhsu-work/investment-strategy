@@ -73,6 +73,8 @@ Trace: #322 Step 1 execution record and current-source same-path refusal -> exac
 - [ ] 0.39 VERIFY: run integrated bridge regressions, remote Python Quality, strict OpenSpec validation, and an independent review on the exact final head.
 - [ ] 0.40 RED/GREEN: keep the unarchived application-recovery JSON consumer compatible while making artifact file basename and configured name match, and enable safe replacement on both initial/final uploads and workflow reruns; prove the exact artifact identity and workflow contract together.
 
+- [ ] 0.41 VERIFY source-read UNKNOWN: preserve `UNKNOWN(reason)` separately from observed `CONTRADICTORY(reason)` at the canonical materialization proof, prove read-failure NO_WRITE and no false COMPLETE/INCOMPLETE, verify every effect/completion consumer, and obtain the applicable formal Lead-owned OpenSpec semantic gate and independent exact-revision review before integration/merge. Existing approved Recovery Exit and later unattended gates remain mandatory.
+
 ## 1. Contract and typed NO_WORK handoff
 
 - [x] 1.1 RED/GREEN: add contract tests proving `AUTHORIZE` and `FAIL_CLOSED` never enter idle, while one exact completed `NO_WORK` artifact can invoke one bounded Lead idle semantic request.
