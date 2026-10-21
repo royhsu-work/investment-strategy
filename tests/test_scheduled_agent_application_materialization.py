@@ -3009,3 +3009,30 @@ def test_six_file_322_shape_preserves_witness_after_second_legal_commit(
     assert successor.witness is not None and successor.witness.revision == first_commit
     assert successor.witness.revisions.mutation_preimage == initial_parent
     assert proof_git.mutations == []
+
+
+def test_canonical_unavailable_github_observation_is_unknown_not_conflict(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unknown read is neither a safe missing effect nor a proven conflict."""
+    accepted = proof_git.commit(
+        {proof_git.path: "accepted content"}, proof_git.message, (proof_git.base,)
+    )
+    proof_git.set_head(accepted)
+    api = proof_git.api
+
+    def unavailable(repository: str, token: str, path: str, **kwargs: object) -> object:
+        if path == "issues/322":
+            raise OSError("authoritative issue observation unavailable")
+        return api(repository, token, path, **kwargs)
+
+    monkeypatch.setattr(materialization, "_github_json", unavailable)
+    proof = _prove_git(proof_git)
+    assert proof.disposition == "UNKNOWN", proof
+    assert proof.witness is None
+    assert proof.target is None
+    assert proof.reason == "authoritative issue observation unavailable"
+    with pytest.raises(RuntimeError, match="authoritative issue observation unavailable"):
+        _apply_git(proof_git)
+    assert proof_git.mutations == []
