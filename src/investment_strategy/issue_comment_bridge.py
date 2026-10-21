@@ -1116,7 +1116,8 @@ def _preaccept_application_state(
         # Only a complete first-attempt inventory proves zero apply executions.
         total_count = jobs_payload.get("total_count")
         if (
-            run.get("run_attempt") == 1
+            conclusion in {"cancelled", "timed_out", "skipped"}
+            and run.get("run_attempt") == 1
             and type(total_count) is int
             and total_count == len(raw_jobs)
             and all(
