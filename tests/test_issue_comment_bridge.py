@@ -4504,3 +4504,48 @@ def test_unqualified_no_apply_job_never_proves_terminal_no_accept(
     )
     assert result is not None
     assert result.state == "INVALID"
+
+@pytest.mark.parametrize(
+    ("job_ids", "expected_state"),
+    [
+        ((2101, 2101), "INVALID"),
+        ((2101, None), "INVALID"),
+        ((2101, 2102), "REJECTED"),
+    ],
+)
+def test_no_apply_job_inventory_requires_unique_positive_ids(
+    job_ids: tuple[int | None, int | None],
+    expected_state: str,
+) -> None:
+    """A complete no-apply inventory must identify every job uniquely."""
+    request_id = 67891
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 90021,
+                        "display_title": f"Scheduled Agent Application {request_id}",
+                        "run_attempt": 1,
+                        "status": "completed",
+                        "conclusion": "cancelled",
+                    }
+                ]
+            }
+        if path == "actions/runs/90021/jobs":
+            return {
+                "total_count": 2,
+                "jobs": [
+                    {"id": job_ids[0], "name": "prepare"},
+                    {"id": job_ids[1], "name": "idle-admission"},
+                ],
+            }
+        raise AssertionError(path)
+
+    result = bridge._preaccept_application_state(
+        "royhsu-work/investment-strategy", "token", request_id, read=read
+    )
+    assert result is not None
+    assert result.state == expected_state
+
