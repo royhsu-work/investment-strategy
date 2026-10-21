@@ -4765,10 +4765,35 @@ def test_legacy_322_completed_materialization_does_not_launder_unknown_checkpoin
         "message": "Bind slice checkpoints to materialized revision",
         "files": [
             {
+                "path": "openspec/changes/restore-no-work-idle-discovery/tasks.md",
+                "blob_sha": "2594608f200ebc1789ed6cccd5b56d4824aeaa7f",
+                "expected_sha": "2594608f200ebc1789ed6cccd5b56d4824aeaa7f",
+            },
+            {
+                "path": "src/investment_strategy/scheduled_agent_application_bridge.py",
+                "blob_sha": "881225c59e1567b86722d2cb7ef28b62afc8e668",
+                "expected_sha": "dbc17a3e0f7c55a677432d2d53e377fa86ac4435",
+            },
+            {
+                "path": "src/investment_strategy/scheduled_agent_effects.py",
+                "blob_sha": "111aa2e1ac595c6fc14d685ad6d92fafcbc56a66",
+                "expected_sha": "f54065ad27c4a9da17a0c61a5b2d332ba18f73a2",
+            },
+            {
+                "path": "src/investment_strategy/scheduled_agent_merge_acceptance.py",
+                "blob_sha": "ef87c30b0788411d9e3f53d7ae61584657b49f39",
+                "expected_sha": "4d3f943a2654b3ee55f63c12eea4feca4545c422",
+            },
+            {
+                "path": "tests/test_scheduled_agent_application_bridge.py",
+                "blob_sha": "0aec9fcd9513c7779a40430e39a299a849972a17",
+                "expected_sha": "1dcb0527e9e6b2807050636dafaea777c78455ba",
+            },
+            {
                 "path": "tests/test_scheduled_agent_effects.py",
                 "blob_sha": "06a50d199f655af8fa082cd9352bf6c883dad35e",
                 "expected_sha": "a84065b222bb18b8adb56113b866484743f0e1a2",
-            }
+            },
         ],
         "pr_number": 353,
     }
