@@ -2798,3 +2798,14 @@ def test_cli_checkpoint_revision_is_bound_to_fresh_proven_target_not_unverified_
         )
         == 2
     )
+
+
+def test_application_apply_job_uses_bounded_pending_queue() -> None:
+    """Application serialization must not replace normal queued effect requests."""
+    workflow = Path(".github/workflows/scheduled-agent-application.yml").read_text(encoding="utf-8")
+    assert workflow.count("  apply:\n") == 1
+    apply_header = workflow.split("  apply:\n", 1)[1].split("    permissions:", 1)[0]
+    assert "    concurrency:" in apply_header
+    assert "group: scheduled-agent-effect-apply-${{ github.repository }}" in apply_header
+    assert "cancel-in-progress: false" in apply_header
+    assert "queue: max" in apply_header
