@@ -30,6 +30,7 @@ from investment_strategy.scheduled_agent_carrier import (
 )
 from investment_strategy.scheduled_agent_runtime import WorkerRequest
 from investment_strategy.scheduled_agent_validation_resource import (
+    IncompleteGitHubObservation as _IncompleteGitHubObservation,
     ValidationResourcePlan,
     ValidationResourceTarget,
     WorkProductFile,
@@ -136,10 +137,6 @@ class MaterializationProof:
             raise ValueError("unproved materialization cannot carry a target or witness")
         elif self.disposition in {"CONTRADICTORY", "UNKNOWN"} and not self.reason:
             raise ValueError("unproved materialization requires a reason")
-
-
-class _IncompleteGitHubObservation(RuntimeError):
-    """An authoritative GitHub source is insufficient to decide effect truth."""
 
 
 def _positive_int(value: object) -> int | None:
