@@ -18,12 +18,19 @@ from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
+from investment_strategy.human_authority import (
+    decision_comment_from_raw,
+    is_human_decision_approved,
+    label_event_from_raw,
+    parse_decision_ref,
+)
 from investment_strategy.scheduled_agent_action_model import Action as ModelAction
 from investment_strategy.scheduled_agent_action_model import next_action, role_for
 from investment_strategy.scheduled_agent_application_bridge import (
     ApplicationContinuationRequest,
     ApplicationRecoveryArtifact,
     ApplicationRequest,
+    _application_owned_worker_result,
     application_continuation_correlation,
     dispatch_correlation_for,
     parse_application_continuation_request,
@@ -43,6 +50,7 @@ from investment_strategy.scheduled_agent_carrier import (
 from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
 from investment_strategy.scheduled_agent_effects import (
     ApplicationDecisionRecord,
+    ApplyResult,
     consequence_postconditions_complete,
     merged_pr_readiness_complete,
     parse_application_decision,
@@ -54,6 +62,7 @@ from investment_strategy.scheduled_agent_formal_qualification import (
     qualify_current_formal_consequence,
 )
 from investment_strategy.scheduled_agent_formal_result import parse_formal_result
+from investment_strategy.scheduled_agent_merge_acceptance import run_guarded_effect_application
 from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
     acquire_current_github_preflight,
@@ -124,6 +133,1040 @@ class ApplicationCompletion:
     job_id: int | None = None
     qualified_carrier: QualifiedCarrierPlan | None = None
     recovery_artifact: ApplicationRecoveryArtifact | None = None
+
+
+RecoveryPredicate = Literal["COMPLETE", "INCOMPLETE", "UNKNOWN", "CONFLICT"]
+
+
+@dataclass(frozen=True)
+class RecoveryReviewAdoption:
+    """A source-qualified semantic review; never a synthetic REVIEW_RESULT."""
+
+    disposition: RecoveryPredicate
+    reason: str
+    review_id: str | None = None
+    revision: str | None = None
+
+
+@dataclass(frozen=True)
+class RecoveryPreFormalQualification:
+    """Fixed predicate results for an accepted #322 READY, before formal persistence."""
+
+    disposition: RecoveryPredicate
+    predicates: tuple[tuple[str, RecoveryPredicate], ...]
+
+    @property
+    def blocking_predicates(self) -> tuple[str, ...]:
+        return tuple(name for name, status in self.predicates if status != "COMPLETE")
+
+
+def _recovery_predicate_result(
+    predicates: Mapping[str, RecoveryPredicate],
+) -> RecoveryPreFormalQualification:
+    """Use the fixed I/R/M/V/S/F set; never accept a model verdict."""
+
+    if set(predicates) != {"I", "R", "M", "V", "S", "F"}:
+        raise ValueError("recovery predicate set is incomplete")
+    ordered = tuple((name, predicates[name]) for name in ("I", "R", "M", "V", "S", "F"))
+    for disposition in ("CONFLICT", "UNKNOWN", "INCOMPLETE", "COMPLETE"):
+        if disposition in predicates.values():
+            return RecoveryPreFormalQualification(cast(RecoveryPredicate, disposition), ordered)
+    raise ValueError("recovery predicate state is invalid")
+
+
+def _strictest_recovery_status(*statuses: RecoveryPredicate) -> RecoveryPredicate:
+    for status in ("CONFLICT", "UNKNOWN", "INCOMPLETE", "COMPLETE"):
+        if status in statuses:
+            return cast(RecoveryPredicate, status)
+    raise ValueError("recovery predicate state is invalid")
+
+
+def _recovery_task_disposition(raw_tasks: object) -> RecoveryPredicate:
+    """Check exact current approved task markers; never infer READY from prose."""
+
+    if not isinstance(raw_tasks, str):
+        return "UNKNOWN"
+    if "## 0G. Forward Recovery" not in raw_tasks or "0.42 **RED:**" not in raw_tasks:
+        return "CONFLICT"
+    if re.search(r"(?m)^\s*- \[ \] \d+(?:\.\d+)?\s", raw_tasks):
+        return "INCOMPLETE"
+    if not all(f"- [x] {task}" in raw_tasks for task in ("0.42", "0.43", "0.44")):
+        return "INCOMPLETE"
+    return "COMPLETE"
+
+
+_RECOVERY_REVIEW_MARKER = "RECOVERY_OPENSPEC_REVIEW"
+_RECOVERY_REVIEW_FIELDS = (
+    "Repository",
+    "Issue",
+    "Change",
+    "PR",
+    "Revision",
+    "Baseline",
+    "Human-Decision-Comment",
+    "Validator-Run",
+    "Disposition",
+)
+_RECOVERY_NORMATIVE_PREFIXES = (
+    "openspec/config.yaml",
+    "openspec/specs/",
+    "openspec/changes/restore-no-work-idle-discovery/proposal.md",
+    "openspec/changes/restore-no-work-idle-discovery/design.md",
+    "openspec/changes/restore-no-work-idle-discovery/specs/",
+    "agents/AGENTS.md",
+    "agents/workflow.md",
+    "agents/roles/",
+    "agents/skills/",
+)
+
+
+def _recovery_review_receipt(body: object) -> dict[str, str] | None:
+    """Parse only the spec's ordered receipt, never prose semantic equivalence."""
+
+    if not isinstance(body, str):
+        return None
+    lines = body.splitlines()
+    if len(lines) < 10 or lines[0] != _RECOVERY_REVIEW_MARKER:
+        return None
+    fields: dict[str, str] = {}
+    for field, line in zip(_RECOVERY_REVIEW_FIELDS, lines[1:10], strict=True):
+        prefix = f"{field}: "
+        if not line.startswith(prefix):
+            return None
+        value = line[len(prefix) :]
+        if not value or value != value.strip():
+            return None
+        fields[field] = value
+    if len(lines) > 10 and lines[10] not in {"", "---"}:
+        return None
+    if (
+        _SHA.fullmatch(fields["Revision"]) is None
+        or _SHA.fullmatch(fields["Baseline"]) is None
+        or _positive_int_string(fields["Issue"]) is None
+        or _positive_int_string(fields["PR"]) is None
+        or _positive_int_string(fields["Human-Decision-Comment"]) is None
+        or _positive_int_string(fields["Validator-Run"]) is None
+        or fields["Disposition"] not in {"PASS", "FINDINGS"}
+    ):
+        return None
+    return fields
+
+
+def _recovery_review_log_proves_checkout(log: str, repository: str, revision: str) -> bool:
+    """Require executed checkout identity and successful strict validation output."""
+
+    def exact_output(field: str, value: str) -> bool:
+        found = re.findall(
+            rf"(?m)^(?:\d{{4}}-\d\d-\d\dT\S+Z )?{re.escape(field)}=([^\s\r\n]+)$",
+            log,
+        )
+        return bool(found) and all(item == value for item in found)
+
+    return (
+        exact_output("validation_target_repository", repository)
+        and exact_output("validation_target_sha", revision)
+        and exact_output("validator_checkout_head", revision)
+        and "Run openspec validate --all --strict --json --no-interactive" in log
+        and re.search(r'"totals"\s*:\s*\{', log) is not None
+        and re.search(r'"passed"\s*:\s*[1-9]\d*', log) is not None
+        and re.search(r'"failed"\s*:\s*0\b', log) is not None
+    )
+
+
+def qualify_recovery_openspec_review(
+    *,
+    repository: str,
+    issue_number: int,
+    change: str,
+    pr_number: int,
+    head_sha: str,
+    approval_label_present: bool,
+    reviews: object,
+    commit: object,
+    original_human_comment: object,
+    issue_comments: object,
+    events: object,
+    validator: object,
+    validator_job: object,
+    validator_log: object,
+    comparison: object,
+    baseline_comparison: object,
+    reviewed_blobs: object,
+    current_blobs: object,
+    threads: object,
+) -> RecoveryReviewAdoption:
+    """Adopt one independent exact-R semantic PR review as evidence for V only.
+
+    Callers must supply complete freshly paginated GitHub source collections and
+    the actual validator job log. No model decision or formal result is consumed.
+    """
+
+    unknown = RecoveryReviewAdoption("UNKNOWN", "recovery-review-source-incomplete")
+    conflict = RecoveryReviewAdoption("CONFLICT", "recovery-review-source-conflict")
+    if (
+        repository != "royhsu-work/investment-strategy"
+        or issue_number != 322
+        or change != "restore-no-work-idle-discovery"
+        or pr_number != 340
+        or _SHA.fullmatch(head_sha) is None
+    ):
+        return conflict
+    if (
+        not isinstance(reviews, (list, tuple))
+        or not isinstance(commit, Mapping)
+        or not isinstance(original_human_comment, Mapping)
+        or not isinstance(issue_comments, (list, tuple))
+        or not isinstance(events, (list, tuple))
+        or not isinstance(validator, Mapping)
+        or not isinstance(validator_job, Mapping)
+        or not isinstance(validator_log, str)
+        or not isinstance(comparison, Mapping)
+        or not isinstance(baseline_comparison, Mapping)
+        or not isinstance(reviewed_blobs, Mapping)
+        or not isinstance(current_blobs, Mapping)
+        or not isinstance(threads, (list, tuple))
+    ):
+        return unknown
+    candidates: list[tuple[Mapping[str, object], dict[str, str]]] = []
+    for raw_review in reviews:
+        if not isinstance(raw_review, Mapping):
+            return unknown
+        review_body = raw_review.get("body")
+        if not isinstance(review_body, str):
+            return unknown
+        if not review_body.startswith(_RECOVERY_REVIEW_MARKER):
+            continue
+        receipt = _recovery_review_receipt(review_body)
+        if receipt is None:
+            return conflict
+        candidates.append((raw_review, receipt))
+    if not candidates:
+        return unknown
+    # A later FINDINGS receipt is not neutralized by earlier PASS, and two
+    # claimed PASS sources for one exact semantic R are not a unique review.
+    matching = [
+        (review, receipt)
+        for review, receipt in candidates
+        if receipt["Repository"] == repository
+        and receipt["Issue"] == str(issue_number)
+        and receipt["Change"] == change
+        and receipt["PR"] == str(pr_number)
+    ]
+    if not matching:
+        return conflict
+    if len(matching) != 1:
+        return conflict
+    review, receipt = matching[0]
+    revision = receipt["Revision"]
+    review_id = review.get("node_id")
+    user = review.get("user")
+    author = commit.get("author")
+    submitted_at = review.get("submitted_at")
+    if (
+        not isinstance(review_id, str)
+        or not review_id.startswith("PRR_")
+        or not isinstance(user, Mapping)
+        or not isinstance(author, Mapping)
+        or not isinstance(user.get("login"), str)
+        or not isinstance(author.get("login"), str)
+        or not isinstance(submitted_at, str)
+    ):
+        return unknown
+    if (
+        receipt["Disposition"] != "PASS"
+        or review.get("commit_id") != revision
+        or review.get("state") not in {"COMMENTED", "APPROVED"}
+        or receipt["Human-Decision-Comment"] != "6313995887"
+        or validator.get("id") != int(receipt["Validator-Run"])
+        or validator.get("conclusion") != "success"
+        or validator_job.get("name") != "validate"
+        or validator_job.get("conclusion") != "success"
+        or not _recovery_review_log_proves_checkout(validator_log, repository, revision)
+    ):
+        return conflict
+    if (
+        baseline_comparison.get("status") != "ahead"
+        or not isinstance(baseline_comparison.get("base_commit"), Mapping)
+        or baseline_comparison["base_commit"].get("sha") != receipt["Baseline"]
+    ):
+        return conflict
+    try:
+        original_human = decision_comment_from_raw(original_human_comment)
+        reviewed_time = datetime.fromisoformat(submitted_at.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return unknown
+    if (
+        original_human.id != 6313995887
+        or original_human.author != "royhsu-work"
+        or not original_human.provenance_available
+        or original_human.performed_via_github_app is not None
+        or original_human.updated_at != original_human.created_at
+        or original_human.created_at >= reviewed_time
+        or "Marker: HUMAN_APPROVED_FORWARD_RECOVERY_CONVERGENCE_20261021"
+        not in original_human.body.splitlines()
+    ):
+        return unknown
+    if revision == head_sha:
+        if comparison.get("status") != "identical":
+            return conflict
+    elif (
+        comparison.get("status") != "ahead"
+        or not isinstance(comparison.get("base_commit"), Mapping)
+        or comparison["base_commit"].get("sha") != revision
+    ):
+        return conflict
+
+    # Compare the complete normative tree, not only files named in the PR diff.
+    # Checked task markers are execution bookkeeping, not normative semantics;
+    # this exact subset excludes tasks.md while preserving reviewed design/specs.
+    def normative(path: object) -> bool:
+        return isinstance(path, str) and path.startswith(_RECOVERY_NORMATIVE_PREFIXES)
+
+    old = {key: value for key, value in reviewed_blobs.items() if normative(key)}
+    current = {key: value for key, value in current_blobs.items() if normative(key)}
+    if not old or not current:
+        return unknown
+    if any(
+        not isinstance(value, str) or _SHA.fullmatch(value) is None
+        for value in (*old.values(), *current.values())
+    ):
+        return unknown
+    if old != current:
+        return conflict
+    for thread in threads:
+        if not isinstance(thread, Mapping) or not isinstance(thread.get("comments"), list):
+            return unknown
+        for comment in cast(list[object], thread["comments"]):
+            if not isinstance(comment, Mapping) or not isinstance(comment.get("body"), str):
+                return unknown
+            if (
+                "RECOVERY_OPENSPEC_FINDING" in cast(str, comment["body"])
+                and not thread.get("is_resolved")
+                and not thread.get("is_outdated")
+            ):
+                return conflict
+    if user["login"] == author["login"]:
+        expected_ref = f"issue:322:recovery-openspec-review:{revision}:{review_id}"
+        try:
+            comments = tuple(
+                decision_comment_from_raw(cast(Mapping[str, object], item))
+                for item in issue_comments
+            )
+            label_events = tuple(
+                label_event_from_raw(cast(Mapping[str, object], item))
+                for item in events
+                if isinstance(item, Mapping) and item.get("event") == "labeled"
+            )
+        except (TypeError, ValueError):
+            return unknown
+        bound = tuple(c for c in comments if parse_decision_ref(c.body) == expected_ref)
+        if len(bound) > 1:
+            return conflict
+        if len(bound) != 1:
+            return unknown
+        attestation = bound[0]
+        if (
+            attestation.created_at <= reviewed_time
+            or attestation.updated_at != attestation.created_at
+            or attestation.body.splitlines().count(
+                "Recovery-Review-Independence: separately-reviewed"
+            )
+            != 1
+            or not is_human_decision_approved(
+                expected_ref=expected_ref,
+                approval_label_present=approval_label_present,
+                comments=comments,
+                label_events=label_events,
+            )
+        ):
+            return unknown
+        bound_events = tuple(
+            event
+            for event in label_events
+            if event.actor == "royhsu-work"
+            and event.label == "human:approved"
+            and event.provenance_available
+            and event.performed_via_github_app is None
+            and event.created_at > attestation.created_at
+        )
+        if len(bound_events) != 1:
+            return conflict if len(bound_events) > 1 else unknown
+    return RecoveryReviewAdoption("COMPLETE", "recovery-review-adopted", review_id, revision)
+
+
+def _github_job_log(repository: str, token: str, job_id: int) -> str:
+    """Read the executed validator log; its run HEAD alone is not checkout proof."""
+
+    request = Request(  # noqa: S310 - fixed GitHub REST host
+        f"https://api.github.com/repos/{repository}/actions/jobs/{job_id}/logs",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed GitHub API redirect
+        return response.read().decode("utf-8")
+
+
+def _github_review_threads(repository: str, token: str, pr_number: int) -> list[dict[str, object]]:
+    """Exhaustive GraphQL review threads, including resolution and comment pagination."""
+
+    owner, name = repository.split("/", 1)
+    query = """
+    query($owner: String!, $name: String!, $number: Int!, $after: String) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100, after: $after) {
+            nodes {
+              isResolved
+              isOutdated
+              comments(first: 100) {
+                nodes { body }
+                pageInfo { hasNextPage }
+              }
+            }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }
+    """
+    cursor: str | None = None
+    threads: list[dict[str, object]] = []
+    while True:
+        payload = json.dumps(
+            {
+                "query": query,
+                "variables": {"owner": owner, "name": name, "number": pr_number, "after": cursor},
+            }
+        ).encode("utf-8")
+        request = Request(  # noqa: S310 - fixed GitHub GraphQL host
+            "https://api.github.com/graphql",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+        )
+        with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed host
+            result = json.loads(response.read().decode("utf-8"))
+        if not isinstance(result, Mapping) or result.get("errors"):
+            raise RuntimeError("review thread observation incomplete")
+        data = result.get("data")
+        repo = data.get("repository") if isinstance(data, Mapping) else None
+        pr = repo.get("pullRequest") if isinstance(repo, Mapping) else None
+        connection = pr.get("reviewThreads") if isinstance(pr, Mapping) else None
+        nodes = connection.get("nodes") if isinstance(connection, Mapping) else None
+        page = connection.get("pageInfo") if isinstance(connection, Mapping) else None
+        if not isinstance(nodes, list) or not isinstance(page, Mapping):
+            raise RuntimeError("review thread pagination incomplete")
+        for node in nodes:
+            if not isinstance(node, Mapping):
+                raise RuntimeError("review thread identity incomplete")
+            comment_connection = node.get("comments")
+            if not isinstance(comment_connection, Mapping):
+                raise RuntimeError("review thread comments incomplete")
+            comment_page = comment_connection.get("pageInfo")
+            comments = comment_connection.get("nodes")
+            if (
+                not isinstance(comment_page, Mapping)
+                or comment_page.get("hasNextPage") is not False
+                or not isinstance(comments, list)
+            ):
+                raise RuntimeError("review thread comment pagination incomplete")
+            threads.append(
+                {
+                    "is_resolved": node.get("isResolved"),
+                    "is_outdated": node.get("isOutdated"),
+                    "comments": comments,
+                }
+            )
+        if page.get("hasNextPage") is False:
+            return threads
+        cursor = page.get("endCursor") if isinstance(page.get("endCursor"), str) else None
+        if not cursor:
+            raise RuntimeError("review thread cursor missing")
+
+
+def _recovery_normative_blobs(
+    repository: str,
+    token: str,
+    revision: str,
+    *,
+    read: GitHubReader,
+) -> dict[str, str]:
+    commit = read(repository, token, f"git/commits/{revision}")
+    tree = commit.get("tree") if isinstance(commit, Mapping) else None
+    tree_sha = tree.get("sha") if isinstance(tree, Mapping) else None
+    if not isinstance(tree_sha, str) or _SHA.fullmatch(tree_sha) is None:
+        raise RuntimeError("normative commit tree identity unavailable")
+    listing = read(repository, token, f"git/trees/{tree_sha}?recursive=1")
+    if (
+        not isinstance(listing, Mapping)
+        or listing.get("truncated") is not False
+        or not isinstance(listing.get("tree"), list)
+    ):
+        raise RuntimeError("normative tree enumeration incomplete")
+    blobs: dict[str, str] = {}
+    for item in cast(list[object], listing["tree"]):
+        if not isinstance(item, Mapping):
+            raise RuntimeError("normative tree entry malformed")
+        path = item.get("path")
+        sha = item.get("sha")
+        if not isinstance(path, str) or not isinstance(sha, str):
+            raise RuntimeError("normative tree entry unavailable")
+        if item.get("type") == "blob" and path.startswith(_RECOVERY_NORMATIVE_PREFIXES):
+            if path in blobs or _SHA.fullmatch(sha) is None:
+                raise RuntimeError("normative tree identity ambiguous")
+            blobs[path] = sha
+    return blobs
+
+
+def read_recovery_openspec_review(
+    repository: str,
+    token: str,
+    *,
+    head_sha: str,
+    approval_label_present: bool,
+    issue_comments: tuple[Mapping[str, object], ...],
+    read: GitHubReader | None = None,
+    log_read: Callable[[str, str, int], str] = _github_job_log,
+    thread_read: Callable[[str, str, int], list[dict[str, object]]] = _github_review_threads,
+) -> RecoveryReviewAdoption:
+    """Existing bridge's fresh source-reader for the bounded #322 review gate."""
+
+    unknown = RecoveryReviewAdoption("UNKNOWN", "recovery-review-source-unavailable")
+    source_read = _github_json if read is None else read
+    try:
+        reviews = _paged_list(repository, token, "pulls/340/reviews", read=source_read)
+        receipts = [
+            receipt
+            for item in reviews
+            if (receipt := _recovery_review_receipt(item.get("body"))) is not None
+        ]
+        if len(receipts) != 1:
+            return (
+                RecoveryReviewAdoption("CONFLICT", "recovery-review-receipt-cardinality")
+                if receipts
+                else unknown
+            )
+        revision = receipts[0]["Revision"]
+        run_id = int(receipts[0]["Validator-Run"])
+        commit = source_read(repository, token, f"commits/{revision}")
+        human = source_read(repository, token, "issues/comments/6313995887")
+        events = _paged_list(repository, token, "issues/322/timeline", read=source_read)
+        validator = source_read(repository, token, f"actions/runs/{run_id}")
+        jobs = source_read(repository, token, f"actions/runs/{run_id}/jobs?per_page=100")
+        if (
+            not isinstance(jobs, Mapping)
+            or not isinstance(jobs.get("jobs"), list)
+            or jobs.get("total_count") != len(jobs["jobs"])
+        ):
+            return unknown
+        validate_jobs = [
+            item
+            for item in jobs["jobs"]
+            if isinstance(item, Mapping) and item.get("name") == "validate"
+        ]
+        if len(validate_jobs) != 1:
+            return unknown
+        job = validate_jobs[0]
+        job_id = _positive_int(job.get("id"))
+        if job_id is None:
+            return unknown
+        log = log_read(repository, token, job_id)
+        comparison = (
+            {"status": "identical"}
+            if revision == head_sha
+            else source_read(repository, token, f"compare/{revision}...{head_sha}")
+        )
+        baseline_comparison = source_read(
+            repository, token, f"compare/{receipts[0]['Baseline']}...{revision}"
+        )
+        reviewed_blobs = _recovery_normative_blobs(repository, token, revision, read=source_read)
+        current_blobs = (
+            reviewed_blobs
+            if revision == head_sha
+            else _recovery_normative_blobs(repository, token, head_sha, read=source_read)
+        )
+        threads = thread_read(repository, token, 340)
+    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+        return unknown
+    return qualify_recovery_openspec_review(
+        repository=repository,
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+        pr_number=340,
+        head_sha=head_sha,
+        approval_label_present=approval_label_present,
+        reviews=reviews,
+        commit=commit,
+        original_human_comment=human,
+        issue_comments=issue_comments,
+        events=events,
+        validator=validator,
+        validator_job=job,
+        validator_log=log,
+        comparison=comparison,
+        baseline_comparison=baseline_comparison,
+        reviewed_blobs=reviewed_blobs,
+        current_blobs=current_blobs,
+        threads=threads,
+    )
+
+
+_ORIGINAL_322_REQUEST = 6019133874
+_ORIGINAL_322_DECISION_DIGEST = "9c545558249285ec6d4fa632970dfa7157774d75bf2b6e46889e240a175cbd54"
+
+
+def qualify_original_322_pre_formal(
+    *,
+    repository: str,
+    token: str,
+    source: WorkerRequest,
+    record: ApplicationDecisionRecord,
+    issue_comments: tuple[Mapping[str, object], ...],
+    current_issue: Mapping[str, object],
+    current_revision: str,
+    read: GitHubReader,
+    review_read: Callable[..., RecoveryReviewAdoption] = read_recovery_openspec_review,
+    log_read: Callable[[str, str, int], str] = _github_job_log,
+    expected_request_id: int = _ORIGINAL_322_REQUEST,
+    expected_decision_digest: str = _ORIGINAL_322_DECISION_DIGEST,
+) -> RecoveryPreFormalQualification:
+    """Reconstruct I/R/M/V/S/F without requiring a prior ACTION_RESULT.
+
+    This is a read-only source gate, not a write authorization by itself.
+    GitHubEffectAdapter still owns fresh CAS, deduplication and postconditions
+    for each eventual effect. Historical checkpoint/materialization uncertainty
+    does not enter the predicate set of a *new*, formal-result-only operation.
+    """
+
+    predicates: dict[str, RecoveryPredicate] = dict.fromkeys(
+        ("I", "R", "M", "V", "S", "F"), "UNKNOWN"
+    )
+    if (
+        repository != "royhsu-work/investment-strategy"
+        or source != WorkerRequest(322, "executor", "implement-change")
+        or record.request_comment_id != expected_request_id
+        or record.issue_number != 322
+        or record.change != "restore-no-work-idle-discovery"
+        or record.disposition != "ACCEPTED"
+        or record.result_kind != "ready"
+    ):
+        predicates["I"] = "CONFLICT"
+        return _recovery_predicate_result(predicates)
+    matched = [
+        item
+        for item in issue_comments
+        if is_github_actions_comment(item)
+        and parse_application_decision(item.get("body")) == record
+    ]
+    # Past completed Action occurrences are history, not competing owners.
+    # Only a new accepted write *after* this original acceptance would be a
+    # competing unresolved application at its current frontier.
+    original_time = _comment_time(matched[0]) if len(matched) == 1 else None
+    other_accepted = [
+        item
+        for item in issue_comments
+        if (decision := parse_application_decision(item.get("body"))) is not None
+        and decision.disposition == "ACCEPTED"
+        and decision.issue_number == 322
+        and decision.request_comment_id != expected_request_id
+        and original_time is not None
+        and ((later_time := _comment_time(item)) is None or later_time >= original_time)
+    ]
+    if (
+        len(matched) != 1
+        or other_accepted
+        or (
+            _accepted_decision_sha256(record, issue_comments) != expected_decision_digest
+            or _application_worker_for_record(record, source) is None
+        )
+    ):
+        predicates["I"] = "CONFLICT"
+    else:
+        predicates["I"] = "COMPLETE"
+
+    observation = normalize_github_issue(current_issue)
+    if observation is None or not observation.authoritative:
+        predicates["R"] = "UNKNOWN"
+    elif (
+        observation.issue_number != 322
+        or observation.change != record.change
+        or observation.state != "open"
+        or observation.routing
+        not in {("executor", "implement-change"), ("reviewer", "review-implementation")}
+    ):
+        predicates["R"] = "CONFLICT"
+    else:
+        try:
+            worker = _application_worker_for_record(record, source)
+            successor = (
+                None
+                if worker is None
+                else next_action(worker.typed_result.action, worker.typed_result.result)
+            )
+            predicates["R"] = (
+                "COMPLETE" if successor == ModelAction.REVIEW_IMPLEMENTATION else "CONFLICT"
+            )
+        except (TypeError, ValueError):
+            predicates["R"] = "CONFLICT"
+
+    pr = read(repository, token, "pulls/340")
+    head_sha: str | None = None
+    if not isinstance(pr, Mapping):
+        predicates["M"] = "UNKNOWN"
+    else:
+        head = pr.get("head")
+        base = pr.get("base")
+        head_repo = head.get("repo") if isinstance(head, Mapping) else None
+        base_repo = base.get("repo") if isinstance(base, Mapping) else None
+        head_sha = head.get("sha") if isinstance(head, Mapping) else None
+        if (
+            pr.get("number") != 340
+            or pr.get("state") != "open"
+            or pr.get("draft") is not False
+            or not isinstance(head_sha, str)
+            or _SHA.fullmatch(head_sha) is None
+            or not isinstance(head_repo, Mapping)
+            or head_repo.get("full_name") != repository
+            or not isinstance(base_repo, Mapping)
+            or base_repo.get("full_name") != repository
+            or (base.get("ref") if isinstance(base, Mapping) else None) != "main"
+        ):
+            predicates["M"] = "CONFLICT"
+        else:
+            task_path = f"openspec/changes/{record.change}/tasks.md"
+            task_content = read(repository, token, f"contents/{task_path}?ref={head_sha}")
+            if (
+                not isinstance(task_content, Mapping)
+                or task_content.get("encoding") != "base64"
+                or not isinstance(task_content.get("content"), str)
+            ):
+                predicates["M"] = "UNKNOWN"
+            else:
+                try:
+                    tasks = base64.b64decode(
+                        task_content["content"].encode("ascii"), validate=False
+                    ).decode("utf-8")
+                except (UnicodeError, binascii.Error, ValueError):
+                    predicates["M"] = "UNKNOWN"
+                else:
+                    predicates["M"] = _recovery_task_disposition(tasks)
+
+    labels = current_issue.get("labels")
+    approval_present = isinstance(labels, list) and any(
+        isinstance(item, Mapping) and item.get("name") == "human:approved" for item in labels
+    )
+    if head_sha is not None and predicates["M"] != "CONFLICT":
+        review = review_read(
+            repository,
+            token,
+            head_sha=head_sha,
+            approval_label_present=approval_present,
+            issue_comments=issue_comments,
+            read=read,
+        )
+        predicates["V"] = review.disposition
+        checks = read(repository, token, f"commits/{head_sha}/check-runs?per_page=100")
+        if (
+            not isinstance(checks, Mapping)
+            or not isinstance(checks.get("check_runs"), list)
+            or checks.get("total_count") != len(checks["check_runs"])
+        ):
+            predicates["V"] = _strictest_recovery_status(predicates["V"], "UNKNOWN")
+        else:
+            required = {
+                name: [
+                    item
+                    for item in checks["check_runs"]
+                    if isinstance(item, Mapping)
+                    and item.get("name") == name
+                    and item.get("head_sha") == head_sha
+                ]
+                for name in ("quality", "validate")
+            }
+            if any(len(items) != 1 for items in required.values()):
+                predicates["V"] = _strictest_recovery_status(predicates["V"], "UNKNOWN")
+            elif any(items[0].get("conclusion") != "success" for items in required.values()):
+                predicates["V"] = _strictest_recovery_status(predicates["V"], "INCOMPLETE")
+            else:
+                validation_details = required["validate"][0].get("details_url")
+                match = (
+                    None
+                    if not isinstance(validation_details, str)
+                    else re.fullmatch(
+                        rf"https://github\.com/{re.escape(repository)}/actions/runs/\d+/job/(\d+)",
+                        validation_details,
+                    )
+                )
+                if match is None or _positive_int_string(match[1]) is None:
+                    predicates["V"] = _strictest_recovery_status(predicates["V"], "UNKNOWN")
+                else:
+                    job_id = int(match[1])
+                    job = read(repository, token, f"actions/jobs/{job_id}")
+                    if not isinstance(job, Mapping) or job.get("id") != job_id:
+                        predicates["V"] = _strictest_recovery_status(predicates["V"], "UNKNOWN")
+                    elif job.get("conclusion") != "success" or job.get("name") != "validate":
+                        predicates["V"] = _strictest_recovery_status(predicates["V"], "CONFLICT")
+                    else:
+                        try:
+                            validation_log = log_read(repository, token, job_id)
+                        except (HTTPError, OSError, RuntimeError, ValueError, UnicodeError):
+                            predicates["V"] = _strictest_recovery_status(predicates["V"], "UNKNOWN")
+                        else:
+                            if not _recovery_review_log_proves_checkout(
+                                validation_log, repository, head_sha
+                            ):
+                                predicates["V"] = _strictest_recovery_status(
+                                    predicates["V"], "CONFLICT"
+                                )
+
+    # The original two-effect envelope is never replayed by this entry. Its
+    # unobserved historical checkpoint does not classify a proposed new
+    # *formal-result-only* write. A competing accepted owner remains unsafe.
+    predicates["S"] = "CONFLICT" if other_accepted else "COMPLETE"
+
+    formal = [
+        item
+        for item in issue_comments
+        if is_github_actions_comment(item)
+        and isinstance(item.get("body"), str)
+        and cast(str, item["body"]).splitlines()[:1] == ["ACTION_RESULT"]
+        and ((f"application:{expected_request_id}:322:") in cast(str, item["body"]))
+    ]
+    # Zero is the lawful pre-write state. A previously persisted record must
+    # be qualified through the ordinary _formal_consequence owner, not
+    # blindly counted as a successful recovery write.
+    if len(formal) > 1:
+        predicates["F"] = "CONFLICT"
+    elif not formal:
+        predicates["F"] = "COMPLETE"
+    else:
+        event = parse_formal_result(formal[0], current_revision=current_revision)
+        predicates["F"] = (
+            "COMPLETE"
+            if event is not None
+            and event.valid
+            and event.issue_number == 322
+            and event.role == "executor"
+            and event.action == "implement-change"
+            and event.change == record.change
+            and event.result_kind == "ready"
+            and isinstance(event.application_correlation, str)
+            and event.application_correlation.startswith(
+                f"application:{expected_request_id}:322:{record.change}:"
+                "executor:implement-change:ready:"
+            )
+            else "CONFLICT"
+        )
+    if (
+        observation is not None
+        and observation.routing == ("reviewer", "review-implementation")
+        and (len(formal) != 1 or predicates["F"] != "COMPLETE")
+    ):
+        predicates["R"] = "CONFLICT"
+    return _recovery_predicate_result(predicates)
+
+
+def apply_original_322_recovery_exit(
+    repository: str,
+    token: str,
+    *,
+    current_revision: str,
+    read: GitHubReader | None = None,
+    effect_apply: Callable[..., tuple[object, ApplyResult]] = run_guarded_effect_application,
+    review_read: Callable[..., RecoveryReviewAdoption] = read_recovery_openspec_review,
+    log_read: Callable[[str, str, int], str] = _github_job_log,
+) -> ApplicationCompletion:
+    """One existing application-owned correction, never a second semantic Action.
+
+    The only new effects are the canonical formal projection and the
+    Action-model-derived successor. The obsolete six-file materialization and
+    checkpoint are retained as historical UNKNOWN and are never replayed.
+    """
+
+    source_read = _github_json if read is None else read
+    source = WorkerRequest(322, "executor", "implement-change")
+    try:
+        first = _paged_list(
+            repository, token, "issues/322/comments?sort=created&direction=asc", read=source_read
+        )
+        second = _paged_list(
+            repository, token, "issues/322/comments?sort=created&direction=asc", read=source_read
+        )
+        if first != second:
+            raise RuntimeError("recovery comment enumeration changed")
+        issue = source_read(repository, token, "issues/322")
+        if not isinstance(issue, Mapping):
+            raise RuntimeError("recovery current Issue unavailable")
+        decisions = [
+            record
+            for item in second
+            if is_github_actions_comment(item)
+            and (record := parse_application_decision(item.get("body"))) is not None
+            and record.request_comment_id == _ORIGINAL_322_REQUEST
+            and record.disposition == "ACCEPTED"
+        ]
+        if len(decisions) != 1:
+            raise RuntimeError("original accepted application identity is not unique")
+        record = decisions[0]
+        if (
+            _authorization_ancestry(
+                repository,
+                token,
+                authorization_revision=record.authorization_revision,
+                current_revision=current_revision,
+                read=source_read,
+            )
+            is None
+        ):
+            raise RuntimeError("original authorization ancestry unavailable")
+        evidence = qualify_original_322_pre_formal(
+            repository=repository,
+            token=token,
+            source=source,
+            record=record,
+            issue_comments=second,
+            current_issue=issue,
+            current_revision=current_revision,
+            read=source_read,
+            review_read=review_read,
+            log_read=log_read,
+        )
+    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+        return ApplicationCompletion(
+            "INVALID", "recovery-exit-authoritative-source-unavailable", _ORIGINAL_322_REQUEST
+        )
+    if evidence.disposition != "COMPLETE":
+        return ApplicationCompletion(
+            "INVALID",
+            f"recovery-exit-{evidence.disposition.lower()}-"
+            + ",".join(evidence.blocking_predicates),
+            _ORIGINAL_322_REQUEST,
+        )
+    current_observation = normalize_github_issue(issue)
+    if current_observation is None:
+        return ApplicationCompletion("INVALID", "recovery-exit-frontier-unknown")
+    if current_observation.routing == ("reviewer", "review-implementation"):
+        # Only the already-proven formal result and successor may be observed;
+        # this path performs zero writes after an ambiguous/lost response.
+        return ApplicationCompletion(
+            "COMPLETE", "recovery-exit-existing-formal-successor", _ORIGINAL_322_REQUEST
+        )
+    if current_observation.routing != ("executor", "implement-change"):
+        return ApplicationCompletion("INVALID", "recovery-exit-frontier-conflict")
+
+    already_formal = any(
+        isinstance(item.get("body"), str)
+        and cast(str, item["body"]).splitlines()[:1] == ["ACTION_RESULT"]
+        and f"application:{_ORIGINAL_322_REQUEST}:322:" in cast(str, item["body"])
+        for item in second
+    )
+    prior_formal_correlation = None
+    if already_formal:
+        events = [
+            event
+            for item in second
+            if (event := parse_formal_result(item, current_revision=current_revision)) is not None
+            and event.valid
+            and isinstance(event.application_correlation, str)
+            and event.application_correlation.startswith(
+                f"application:{_ORIGINAL_322_REQUEST}:322:{record.change}:"
+                "executor:implement-change:ready:"
+            )
+        ]
+        if len(events) != 1:
+            return ApplicationCompletion("INVALID", "recovery-exit-formal-correlation-conflict")
+        prior_formal_correlation = events[0].application_correlation
+
+    pr = source_read(repository, token, "pulls/340")
+    head = pr.get("head") if isinstance(pr, Mapping) else None
+    head_sha = head.get("sha") if isinstance(head, Mapping) else None
+    if not isinstance(head_sha, str) or _SHA.fullmatch(head_sha) is None:
+        return ApplicationCompletion("INVALID", "recovery-exit-implementation-head-unavailable")
+    try:
+        worker = _application_worker_for_record(record, source)
+        decoded = json.loads(record.raw_worker_result)
+        if worker is None or not isinstance(decoded, dict):
+            raise RuntimeError("original accepted worker unavailable")
+        # Strip only obsolete physical effects from the application-owned
+        # projection; the immutable accepted result and decision remain intact.
+        decoded["requested_effects"] = []
+        bounded_raw = json.dumps(decoded, sort_keys=True, separators=(",", ":"))
+        application_raw = _application_owned_worker_result(
+            bounded_raw,
+            source=source,
+            change=record.change,
+            current_revision=current_revision,
+            result_revision=head_sha,
+            request_comment_id=record.request_comment_id,
+        )
+        if already_formal:
+            # Formal POST may have succeeded before the route PATCH failed or
+            # its response was lost. Reuse the already-qualified record and
+            # ask the existing effect owner to apply *only* derived routing.
+            # Never construct another comment with a new observation SHA.
+            projected_formal = json.loads(application_raw)
+            if not isinstance(projected_formal, dict):
+                raise RuntimeError("formal-only recovery payload malformed")
+            projected_formal["requested_effects"] = []
+            application_raw = json.dumps(projected_formal, sort_keys=True, separators=(",", ":"))
+        projected = parse_worker_result(application_raw, source, authorized_change=record.change)
+        if (
+            projected.typed_result.result.kind.value != "ready"
+            or len(projected.requested_effects) != (0 if already_formal else 1)
+            or (not already_formal and projected.requested_effects[0].kind != "issue-comment")
+        ):
+            raise RuntimeError("recovery correction projected non-formal effects")
+        _, result = effect_apply(
+            application_raw,
+            source=source,
+            repository=repository,
+            token=token,
+            current_revision=current_revision,
+            request_comment_id=record.request_comment_id,
+            authorization_revision=record.authorization_revision,
+            authorized_change=record.change,
+            accepted_intent=True,
+            original_322_recovery=True,
+            pending_application_correlation=prior_formal_correlation,
+        )
+    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+        # The GitHub effect adapter's idempotent read-before-write semantics
+        # are still required on the next fresh recovery invocation.
+        return ApplicationCompletion("INVALID", "recovery-exit-effect-unverified")
+    if not result.applied:
+        return ApplicationCompletion("INVALID", "recovery-exit-effect-not-applied")
+    try:
+        final_issue = source_read(repository, token, "issues/322")
+        final_comments = _paged_list(
+            repository, token, "issues/322/comments?sort=created&direction=asc", read=source_read
+        )
+        if not isinstance(final_issue, Mapping):
+            raise RuntimeError("recovery exit Issue postcondition unavailable")
+        post = qualify_original_322_pre_formal(
+            repository=repository,
+            token=token,
+            source=source,
+            record=record,
+            issue_comments=final_comments,
+            current_issue=final_issue,
+            current_revision=current_revision,
+            read=source_read,
+            review_read=review_read,
+            log_read=log_read,
+        )
+    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+        return ApplicationCompletion("INVALID", "recovery-exit-postcondition-unavailable")
+    if post.disposition != "COMPLETE":
+        return ApplicationCompletion("INVALID", "recovery-exit-postcondition-unqualified")
+    observation = normalize_github_issue(final_issue)
+    if observation is None or observation.routing != ("reviewer", "review-implementation"):
+        return ApplicationCompletion("INVALID", "recovery-exit-successor-not-observed")
+    return ApplicationCompletion("COMPLETE", "recovery-exit-formal-successor-observed")
 
 
 PreacceptClassification = Literal[
@@ -1290,6 +2333,7 @@ def _formal_consequence(
     read: GitHubReader,
     mode: Literal["current", "pending"],
     authorization_ancestry: tuple[tuple[str, str], ...],
+    original_322_recovery_qualified: bool = False,
 ) -> bool:
     observation = normalize_github_issue(current_issue)
     if (
@@ -1406,19 +2450,23 @@ def _formal_consequence(
     if not decision.qualified or decision.event is None:
         return False
     candidate = canonical_event
-    if mode == "current" and not _fresh_completion_postconditions(
-        record.raw_worker_result,
-        source=source,
-        repository=repository,
-        token=token,
-        # Formal correlation remains bound to the accepted observation, but
-        # successor-readiness is a fresh repository predicate.  In
-        # particular an Archive PR must target the current default branch,
-        # not merely the historical application revision.
-        current_revision=current_revision,
-        authorized_change=record.change,
-        request_comment_id=record.request_comment_id,
-        accepted_authorization_revision=record.authorization_revision,
+    if (
+        mode == "current"
+        and not original_322_recovery_qualified
+        and not _fresh_completion_postconditions(
+            record.raw_worker_result,
+            source=source,
+            repository=repository,
+            token=token,
+            # Formal correlation remains bound to the accepted observation, but
+            # successor-readiness is a fresh repository predicate.  In
+            # particular an Archive PR must target the current default branch,
+            # not merely the historical application revision.
+            current_revision=current_revision,
+            authorized_change=record.change,
+            request_comment_id=record.request_comment_id,
+            accepted_authorization_revision=record.authorization_revision,
+        )
     ):
         return False
     return (
@@ -1504,6 +2552,58 @@ def _accepted_application_state(
     semantic_intent = (
         isinstance(decoded_intent, Mapping) and decoded_intent.get("_semantic_intent_version") == 2
     )
+    # Only the original, Human-authorized #322 correction can substitute a
+    # freshly qualified I/R/M/V/S/F proof for its obsolete six-file envelope.
+    # This is deliberately *after* a formal event is observed, so the normal
+    # absence-of-result path never calls a result-dependent predicate.
+    original_322_formal_seen = (
+        source == WorkerRequest(322, "executor", "implement-change")
+        and record.request_comment_id == _ORIGINAL_322_REQUEST
+        and any(
+            isinstance(item.get("body"), str)
+            and cast(str, item["body"]).startswith("ACTION_RESULT\n")
+            and f"application:{_ORIGINAL_322_REQUEST}:322:" in cast(str, item["body"])
+            for item in issue_comments
+        )
+    )
+    if original_322_formal_seen:
+        try:
+            recovery = qualify_original_322_pre_formal(
+                repository=repository,
+                token=token,
+                source=source,
+                record=record,
+                issue_comments=issue_comments,
+                current_issue=current_issue,
+                current_revision=current_revision,
+                read=read,
+            )
+        except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+            recovery = None
+        if (
+            recovery is not None
+            and recovery.disposition == "COMPLETE"
+            and _formal_consequence(
+                repository=repository,
+                token=token,
+                source=source,
+                record=record,
+                worker=worker,
+                issue_comments=issue_comments,
+                lifecycle_events=lifecycle_events,
+                current_issue=current_issue,
+                current_revision=current_revision,
+                read=read,
+                mode="current",
+                authorization_ancestry=ancestry,
+                original_322_recovery_qualified=True,
+            )
+        ):
+            return ApplicationCompletion(
+                "COMPLETE",
+                "application-completion-original-322-recovered",
+                record.request_comment_id,
+            )
     if _formal_consequence(
         repository=repository,
         token=token,
@@ -3190,11 +4290,34 @@ def _write_result_payload(path: Path, plan: BridgePlan) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Plan one run-scoped dispatch result")
-    parser.add_argument("--event-path", type=Path, required=True)
+    parser.add_argument("--event-path", type=Path)
     parser.add_argument("--revision", required=True)
-    parser.add_argument("--github-output", type=Path, required=True)
-    parser.add_argument("--result-payload", type=Path, required=True)
+    parser.add_argument("--github-output", type=Path)
+    parser.add_argument("--result-payload", type=Path)
+    parser.add_argument("--recovery-exit-request-comment-id", type=int)
     args = parser.parse_args()
+
+    if args.recovery_exit_request_comment_id is not None:
+        if (
+            args.recovery_exit_request_comment_id != _ORIGINAL_322_REQUEST
+            or args.event_path is not None
+            or args.github_output is not None
+            or args.result_payload is not None
+            or _SHA.fullmatch(args.revision) is None
+        ):
+            parser.error("only the exact historical #322 recovery request is permitted")
+        repository = os.environ.get("GITHUB_REPOSITORY")
+        token = os.environ.get("GITHUB_TOKEN")
+        if repository != "royhsu-work/investment-strategy" or not token:
+            raise RuntimeError("recovery requires the exact repository and GitHub token")
+        completion = apply_original_322_recovery_exit(
+            repository, token, current_revision=args.revision
+        )
+        print(f"recovery_exit={completion.state}; reason={completion.reason}")
+        return 0 if completion.state == "COMPLETE" else 1
+
+    if args.event_path is None or args.github_output is None or args.result_payload is None:
+        parser.error("dispatch requires --event-path, --github-output and --result-payload")
 
     event = _require_mapping(json.loads(args.event_path.read_text(encoding="utf-8")), "event")
     identity = _request_identity(event)

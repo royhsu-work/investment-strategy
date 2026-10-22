@@ -4600,3 +4600,452 @@ def test_no_apply_job_inventory_requires_unique_positive_ids(
     )
     assert result is not None
     assert result.state == expected_state
+
+
+_RECOVERY_R = "54af6323d224c96e42792b6fe83fd31158b88e8c"
+_RECOVERY_BASE = "5d5edd88357824722887ce9eba8da96b08f2aeb3"
+_RECOVERY_REVIEW_ID = "PRR_kwDOT0Uyc88AAAABTsE88Q"
+
+
+def _recovery_review_sources() -> dict[str, object]:
+    reviewed_at = "2026-10-22T14:58:07Z"
+    human_at = "2026-10-22T15:13:01Z"
+    receipt = (
+        "RECOVERY_OPENSPEC_REVIEW\n"
+        "Repository: royhsu-work/investment-strategy\n"
+        "Issue: 322\n"
+        "Change: restore-no-work-idle-discovery\n"
+        "PR: 340\n"
+        f"Revision: {_RECOVERY_R}\n"
+        f"Baseline: {_RECOVERY_BASE}\n"
+        "Human-Decision-Comment: 6313995887\n"
+        "Validator-Run: 39795457767\n"
+        "Disposition: PASS\n\nIndependent semantic re-review."
+    )
+    decision_ref = f"issue:322:recovery-openspec-review:{_RECOVERY_R}:{_RECOVERY_REVIEW_ID}"
+    return {
+        "reviews": [
+            {
+                "id": 5616254193,
+                "node_id": _RECOVERY_REVIEW_ID,
+                "user": {"login": "royhsu-work"},
+                "commit_id": _RECOVERY_R,
+                "submitted_at": reviewed_at,
+                "state": "COMMENTED",
+                "body": receipt,
+            }
+        ],
+        "commit": {"author": {"login": "royhsu-work"}},
+        "original_human_comment": {
+            "id": 6313995887,
+            "user": {"login": "royhsu-work"},
+            "body": "Marker: HUMAN_APPROVED_FORWARD_RECOVERY_CONVERGENCE_20261021",
+            "created_at": "2026-10-21T10:42:08Z",
+            "updated_at": "2026-10-21T10:42:08Z",
+            "performed_via_github_app": None,
+        },
+        "issue_comments": [
+            {
+                "id": 6344199684,
+                "user": {"login": "royhsu-work"},
+                "body": f"Human-Decision-For: {decision_ref}\n"
+                "Recovery-Review-Independence: separately-reviewed\n",
+                "created_at": human_at,
+                "updated_at": human_at,
+                "performed_via_github_app": None,
+            }
+        ],
+        "events": [
+            {
+                "id": 33964035959,
+                "event": "labeled",
+                "actor": {"login": "royhsu-work"},
+                "label": {"name": "human:approved"},
+                "created_at": "2026-10-22T15:13:33Z",
+                "performed_via_github_app": None,
+            }
+        ],
+        "validator": {"id": 39795457767, "conclusion": "success"},
+        "validator_job": {"id": 119881578427, "name": "validate", "conclusion": "success"},
+        "validator_log": (
+            "validation_target_repository=royhsu-work/investment-strategy\n"
+            f"validation_target_sha={_RECOVERY_R}\n"
+            f"validator_checkout_head={_RECOVERY_R}\n"
+            "Run openspec validate --all --strict --json --no-interactive\n"
+            '"totals": { "items": 8, "passed": 8, "failed": 0 }'
+        ),
+        "comparison": {"status": "identical"},
+        "baseline_comparison": {"status": "ahead", "base_commit": {"sha": _RECOVERY_BASE}},
+        "reviewed_blobs": {"openspec/changes/restore-no-work-idle-discovery/design.md": "a" * 40},
+        "current_blobs": {"openspec/changes/restore-no-work-idle-discovery/design.md": "a" * 40},
+        "threads": [],
+    }
+
+
+def test_322_recovery_review_human_attestation_adoption_red() -> None:
+    evidence = _recovery_review_sources()
+    result = bridge.qualify_recovery_openspec_review(
+        repository="royhsu-work/investment-strategy",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+        pr_number=340,
+        head_sha=_RECOVERY_R,
+        approval_label_present=True,
+        **evidence,
+    )
+    assert result.disposition == "COMPLETE"
+    assert result.review_id == _RECOVERY_REVIEW_ID
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("missing-attestation", "UNKNOWN"),
+        ("edited-attestation", "UNKNOWN"),
+        ("connector-attestation", "UNKNOWN"),
+        ("competing-attestation", "CONFLICT"),
+        ("missing-approval", "UNKNOWN"),
+        ("wrong-checkout", "CONFLICT"),
+        ("changed-normative-blob", "CONFLICT"),
+        ("findings", "CONFLICT"),
+        ("unresolved-thread", "CONFLICT"),
+        ("missing-original-human", "UNKNOWN"),
+        ("wrong-baseline", "CONFLICT"),
+    ],
+)
+def test_322_recovery_review_rejects_unqualified_sources_red(mutation: str, expected: str) -> None:
+    evidence = _recovery_review_sources()
+    comments = cast(list[dict[str, object]], evidence["issue_comments"])
+    if mutation == "missing-attestation":
+        comments.clear()
+    elif mutation == "edited-attestation":
+        comments[0]["updated_at"] = "2026-10-22T15:14:00Z"
+    elif mutation == "connector-attestation":
+        comments[0]["performed_via_github_app"] = {"slug": "chatgpt-codex-connector"}
+    elif mutation == "competing-attestation":
+        comments.append({**comments[0], "id": 6344199685})
+    elif mutation == "missing-approval":
+        evidence["events"] = []
+    elif mutation == "wrong-checkout":
+        evidence["validator_log"] = cast(str, evidence["validator_log"]).replace(
+            f"validator_checkout_head={_RECOVERY_R}", "validator_checkout_head=" + "b" * 40
+        )
+    elif mutation == "changed-normative-blob":
+        evidence["current_blobs"] = {
+            "openspec/changes/restore-no-work-idle-discovery/design.md": "b" * 40
+        }
+    elif mutation == "findings":
+        cast(list[dict[str, object]], evidence["reviews"])[0]["body"] = cast(
+            str, cast(list[dict[str, object]], evidence["reviews"])[0]["body"]
+        ).replace("Disposition: PASS", "Disposition: FINDINGS")
+    elif mutation == "unresolved-thread":
+        evidence["threads"] = [
+            {
+                "is_resolved": False,
+                "is_outdated": False,
+                "comments": [{"body": "RECOVERY_OPENSPEC_FINDING material"}],
+            }
+        ]
+    elif mutation == "missing-original-human":
+        evidence["original_human_comment"] = None
+    elif mutation == "wrong-baseline":
+        evidence["baseline_comparison"] = {"status": "diverged"}
+    result = bridge.qualify_recovery_openspec_review(
+        repository="royhsu-work/investment-strategy",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+        pr_number=340,
+        head_sha=_RECOVERY_R,
+        approval_label_present=True,
+        **evidence,
+    )
+    assert result.disposition == expected, result.predicates
+
+
+def test_322_review_source_reader_adopts_exact_r_without_formal_result() -> None:
+    """Exercise the actual reader/consumer path, including trees and executed log."""
+    sources = _recovery_review_sources()
+    paths: list[str] = []
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        paths.append(path)
+        if path == "pulls/340/reviews?per_page=100&page=1":
+            return sources["reviews"]
+        if path == f"commits/{_RECOVERY_R}":
+            return sources["commit"]
+        if path == "issues/comments/6313995887":
+            return sources["original_human_comment"]
+        if path == "issues/322/timeline?per_page=100&page=1":
+            return sources["events"]
+        if path == "actions/runs/39795457767":
+            return sources["validator"]
+        if path == "actions/runs/39795457767/jobs?per_page=100":
+            return {"total_count": 1, "jobs": [sources["validator_job"]]}
+        if path == f"compare/{_RECOVERY_BASE}...{_RECOVERY_R}":
+            return sources["baseline_comparison"]
+        if path == f"git/commits/{_RECOVERY_R}":
+            return {"tree": {"sha": "c" * 40}}
+        if path == f"git/trees/{'c' * 40}?recursive=1":
+            return {
+                "truncated": False,
+                "tree": [
+                    {
+                        "type": "blob",
+                        "path": "openspec/changes/restore-no-work-idle-discovery/design.md",
+                        "sha": "a" * 40,
+                    }
+                ],
+            }
+        raise AssertionError(f"unexpected source: {path}")
+
+    result = bridge.read_recovery_openspec_review(
+        "royhsu-work/investment-strategy",
+        "token",
+        head_sha=_RECOVERY_R,
+        approval_label_present=True,
+        issue_comments=tuple(cast(list[dict[str, object]], sources["issue_comments"])),
+        read=read,
+        log_read=lambda *_: cast(str, sources["validator_log"]),
+        thread_read=lambda *_: [],
+    )
+    assert result.disposition == "COMPLETE"
+    assert result.review_id == _RECOVERY_REVIEW_ID
+    assert "issues/322/timeline?per_page=100&page=1" in paths
+    assert f"git/trees/{'c' * 40}?recursive=1" in paths
+
+
+@pytest.mark.parametrize(
+    ("unfinished", "expected"),
+    [(True, "INCOMPLETE"), (False, "COMPLETE")],
+)
+def test_original_ready_preformal_entry_has_no_result_cycle(
+    unfinished: bool, expected: str
+) -> None:
+    """Real accepted-result parser, live consumer and absent ACTION_RESULT shape."""
+    request = _effect_request_comment(
+        comment_id=6019133874,
+        created_at="2026-10-07T02:00:00Z",
+        action="implement-change",
+        role="executor",
+        result_kind="ready",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+    )
+    decision = _application_decision_comment(request, comment_id=6019173711)
+    record = bridge.parse_application_decision(decision["body"])
+    assert record is not None
+    tasks = (
+        "## 0G. Forward Recovery\n"
+        f"- [{' ' if unfinished else 'x'}] 0.42 **RED:** regression\n"
+        "- [x] 0.43 **GREEN:** implementation\n"
+        "- [x] 0.44 **REFACTOR/VERIFY:** gates\n"
+    )
+    issue = {
+        "number": 322,
+        "title": "Explore restoring NO_WORK idle discovery after Action-only dispatch",
+        "state": "open",
+        "created_at": "2026-09-22T15:39:54Z",
+        "closed_at": None,
+        "body": "Change: restore-no-work-idle-discovery",
+        "labels": [
+            {"name": "action:implement-change"},
+            {"name": "human:approved"},
+        ],
+    }
+    head = _RECOVERY_R
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path == "pulls/340":
+            return {
+                "number": 340,
+                "state": "open",
+                "draft": False,
+                "head": {"sha": head, "repo": {"full_name": "royhsu-work/investment-strategy"}},
+                "base": {"ref": "main", "repo": {"full_name": "royhsu-work/investment-strategy"}},
+            }
+        if path == (
+            "contents/openspec/changes/restore-no-work-idle-discovery/tasks.md?ref=" + head
+        ):
+            return {"encoding": "base64", "content": base64.b64encode(tasks.encode()).decode()}
+        if path == f"commits/{head}/check-runs?per_page=100":
+            return {
+                "total_count": 2,
+                "check_runs": [
+                    {
+                        "name": name,
+                        "head_sha": head,
+                        "conclusion": "success",
+                        "details_url": (
+                            "https://github.com/royhsu-work/investment-strategy/"
+                            "actions/runs/39795457767/job/119881578427"
+                        ),
+                    }
+                    for name in ("quality", "validate")
+                ],
+            }
+        if path == "actions/jobs/119881578427":
+            return {"id": 119881578427, "name": "validate", "conclusion": "success"}
+        raise AssertionError(path)
+
+    result = bridge.qualify_original_322_pre_formal(
+        repository="royhsu-work/investment-strategy",
+        token=REVISION,
+        source=bridge.WorkerRequest(322, "executor", "implement-change"),
+        record=record,
+        issue_comments=(decision,),
+        current_issue=issue,
+        current_revision=_RECOVERY_BASE,
+        read=read,
+        review_read=lambda *_args, **_kwargs: bridge.RecoveryReviewAdoption(
+            "COMPLETE", "recovery-review-adopted", _RECOVERY_REVIEW_ID, _RECOVERY_R
+        ),
+        log_read=lambda *_args: cast(str, _recovery_review_sources()["validator_log"]),
+        expected_decision_digest=hashlib.sha256(cast(str, decision["body"]).encode()).hexdigest(),
+    )
+    assert result.disposition == expected, result.predicates
+    assert dict(result.predicates)["F"] == "COMPLETE"  # zero formal records is lawful
+    assert dict(result.predicates)["S"] == "COMPLETE"  # no old checkpoint replay
+    assert result.blocking_predicates == (("M",) if unfinished else ())
+
+
+@pytest.mark.parametrize("lost_after_formal_post", [False, True])
+def test_original_322_exit_materializes_once_then_reconciles_without_replay(
+    monkeypatch: pytest.MonkeyPatch,
+    lost_after_formal_post: bool,
+) -> None:
+    """The actual application entry never replays the accepted physical plan."""
+    request = _effect_request_comment(
+        comment_id=6019133874,
+        created_at="2026-10-07T02:00:00Z",
+        action="implement-change",
+        role="executor",
+        result_kind="ready",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+    )
+    decision = _application_decision_comment(request, comment_id=6019173711)
+    comments = [decision]
+    issue = {
+        "number": 322,
+        "title": "Explore restoring NO_WORK idle discovery after Action-only dispatch",
+        "state": "open",
+        "created_at": "2026-09-22T15:39:54Z",
+        "closed_at": None,
+        "body": "Change: restore-no-work-idle-discovery",
+        "labels": [{"name": "action:implement-change"}, {"name": "human:approved"}],
+    }
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
+            return list(comments)
+        if path == "issues/322":
+            return dict(issue)
+        if path == "pulls/340":
+            return {"head": {"sha": _RECOVERY_R}}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "_authorization_ancestry", lambda *_args, **_kw: ())
+    monkeypatch.setattr(
+        bridge,
+        "qualify_original_322_pre_formal",
+        lambda **_kw: bridge.RecoveryPreFormalQualification(
+            "COMPLETE", tuple((name, "COMPLETE") for name in "IRMVSF")
+        ),
+    )
+    requested: list[list[str]] = []
+
+    def apply(raw: str, **kwargs: object) -> tuple[object, bridge.ApplyResult]:
+        assert kwargs["original_322_recovery"] is True
+        assert kwargs["accepted_intent"] is True
+        worker = bridge.parse_worker_result(
+            raw,
+            bridge.WorkerRequest(322, "executor", "implement-change"),
+            authorized_change="restore-no-work-idle-discovery",
+        )
+        effects = [effect.kind for effect in worker.requested_effects]
+        requested.append(effects)
+        if effects:
+            payload = json.loads(worker.requested_effects[0].payload_json)
+            comments.append(
+                {
+                    "id": 6999999999,
+                    "body": payload["body"],
+                    "created_at": "2026-10-22T17:00:00Z",
+                    "user": {"login": "github-actions[bot]"},
+                    "performed_via_github_app": {"slug": "github-actions"},
+                }
+            )
+            if lost_after_formal_post:
+                return object(), bridge.ApplyResult(False, "response-lost-after-formal")
+        issue["labels"] = [
+            {"name": "action:review-implementation"},
+            {"name": "human:approved"},
+        ]
+        return object(), bridge.ApplyResult(True, "applied")
+
+    first = bridge.apply_original_322_recovery_exit(
+        "royhsu-work/investment-strategy",
+        "token",
+        current_revision=_RECOVERY_BASE,
+        read=read,
+        effect_apply=apply,
+    )
+    assert first.state == ("INVALID" if lost_after_formal_post else "COMPLETE"), first
+    assert requested == [["issue-comment"]]
+    second = bridge.apply_original_322_recovery_exit(
+        "royhsu-work/investment-strategy",
+        "token",
+        current_revision=_RECOVERY_BASE,
+        read=read,
+        effect_apply=apply,
+    )
+    assert second.state == "COMPLETE", second
+    assert requested == ([["issue-comment"], []] if lost_after_formal_post else [["issue-comment"]])
+
+
+def test_original_322_exit_incomplete_does_not_call_effect_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = _effect_request_comment(
+        comment_id=6019133874,
+        created_at="2026-10-07T02:00:00Z",
+        action="implement-change",
+        role="executor",
+        result_kind="ready",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+    )
+    decision = _application_decision_comment(request, comment_id=6019173711)
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
+            return [decision]
+        if path == "issues/322":
+            return {"number": 322}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "_authorization_ancestry", lambda *_args, **_kw: ())
+    monkeypatch.setattr(
+        bridge,
+        "qualify_original_322_pre_formal",
+        lambda **_kw: bridge.RecoveryPreFormalQualification(
+            "INCOMPLETE",
+            (
+                ("I", "COMPLETE"),
+                ("R", "COMPLETE"),
+                ("M", "INCOMPLETE"),
+                ("V", "COMPLETE"),
+                ("S", "COMPLETE"),
+                ("F", "COMPLETE"),
+            ),
+        ),
+    )
+    result = bridge.apply_original_322_recovery_exit(
+        "royhsu-work/investment-strategy",
+        "token",
+        current_revision=_RECOVERY_BASE,
+        read=read,
+        effect_apply=lambda *_args, **_kw: pytest.fail("incomplete must have NO_WRITE"),
+    )
+    assert result.state == "INVALID"
+    assert result.reason == "recovery-exit-incomplete-M"

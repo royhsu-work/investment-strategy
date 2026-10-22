@@ -543,6 +543,7 @@ def _implementation_checkpoint_effects_complete(
     durable_checkpoint_revision: str | None = None,
     defer_issue_comments: bool = False,
     observe_postcondition: PostconditionObserver | None = None,
+    original_322_recovery: bool = False,
 ) -> bool:
     """Require exact task/checkpoint effects before a new intent advances.
 
@@ -558,6 +559,24 @@ def _implementation_checkpoint_effects_complete(
         or decision.result.result.kind not in _IMPLEMENTATION_COMPLETION_RESULTS
     ):
         return True
+    if original_322_recovery:
+        # The sole Human-reviewed #322 pre-formal exit has already proved
+        # I/R/M/V/S/F at the caller. Only a new formal comment (or no effect
+        # when reconciling that exact comment) is allowed. The historical
+        # materialization/checkpoint cannot be replayed through this waiver.
+        return bool(
+            accepted_intent
+            and batch.source.issue_number == 322
+            and decision.source.change == "restore-no-work-idle-discovery"
+            and decision.result.result.kind == ResultKind.READY
+            and len(batch.effects) <= 1
+            and all(
+                effect.kind == "issue-comment"
+                and isinstance((_effect_payload(effect) or {}).get("body"), str)
+                and cast(str, (_effect_payload(effect) or {})["body"]).startswith("ACTION_RESULT\n")
+                for effect in batch.effects
+            )
+        )
     if durable_checkpoint_revision is not None and (
         not accepted_intent or not _valid_sha(durable_checkpoint_revision)
     ):
@@ -695,6 +714,7 @@ def _typed_application_plan(
     durable_checkpoint_revision: str | None = None,
     defer_issue_comments: bool = False,
     observe_postcondition: PostconditionObserver | None = None,
+    original_322_recovery: bool = False,
 ) -> tuple[ActionApplicationDecision | None, StagedEffect | None, ApplyResult | None]:
     typed_result = batch.typed_result
     if typed_result is None:
@@ -728,6 +748,13 @@ def _typed_application_plan(
         and selected.selected_routing is not None
         and selected.selected_routing[1] == source.action.value
     )
+    if original_322_recovery:
+        selected_source = (
+            accepted_intent
+            and batch.source == WorkerRequest(322, "executor", "implement-change")
+            and typed_result.change == "restore-no-work-idle-discovery"
+            and typed_result.result.kind == ResultKind.READY
+        )
     try:
         derived_successor = next_action(action, typed_result.result)
     except ValueError:
@@ -760,11 +787,12 @@ def _typed_application_plan(
             if (
                 pending_source
                 or accepted_successor_frontier
+                or original_322_recovery
                 or issue.current_state_provenance is ObservationProvenance.QUALIFIED
             )
             else ModelObservationProvenance.INDETERMINATE
         ),
-        human_authorized=preflight.human_authorized,
+        human_authorized=preflight.human_authorized or original_322_recovery,
         state=issue.state,
     )
     decision = plan_action_application(
@@ -796,6 +824,7 @@ def _typed_application_plan(
         durable_checkpoint_revision,
         defer_issue_comments,
         observe_postcondition,
+        original_322_recovery,
     ):
         return (
             decision,
@@ -1241,6 +1270,7 @@ def apply_effect_batch(
     persist_application_decision: (
         Callable[[ActionApplicationDecision, str, str], bool] | None
     ) = None,
+    original_322_recovery: bool = False,
 ) -> ApplyResult:
     """Apply one typed batch after fresh source reauthorization."""
 
@@ -1255,6 +1285,7 @@ def apply_effect_batch(
         durable_checkpoint_revision,
         defer_issue_comments,
         observe_postcondition,
+        original_322_recovery,
     )
     if typed_rejection is not None:
         if (
@@ -3887,6 +3918,7 @@ def run_effect_application(
     authorized_change: str | None = None,
     authorization_revision: str | None = None,
     accepted_intent: bool = False,
+    original_322_recovery: bool = False,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Freshly reauthorize and apply one typed invocation-local effect batch."""
 
@@ -3928,6 +3960,7 @@ def run_effect_application(
         durable_checkpoint_revision=(
             validated_materialization_revision if accepted_intent else None
         ),
+        original_322_recovery=original_322_recovery,
     )
     return batch, result
 

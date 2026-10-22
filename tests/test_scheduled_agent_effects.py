@@ -106,6 +106,64 @@ def _raw(
     )
 
 
+@pytest.mark.parametrize("formal_already_persisted", [False, True])
+def test_original_322_recovery_projects_only_qualified_formal_and_successor(
+    formal_already_persisted: bool,
+) -> None:
+    """Actual effect planner: normal dispatch/checkpoint gates remain intact."""
+    source = WorkerRequest(322, "executor", "implement-change")
+    change = "restore-no-work-idle-discovery"
+    formal = {
+        "kind": "issue-comment",
+        "payload_json": json.dumps(
+            {
+                "issue_number": 322,
+                "body": (
+                    "ACTION_RESULT\nWorkflow: #322\n"
+                    f"Change: {change}\nRole: executor\nAction: implement-change\n"
+                    f"Result: READY\nRevision: {_REVISION}\n"
+                    f"Default-Branch-Revision: {_REVISION}\n"
+                    "Application-Correlation: "
+                    f"application:6019133874:322:{change}:executor:implement-change:ready:{_REVISION}\n"
+                    "Repository-derived successor: Reviewer / review-implementation\n"
+                    "Evidence: bounded regression"
+                ),
+            }
+        ),
+    }
+    raw = _raw(
+        issue_number=322,
+        action="implement-change",
+        role="executor",
+        change=change,
+        result_kind="ready",
+        requested_effects=[] if formal_already_persisted else [formal],
+    )
+    current = _preflight(issue_number=322, change=change, human_authorized=False)
+    applied: list[str] = []
+
+    def run(*, recovery: bool) -> effects.ApplyResult:
+        return apply_effect_batch(
+            parse_effect_batch(raw, source, authorized_change=change),
+            fresh_preflight=lambda: current,
+            effect_guard=lambda _effect: True,
+            apply_effect=lambda effect: applied.append(effect.kind),
+            observe_postcondition=lambda _effect: True,
+            current_revision=_REVISION,
+            accepted_intent=True,
+            original_322_recovery=recovery,
+        )
+
+    assert not run(recovery=False).applied
+    assert applied == []
+    assert run(recovery=True).applied
+    assert applied == (
+        ["routing-transition"]
+        if formal_already_persisted
+        else ["issue-comment", "routing-transition"]
+    )
+
+
 def _protocol_decision() -> ActionApplicationDecision:
     source = ActionSource(138, _CHANGE, Action.IMPLEMENT_CHANGE, _REVISION)
     result = BoundedActionResult(
