@@ -3716,6 +3716,34 @@ def test_continuation_chain_selects_one_leaf_and_preserves_branches() -> None:
     assert incomplete is None
 
 
+def test_322_legacy_continuation_transports_are_not_new_failure_qualified_transitions() -> None:
+    """Two real old transport comments share one accepted intent but lack new transition evidence."""
+
+    body = (
+        "APPLICATION_CONTINUATION\n"
+        "Issue: 322\n"
+        "Original-Request-Comment: 6019133874\n"
+        "Accepted-Decision-SHA256: "
+        "9c545558249285ec6d4fa632970dfa7157774d75bf2b6e46889e240a175cbd54\n"
+        "Continuation-Correlation: "
+        "54ae08a7d74fc4a73820abce47a38c49b918827d905e1725b3cd9d869a41bb5a"
+    )
+
+    # Actual #364 and #365 comments use the same five-line legacy envelope.
+    # Recognizing their run names is read-only historical reconstruction;
+    # it cannot invent predecessor run/job, artifact, or fresh failure digest.
+    for comment_id in (6029741785, 6047718564):
+        title = f"Scheduled Agent Application {comment_id}"
+        assert bridge.parse_application_run_name(title) == comment_id
+        assert bridge.parse_application_continuation_request(body) is None
+
+    assert bridge._continuation_leaf_comment_ids(
+        request_comment_id=6019133874,
+        continuation_predecessors={},
+        workflow_runs=(),
+    ) == ()
+
+
 def test_application_continuation_binds_exact_failure_transition() -> None:
     render = bridge.render_application_continuation_request
     first = render(
