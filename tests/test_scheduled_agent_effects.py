@@ -4747,10 +4747,16 @@ def test_unknown_materialization_guard_preserves_unqualified_source_rejection(
     assert json.loads(rejection.observed)["disposition"] == "UNKNOWN"
 
 
+@pytest.mark.parametrize(
+    ("materialization_proven", "checkpoint_proven"),
+    [(False, False), (False, True), (True, False), (True, True)],
+)
 def test_legacy_322_completed_materialization_does_not_launder_unknown_checkpoint(
     monkeypatch: pytest.MonkeyPatch,
+    materialization_proven: bool,
+    checkpoint_proven: bool,
 ) -> None:
-    """An independently proven Git witness cannot satisfy an unobserved non-idempotent comment."""
+    """Only independent positive proofs discharge each of the two original obligations."""
 
     source = WorkerRequest(322, "executor", "implement-change")
     change = "restore-no-work-idle-discovery"
@@ -4807,8 +4813,14 @@ def test_legacy_322_completed_materialization_does_not_launder_unknown_checkpoin
             "Completed-Tasks: 0.23, 0.24, 0.25, 0.26",
             f"Revision: {base}",
             "Application-Correlation: pending-application-binding",
-            "Gate-Evidence: Original accepted implementation slice",
-            "Remaining-Approved-Boundary: Follow-up implementation",
+            "Gate-Evidence: Exact-head reproduction isolated stale checkpoint binding; "
+            "exact-blob Ruff check and format now pass after correcting three formatter diffs; "
+            "patched behavioral checks, compileall, and diff check pass; exact pytest "
+            "and Mypy must pass before acceptance",
+            "Remaining-Approved-Boundary: Independent exact-head implementation review "
+            "and merge remain; 0D tasks 0.27-0.30, advisory 2.6, Human wait 2.7, "
+            "parent finalize/archive, genuine native Scheduled Task acceptance, "
+            "and post-terminal NO_WORK acceptance remain",
         )
     )
     raw = _raw(
@@ -4828,10 +4840,10 @@ def test_legacy_322_completed_materialization_does_not_launder_unknown_checkpoin
     )
     observed: list[str] = []
 
-    monkeypatch.setattr(
-        effects,
-        "_fresh_materialization_target",
-        lambda *_args, **_kwargs: ValidationResourceTarget(
+    # The historical source remains UNKNOWN. A positive old target here is
+    # hypothetical proof-isolation coverage, never a claim that #322 has one.
+    target = (
+        ValidationResourceTarget(
             repository="royhsu-work/investment-strategy",
             revision="b" * 40,
             correlation="effect-request-322",
@@ -4839,15 +4851,22 @@ def test_legacy_322_completed_materialization_does_not_launder_unknown_checkpoin
             change=change,
             branch="agent/restore-no-work-idle-discovery-continuation-347",
             validation_required=True,
-        ),
+        )
+        if materialization_proven
+        else None
+    )
+    monkeypatch.setattr(
+        effects,
+        "_fresh_materialization_target",
+        lambda *_args, **_kwargs: target,
     )
 
-    def missing_checkpoint(self: GitHubEffectAdapter, effect: StagedEffect) -> bool:
+    def observe_checkpoint(self: GitHubEffectAdapter, effect: StagedEffect) -> bool:
         observed.append(effect.kind)
-        return False
+        return checkpoint_proven
 
-    monkeypatch.setattr(GitHubEffectAdapter, "observe_postcondition", missing_checkpoint)
-    assert not effects.consequence_postconditions_complete(
+    monkeypatch.setattr(GitHubEffectAdapter, "observe_postcondition", observe_checkpoint)
+    complete = effects.consequence_postconditions_complete(
         raw,
         source=source,
         repository="royhsu-work/investment-strategy",
@@ -4858,4 +4877,5 @@ def test_legacy_322_completed_materialization_does_not_launder_unknown_checkpoin
         accepted_authorization_revision="ac7aebd7c2ac81b3227986350544307cadb221cc",
         accepted_intent=True,
     )
-    assert observed == ["issue-comment"]
+    assert complete is (materialization_proven and checkpoint_proven)
+    assert observed == (["issue-comment"] if materialization_proven else [])
