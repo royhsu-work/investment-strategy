@@ -3717,7 +3717,7 @@ def test_continuation_chain_selects_one_leaf_and_preserves_branches() -> None:
 
 
 def test_322_legacy_continuation_transports_are_not_new_failure_qualified_transitions() -> None:
-    """Two real old transport comments share one accepted intent but lack new transition evidence."""
+    """Old continuation transports cannot qualify a new failure transition."""
 
     body = (
         "APPLICATION_CONTINUATION\n"
