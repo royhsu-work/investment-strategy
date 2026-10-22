@@ -3737,11 +3737,14 @@ def test_322_legacy_continuation_transports_are_not_new_failure_qualified_transi
         assert bridge.parse_application_run_name(title) == comment_id
         assert bridge.parse_application_continuation_request(body) is None
 
-    assert bridge._continuation_leaf_comment_ids(
-        request_comment_id=6019133874,
-        continuation_predecessors={},
-        workflow_runs=(),
-    ) == ()
+    assert (
+        bridge._continuation_leaf_comment_ids(
+            request_comment_id=6019133874,
+            continuation_predecessors={},
+            workflow_runs=(),
+        )
+        == ()
+    )
 
 
 def test_application_continuation_binds_exact_failure_transition() -> None:
@@ -4313,9 +4316,7 @@ def test_completed_legacy_application_job_preserves_historical_identity_without_
             result_kind="ready",
         ),
         accepted_decision_sha256="9c545558249285ec6d4fa632970dfa7157774d75bf2b6e46889e240a175cbd54",
-        transport_comment_ids=(
-            () if transport_comment_id is None else (transport_comment_id,)
-        ),
+        transport_comment_ids=(() if transport_comment_id is None else (transport_comment_id,)),
     )
 
     assert completion.state == "INVALID"
