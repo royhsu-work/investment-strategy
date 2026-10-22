@@ -764,6 +764,58 @@ A substantive recovery transition SHALL be eligible without a fixed numerical at
 - THEN it performs no application rerun or semantic replay
 - AND it returns the existing evidence-bound fail-closed disposition
 
+### Requirement: Verified implementation slices persist a bounded coordination-Issue checkpoint
+
+For every future fresh `Executor / implement-change` invocation, a successfully VERIFIED
+approved slice MUST durably persist its satisfied task markers and exactly one bounded
+`SLICE_CHECKPOINT` on the coordination Issue, identifying Change, task IDs, verified
+revision, gate result, and remaining work, before another slice or handoff. Intermediate
+RED/GREEN/refactor commits do not individually require progress comments. If task markers
+were persisted but the comment was interrupted, the next fresh Executor wake MUST
+reconstruct current truth, persist the missing checkpoint, and MUST NOT rerun the verified
+slice. This requirement creates no heartbeat, cursor, lease, or progress state.
+
+Only for the historical #322 accepted `implement-change / READY` application with
+request comment `6019133874` and decision comment `6019173711`, **pre-formal-result
+Recovery Exit qualification** MAY proceed without positive evidence of the old
+`SLICE_CHECKPOINT`. The historical effect remains UNKNOWN; no replacement comment,
+replay, assumed absence, or assumed success is authorized. The application MUST prove
+current task/implementation and required gate facts independently and MUST block a
+prospective write that could repeat any unproven non-idempotent side effect until its
+specific safety/deduplication predicate is proven. This exception does not apply to
+fresh slices or any other accepted application.
+
+#### Scenario: Verified slice completes before another slice begins
+
+- GIVEN Executor completes an approved vertical slice and its VERIFY/gates pass
+- WHEN Executor prepares to continue implementation
+- THEN the satisfied task markers and one bounded, source-bound `SLICE_CHECKPOINT` are durable
+- AND only then may Executor begin the next approved slice
+
+#### Scenario: Work continues inside an unverified slice
+
+- GIVEN a slice is still in RED, GREEN, refactor, test-trigger, or compatibility correction
+- WHEN ordinary implementation commits or task edits occur before successful VERIFY
+- THEN Git/PR/tasks remain the source evidence
+- AND no additional checkpoint comment is required solely for those intermediate commits
+
+#### Scenario: Task markers persisted but checkpoint write was interrupted
+
+- GIVEN a previous fresh Executor run verified a slice and durably persisted its task markers
+- BUT the required checkpoint was interrupted
+- WHEN another fresh Executor wake reconstructs the implementation state
+- THEN it persists only the missing checkpoint from current durable evidence
+- AND never re-executes the verified slice merely to recreate evidence
+
+#### Scenario: Legacy accepted READY is qualified without inventing its checkpoint
+
+- GIVEN the exact #322 accepted request `6019133874` and decision `6019173711`
+- AND its historical checkpoint remains UNKNOWN
+- WHEN pre-formal-result Recovery Exit evaluates independently proven current implementation/gate facts
+- THEN the missing historical checkpoint does not independently block that qualification
+- AND a prospective non-idempotent duplicate is blocked until its own safety proof exists
+- AND no future fresh Executor checkpoint requirement is waived
+
 ### Requirement: Legacy Forward Correction is independently authorized and never replays accepted semantic work
 
 Historical accepted intent `I`, decision digest, `A/B`, original physical plan, original `ACTION_RESULT` meaning, and incomplete/unknown run and effect history SHALL remain immutable. A completed historical run which never had the recovery-upload step SHALL NOT be required to manufacture that artifact as the sole means of **preparing, reviewing or verifying separately Human-approved corrective maintenance**. Its missing artifact alone is neither a proof of original mutation, a missing write, an actual conflicting write nor authority for `PLAN_SUPERSEDED`, old-plan replay, semantic result, routing or fresh write. Incomplete current GitHub source evidence is `UNKNOWN(reason)`, a proven inconsistent source target is `CONTRADICTORY(reason)`, and both prohibit unsafe effects.
@@ -772,11 +824,78 @@ After a durable `APPLICATION_DECISION: ACCEPTED`, the same normal Action/worker 
 
 The prospective correction SHALL be uniquely and sufficiently bound to the existing accepted decision, qualified Human source, Change, reviewed PR/ref/current target, and intended operation. It SHALL reuse those source identities rather than requiring an additional derived hash or state when they already prove uniqueness. A changed revision alone SHALL NOT authorize duplicate writes or reset recovery attempts. Before any *new* write, require complete current authority, unique target/carrier, absence of relevant in-flight or competing effects, fresh `P/D`, non-force CAS, path overlap/content/lineage checks, and a fresh postcondition. The canonical materialization owner SHALL prove any new Git consequence as `COMPLETE(T_new,W_new)` independently of old-plan proof; this SHALL NOT claim original `COMPLETE(T_old,W_old)`. Old `expected_sha` SHALL NOT guard a distinct new operation. Original physical effects remain UNKNOWN unless independently observed; unsupported or unsafe mutations remain NO_WRITE.
 
-**Recovery Exit uses deterministic application-completion predicates, not a new LLM semantic judgment or universal historical-effect completion.** The existing application-completion and canonical consequence owners SHALL jointly establish from the immutable accepted typed result and fresh authoritative GitHub observations: (1) exact approved Issue/Change/Action/result identity and current routing eligibility, (2) qualified required concrete GitHub consequence/postcondition and validation/review/authorization records defined by the approved contract, (3) no evidenced conflict or historical side-effect ambiguity that creates a concrete unacceptable duplicate/irreversible risk for the affected operation, and (4) unique lawful formal result persistence and `next_action` transition. A free-form model assessment of whether the current state "fulfills the intent" SHALL NOT be an executable acceptance predicate. The same accepted result and complete source observations MUST produce the same completion disposition, regardless of a model's subsequent opinion. Old effect ordinals, payload digests, artifacts, and comments MAY identify safety risks or provenance, but SHALL NOT become a universal proof-of-each-old-effect checklist. An informational checkpoint SHALL NOT require a replacement comment when its concrete necessary information and postconditions are independently verified. If a checkpoint actually enforces deduplication, authorization, or irreversible-effect safety, that specific property MUST be independently proven before any affected mutation; a file witness alone is not such proof. Historical UNKNOWN remains UNKNOWN and does not become false COMPLETE or a blanket block on unrelated safe effects. Unexpressed/non-machine-verifiable acceptance criteria MUST be resolved through an explicit Human decision, not an improvised probabilistic runtime verdict. No completion or successor is authorized merely by an unreviewed correction PR, green CI or a stale historical READY assertion.
+**Deterministic pre-formal-result Recovery Exit for the original accepted #322 application.** The existing application-completion owner SHALL evaluate the following finite predicate set **before** asking for an `ACTION_RESULT`. The target is the immutable `implement-change / READY` acceptance at request `6019133874`, decision `6019173711`, decision digest `9c545558249285ec6d4fa632970dfa7157774d75bf2b6e46889e240a175cbd54`, Issue `322`, Change `restore-no-work-idle-discovery`. The historical run `37484224666` and continuation runs `37563005754` / `37693412638` identify UNKNOWN evidence, not independent accepted decisions.
 
-For legacy accepted applications without a formal `ACTION_RESULT`, the current `_formal_consequence -> _fresh_completion_postconditions` ordering SHALL NOT make the missing result a prerequisite to evaluating whether completion is lawful. The **same repository-owned application** SHALL first execute the predefined current-source qualification predicates for the original accepted typed result, review/authorization, material safety and any required canonical materialization witness, then perform and observe **one** formal result persistence and derived `next_action` transition through its existing owner. It SHALL reconcile any lost response by read-only observation before another write and SHALL NOT emit a second semantic worker result, fabricate `READY`, or introduce a competing completion authority. If the original accepted READY fails a mandatory concrete current-state predicate, it SHALL NOT be projected as complete; the existing governed disposition must resolve that mismatch.
+| Predicate | Source-bound PASS condition | Missing/mismatch consequence |
+| --- | --- | --- |
+| `I` immutable acceptance | Unique parsed, provenance-qualified `APPLICATION_DECISION: ACCEPTED` and original typed `READY` result/sha256, exact Issue/Change/Executor Action; no second accepted owner | Source read unavailable → `UNKNOWN`; duplicate/conflicting acceptance, identity or result mismatch → `CONFLICT` |
+| `R` current frontier | Fresh Issue lifecycle, Change and sole route `action:implement-change` still belong to this accepted application; default-branch Action model maps its `READY` to `review-implementation` (or an already qualified identical formal successor is read back) | Required route not yet qualified → `UNKNOWN`; observed incompatible ownership/route → `CONFLICT` |
+| `M` necessary implementation | Fresh exact repository PR #340, same-repository implementation head `H`/ref/Change; all *applicable current Executor implementation tasks* are verified at H, required content/commit/PR postconditions pass the existing canonical proof for new corrective writes (`COMPLETE(T_new,W_new)`), and no unrelated content is overwritten | Verifiably unfinished necessary task/consequence → `INCOMPLETE`; unreadable target → `UNKNOWN`; wrong identity/overlap/contradictory proof → `CONFLICT` |
+| `V` pre-READY gates | Proven Human comment `6313995887` and exact-revision independent OpenSpec recovery review *adopted by the contract below*; strict OpenSpec validation and required implementation tests/checks bound to the necessary implementation head, with checkout evidence rather than head association alone | Pending/unrun required gate → `INCOMPLETE`; missing/unreadable gate source → `UNKNOWN`; wrong revision, rejected review or false checkout identity → `CONFLICT` |
+| `S` effect isolation | All proposed *new* irreversible/non-idempotent effects have unique identities, no competing in-flight writer, fresh preimages and deduplication/postcondition proofs; no old materialization or checkpoint operation is replayed. Old UNKNOWN not touched by new effects is audit only | Relevant incomplete safe prospective work → `INCOMPLETE`; unreadable ambiguous write/dedup source → `UNKNOWN` for the affected operation; proven duplicate/conflict → `CONFLICT` |
+| `F` formal-result uniqueness | Complete paginated Issue comments and lifecycle events show zero prior formal result for this accepted correlation (pre-write), or exactly one previously persisted result with identical immutable typed content and qualified successor (read-back) | Unavailable comment/event read → `UNKNOWN`; competing/incompatible result or successor → `CONFLICT`; **absence of a formal result is not failure and not an input to I–S** |
 
-Only when the specified deterministic application predicates and material safety are qualified and all current required review/authorization/handoff gates pass MAY the existing repository-owned application **once** project the accepted typed result's legal successor via `next_action`. Historical gaps unrelated to these predicates or material safety SHALL NOT by themselves prohibit projection. The projection SHALL have durable, source-bound evidence; it SHALL NOT fabricate original physical-plan completion, rewrite `I`, call a second semantic worker, or persist duplicate formal results. Incomplete *necessary* evidence retains a precise blocker for the affected transition, not a new global recovery lock. A correction PR merge, green CI, or read-only assessment alone is NOT Recovery Exit.
+The application SHALL compute one of `COMPLETE / INCOMPLETE / UNKNOWN / CONFLICT` from these fixed observations, with precedence `CONFLICT > UNKNOWN > INCOMPLETE > COMPLETE` **within the predicate set actually necessary for the requested effect/transition**. `COMPLETE` before the formal write means *qualified to persist*, **not yet exited**. For `COMPLETE` and exactly zero formal records, the same application owner may append one canonical `ACTION_RESULT` for the already-accepted `READY`, then fresh-read the record, apply the existing `next_action(implement-change, READY) = review-implementation` projection and verify its route postcondition. If a valid identical result already exists, reconcile without a duplicate write. Only after formal result **and** route are durably qualified is Recovery Exit complete. `review-implementation` PASS, merge, archive, and native NO_WORK are downstream lifecycle gates: they MUST NOT be prerequisites to this pre-result qualification.
+
+`INCOMPLETE` allows only independently reauthorized necessary corrective work; `UNKNOWN` prohibits only the effect/transition depending on unreadable or ambiguous evidence and permits re-observation; `CONFLICT` prohibits the overlapping write/transition until its exact conflict is resolved through governed correction or Human decision. All states preserve unchanged original identity and historical UNKNOWN. A historical upload, old six-file completion, individual effect ordinals, and old checkpoint comment SHALL NOT be a universal positive prerequisite. No model-generated “semantic equivalence” or interpretation of whether the checkpoint was “informational” may alter these results. Truly unexpressed required acceptance criteria return to Human without imposing a global lock on disjoint qualified work.
+
+**Human-authorized recovery-review evidence adoption (temporary bootstrap, not a second workflow).** While #322's accepted application prevents normal `review-openspec` dispatch, the Human MAY request a distinct independent Reviewer examination of exact PR #340 revision `R` and its complete proposal/design/delta/tasks/affected contracts **without first completing Recovery Exit or changing routing**. A review is adoptable for predicate `V` only when complete authoritative GitHub evidence establishes: the exact Human approval reference; same repository/Change/PR/base and immutable reviewed `R`; strict checkout-verified validation of `R`; a source-bound independent reviewer identity distinct from the author with an explicit `PASS` verdict on OpenSpec semantics (not a CI or code-only verdict); no unresolved material findings on `R`; and fresh confirmation that the reviewed OpenSpec and affected normative Skill/canonical blobs at current implementation head `H` equal those at `R`, with `H = R` or `H` a verified descendant of `R`. Code-only implementation commits may thus advance `H` without inventing a second semantic review; **any material normative blob change requires a new reviewed `R`**. The existing review/authorization consumer SHALL validate these fields deterministically and record the adopted source review ID, `R`, and Human reference as **review evidence only**, not a fabricated `review-openspec` Action, `REVIEW_RESULT`, `ACTION_RESULT`, routing or merge approval. `FINDINGS`, missing identity/checkout, unqualified lineage, changed reviewed blobs, self-review, partial pagination, or contradictory review evidence MUST NOT be adopted; revise and obtain another independent exact-revision review. This bounded bridge expires for the historical #322 correction once its normal frontier advances; all later normal reviews use repository dispatch. An unmerged proposal alone is not operative adoption and an unimplemented consumer cannot claim a PASS.
+
+The adoptable GitHub **PR review** (not an Issue comment or author declaration) MUST contain a machine-parsed review receipt with exactly these ordered nonempty fields; source reviewer login, review ID, submission timestamp, and GitHub review state come from the GitHub review object, never self-asserted body fields:
+
+```text
+RECOVERY_OPENSPEC_REVIEW
+Repository: royhsu-work/investment-strategy
+Issue: 322
+Change: restore-no-work-idle-discovery
+PR: 340
+Revision: <40-lowercase-hex-R>
+Baseline: <40-lowercase-hex-default-branch-at-review>
+Human-Decision-Comment: 6313995887
+Validator-Run: <positive-run-id>
+Disposition: PASS|FINDINGS
+```
+
+The consumer MUST require exactly one latest, uncontradicted independent PASS receipt applicable to R, validate the validator run's **actual checkout R** and PASS, compare all normative blob IDs between R and H, and reject unresolved `RECOVERY_OPENSPEC_FINDING` review threads on R. It SHALL treat missing/partial review pagination or thread reads as UNKNOWN and an explicit FINDINGS receipt or conflicting independent verdict as non-PASS. Reviewer semantic judgment determines PASS/FINDINGS **once** at review time; the application parses that recorded decision and objective provenance, not a fresh LLM verdict. Normal implementation review remains a separate later gate.
+
+#### Scenario: Original READY has no prior formal result and all pre-result predicates pass
+
+- GIVEN exact accepted request `6019133874` with immutable `READY`, current `action:implement-change`, qualified implementation and adopted exact-revision OpenSpec review
+- AND the required machine checks and non-idempotent isolation pass while complete source history shows zero qualified formal results
+- WHEN the existing application evaluates predicates I–S before F
+- THEN it returns pre-write `COMPLETE` without demanding an `ACTION_RESULT` or successor review first
+- AND it durably writes at most one formal result, fresh-verifies that record, derives `review-implementation` through the existing Action model, and verifies the projected route
+
+#### Scenario: Missing required task is incomplete, not an invented READY
+
+- GIVEN the accepted `READY` and an authoritative current task/implementation observation showing a necessary Executor behavior unfinished
+- WHEN predicate M is evaluated
+- THEN it returns `INCOMPLETE`, never fabricates READY or writes the formal result
+- AND only that missing work may be pursued through a separately authorized safe correction; unrelated qualified inspection or repair is not frozen
+
+#### Scenario: Read failure and conflicting formal result are distinct
+
+- GIVEN an original accepted application whose historic upload was never generated
+- WHEN a necessary current PR, review, Issue-comment, or effect-safety read is unavailable
+- THEN the affected predicate returns `UNKNOWN` and does not replay the old plan
+- BUT WHEN authoritative evidence instead shows a competing accepted owner, overlapping write, or incompatible formal result
+- THEN the affected predicate returns `CONFLICT` and blocks its write/transition until the conflict is resolved
+
+#### Scenario: Human-requested independent recovery review may be adopted
+
+- GIVEN the accepted #322 frontier is still `action:implement-change`, so normal review dispatch cannot run
+- AND Human explicitly directs an independent Reviewer to review exact corrective revision `R`
+- WHEN the existing review consumer verifies the Human source, Reviewer independence, exact PR/Change/`R`, checkout-verified validation, explicit semantic PASS and no unresolved material findings
+- THEN that exact source review may satisfy only the OpenSpec review evidence predicate for the bounded recovery correction
+- AND no normal Action, formal `REVIEW_RESULT`, route change or merge authority is created
+- AND the admission requires neither a historical `ACTION_RESULT` nor Recovery Exit
+
+#### Scenario: Stale or failed recovery review is not adopted
+
+- GIVEN a Human-requested recovery review reports FINDINGS, was authored by the correction author, or is bound to a different revision
+- WHEN the review evidence is evaluated
+- THEN it cannot satisfy the OpenSpec gate even if CI is green
+- AND the same PR/Change remains eligible for correction and a new independent exact-revision review without invented routing
 
 #### Scenario: Legacy recovery upload was never produced
 
@@ -796,10 +915,10 @@ Only when the specified deterministic application predicates and material safety
 - AND application MAY derive the unique already-accepted successor only after fresh review, exact accepted-result/current-routing qualification, necessary consequence checks, non-idempotent isolation and all normal guards
 - AND no extra semantic result, replay or route override is generated
 
-#### Scenario: An informational historical checkpoint does not block a correct final state
+#### Scenario: The scoped historical checkpoint is not an independent Recovery Exit gate
 
 - GIVEN the accepted #322 original two-effect envelope has UNKNOWN physical materialization and an unobserved old `SLICE_CHECKPOINT` comment
-- AND fresh qualified evidence proves the approved material implementation outcome and shows the checkpoint records only task progress that is independently verifiable
+- AND fresh qualified observations prove the currently required implementation tasks, content, tests and reviews without consulting the old comment
 - AND no competing writer, duplicate irreversible side effect, or other material safety conflict remains unresolved
 - WHEN the existing application owner evaluates the accepted result for Recovery Exit
 - THEN the missing historical checkpoint comment does not require an invented replacement or independently block formal completion

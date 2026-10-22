@@ -1458,6 +1458,8 @@ For `Executor / implement-change`, after an approved vertical slice reaches succ
 
 The checkpoint comment MUST use the canonical `SLICE_CHECKPOINT` presentation contract when that contract is active on the default branch and MUST identify the completed slice or task IDs, the durable checkpoint or verified revision, the required VERIFY/gate result, and the remaining approved work or handoff target. Before template activation, the same evidence fields remain required by the then-authoritative workflow contract even if presentation is not yet canonical. The comment SHALL summarize the completion boundary and MUST NOT replace the PR/commit, task markers, or CI evidence as their respective sources of truth.
 
+Narrow historical recovery exception: the already-accepted #322 `Executor / implement-change / READY` application (request comment `6019133874`, accepted-decision comment `6019173711`) predates recoverable checkpoint evidence. During **pre-formal-result Recovery Exit qualification only**, the absence or unavailability of its historical `SLICE_CHECKPOINT` SHALL NOT itself be a mandatory completion predicate. The application MUST independently verify current task/implementation/required-gate postconditions and MUST prevent replay or duplication of an uncertain non-idempotent comment/effect; an unverified hazardous side effect blocks only the operation that can repeat it. It MUST retain historical UNKNOWN and MUST NOT infer the comment was absent, completed, or informational from a file witness. Every future fresh Executor slice and all other accepted applications remain subject to the ordinary checkpoint requirement above.
+
 RED/GREEN/refactor/test-trigger/compatibility-correction commits and ordinary governed artifact or task-marker edits inside the same not-yet-complete slice MUST NOT independently require coordination-Issue progress comments. This requirement is completion-boundary observability only and MUST NOT introduce periodic heartbeat, progress percentage, `status:in-progress`, lock, claim, lease, retry counter, hidden ownership state, or other live execution machinery.
 
 #### Scenario: Verified slice completes before another slice begins
@@ -1485,6 +1487,15 @@ RED/GREEN/refactor/test-trigger/compatibility-correction commits and ordinary go
 - WHEN a later Executor run reconstructs the active implementation state
 - THEN it does not rerun or clear the already verified slice merely to recreate progress
 - AND it persists the missing bounded checkpoint from current durable evidence using the currently authoritative presentation contract before beginning another slice or handing off
+
+#### Scenario: Legacy accepted READY is qualified without inventing its checkpoint
+
+- GIVEN the exact #322 accepted application identified by request `6019133874` and decision `6019173711`
+- AND its historical checkpoint write is UNKNOWN while current task, implementation, and applicable gates can be independently observed
+- WHEN the existing application evaluates pre-formal-result Recovery Exit without scheduling another Executor slice
+- THEN it does not demand or forge a replacement historical `SLICE_CHECKPOINT` as a positive completion predicate
+- AND it blocks any prospective operation that could duplicate the uncertain comment or other irreversible effect until the specific deduplication/safety predicate is proven
+- AND later fresh Executor slices still persist their ordinary verified-slice checkpoint before handoff
 
 ### Requirement: Native Archive close hands off to terminal Lead reconstruction
 
