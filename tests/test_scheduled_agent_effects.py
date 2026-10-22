@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 from collections.abc import Callable, Mapping
@@ -4879,3 +4880,78 @@ def test_legacy_322_completed_materialization_does_not_launder_unknown_checkpoin
     )
     assert complete is (materialization_proven and checkpoint_proven)
     assert observed == (["issue-comment"] if materialization_proven else [])
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=TypeError,
+    reason="G2 RED: canonical forward correction satisfaction interface is not yet implemented",
+)
+def test_legacy_322_untrusted_forward_mapping_cannot_release_original_effects() -> None:
+    """RED: the canonical consumer has no independently verified correction seam.
+
+    A new materialization witness must not be mistaken for the old physical
+    witness, nor can it discharge the separately accepted SLICE_CHECKPOINT.
+    This is a pre-review contract test, not a fabricated live correction.
+    """
+    source = WorkerRequest(322, "executor", "implement-change")
+    change = "restore-no-work-idle-discovery"
+    materialize = StagedEffect(
+        kind=effects.GITHUB_MUTATION_KIND,
+        payload_json=json.dumps(
+            {"issue_number": 322, "operation": "application-materialize"},
+            sort_keys=True,
+        ),
+    )
+    checkpoint = StagedEffect(
+        kind="issue-comment",
+        payload_json=json.dumps(
+            {"issue_number": 322, "body": "SLICE_CHECKPOINT\nWorkflow: #322"},
+            sort_keys=True,
+        ),
+    )
+    raw = _raw(
+        issue_number=322,
+        change=change,
+        result_kind="ready",
+        requested_effects=[
+            {"kind": effect.kind, "payload_json": effect.payload_json}
+            for effect in (materialize, checkpoint)
+        ],
+    )
+    # In production this input must be independently reconstructed from
+    # current reviewed GitHub sources, never accepted on its own assertion.
+    accepted_decision_sha256 = "9c545558249285ec6d4fa632970dfa7157774d75bf2b6e46889e240a175cbd54"
+    correction_mapping = {
+        "original_request_comment_id": 6019133874,
+        "accepted_decision_sha256": accepted_decision_sha256,
+        "human_decision_comment_id": 6313995887,
+        "change": change,
+        "bindings": [
+            {
+                "ordinal": index,
+                "original_payload_sha256": hashlib.sha256(
+                    effect.payload_json.encode("utf-8")
+                ).hexdigest(),
+                "obligation": obligation,
+            }
+            for index, (effect, obligation) in enumerate(
+                ((materialize, "materialization"), (checkpoint, "slice-checkpoint"))
+            )
+        ],
+    }
+    canonical_postconditions = cast(
+        Callable[..., bool], effects.consequence_postconditions_complete
+    )
+    assert not canonical_postconditions(
+        raw,
+        source=source,
+        repository="royhsu-work/investment-strategy",
+        token=_TEST_TOKEN,
+        current_revision=_REVISION,
+        authorized_change=change,
+        request_comment_id=6019133874,
+        accepted_authorization_revision="ac7aebd7c2ac81b3227986350544307cadb221cc",
+        accepted_intent=True,
+        forward_correction_satisfaction=correction_mapping,
+    )
