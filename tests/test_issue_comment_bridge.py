@@ -4697,6 +4697,42 @@ def test_322_recovery_review_human_attestation_adoption_red() -> None:
     assert result.review_id == _RECOVERY_REVIEW_ID
 
 
+def test_322_review_adopts_disjoint_code_only_descendant_without_sha_lock() -> None:
+    sources = _recovery_review_sources()
+    head = "b" * 40
+    sources["comparison"] = {"status": "ahead", "base_commit": {"sha": _RECOVERY_R}}
+    result = bridge.qualify_recovery_openspec_review(
+        repository="royhsu-work/investment-strategy",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+        pr_number=340,
+        head_sha=head,
+        approval_label_present=True,
+        **sources,
+    )
+    assert result.disposition == "COMPLETE"
+    assert result.revision == _RECOVERY_R
+
+
+def test_322_distinct_authenticated_review_actor_needs_no_same_login_attestation() -> None:
+    sources = _recovery_review_sources()
+    cast(list[dict[str, object]], sources["reviews"])[0]["user"] = {
+        "login": "separate-independent-reviewer"
+    }
+    sources["issue_comments"] = []
+    sources["events"] = []
+    result = bridge.qualify_recovery_openspec_review(
+        repository="royhsu-work/investment-strategy",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+        pr_number=340,
+        head_sha=_RECOVERY_R,
+        approval_label_present=False,
+        **sources,
+    )
+    assert result.disposition == "COMPLETE"
+
+
 @pytest.mark.parametrize(
     ("mutation", "expected"),
     [
@@ -4819,8 +4855,14 @@ def test_322_review_source_reader_adopts_exact_r_without_formal_result() -> None
     [(True, "INCOMPLETE"), (False, "COMPLETE")],
 )
 @pytest.mark.parametrize("duplicate_checks", [False, True])
+@pytest.mark.parametrize("duplicate_formal", [False, True])
+@pytest.mark.parametrize("target_state", ["ok", "unreadable", "conflict"])
 def test_original_ready_preformal_entry_has_no_result_cycle(
-    unfinished: bool, expected: str, duplicate_checks: bool
+    unfinished: bool,
+    expected: str,
+    duplicate_checks: bool,
+    duplicate_formal: bool,
+    target_state: str,
 ) -> None:
     """Real accepted-result parser, live consumer and absent ACTION_RESULT shape."""
     request = _effect_request_comment(
@@ -4854,6 +4896,32 @@ def test_original_ready_preformal_entry_has_no_result_cycle(
         ],
     }
     head = _RECOVERY_R
+    comments = [decision]
+    if duplicate_formal:
+        raw = bridge._application_owned_worker_result(
+            record.raw_worker_result,
+            source=bridge.WorkerRequest(322, "executor", "implement-change"),
+            change="restore-no-work-idle-discovery",
+            current_revision=_RECOVERY_BASE,
+            result_revision=head,
+            request_comment_id=6019133874,
+        )
+        worker = bridge.parse_worker_result(
+            raw, bridge.WorkerRequest(322, "executor", "implement-change")
+        )
+        result_body = json.loads(worker.requested_effects[-1].payload_json)["body"]
+        comments.extend(
+            [
+                {
+                    "id": 6300000000 + index,
+                    "body": result_body,
+                    "created_at": f"2026-10-22T16:00:0{index}Z",
+                    "user": {"login": "github-actions[bot]"},
+                    "performed_via_github_app": {"slug": "github-actions"},
+                }
+                for index in (1, 2)
+            ]
+        )
 
     def read(_repository: str, _token: str, path: str) -> object:
         if path == "pulls/340":
@@ -4861,9 +4929,17 @@ def test_original_ready_preformal_entry_has_no_result_cycle(
                 "number": 340,
                 "state": "open",
                 "draft": False,
-                "head": {"sha": head, "repo": {"full_name": "royhsu-work/investment-strategy"}},
+                "head": {
+                    "sha": head,
+                    "ref": "agent/report-materialization-postcondition-failure",
+                    "repo": {"full_name": "royhsu-work/investment-strategy"},
+                },
                 "base": {"ref": "main", "repo": {"full_name": "royhsu-work/investment-strategy"}},
             }
+        if path == "git/ref/heads/agent/report-materialization-postcondition-failure":
+            if target_state == "unreadable":
+                return None
+            return {"object": {"sha": head if target_state == "ok" else "b" * 40}}
         if path == (
             "contents/openspec/changes/restore-no-work-idle-discovery/tasks.md?ref=" + head
         ):
@@ -4896,7 +4972,7 @@ def test_original_ready_preformal_entry_has_no_result_cycle(
         token=REVISION,
         source=bridge.WorkerRequest(322, "executor", "implement-change"),
         record=record,
-        issue_comments=(decision,),
+        issue_comments=tuple(comments),
         current_issue=issue,
         current_revision=_RECOVERY_BASE,
         read=read,
@@ -4906,10 +4982,24 @@ def test_original_ready_preformal_entry_has_no_result_cycle(
         log_read=lambda *_args: cast(str, _recovery_review_sources()["validator_log"]),
         expected_decision_digest=hashlib.sha256(cast(str, decision["body"]).encode()).hexdigest(),
     )
-    assert result.disposition == expected, result.predicates
-    assert dict(result.predicates)["F"] == "COMPLETE"  # zero formal records is lawful
+    target_disposition = (
+        "CONFLICT"
+        if target_state == "conflict"
+        else "UNKNOWN"
+        if target_state == "unreadable"
+        else expected
+    )
+    assert result.disposition == ("CONFLICT" if duplicate_formal else target_disposition), (
+        result.predicates
+    )
+    assert dict(result.predicates)["F"] == ("CONFLICT" if duplicate_formal else "COMPLETE")
     assert dict(result.predicates)["S"] == "COMPLETE"  # no old checkpoint replay
-    assert result.blocking_predicates == (("M",) if unfinished else ())
+    assert result.blocking_predicates == tuple(
+        name
+        for name in ("M", "F")
+        if (name == "M" and (unfinished or target_state != "ok"))
+        or (name == "F" and duplicate_formal)
+    )
 
 
 @pytest.mark.parametrize("lost_after_formal_post", [False, True])

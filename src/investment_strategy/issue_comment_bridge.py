@@ -824,12 +824,14 @@ def qualify_original_322_pre_formal(
         head_repo = head.get("repo") if isinstance(head, Mapping) else None
         base_repo = base.get("repo") if isinstance(base, Mapping) else None
         head_sha = head.get("sha") if isinstance(head, Mapping) else None
+        head_ref = head.get("ref") if isinstance(head, Mapping) else None
         if (
             pr.get("number") != 340
             or pr.get("state") != "open"
             or pr.get("draft") is not False
             or not isinstance(head_sha, str)
             or _SHA.fullmatch(head_sha) is None
+            or head_ref != "agent/report-materialization-postcondition-failure"
             or not isinstance(head_repo, Mapping)
             or head_repo.get("full_name") != repository
             or not isinstance(base_repo, Mapping)
@@ -838,14 +840,27 @@ def qualify_original_322_pre_formal(
         ):
             predicates["M"] = "CONFLICT"
         else:
+            live_ref = read(repository, token, f"git/ref/heads/{head_ref}")
+            ref_object = live_ref.get("object") if isinstance(live_ref, Mapping) else None
+            if not isinstance(ref_object, Mapping):
+                predicates["M"] = "UNKNOWN"
+            elif ref_object.get("sha") != head_sha:
+                predicates["M"] = "CONFLICT"
             task_path = f"openspec/changes/{record.change}/tasks.md"
-            task_content = read(repository, token, f"contents/{task_path}?ref={head_sha}")
+            task_content = (
+                read(repository, token, f"contents/{task_path}?ref={head_sha}")
+                if predicates["M"] == "UNKNOWN"
+                and isinstance(ref_object, Mapping)
+                and ref_object.get("sha") == head_sha
+                else None
+            )
             if (
                 not isinstance(task_content, Mapping)
                 or task_content.get("encoding") != "base64"
                 or not isinstance(task_content.get("content"), str)
             ):
-                predicates["M"] = "UNKNOWN"
+                if predicates["M"] != "CONFLICT":
+                    predicates["M"] = "UNKNOWN"
             else:
                 try:
                     tasks = base64.b64decode(
@@ -860,7 +875,7 @@ def qualify_original_322_pre_formal(
     approval_present = isinstance(labels, list) and any(
         isinstance(item, Mapping) and item.get("name") == "human:approved" for item in labels
     )
-    if head_sha is not None and predicates["M"] != "CONFLICT":
+    if head_sha is not None:
         review = review_read(
             repository,
             token,
