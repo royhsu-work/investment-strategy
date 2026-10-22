@@ -793,6 +793,16 @@ Only when the unique new corrective consequence is proven, the original accepted
 - AND application MAY derive the unique already-accepted semantic successor only after fresh review, complete original semantic applicability, non-idempotent isolation and all normal guards
 - AND no extra semantic result, replay or route override is generated
 
+#### Scenario: Distinct correction witness cannot release an unknown historical checkpoint
+
+- GIVEN the accepted #322 original two-effect envelope, its six-file physical materialization and checkpoint remain independently UNKNOWN
+- AND a new qualified correction has positive canonical file witness `COMPLETE(T_new,W_new)` and a unique reviewed correction identity
+- AND the only observed historical checkpoint has a different revision or application correlation, or source evidence for the original checkpoint is incomplete
+- WHEN the application reconstructs the accepted formal result's consequence
+- THEN the new file witness satisfies only the specifically approved materialization-equivalent obligation, not the checkpoint obligation
+- AND it neither fabricates `COMPLETE(T_old,W_old)` nor projects any successor until the checkpoint's own uniquely qualified proof or explicitly approved separate equivalent is observed
+- AND a later proof of the separate checkpoint can permit one derived successor only after all other fresh review, authorization, and non-idempotent isolation gates pass
+
 #### Scenario: Uncertain checkpoint or overlapping writes prohibit a corrective mutation
 
 - GIVEN the historical checkpoint issue-comment status is ambiguous or same-path effects overlap
