@@ -4202,20 +4202,22 @@ def test_carrier_outcome_cannot_claim_matching_precondition_with_other_observati
 
 
 @pytest.mark.parametrize(
-    ("run_id", "job_id"),
+    ("run_attempt", "job_id"),
     [
-        (37563005754, 112607809410),
-        (37693412638, 113038961936),
+        (1, 112340001372),
+        (2, 112577054083),
     ],
 )
 @pytest.mark.parametrize("upload_step_present", [False, True])
 def test_completed_legacy_application_job_preserves_historical_identity_without_replay(
     monkeypatch: pytest.MonkeyPatch,
-    run_id: int,
+    run_attempt: int,
     job_id: int,
     upload_step_present: bool,
 ) -> None:
-    """Missing older evidence cannot imply zero writes or authorize a completed-job rerun."""
+    """Both attempts of original request 6019133874 remain source-qualified blockers."""
+    run_id = 37484224666
+    request_id = 6019133874
     steps = [
         {"name": "Set up job", "conclusion": "success"},
         {
@@ -4237,11 +4239,11 @@ def test_completed_legacy_application_job_preserves_historical_identity_without_
                 "workflow_runs": [
                     {
                         "id": run_id,
-                        "display_title": "Scheduled Agent Application 90",
+                        "display_title": f"Scheduled Agent Application {request_id}",
                         "status": "completed",
                         "conclusion": "failure",
-                        "run_attempt": 1,
-                        "head_sha": REVISION,
+                        "run_attempt": run_attempt,
+                        "head_sha": "ac7aebd7c2ac81b3227986350544307cadb221cc",
                     }
                 ]
             }
@@ -4265,13 +4267,19 @@ def test_completed_legacy_application_job_preserves_historical_identity_without_
     completion = bridge._application_job(
         "royhsu-work/investment-strategy",
         "test-token",
-        90,
+        request_id,
         read=read,
-        record=_accepted_carrier_record(),
+        record=replace(
+            _accepted_carrier_record(),
+            request_comment_id=request_id,
+            authorization_revision="ac7aebd7c2ac81b3227986350544307cadb221cc",
+            result_kind="ready",
+        ),
         accepted_decision_sha256="a" * 64,
     )
 
     assert completion.state == "INVALID"
+    assert completion.request_comment_id == request_id
     if upload_step_present:
         assert completion.reason == "application-completion-recovery-evidence-missing"
         assert completion.job_id is None
