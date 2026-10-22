@@ -737,7 +737,7 @@ A substantive recovery transition SHALL be eligible without a fixed numerical at
 - THEN it performs only the fresh read-only proof required to determine whether the consequence is already complete
 - AND if remaining work, a unique predecessor, and safe effect state are not provable, it returns an evidence-incomplete blocker
 - AND it emits no new old-plan continuation and fabricates no guard reason
-- AND that old-plan evidence gap does not independently prohibit a separately authorized safe prospective correction whose current semantic outcome and side-effect safety can be proven
+- AND that old-plan evidence gap does not independently prohibit a separately authorized safe prospective correction whose defined current postconditions and side-effect safety can be machine-verified
 
 #### Scenario: New evidence continues after the former numeric threshold
 
@@ -772,11 +772,11 @@ After a durable `APPLICATION_DECISION: ACCEPTED`, the same normal Action/worker 
 
 The prospective correction SHALL be uniquely and sufficiently bound to the existing accepted decision, qualified Human source, Change, reviewed PR/ref/current target, and intended operation. It SHALL reuse those source identities rather than requiring an additional derived hash or state when they already prove uniqueness. A changed revision alone SHALL NOT authorize duplicate writes or reset recovery attempts. Before any *new* write, require complete current authority, unique target/carrier, absence of relevant in-flight or competing effects, fresh `P/D`, non-force CAS, path overlap/content/lineage checks, and a fresh postcondition. The canonical materialization owner SHALL prove any new Git consequence as `COMPLETE(T_new,W_new)` independently of old-plan proof; this SHALL NOT claim original `COMPLETE(T_old,W_old)`. Old `expected_sha` SHALL NOT guard a distinct new operation. Original physical effects remain UNKNOWN unless independently observed; unsupported or unsafe mutations remain NO_WRITE.
 
-**Recovery Exit is final-state semantic correctness, not universal historical-effect completion.** The existing application-completion and canonical consequence owners SHALL jointly establish: (1) the original approved intent and accepted semantic result remain applicable to the current Change/tasks, (2) current authoritative evidence affirmatively proves all *material semantic obligations* are fulfilled, (3) no unresolved conflict or historical side-effect ambiguity creates a concrete unacceptable duplicate/irreversible risk, and (4) a uniquely authorized existing application can persist one lawful formal result and successor transition. Old effect ordinals, payload digests, artifacts, and comments MAY identify safety risks or provenance, but SHALL NOT become a universal proof-of-each-old-effect checklist. A checkpoint that only records progress SHALL NOT require a replacement comment when its material information and outcome are independently verifiable. If a checkpoint actually enforces a separate deduplication, authorization, or irreversible side-effect property, that specific property MUST be independently proven before any affected mutation; a file witness alone is not such proof. Historical UNKNOWN remains UNKNOWN and may coexist with verified final semantic correctness. No acceptance, completion or successor is authorized merely by an unreviewed correction PR, green CI or a stale historical READY assertion.
+**Recovery Exit uses deterministic application-completion predicates, not a new LLM semantic judgment or universal historical-effect completion.** The existing application-completion and canonical consequence owners SHALL jointly establish from the immutable accepted typed result and fresh authoritative GitHub observations: (1) exact approved Issue/Change/Action/result identity and current routing eligibility, (2) qualified required concrete GitHub consequence/postcondition and validation/review/authorization records defined by the approved contract, (3) no evidenced conflict or historical side-effect ambiguity that creates a concrete unacceptable duplicate/irreversible risk for the affected operation, and (4) unique lawful formal result persistence and `next_action` transition. A free-form model assessment of whether the current state "fulfills the intent" SHALL NOT be an executable acceptance predicate. The same accepted result and complete source observations MUST produce the same completion disposition, regardless of a model's subsequent opinion. Old effect ordinals, payload digests, artifacts, and comments MAY identify safety risks or provenance, but SHALL NOT become a universal proof-of-each-old-effect checklist. An informational checkpoint SHALL NOT require a replacement comment when its concrete necessary information and postconditions are independently verified. If a checkpoint actually enforces deduplication, authorization, or irreversible-effect safety, that specific property MUST be independently proven before any affected mutation; a file witness alone is not such proof. Historical UNKNOWN remains UNKNOWN and does not become false COMPLETE or a blanket block on unrelated safe effects. Unexpressed/non-machine-verifiable acceptance criteria MUST be resolved through an explicit Human decision, not an improvised probabilistic runtime verdict. No completion or successor is authorized merely by an unreviewed correction PR, green CI or a stale historical READY assertion.
 
-For legacy accepted applications without a formal `ACTION_RESULT`, the current `_formal_consequence -> _fresh_completion_postconditions` ordering SHALL NOT make the missing result a prerequisite to evaluating whether completion is lawful. The **same repository-owned application** SHALL first fresh-qualify the approved final semantic outcome, current review/authorization, material safety, and any required canonical materialization witness, then perform and observe **one** formal result persistence and derived `next_action` transition through its existing owner. It SHALL reconcile any lost response by read-only observation before another write and SHALL NOT emit a second semantic worker result, fabricate `READY`, or introduce a competing completion authority. If the original accepted READY no longer represents the current approved outstanding work, it SHALL NOT be projected as complete; the existing governed disposition must resolve that mismatch.
+For legacy accepted applications without a formal `ACTION_RESULT`, the current `_formal_consequence -> _fresh_completion_postconditions` ordering SHALL NOT make the missing result a prerequisite to evaluating whether completion is lawful. The **same repository-owned application** SHALL first execute the predefined current-source qualification predicates for the original accepted typed result, review/authorization, material safety and any required canonical materialization witness, then perform and observe **one** formal result persistence and derived `next_action` transition through its existing owner. It SHALL reconcile any lost response by read-only observation before another write and SHALL NOT emit a second semantic worker result, fabricate `READY`, or introduce a competing completion authority. If the original accepted READY fails a mandatory concrete current-state predicate, it SHALL NOT be projected as complete; the existing governed disposition must resolve that mismatch.
 
-Only when the final semantic outcome and material safety are affirmatively qualified and all current required review/authorization/handoff gates pass MAY the existing repository-owned application **once** project the still-applicable accepted result's legal successor via `next_action`. Historical gaps unrelated to semantic outcome or material safety SHALL NOT by themselves prohibit projection. The projection SHALL have durable, source-bound evidence; it SHALL NOT fabricate original physical-plan completion, rewrite `I`, call a second semantic worker, or persist duplicate formal results. Incomplete *necessary* evidence retains a precise blocker and prevents the affected transition. A correction PR merge, green CI, or read-only assessment alone is NOT Recovery Exit.
+Only when the specified deterministic application predicates and material safety are qualified and all current required review/authorization/handoff gates pass MAY the existing repository-owned application **once** project the accepted typed result's legal successor via `next_action`. Historical gaps unrelated to these predicates or material safety SHALL NOT by themselves prohibit projection. The projection SHALL have durable, source-bound evidence; it SHALL NOT fabricate original physical-plan completion, rewrite `I`, call a second semantic worker, or persist duplicate formal results. Incomplete *necessary* evidence retains a precise blocker for the affected transition, not a new global recovery lock. A correction PR merge, green CI, or read-only assessment alone is NOT Recovery Exit.
 
 #### Scenario: Legacy recovery upload was never produced
 
@@ -793,7 +793,7 @@ Only when the final semantic outcome and material safety are affirmatively quali
 - WHEN the existing canonical proof observes `COMPLETE(T_new,W_new)` for the corrective outcome after its non-force mutation
 - THEN the corrected consequence is complete only under its own exact identity
 - AND the original accepted six-file effect and checkpoint remain UNKNOWN unless separately proven
-- AND application MAY derive the unique already-accepted semantic successor only after fresh review, complete original semantic applicability, non-idempotent isolation and all normal guards
+- AND application MAY derive the unique already-accepted successor only after fresh review, exact accepted-result/current-routing qualification, necessary consequence checks, non-idempotent isolation and all normal guards
 - AND no extra semantic result, replay or route override is generated
 
 #### Scenario: An informational historical checkpoint does not block a correct final state
@@ -804,7 +804,7 @@ Only when the final semantic outcome and material safety are affirmatively quali
 - WHEN the existing application owner evaluates the accepted result for Recovery Exit
 - THEN the missing historical checkpoint comment does not require an invented replacement or independently block formal completion
 - AND historical checkpoint/materialization UNKNOWN remains unchanged
-- AND the application may complete only after current semantic applicability, independent reviews, exact postconditions, and all other mandatory gates are met
+- AND the application may complete only after deterministic accepted-result/current-state predicates, independent reviews, exact postconditions, and applicable governance gates are met
 
 #### Scenario: A checkpoint with actual side effects still requires safety proof
 
@@ -817,11 +817,27 @@ Only when the final semantic outcome and material safety are affirmatively quali
 #### Scenario: Legacy formal-result sequencing has a lawful entry
 
 - GIVEN one durable accepted semantic result with no historical `ACTION_RESULT` and an old completed job lacking the later recovery-upload step
-- AND a Human-approved, independently reviewed correction yields verified current semantic correctness and relevant side-effect safety
+- AND a Human-approved, independently reviewed correction yields PASS for the fixed observable application-completion predicates and relevant side-effect safety
 - WHEN the existing application owner evaluates Recovery Exit
 - THEN it may qualify the accepted result before requiring a previously persisted formal result, and it persists at most one lawful formal result and derived successor
 - AND loss of the persistence response is reconciled read-only before any new write
 - AND it neither reruns the old job nor emits another semantic worker result
+
+#### Scenario: Model opinion cannot change a mechanically qualified application result
+
+- GIVEN the same immutable accepted typed result, approved contract, current routing, and complete authoritative source observations
+- AND different LLM invocations express conflicting opinions about whether the intent is fulfilled
+- WHEN the repository-owned application evaluates Recovery Exit
+- THEN it computes the same disposition from the same fixed identity, postcondition, authorization, review and side-effect predicates
+- AND it does not request or consume a new model-generated semantic verdict as completion evidence
+
+#### Scenario: A genuinely subjective acceptance criterion returns to Human authority
+
+- GIVEN a required outcome has no agreed mechanical predicate or recorded explicit Human acceptance
+- WHEN the application evaluates the affected completion boundary
+- THEN it identifies the exact unresolved acceptance criterion for governed Human disposition
+- AND it neither fabricates success nor retries the model's opinion until it happens to return PASS
+- AND unrelated operations with independently satisfied authorization and safety predicates remain eligible
 
 #### Scenario: Uncertain checkpoint or overlapping writes prohibit a corrective mutation
 
