@@ -766,55 +766,48 @@ A substantive recovery transition SHALL be eligible without a fixed numerical at
 
 ### Requirement: Verified implementation slices persist a bounded coordination-Issue checkpoint
 
-For every future fresh `Executor / implement-change` invocation, a successfully VERIFIED
-approved slice MUST durably persist its satisfied task markers and exactly one bounded
-`SLICE_CHECKPOINT` on the coordination Issue, identifying Change, task IDs, verified
-revision, gate result, and remaining work, before another slice or handoff. Intermediate
-RED/GREEN/refactor commits do not individually require progress comments. If task markers
-were persisted but the comment was interrupted, the next fresh Executor wake MUST
-reconstruct current truth, persist the missing checkpoint, and MUST NOT rerun the verified
-slice. This requirement creates no heartbeat, cursor, lease, or progress state.
+For `Executor / implement-change`, after an approved vertical slice reaches successful `VERIFY`, Executor MUST persist all satisfied task markers for that slice and MUST persist exactly one bounded checkpoint comment on the persistent coordination Issue before beginning the next slice or handing off.
 
-Only for the historical #322 accepted `implement-change / READY` application with
-request comment `6019133874` and decision comment `6019173711`, **pre-formal-result
-Recovery Exit qualification** MAY proceed without positive evidence of the old
-`SLICE_CHECKPOINT`. The historical effect remains UNKNOWN; no replacement comment,
-replay, assumed absence, or assumed success is authorized. The application MUST prove
-current task/implementation and required gate facts independently and MUST block a
-prospective write that could repeat any unproven non-idempotent side effect until its
-specific safety/deduplication predicate is proven. This exception does not apply to
-fresh slices or any other accepted application.
+The checkpoint comment MUST use the canonical `SLICE_CHECKPOINT` presentation contract when that contract is active on the default branch and MUST identify the completed slice or task IDs, the durable checkpoint or verified revision, the required VERIFY/gate result, and the remaining approved work or handoff target. Before template activation, the same evidence fields remain required by the then-authoritative workflow contract even if presentation is not yet canonical. The comment SHALL summarize the completion boundary and MUST NOT replace the PR/commit, task markers, or CI evidence as their respective sources of truth.
+
+Narrow historical recovery exception: the already-accepted #322 `Executor / implement-change / READY` application (request comment `6019133874`, accepted-decision comment `6019173711`) predates recoverable checkpoint evidence. During **pre-formal-result Recovery Exit qualification only**, the absence or unavailability of its historical `SLICE_CHECKPOINT` SHALL NOT itself be a mandatory completion predicate. The application MUST independently verify current task/implementation/required-gate postconditions and MUST prevent replay or duplication of an uncertain non-idempotent comment/effect; an unverified hazardous side effect blocks only the operation that can repeat it. It MUST retain historical UNKNOWN and MUST NOT infer the comment was absent, completed, or informational from a file witness. Every future fresh Executor slice and all other accepted applications remain subject to the ordinary checkpoint requirement above.
+
+RED/GREEN/refactor/test-trigger/compatibility-correction commits and ordinary governed artifact or task-marker edits inside the same not-yet-complete slice MUST NOT independently require coordination-Issue progress comments. This requirement is completion-boundary observability only and MUST NOT introduce periodic heartbeat, progress percentage, `status:in-progress`, lock, claim, lease, retry counter, hidden ownership state, or other live execution machinery.
 
 #### Scenario: Verified slice completes before another slice begins
 
-- GIVEN Executor completes an approved vertical slice and its VERIFY/gates pass
+- GIVEN Executor completes an approved vertical slice
+- AND the slice's required VERIFY and repository gates succeed
 - WHEN Executor prepares to continue implementation
-- THEN the satisfied task markers and one bounded, source-bound `SLICE_CHECKPOINT` are durable
+- THEN all satisfied task markers for that slice are durably persisted
+- AND exactly one bounded `SLICE_CHECKPOINT`-equivalent completion record is durably recorded on the persistent coordination Issue using the currently authoritative presentation contract
+- AND the checkpoint identifies the completed work, durable revision, gate result, and remaining work
 - AND only then may Executor begin the next approved slice
 
 #### Scenario: Work continues inside an unverified slice
 
-- GIVEN a slice is still in RED, GREEN, refactor, test-trigger, or compatibility correction
-- WHEN ordinary implementation commits or task edits occur before successful VERIFY
-- THEN Git/PR/tasks remain the source evidence
-- AND no additional checkpoint comment is required solely for those intermediate commits
+- GIVEN Executor is performing RED, GREEN, refactor, test-trigger, compatibility correction, or ordinary artifact/task edits inside one approved slice
+- AND that slice has not yet reached successful VERIFY
+- WHEN those intermediate mutations are persisted
+- THEN Git/PR/task evidence remains the detailed source of truth
+- AND no additional implementation-progress Issue comment is required solely for those mutations
 
 #### Scenario: Task markers persisted but checkpoint write was interrupted
 
-- GIVEN a previous fresh Executor run verified a slice and durably persisted its task markers
-- BUT the required checkpoint was interrupted
-- WHEN another fresh Executor wake reconstructs the implementation state
-- THEN it persists only the missing checkpoint from current durable evidence
-- AND never re-executes the verified slice merely to recreate evidence
+- GIVEN a prior Executor run successfully verified a slice and durably persisted its satisfied task markers
+- BUT the run ended before the required coordination-Issue checkpoint was persisted
+- WHEN a later Executor run reconstructs the active implementation state
+- THEN it does not rerun or clear the already verified slice merely to recreate progress
+- AND it persists the missing bounded checkpoint from current durable evidence using the currently authoritative presentation contract before beginning another slice or handing off
 
 #### Scenario: Legacy accepted READY is qualified without inventing its checkpoint
 
-- GIVEN the exact #322 accepted request `6019133874` and decision `6019173711`
-- AND its historical checkpoint remains UNKNOWN
-- WHEN pre-formal-result Recovery Exit evaluates independently proven current implementation/gate facts
-- THEN the missing historical checkpoint does not independently block that qualification
-- AND a prospective non-idempotent duplicate is blocked until its own safety proof exists
-- AND no future fresh Executor checkpoint requirement is waived
+- GIVEN the exact #322 accepted application identified by request `6019133874` and decision `6019173711`
+- AND its historical checkpoint write is UNKNOWN while current task, implementation, and applicable gates can be independently observed
+- WHEN the existing application evaluates pre-formal-result Recovery Exit without scheduling another Executor slice
+- THEN it does not demand or forge a replacement historical `SLICE_CHECKPOINT` as a positive completion predicate
+- AND it blocks any prospective operation that could duplicate the uncertain comment or other irreversible effect until the specific deduplication/safety predicate is proven
+- AND later fresh Executor slices still persist their ordinary verified-slice checkpoint before handoff
 
 ### Requirement: Legacy Forward Correction is independently authorized and never replays accepted semantic work
 
@@ -839,9 +832,9 @@ The application SHALL compute one of `COMPLETE / INCOMPLETE / UNKNOWN / CONFLICT
 
 `INCOMPLETE` allows only independently reauthorized necessary corrective work; `UNKNOWN` prohibits only the effect/transition depending on unreadable or ambiguous evidence and permits re-observation; `CONFLICT` prohibits the overlapping write/transition until its exact conflict is resolved through governed correction or Human decision. All states preserve unchanged original identity and historical UNKNOWN. A historical upload, old six-file completion, individual effect ordinals, and old checkpoint comment SHALL NOT be a universal positive prerequisite. No model-generated “semantic equivalence” or interpretation of whether the checkpoint was “informational” may alter these results. Truly unexpressed required acceptance criteria return to Human without imposing a global lock on disjoint qualified work.
 
-**Human-authorized recovery-review evidence adoption (temporary bootstrap, not a second workflow).** While #322's accepted application prevents normal `review-openspec` dispatch, the Human MAY request a distinct independent Reviewer examination of exact PR #340 revision `R` and its complete proposal/design/delta/tasks/affected contracts **without first completing Recovery Exit or changing routing**. A review is adoptable for predicate `V` only when complete authoritative GitHub evidence establishes: the exact Human approval reference; same repository/Change/PR/base and immutable reviewed `R`; strict checkout-verified validation of `R`; a source-bound independent reviewer identity distinct from the author with an explicit `PASS` verdict on OpenSpec semantics (not a CI or code-only verdict); no unresolved material findings on `R`; and fresh confirmation that the reviewed OpenSpec and affected normative Skill/canonical blobs at current implementation head `H` equal those at `R`, with `H = R` or `H` a verified descendant of `R`. Code-only implementation commits may thus advance `H` without inventing a second semantic review; **any material normative blob change requires a new reviewed `R`**. The existing review/authorization consumer SHALL validate these fields deterministically and record the adopted source review ID, `R`, and Human reference as **review evidence only**, not a fabricated `review-openspec` Action, `REVIEW_RESULT`, `ACTION_RESULT`, routing or merge approval. `FINDINGS`, missing identity/checkout, unqualified lineage, changed reviewed blobs, self-review, partial pagination, or contradictory review evidence MUST NOT be adopted; revise and obtain another independent exact-revision review. This bounded bridge expires for the historical #322 correction once its normal frontier advances; all later normal reviews use repository dispatch. An unmerged proposal alone is not operative adoption and an unimplemented consumer cannot claim a PASS.
+**Human-authorized recovery-review evidence adoption (temporary bootstrap, not a second workflow).** While #322's accepted application prevents normal `review-openspec` dispatch, the Human MAY request a distinct independent Reviewer examination of exact PR #340 revision `R` and its complete proposal/design/delta/tasks/affected contracts **without first completing Recovery Exit or changing routing**. A review is adoptable for predicate `V` only when complete authoritative GitHub evidence establishes: the exact Human approval reference; same repository/Change/PR/base and immutable reviewed `R`; strict checkout-verified validation of `R`; an explicit independent OpenSpec semantic `PASS` review (not CI or code-only PASS) and objectively qualified Reviewer independence **under one of the two source-bound paths below**; no unresolved material findings on `R`; and fresh confirmation that the reviewed OpenSpec and affected normative Skill/canonical blobs at current implementation head `H` equal those at `R`, with `H = R` or `H` a verified descendant of `R`. Code-only implementation commits may thus advance `H` without inventing a second semantic review; **any material normative blob change requires a new reviewed `R`**. The existing review/authorization consumer SHALL validate these fields deterministically and record the adopted source review ID, `R`, and Human reference as **review evidence only**, not a fabricated `review-openspec` Action, `REVIEW_RESULT`, `ACTION_RESULT`, routing or merge approval. `FINDINGS`, unqualified independence/checkout, unqualified lineage, changed reviewed blobs, actual self-review, partial pagination, or contradictory review evidence MUST NOT be adopted; revise and obtain another independent exact-revision review. This bounded bridge expires for the historical #322 correction once its normal frontier advances; all later normal reviews use repository dispatch. An unmerged proposal alone is not operative adoption and an unimplemented consumer cannot claim a PASS.
 
-The adoptable GitHub **PR review** (not an Issue comment or author declaration) MUST contain a machine-parsed review receipt with exactly these ordered nonempty fields; source reviewer login, review ID, submission timestamp, and GitHub review state come from the GitHub review object, never self-asserted body fields:
+The adoptable GitHub **PR review** (not an author declaration) MUST contain a machine-parsed review receipt with exactly these ordered nonempty fields; source reviewer login, immutable GitHub review ID, submission timestamp, and GitHub review state come from the GitHub review object, never self-asserted body fields:
 
 ```text
 RECOVERY_OPENSPEC_REVIEW
@@ -856,7 +849,12 @@ Validator-Run: <positive-run-id>
 Disposition: PASS|FINDINGS
 ```
 
-The consumer MUST require exactly one latest, uncontradicted independent PASS receipt applicable to R, validate the validator run's **actual checkout R** and PASS, compare all normative blob IDs between R and H, and reject unresolved `RECOVERY_OPENSPEC_FINDING` review threads on R. It SHALL treat missing/partial review pagination or thread reads as UNKNOWN and an explicit FINDINGS receipt or conflicting independent verdict as non-PASS. Reviewer semantic judgment determines PASS/FINDINGS **once** at review time; the application parses that recorded decision and objective provenance, not a fresh LLM verdict. Normal implementation review remains a separate later gate.
+**Review independence has two executable proof paths (choose one, not both):**
+
+1. **Distinct authenticated GitHub reviewer.** The PR review object's `user.login` differs from the current correction commit's authoritative `author.login`, and the review is bound to exact `R` and the designated independent review evidence. This proves distinct authenticated GitHub actors for this bounded review; the author cannot claim a second identity in the receipt body.
+2. **Same-login connector, separately confirmed by Human.** If both GitHub actions resolve to the same login (as they do when distinct Lead and Reviewer conversations use the `royhsu-work` connector), login equality SHALL NOT automatically prove self-review or independence. Instead, the Human MUST make a **direct GitHub Issue #322 decision comment after the submitted PR review**, naming the exact immutable `R`, GitHub PR review ID, and confirming that an independently commissioned Reviewer session—not the Lead authoring session—produced that review. Its canonical `Human-Decision-For` value SHALL be `issue:322:recovery-openspec-review:<R>:<review-global-id>`, followed by exactly `Recovery-Review-Independence: separately-reviewed`. The existing default-branch provenance-bound Human-decision predicate applies: raw comment `user.login == royhsu-work`, `performed_via_github_app == null`, an independently observed subsequent Human-only `human:approved` labeled event bound to that exact decision reference, current `human:approved` presence, no post-approval comment edit, complete ordering/uniqueness and no competing Human decision. GitHub connector-authored comments, review-body assertions, copied conversation prose, and an author-created Issue comment SHALL NOT satisfy this path. This is Human attestation of role separation, **not** a claim that the GitHub login identifies the two sessions; missing Human-only provenance/event returns UNKNOWN for review adoption, never inferred PASS.
+
+The consumer MUST require exactly one latest, uncontradicted independent PASS receipt applicable to R; establish one of the two independence paths using raw source evidence; validate the validator run's **actual checkout R** and PASS; compare all normative blob IDs between R and H; and reject unresolved `RECOVERY_OPENSPEC_FINDING` review threads on R. It SHALL treat missing/partial review, Human decision/event, or thread pagination as UNKNOWN and an explicit FINDINGS receipt or conflicting independent verdict as non-PASS. Reviewer semantic judgment determines PASS/FINDINGS **once** at review time; the application parses that recorded decision and objective provenance, not a fresh LLM verdict. The optional Human attestation is bounded to #322 recovery and the exact source PR review; it authorizes neither semantic self-review nor another workflow Action, and normal implementation review remains a separate later gate.
 
 #### Scenario: Original READY has no prior formal result and all pre-result predicates pass
 
@@ -890,9 +888,17 @@ The consumer MUST require exactly one latest, uncontradicted independent PASS re
 - AND no normal Action, formal `REVIEW_RESULT`, route change or merge authority is created
 - AND the admission requires neither a historical `ACTION_RESULT` nor Recovery Exit
 
+#### Scenario: Separate Reviewer shares the connector login with Lead
+
+- GIVEN a Human-commissioned independent Reviewer submits a semantic PASS PR review for exact R and both GitHub review and correction author have login `royhsu-work`
+- AND a later direct-Human #322 decision comment names that review ID and R, attests a different Reviewer session, and uniquely binds to a subsequent qualifying Human-only `human:approved` event
+- WHEN the existing consumer validates raw Human comment/event provenance and all the ordinary exact-R review and validation predicates
+- THEN login equality alone does not reject the independent review and the source review MAY be adopted as evidence for V
+- AND missing, edited, connector-authored or competing Human attestation prevents adoption without inventing an Action or formal result
+
 #### Scenario: Stale or failed recovery review is not adopted
 
-- GIVEN a Human-requested recovery review reports FINDINGS, was authored by the correction author, or is bound to a different revision
+- GIVEN a Human-requested recovery review reports FINDINGS, lacks a qualified independent-review path, or is bound to a different revision
 - WHEN the review evidence is evaluated
 - THEN it cannot satisfy the OpenSpec gate even if CI is green
 - AND the same PR/Change remains eligible for correction and a new independent exact-revision review without invented routing
