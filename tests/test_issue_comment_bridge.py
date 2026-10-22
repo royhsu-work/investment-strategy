@@ -4202,22 +4202,31 @@ def test_carrier_outcome_cannot_claim_matching_precondition_with_other_observati
 
 
 @pytest.mark.parametrize(
-    ("run_attempt", "job_id"),
+    ("run_id", "run_attempt", "job_id", "transport_comment_id"),
     [
-        (1, 112340001372),
-        (2, 112577054083),
+        (37484224666, 1, 112340001372, None),
+        (37484224666, 2, 112577054083, None),
+        (37563005754, 2, 112607809410, 6029741785),
+        (37693412638, 1, 113038961936, 6047718564),
     ],
 )
 @pytest.mark.parametrize("upload_step_present", [False, True])
 def test_completed_legacy_application_job_preserves_historical_identity_without_replay(
     monkeypatch: pytest.MonkeyPatch,
+    run_id: int,
     run_attempt: int,
     job_id: int,
+    transport_comment_id: int | None,
     upload_step_present: bool,
 ) -> None:
-    """Both attempts of original request 6019133874 remain source-qualified blockers."""
-    run_id = 37484224666
+    """Original and legacy continuation attempts cannot replay the same accepted intent."""
     request_id = 6019133874
+    transport_id = request_id if transport_comment_id is None else transport_comment_id
+    run_head = (
+        "ac7aebd7c2ac81b3227986350544307cadb221cc"
+        if transport_comment_id is None
+        else "cd8d45f64e901cdb8e5e8b42358d6081a293d08f"
+    )
     steps = [
         {"name": "Set up job", "conclusion": "success"},
         {
@@ -4239,11 +4248,11 @@ def test_completed_legacy_application_job_preserves_historical_identity_without_
                 "workflow_runs": [
                     {
                         "id": run_id,
-                        "display_title": f"Scheduled Agent Application {request_id}",
+                        "display_title": f"Scheduled Agent Application {transport_id}",
                         "status": "completed",
                         "conclusion": "failure",
                         "run_attempt": run_attempt,
-                        "head_sha": "ac7aebd7c2ac81b3227986350544307cadb221cc",
+                        "head_sha": run_head,
                     }
                 ]
             }
@@ -4275,7 +4284,10 @@ def test_completed_legacy_application_job_preserves_historical_identity_without_
             authorization_revision="ac7aebd7c2ac81b3227986350544307cadb221cc",
             result_kind="ready",
         ),
-        accepted_decision_sha256="a" * 64,
+        accepted_decision_sha256="9c545558249285ec6d4fa632970dfa7157774d75bf2b6e46889e240a175cbd54",
+        transport_comment_ids=(
+            () if transport_comment_id is None else (transport_comment_id,)
+        ),
     )
 
     assert completion.state == "INVALID"
