@@ -4049,6 +4049,213 @@ def test_prior_dispatch_without_a_visible_run_fails_closed_before_carrier_reissu
     assert status == "application-completion-carrier-prior-dispatch-incomplete"
 
 
+def test_malformed_prior_dispatch_handoff_cannot_disappear_from_history() -> None:
+    """An orphaned connector dispatch marker is not proof of no prior plan."""
+    reads: list[str] = []
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        reads.append(path)
+        return {"workflow_runs": []}
+
+    status = bridge._prior_dispatch_handoff_reason(
+        "owner/repo",
+        "token",
+        recent_comments=(
+            _trusted_connector_comment(90, f"{REQUEST_BODY}\nExtra: orphaned"),
+            _trusted_connector_comment(91, REQUEST_BODY),
+        ),
+        owner="owner",
+        current_dispatch_request_comment_id=100,
+        plan_id=_carrier_plan_fixture().plan_id,
+        read=read,
+    )
+
+    assert status == "application-completion-carrier-prior-dispatch-incomplete"
+    assert reads == []
+
+
+def test_unanswered_human_question_wait_is_derived_before_semantic_ingress() -> None:
+    change = "human-wait-test"
+    formal = _formal_frontier_comment(
+        100,
+        action="resolve-question",
+        role="lead",
+        result="human-decision-required",
+        successor="Lead / resolve-question",
+        request_id=90,
+        change=change,
+    )
+    formal["updated_at"] = formal["created_at"]
+    predecessor = _formal_frontier_comment(
+        80,
+        action="implement-change",
+        role="executor",
+        result="spec-blocker",
+        successor="Lead / resolve-question",
+        request_id=70,
+        change=change,
+    )
+    predecessor["updated_at"] = predecessor["created_at"]
+    current_issue = {
+        "number": 138,
+        "title": "Human wait regression",
+        "state": "open",
+        "created_at": "2026-09-17T00:00:00Z",
+        "closed_at": None,
+        "body": f"Change: {change}",
+        "labels": [{"name": "action:resolve-question"}],
+        "updated_at": formal["created_at"],
+    }
+    timeline = [
+        {"id": 80, "event": "commented", "created_at": predecessor["created_at"]},
+        {
+            "id": 998,
+            "event": "unlabeled",
+            "created_at": "2026-09-18T02:00:09Z",
+            "label": {"name": "action:implement-change"},
+        },
+        {
+            "id": 999,
+            "event": "labeled",
+            "created_at": "2026-09-18T02:00:09Z",
+            "label": {"name": "action:resolve-question"},
+        },
+        {"id": 100, "event": "commented", "created_at": formal["created_at"]},
+    ]
+    comments = [predecessor, formal]
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path == "issues/138":
+            return current_issue
+        if path.startswith("issues/138/comments?"):
+            return comments
+        if path.startswith("issues/138/timeline?"):
+            return timeline
+        if path == f"compare/{REVISION}...{'d' * 40}":
+            return {"status": "ahead", "base_commit": {"sha": REVISION}}
+        raise AssertionError(path)
+
+    source = bridge.WorkerRequest(138, "lead", "resolve-question")
+    fixture_value = "unused-by-fake-reader"
+    qualification = bridge.build_qualification_input(
+        issue_number=138,
+        change=change,
+        state="open",
+        current_routing=("lead", "resolve-question"),
+        comments=tuple(comments),
+        current_revision=REVISION,
+        lifecycle_events=tuple(timeline),
+    )
+    assert bridge.qualify_current_formal_consequence(qualification).qualified, (
+        bridge.qualify_current_formal_consequence(qualification)
+    )
+    frontier, qualified = bridge._derive_frontier(
+        repository="owner/repo",
+        token=fixture_value,
+        source=source,
+        current_issue=current_issue,
+        issue_comments=tuple(comments),
+        lifecycle_events=tuple(timeline),
+        current_revision=REVISION,
+        read=read,
+    )
+    assert qualified, frontier
+    assert (
+        bridge.derive_unanswered_human_wait(
+            "owner/repo",
+            fixture_value,
+            source=source,
+            current_revision=REVISION,
+            read=read,
+        )
+        is True
+    )
+    # The exact unchanged request never receives semantic ingress on a later wake.
+    decision = _decision("AUTHORIZE", issue_number=138, routing=("lead", "resolve-question"))
+    suppressed = bridge.apply_derived_human_wait(
+        decision,
+        repository="owner/repo",
+        token=fixture_value,
+        current_revision=REVISION,
+        read=read,
+    )
+    assert suppressed.disposition == "FAIL_CLOSED"
+    assert suppressed.reason == "human-question-awaiting-new-evidence"
+    machine = bridge.plan_dispatch_decision(
+        event=_event(),
+        default_branch_revision=REVISION,
+        decision=suppressed,
+    )
+    assert machine.should_emit
+    assert machine.result_body is not None
+    machine_result = json.loads(machine.result_body)
+    assert machine_result["disposition"] == "FAIL_CLOSED"
+    assert "action" not in machine_result
+    assert "issue_number" not in machine_result
+
+    comments.append(
+        {
+            "id": 101,
+            "created_at": "2026-09-18T02:00:11Z",
+            "updated_at": "2026-09-18T02:00:11Z",
+            "body": "Please continue",
+            "user": {"login": "human"},
+            "performed_via_github_app": None,
+        }
+    )
+    current_issue["updated_at"] = "2026-09-18T02:00:11Z"
+    resumed = bridge.apply_derived_human_wait(
+        decision,
+        repository="owner/repo",
+        token=fixture_value,
+        current_revision=REVISION,
+        read=read,
+    )
+    assert resumed == decision
+
+    comments.pop()
+    current_issue["updated_at"] = formal["created_at"]
+    timeline.append({"id": 1002, "event": "renamed", "created_at": "2026-09-18T02:00:11Z"})
+    assert (
+        bridge.apply_derived_human_wait(
+            decision,
+            repository="owner/repo",
+            token=fixture_value,
+            current_revision=REVISION,
+            read=read,
+        )
+        == decision
+    )
+    timeline.pop()
+    # A new authoritative main revision is conservatively re-evaluated, not
+    # silenced by the old unanswered question.
+    assert (
+        bridge.apply_derived_human_wait(
+            decision,
+            repository="owner/repo",
+            token=fixture_value,
+            current_revision="d" * 40,
+            read=read,
+        )
+        == decision
+    )
+
+
+def test_unanswered_human_wait_never_suppresses_other_actions() -> None:
+    decision = _decision("AUTHORIZE", issue_number=138, routing=("executor", "implement-change"))
+    fixture_value = "unused-by-fake-reader"
+    assert (
+        bridge.apply_derived_human_wait(
+            decision,
+            repository="owner/repo",
+            token=fixture_value,
+            current_revision=REVISION,
+            read=lambda *_args: pytest.fail("irrelevant actions must not read Human wait evidence"),
+        )
+        == decision
+    )
+
+
 def test_carrier_outcome_consumer_blocks_duplicate_identical_reports() -> None:
     plan = _carrier_plan_fixture()
     recovery = _qualified_recovery_fixture(artifact_id=997)

@@ -61,7 +61,10 @@ from investment_strategy.scheduled_agent_formal_qualification import (
     derive_current_frontier,
     qualify_current_formal_consequence,
 )
-from investment_strategy.scheduled_agent_formal_result import parse_formal_result
+from investment_strategy.scheduled_agent_formal_result import (
+    FormalLifecycleEvent,
+    parse_formal_result,
+)
 from investment_strategy.scheduled_agent_merge_acceptance import run_guarded_effect_application
 from investment_strategy.scheduled_agent_runtime import (
     WorkerRequest,
@@ -1739,8 +1742,13 @@ def _prior_dispatch_handoff_reason(
             and comment_id < current_dispatch_request_comment_id
             and _trusted_connector_comment(comment, owner)
             and isinstance(body, str)
-            and parse_dispatch_request(body) is not None
+            and body.split("\n", 1)[0] == "DISPATCH_REQUEST"
         ):
+            # A malformed transport request is an orphaned historical
+            # boundary, not evidence that no earlier plan was handed off.
+            # Do not let a later valid or FAIL_CLOSED dispatch mask it.
+            if parse_dispatch_request(body) is None:
+                return "application-completion-carrier-prior-dispatch-incomplete"
             prior_ids.append(comment_id)
     for prior_comment_id in sorted(prior_ids, reverse=True):
         runs = _dispatch_runs_for_request(
@@ -3160,6 +3168,124 @@ def _frontier_comment_id(frontier: CurrentFrontier | None) -> int | None:
     return _positive_int(comment_id)
 
 
+def derive_unanswered_human_wait(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    current_revision: str,
+    read: GitHubReader = _github_json,
+) -> bool:
+    """Prove an unchanged same-action Human question from current GitHub truth.
+
+    This is deliberately a narrow no-op qualification, not a cached BLOCKED
+    result. Any fresh Issue event, comment, or changed main revision resumes
+    ordinary semantics; missing evidence never qualifies a suppressing wait.
+    """
+
+    if (source.role, source.action) != ("lead", "resolve-question"):
+        return False
+    try:
+        issue = read(repository, token, f"issues/{source.issue_number}")
+        if not isinstance(issue, Mapping):
+            return False
+        comments = _paged_list(
+            repository,
+            token,
+            f"issues/{source.issue_number}/comments?sort=created&direction=asc",
+            read=read,
+        )
+        lifecycle = _paged_list(
+            repository, token, f"issues/{source.issue_number}/timeline", read=read
+        )
+        frontier, qualified = _derive_frontier(
+            repository=repository,
+            token=token,
+            source=source,
+            current_issue=cast(Mapping[str, object], issue),
+            issue_comments=comments,
+            lifecycle_events=lifecycle,
+            current_revision=current_revision,
+            read=read,
+        )
+    except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return False
+    if not qualified or frontier is None or not isinstance(frontier.event, FormalLifecycleEvent):
+        return False
+    event = frontier.event
+    if (
+        not event.valid
+        or event.comment_id is None
+        or event.action != "resolve-question"
+        or event.result_kind != "human-decision-required"
+        or event.successor != ("lead", "resolve-question")
+        or event.default_branch_revision != current_revision
+        or frontier.current_routing != ("lead", "resolve-question")
+    ):
+        return False
+    anchor = [item for item in comments if item.get("id") == event.comment_id]
+    if len(anchor) != 1:
+        return False
+    since = _comment_time(anchor[0])
+    if (
+        since is None
+        or anchor[0].get("updated_at") != since
+        or not isinstance(issue.get("updated_at"), str)
+        or cast(str, issue["updated_at"]) > since
+    ):
+        return False
+    # A newer comment may be a qualifying Human answer, or new material
+    # source evidence. Neither may be silenced merely by unchanged routing.
+    if any(
+        item.get("id") != event.comment_id
+        and (not isinstance(item.get("created_at"), str) or cast(str, item["created_at"]) >= since)
+        for item in comments
+    ):
+        return False
+    # Issue mutations are also source evidence. Same-second event order is
+    # not inferred; in doubt, resume rather than suppress.
+    return not any(
+        item.get("event") != "commented"
+        or item.get("id") != event.comment_id
+        or item.get("created_at") != since
+        for item in lifecycle
+        if not isinstance(item.get("created_at"), str) or cast(str, item["created_at"]) >= since
+    )
+
+
+def apply_derived_human_wait(
+    decision: DispatchDecision,
+    *,
+    repository: str,
+    token: str,
+    current_revision: str,
+    read: GitHubReader = _github_json,
+) -> DispatchDecision:
+    """Keep the Action-only selector intact and prevent repeated ingress."""
+
+    if (
+        decision.disposition != "AUTHORIZE"
+        or decision.selected_routing != ("lead", "resolve-question")
+        or decision.selected_issue_id is None
+    ):
+        return decision
+    if not derive_unanswered_human_wait(
+        repository,
+        token,
+        source=WorkerRequest(decision.selected_issue_id, "lead", "resolve-question"),
+        current_revision=current_revision,
+        read=read,
+    ):
+        return decision
+    return replace(
+        decision,
+        selected_issue_id=None,
+        selected_routing=None,
+        disposition="FAIL_CLOSED",
+        reason="human-question-awaiting-new-evidence",
+    )
+
+
 def _belongs_to_current_frontier(
     request_comment_id: int,
     frontier: CurrentFrontier | None,
@@ -4396,6 +4522,12 @@ def main() -> int:
                 disposition="FAIL_CLOSED",
                 reason=completion.reason,
             )
+        decision = apply_derived_human_wait(
+            decision,
+            repository=repository,
+            token=token,
+            current_revision=args.revision,
+        )
         plan = plan_dispatch_decision(
             event=event,
             default_branch_revision=args.revision,
