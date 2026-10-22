@@ -4795,7 +4795,7 @@ def test_322_recovery_review_rejects_unqualified_sources_red(mutation: str, expe
         approval_label_present=True,
         **evidence,
     )
-    assert result.disposition == expected, result.predicates
+    assert result.disposition == expected, result.reason
 
 
 def test_322_review_source_reader_adopts_exact_r_without_formal_result() -> None:
