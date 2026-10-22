@@ -4818,8 +4818,9 @@ def test_322_review_source_reader_adopts_exact_r_without_formal_result() -> None
     ("unfinished", "expected"),
     [(True, "INCOMPLETE"), (False, "COMPLETE")],
 )
+@pytest.mark.parametrize("duplicate_checks", [False, True])
 def test_original_ready_preformal_entry_has_no_result_cycle(
-    unfinished: bool, expected: str
+    unfinished: bool, expected: str, duplicate_checks: bool
 ) -> None:
     """Real accepted-result parser, live consumer and absent ACTION_RESULT shape."""
     request = _effect_request_comment(
@@ -4868,20 +4869,23 @@ def test_original_ready_preformal_entry_has_no_result_cycle(
         ):
             return {"encoding": "base64", "content": base64.b64encode(tasks.encode()).decode()}
         if path == f"commits/{head}/check-runs?per_page=100":
+            checks = [
+                {
+                    "name": name,
+                    "head_sha": head,
+                    "conclusion": "success",
+                    "details_url": (
+                        "https://github.com/royhsu-work/investment-strategy/"
+                        "actions/runs/39795457767/job/119881578427"
+                    ),
+                }
+                for name in ("quality", "validate")
+            ]
+            if duplicate_checks:
+                checks.extend([dict(check) for check in checks])
             return {
-                "total_count": 2,
-                "check_runs": [
-                    {
-                        "name": name,
-                        "head_sha": head,
-                        "conclusion": "success",
-                        "details_url": (
-                            "https://github.com/royhsu-work/investment-strategy/"
-                            "actions/runs/39795457767/job/119881578427"
-                        ),
-                    }
-                    for name in ("quality", "validate")
-                ],
+                "total_count": len(checks),
+                "check_runs": checks,
             }
         if path == "actions/jobs/119881578427":
             return {"id": 119881578427, "name": "validate", "conclusion": "success"}

@@ -888,23 +888,30 @@ def qualify_original_322_pre_formal(
                 ]
                 for name in ("quality", "validate")
             }
-            if any(len(items) != 1 for items in required.values()):
+            # Push and pull_request triggers can legitimately produce two
+            # check-runs of the same name on one exact head. Treat duplicate
+            # check *names* as independent source runs, not a conflicting
+            # semantic identity; each must pass at this head.
+            if any(not items for items in required.values()):
                 predicates["V"] = _strictest_recovery_status(predicates["V"], "UNKNOWN")
-            elif any(items[0].get("conclusion") != "success" for items in required.values()):
+            elif any(
+                item.get("conclusion") != "success" for items in required.values() for item in items
+            ):
                 predicates["V"] = _strictest_recovery_status(predicates["V"], "INCOMPLETE")
             else:
-                validation_details = required["validate"][0].get("details_url")
-                match = (
-                    None
-                    if not isinstance(validation_details, str)
-                    else re.fullmatch(
-                        rf"https://github\.com/{re.escape(repository)}/actions/runs/\d+/job/(\d+)",
-                        validation_details,
+                for validation_run in required["validate"]:
+                    validation_details = validation_run.get("details_url")
+                    match = (
+                        None
+                        if not isinstance(validation_details, str)
+                        else re.fullmatch(
+                            rf"https://github\.com/{re.escape(repository)}/actions/runs/\d+/job/(\d+)",
+                            validation_details,
+                        )
                     )
-                )
-                if match is None or _positive_int_string(match[1]) is None:
-                    predicates["V"] = _strictest_recovery_status(predicates["V"], "UNKNOWN")
-                else:
+                    if match is None or _positive_int_string(match[1]) is None:
+                        predicates["V"] = _strictest_recovery_status(predicates["V"], "UNKNOWN")
+                        continue
                     job_id = int(match[1])
                     job = read(repository, token, f"actions/jobs/{job_id}")
                     if not isinstance(job, Mapping) or job.get("id") != job_id:
