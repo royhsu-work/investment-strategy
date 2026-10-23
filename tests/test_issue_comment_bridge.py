@@ -5138,12 +5138,14 @@ def test_322_review_source_reader_adopts_exact_r_without_formal_result() -> None
 @pytest.mark.parametrize("duplicate_checks", [False, True])
 @pytest.mark.parametrize("duplicate_formal", [False, True])
 @pytest.mark.parametrize("target_state", ["ok", "unreadable", "conflict", "missing-effect"])
+@pytest.mark.parametrize("carrier_merged", [False, True])
 def test_original_ready_preformal_entry_has_no_result_cycle(
     unfinished: bool,
     expected: str,
     duplicate_checks: bool,
     duplicate_formal: bool,
     target_state: str,
+    carrier_merged: bool,
 ) -> None:
     """Real accepted-result parser, live consumer and absent ACTION_RESULT shape."""
     request = _effect_request_comment(
@@ -5177,6 +5179,7 @@ def test_original_ready_preformal_entry_has_no_result_cycle(
         ],
     }
     head = "d" * 40
+    merge_sha = "7" * 40
     task_sha = "f" * 40
     correction_files = {
         "openspec/changes/restore-no-work-idle-discovery/tasks.md": task_sha,
@@ -5216,16 +5219,25 @@ def test_original_ready_preformal_entry_has_no_result_cycle(
         if path == "pulls/340":
             return {
                 "number": 340,
-                "state": "open",
+                "state": "closed" if carrier_merged else "open",
+                "merged": carrier_merged,
+                "merged_at": "2026-10-23T15:54:38Z" if carrier_merged else None,
+                "merge_commit_sha": merge_sha if carrier_merged else None,
                 "draft": False,
                 "head": {
                     "sha": head,
                     "ref": "agent/report-materialization-postcondition-failure",
                     "repo": {"full_name": "royhsu-work/investment-strategy"},
                 },
-                "base": {"ref": "main", "repo": {"full_name": "royhsu-work/investment-strategy"}},
+                "base": {
+                    "ref": "main",
+                    "sha": _RECOVERY_BASE,
+                    "repo": {"full_name": "royhsu-work/investment-strategy"},
+                },
             }
         if path == "git/ref/heads/agent/report-materialization-postcondition-failure":
+            if carrier_merged:
+                raise AssertionError("merged recovery must not require deleted source ref")
             if target_state == "unreadable":
                 return None
             return {
@@ -5257,6 +5269,22 @@ def test_original_ready_preformal_entry_has_no_result_cycle(
                 "sha": head,
                 "parents": [{"sha": _RECOVERY_R}],
                 "tree": {"sha": "9" * 40},
+            }
+        if path == f"git/commits/{merge_sha}":
+            if target_state == "unreadable":
+                return None
+            return {
+                "sha": merge_sha,
+                "parents": [
+                    {"sha": _RECOVERY_BASE},
+                    {"sha": "b" * 40 if target_state == "conflict" else head},
+                ],
+            }
+        if path == f"compare/{merge_sha}...{merge_sha}":
+            return {
+                "status": "identical",
+                "behind_by": 0,
+                "base_commit": {"sha": merge_sha},
             }
         if path == f"git/trees/{'9' * 40}?recursive=1":
             return {
@@ -5296,7 +5324,7 @@ def test_original_ready_preformal_entry_has_no_result_cycle(
         record=record,
         issue_comments=tuple(comments),
         current_issue=issue,
-        current_revision=_RECOVERY_BASE,
+        current_revision=merge_sha if carrier_merged else _RECOVERY_BASE,
         read=read,
         review_read=lambda *_args, **_kwargs: bridge.RecoveryReviewAdoption(
             "COMPLETE", "recovery-review-adopted", _RECOVERY_REVIEW_ID, _RECOVERY_R
@@ -5424,7 +5452,8 @@ def test_original_322_exit_materializes_once_then_reconciles_without_replay(
 
 
 @pytest.mark.parametrize(
-    "scenario", ["normal", "lost-response", "disjoint", "conflict", "incomplete", "unknown"]
+    "scenario",
+    ["normal", "merged", "lost-response", "disjoint", "conflict", "incomplete", "unknown"],
 )
 def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
     monkeypatch: pytest.MonkeyPatch,
@@ -5436,6 +5465,7 @@ def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
 
     repository = "royhsu-work/investment-strategy"
     head = "d" * 40
+    merge_sha = "7" * 40
     head_tree = "9" * 40
     review_tree = "8" * 40
     task_sha = "f" * 40
@@ -5483,8 +5513,30 @@ def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
         *cast(list[dict[str, object]], evidence["issue_comments"]),
     ]
     timeline: list[dict[str, object]] = list(cast(list[dict[str, object]], evidence["events"]))
+    if scenario == "merged":
+        # Exact production consequence of the one-time merge: GitHub closed
+        # #322 through a historic commit keyword, then it was reopened with
+        # its action labels unchanged. Neither event is an ACTION_RESULT.
+        timeline.extend(
+            (
+                {
+                    "id": 34068056850,
+                    "event": "closed",
+                    "created_at": "2026-10-23T15:54:42Z",
+                    "commit_id": "553eccce7169785c6836abc1a03dee8fdf1b33ba",
+                },
+                {
+                    "id": 34068301236,
+                    "event": "reopened",
+                    "created_at": "2026-10-23T15:57:23Z",
+                },
+            )
+        )
     comment_posts = 0
     route_patches = 0
+    posted_at = "2026-10-23T16:00:01Z" if scenario == "merged" else "2026-10-22T16:00:01Z"
+    unlabel_at = "2026-10-23T16:00:02Z" if scenario == "merged" else "2026-10-22T16:00:02Z"
+    label_at = "2026-10-23T16:00:03Z" if scenario == "merged" else "2026-10-22T16:00:03Z"
 
     def read(_repository: str, _token: str, path: str) -> object:
         assert _repository == repository
@@ -5506,19 +5558,24 @@ def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
         if path == "pulls/340":
             return {
                 "number": 340,
-                "state": "open",
+                "state": "closed" if scenario == "merged" else "open",
+                "merged": scenario == "merged",
+                "merged_at": "2026-10-23T15:54:38Z" if scenario == "merged" else None,
+                "merge_commit_sha": merge_sha if scenario == "merged" else None,
                 "draft": False,
                 "head": {
                     "sha": head,
                     "ref": "agent/report-materialization-postcondition-failure",
                     "repo": {"full_name": repository},
                 },
-                "base": {"ref": "main", "repo": {"full_name": repository}},
+                "base": {"ref": "main", "sha": _RECOVERY_BASE, "repo": {"full_name": repository}},
             }
         if path == "git/ref/heads/agent/report-materialization-postcondition-failure":
+            if scenario == "merged":
+                raise AssertionError("merged PR's deleted head ref must not be required")
             return {"object": {"sha": head}}
         if path == "git/ref/heads/main":
-            return {"object": {"sha": _RECOVERY_BASE}}
+            return {"object": {"sha": merge_sha if scenario == "merged" else _RECOVERY_BASE}}
         if path == f"contents/openspec/changes/restore-no-work-idle-discovery/tasks.md?ref={head}":
             return {
                 "encoding": "base64",
@@ -5562,11 +5619,20 @@ def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
                 "commits": [{"sha": head}],
                 "files": compared_files,
             }
-        if path == f"compare/{record.authorization_revision}...{_RECOVERY_BASE}":
+        expected_current_sha = merge_sha if scenario == "merged" else _RECOVERY_BASE
+        if path == f"compare/{record.authorization_revision}...{expected_current_sha}":
             return {
                 "status": "ahead",
                 "behind_by": 0,
                 "base_commit": {"sha": record.authorization_revision},
+            }
+        if path == f"git/commits/{merge_sha}":
+            return {"sha": merge_sha, "parents": [{"sha": _RECOVERY_BASE}, {"sha": head}]}
+        if path == f"compare/{merge_sha}...{merge_sha}":
+            return {
+                "status": "identical",
+                "behind_by": 0,
+                "base_commit": {"sha": merge_sha},
             }
         if path == f"git/commits/{_RECOVERY_R}":
             return {"tree": {"sha": review_tree}}
@@ -5633,8 +5699,8 @@ def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
             comment = {
                 "id": 6900000000,
                 "body": payload["body"],
-                "created_at": "2026-10-22T16:00:01Z",
-                "updated_at": "2026-10-22T16:00:01Z",
+                "created_at": posted_at,
+                "updated_at": posted_at,
                 "user": {"login": "github-actions[bot]"},
                 "performed_via_github_app": {"slug": "github-actions"},
             }
@@ -5654,13 +5720,13 @@ def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
                     {
                         "id": 6900000001,
                         "event": "unlabeled",
-                        "created_at": "2026-10-22T16:00:02Z",
+                        "created_at": unlabel_at,
                         "label": {"name": "action:implement-change"},
                     },
                     {
                         "id": 6900000002,
                         "event": "labeled",
-                        "created_at": "2026-10-22T16:00:03Z",
+                        "created_at": label_at,
                         "label": {"name": "action:review-implementation"},
                         "actor": {"login": "github-actions[bot]"},
                         "performed_via_github_app": {"slug": "github-actions"},
@@ -5709,9 +5775,10 @@ def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
         return bridge.apply_original_322_recovery_exit(
             repository,
             REVISION,
-            current_revision=_RECOVERY_BASE,
+            current_revision=merge_sha if scenario == "merged" else _RECOVERY_BASE,
             read=github_io,
             log_read=checkout_log,
+            effect_apply=bridge.run_guarded_effect_application,
         )
 
     adoption = bridge.read_recovery_openspec_review(
@@ -5732,7 +5799,7 @@ def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
         record=record,
         issue_comments=tuple(comments),
         current_issue=issue,
-        current_revision=_RECOVERY_BASE,
+        current_revision=merge_sha if scenario == "merged" else _RECOVERY_BASE,
         read=github_io,
         log_read=checkout_log,
     )
@@ -5747,7 +5814,9 @@ def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
     )
     assert pre.disposition == expected_pre, pre.predicates
     first = invoke()
-    assert first.state == ("COMPLETE" if scenario in {"normal", "disjoint"} else "INVALID"), first
+    assert first.state == (
+        "COMPLETE" if scenario in {"normal", "merged", "disjoint"} else "INVALID"
+    ), first
     if scenario in {"conflict", "incomplete", "unknown"}:
         assert comment_posts == 0
         assert route_patches == 0
