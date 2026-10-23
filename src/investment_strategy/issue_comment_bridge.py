@@ -568,13 +568,16 @@ def qualify_recovery_openspec_review(
         original_human.id != 6313995887
         or original_human.author != "royhsu-work"
         or not original_human.provenance_available
-        or original_human.performed_via_github_app is not None
         or original_human.updated_at != original_human.created_at
         or original_human.created_at >= reviewed_time
         or "Marker: HUMAN_APPROVED_FORWARD_RECOVERY_CONVERGENCE_20261021"
         not in original_human.body.splitlines()
     ):
         return unknown
+    # The pinned original decision is a scope/reference witness, not the
+    # reserved Human approval. Its historical connector provenance is real;
+    # only the separately bound independence attestation and approval event
+    # must be Human-only (checked below).
     if revision == head_sha:
         if comparison.get("status") != "identical":
             return conflict

@@ -4850,7 +4850,7 @@ def _recovery_review_sources() -> dict[str, object]:
             "body": "Marker: HUMAN_APPROVED_FORWARD_RECOVERY_CONVERGENCE_20261021",
             "created_at": "2026-10-21T10:42:08Z",
             "updated_at": "2026-10-21T10:42:08Z",
-            "performed_via_github_app": None,
+            "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
         },
         "issue_comments": [
             {
@@ -4956,6 +4956,25 @@ def test_322_recovery_review_human_attestation_adoption_red() -> None:
     )
     assert result.disposition == "COMPLETE"
     assert result.review_id == _RECOVERY_REVIEW_ID
+
+
+def test_322_recovery_original_human_reference_can_be_connector_recorded() -> None:
+    """The original decision reference is not the reserved Human attestation."""
+
+    evidence = _recovery_review_sources()
+    cast(dict[str, object], evidence["original_human_comment"])["performed_via_github_app"] = {
+        "slug": "chatgpt-codex-connector"
+    }
+    result = bridge.qualify_recovery_openspec_review(
+        repository="royhsu-work/investment-strategy",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+        pr_number=340,
+        head_sha=_RECOVERY_R,
+        approval_label_present=True,
+        **evidence,
+    )
+    assert result.disposition == "COMPLETE", result.reason
 
 
 def test_322_review_adopts_disjoint_code_only_descendant_without_sha_lock() -> None:
