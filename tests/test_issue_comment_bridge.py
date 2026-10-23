@@ -88,7 +88,9 @@ def test_bridge_is_run_scoped_transport_without_mailbox_semantics() -> None:
     assert "run-name: Scheduled Agent Dispatch ${{ github.event.comment.id }}" in workflow
     assert "issues: read" in workflow
     assert "actions: write" in workflow
-    assert "Resume exact incomplete application before semantic dispatch" in workflow
+    assert "application_resume_job_id" not in bridge.BridgePlan.__dataclass_fields__
+    assert "Resume exact incomplete application before semantic dispatch" not in workflow
+    assert "/rerun" not in workflow  # completed application jobs are never re-executed
     assert "ref: ${{ github.event.repository.default_branch }}" in workflow
     assert "persist-credentials: false" in workflow
     assert "uv run python -m investment_strategy.issue_comment_bridge" in workflow
@@ -1336,6 +1338,7 @@ def _completion_matrix_reader(
     live_ids: set[int] | None = None,
     accepted_ids: set[int] | None = None,
     rejected_ids: set[int] | None = None,
+    terminal_conclusion: str = "failure",
 ) -> bridge.GitHubReader:
     live_ids = set() if live_ids is None else live_ids
     accepted_ids = set() if accepted_ids is None else accepted_ids
@@ -1357,7 +1360,7 @@ def _completion_matrix_reader(
             "id": run_by_request[cast(int, request["id"])],
             "display_title": f"Scheduled Agent Application {request['id']}",
             "status": "in_progress" if request["id"] in live_ids else "completed",
-            "conclusion": None if request["id"] in live_ids else "failure",
+            "conclusion": None if request["id"] in live_ids else terminal_conclusion,
             "run_attempt": 1,
         }
         for request in requests
@@ -1384,7 +1387,7 @@ def _completion_matrix_reader(
                         "id": run_id + 100,
                         "name": "apply",
                         "status": "completed",
-                        "conclusion": "failure",
+                        "conclusion": terminal_conclusion,
                     }
                 ]
             }
@@ -1394,7 +1397,10 @@ def _completion_matrix_reader(
 
 
 @pytest.mark.parametrize("count", (1, 2, 3))
-def test_terminal_preactcept_candidates_do_not_compete_by_raw_cardinality(count: int) -> None:
+@pytest.mark.parametrize("terminal_conclusion", ("failure", "cancelled", "timed_out", "skipped"))
+def test_terminal_preactcept_candidates_do_not_compete_by_raw_cardinality(
+    count: int, terminal_conclusion: str
+) -> None:
     source = bridge.WorkerRequest(138, "lead", "explore-change")
     requests = [
         _effect_request_comment(
@@ -1410,7 +1416,7 @@ def test_terminal_preactcept_candidates_do_not_compete_by_raw_cardinality(count:
         "token",
         source=source,
         current_revision=bridge._APPLICATION_DECISION_PROTOCOL_REVISION,
-        read=_completion_matrix_reader(requests),
+        read=_completion_matrix_reader(requests, terminal_conclusion=terminal_conclusion),
         now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
     )
 
@@ -3710,6 +3716,37 @@ def test_continuation_chain_selects_one_leaf_and_preserves_branches() -> None:
     assert incomplete is None
 
 
+def test_322_legacy_continuation_transports_are_not_new_failure_qualified_transitions() -> None:
+    """Old continuation transports cannot qualify a new failure transition."""
+
+    body = (
+        "APPLICATION_CONTINUATION\n"
+        "Issue: 322\n"
+        "Original-Request-Comment: 6019133874\n"
+        "Accepted-Decision-SHA256: "
+        "9c545558249285ec6d4fa632970dfa7157774d75bf2b6e46889e240a175cbd54\n"
+        "Continuation-Correlation: "
+        "54ae08a7d74fc4a73820abce47a38c49b918827d905e1725b3cd9d869a41bb5a"
+    )
+
+    # Actual #364 and #365 comments use the same five-line legacy envelope.
+    # Recognizing their run names is read-only historical reconstruction;
+    # it cannot invent predecessor run/job, artifact, or fresh failure digest.
+    for comment_id in (6029741785, 6047718564):
+        title = f"Scheduled Agent Application {comment_id}"
+        assert bridge.parse_application_run_name(title) == comment_id
+        assert bridge.parse_application_continuation_request(body) is None
+
+    assert (
+        bridge._continuation_leaf_comment_ids(
+            request_comment_id=6019133874,
+            continuation_predecessors={},
+            workflow_runs=(),
+        )
+        == ()
+    )
+
+
 def test_application_continuation_binds_exact_failure_transition() -> None:
     render = bridge.render_application_continuation_request
     first = render(
@@ -4012,6 +4049,213 @@ def test_prior_dispatch_without_a_visible_run_fails_closed_before_carrier_reissu
     assert status == "application-completion-carrier-prior-dispatch-incomplete"
 
 
+def test_malformed_prior_dispatch_handoff_cannot_disappear_from_history() -> None:
+    """An orphaned connector dispatch marker is not proof of no prior plan."""
+    reads: list[str] = []
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        reads.append(path)
+        return {"workflow_runs": []}
+
+    status = bridge._prior_dispatch_handoff_reason(
+        "owner/repo",
+        "token",
+        recent_comments=(
+            _trusted_connector_comment(90, f"{REQUEST_BODY}\nExtra: orphaned"),
+            _trusted_connector_comment(91, REQUEST_BODY),
+        ),
+        owner="owner",
+        current_dispatch_request_comment_id=100,
+        plan_id=_carrier_plan_fixture().plan_id,
+        read=read,
+    )
+
+    assert status == "application-completion-carrier-prior-dispatch-incomplete"
+    assert reads == []
+
+
+def test_unanswered_human_question_wait_is_derived_before_semantic_ingress() -> None:
+    change = "human-wait-test"
+    formal = _formal_frontier_comment(
+        100,
+        action="resolve-question",
+        role="lead",
+        result="human-decision-required",
+        successor="Lead / resolve-question",
+        request_id=90,
+        change=change,
+    )
+    formal["updated_at"] = formal["created_at"]
+    predecessor = _formal_frontier_comment(
+        80,
+        action="implement-change",
+        role="executor",
+        result="spec-blocker",
+        successor="Lead / resolve-question",
+        request_id=70,
+        change=change,
+    )
+    predecessor["updated_at"] = predecessor["created_at"]
+    current_issue = {
+        "number": 138,
+        "title": "Human wait regression",
+        "state": "open",
+        "created_at": "2026-09-17T00:00:00Z",
+        "closed_at": None,
+        "body": f"Change: {change}",
+        "labels": [{"name": "action:resolve-question"}],
+        "updated_at": formal["created_at"],
+    }
+    timeline = [
+        {"id": 80, "event": "commented", "created_at": predecessor["created_at"]},
+        {
+            "id": 998,
+            "event": "unlabeled",
+            "created_at": "2026-09-18T02:00:09Z",
+            "label": {"name": "action:implement-change"},
+        },
+        {
+            "id": 999,
+            "event": "labeled",
+            "created_at": "2026-09-18T02:00:09Z",
+            "label": {"name": "action:resolve-question"},
+        },
+        {"id": 100, "event": "commented", "created_at": formal["created_at"]},
+    ]
+    comments = [predecessor, formal]
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path == "issues/138":
+            return current_issue
+        if path.startswith("issues/138/comments?"):
+            return comments
+        if path.startswith("issues/138/timeline?"):
+            return timeline
+        if path == f"compare/{REVISION}...{'d' * 40}":
+            return {"status": "ahead", "base_commit": {"sha": REVISION}}
+        raise AssertionError(path)
+
+    source = bridge.WorkerRequest(138, "lead", "resolve-question")
+    fixture_value = "unused-by-fake-reader"
+    qualification = bridge.build_qualification_input(
+        issue_number=138,
+        change=change,
+        state="open",
+        current_routing=("lead", "resolve-question"),
+        comments=tuple(comments),
+        current_revision=REVISION,
+        lifecycle_events=tuple(timeline),
+    )
+    assert bridge.qualify_current_formal_consequence(qualification).qualified, (
+        bridge.qualify_current_formal_consequence(qualification)
+    )
+    frontier, qualified = bridge._derive_frontier(
+        repository="owner/repo",
+        token=fixture_value,
+        source=source,
+        current_issue=current_issue,
+        issue_comments=tuple(comments),
+        lifecycle_events=tuple(timeline),
+        current_revision=REVISION,
+        read=read,
+    )
+    assert qualified, frontier
+    assert (
+        bridge.derive_unanswered_human_wait(
+            "owner/repo",
+            fixture_value,
+            source=source,
+            current_revision=REVISION,
+            read=read,
+        )
+        is True
+    )
+    # The exact unchanged request never receives semantic ingress on a later wake.
+    decision = _decision("AUTHORIZE", issue_number=138, routing=("lead", "resolve-question"))
+    suppressed = bridge.apply_derived_human_wait(
+        decision,
+        repository="owner/repo",
+        token=fixture_value,
+        current_revision=REVISION,
+        read=read,
+    )
+    assert suppressed.disposition == "FAIL_CLOSED"
+    assert suppressed.reason == "human-question-awaiting-new-evidence"
+    machine = bridge.plan_dispatch_decision(
+        event=_event(),
+        default_branch_revision=REVISION,
+        decision=suppressed,
+    )
+    assert machine.should_emit
+    assert machine.result_body is not None
+    machine_result = json.loads(machine.result_body)
+    assert machine_result["disposition"] == "FAIL_CLOSED"
+    assert "action" not in machine_result
+    assert "issue_number" not in machine_result
+
+    comments.append(
+        {
+            "id": 101,
+            "created_at": "2026-09-18T02:00:11Z",
+            "updated_at": "2026-09-18T02:00:11Z",
+            "body": "Please continue",
+            "user": {"login": "human"},
+            "performed_via_github_app": None,
+        }
+    )
+    current_issue["updated_at"] = "2026-09-18T02:00:11Z"
+    resumed = bridge.apply_derived_human_wait(
+        decision,
+        repository="owner/repo",
+        token=fixture_value,
+        current_revision=REVISION,
+        read=read,
+    )
+    assert resumed == decision
+
+    comments.pop()
+    current_issue["updated_at"] = formal["created_at"]
+    timeline.append({"id": 1002, "event": "renamed", "created_at": "2026-09-18T02:00:11Z"})
+    assert (
+        bridge.apply_derived_human_wait(
+            decision,
+            repository="owner/repo",
+            token=fixture_value,
+            current_revision=REVISION,
+            read=read,
+        )
+        == decision
+    )
+    timeline.pop()
+    # A new authoritative main revision is conservatively re-evaluated, not
+    # silenced by the old unanswered question.
+    assert (
+        bridge.apply_derived_human_wait(
+            decision,
+            repository="owner/repo",
+            token=fixture_value,
+            current_revision="d" * 40,
+            read=read,
+        )
+        == decision
+    )
+
+
+def test_unanswered_human_wait_never_suppresses_other_actions() -> None:
+    decision = _decision("AUTHORIZE", issue_number=138, routing=("executor", "implement-change"))
+    fixture_value = "unused-by-fake-reader"
+    assert (
+        bridge.apply_derived_human_wait(
+            decision,
+            repository="owner/repo",
+            token=fixture_value,
+            current_revision=REVISION,
+            read=lambda *_args: pytest.fail("irrelevant actions must not read Human wait evidence"),
+        )
+        == decision
+    )
+
+
 def test_carrier_outcome_consumer_blocks_duplicate_identical_reports() -> None:
     plan = _carrier_plan_fixture()
     recovery = _qualified_recovery_fixture(artifact_id=997)
@@ -4193,3 +4437,1382 @@ def test_carrier_outcome_cannot_claim_matching_precondition_with_other_observati
 
     assert outcome == "BLOCKED"
     assert reason == "application-completion-carrier-outcome-invalid"
+
+
+@pytest.mark.parametrize(
+    ("run_id", "run_attempt", "job_id", "transport_comment_id"),
+    [
+        (37484224666, 1, 112340001372, None),
+        (37484224666, 2, 112577054083, None),
+        (37563005754, 2, 112607809410, 6029741785),
+        (37693412638, 1, 113038961936, 6047718564),
+    ],
+)
+@pytest.mark.parametrize("upload_step_present", [False, True])
+def test_completed_legacy_application_job_preserves_historical_identity_without_replay(
+    monkeypatch: pytest.MonkeyPatch,
+    run_id: int,
+    run_attempt: int,
+    job_id: int,
+    transport_comment_id: int | None,
+    upload_step_present: bool,
+) -> None:
+    """Original and legacy continuation attempts cannot replay the same accepted intent."""
+    request_id = 6019133874
+    transport_id = request_id if transport_comment_id is None else transport_comment_id
+    run_head = (
+        "ac7aebd7c2ac81b3227986350544307cadb221cc"
+        if transport_comment_id is None
+        else "cd8d45f64e901cdb8e5e8b42358d6081a293d08f"
+    )
+    steps = [
+        {"name": "Set up job", "conclusion": "success"},
+        {
+            "name": "Freshly authorize and apply repository-owned effects",
+            "conclusion": "failure",
+        },
+    ]
+    if upload_step_present:
+        steps.append(
+            {"name": "Upload exact application recovery evidence", "conclusion": "skipped"}
+        )
+    steps.append({"name": "Complete job", "conclusion": "success"})
+    requested: list[str] = []
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        requested.append(path)
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": run_id,
+                        "display_title": f"Scheduled Agent Application {transport_id}",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "run_attempt": run_attempt,
+                        "head_sha": run_head,
+                    }
+                ]
+            }
+        if path == f"actions/runs/{run_id}/jobs":
+            return {
+                "jobs": [
+                    {
+                        "id": job_id,
+                        "name": "apply",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "steps": steps,
+                    }
+                ]
+            }
+        raise AssertionError(f"unexpected read: {path}")
+
+    monkeypatch.setattr(
+        bridge, "read_application_recovery_artifact", lambda *_args, **_kwargs: None
+    )
+    completion = bridge._application_job(
+        "royhsu-work/investment-strategy",
+        "test-token",
+        request_id,
+        read=read,
+        record=replace(
+            _accepted_carrier_record(),
+            request_comment_id=request_id,
+            authorization_revision="ac7aebd7c2ac81b3227986350544307cadb221cc",
+            result_kind="ready",
+        ),
+        accepted_decision_sha256="9c545558249285ec6d4fa632970dfa7157774d75bf2b6e46889e240a175cbd54",
+        transport_comment_ids=(() if transport_comment_id is None else (transport_comment_id,)),
+    )
+
+    assert completion.state == "INVALID"
+    assert completion.request_comment_id == request_id
+    if upload_step_present:
+        assert completion.reason == "application-completion-recovery-evidence-missing"
+        assert completion.job_id is None
+    else:
+        assert completion.reason == "application-completion-legacy-recovery-upload-unavailable"
+        assert completion.job_id == job_id
+    assert requested == [
+        "actions/workflows/scheduled-agent-application.yml/runs?event=issue_comment&per_page=100&page=1",
+        f"actions/runs/{run_id}/jobs",
+    ]
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert "/rerun" not in workflow
+
+
+def test_recovery_artifact_read_failure_is_not_legacy_missing_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed authoritative evidence read is not proof that the artifact never existed."""
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 37563005754,
+                        "display_title": "Scheduled Agent Application 90",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "run_attempt": 1,
+                        "head_sha": REVISION,
+                    }
+                ]
+            }
+        if path == "actions/runs/37563005754/jobs":
+            return {
+                "jobs": [
+                    {
+                        "id": 112607809410,
+                        "name": "apply",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "steps": [
+                            {
+                                "name": "Freshly authorize and apply repository-owned effects",
+                                "conclusion": "failure",
+                            },
+                            {"name": "Complete job", "conclusion": "success"},
+                        ],
+                    }
+                ]
+            }
+        raise AssertionError(f"unexpected read: {path}")
+
+    def failed_evidence_read(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("incomplete GitHub artifact listing")
+
+    monkeypatch.setattr(bridge, "read_application_recovery_artifact", failed_evidence_read)
+    completion = bridge._application_job(
+        "royhsu-work/investment-strategy",
+        "test-token",
+        90,
+        read=read,
+        record=_accepted_carrier_record(),
+        accepted_decision_sha256="a" * 64,
+    )
+
+    assert completion.state == "INVALID"
+    assert completion.reason == "application-completion-recovery-evidence-unavailable"
+    assert completion.job_id is None
+
+
+@pytest.mark.parametrize("terminal", ["cancelled", "timed_out", "skipped"])
+def test_pending_capacity_cancel_before_accept_recovers_on_fresh_dispatch(
+    terminal: str,
+) -> None:
+    """A cancelled pending apply job is not ACCEPT; later selection stays executable."""
+    request_comment_id = 56789
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 90001,
+                        "display_title": f"Scheduled Agent Application {request_comment_id}",
+                        "run_attempt": 1,
+                        "status": "completed",
+                        "conclusion": terminal,
+                    }
+                ]
+            }
+        if path == "actions/runs/90001/jobs":
+            return {
+                "jobs": [
+                    {"id": 90002, "name": "apply", "status": "completed", "conclusion": terminal}
+                ]
+            }
+        raise AssertionError(path)
+
+    incomplete = bridge._preaccept_application_state(
+        "royhsu-work/investment-strategy",
+        "token",
+        request_comment_id,
+        read=read,
+    )
+    assert incomplete is not None
+    assert incomplete.state == "REJECTED"
+    assert incomplete.reason == "application-completion-preaccept-terminal-no-accept"
+
+    from investment_strategy.scheduled_agent_runtime import (
+        GitHubIssueObservation,
+        acquire_dispatch_preflight,
+    )
+    from investment_strategy.workflow_dispatch import classify_dispatch
+
+    preflight = acquire_dispatch_preflight(
+        observations=(
+            GitHubIssueObservation(
+                issue_number=322,
+                change="restore-no-work-idle-discovery",
+                routing=("executor", "implement-change"),
+                state="open",
+                created_order=1,
+                authoritative=True,
+            ),
+        ),
+        source_total_count=1,
+        incomplete_results=False,
+        exhausted=True,
+        human_authorized=True,
+    )
+    decision = classify_dispatch(preflight)
+    assert decision.disposition == "AUTHORIZE"
+    assert decision.selected_issue_id == 322
+    assert decision.selected_routing == ("executor", "implement-change")
+    fresh = bridge.plan_dispatch_decision(
+        event=_event(),
+        default_branch_revision=REVISION,
+        decision=decision,
+    )
+    assert fresh.should_emit and fresh.result_body is not None
+    rendered = json.loads(fresh.result_body)
+    assert rendered["disposition"] == "AUTHORIZE"
+    assert rendered["action"] == "implement-change"
+    assert rendered["request_comment_id"] == 987
+
+
+def test_capacity_run_unobservable_fails_closed_not_false_no_accept() -> None:
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/"):
+            return {"workflow_runs": []}
+        raise AssertionError(path)
+
+    result = bridge._preaccept_application_state(
+        "royhsu-work/investment-strategy", "token", 56789, read=read
+    )
+    assert result is not None
+    assert result.state == "INVALID"
+    assert result.reason == "application-completion-run-not-yet-observable"
+
+
+@pytest.mark.parametrize("conclusion", ("cancelled", "timed_out", "skipped"))
+def test_preactcept_cancel_before_apply_job_is_terminal_no_accept(
+    conclusion: str,
+) -> None:
+    """A uniquely canceled first run with conclusively zero jobs did not apply."""
+    request_id = 67891
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 90021,
+                        "display_title": f"Scheduled Agent Application {request_id}",
+                        "run_attempt": 1,
+                        "status": "completed",
+                        "conclusion": conclusion,
+                    }
+                ]
+            }
+        if path == "actions/runs/90021/jobs":
+            return {"total_count": 0, "jobs": []}
+        raise AssertionError(path)
+
+    result = bridge._preaccept_application_state(
+        "royhsu-work/investment-strategy",
+        "token",
+        request_id,
+        read=read,
+    )
+    assert result is not None
+    assert result.state == "REJECTED"
+    assert result.reason == "application-completion-preaccept-terminal-no-accept"
+
+
+@pytest.mark.parametrize(
+    ("run_attempt", "conclusion", "total_count"),
+    [
+        (1, "failure", 0),
+        (2, "cancelled", 0),
+        (1, "cancelled", None),
+        (1, "cancelled", 1),
+        (True, "cancelled", 0),
+        (1.0, "cancelled", 0),
+    ],
+)
+def test_unqualified_no_apply_job_never_proves_terminal_no_accept(
+    run_attempt: int | float | bool,
+    conclusion: str,
+    total_count: int | None,
+) -> None:
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 90021,
+                        "display_title": "Scheduled Agent Application 67891",
+                        "run_attempt": run_attempt,
+                        "status": "completed",
+                        "conclusion": conclusion,
+                    }
+                ]
+            }
+        if path == "actions/runs/90021/jobs":
+            return {"total_count": total_count, "jobs": []}
+        raise AssertionError(path)
+
+    result = bridge._preaccept_application_state(
+        "royhsu-work/investment-strategy", "token", 67891, read=read
+    )
+    assert result is not None
+    assert result.state == "INVALID"
+
+
+@pytest.mark.parametrize(
+    ("job_ids", "expected_state"),
+    [
+        ((2101, 2101), "INVALID"),
+        ((2101, None), "INVALID"),
+        ((2101, 2102), "REJECTED"),
+    ],
+)
+def test_no_apply_job_inventory_requires_unique_positive_ids(
+    job_ids: tuple[int | None, int | None],
+    expected_state: str,
+) -> None:
+    """A complete no-apply inventory must identify every job uniquely."""
+    request_id = 67891
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 90021,
+                        "display_title": f"Scheduled Agent Application {request_id}",
+                        "run_attempt": 1,
+                        "status": "completed",
+                        "conclusion": "cancelled",
+                    }
+                ]
+            }
+        if path == "actions/runs/90021/jobs":
+            return {
+                "total_count": 2,
+                "jobs": [
+                    {"id": job_ids[0], "name": "prepare"},
+                    {"id": job_ids[1], "name": "idle-admission"},
+                ],
+            }
+        raise AssertionError(path)
+
+    result = bridge._preaccept_application_state(
+        "royhsu-work/investment-strategy", "token", request_id, read=read
+    )
+    assert result is not None
+    assert result.state == expected_state
+
+
+_RECOVERY_R = "54af6323d224c96e42792b6fe83fd31158b88e8c"
+_RECOVERY_BASE = "5d5edd88357824722887ce9eba8da96b08f2aeb3"
+_RECOVERY_REVIEW_ID = "PRR_kwDOT0Uyc88AAAABTsE88Q"
+_RECOVERY_OLD_R = "553eccce7169785c6836abc1a03dee8fdf1b33ba"
+
+
+def _recovery_review_sources() -> dict[str, object]:
+    reviewed_at = "2026-10-22T14:58:07Z"
+    human_at = "2026-10-22T15:13:01Z"
+    receipt = (
+        "RECOVERY_OPENSPEC_REVIEW\n"
+        "Repository: royhsu-work/investment-strategy\n"
+        "Issue: 322\n"
+        "Change: restore-no-work-idle-discovery\n"
+        "PR: 340\n"
+        f"Revision: {_RECOVERY_R}\n"
+        f"Baseline: {_RECOVERY_BASE}\n"
+        "Human-Decision-Comment: 6313995887\n"
+        "Validator-Run: 39795457767\n"
+        "Disposition: PASS\n\nIndependent semantic re-review."
+    )
+    decision_ref = f"issue:322:recovery-openspec-review:{_RECOVERY_R}:{_RECOVERY_REVIEW_ID}"
+    return {
+        "reviews": [
+            {
+                "id": 5616254193,
+                "node_id": _RECOVERY_REVIEW_ID,
+                "user": {"login": "royhsu-work"},
+                "commit_id": _RECOVERY_R,
+                "submitted_at": reviewed_at,
+                "state": "COMMENTED",
+                "body": receipt,
+            }
+        ],
+        "commit": {"author": {"login": "royhsu-work"}},
+        "original_human_comment": {
+            "id": 6313995887,
+            "user": {"login": "royhsu-work"},
+            "body": "Marker: HUMAN_APPROVED_FORWARD_RECOVERY_CONVERGENCE_20261021",
+            "created_at": "2026-10-21T10:42:08Z",
+            "updated_at": "2026-10-21T10:42:08Z",
+            "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+        },
+        "issue_comments": [
+            {
+                "id": 6344199684,
+                "user": {"login": "royhsu-work"},
+                "body": f"Human-Decision-For: {decision_ref}\n"
+                "Recovery-Review-Independence: separately-reviewed\n",
+                "created_at": human_at,
+                "updated_at": human_at,
+                "performed_via_github_app": None,
+            }
+        ],
+        "events": [
+            {
+                "id": 33964035959,
+                "event": "labeled",
+                "actor": {"login": "royhsu-work"},
+                "label": {"name": "human:approved"},
+                "created_at": "2026-10-22T15:13:33Z",
+                "performed_via_github_app": None,
+            }
+        ],
+        "validator": {"id": 39795457767, "conclusion": "success"},
+        "validator_job": {"id": 119881578427, "name": "validate", "conclusion": "success"},
+        "validator_log": (
+            "validation_target_repository=royhsu-work/investment-strategy\n"
+            f"validation_target_sha={_RECOVERY_R}\n"
+            f"validator_checkout_head={_RECOVERY_R}\n"
+            "Run openspec validate --all --strict --json --no-interactive\n"
+            '"totals": { "items": 8, "passed": 8, "failed": 0 }'
+        ),
+        "comparison": {"status": "identical"},
+        "baseline_comparison": {"status": "ahead", "base_commit": {"sha": _RECOVERY_BASE}},
+        "reviewed_blobs": {"openspec/changes/restore-no-work-idle-discovery/design.md": "a" * 40},
+        "current_blobs": {"openspec/changes/restore-no-work-idle-discovery/design.md": "a" * 40},
+        "threads": [],
+    }
+
+
+def _recovery_prior_findings() -> dict[str, object]:
+    """The actual historical old-revision FINDINGS preceding the reviewed PASS."""
+    current = cast(list[dict[str, object]], _recovery_review_sources()["reviews"])[0]
+    return {
+        **current,
+        "id": 5613393788,
+        "node_id": "PRR_kwDOT0Uyc88AAAABTpWXfA",
+        "commit_id": _RECOVERY_OLD_R,
+        "submitted_at": "2026-10-22T12:10:00Z",
+        "body": cast(str, current["body"])
+        .replace(_RECOVERY_R, _RECOVERY_OLD_R)
+        .replace("Disposition: PASS", "Disposition: FINDINGS"),
+    }
+
+
+def test_322_recovery_review_latest_revision_pass_supersedes_historical_findings_red() -> None:
+    evidence = _recovery_review_sources()
+    cast(list[dict[str, object]], evidence["reviews"]).insert(0, _recovery_prior_findings())
+    result = bridge.qualify_recovery_openspec_review(
+        repository="royhsu-work/investment-strategy",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+        pr_number=340,
+        head_sha=_RECOVERY_R,
+        approval_label_present=True,
+        **evidence,
+    )
+    assert result.disposition == "COMPLETE", result.reason
+    assert result.revision == _RECOVERY_R
+
+
+@pytest.mark.parametrize("case", ["same-revision-conflict", "later-findings"])
+def test_322_review_keeps_applicable_duplicate_and_latest_findings_blocked(case: str) -> None:
+    evidence = _recovery_review_sources()
+    earlier = _recovery_prior_findings()
+    if case == "same-revision-conflict":
+        earlier["commit_id"] = _RECOVERY_R
+        earlier["body"] = cast(str, earlier["body"]).replace(_RECOVERY_OLD_R, _RECOVERY_R)
+    else:
+        earlier["submitted_at"] = "2026-10-22T16:00:00Z"
+    cast(list[dict[str, object]], evidence["reviews"]).insert(0, earlier)
+    result = bridge.qualify_recovery_openspec_review(
+        repository="royhsu-work/investment-strategy",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+        pr_number=340,
+        head_sha=_RECOVERY_R,
+        approval_label_present=True,
+        **evidence,
+    )
+    assert result.disposition == "CONFLICT"
+
+
+def test_322_recovery_review_human_attestation_adoption_red() -> None:
+    evidence = _recovery_review_sources()
+    result = bridge.qualify_recovery_openspec_review(
+        repository="royhsu-work/investment-strategy",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+        pr_number=340,
+        head_sha=_RECOVERY_R,
+        approval_label_present=True,
+        **evidence,
+    )
+    assert result.disposition == "COMPLETE"
+    assert result.review_id == _RECOVERY_REVIEW_ID
+
+
+def test_322_recovery_original_human_reference_can_be_connector_recorded() -> None:
+    """The original decision reference is not the reserved Human attestation."""
+
+    evidence = _recovery_review_sources()
+    cast(dict[str, object], evidence["original_human_comment"])["performed_via_github_app"] = {
+        "slug": "chatgpt-codex-connector"
+    }
+    result = bridge.qualify_recovery_openspec_review(
+        repository="royhsu-work/investment-strategy",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+        pr_number=340,
+        head_sha=_RECOVERY_R,
+        approval_label_present=True,
+        **evidence,
+    )
+    assert result.disposition == "COMPLETE", result.reason
+
+
+def test_322_review_adopts_disjoint_code_only_descendant_without_sha_lock() -> None:
+    sources = _recovery_review_sources()
+    head = "b" * 40
+    sources["comparison"] = {"status": "ahead", "base_commit": {"sha": _RECOVERY_R}}
+    result = bridge.qualify_recovery_openspec_review(
+        repository="royhsu-work/investment-strategy",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+        pr_number=340,
+        head_sha=head,
+        approval_label_present=True,
+        **sources,
+    )
+    assert result.disposition == "COMPLETE"
+    assert result.revision == _RECOVERY_R
+
+
+def test_322_distinct_authenticated_review_actor_needs_no_same_login_attestation() -> None:
+    sources = _recovery_review_sources()
+    cast(list[dict[str, object]], sources["reviews"])[0]["user"] = {
+        "login": "separate-independent-reviewer"
+    }
+    sources["issue_comments"] = []
+    sources["events"] = []
+    result = bridge.qualify_recovery_openspec_review(
+        repository="royhsu-work/investment-strategy",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+        pr_number=340,
+        head_sha=_RECOVERY_R,
+        approval_label_present=False,
+        **sources,
+    )
+    assert result.disposition == "COMPLETE"
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("missing-attestation", "UNKNOWN"),
+        ("edited-attestation", "UNKNOWN"),
+        ("connector-attestation", "UNKNOWN"),
+        ("competing-attestation", "CONFLICT"),
+        ("missing-approval", "UNKNOWN"),
+        ("wrong-checkout", "CONFLICT"),
+        ("changed-normative-blob", "CONFLICT"),
+        ("findings", "CONFLICT"),
+        ("unresolved-thread", "CONFLICT"),
+        ("missing-original-human", "UNKNOWN"),
+        ("wrong-baseline", "CONFLICT"),
+    ],
+)
+def test_322_recovery_review_rejects_unqualified_sources_red(mutation: str, expected: str) -> None:
+    evidence = _recovery_review_sources()
+    comments = cast(list[dict[str, object]], evidence["issue_comments"])
+    if mutation == "missing-attestation":
+        comments.clear()
+    elif mutation == "edited-attestation":
+        comments[0]["updated_at"] = "2026-10-22T15:14:00Z"
+    elif mutation == "connector-attestation":
+        comments[0]["performed_via_github_app"] = {"slug": "chatgpt-codex-connector"}
+    elif mutation == "competing-attestation":
+        comments.append({**comments[0], "id": 6344199685})
+    elif mutation == "missing-approval":
+        evidence["events"] = []
+    elif mutation == "wrong-checkout":
+        evidence["validator_log"] = cast(str, evidence["validator_log"]).replace(
+            f"validator_checkout_head={_RECOVERY_R}", "validator_checkout_head=" + "b" * 40
+        )
+    elif mutation == "changed-normative-blob":
+        evidence["current_blobs"] = {
+            "openspec/changes/restore-no-work-idle-discovery/design.md": "b" * 40
+        }
+    elif mutation == "findings":
+        cast(list[dict[str, object]], evidence["reviews"])[0]["body"] = cast(
+            str, cast(list[dict[str, object]], evidence["reviews"])[0]["body"]
+        ).replace("Disposition: PASS", "Disposition: FINDINGS")
+    elif mutation == "unresolved-thread":
+        evidence["threads"] = [
+            {
+                "is_resolved": False,
+                "is_outdated": False,
+                "comments": [{"body": "RECOVERY_OPENSPEC_FINDING material"}],
+            }
+        ]
+    elif mutation == "missing-original-human":
+        evidence["original_human_comment"] = None
+    elif mutation == "wrong-baseline":
+        evidence["baseline_comparison"] = {"status": "diverged"}
+    result = bridge.qualify_recovery_openspec_review(
+        repository="royhsu-work/investment-strategy",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+        pr_number=340,
+        head_sha=_RECOVERY_R,
+        approval_label_present=True,
+        **evidence,
+    )
+    assert result.disposition == expected, result.reason
+
+
+def test_322_review_source_reader_adopts_exact_r_without_formal_result() -> None:
+    """Exercise the actual reader/consumer path, including trees and executed log."""
+    sources = _recovery_review_sources()
+    cast(list[dict[str, object]], sources["reviews"]).insert(0, _recovery_prior_findings())
+    paths: list[str] = []
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        paths.append(path)
+        if path == "pulls/340/reviews?per_page=100&page=1":
+            return sources["reviews"]
+        if path == f"commits/{_RECOVERY_R}":
+            return sources["commit"]
+        if path == "issues/comments/6313995887":
+            return sources["original_human_comment"]
+        if path == "issues/322/timeline?per_page=100&page=1":
+            return sources["events"]
+        if path == "actions/runs/39795457767":
+            return sources["validator"]
+        if path == "actions/runs/39795457767/jobs?per_page=100":
+            return {"total_count": 1, "jobs": [sources["validator_job"]]}
+        if path == f"compare/{_RECOVERY_BASE}...{_RECOVERY_R}":
+            return sources["baseline_comparison"]
+        if path == f"git/commits/{_RECOVERY_R}":
+            return {"tree": {"sha": "c" * 40}}
+        if path == f"git/trees/{'c' * 40}?recursive=1":
+            return {
+                "truncated": False,
+                "tree": [
+                    {
+                        "type": "blob",
+                        "path": "openspec/changes/restore-no-work-idle-discovery/design.md",
+                        "sha": "a" * 40,
+                    }
+                ],
+            }
+        raise AssertionError(f"unexpected source: {path}")
+
+    result = bridge.read_recovery_openspec_review(
+        "royhsu-work/investment-strategy",
+        "token",
+        head_sha=_RECOVERY_R,
+        approval_label_present=True,
+        issue_comments=tuple(cast(list[dict[str, object]], sources["issue_comments"])),
+        read=read,
+        log_read=lambda *_: cast(str, sources["validator_log"]),
+        thread_read=lambda *_: [],
+    )
+    assert result.disposition == "COMPLETE"
+    assert result.review_id == _RECOVERY_REVIEW_ID
+    assert "issues/322/timeline?per_page=100&page=1" in paths
+    assert f"git/trees/{'c' * 40}?recursive=1" in paths
+
+
+@pytest.mark.parametrize(
+    ("unfinished", "expected"),
+    [(True, "INCOMPLETE"), (False, "COMPLETE")],
+)
+@pytest.mark.parametrize("duplicate_checks", [False, True])
+@pytest.mark.parametrize("duplicate_formal", [False, True])
+@pytest.mark.parametrize("target_state", ["ok", "unreadable", "conflict", "missing-effect"])
+def test_original_ready_preformal_entry_has_no_result_cycle(
+    unfinished: bool,
+    expected: str,
+    duplicate_checks: bool,
+    duplicate_formal: bool,
+    target_state: str,
+) -> None:
+    """Real accepted-result parser, live consumer and absent ACTION_RESULT shape."""
+    request = _effect_request_comment(
+        comment_id=6019133874,
+        created_at="2026-10-07T02:00:00Z",
+        action="implement-change",
+        role="executor",
+        result_kind="ready",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+    )
+    decision = _application_decision_comment(request, comment_id=6019173711)
+    record = bridge.parse_application_decision(decision["body"])
+    assert record is not None
+    tasks = (
+        "## 0G. Forward Recovery\n"
+        f"- [{' ' if unfinished else 'x'}] 0.42 **RED:** regression\n"
+        "- [x] 0.43 **GREEN:** implementation\n"
+        "- [x] 0.44 **REFACTOR/VERIFY:** gates\n"
+    )
+    issue = {
+        "number": 322,
+        "title": "Explore restoring NO_WORK idle discovery after Action-only dispatch",
+        "state": "open",
+        "created_at": "2026-09-22T15:39:54Z",
+        "closed_at": None,
+        "body": "Change: restore-no-work-idle-discovery",
+        "labels": [
+            {"name": "action:implement-change"},
+            {"name": "human:approved"},
+        ],
+    }
+    head = "d" * 40
+    task_sha = "f" * 40
+    correction_files = {
+        "openspec/changes/restore-no-work-idle-discovery/tasks.md": task_sha,
+        "src/investment_strategy/issue_comment_bridge.py": "a" * 40,
+        "src/investment_strategy/scheduled_agent_effects.py": "b" * 40,
+        "tests/test_issue_comment_bridge.py": "c" * 40,
+        "tests/test_scheduled_agent_effects.py": "e" * 40,
+    }
+    comments = [decision]
+    if duplicate_formal:
+        raw = bridge._application_owned_worker_result(
+            record.raw_worker_result,
+            source=bridge.WorkerRequest(322, "executor", "implement-change"),
+            change="restore-no-work-idle-discovery",
+            current_revision=_RECOVERY_BASE,
+            result_revision=head,
+            request_comment_id=6019133874,
+        )
+        worker = bridge.parse_worker_result(
+            raw, bridge.WorkerRequest(322, "executor", "implement-change")
+        )
+        result_body = json.loads(worker.requested_effects[-1].payload_json)["body"]
+        comments.extend(
+            [
+                {
+                    "id": 6300000000 + index,
+                    "body": result_body,
+                    "created_at": f"2026-10-22T16:00:0{index}Z",
+                    "user": {"login": "github-actions[bot]"},
+                    "performed_via_github_app": {"slug": "github-actions"},
+                }
+                for index in (1, 2)
+            ]
+        )
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path == "pulls/340":
+            return {
+                "number": 340,
+                "state": "open",
+                "draft": False,
+                "head": {
+                    "sha": head,
+                    "ref": "agent/report-materialization-postcondition-failure",
+                    "repo": {"full_name": "royhsu-work/investment-strategy"},
+                },
+                "base": {"ref": "main", "repo": {"full_name": "royhsu-work/investment-strategy"}},
+            }
+        if path == "git/ref/heads/agent/report-materialization-postcondition-failure":
+            if target_state == "unreadable":
+                return None
+            return {
+                "object": {"sha": head if target_state in {"ok", "missing-effect"} else "b" * 40}
+            }
+        if path == (
+            "contents/openspec/changes/restore-no-work-idle-discovery/tasks.md?ref=" + head
+        ):
+            return {
+                "encoding": "base64",
+                "content": base64.b64encode(tasks.encode()).decode(),
+                "sha": task_sha,
+            }
+        if path == f"compare/{_RECOVERY_R}...{head}":
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "base_commit": {"sha": _RECOVERY_R},
+                "commits": [{"sha": head}],
+                "files": [
+                    {"filename": name, "sha": sha, "status": "modified"}
+                    for name, sha in correction_files.items()
+                    if target_state != "missing-effect"
+                    or name != "tests/test_scheduled_agent_effects.py"
+                ],
+            }
+        if path == f"git/commits/{head}":
+            return {
+                "sha": head,
+                "parents": [{"sha": _RECOVERY_R}],
+                "tree": {"sha": "9" * 40},
+            }
+        if path == f"git/trees/{'9' * 40}?recursive=1":
+            return {
+                "truncated": False,
+                "tree": [
+                    {"type": "blob", "path": name, "sha": sha}
+                    for name, sha in correction_files.items()
+                ],
+            }
+        if path == f"commits/{head}/check-runs?per_page=100":
+            checks = [
+                {
+                    "name": name,
+                    "head_sha": head,
+                    "conclusion": "success",
+                    "details_url": (
+                        "https://github.com/royhsu-work/investment-strategy/"
+                        "actions/runs/39795457767/job/119881578427"
+                    ),
+                }
+                for name in ("quality", "validate")
+            ]
+            if duplicate_checks:
+                checks.extend([dict(check) for check in checks])
+            return {
+                "total_count": len(checks),
+                "check_runs": checks,
+            }
+        if path == "actions/jobs/119881578427":
+            return {"id": 119881578427, "name": "validate", "conclusion": "success"}
+        raise AssertionError(path)
+
+    result = bridge.qualify_original_322_pre_formal(
+        repository="royhsu-work/investment-strategy",
+        token=REVISION,
+        source=bridge.WorkerRequest(322, "executor", "implement-change"),
+        record=record,
+        issue_comments=tuple(comments),
+        current_issue=issue,
+        current_revision=_RECOVERY_BASE,
+        read=read,
+        review_read=lambda *_args, **_kwargs: bridge.RecoveryReviewAdoption(
+            "COMPLETE", "recovery-review-adopted", _RECOVERY_REVIEW_ID, _RECOVERY_R
+        ),
+        log_read=lambda *_args: cast(str, _recovery_review_sources()["validator_log"]).replace(
+            _RECOVERY_R, head
+        ),
+        expected_decision_digest=hashlib.sha256(cast(str, decision["body"]).encode()).hexdigest(),
+    )
+    target_disposition = (
+        "CONFLICT"
+        if target_state == "conflict"
+        else "UNKNOWN"
+        if target_state == "unreadable"
+        else "INCOMPLETE"
+        if target_state == "missing-effect"
+        else expected
+    )
+    assert result.disposition == ("CONFLICT" if duplicate_formal else target_disposition), (
+        result.predicates
+    )
+    assert dict(result.predicates)["F"] == ("CONFLICT" if duplicate_formal else "COMPLETE")
+    assert dict(result.predicates)["S"] == "COMPLETE"  # no old checkpoint replay
+    assert result.blocking_predicates == tuple(
+        name
+        for name in ("M", "F")
+        if (name == "M" and (unfinished or target_state != "ok"))
+        or (name == "F" and duplicate_formal)
+    )
+
+
+@pytest.mark.parametrize("lost_after_formal_post", [False, True])
+def test_original_322_exit_materializes_once_then_reconciles_without_replay(
+    monkeypatch: pytest.MonkeyPatch,
+    lost_after_formal_post: bool,
+) -> None:
+    """The actual application entry never replays the accepted physical plan."""
+    request = _effect_request_comment(
+        comment_id=6019133874,
+        created_at="2026-10-07T02:00:00Z",
+        action="implement-change",
+        role="executor",
+        result_kind="ready",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+    )
+    decision = _application_decision_comment(request, comment_id=6019173711)
+    comments = [decision]
+    issue = {
+        "number": 322,
+        "title": "Explore restoring NO_WORK idle discovery after Action-only dispatch",
+        "state": "open",
+        "created_at": "2026-09-22T15:39:54Z",
+        "closed_at": None,
+        "body": "Change: restore-no-work-idle-discovery",
+        "labels": [{"name": "action:implement-change"}, {"name": "human:approved"}],
+    }
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
+            return list(comments)
+        if path == "issues/322":
+            return dict(issue)
+        if path == "pulls/340":
+            return {"head": {"sha": _RECOVERY_R}}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "_authorization_ancestry", lambda *_args, **_kw: ())
+    monkeypatch.setattr(
+        bridge,
+        "qualify_original_322_pre_formal",
+        lambda **_kw: bridge.RecoveryPreFormalQualification(
+            "COMPLETE", tuple((name, "COMPLETE") for name in "IRMVSF")
+        ),
+    )
+    requested: list[list[str]] = []
+
+    def apply(raw: str, **kwargs: object) -> tuple[object, bridge.ApplyResult]:
+        assert kwargs["original_322_recovery"] is True
+        assert kwargs["accepted_intent"] is True
+        worker = bridge.parse_worker_result(
+            raw,
+            bridge.WorkerRequest(322, "executor", "implement-change"),
+            authorized_change="restore-no-work-idle-discovery",
+        )
+        effects = [effect.kind for effect in worker.requested_effects]
+        requested.append(effects)
+        if effects:
+            payload = json.loads(worker.requested_effects[0].payload_json)
+            comments.append(
+                {
+                    "id": 6999999999,
+                    "body": payload["body"],
+                    "created_at": "2026-10-22T17:00:00Z",
+                    "user": {"login": "github-actions[bot]"},
+                    "performed_via_github_app": {"slug": "github-actions"},
+                }
+            )
+            if lost_after_formal_post:
+                return object(), bridge.ApplyResult(False, "response-lost-after-formal")
+        issue["labels"] = [
+            {"name": "action:review-implementation"},
+            {"name": "human:approved"},
+        ]
+        return object(), bridge.ApplyResult(True, "applied")
+
+    first = bridge.apply_original_322_recovery_exit(
+        "royhsu-work/investment-strategy",
+        "token",
+        current_revision=_RECOVERY_BASE,
+        read=read,
+        effect_apply=apply,
+    )
+    assert first.state == ("INVALID" if lost_after_formal_post else "COMPLETE"), first
+    assert requested == [["issue-comment"]]
+    second = bridge.apply_original_322_recovery_exit(
+        "royhsu-work/investment-strategy",
+        "token",
+        current_revision=_RECOVERY_BASE,
+        read=read,
+        effect_apply=apply,
+    )
+    assert second.state == "COMPLETE", second
+    assert requested == ([["issue-comment"], []] if lost_after_formal_post else [["issue-comment"]])
+
+
+@pytest.mark.parametrize(
+    "scenario", ["normal", "lost-response", "disjoint", "conflict", "incomplete", "unknown"]
+)
+def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
+    monkeypatch: pytest.MonkeyPatch,
+    scenario: str,
+) -> None:
+    """Real application/review/effect/dispatch owners; only GitHub I/O is simulated."""
+    from investment_strategy import scheduled_agent_effects as effects
+    from investment_strategy import scheduled_agent_runtime as runtime
+
+    repository = "royhsu-work/investment-strategy"
+    head = "d" * 40
+    head_tree = "9" * 40
+    review_tree = "8" * 40
+    task_sha = "f" * 40
+    correction_files = {
+        "openspec/changes/restore-no-work-idle-discovery/tasks.md": task_sha,
+        "src/investment_strategy/issue_comment_bridge.py": "a" * 40,
+        "src/investment_strategy/scheduled_agent_effects.py": "b" * 40,
+        "tests/test_issue_comment_bridge.py": "c" * 40,
+        "tests/test_scheduled_agent_effects.py": "e" * 40,
+    }
+    tasks = "\n".join(
+        (
+            "## 0G. Forward Recovery",
+            "- [x] 0.42 **RED:** regression",
+            "- [x] 0.43 **GREEN:** implement",
+            "- [x] 0.44 **REFACTOR/VERIFY:** gates",
+        )
+    )
+    original_fixture = json.loads(
+        Path("tests/fixtures/issue322-application-recovery.json").read_text(encoding="utf-8")
+    )
+    decision = cast(dict[str, object], original_fixture["original_accepted_decision"])
+    record = bridge.parse_application_decision(decision["body"])
+    assert record is not None
+    assert record.request_comment_id == 6019133874
+    assert hashlib.sha256(cast(str, decision["body"]).encode()).hexdigest() == (
+        "9c545558249285ec6d4fa632970dfa7157774d75bf2b6e46889e240a175cbd54"
+    )
+    # The original accepted intent includes non-idempotent physical effects;
+    # only its formal projection may run in this recovery.
+    assert len(json.loads(record.raw_worker_result)["requested_effects"]) == 2
+    evidence = _recovery_review_sources()
+    cast(list[dict[str, object]], evidence["reviews"]).insert(0, _recovery_prior_findings())
+    issue: dict[str, object] = {
+        "number": 322,
+        "title": "Explore restoring NO_WORK idle discovery after Action-only dispatch",
+        "state": "open",
+        "created_at": "2026-09-22T15:39:54Z",
+        "closed_at": None,
+        "body": "Change: restore-no-work-idle-discovery",
+        "labels": [{"name": "action:implement-change"}, {"name": "human:approved"}],
+    }
+    comments: list[dict[str, object]] = [
+        decision,
+        *cast(list[dict[str, object]], evidence["issue_comments"]),
+    ]
+    timeline: list[dict[str, object]] = list(cast(list[dict[str, object]], evidence["events"]))
+    comment_posts = 0
+    route_patches = 0
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        assert _repository == repository
+        if path == "":
+            return {"default_branch": "main"}
+        if path == "issues/322":
+            return dict(issue)
+        if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
+            return list(comments)
+        if path.startswith("issues/322/comments?per_page=100&sort=created&direction=desc"):
+            return list(reversed(comments))
+        if path == "issues/322/timeline?per_page=100&page=1":
+            return list(timeline)
+        if path == "issues/comments/6313995887":
+            return evidence["original_human_comment"]
+        if path.startswith("issues/comments/"):
+            comment_id = int(path.rsplit("/", 1)[1])
+            return next((dict(item) for item in comments if item["id"] == comment_id), None)
+        if path == "pulls/340":
+            return {
+                "number": 340,
+                "state": "open",
+                "draft": False,
+                "head": {
+                    "sha": head,
+                    "ref": "agent/report-materialization-postcondition-failure",
+                    "repo": {"full_name": repository},
+                },
+                "base": {"ref": "main", "repo": {"full_name": repository}},
+            }
+        if path == "git/ref/heads/agent/report-materialization-postcondition-failure":
+            return {"object": {"sha": head}}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": _RECOVERY_BASE}}
+        if path == f"contents/openspec/changes/restore-no-work-idle-discovery/tasks.md?ref={head}":
+            return {
+                "encoding": "base64",
+                "content": base64.b64encode(tasks.encode()).decode(),
+                "sha": task_sha,
+            }
+        if path == "pulls/340/reviews?per_page=100&page=1":
+            return evidence["reviews"]
+        if path == f"commits/{_RECOVERY_R}":
+            return evidence["commit"]
+        if path == "actions/runs/39795457767":
+            return evidence["validator"]
+        if path == "actions/runs/39795457767/jobs?per_page=100":
+            return {"total_count": 1, "jobs": [evidence["validator_job"]]}
+        if path == "actions/jobs/119881578427":
+            return evidence["validator_job"]
+        if path == "actions/jobs/111111111111":
+            return {"id": 111111111111, "name": "validate", "conclusion": "success"}
+        if path == f"compare/{_RECOVERY_BASE}...{_RECOVERY_R}":
+            return evidence["baseline_comparison"]
+        if path == f"compare/{_RECOVERY_R}...{head}":
+            if scenario == "unknown":
+                return None
+            compared_files = [
+                {"filename": name, "sha": sha, "status": "modified"}
+                for name, sha in correction_files.items()
+                if scenario != "incomplete" or name != "tests/test_scheduled_agent_effects.py"
+            ]
+            if scenario in {"disjoint", "conflict"}:
+                compared_files.append(
+                    {
+                        "filename": "README.md",
+                        "sha": "6" * 40 if scenario == "disjoint" else "5" * 40,
+                        "status": "modified",
+                    }
+                )
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "base_commit": {"sha": _RECOVERY_R},
+                "commits": [{"sha": head}],
+                "files": compared_files,
+            }
+        if path == f"compare/{record.authorization_revision}...{_RECOVERY_BASE}":
+            return {
+                "status": "ahead",
+                "behind_by": 0,
+                "base_commit": {"sha": record.authorization_revision},
+            }
+        if path == f"git/commits/{_RECOVERY_R}":
+            return {"tree": {"sha": review_tree}}
+        if path == f"git/commits/{head}":
+            return {
+                "sha": head,
+                "parents": [{"sha": _RECOVERY_R}],
+                "tree": {"sha": head_tree},
+            }
+        if path == f"git/trees/{review_tree}?recursive=1":
+            return {
+                "truncated": False,
+                "tree": [
+                    {
+                        "type": "blob",
+                        "path": "openspec/changes/restore-no-work-idle-discovery/design.md",
+                        "sha": "7" * 40,
+                    }
+                ],
+            }
+        if path == f"git/trees/{head_tree}?recursive=1":
+            return {
+                "truncated": False,
+                "tree": [
+                    {
+                        "type": "blob",
+                        "path": "openspec/changes/restore-no-work-idle-discovery/design.md",
+                        "sha": "7" * 40,
+                    },
+                    *[
+                        {"type": "blob", "path": name, "sha": sha}
+                        for name, sha in correction_files.items()
+                    ],
+                    {"type": "blob", "path": "README.md", "sha": "6" * 40},
+                ],
+            }
+        if path == f"commits/{head}/check-runs?per_page=100":
+            checks = [
+                {
+                    "name": name,
+                    "head_sha": head,
+                    "conclusion": "success",
+                    "details_url": f"https://github.com/{repository}/actions/runs/39795457767/job/111111111111",
+                }
+                for name in ("quality", "validate")
+            ]
+            return {"total_count": 2, "check_runs": checks}
+        raise AssertionError(f"unexpected GitHub read: {path}")
+
+    def github_io(
+        repo: str,
+        token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: Mapping[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object:
+        nonlocal comment_posts, route_patches
+        assert isinstance(allow_not_found, bool)
+        if method == "POST" and path == "issues/322/comments":
+            assert payload is not None and isinstance(payload.get("body"), str)
+            comment_posts += 1
+            comment = {
+                "id": 6900000000,
+                "body": payload["body"],
+                "created_at": "2026-10-22T16:00:01Z",
+                "updated_at": "2026-10-22T16:00:01Z",
+                "user": {"login": "github-actions[bot]"},
+                "performed_via_github_app": {"slug": "github-actions"},
+            }
+            comments.append(comment)
+            timeline.append(
+                {"id": 6900000000, "event": "commented", "created_at": comment["created_at"]}
+            )
+            if scenario == "lost-response":
+                raise OSError("GitHub saved formal comment; client response lost")
+            return comment
+        if method == "PATCH" and path == "issues/322":
+            assert payload is not None
+            assert "action:review-implementation" in cast(list[str], payload["labels"])
+            issue["labels"] = [{"name": label} for label in cast(list[str], payload["labels"])]
+            timeline.extend(
+                (
+                    {
+                        "id": 6900000001,
+                        "event": "unlabeled",
+                        "created_at": "2026-10-22T16:00:02Z",
+                        "label": {"name": "action:implement-change"},
+                    },
+                    {
+                        "id": 6900000002,
+                        "event": "labeled",
+                        "created_at": "2026-10-22T16:00:03Z",
+                        "label": {"name": "action:review-implementation"},
+                        "actor": {"login": "github-actions[bot]"},
+                        "performed_via_github_app": {"slug": "github-actions"},
+                    },
+                )
+            )
+            route_patches += 1
+            return dict(issue)
+        assert method == "GET"
+        return read(repo, token, path)
+
+    def transport_list(url: str, token: str) -> tuple[Mapping[str, object], ...]:
+        assert token == REVISION
+        assert url.startswith(f"https://api.github.com/repos/{repository}/")
+        path = url.split(f"/{repository}/", 1)[1]
+        if path == "issues?state=all&per_page=100&page=1":
+            return (dict(issue),)
+        if path == "issues/322/comments?per_page=100&sort=created&direction=desc":
+            return tuple(reversed(comments))
+        if path == "issues/322/timeline?per_page=100&page=1":
+            return tuple(timeline)
+        raise AssertionError(f"unexpected runtime listing: {path}")
+
+    def transport_object(url: str, token: str) -> Mapping[str, object]:
+        assert token == REVISION
+        path = url.split(f"/{repository}", 1)[1].removeprefix("/")
+        result = read(repository, token, path)
+        assert isinstance(result, Mapping)
+        return result
+
+    def checkout_log(_repo: str, _token: str, job_id: int) -> str:
+        assert job_id in {119881578427, 111111111111}
+        log = cast(str, evidence["validator_log"])
+        return log if job_id == 119881578427 else log.replace(_RECOVERY_R, head)
+
+    monkeypatch.setattr(bridge, "_github_json", github_io)
+    monkeypatch.setattr(effects, "_github_json", github_io)
+    monkeypatch.setattr(runtime, "_github_get_list_page", transport_list)
+    monkeypatch.setattr(runtime, "_github_get_object", transport_object)
+    review_defaults = bridge.read_recovery_openspec_review.__kwdefaults__
+    assert review_defaults is not None
+    monkeypatch.setitem(review_defaults, "log_read", checkout_log)
+    monkeypatch.setitem(review_defaults, "thread_read", lambda *_: [])
+
+    def invoke() -> bridge.ApplicationCompletion:
+        return bridge.apply_original_322_recovery_exit(
+            repository,
+            REVISION,
+            current_revision=_RECOVERY_BASE,
+            read=github_io,
+            log_read=checkout_log,
+        )
+
+    adoption = bridge.read_recovery_openspec_review(
+        repository,
+        REVISION,
+        head_sha=head,
+        approval_label_present=True,
+        issue_comments=tuple(comments),
+        read=github_io,
+        log_read=checkout_log,
+        thread_read=lambda *_: [],
+    )
+    assert adoption.disposition == ("UNKNOWN" if scenario == "unknown" else "COMPLETE"), adoption
+    pre = bridge.qualify_original_322_pre_formal(
+        repository=repository,
+        token=REVISION,
+        source=bridge.WorkerRequest(322, "executor", "implement-change"),
+        record=record,
+        issue_comments=tuple(comments),
+        current_issue=issue,
+        current_revision=_RECOVERY_BASE,
+        read=github_io,
+        log_read=checkout_log,
+    )
+    expected_pre = (
+        "CONFLICT"
+        if scenario == "conflict"
+        else "INCOMPLETE"
+        if scenario == "incomplete"
+        else "UNKNOWN"
+        if scenario == "unknown"
+        else "COMPLETE"
+    )
+    assert pre.disposition == expected_pre, pre.predicates
+    first = invoke()
+    assert first.state == ("COMPLETE" if scenario in {"normal", "disjoint"} else "INVALID"), first
+    if scenario in {"conflict", "incomplete", "unknown"}:
+        assert comment_posts == 0
+        assert route_patches == 0
+        assert len(comments) == 2  # no formal result was fabricated
+        return
+    assert comment_posts == 1
+    assert route_patches == (0 if scenario == "lost-response" else 1)
+    second = invoke()
+    assert second.state == "COMPLETE", second
+    assert comment_posts == 1  # fresh-read reconciliation, no duplicate formal write
+    assert route_patches == 1
+    assert "action:review-implementation" in [
+        label["name"] for label in cast(list[dict[str, object]], issue["labels"])
+    ]
+    fresh_wake = runtime.classify_dispatch(
+        runtime.acquire_current_github_preflight(repository, REVISION)
+    )
+    assert fresh_wake.disposition == "AUTHORIZE", fresh_wake
+    assert fresh_wake.selected_issue_id == 322
+    assert fresh_wake.selected_routing == ("reviewer", "review-implementation")
+
+
+def test_original_322_exit_incomplete_does_not_call_effect_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = _effect_request_comment(
+        comment_id=6019133874,
+        created_at="2026-10-07T02:00:00Z",
+        action="implement-change",
+        role="executor",
+        result_kind="ready",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+    )
+    decision = _application_decision_comment(request, comment_id=6019173711)
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
+            return [decision]
+        if path == "issues/322":
+            return {"number": 322}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "_authorization_ancestry", lambda *_args, **_kw: ())
+    monkeypatch.setattr(
+        bridge,
+        "qualify_original_322_pre_formal",
+        lambda **_kw: bridge.RecoveryPreFormalQualification(
+            "INCOMPLETE",
+            (
+                ("I", "COMPLETE"),
+                ("R", "COMPLETE"),
+                ("M", "INCOMPLETE"),
+                ("V", "COMPLETE"),
+                ("S", "COMPLETE"),
+                ("F", "COMPLETE"),
+            ),
+        ),
+    )
+    result = bridge.apply_original_322_recovery_exit(
+        "royhsu-work/investment-strategy",
+        "token",
+        current_revision=_RECOVERY_BASE,
+        read=read,
+        effect_apply=lambda *_args, **_kw: pytest.fail("incomplete must have NO_WRITE"),
+    )
+    assert result.state == "INVALID"
+    assert result.reason == "recovery-exit-incomplete-M"

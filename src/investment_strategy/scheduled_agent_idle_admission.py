@@ -38,6 +38,7 @@ IDLE_ENVELOPE_MARKER = "NO_WORK_IDLE_ENVELOPE"
 IDLE_REQUEST_MARKER = "IDLE_ADMISSION_REQUEST"
 IDLE_SCHEMA = "scheduled-agent-idle-admission/v1"
 ACTION_EXPLORE_CHANGE = "action:explore-change"
+ADVISORY_IDLE = "advisory:idle"
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -51,11 +52,12 @@ _DISPATCH_ARTIFACT_NAME = "dispatch-result.json"
 _DISPATCH_WORKFLOW_PATH = ".github/workflows/scheduled-agent-bridge.yml"
 _CHATGPT_CONNECTOR_APP_SLUG = "chatgpt-codex-connector"
 
-IdleCandidateKind = Literal["no-finding", "existing", "new"]
+IdleCandidateKind = Literal["no-finding", "existing", "new", "advisory"]
 IdleAdmissionState = Literal[
     "NO_FINDING",
     "ADMITTED",
     "ALREADY_ADMITTED",
+    "SUPPRESSED",
     "STALE",
     "FAIL_CLOSED",
     "AMBIGUOUS",
@@ -246,6 +248,7 @@ class IdleCandidate:
     body: str | None = None
     labels: tuple[str, ...] = ()
     observed_issue_sha256: str | None = None
+    recommendations: tuple[str, ...] = ()
 
     def validate(self, envelope: IdleDispatchEnvelope) -> None:
         if self.kind == "no-finding":
@@ -264,6 +267,7 @@ class IdleCandidate:
                     )
                 )
                 or self.labels
+                or self.recommendations
             ):
                 raise ValueError("no-finding candidate contains mutation data")
             return
@@ -282,10 +286,15 @@ class IdleCandidate:
         if self.kind == "existing":
             if _positive_int(self.issue_number) is None:
                 raise ValueError("existing idle candidate Issue is invalid")
-            if self.title is not None or self.body is not None or self.labels:
+            if (
+                self.title is not None
+                or self.body is not None
+                or self.labels
+                or self.recommendations
+            ):
                 raise ValueError("existing candidate must not carry replacement Issue fields")
             return
-        if self.kind != "new":
+        if self.kind not in {"new", "advisory"}:
             raise ValueError("idle candidate kind is invalid")
         if self.issue_number is not None:
             raise ValueError("new idle candidate unexpectedly carries an Issue")
@@ -295,6 +304,23 @@ class IdleCandidate:
             _valid_text(label, maximum=100) for label in self.labels
         ):
             raise ValueError("new idle candidate labels are invalid")
+        if self.kind == "advisory":
+            body = cast(str, self.body)
+            if (
+                self.labels != (ADVISORY_IDLE,)
+                or _CHANGE_LINE.search(body) is not None
+                or not 1 <= len(self.recommendations) <= 3
+                or len(set(self.recommendations)) != len(self.recommendations)
+                or not all(_valid_text(item, maximum=2_000) for item in self.recommendations)
+                or tuple(line for line in body.splitlines() if line.startswith("- "))
+                != tuple(f"- {item}" for item in self.recommendations)
+            ):
+                raise ValueError(
+                    "advisory candidate must contain one to three nonrouting recommendations"
+                )
+            return
+        if self.recommendations:
+            raise ValueError("formal Explore candidate must not contain advisory recommendations")
         action_labels = tuple(label for label in self.labels if label.startswith("action:"))
         if action_labels != (ACTION_EXPLORE_CHANGE,):
             raise ValueError("new idle candidate must have exactly one explore routing label")
@@ -303,7 +329,7 @@ class IdleCandidate:
             raise ValueError("new idle candidate must contain exactly Change: unset")
 
     def payload(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "kind": self.kind,
             "source_kind": self.source_kind,
             "source_ref": self.source_ref,
@@ -315,6 +341,10 @@ class IdleCandidate:
             "labels": list(self.labels),
             "observed_issue_sha256": self.observed_issue_sha256,
         }
+        # Preserve the wire identity of existing pre-advisory idle requests.
+        if self.kind == "advisory":
+            payload["recommendations"] = list(self.recommendations)
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,7 +407,7 @@ def parse_idle_admission_request(body: str) -> IdleAdmissionRequest | None:
     candidate_payload = payload.get("candidate")
     if not isinstance(envelope_payload, Mapping) or not isinstance(candidate_payload, Mapping):
         return None
-    if set(candidate_payload) != {
+    required_candidate_fields = {
         "kind",
         "source_kind",
         "source_ref",
@@ -388,7 +418,11 @@ def parse_idle_admission_request(body: str) -> IdleAdmissionRequest | None:
         "body",
         "labels",
         "observed_issue_sha256",
-    }:
+    }
+    is_advisory = candidate_payload.get("kind") == "advisory"
+    if set(candidate_payload) != (
+        required_candidate_fields | ({"recommendations"} if is_advisory else set())
+    ):
         return None
     envelope_body = f"{IDLE_ENVELOPE_MARKER}\nEnvelope-B64: {_encode_payload(envelope_payload)}"
     envelope = parse_idle_envelope(envelope_body)
@@ -396,6 +430,11 @@ def parse_idle_admission_request(body: str) -> IdleAdmissionRequest | None:
         return None
     labels = candidate_payload.get("labels")
     if not isinstance(labels, list) or not all(isinstance(label, str) for label in labels):
+        return None
+    recommendations = candidate_payload.get("recommendations", [])
+    if not isinstance(recommendations, list) or not all(
+        isinstance(item, str) for item in recommendations
+    ):
         return None
     try:
         candidate = IdleCandidate(
@@ -409,6 +448,7 @@ def parse_idle_admission_request(body: str) -> IdleAdmissionRequest | None:
             body=cast(str | None, candidate_payload.get("body")),
             labels=tuple(cast(list[str], labels)),
             observed_issue_sha256=cast(str | None, candidate_payload.get("observed_issue_sha256")),
+            recommendations=tuple(cast(list[str], recommendations)),
         )
         return IdleAdmissionRequest(
             envelope=envelope,
@@ -743,8 +783,32 @@ def _matching_new_candidates(
     )
 
 
+def _open_advisory_number(
+    issues: tuple[Mapping[str, object], ...],
+) -> int | None:
+    for issue in issues:
+        names = _labels(issue)
+        if (
+            "pull_request" not in issue
+            and issue.get("state") == "open"
+            and names is not None
+            and ADVISORY_IDLE in names
+        ):
+            return _positive_int(issue.get("number")) or 0
+    return None
+
+
 def _new_postcondition(request: IdleAdmissionRequest, issue: Mapping[str, object]) -> bool:
-    if not _routing_complete(issue):
+    if request.candidate.kind == "advisory":
+        names = _labels(issue)
+        if (
+            issue.get("state") != "open"
+            or "pull_request" in issue
+            or names != (ADVISORY_IDLE,)
+            or _change_values(issue.get("body")) != ()
+        ):
+            return False
+    elif not _routing_complete(issue):
         return False
     if issue.get("title") != request.candidate.title:
         return False
@@ -902,6 +966,12 @@ def admit_idle_request(
         if number is None or not _new_postcondition(request, matches[0]):
             return IdleAdmissionResult("AMBIGUOUS", "idle-new-target-postcondition-invalid")
         return IdleAdmissionResult("ALREADY_ADMITTED", "idle-new-target-already-complete", number)
+    if candidate.kind == "advisory":
+        existing = _open_advisory_number(issues)
+        if existing is not None:
+            if existing == 0:
+                return IdleAdmissionResult("AMBIGUOUS", "idle-advisory-open-identity-invalid")
+            return IdleAdmissionResult("SUPPRESSED", "idle-advisory-existing-open", existing)
     gate = _fresh_gate(
         request,
         read=read,
@@ -919,6 +989,12 @@ def admit_idle_request(
             return IdleAdmissionResult("AMBIGUOUS", "idle-new-target-correlation-ambiguous")
         number = _positive_int(matches_again[0].get("number"))
         return IdleAdmissionResult("ALREADY_ADMITTED", "idle-new-target-already-complete", number)
+    if candidate.kind == "advisory":
+        existing = _open_advisory_number(issues_again)
+        if existing is not None:
+            if existing == 0:
+                return IdleAdmissionResult("AMBIGUOUS", "idle-advisory-open-identity-invalid")
+            return IdleAdmissionResult("SUPPRESSED", "idle-advisory-existing-open", existing)
     gate = _fresh_gate(
         request,
         read=read,

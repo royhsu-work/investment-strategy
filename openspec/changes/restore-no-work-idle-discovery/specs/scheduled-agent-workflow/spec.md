@@ -322,7 +322,7 @@ For first-carrier materialization, the apply-side already-complete check, immedi
 
 A fresh process SHALL reconstruct materialized-consequence completion from the existing `ConsequenceSpec.evidence_target` through the same canonical durable-consequence proof owner. It MUST NOT require invocation-local `_materialization_targets` to recognize an already durable consequence. Implementation-carrier qualification remains in its existing owner except where that owner supplies materialization proof primitives; it MUST NOT become a competing positive definition for the same materialized consequence. If an uncorrelated legacy result invalidates formal-frontier qualification while the exact source route remains current, recovery MAY resume only one accepted intent and its unique request-bound run/job after exact Issue/Change/Role/Action checks. For a completed request-bound run, `run_attempt` is GitHub-owned invocation evidence and is not the recovery budget. `run_attempt > 1` alone SHALL NOT permanently block recovery or authorize a rerun of that same run/job. A safe continuation MAY use the existing `APPLICATION_CONTINUATION` transport to start one fresh, separately identified run only after exact failure evidence, unique accepted intent/run/job, current authorization, and the bounded-recovery requirement below qualify it. Changed identity/routing, duplicate intent/run/job, or incomplete evidence SHALL fail closed. Existing correlation, formal qualification, source/frontier, carrier, validation, review, successor, and terminal gates remain in force.
 
-The materialized durable consequence itself SHALL have exactly one authoritative positive proof definition. Given one accepted intent and fresh repository state, the proof owner SHALL return exactly one of `COMPLETE(target, witness)`, `INCOMPLETE`, or `CONTRADICTORY(reason)`. `COMPLETE` SHALL require coherent Identity, Content, Lineage, and Non-conflict evidence together. Git topology labels such as historical, replacement, merged, reconciled, or direct SHALL be treated only as evidence/witness shapes and MUST NOT create separate top-level positive completion semantics.
+The materialized durable consequence itself SHALL have exactly one authoritative positive proof definition. Given one accepted intent and fresh repository state, the proof owner SHALL return exactly one of `COMPLETE(target, witness)`, `INCOMPLETE`, `CONTRADICTORY(reason)`, or `UNKNOWN(reason)`. `UNKNOWN` means an authoritative source observation was unavailable rather than an observed conflicting Git state; it neither proves a missing mutation nor permits completion. All consumers SHALL fail closed without mutation and SHALL preserve the evidence boundary until a new complete authoritative observation exists. Historical missing artifacts likewise SHALL NOT be treated as evidence of a write or no write. `COMPLETE` SHALL require coherent Identity, Content, Lineage, and Non-conflict evidence together. Git topology labels such as historical, replacement, merged, reconciled, or direct SHALL be treated only as evidence/witness shapes and MUST NOT create separate top-level positive completion semantics.
 
 Identity SHALL include the exact repository, Issue, immutable Change, source Role/Action, intended PR/ref/branch, and unique carrier/cardinality. Content SHALL prove every accepted desired blob/content identity in the immutable qualified witness `W`. The current target `T` SHALL be the exact freshly qualified carrier/consumer revision for the requested evidence target; exact review and validation SHALL bind `T`. The proof MAY return `COMPLETE(T, W)` with `T != W` after legal same-Change evolution changes the target or accepted paths, provided Identity, complete Lineage from `W` to the qualified target, and Non-conflict remain proven. It MUST NOT require original desired bytes at a legal later `T`, `T == W`, or equality with an invocation-local apply target as durable completion predicates.
 
@@ -688,7 +688,7 @@ Before any later write, recovery SHALL use current repository truth and fresh au
 
 A `run_attempt > 1` value alone SHALL neither permanently block a safe continuation nor authorize rerunning its completed run/job. A continuation SHALL use the existing `APPLICATION_CONTINUATION` path and create a fresh run only after unique intent/current predecessor, current Issue/Change/Role/Action, exact evidence chain, fresh authorization, and a new qualified failure-evidence transition is proven. No new Action, ResultKind, retry registry, counter, queue, cursor, lease, or progress database is introduced.
 
-The existing `APPLICATION_CONTINUATION` correlation SHALL be extended to bind the accepted-decision digest, one exact predecessor run/job/attempt and artifact id/digest, the structured rejection-evidence digest, and a stable causal-episode fingerprint. The per-transition correlation SHALL be deterministic from qualified evidence, not an arbitrary nonce; identical evidence SHALL map to the same correlation and at most one next continuation/run. Each new run SHALL have exactly one evidence-linked predecessor in one linear chain. Duplicate, branching, missing, or ambiguous continuation/run/artifact links SHALL fail closed. The stable episode fingerprint, which excludes run id, plan id, nonce, and date, SHALL preserve causal identity across distinct transition correlations without imposing a numeric attempt cap. Historical intent-only continuation comments do not qualify as new failure evidence. When a legacy attempt has only generic or incomplete failure evidence and a fresh canonical/safety proof cannot uniquely recover the remaining work and evidence chain, the owner SHALL return a specific evidence-incomplete blocker without emitting a continuation.
+The existing `APPLICATION_CONTINUATION` correlation SHALL be extended to bind the accepted-decision digest, one exact predecessor run/job/attempt and artifact id/digest, the structured rejection-evidence digest, and a stable causal-episode fingerprint. The per-transition correlation SHALL be deterministic from qualified evidence, not an arbitrary nonce; identical evidence SHALL map to the same correlation and at most one next continuation/run. Each new run SHALL have exactly one evidence-linked predecessor in one linear chain. Duplicate, branching, missing, or ambiguous continuation/run/artifact links SHALL fail closed **for continuation or replay of that physical operation**. The stable episode fingerprint, which excludes run id, plan id, nonce, and date, SHALL preserve causal identity across distinct transition correlations without imposing a numeric attempt cap. Historical intent-only continuation comments do not qualify as new failure evidence. When a legacy attempt has only generic or incomplete failure evidence and a fresh canonical/safety proof cannot uniquely recover the remaining work and evidence chain, the owner SHALL return a specific evidence-incomplete blocker without emitting an **old-plan continuation**. This historical blocker SHALL NOT alone prohibit an independently authorized prospective correction with sufficient current final-state and material safety evidence.
 
 
 
@@ -707,9 +707,9 @@ A substantive recovery transition SHALL be eligible without a fixed numerical at
 - AND fresh default-branch history changed the same requested path after the plan base
 - AND the canonical proof cannot prove the accepted desired consequence complete or safely project it
 - WHEN recovery reconciles the rejected plan
-- THEN it records `PLAN_SUPERSEDED` for that exact plan and reports the path conflict and expected/observed preimage
-- AND it performs no carrier or repository mutation
-- AND a new plan requires the existing governed correction path
+- THEN it reports the exact path conflict and expected/observed preimage and performs no old-plan carrier or repository mutation
+- AND `PLAN_SUPERSEDED` is recorded only if **both** the plan invalidation and sufficient completed-effect frontier have been proven, otherwise historical UNKNOWN remains unchanged
+- AND a new prospective operation requires separately qualified governed Forward Correction with fresh authorization and preimage, not silent rebasing of the rejected plan
 
 #### Scenario: Safe disjoint evolution permits a fresh plan
 
@@ -736,7 +736,8 @@ A substantive recovery transition SHALL be eligible without a fixed numerical at
 - WHEN the recovery owner evaluates the accepted intent
 - THEN it performs only the fresh read-only proof required to determine whether the consequence is already complete
 - AND if remaining work, a unique predecessor, and safe effect state are not provable, it returns an evidence-incomplete blocker
-- AND it emits no new continuation and fabricates no guard reason
+- AND it emits no new old-plan continuation and fabricates no guard reason
+- AND that old-plan evidence gap does not independently prohibit a separately authorized safe prospective correction whose defined current postconditions and side-effect safety can be machine-verified
 
 #### Scenario: New evidence continues after the former numeric threshold
 
@@ -762,6 +763,223 @@ A substantive recovery transition SHALL be eligible without a fixed numerical at
 - WHEN a later scheduled wake evaluates the accepted intent
 - THEN it performs no application rerun or semantic replay
 - AND it returns the existing evidence-bound fail-closed disposition
+
+### Requirement: Verified implementation slices persist a bounded coordination-Issue checkpoint
+
+For `Executor / implement-change`, after an approved vertical slice reaches successful `VERIFY`, Executor MUST persist all satisfied task markers for that slice and MUST persist exactly one bounded checkpoint comment on the persistent coordination Issue before beginning the next slice or handing off.
+
+The checkpoint comment MUST use the canonical `SLICE_CHECKPOINT` presentation contract when that contract is active on the default branch and MUST identify the completed slice or task IDs, the durable checkpoint or verified revision, the required VERIFY/gate result, and the remaining approved work or handoff target. Before template activation, the same evidence fields remain required by the then-authoritative workflow contract even if presentation is not yet canonical. The comment SHALL summarize the completion boundary and MUST NOT replace the PR/commit, task markers, or CI evidence as their respective sources of truth.
+
+Narrow historical recovery exception: the already-accepted #322 `Executor / implement-change / READY` application (request comment `6019133874`, accepted-decision comment `6019173711`) predates recoverable checkpoint evidence. During **pre-formal-result Recovery Exit qualification only**, the absence or unavailability of its historical `SLICE_CHECKPOINT` SHALL NOT itself be a mandatory completion predicate. The application MUST independently verify current task/implementation/required-gate postconditions and MUST prevent replay or duplication of an uncertain non-idempotent comment/effect; an unverified hazardous side effect blocks only the operation that can repeat it. It MUST retain historical UNKNOWN and MUST NOT infer the comment was absent, completed, or informational from a file witness. Every future fresh Executor slice and all other accepted applications remain subject to the ordinary checkpoint requirement above.
+
+RED/GREEN/refactor/test-trigger/compatibility-correction commits and ordinary governed artifact or task-marker edits inside the same not-yet-complete slice MUST NOT independently require coordination-Issue progress comments. This requirement is completion-boundary observability only and MUST NOT introduce periodic heartbeat, progress percentage, `status:in-progress`, lock, claim, lease, retry counter, hidden ownership state, or other live execution machinery.
+
+#### Scenario: Verified slice completes before another slice begins
+
+- GIVEN Executor completes an approved vertical slice
+- AND the slice's required VERIFY and repository gates succeed
+- WHEN Executor prepares to continue implementation
+- THEN all satisfied task markers for that slice are durably persisted
+- AND exactly one bounded `SLICE_CHECKPOINT`-equivalent completion record is durably recorded on the persistent coordination Issue using the currently authoritative presentation contract
+- AND the checkpoint identifies the completed work, durable revision, gate result, and remaining work
+- AND only then may Executor begin the next approved slice
+
+#### Scenario: Work continues inside an unverified slice
+
+- GIVEN Executor is performing RED, GREEN, refactor, test-trigger, compatibility correction, or ordinary artifact/task edits inside one approved slice
+- AND that slice has not yet reached successful VERIFY
+- WHEN those intermediate mutations are persisted
+- THEN Git/PR/task evidence remains the detailed source of truth
+- AND no additional implementation-progress Issue comment is required solely for those mutations
+
+#### Scenario: Task markers persisted but checkpoint write was interrupted
+
+- GIVEN a prior Executor run successfully verified a slice and durably persisted its satisfied task markers
+- BUT the run ended before the required coordination-Issue checkpoint was persisted
+- WHEN a later Executor run reconstructs the active implementation state
+- THEN it does not rerun or clear the already verified slice merely to recreate progress
+- AND it persists the missing bounded checkpoint from current durable evidence using the currently authoritative presentation contract before beginning another slice or handing off
+
+#### Scenario: Legacy accepted READY is qualified without inventing its checkpoint
+
+- GIVEN the exact #322 accepted application identified by request `6019133874` and decision `6019173711`
+- AND its historical checkpoint write is UNKNOWN while current task, implementation, and applicable gates can be independently observed
+- WHEN the existing application evaluates pre-formal-result Recovery Exit without scheduling another Executor slice
+- THEN it does not demand or forge a replacement historical `SLICE_CHECKPOINT` as a positive completion predicate
+- AND it blocks any prospective operation that could duplicate the uncertain comment or other irreversible effect until the specific deduplication/safety predicate is proven
+- AND later fresh Executor slices still persist their ordinary verified-slice checkpoint before handoff
+
+### Requirement: Legacy Forward Correction is independently authorized and never replays accepted semantic work
+
+Historical accepted intent `I`, decision digest, `A/B`, original physical plan, original `ACTION_RESULT` meaning, and incomplete/unknown run and effect history SHALL remain immutable. A completed historical run which never had the recovery-upload step SHALL NOT be required to manufacture that artifact as the sole means of **preparing, reviewing or verifying separately Human-approved corrective maintenance**. Its missing artifact alone is neither a proof of original mutation, a missing write, an actual conflicting write nor authority for `PLAN_SUPERSEDED`, old-plan replay, semantic result, routing or fresh write. Incomplete current GitHub source evidence is `UNKNOWN(reason)`, a proven inconsistent source target is `CONTRADICTORY(reason)`, and both prohibit unsafe effects.
+
+After a durable `APPLICATION_DECISION: ACCEPTED`, the same normal Action/worker SHALL NOT run again merely to obtain `SPEC_BLOCKER`, to re-enter Lead work, or to bypass an impossible historical recovery artifact. **No exception** to the established zero-semantic-replay/unique-accepted-intent rule is granted by Forward Correction. Instead, the existing Human-authorized interaction-layer maintenance path MAY prepare the *existing* Change/PR correction without issuing normal `EFFECT_REQUEST`, `APPLICATION_DECISION`, `ACTION_RESULT`, `SPEC_BLOCKER`, or Issue routing mutation. Material Lead-owned OpenSpec correction MUST be reviewed independently at the exact revision; an unmerged draft cannot authorize implementation merely because strict validation passed. No new scheduled workflow Action, ResultKind, queue, registry, or state dimension is created.
+
+The prospective correction SHALL be uniquely and sufficiently bound to the existing accepted decision, qualified Human source, Change, reviewed PR/ref/current target, and intended operation. It SHALL reuse those source identities rather than requiring an additional derived hash or state when they already prove uniqueness. A changed revision alone SHALL NOT authorize duplicate writes or reset recovery attempts. Before any *new* write, require complete current authority, unique target/carrier, absence of relevant in-flight or competing effects, fresh `P/D`, non-force CAS, path overlap/content/lineage checks, and a fresh postcondition. The canonical materialization owner SHALL prove any new Git consequence as `COMPLETE(T_new,W_new)` independently of old-plan proof; this SHALL NOT claim original `COMPLETE(T_old,W_old)`. Old `expected_sha` SHALL NOT guard a distinct new operation. Original physical effects remain UNKNOWN unless independently observed; unsupported or unsafe mutations remain NO_WRITE.
+
+**Deterministic pre-formal-result Recovery Exit for the original accepted #322 application.** The existing application-completion owner SHALL evaluate the following finite predicate set **before** asking for an `ACTION_RESULT`. The target is the immutable `implement-change / READY` acceptance at request `6019133874`, decision `6019173711`, decision digest `9c545558249285ec6d4fa632970dfa7157774d75bf2b6e46889e240a175cbd54`, Issue `322`, Change `restore-no-work-idle-discovery`. The historical run `37484224666` and continuation runs `37563005754` / `37693412638` identify UNKNOWN evidence, not independent accepted decisions.
+
+| Predicate | Source-bound PASS condition | Missing/mismatch consequence |
+| --- | --- | --- |
+| `I` immutable acceptance | Unique parsed, provenance-qualified `APPLICATION_DECISION: ACCEPTED` and original typed `READY` result/sha256, exact Issue/Change/Executor Action; no second accepted owner | Source read unavailable → `UNKNOWN`; duplicate/conflicting acceptance, identity or result mismatch → `CONFLICT` |
+| `R` current frontier | Fresh Issue lifecycle, Change and sole route `action:implement-change` still belong to this accepted application; default-branch Action model maps its `READY` to `review-implementation` (or an already qualified identical formal successor is read back) | Required route not yet qualified → `UNKNOWN`; observed incompatible ownership/route → `CONFLICT` |
+| `M` necessary implementation | Fresh exact repository PR #340, same-repository implementation head `H`/ref/Change; all *applicable current Executor implementation tasks* are verified at H, required content/commit/PR postconditions pass the existing canonical proof for new corrective writes (`COMPLETE(T_new,W_new)`), and no unrelated content is overwritten | Verifiably unfinished necessary task/consequence → `INCOMPLETE`; unreadable target → `UNKNOWN`; wrong identity/overlap/contradictory proof → `CONFLICT` |
+| `V` pre-READY gates | Proven Human comment `6313995887` and exact-revision independent OpenSpec recovery review *adopted by the contract below*; strict OpenSpec validation and required implementation tests/checks bound to the necessary implementation head, with checkout evidence rather than head association alone | Pending/unrun required gate → `INCOMPLETE`; missing/unreadable gate source → `UNKNOWN`; wrong revision, rejected review or false checkout identity → `CONFLICT` |
+| `S` effect isolation | All proposed *new* irreversible/non-idempotent effects have unique identities, no competing in-flight writer, fresh preimages and deduplication/postcondition proofs; no old materialization or checkpoint operation is replayed. Old UNKNOWN not touched by new effects is audit only | Relevant incomplete safe prospective work → `INCOMPLETE`; unreadable ambiguous write/dedup source → `UNKNOWN` for the affected operation; proven duplicate/conflict → `CONFLICT` |
+| `F` formal-result uniqueness | Complete paginated Issue comments and lifecycle events show zero prior formal result for this accepted correlation (pre-write), or exactly one previously persisted result with identical immutable typed content and qualified successor (read-back) | Unavailable comment/event read → `UNKNOWN`; competing/incompatible result or successor → `CONFLICT`; **absence of a formal result is not failure and not an input to I–S** |
+
+The application SHALL compute one of `COMPLETE / INCOMPLETE / UNKNOWN / CONFLICT` from these fixed observations, with precedence `CONFLICT > UNKNOWN > INCOMPLETE > COMPLETE` **within the predicate set actually necessary for the requested effect/transition**. `COMPLETE` before the formal write means *qualified to persist*, **not yet exited**. For `COMPLETE` and exactly zero formal records, the same application owner may append one canonical `ACTION_RESULT` for the already-accepted `READY`, then fresh-read the record, apply the existing `next_action(implement-change, READY) = review-implementation` projection and verify its route postcondition. If a valid identical result already exists, reconcile without a duplicate write. Only after formal result **and** route are durably qualified is Recovery Exit complete. `review-implementation` PASS, merge, archive, and native NO_WORK are downstream lifecycle gates: they MUST NOT be prerequisites to this pre-result qualification.
+
+`INCOMPLETE` allows only independently reauthorized necessary corrective work; `UNKNOWN` prohibits only the effect/transition depending on unreadable or ambiguous evidence and permits re-observation; `CONFLICT` prohibits the overlapping write/transition until its exact conflict is resolved through governed correction or Human decision. All states preserve unchanged original identity and historical UNKNOWN. A historical upload, old six-file completion, individual effect ordinals, and old checkpoint comment SHALL NOT be a universal positive prerequisite. No model-generated “semantic equivalence” or interpretation of whether the checkpoint was “informational” may alter these results. Truly unexpressed required acceptance criteria return to Human without imposing a global lock on disjoint qualified work.
+
+**Human-authorized recovery-review evidence adoption (temporary bootstrap, not a second workflow).** While #322's accepted application prevents normal `review-openspec` dispatch, the Human MAY request a distinct independent Reviewer examination of exact PR #340 revision `R` and its complete proposal/design/delta/tasks/affected contracts **without first completing Recovery Exit or changing routing**. A review is adoptable for predicate `V` only when complete authoritative GitHub evidence establishes: the exact Human approval reference; same repository/Change/PR/base and immutable reviewed `R`; strict checkout-verified validation of `R`; an explicit independent OpenSpec semantic `PASS` review (not CI or code-only PASS) and objectively qualified Reviewer independence **under one of the two source-bound paths below**; no unresolved material findings on `R`; and fresh confirmation that the reviewed OpenSpec and affected normative Skill/canonical blobs at current implementation head `H` equal those at `R`, with `H = R` or `H` a verified descendant of `R`. Code-only implementation commits may thus advance `H` without inventing a second semantic review; **any material normative blob change requires a new reviewed `R`**. The existing review/authorization consumer SHALL validate these fields deterministically and record the adopted source review ID, `R`, and Human reference as **review evidence only**, not a fabricated `review-openspec` Action, `REVIEW_RESULT`, `ACTION_RESULT`, routing or merge approval. `FINDINGS`, unqualified independence/checkout, unqualified lineage, changed reviewed blobs, actual self-review, partial pagination, or contradictory review evidence MUST NOT be adopted; revise and obtain another independent exact-revision review. This bounded bridge expires for the historical #322 correction once its normal frontier advances; all later normal reviews use repository dispatch. An unmerged proposal alone is not operative adoption and an unimplemented consumer cannot claim a PASS.
+
+The adoptable GitHub **PR review** (not an author declaration) MUST contain a machine-parsed review receipt with exactly these ordered nonempty fields; source reviewer login, immutable GitHub review ID, submission timestamp, and GitHub review state come from the GitHub review object, never self-asserted body fields:
+
+```text
+RECOVERY_OPENSPEC_REVIEW
+Repository: royhsu-work/investment-strategy
+Issue: 322
+Change: restore-no-work-idle-discovery
+PR: 340
+Revision: <40-lowercase-hex-R>
+Baseline: <40-lowercase-hex-default-branch-at-review>
+Human-Decision-Comment: 6313995887
+Validator-Run: <positive-run-id>
+Disposition: PASS|FINDINGS
+```
+
+**Review independence has two executable proof paths (choose one, not both):**
+
+1. **Distinct authenticated GitHub reviewer.** The PR review object's `user.login` differs from the current correction commit's authoritative `author.login`, and the review is bound to exact `R` and the designated independent review evidence. This proves distinct authenticated GitHub actors for this bounded review; the author cannot claim a second identity in the receipt body.
+2. **Same-login connector, separately confirmed by Human.** If both GitHub actions resolve to the same login (as they do when distinct Lead and Reviewer conversations use the `royhsu-work` connector), login equality SHALL NOT automatically prove self-review or independence. Instead, the Human MUST make a **direct GitHub Issue #322 decision comment after the submitted PR review**, naming the exact immutable `R`, GitHub PR review ID, and confirming that an independently commissioned Reviewer session—not the Lead authoring session—produced that review. Its canonical `Human-Decision-For` value SHALL be `issue:322:recovery-openspec-review:<R>:<review-global-id>`, followed by exactly `Recovery-Review-Independence: separately-reviewed`. The existing default-branch provenance-bound Human-decision predicate applies: raw comment `user.login == royhsu-work`, `performed_via_github_app == null`, an independently observed subsequent Human-only `human:approved` labeled event bound to that exact decision reference, current `human:approved` presence, no post-approval comment edit, complete ordering/uniqueness and no competing Human decision. GitHub connector-authored comments, review-body assertions, copied conversation prose, and an author-created Issue comment SHALL NOT satisfy this path. This is Human attestation of role separation, **not** a claim that the GitHub login identifies the two sessions; missing Human-only provenance/event returns UNKNOWN for review adoption, never inferred PASS.
+
+The consumer MUST require exactly one latest, uncontradicted independent PASS receipt applicable to R; establish one of the two independence paths using raw source evidence; validate the validator run's **actual checkout R** and PASS; compare all normative blob IDs between R and H; and reject unresolved `RECOVERY_OPENSPEC_FINDING` review threads on R. It SHALL treat missing/partial review, Human decision/event, or thread pagination as UNKNOWN and an explicit FINDINGS receipt or conflicting independent verdict as non-PASS. Reviewer semantic judgment determines PASS/FINDINGS **once** at review time; the application parses that recorded decision and objective provenance, not a fresh LLM verdict. The optional Human attestation is bounded to #322 recovery and the exact source PR review; it authorizes neither semantic self-review nor another workflow Action, and normal implementation review remains a separate later gate.
+
+#### Scenario: Original READY has no prior formal result and all pre-result predicates pass
+
+- GIVEN exact accepted request `6019133874` with immutable `READY`, current `action:implement-change`, qualified implementation and adopted exact-revision OpenSpec review
+- AND the required machine checks and non-idempotent isolation pass while complete source history shows zero qualified formal results
+- WHEN the existing application evaluates predicates I–S before F
+- THEN it returns pre-write `COMPLETE` without demanding an `ACTION_RESULT` or successor review first
+- AND it durably writes at most one formal result, fresh-verifies that record, derives `review-implementation` through the existing Action model, and verifies the projected route
+
+#### Scenario: Missing required task is incomplete, not an invented READY
+
+- GIVEN the accepted `READY` and an authoritative current task/implementation observation showing a necessary Executor behavior unfinished
+- WHEN predicate M is evaluated
+- THEN it returns `INCOMPLETE`, never fabricates READY or writes the formal result
+- AND only that missing work may be pursued through a separately authorized safe correction; unrelated qualified inspection or repair is not frozen
+
+#### Scenario: Read failure and conflicting formal result are distinct
+
+- GIVEN an original accepted application whose historic upload was never generated
+- WHEN a necessary current PR, review, Issue-comment, or effect-safety read is unavailable
+- THEN the affected predicate returns `UNKNOWN` and does not replay the old plan
+- BUT WHEN authoritative evidence instead shows a competing accepted owner, overlapping write, or incompatible formal result
+- THEN the affected predicate returns `CONFLICT` and blocks its write/transition until the conflict is resolved
+
+#### Scenario: Human-requested independent recovery review may be adopted
+
+- GIVEN the accepted #322 frontier is still `action:implement-change`, so normal review dispatch cannot run
+- AND Human explicitly directs an independent Reviewer to review exact corrective revision `R`
+- WHEN the existing review consumer verifies the Human source, Reviewer independence, exact PR/Change/`R`, checkout-verified validation, explicit semantic PASS and no unresolved material findings
+- THEN that exact source review may satisfy only the OpenSpec review evidence predicate for the bounded recovery correction
+- AND no normal Action, formal `REVIEW_RESULT`, route change or merge authority is created
+- AND the admission requires neither a historical `ACTION_RESULT` nor Recovery Exit
+
+#### Scenario: Separate Reviewer shares the connector login with Lead
+
+- GIVEN a Human-commissioned independent Reviewer submits a semantic PASS PR review for exact R and both GitHub review and correction author have login `royhsu-work`
+- AND a later direct-Human #322 decision comment names that review ID and R, attests a different Reviewer session, and uniquely binds to a subsequent qualifying Human-only `human:approved` event
+- WHEN the existing consumer validates raw Human comment/event provenance and all the ordinary exact-R review and validation predicates
+- THEN login equality alone does not reject the independent review and the source review MAY be adopted as evidence for V
+- AND missing, edited, connector-authored or competing Human attestation prevents adoption without inventing an Action or formal result
+
+#### Scenario: Stale or failed recovery review is not adopted
+
+- GIVEN a Human-requested recovery review reports FINDINGS, lacks a qualified independent-review path, or is bound to a different revision
+- WHEN the review evidence is evaluated
+- THEN it cannot satisfy the OpenSpec gate even if CI is green
+- AND the same PR/Change remains eligible for correction and a new independent exact-revision review without invented routing
+
+#### Scenario: Legacy recovery upload was never produced
+
+- GIVEN one exact immutable accepted application and completed historical jobs before recovery artifact upload was implemented
+- AND its original materialization and non-idempotent Issue-comment effect history remain UNKNOWN
+- WHEN the Human-approved maintenance revision is prepared under the existing PR and Change
+- THEN review and safe code repair MAY proceed without reproducing that historical artifact
+- AND the scheduled application neither executes the accepted semantic worker again nor derives a successor from artifact absence
+- AND historical write/plan status remains unchanged, with no duplicate old operation
+
+#### Scenario: Independent correction proof does not launder old effects
+
+- GIVEN a reviewed correction has stable source-derived identity, a unique safe current operation and fresh preimage `P/D`
+- WHEN the existing canonical proof observes `COMPLETE(T_new,W_new)` for the corrective outcome after its non-force mutation
+- THEN the corrected consequence is complete only under its own exact identity
+- AND the original accepted six-file effect and checkpoint remain UNKNOWN unless separately proven
+- AND application MAY derive the unique already-accepted successor only after fresh review, exact accepted-result/current-routing qualification, necessary consequence checks, non-idempotent isolation and all normal guards
+- AND no extra semantic result, replay or route override is generated
+
+#### Scenario: The scoped historical checkpoint is not an independent Recovery Exit gate
+
+- GIVEN the accepted #322 original two-effect envelope has UNKNOWN physical materialization and an unobserved old `SLICE_CHECKPOINT` comment
+- AND fresh qualified observations prove the currently required implementation tasks, content, tests and reviews without consulting the old comment
+- AND no competing writer, duplicate irreversible side effect, or other material safety conflict remains unresolved
+- WHEN the existing application owner evaluates the accepted result for Recovery Exit
+- THEN the missing historical checkpoint comment does not require an invented replacement or independently block formal completion
+- AND historical checkpoint/materialization UNKNOWN remains unchanged
+- AND the application may complete only after deterministic accepted-result/current-state predicates, independent reviews, exact postconditions, and applicable governance gates are met
+
+#### Scenario: A checkpoint with actual side effects still requires safety proof
+
+- GIVEN an old checkpoint or another historical effect may have executed an irreversible or externally meaningful operation
+- AND its repeated execution could cause an unacceptable duplicate or conflict
+- WHEN recovery evaluates a prospective write that could repeat that side effect
+- THEN it rejects that affected write until the specific side-effect safety predicate is independently proven
+- AND a correct file tree or unrelated materialization witness alone does not discharge that safety predicate
+
+#### Scenario: Legacy formal-result sequencing has a lawful entry
+
+- GIVEN one durable accepted semantic result with no historical `ACTION_RESULT` and an old completed job lacking the later recovery-upload step
+- AND a Human-approved, independently reviewed correction yields PASS for the fixed observable application-completion predicates and relevant side-effect safety
+- WHEN the existing application owner evaluates Recovery Exit
+- THEN it may qualify the accepted result before requiring a previously persisted formal result, and it persists at most one lawful formal result and derived successor
+- AND loss of the persistence response is reconciled read-only before any new write
+- AND it neither reruns the old job nor emits another semantic worker result
+
+#### Scenario: Model opinion cannot change a mechanically qualified application result
+
+- GIVEN the same immutable accepted typed result, approved contract, current routing, and complete authoritative source observations
+- AND different LLM invocations express conflicting opinions about whether the intent is fulfilled
+- WHEN the repository-owned application evaluates Recovery Exit
+- THEN it computes the same disposition from the same fixed identity, postcondition, authorization, review and side-effect predicates
+- AND it does not request or consume a new model-generated semantic verdict as completion evidence
+
+#### Scenario: A genuinely subjective acceptance criterion returns to Human authority
+
+- GIVEN a required outcome has no agreed mechanical predicate or recorded explicit Human acceptance
+- WHEN the application evaluates the affected completion boundary
+- THEN it identifies the exact unresolved acceptance criterion for governed Human disposition
+- AND it neither fabricates success nor retries the model's opinion until it happens to return PASS
+- AND unrelated operations with independently satisfied authorization and safety predicates remain eligible
+
+#### Scenario: Uncertain checkpoint or overlapping writes prohibit a corrective mutation
+
+- GIVEN the historical checkpoint issue-comment status is ambiguous or same-path effects overlap
+- WHEN a proposed correction would repeat the side effect or overwrite unrelated content
+- THEN that requested mutation and successor fail closed until their independent safety proof is complete
+- AND maintenance preparation and inspection alone create no claim of progress or no-write history
+
+#### Scenario: Two fresh Action witnesses remain valid across evolution
+
+- GIVEN a separately reviewed maintenance correction has its **own correction witness**, which is not `W1` and does not count as either normal Action
+- AND a **first later fresh repository-dispatched Action wake** authorizes exact `P1/D1`, produces necessary non-force commit `C1`, and fresh canonical proof establishes **`W1` for `C1`**
+- AND an unrelated legal intervening commit/default-branch advance changes the prospective preimage without contradicting `W1`
+- WHEN a **second distinct later fresh repository-dispatched Action wake** authorizes `P2/D2`
+- THEN its separate necessary non-force commit `C2` is independently verified as **`W2` for `C2`**, without stale preimage reuse or semantic replay
+- AND both wake/request identities, actual commit parents, postconditions, and next legal Action are recorded and `W1` remains valid
+- AND no maintenance commit, CI, synthetic wake or single normal Action can substitute for either of the **two** real Action/Commit/witness chains; conflicts remain NO_WRITE
 
 ### Requirement: Production idle acceptance follows legal formal termination
 

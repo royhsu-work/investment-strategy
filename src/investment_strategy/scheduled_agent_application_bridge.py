@@ -3659,8 +3659,16 @@ def read_application_recovery_artifact(
     accepted_decision_sha256: str,
     read: Callable[[str, str, str], object] | None = None,
     artifact_reader: Callable[[str, str, str], bytes] | None = None,
+    strict_read: bool = False,
 ) -> ApplicationRecoveryArtifact | None:
     """Qualify structured recovery evidence against one completed Actions job."""
+
+    def unavailable() -> ApplicationRecoveryArtifact | None:
+        # A missing, contradictory, expired or unreadable current-protocol
+        # artifact is NOT observed legacy absence.
+        if strict_read:
+            raise RuntimeError("application recovery evidence unavailable")
+        return None
 
     api_read = _github_json if read is None else read
     download = read_github_artifact_bytes if artifact_reader is None else artifact_reader
@@ -3671,7 +3679,7 @@ def read_application_recovery_artifact(
         or _strict_positive_int(request_comment_id) is None
         or re.fullmatch(r"[0-9a-f]{64}", accepted_decision_sha256) is None
     ):
-        return None
+        return unavailable()
     run = api_read(repository, token, f"actions/runs/{run_id}")
     if (
         not isinstance(run, Mapping)
@@ -3680,27 +3688,27 @@ def read_application_recovery_artifact(
         or run.get("status") != "completed"
         or not isinstance(run.get("head_sha"), str)
     ):
-        return None
+        return unavailable()
     jobs_payload = api_read(repository, token, f"actions/runs/{run_id}/jobs")
     if not isinstance(jobs_payload, Mapping) or not isinstance(jobs_payload.get("jobs"), list):
-        return None
+        return unavailable()
     jobs = [
         item
         for item in cast(list[object], jobs_payload["jobs"])
         if isinstance(item, Mapping) and item.get("id") == job_id and item.get("name") == "apply"
     ]
     if len(jobs) != 1:
-        return None
+        return unavailable()
     job = cast(Mapping[str, object], jobs[0])
     if (
         job.get("run_attempt") != run_attempt
         or job.get("status") != "completed"
         or job.get("conclusion") not in {"success", "failure"}
     ):
-        return None
+        return unavailable()
     steps = job.get("steps")
     if not isinstance(steps, list):
-        return None
+        return unavailable()
     uploads = [
         step
         for step in steps
@@ -3708,7 +3716,16 @@ def read_application_recovery_artifact(
         and step.get("name") == "Upload exact application recovery evidence"
     ]
     if len(uploads) != 1 or uploads[0].get("conclusion") != "success":
-        return None
+        if not uploads and not any(
+            isinstance(step, Mapping)
+            and step.get("name") == "Upload final exact application recovery evidence"
+            for step in steps
+        ):
+            # A completed legacy job without an upload step really cannot
+            # supply this artifact. Its separate caller still proves legacy
+            # identity and does not infer zero writes.
+            return None
+        return unavailable()
     artifacts_payload = api_read(
         repository,
         token,
@@ -3717,14 +3734,14 @@ def read_application_recovery_artifact(
     if not isinstance(artifacts_payload, Mapping) or not isinstance(
         artifacts_payload.get("artifacts"), list
     ):
-        return None
+        return unavailable()
     artifacts = [
         item
         for item in cast(list[object], artifacts_payload["artifacts"])
         if isinstance(item, Mapping) and item.get("name") == _APPLICATION_RECOVERY_ARTIFACT
     ]
     if len(artifacts) != 1:
-        return None
+        return unavailable()
     artifact = cast(Mapping[str, object], artifacts[0])
     artifact_id = _strict_positive_int(artifact.get("id"))
     artifact_digest = artifact.get("digest")
@@ -3738,23 +3755,25 @@ def read_application_recovery_artifact(
         or workflow_run.get("id") != run_id
         or workflow_run.get("head_sha") != run.get("head_sha")
     ):
-        return None
+        return unavailable()
     try:
         raw = download(repository, token, f"actions/artifacts/{artifact_id}/zip")
     except (HTTPError, OSError, RuntimeError, ValueError):
-        return None
+        # The exact artifact was observed; read refusal must survive through
+        # the application-completion consumer, not be flattened into absence.
+        raise
     if (
         not raw
         or len(raw) > _MAX_APPLICATION_RECOVERY_BYTES
         or f"sha256:{hashlib.sha256(raw).hexdigest()}" != artifact_digest
     ):
-        return None
+        return unavailable()
     try:
         decoded = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
-        return None
+        return unavailable()
     if not isinstance(decoded, Mapping):
-        return None
+        return unavailable()
     document = cast(Mapping[str, object], decoded)
     expected_keys = {
         "schema",
@@ -3819,14 +3838,14 @@ def read_application_recovery_artifact(
         or trigger_comment_id is None
         or run.get("display_title") != f"Scheduled Agent Application {trigger_comment_id}"
     ):
-        return None
+        return unavailable()
     predecessor = document.get("predecessor")
     if recovery_attempt == 1:
         if predecessor is not None or prior_failures:
-            return None
+            return unavailable()
     elif predecessor is None:
         if cast(bool, document.get("continuation_eligible")) or prior_failures:
-            return None
+            return unavailable()
     elif (
         not isinstance(predecessor, Mapping)
         or predecessor.get("recovery_attempt") != recovery_attempt - 1
@@ -3834,7 +3853,7 @@ def read_application_recovery_artifact(
         or predecessor.get("artifact_id") is None
         or predecessor.get("failure_evidence_sha256") not in prior_failures
     ):
-        return None
+        return unavailable()
     return ApplicationRecoveryArtifact(
         run_id=run_id,
         run_attempt=run_attempt,
@@ -3918,6 +3937,56 @@ def qualify_application_continuation_predecessor(
     ):
         return None
     return evidence
+
+
+def _public_failure_diagnostics(result: ApplyResult) -> dict[str, object] | None:
+    """Expose bounded effect failure identity in run logs, without raw payloads.
+
+    Logs aid diagnosis if artifact persistence fails, but cannot serve as a
+    qualified recovery artifact or authorize replay of a completed job.
+    """
+    evidence = result.recovery_evidence
+    if result.applied or evidence is None:
+        return None
+    summary: dict[str, object] = {
+        "failed_effect_index": evidence.failed_effect_index,
+        "failed_effect_kind": evidence.failed_effect_kind,
+        "failed_effect_sha256": evidence.failed_effect_sha256,
+        "completed_effect_indexes": list(evidence.completed_effect_indexes),
+        "completed_effect_sha256": list(evidence.completed_effect_sha256),
+        "mutation_status": evidence.mutation_status,
+        "unfinished_boundary": evidence.unfinished_boundary,
+        "failure_evidence_sha256": _canonical_sha256(_recovery_failure_document(result)),
+    }
+    rejection = evidence.rejection
+    if rejection is not None:
+        summary["rejection_classification"] = str(
+            getattr(rejection.classification, "value", rejection.classification)
+        )
+        try:
+            expected = json.loads(rejection.expected)
+            observed = json.loads(rejection.observed)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            expected = observed = None
+        # Both the exact internal proof envelope and a known reason must match:
+        # a generic guard rejection carries untrusted effect.payload_json in
+        # observed and must never be promoted to public diagnostic text.
+        if (
+            isinstance(expected, Mapping)
+            and set(expected) == {"materialization_proof", "accepted_intent"}
+            and expected.get("materialization_proof") == ["COMPLETE", "INCOMPLETE"]
+            and isinstance(expected.get("accepted_intent"), bool)
+            and isinstance(observed, Mapping)
+            and set(observed) == {"disposition", "reason"}
+            and observed.get("disposition") == "CONTRADICTORY"
+            and observed.get("reason")
+            in {
+                "materialization missing work preimage is stale",
+                "materialization missing work overlaps default advance",
+            }
+        ):
+            summary["guard_reason"] = observed["reason"]
+    return summary
 
 
 def _recovery_failure_document(result: ApplyResult) -> dict[str, object]:
@@ -4465,7 +4534,7 @@ def main() -> int:
                 current_revision=args.revision,
                 apply_derived=False,
                 materialization_promote_change=False,
-                validated_materialization_revision=args.validated_revision,
+                validated_materialization_revision=(None if target is None else target.revision),
                 request_comment_id=plan.request_comment_id,
                 defer_issue_comments=first_activation,
                 allow_pending_continuation=pending_continuation,
@@ -4502,7 +4571,7 @@ def main() -> int:
                 current_revision=args.revision,
                 apply_derived=not requires_validation or args.validation_passed,
                 materialization_promote_change=args.validation_passed,
-                validated_materialization_revision=args.validated_revision,
+                validated_materialization_revision=(None if target is None else target.revision),
                 request_comment_id=plan.request_comment_id,
                 defer_issue_comments=requires_validation and not args.validation_passed,
                 allow_pending_continuation=pending_continuation,
@@ -4628,6 +4697,7 @@ def main() -> int:
                 "carrier_plan_id": None
                 if result.carrier_plan is None
                 else result.carrier_plan.plan_id,
+                "failure_evidence": _public_failure_diagnostics(result),
             },
             sort_keys=True,
         )

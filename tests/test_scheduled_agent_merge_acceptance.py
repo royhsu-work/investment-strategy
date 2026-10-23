@@ -803,3 +803,41 @@ def test_historical_merged_carrier_accepts_current_main_bound_re_review(
         expected_branch="agent/preserve-openspec-parent-outcome-final",
         reviewer_pass_default_branch_revision=current_revision,
     )
+
+
+@pytest.mark.parametrize("accepted_intent", [False, True])
+def test_guarded_application_binds_checkpoint_to_verified_materialization_revision(
+    monkeypatch: pytest.MonkeyPatch, accepted_intent: bool
+) -> None:
+    """Only Phase-B accepted effects may use a fresh materialized checkpoint SHA."""
+    source = WorkerRequest(issue_number=159, role="executor", action="implement-change")
+    raw_worker_result = json.dumps(
+        {
+            "issue_number": 159,
+            "role": "executor",
+            "action": "implement-change",
+            "change": "checkpoint-change",
+            "result_kind": "more-implementation-required",
+            "result_content": "Slice verified",
+            "requested_effects": [],
+        }
+    )
+    revision = "d" * 40
+    observed: list[object] = []
+
+    def capture_batch(_batch: object, **kwargs: object) -> merge_acceptance.ApplyResult:
+        observed.append(kwargs.get("durable_checkpoint_revision"))
+        return merge_acceptance.ApplyResult(False, "captured")
+
+    monkeypatch.setattr(merge_acceptance, "apply_effect_batch", capture_batch)
+    _batch, result = merge_acceptance.run_guarded_effect_application(
+        raw_worker_result,
+        source=source,
+        repository="royhsu-work/investment-strategy",
+        token=HEAD,
+        current_revision=HEAD,
+        validated_materialization_revision=revision,
+        accepted_intent=accepted_intent,
+    )
+    assert result.reason == "captured"
+    assert observed == ([revision] if accepted_intent else [None])

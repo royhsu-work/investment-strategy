@@ -303,6 +303,11 @@ def _issue_lifecycle_event_from_payload(
         label_payload = raw_label if isinstance(raw_label, Mapping) else None
         label_value = None if label_payload is None else label_payload.get("name")
         label = label_value if isinstance(label_value, str) else None
+        # Human approvals and other unrelated labels do not mutate Action
+        # routing. Preserve them for their own evidence consumers without
+        # poisoning the routing lifecycle's completeness predicate.
+        if isinstance(label, str) and not label.startswith(_ACTION_LABEL_PREFIX):
+            return None
         valid = (
             valid
             and label is not None

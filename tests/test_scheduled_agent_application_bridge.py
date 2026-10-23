@@ -517,9 +517,31 @@ def test_recovery_evidence_continues_only_for_unwritten_precondition_rejection(
         ),
     )
 
+    unknown_source = write_evidence(
+        "unknown-source",
+        EffectRecoveryEvidence(
+            failed_effect_index=0,
+            failed_effect_kind="github-mutation",
+            failed_effect_sha256="e" * 64,
+            completed_effect_indexes=(),
+            completed_effect_sha256=(),
+            mutation_status="not-complete",
+            unfinished_boundary="effect-precondition",
+            rejection=ApplicationRejection(
+                ApplicationRejectionKind.OBSERVATION_UNQUALIFIED,
+                '{"materialization_proof":["COMPLETE","INCOMPLETE"],"accepted_intent":true}',
+                '{"disposition":"UNKNOWN","reason":"GitHub source unreadable"}',
+            ),
+        ),
+    )
+
     assert safe["continuation_eligible"] is True
     assert partial["continuation_eligible"] is False
     assert unknown_postcondition["continuation_eligible"] is False
+    assert unknown_source["continuation_eligible"] is False
+    failure = cast(dict[str, object], unknown_source["failure_evidence"])
+    rejected = cast(dict[str, object], failure["rejection"])
+    assert rejected["classification"] == "observation-unqualified"
 
 
 def test_main_accepts_only_a_fresh_continuation_transport(
@@ -2572,3 +2594,240 @@ def test_rerun_reauthorizes_exact_request_on_descendant_main(
     assert plan.should_apply
     assert plan.source == WorkerRequest(138, "lead", "explore-change")
     assert plan.request_comment_id == 102
+
+
+def test_application_failed_effect_is_not_lost_from_actions_log_contract() -> None:
+    """The normal application failure summary must preserve bounded effect identity."""
+    import inspect
+
+    main_source = inspect.getsource(bridge.main)
+    assert '"failure_evidence": _public_failure_diagnostics(result)' in main_source
+
+
+def test_public_failure_diagnostics_keeps_ordinal_and_redacts_raw_payload() -> None:
+    """An artifact upload failure still leaves a nonauthoritative, safe log hint."""
+    marker_value = "NEVER_PRINT_A_RAW_SECRET"
+    rejection = ApplicationRejection(
+        ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+        expected=json.dumps(
+            {"materialization_proof": ["COMPLETE", "INCOMPLETE"], "accepted_intent": True}
+        ),
+        observed=json.dumps(
+            {
+                "disposition": "CONTRADICTORY",
+                "reason": "materialization missing work preimage is stale",
+            }
+        ),
+    )
+    evidence = EffectRecoveryEvidence(
+        failed_effect_index=1,
+        failed_effect_kind="github-mutation",
+        failed_effect_sha256="b" * 64,
+        completed_effect_indexes=(0,),
+        completed_effect_sha256=("a" * 64,),
+        mutation_status="not-complete",
+        unfinished_boundary="effect-precondition",
+        rejection=rejection,
+    )
+    result = bridge.ApplyResult(
+        False,
+        f"effect precondition rejected {marker_value}",
+        rejection=rejection,
+        recovery_evidence=evidence,
+    )
+    logged = bridge._public_failure_diagnostics(result)
+    assert logged is not None
+    assert logged["failed_effect_index"] == 1
+    assert logged["failed_effect_kind"] == "github-mutation"
+    assert logged["failed_effect_sha256"] == "b" * 64
+    assert logged["completed_effect_indexes"] == [0]
+    assert logged["completed_effect_sha256"] == ["a" * 64]
+    assert logged["mutation_status"] == "not-complete"
+    assert logged["unfinished_boundary"] == "effect-precondition"
+    assert logged["rejection_classification"] == "effect-precondition-unsatisfied"
+    assert logged["guard_reason"] == "materialization missing work preimage is stale"
+    assert logged["failure_evidence_sha256"] == bridge._canonical_sha256(
+        bridge._recovery_failure_document(result)
+    )
+    assert marker_value not in json.dumps(logged)
+    assert bridge._public_failure_diagnostics(bridge.ApplyResult(True, "applied")) is None
+
+
+def test_public_failure_diagnostics_never_exposes_untrusted_guard_reason() -> None:
+    """Review regression: effect payloads cannot spoof proof-classified log details."""
+    untrusted_value = "NONPUBLIC_PAYLOAD_MARKER"
+    rejection = ApplicationRejection(
+        ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+        expected=json.dumps({"source": {"issue_number": 322}}),
+        observed=json.dumps(
+            {"disposition": "CONTRADICTORY", "reason": f"materialization {untrusted_value}"}
+        ),
+    )
+    evidence = EffectRecoveryEvidence(
+        failed_effect_index=0,
+        failed_effect_kind="github-mutation",
+        failed_effect_sha256="a" * 64,
+        completed_effect_indexes=(),
+        completed_effect_sha256=(),
+        mutation_status="not-complete",
+        unfinished_boundary="effect-precondition",
+        rejection=rejection,
+    )
+    result = bridge.ApplyResult(False, "effect precondition rejected", recovery_evidence=evidence)
+    diagnostics = bridge._public_failure_diagnostics(result)
+
+    assert diagnostics is not None
+    assert diagnostics["rejection_classification"] == "effect-precondition-unsatisfied"
+    assert "guard_reason" not in diagnostics
+    assert untrusted_value not in json.dumps(diagnostics)
+
+
+def test_recovery_artifact_reader_propagates_transient_download_failure() -> None:
+    """An observed upload followed by a failed download is unavailable, not absent."""
+    run_id, job_id, artifact_id = 7001, 7002, 7003
+    run_head = _REVISION
+    digest = "sha256:" + "a" * 64
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path == f"actions/runs/{run_id}":
+            return {
+                "id": run_id,
+                "run_attempt": 1,
+                "status": "completed",
+                "head_sha": run_head,
+                "display_title": "Scheduled Agent Application 90",
+            }
+        if path == f"actions/runs/{run_id}/jobs":
+            return {
+                "jobs": [
+                    {
+                        "id": job_id,
+                        "name": "apply",
+                        "run_attempt": 1,
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "steps": [
+                            {
+                                "name": "Upload exact application recovery evidence",
+                                "conclusion": "success",
+                            }
+                        ],
+                    }
+                ]
+            }
+        if path == f"actions/runs/{run_id}/artifacts?per_page=100":
+            return {
+                "artifacts": [
+                    {
+                        "id": artifact_id,
+                        "name": "application-recovery-evidence",
+                        "digest": digest,
+                        "expired": False,
+                        "workflow_run": {"id": run_id, "head_sha": run_head},
+                    }
+                ]
+            }
+        raise AssertionError(f"unexpected read: {path}")
+
+    def failed_download(_repository: str, _token: str, path: str) -> bytes:
+        assert path == f"actions/artifacts/{artifact_id}/zip"
+        raise OSError("transient artifact read refusal")
+
+    with pytest.raises(OSError, match="transient artifact read refusal"):
+        bridge.read_application_recovery_artifact(
+            _REPOSITORY,
+            "test-token",
+            run_id=run_id,
+            run_attempt=1,
+            job_id=job_id,
+            request_comment_id=90,
+            accepted_decision_sha256="b" * 64,
+            read=read,
+            artifact_reader=failed_download,
+        )
+
+
+@pytest.mark.parametrize("has_upload_step", [False, True])
+def test_strict_recovery_reader_distinguishes_legacy_absence_from_missing_uploaded_artifact(
+    has_upload_step: bool,
+) -> None:
+    """No upload is historical absence; a successful upload with missing listing is unknown."""
+    run_id, job_id = 8101, 8102
+    seen: list[str] = []
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        seen.append(path)
+        if path == f"actions/runs/{run_id}":
+            return {
+                "id": run_id,
+                "run_attempt": 1,
+                "status": "completed",
+                "head_sha": _REVISION,
+            }
+        if path == f"actions/runs/{run_id}/jobs":
+            steps = (
+                [{"name": "Upload exact application recovery evidence", "conclusion": "success"}]
+                if has_upload_step
+                else [{"name": "Complete job", "conclusion": "success"}]
+            )
+            return {
+                "jobs": [
+                    {
+                        "id": job_id,
+                        "name": "apply",
+                        "run_attempt": 1,
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "steps": steps,
+                    }
+                ]
+            }
+        if path == f"actions/runs/{run_id}/artifacts?per_page=100":
+            return {"artifacts": []}
+        raise AssertionError(f"unexpected read: {path}")
+
+    def qualify() -> object:
+        return bridge.read_application_recovery_artifact(
+            _REPOSITORY,
+            "test-token",
+            run_id=run_id,
+            run_attempt=1,
+            job_id=job_id,
+            request_comment_id=90,
+            accepted_decision_sha256="b" * 64,
+            read=read,
+            strict_read=True,
+        )
+
+    if has_upload_step:
+        with pytest.raises(RuntimeError, match="application recovery evidence unavailable"):
+            qualify()
+        assert f"actions/runs/{run_id}/artifacts?per_page=100" in seen
+    else:
+        assert qualify() is None
+        assert f"actions/runs/{run_id}/artifacts?per_page=100" not in seen
+
+
+def test_cli_checkpoint_revision_is_bound_to_fresh_proven_target_not_unverified_argument() -> None:
+    """CLI echo is evidence transport, never the materialized checkpoint authority."""
+    import inspect
+
+    main_source = inspect.getsource(bridge.main)
+    assert "validated_materialization_revision=args.validated_revision" not in main_source
+    assert (
+        main_source.count(
+            "validated_materialization_revision=(None if target is None else target.revision)"
+        )
+        == 2
+    )
+
+
+def test_application_apply_job_uses_bounded_pending_queue() -> None:
+    """Application serialization must not replace normal queued effect requests."""
+    workflow = Path(".github/workflows/scheduled-agent-application.yml").read_text(encoding="utf-8")
+    assert workflow.count("  apply:\n") == 1
+    apply_header = workflow.split("  apply:\n", 1)[1].split("    permissions:", 1)[0]
+    assert "    concurrency:" in apply_header
+    assert "group: scheduled-agent-effect-apply-${{ github.repository }}" in apply_header
+    assert "cancel-in-progress: false" in apply_header
+    assert "queue: max" in apply_header

@@ -430,6 +430,7 @@ def _slice_checkpoint_completed_task_ids(
     source: WorkerRequest,
     change: str,
     request: MaterializationRequest,
+    expected_checkpoint_revision: str | None = None,
 ) -> tuple[str, ...] | None:
     """Parse the bounded checkpoint envelope and return its task IDs."""
 
@@ -470,7 +471,14 @@ def _slice_checkpoint_completed_task_ids(
     ):
         return None
     revision = values["Revision"]
-    if not re.fullmatch(r"[0-9a-f]{40}", revision) or revision != request.base_sha:
+    expected_revision = (
+        request.base_sha if expected_checkpoint_revision is None else expected_checkpoint_revision
+    )
+    if (
+        not re.fullmatch(r"[0-9a-f]{40}", expected_revision)
+        or not re.fullmatch(r"[0-9a-f]{40}", revision)
+        or revision != expected_revision
+    ):
         return None
     if not values["Gate-Evidence"] or not values["Remaining-Approved-Boundary"]:
         return None
@@ -532,6 +540,10 @@ def _implementation_checkpoint_effects_complete(
     decision: ActionApplicationDecision,
     validate_implementation_checkpoint: ImplementationCheckpointValidator | None,
     accepted_intent: bool,
+    durable_checkpoint_revision: str | None = None,
+    defer_issue_comments: bool = False,
+    observe_postcondition: PostconditionObserver | None = None,
+    original_322_recovery: bool = False,
 ) -> bool:
     """Require exact task/checkpoint effects before a new intent advances.
 
@@ -547,7 +559,28 @@ def _implementation_checkpoint_effects_complete(
         or decision.result.result.kind not in _IMPLEMENTATION_COMPLETION_RESULTS
     ):
         return True
-
+    if original_322_recovery:
+        # The sole Human-reviewed #322 pre-formal exit has already proved
+        # I/R/M/V/S/F at the caller. Only a new formal comment (or no effect
+        # when reconciling that exact comment) is allowed. The historical
+        # materialization/checkpoint cannot be replayed through this waiver.
+        return bool(
+            accepted_intent
+            and batch.source.issue_number == 322
+            and decision.source.change == "restore-no-work-idle-discovery"
+            and decision.result.result.kind == ResultKind.READY
+            and len(batch.effects) <= 1
+            and all(
+                effect.kind == "issue-comment"
+                and isinstance((_effect_payload(effect) or {}).get("body"), str)
+                and cast(str, (_effect_payload(effect) or {})["body"]).startswith("ACTION_RESULT\n")
+                for effect in batch.effects
+            )
+        )
+    if durable_checkpoint_revision is not None and (
+        not accepted_intent or not _valid_sha(durable_checkpoint_revision)
+    ):
+        return False
     materializations: list[tuple[int, MaterializationRequest]] = []
     issue_comment_indexes: list[int] = []
     checkpoint_indexes: list[int] = []
@@ -606,6 +639,7 @@ def _implementation_checkpoint_effects_complete(
         source=batch.source,
         change=decision.source.change,
         request=request,
+        expected_checkpoint_revision=durable_checkpoint_revision,
     )
     if (
         request.expected_change != decision.source.change
@@ -619,7 +653,17 @@ def _implementation_checkpoint_effects_complete(
     ):
         return False
     if accepted_intent:
-        return True
+        # On lost response, completed materialization and checkpoint effects
+        # may be proven by fresh reads without replaying their physical plan.
+        return (
+            defer_issue_comments
+            or durable_checkpoint_revision is not None
+            or (
+                observe_postcondition is not None
+                and observe_postcondition(batch.effects[task_index])
+                and observe_postcondition(batch.effects[checkpoint_indexes[0]])
+            )
+        )
     if validate_implementation_checkpoint is None:
         return False
     return validate_implementation_checkpoint(request, completed_task_ids)
@@ -667,6 +711,10 @@ def _typed_application_plan(
     validate_implementation_checkpoint: ImplementationCheckpointValidator | None,
     allow_pending_continuation: bool,
     accepted_intent: bool,
+    durable_checkpoint_revision: str | None = None,
+    defer_issue_comments: bool = False,
+    observe_postcondition: PostconditionObserver | None = None,
+    original_322_recovery: bool = False,
 ) -> tuple[ActionApplicationDecision | None, StagedEffect | None, ApplyResult | None]:
     typed_result = batch.typed_result
     if typed_result is None:
@@ -700,6 +748,13 @@ def _typed_application_plan(
         and selected.selected_routing is not None
         and selected.selected_routing[1] == source.action.value
     )
+    if original_322_recovery:
+        selected_source = (
+            accepted_intent
+            and batch.source == WorkerRequest(322, "executor", "implement-change")
+            and typed_result.change == "restore-no-work-idle-discovery"
+            and typed_result.result.kind == ResultKind.READY
+        )
     try:
         derived_successor = next_action(action, typed_result.result)
     except ValueError:
@@ -732,11 +787,12 @@ def _typed_application_plan(
             if (
                 pending_source
                 or accepted_successor_frontier
+                or original_322_recovery
                 or issue.current_state_provenance is ObservationProvenance.QUALIFIED
             )
             else ModelObservationProvenance.INDETERMINATE
         ),
-        human_authorized=preflight.human_authorized,
+        human_authorized=preflight.human_authorized or original_322_recovery,
         state=issue.state,
     )
     decision = plan_action_application(
@@ -765,6 +821,10 @@ def _typed_application_plan(
         decision,
         validate_implementation_checkpoint,
         accepted_intent,
+        durable_checkpoint_revision,
+        defer_issue_comments,
+        observe_postcondition,
+        original_322_recovery,
     ):
         return (
             decision,
@@ -1206,9 +1266,11 @@ def apply_effect_batch(
     carrier_plan_for_effect: CarrierPlanProvider | None = None,
     effect_rejection: EffectRejectionProvider | None = None,
     accepted_intent: bool = False,
+    durable_checkpoint_revision: str | None = None,
     persist_application_decision: (
         Callable[[ActionApplicationDecision, str, str], bool] | None
     ) = None,
+    original_322_recovery: bool = False,
 ) -> ApplyResult:
     """Apply one typed batch after fresh source reauthorization."""
 
@@ -1220,6 +1282,10 @@ def apply_effect_batch(
         validate_implementation_checkpoint,
         allow_pending_continuation,
         accepted_intent,
+        durable_checkpoint_revision,
+        defer_issue_comments,
+        observe_postcondition,
+        original_322_recovery,
     )
     if typed_rejection is not None:
         if (
@@ -1246,11 +1312,15 @@ def apply_effect_batch(
         ):
             return ApplyResult(False, "typed application rejected:terminal-effect")
 
-    effects_to_apply = tuple(
-        effect
-        for effect in batch.effects
+    # Recovery indexes address the immutable accepted effect batch, even when
+    # comments are held back until exact materialization validation completes.
+    # The filtered execution order is never a second durable effect identity.
+    indexed_effects_to_apply = tuple(
+        (index, effect)
+        for index, effect in enumerate(batch.effects)
         if not (defer_issue_comments and effect.kind == "issue-comment")
     )
+    effects_to_apply = tuple(effect for _, effect in indexed_effects_to_apply)
 
     def rejected(
         reason: str,
@@ -1267,12 +1337,18 @@ def apply_effect_batch(
         )
         rejection = None if effect_rejection is None else effect_rejection()
         evidence = EffectRecoveryEvidence(
-            failed_effect_index=effect_index,
+            failed_effect_index=(
+                indexed_effects_to_apply[effect_index][0]
+                if effect_index < len(indexed_effects_to_apply)
+                else len(batch.effects)
+            ),
             failed_effect_kind=failed_effect.kind,
             failed_effect_sha256=hashlib.sha256(
                 failed_effect.payload_json.encode("utf-8")
             ).hexdigest(),
-            completed_effect_indexes=completed_indexes,
+            completed_effect_indexes=tuple(
+                indexed_effects_to_apply[index][0] for index in completed_indexes
+            ),
             completed_effect_sha256=tuple(
                 hashlib.sha256(effects_to_apply[index].payload_json.encode("utf-8")).hexdigest()
                 for index in completed_indexes
@@ -2357,9 +2433,16 @@ class GitHubEffectAdapter:
                 allow_pending_continuation=self.allow_pending_continuation,
                 accepted_intent=self.accepted_intent,
             )
-            if proof.disposition == "CONTRADICTORY":
+            if proof.disposition in {"CONTRADICTORY", "UNKNOWN"}:
+                # Unavailable source evidence is not an observed failed
+                # precondition; it must not authorize a fresh continuation.
+                classification = (
+                    ApplicationRejectionKind.OBSERVATION_UNQUALIFIED
+                    if proof.disposition == "UNKNOWN"
+                    else ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED
+                )
                 self._last_rejection = ApplicationRejection(
-                    ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+                    classification,
                     expected=json.dumps(
                         {
                             "materialization_proof": ["COMPLETE", "INCOMPLETE"],
@@ -3029,29 +3112,54 @@ class GitHubEffectAdapter:
         return "\n".join(lines) + suffix
 
     def _existing_issue_comment(self, body: str) -> int | None:
-        page = 1
-        while True:
-            page_suffix = "" if page == 1 else f"&page={page}"
-            payload = _github_json(
-                self.repository,
-                self.token,
-                "issues/"
-                f"{self.source.issue_number}/comments?per_page=100&sort=created"
-                f"&direction=desc{page_suffix}",
-            )
-            if not isinstance(payload, list):
-                return None
-            for item in payload:
-                if not isinstance(item, Mapping) or item.get("body") != body:
-                    continue
-                comment_id = item.get("id")
-                if not isinstance(comment_id, int) or isinstance(comment_id, bool):
-                    continue
-                if is_github_actions_comment(item):
-                    return comment_id
-            if len(payload) < 100:
-                return None
-            page += 1
+        # Offset pagination is not a snapshot.  Compare two exhaustive
+        # enumerations before treating absence/uniqueness as durable evidence.
+        # The application write job is serialized with sibling applications;
+        # without that boundary a successful read alone cannot authorize POST.
+        def snapshot() -> tuple[tuple[tuple[int, str, bool], ...], int | None]:
+            page = 1
+            matching_id: int | None = None
+            seen_ids: set[int] = set()
+            observed: list[tuple[int, str, bool]] = []
+            while True:
+                page_suffix = "" if page == 1 else f"&page={page}"
+                payload = _github_json(
+                    self.repository,
+                    self.token,
+                    "issues/"
+                    f"{self.source.issue_number}/comments?per_page=100&sort=created"
+                    f"&direction=desc{page_suffix}",
+                )
+                if not isinstance(payload, list):
+                    raise RuntimeError("issue-comment recovery listing is incomplete")
+                for item in payload:
+                    if not isinstance(item, Mapping):
+                        raise RuntimeError("issue-comment recovery listing is malformed")
+                    comment_id = _positive_comment_id(item.get("id"))
+                    if comment_id is None:
+                        raise RuntimeError("issue-comment recovery listing identity is invalid")
+                    if comment_id in seen_ids:
+                        raise RuntimeError("issue-comment recovery listing identity is duplicated")
+                    seen_ids.add(comment_id)
+                    comment_body = item.get("body")
+                    if not isinstance(comment_body, str):
+                        raise RuntimeError("issue-comment recovery listing body is invalid")
+                    trusted = is_github_actions_comment(item)
+                    observed.append((comment_id, comment_body, trusted))
+                    if comment_body != body or not trusted:
+                        continue
+                    if matching_id is not None:
+                        raise RuntimeError("issue-comment recovery evidence is duplicated")
+                    matching_id = comment_id
+                if len(payload) < 100:
+                    return tuple(observed), matching_id
+                page += 1
+
+        first, match = snapshot()
+        second, second_match = snapshot()
+        if first != second or match != second_match:
+            raise RuntimeError("issue-comment recovery listing changed during read")
+        return match
 
     def _persist_application_evidence_comment(
         self,
@@ -3377,9 +3485,17 @@ class GitHubEffectAdapter:
 
     def observe_postcondition(self, effect: StagedEffect) -> bool:
         if effect.kind == "issue-comment":
-            comment_id = self._comment_ids.get(effect)
             payload = _effect_payload(effect)
-            if comment_id is None or payload is None:
+            if payload is None:
+                return False
+            bound_body = self._application_bound_comment_body(cast(str, payload["body"]))
+            comment_id = self._comment_ids.get(effect)
+            if comment_id is None:
+                # An interrupted application has no process-local receipt.
+                # Reconstruct the exact durable comment by read-only GitHub
+                # observation, then verify its individual source object.
+                comment_id = self._existing_issue_comment(bound_body)
+            if comment_id is None:
                 return False
             response = _github_json(
                 self.repository,
@@ -3388,8 +3504,7 @@ class GitHubEffectAdapter:
             )
             return bool(
                 isinstance(response, Mapping)
-                and response.get("body")
-                == self._application_bound_comment_body(cast(str, payload["body"]))
+                and response.get("body") == bound_body
                 and response.get("id") == comment_id
                 and is_github_actions_comment(response)
             )
@@ -3682,9 +3797,9 @@ def consequence_postconditions_complete(
                 accepted_intent=accepted_intent,
             )
             payload = _effect_payload(materializations[0])
-            return (
-                payload is not None
-                and _fresh_materialization_target(
+            if (
+                payload is None
+                or _fresh_materialization_target(
                     payload,
                     adapter=adapter,
                     source=source,
@@ -3692,8 +3807,24 @@ def consequence_postconditions_complete(
                     allow_pending_continuation=allow_pending_continuation,
                     accepted_successor_routing=accepted_successor_routing,
                 )
-                is not None
+                is None
+            ):
+                return False
+            # Materialization and the non-idempotent SLICE_CHECKPOINT are
+            # distinct obligations of one immutable accepted result. The
+            # carrier's positive witness alone must not complete a checkpoint
+            # whose exact trusted Issue comment has not been observed.
+            checkpoints = tuple(
+                effect
+                for effect in batch.effects
+                if effect.kind == "issue-comment"
+                and isinstance((_effect_payload(effect) or {}).get("body"), str)
+                and cast(str, (_effect_payload(effect) or {})["body"]).splitlines()[:1]
+                == ["SLICE_CHECKPOINT"]
             )
+            if len(checkpoints) > 1:
+                return False
+            return all(adapter.observe_postcondition(effect) for effect in checkpoints)
         if spec.evidence_target is EvidenceTarget.MERGED_PR_HEAD:
             return merged_pr_readiness_complete(
                 repository=repository,
@@ -3753,7 +3884,20 @@ def consequence_postconditions_complete(
                     "pull-request-merge",
                 } and not adapter._observe_github_mutation(effect, payload):
                     return False
-        return True
+        # READY and MORE_IMPLEMENTATION_REQUIRED use IMPLEMENTATION_PR_HEAD,
+        # not MATERIALIZED_REVISION. The PR witness cannot silently satisfy
+        # a separately accepted, non-idempotent SLICE_CHECKPOINT comment.
+        checkpoints = tuple(
+            effect
+            for effect in batch.effects
+            if effect.kind == "issue-comment"
+            and isinstance((_effect_payload(effect) or {}).get("body"), str)
+            and cast(str, (_effect_payload(effect) or {})["body"]).splitlines()[:1]
+            == ["SLICE_CHECKPOINT"]
+        )
+        if len(checkpoints) > 1:
+            return False
+        return all(adapter.observe_postcondition(effect) for effect in checkpoints)
     except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return False
 
@@ -3774,6 +3918,7 @@ def run_effect_application(
     authorized_change: str | None = None,
     authorization_revision: str | None = None,
     accepted_intent: bool = False,
+    original_322_recovery: bool = False,
 ) -> tuple[EffectBatch, ApplyResult]:
     """Freshly reauthorize and apply one typed invocation-local effect batch."""
 
@@ -3812,6 +3957,10 @@ def run_effect_application(
         carrier_plan_for_effect=adapter.carrier_plan_if_required,
         effect_rejection=adapter.effect_rejection,
         accepted_intent=accepted_intent,
+        durable_checkpoint_revision=(
+            validated_materialization_revision if accepted_intent else None
+        ),
+        original_322_recovery=original_322_recovery,
     )
     return batch, result
 

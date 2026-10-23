@@ -1845,7 +1845,9 @@ def test_canonical_git_proof_preserves_conflicts(
     else:
         proof_git.failure = failure
     proof = _prove_git(proof_git)
-    assert proof.disposition == "CONTRADICTORY", proof
+    # Truncated comparison data proves neither missing work nor a conflict.
+    expected = "UNKNOWN" if failure == "incomplete-compare" else "CONTRADICTORY"
+    assert proof.disposition == expected, proof
     assert proof.reason
     assert proof_git.mutations == []
 
@@ -2885,3 +2887,260 @@ def test_concurrent_change_after_commit_rejects_direct_ref_creation(
             _apply_git(proof_git)
     assert "git/commits" in proof_git.mutations
     assert "git/refs" not in proof_git.mutations
+
+
+def test_bad_accepted_preimage_preserves_witness_across_legal_second_commit(
+    proof_git: _ProofGitRepository,
+) -> None:
+    """A historical manifest error and a later legal commit are distinct identities."""
+    payload = proof_git.payload()
+    files = cast(list[dict[str, object]], payload["files"])
+    historical_bad_sha = "f" * 40
+    files[0]["expected_sha"] = historical_bad_sha
+    first_parent = proof_git.base
+    first_commit = proof_git.commit(
+        {proof_git.path: "accepted content"},
+        proof_git.message,
+        (first_parent,),
+    )
+    proof_git.set_head(first_commit)
+    first_proof = _prove_payload_git(proof_git, payload, accepted_intent=True)
+    assert first_proof.disposition == "COMPLETE", first_proof
+    assert first_proof.witness is not None
+    assert first_proof.witness.revision == first_commit
+    assert first_proof.witness.revisions.mutation_preimage == first_parent
+
+    # A disjoint default-branch revision and a second, same-Change edit cannot
+    # invalidate the first immutable witness or reuse the old physical preimage.
+    proof_git.main = proof_git.commit(
+        {"README.md": "a newer default-branch revision"},
+        "Disjoint default advance",
+        (proof_git.main,),
+    )
+    second_parent = proof_git.head
+    second_commit = proof_git.commit(
+        {proof_git.path: "qualified later correction"},
+        "Correct same Change",
+        (second_parent,),
+    )
+    proof_git.set_head(second_commit)
+    evolved = _prove_payload_git(proof_git, payload, accepted_intent=True)
+    assert evolved.disposition == "COMPLETE", evolved
+    assert evolved.target is not None and evolved.target.revision == second_commit
+    assert evolved.witness is not None and evolved.witness.revision == first_commit
+    assert evolved.witness.revisions.mutation_preimage == first_parent
+    assert files[0]["expected_sha"] == historical_bad_sha
+    assert proof_git.mutations == []
+
+
+def test_partial_manifest_blob_match_is_not_a_complete_materialization_witness(
+    proof_git: _ProofGitRepository,
+) -> None:
+    """One later matching blob does not prove a multi-file accepted effect."""
+    payload = proof_git.payload()
+    files = cast(list[dict[str, object]], payload["files"])
+    files.append(
+        {
+            "path": f"openspec/changes/{_CHANGE}/tasks.md",
+            "blob_sha": proof_git.blob("accepted tasks"),
+            "expected_sha": None,
+        }
+    )
+    partial = proof_git.commit(
+        {proof_git.path: "accepted content"},
+        "Later legal correction of one file",
+        (proof_git.base,),
+    )
+    proof_git.set_head(partial)
+
+    proof = _prove_payload_git(proof_git, payload, accepted_intent=True)
+
+    assert proof.disposition != "COMPLETE", proof
+    assert proof.witness is None
+    assert proof_git.mutations == []
+
+
+def test_six_file_322_shape_preserves_witness_after_second_legal_commit(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A six-file Executor shape must retain W after a fresh later commit.
+
+    The task path is namespaced to the test Change; other five paths model the
+    accepted #322 manifest. Synthetic blobs do not prove historical completion.
+    """
+    proof_git.source = WorkerRequest(322, "executor", "implement-change")
+    proof_git.routing = "implement-change"
+    monkeypatch.setattr(
+        materialization, "_qualified_implementation_decision", lambda *_args, **_kwargs: None
+    )
+    paths = (
+        f"openspec/changes/{_CHANGE}/tasks.md",
+        "src/investment_strategy/scheduled_agent_application_bridge.py",
+        "src/investment_strategy/scheduled_agent_effects.py",
+        "src/investment_strategy/scheduled_agent_merge_acceptance.py",
+        "tests/test_scheduled_agent_application_bridge.py",
+        "tests/test_scheduled_agent_effects.py",
+    )
+    desired = {path: f"accepted content for {index}" for index, path in enumerate(paths)}
+    payload = proof_git.payload()
+    payload["files"] = [
+        {
+            "path": path,
+            "blob_sha": proof_git.blob(desired[path]),
+            # The final incorrect expected value models the real historical
+            # mismatch; the actual Git tree remains the only preimage authority.
+            "expected_sha": "a84065b222bb18b8adb56113b866484743f0e1a2" if index == 5 else None,
+        }
+        for index, path in enumerate(paths)
+    ]
+    initial_parent = proof_git.base
+    first_commit = proof_git.commit(desired, proof_git.message, (initial_parent,))
+    proof_git.set_head(first_commit)
+    first = _prove_payload_git(proof_git, payload, accepted_intent=True)
+    assert first.disposition == "COMPLETE", first
+    assert first.witness is not None and first.witness.revision == first_commit
+
+    second_commit = proof_git.commit(
+        {paths[0]: "later legal task checkpoint"}, "Next Action", (first_commit,)
+    )
+    proof_git.set_head(second_commit)
+    successor = _prove_payload_git(proof_git, payload, accepted_intent=True)
+    assert successor.disposition == "COMPLETE", successor
+    assert successor.target is not None and successor.target.revision == second_commit
+    assert successor.witness is not None and successor.witness.revision == first_commit
+    assert successor.witness.revisions.mutation_preimage == initial_parent
+    assert proof_git.mutations == []
+
+
+@pytest.mark.parametrize(
+    "read_error",
+    [
+        OSError("authoritative issue observation unavailable"),
+        json.JSONDecodeError("source response JSON truncated", "{", 0),
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid response bytes"),
+    ],
+)
+def test_canonical_unavailable_github_observation_is_unknown_not_conflict(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    read_error: Exception,
+) -> None:
+    """An unknown read is neither a safe missing effect nor a proven conflict."""
+    accepted = proof_git.commit(
+        {proof_git.path: "accepted content"}, proof_git.message, (proof_git.base,)
+    )
+    proof_git.set_head(accepted)
+    api = proof_git.api
+
+    def unavailable(repository: str, token: str, path: str, **kwargs: object) -> object:
+        if path == "issues/322":
+            raise read_error
+        return api(repository, token, path, **kwargs)
+
+    monkeypatch.setattr(materialization, "_github_json", unavailable)
+    proof = _prove_git(proof_git)
+    assert proof.disposition == "UNKNOWN", proof
+    assert proof.witness is None
+    assert proof.target is None
+    assert proof.reason == str(read_error)
+    with pytest.raises(RuntimeError):
+        _apply_git(proof_git)
+    assert proof_git.mutations == []
+
+
+@pytest.mark.parametrize(
+    "broken_source",
+    (
+        "carrier-pr-list",
+        "matching-pr-list",
+        "malformed-pr-entry",
+        "commit-comparison",
+        "commit-enumeration",
+        "git-commit",
+        "branch-ref",
+    ),
+)
+def test_incomplete_source_shaped_materialization_proof_is_unknown(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    broken_source: str,
+) -> None:
+    """Truncated GitHub observations cannot become a proven semantic conflict."""
+    accepted = proof_git.commit(
+        {proof_git.path: "accepted content"}, proof_git.message, (proof_git.base,)
+    )
+    proof_git.set_head(accepted)
+    original_api = proof_git.api
+
+    def incomplete_source(repository: str, token: str, path: str, **kwargs: object) -> object:
+        observed = original_api(repository, token, path, **kwargs)
+        if (
+            broken_source == "carrier-pr-list"
+            and path.startswith("pulls?")
+            and "state=open" in path
+        ):
+            return {"unexpected": "incomplete pagination"}
+        if (
+            broken_source == "matching-pr-list"
+            and path.startswith("pulls?")
+            and "state=all" in path
+        ):
+            return {"unexpected": "incomplete pagination"}
+        if (
+            broken_source == "malformed-pr-entry"
+            and path.startswith("pulls?")
+            and "state=all" in path
+        ):
+            return [None]
+        if broken_source == "commit-comparison" and path.startswith("compare/"):
+            assert isinstance(observed, dict)
+            return {key: value for key, value in observed.items() if key != "files"}
+        if broken_source == "commit-enumeration" and path.startswith("compare/"):
+            assert isinstance(observed, dict)
+            return {**observed, "commits": []} if observed["ahead_by"] else observed
+        if broken_source == "git-commit" and path == f"git/commits/{accepted}":
+            assert isinstance(observed, dict)
+            return {key: value for key, value in observed.items() if key != "parents"}
+        if broken_source == "branch-ref" and path == f"git/ref/heads/{proof_git.branch}":
+            return {"object": {}}
+        return observed
+
+    monkeypatch.setattr(materialization, "_github_json", incomplete_source)
+    proof = _prove_git(proof_git)
+    assert proof.disposition == "UNKNOWN", (broken_source, proof)
+    assert proof.target is None and proof.witness is None
+    assert proof.reason
+    assert not proof_git.mutations
+
+
+@pytest.mark.parametrize("broken_source", ("pr-head", "pr-base", "content-sha"))
+def test_imported_reader_incomplete_github_observation_is_unknown(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    broken_source: str,
+) -> None:
+    """Imported readers must not turn missing authoritative source fields into conflicts."""
+    accepted = proof_git.commit(
+        {proof_git.path: "accepted content"}, proof_git.message, (proof_git.base,)
+    )
+    proof_git.set_head(accepted)
+    original_api = proof_git.api
+
+    def incomplete(repository: str, token: str, path: str, **kwargs: object) -> object:
+        observed = original_api(repository, token, path, **kwargs)
+        if broken_source in {"pr-head", "pr-base"} and path == "pulls/324":
+            assert isinstance(observed, dict)
+            missing = "head" if broken_source == "pr-head" else "base"
+            return {key: value for key, value in observed.items() if key != missing}
+        if broken_source == "content-sha" and path.startswith("contents/"):
+            return {"type": "file", "encoding": "base64"}
+        return observed
+
+    monkeypatch.setattr(materialization, "_github_json", incomplete)
+    monkeypatch.setattr(validation_resource, "_github_json", incomplete)
+    proof = _prove_git(proof_git)
+    assert proof.disposition == "UNKNOWN", (broken_source, proof)
+    assert proof.target is None and proof.witness is None
+    assert proof.reason
+    assert proof_git.mutations == []

@@ -63,6 +63,15 @@ reconstructs current truth and satisfies only the missing effect. It must never 
 does not create a cursor or progress state, and resumes the first incomplete slice. A verified slice
 is not repeated merely to recreate missing evidence.
 
+Historical #322 exception (not a new Executor invocation): for the already-accepted
+`implement-change / READY` decision on request `6019133874`, a missing/unreadable old
+`SLICE_CHECKPOINT` is not retroactively manufactured or replayed as a prerequisite to
+*pre-formal-result recovery qualification*. The application must independently verify current
+task/implementation/gate facts, and must isolate any potentially irreversible checkpoint
+write before an operation that could repeat it. This exception does not certify that the
+historical checkpoint happened, authorize a new slice, remove required task verification,
+or relax this checkpoint obligation for any later fresh Executor invocation.
+
 ## Spec-driven semantic adapter
 
 When openspec/config.yaml declares schema: spec-driven, load

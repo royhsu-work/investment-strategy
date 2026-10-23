@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 from collections.abc import Callable, Mapping
@@ -20,6 +21,7 @@ from investment_strategy.scheduled_agent_action_model import (
     TypedResult,
     role_for,
 )
+from investment_strategy.scheduled_agent_application_materialization import MaterializationProof
 from investment_strategy.scheduled_agent_carrier import CarrierRequired, make_carrier_plan
 from investment_strategy.scheduled_agent_effect_contract import (
     allowed_github_mutation_operations,
@@ -101,6 +103,64 @@ def _raw(
             "result_content": "bounded result",
             "requested_effects": requested_effects or [],
         }
+    )
+
+
+@pytest.mark.parametrize("formal_already_persisted", [False, True])
+def test_original_322_recovery_projects_only_qualified_formal_and_successor(
+    formal_already_persisted: bool,
+) -> None:
+    """Actual effect planner: normal dispatch/checkpoint gates remain intact."""
+    source = WorkerRequest(322, "executor", "implement-change")
+    change = "restore-no-work-idle-discovery"
+    formal = {
+        "kind": "issue-comment",
+        "payload_json": json.dumps(
+            {
+                "issue_number": 322,
+                "body": (
+                    "ACTION_RESULT\nWorkflow: #322\n"
+                    f"Change: {change}\nRole: executor\nAction: implement-change\n"
+                    f"Result: READY\nRevision: {_REVISION}\n"
+                    f"Default-Branch-Revision: {_REVISION}\n"
+                    "Application-Correlation: "
+                    f"application:6019133874:322:{change}:executor:implement-change:ready:{_REVISION}\n"
+                    "Repository-derived successor: Reviewer / review-implementation\n"
+                    "Evidence: bounded regression"
+                ),
+            }
+        ),
+    }
+    raw = _raw(
+        issue_number=322,
+        action="implement-change",
+        role="executor",
+        change=change,
+        result_kind="ready",
+        requested_effects=[] if formal_already_persisted else [formal],
+    )
+    current = _preflight(issue_number=322, change=change, human_authorized=False)
+    applied: list[str] = []
+
+    def run(*, recovery: bool) -> effects.ApplyResult:
+        return apply_effect_batch(
+            parse_effect_batch(raw, source, authorized_change=change),
+            fresh_preflight=lambda: current,
+            effect_guard=lambda _effect: True,
+            apply_effect=lambda effect: applied.append(effect.kind),
+            observe_postcondition=lambda _effect: True,
+            current_revision=_REVISION,
+            accepted_intent=True,
+            original_322_recovery=recovery,
+        )
+
+    assert not run(recovery=False).applied
+    assert applied == []
+    assert run(recovery=True).applied
+    assert applied == (
+        ["routing-transition"]
+        if formal_already_persisted
+        else ["issue-comment", "routing-transition"]
     )
 
 
@@ -380,6 +440,7 @@ def test_accepted_intent_does_not_reverify_candidate_during_phase_b() -> None:
         current_revision=_REVISION,
         validate_implementation_checkpoint=forbidden_verification,
         accepted_intent=True,
+        durable_checkpoint_revision=_REVISION,
     )
 
     assert result.applied
@@ -2057,6 +2118,7 @@ def test_issue_comment_reuses_existing_bot_comment_without_post(
 
     assert calls == [
         ("issues/138/comments?per_page=100&sort=created&direction=desc", "GET"),
+        ("issues/138/comments?per_page=100&sort=created&direction=desc", "GET"),
         ("issues/comments/991", "GET"),
     ]
 
@@ -2116,6 +2178,7 @@ def test_issue_comment_does_not_reuse_connector_authored_formal_body(
     assert adapter.observe_postcondition(effect)
 
     assert calls == [
+        ("issues/138/comments?per_page=100&sort=created&direction=desc", "GET"),
         ("issues/138/comments?per_page=100&sort=created&direction=desc", "GET"),
         ("issues/138/comments", "POST"),
         ("issues/comments/992", "GET"),
@@ -2957,7 +3020,7 @@ def test_issue_comment_reuses_existing_bot_comment_on_later_page(
     }
     first_page = [
         {
-            "id": index,
+            "id": index + 1,
             "body": f"unrelated-{index}",
             "user": {"login": "github-actions[bot]"},
             "performed_via_github_app": {"slug": "github-actions"},
@@ -3001,8 +3064,91 @@ def test_issue_comment_reuses_existing_bot_comment_on_later_page(
     assert calls == [
         "issues/138/comments?per_page=100&sort=created&direction=desc",
         "issues/138/comments?per_page=100&sort=created&direction=desc&page=2",
+        "issues/138/comments?per_page=100&sort=created&direction=desc",
+        "issues/138/comments?per_page=100&sort=created&direction=desc&page=2",
     ]
     assert adapter.observe_postcondition(effect)
+
+
+def test_issue_comment_recovery_rejects_duplicate_bot_matches_across_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = "SLICE_CHECKPOINT\\nWorkflow: #322\\nChange: restore-no-work-idle-discovery"
+    bot = {"login": "github-actions[bot]"}
+    via_app = {"slug": "github-actions"}
+    first = [{"id": 991, "body": body, "user": bot, "performed_via_github_app": via_app}]
+    first.extend({"id": n + 1000, "body": "unrelated"} for n in range(99))
+    second = [{"id": 992, "body": body, "user": bot, "performed_via_github_app": via_app}]
+
+    def read(_repo: str, _token: str, api_path: str, **_kwargs: object) -> object:
+        if api_path == "issues/322/comments?per_page=100&sort=created&direction=desc":
+            return first
+        if api_path == "issues/322/comments?per_page=100&sort=created&direction=desc&page=2":
+            return second
+        raise AssertionError(f"unexpected request: {api_path}")
+
+    monkeypatch.setattr(effects, "_github_json", read)
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        WorkerRequest(322, "executor", "implement-change"),
+        authorized_change="restore-no-work-idle-discovery",
+    )
+    with pytest.raises(RuntimeError, match="duplicated"):
+        adapter._existing_issue_comment(body)
+
+
+@pytest.mark.parametrize("incomplete_on_second_page", [False, True])
+def test_issue_comment_recovery_fails_closed_when_listing_is_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+    incomplete_on_second_page: bool,
+) -> None:
+    body = "SLICE_CHECKPOINT\\nWorkflow: #322"
+    page_one = [{"id": n + 100, "body": f"other-{n}"} for n in range(100)]
+
+    def read(_repo: str, _token: str, api_path: str, **_kwargs: object) -> object:
+        if api_path == "issues/322/comments?per_page=100&sort=created&direction=desc":
+            return page_one if incomplete_on_second_page else None
+        if api_path == "issues/322/comments?per_page=100&sort=created&direction=desc&page=2":
+            return None
+        raise AssertionError(f"unexpected request: {api_path}")
+
+    monkeypatch.setattr(effects, "_github_json", read)
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        WorkerRequest(322, "executor", "implement-change"),
+        authorized_change="restore-no-work-idle-discovery",
+    )
+    with pytest.raises(RuntimeError, match="incomplete"):
+        adapter._existing_issue_comment(body)
+
+
+@pytest.mark.parametrize("invalid", ["missing_id", "duplicate_id"])
+def test_issue_comment_recovery_rejects_unrelated_malformed_page_identities(
+    monkeypatch: pytest.MonkeyPatch,
+    invalid: str,
+) -> None:
+    body = "SLICE_CHECKPOINT\\nWorkflow: #322"
+    page_one = [{"id": n + 100, "body": f"unrelated-{n}"} for n in range(100)]
+    page_two = [{"body": "other"} if invalid == "missing_id" else {"id": 100, "body": "other"}]
+
+    def read(_repo: str, _token: str, api_path: str, **_kwargs: object) -> object:
+        if api_path == "issues/322/comments?per_page=100&sort=created&direction=desc":
+            return page_one
+        if api_path == "issues/322/comments?per_page=100&sort=created&direction=desc&page=2":
+            return page_two
+        raise AssertionError(f"unexpected request: {api_path}")
+
+    monkeypatch.setattr(effects, "_github_json", read)
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        WorkerRequest(322, "executor", "implement-change"),
+        authorized_change="restore-no-work-idle-discovery",
+    )
+    with pytest.raises(RuntimeError, match="identity|duplicated"):
+        adapter._existing_issue_comment(body)
 
 
 def test_archive_pull_request_create_binds_exact_branch_head(
@@ -4364,3 +4510,506 @@ def test_effect_precondition_rejection_records_recovery_boundary() -> None:
     assert getattr(evidence, "mutation_status", None) == "not-complete"
     assert getattr(evidence, "unfinished_boundary", None) == "effect-precondition"
     assert getattr(evidence, "rejection", None) == rejection
+
+
+def test_deferred_comment_keeps_original_accepted_effect_index_on_rejection() -> None:
+    """Recovery evidence addresses the immutable batch, not the filtered apply list."""
+    source = WorkerRequest(138, "executor", "implement-change")
+    comment = {
+        "kind": "issue-comment",
+        "payload_json": json.dumps({"issue_number": 138, "body": "diagnostic checkpoint"}),
+    }
+    mutation = {
+        "kind": "github-mutation",
+        "payload_json": json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "pull-request-ready",
+                "number": 178,
+                "expected_head_sha": "b" * 40,
+            },
+            sort_keys=True,
+        ),
+    }
+    batch = parse_effect_batch(
+        _raw(result_kind="spec-blocker", requested_effects=[comment, mutation]),
+        source,
+    )
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: False,
+        apply_effect=lambda _effect: pytest.fail("failed guard performed a write"),
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        defer_issue_comments=True,
+    )
+
+    assert result.reason == "effect precondition rejected"
+    assert result.recovery_evidence is not None
+    assert result.recovery_evidence.failed_effect_index == 1
+    assert result.recovery_evidence.failed_effect_kind == "github-mutation"
+    assert result.recovery_evidence.completed_effect_indexes == ()
+
+
+def test_deferred_comment_preserves_original_completed_effect_ordinals() -> None:
+    """A partial prefix uses accepted-batch indexes across both guard passes."""
+    source = WorkerRequest(138, "executor", "implement-change")
+    requested = [
+        {
+            "kind": "issue-comment",
+            "payload_json": json.dumps({"issue_number": 138, "body": "checkpoint"}),
+        }
+    ]
+    requested.extend(
+        {
+            "kind": "github-mutation",
+            "payload_json": json.dumps(
+                {
+                    "issue_number": 138,
+                    "operation": "pull-request-ready",
+                    "number": number,
+                    "expected_head_sha": "b" * 40,
+                },
+                sort_keys=True,
+            ),
+        }
+        for number in (178, 179)
+    )
+    batch = parse_effect_batch(
+        _raw(result_kind="spec-blocker", requested_effects=requested), source
+    )
+    guard_calls = 0
+    applied: list[str] = []
+
+    def guard(_effect: StagedEffect) -> bool:
+        nonlocal guard_calls
+        guard_calls += 1
+        return guard_calls != 4
+
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=guard,
+        apply_effect=lambda effect: applied.append(effect.payload_json),
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        defer_issue_comments=True,
+        apply_derived=False,
+    )
+
+    assert result.reason == "effect precondition rejected"
+    assert len(applied) == 1
+    assert result.recovery_evidence is not None
+    evidence = result.recovery_evidence
+    assert evidence.failed_effect_index == 2
+    assert evidence.completed_effect_indexes == (1,)
+    assert evidence.completed_effect_sha256 == (
+        effects.hashlib.sha256(requested[1]["payload_json"].encode("utf-8")).hexdigest(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("checkpoint_revision", "expected_applied"),
+    [("d" * 40, True), (_REVISION, False)],
+)
+def test_accepted_implementation_checkpoint_uses_verified_materialized_revision(
+    checkpoint_revision: str, expected_applied: bool
+) -> None:
+    """Phase B binds checkpoint to proven target, not its obsolete accepted base."""
+    materialized = "d" * 40
+    requested = _implementation_checkpoint_effects()
+    checkpoint = json.loads(requested[1]["payload_json"])
+    checkpoint["body"] = checkpoint["body"].replace(
+        f"Revision: {_REVISION}", f"Revision: {checkpoint_revision}"
+    )
+    requested[1]["payload_json"] = json.dumps(checkpoint)
+    batch = parse_effect_batch(
+        _raw(result_kind="more-implementation-required", requested_effects=requested),
+        WorkerRequest(138, "executor", "implement-change"),
+    )
+    applied: list[StagedEffect] = []
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: True,
+        apply_effect=applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        apply_derived=False,
+        accepted_intent=True,
+        durable_checkpoint_revision=materialized,
+    )
+    assert result.applied is expected_applied, result
+    if expected_applied:
+        assert len(applied) == 3
+    else:
+        assert result.reason == "typed application rejected:implementation-checkpoint-incomplete"
+        assert applied == []
+
+
+def test_accepted_checkpoint_requires_proven_revision_before_comment_application() -> None:
+    """A resumed accepted batch must not commit an obsolete-base checkpoint."""
+    source = WorkerRequest(138, "executor", "implement-change")
+    batch = parse_effect_batch(
+        _raw(
+            result_kind="more-implementation-required",
+            requested_effects=_implementation_checkpoint_effects(),
+        ),
+        source,
+    )
+    applied: list[StagedEffect] = []
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: True,
+        apply_effect=applied.append,
+        observe_postcondition=lambda effect: effect.kind != "issue-comment",
+        current_revision=_REVISION,
+        apply_derived=False,
+        accepted_intent=True,
+    )
+    assert not result.applied
+    assert result.reason == "typed application rejected:implementation-checkpoint-incomplete"
+    assert applied == []
+
+
+def test_accepted_checkpoint_can_defer_comments_until_target_is_proven() -> None:
+    """Phase-A materialization can proceed without issuing its future checkpoint."""
+    source = WorkerRequest(138, "executor", "implement-change")
+    batch = parse_effect_batch(
+        _raw(
+            result_kind="more-implementation-required",
+            requested_effects=_implementation_checkpoint_effects(),
+        ),
+        source,
+    )
+    applied: list[StagedEffect] = []
+    result = apply_effect_batch(
+        batch,
+        fresh_preflight=_preflight,
+        effect_guard=lambda _effect: True,
+        apply_effect=applied.append,
+        observe_postcondition=lambda _effect: True,
+        current_revision=_REVISION,
+        apply_derived=False,
+        defer_issue_comments=True,
+        accepted_intent=True,
+    )
+    assert result.applied, result
+    assert len(applied) == 1
+    assert applied[0].kind == effects.GITHUB_MUTATION_KIND
+
+
+def test_issue_comment_recovery_refuses_shifted_history_before_post(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deletion between offset pages must not hide an older exact comment."""
+    body = "SLICE_CHECKPOINT\\nWorkflow: #322\\nChange: restore-no-work-idle-discovery"
+    existing = {
+        "id": 999,
+        "body": body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    original_first_page = [{"id": n + 1000, "body": "unrelated"} for n in range(100)]
+    shifted_first_page = original_first_page[1:] + [existing]
+    first_page_reads = 0
+    requests: list[tuple[str, str]] = []
+
+    def read(
+        _repo: str,
+        _token: str,
+        api_path: str,
+        *,
+        method: str = "GET",
+        **_kwargs: object,
+    ) -> object:
+        nonlocal first_page_reads
+        requests.append((api_path, method))
+        if method != "GET":
+            pytest.fail("changing page boundary must not permit duplicate comment POST")
+        if api_path == "issues/322/comments?per_page=100&sort=created&direction=desc":
+            first_page_reads += 1
+            return original_first_page if first_page_reads == 1 else shifted_first_page
+        if api_path == "issues/322/comments?per_page=100&sort=created&direction=desc&page=2":
+            return []
+        raise AssertionError(f"unexpected request: {method} {api_path}")
+
+    monkeypatch.setattr(effects, "_github_json", read)
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        WorkerRequest(322, "executor", "implement-change"),
+        authorized_change="restore-no-work-idle-discovery",
+    )
+    effect = StagedEffect(
+        kind="issue-comment",
+        payload_json=json.dumps({"issue_number": 322, "body": body}),
+    )
+    with pytest.raises(RuntimeError, match="changed"):
+        adapter.apply(effect)
+    assert first_page_reads >= 2
+    assert not any(method == "POST" for _, method in requests)
+
+
+def test_unknown_materialization_guard_preserves_unqualified_source_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing authoritative read must never become retryable missing work."""
+    source = WorkerRequest(138, "executor", "implement-change")
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        _TEST_TOKEN,
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        accepted_intent=True,
+    )
+    observation = GitHubIssueObservation(
+        issue_number=138,
+        change=_CHANGE,
+        routing=("executor", "implement-change"),
+        state="open",
+        created_order=1,
+        authoritative=True,
+    )
+    monkeypatch.setattr(adapter, "_authorized_issue_observation", lambda: observation)
+    monkeypatch.setattr(adapter, "_default_branch", lambda: "main")
+    monkeypatch.setattr(adapter, "_default_branch_revision", lambda _name: _REVISION)
+    monkeypatch.setattr(
+        effects,
+        "find_materialization_payload",
+        lambda *_args: effects.MaterializationRequest(
+            138,
+            _CHANGE,
+            _CHANGE,
+            f"agent/{_CHANGE}",
+            _REVISION,
+            "Immutable accepted intent",
+            (),
+            353,
+        ),
+    )
+    monkeypatch.setattr(
+        effects,
+        "prove_materialization",
+        lambda *_args, **_kwargs: MaterializationProof(
+            "UNKNOWN", reason="authoritative GitHub read unavailable"
+        ),
+    )
+
+    assert not adapter._guard_github_mutation({"operation": "application-materialize"})
+    rejection = adapter.effect_rejection()
+    assert rejection is not None
+    assert rejection.classification == effects.ApplicationRejectionKind.OBSERVATION_UNQUALIFIED
+    assert json.loads(rejection.observed)["disposition"] == "UNKNOWN"
+
+
+@pytest.mark.parametrize(
+    ("materialization_proven", "checkpoint_proven"),
+    [(False, False), (False, True), (True, False), (True, True)],
+)
+def test_legacy_322_completed_materialization_does_not_launder_unknown_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    materialization_proven: bool,
+    checkpoint_proven: bool,
+) -> None:
+    """Only independent positive proofs discharge each of the two original obligations."""
+
+    source = WorkerRequest(322, "executor", "implement-change")
+    change = "restore-no-work-idle-discovery"
+    base = "82d5fc44d3ce2838c2dedd77b2440d5bce3ee5dc"
+    materialize = {
+        "issue_number": 322,
+        "operation": "application-materialize",
+        "expected_change": change,
+        "change": change,
+        "branch": "agent/restore-no-work-idle-discovery-continuation-347",
+        "base_sha": base,
+        "message": "Bind slice checkpoints to materialized revision",
+        "files": [
+            {
+                "path": "openspec/changes/restore-no-work-idle-discovery/tasks.md",
+                "blob_sha": "2594608f200ebc1789ed6cccd5b56d4824aeaa7f",
+                "expected_sha": "2594608f200ebc1789ed6cccd5b56d4824aeaa7f",
+            },
+            {
+                "path": "src/investment_strategy/scheduled_agent_application_bridge.py",
+                "blob_sha": "881225c59e1567b86722d2cb7ef28b62afc8e668",
+                "expected_sha": "dbc17a3e0f7c55a677432d2d53e377fa86ac4435",
+            },
+            {
+                "path": "src/investment_strategy/scheduled_agent_effects.py",
+                "blob_sha": "111aa2e1ac595c6fc14d685ad6d92fafcbc56a66",
+                "expected_sha": "f54065ad27c4a9da17a0c61a5b2d332ba18f73a2",
+            },
+            {
+                "path": "src/investment_strategy/scheduled_agent_merge_acceptance.py",
+                "blob_sha": "ef87c30b0788411d9e3f53d7ae61584657b49f39",
+                "expected_sha": "4d3f943a2654b3ee55f63c12eea4feca4545c422",
+            },
+            {
+                "path": "tests/test_scheduled_agent_application_bridge.py",
+                "blob_sha": "0aec9fcd9513c7779a40430e39a299a849972a17",
+                "expected_sha": "1dcb0527e9e6b2807050636dafaea777c78455ba",
+            },
+            {
+                "path": "tests/test_scheduled_agent_effects.py",
+                "blob_sha": "06a50d199f655af8fa082cd9352bf6c883dad35e",
+                "expected_sha": "a84065b222bb18b8adb56113b866484743f0e1a2",
+            },
+        ],
+        "pr_number": 353,
+    }
+    checkpoint = "\n".join(
+        (
+            "SLICE_CHECKPOINT",
+            "Workflow: #322",
+            f"Change: {change}",
+            "Action: implement-change",
+            "Role: executor",
+            "Completed-Tasks: 0.23, 0.24, 0.25, 0.26",
+            f"Revision: {base}",
+            "Application-Correlation: pending-application-binding",
+            "Gate-Evidence: Exact-head reproduction isolated stale checkpoint binding; "
+            "exact-blob Ruff check and format now pass after correcting three formatter diffs; "
+            "patched behavioral checks, compileall, and diff check pass; exact pytest "
+            "and Mypy must pass before acceptance",
+            "Remaining-Approved-Boundary: Independent exact-head implementation review "
+            "and merge remain; 0D tasks 0.27-0.30, advisory 2.6, Human wait 2.7, "
+            "parent finalize/archive, genuine native Scheduled Task acceptance, "
+            "and post-terminal NO_WORK acceptance remain",
+        )
+    )
+    raw = _raw(
+        issue_number=322,
+        change=change,
+        result_kind="ready",
+        requested_effects=[
+            {
+                "kind": effects.GITHUB_MUTATION_KIND,
+                "payload_json": json.dumps(materialize, sort_keys=True),
+            },
+            {
+                "kind": "issue-comment",
+                "payload_json": json.dumps({"issue_number": 322, "body": checkpoint}),
+            },
+        ],
+    )
+    observed: list[str] = []
+
+    # The historical source remains UNKNOWN. A positive old target here is
+    # hypothetical proof-isolation coverage, never a claim that #322 has one.
+    target = (
+        ValidationResourceTarget(
+            repository="royhsu-work/investment-strategy",
+            revision="b" * 40,
+            correlation="effect-request-322",
+            pr_number=353,
+            change=change,
+            branch="agent/restore-no-work-idle-discovery-continuation-347",
+            validation_required=True,
+        )
+        if materialization_proven
+        else None
+    )
+    monkeypatch.setattr(
+        effects,
+        "_fresh_materialization_target",
+        lambda *_args, **_kwargs: target,
+    )
+
+    def observe_checkpoint(self: GitHubEffectAdapter, effect: StagedEffect) -> bool:
+        observed.append(effect.kind)
+        return checkpoint_proven
+
+    monkeypatch.setattr(GitHubEffectAdapter, "observe_postcondition", observe_checkpoint)
+    complete = effects.consequence_postconditions_complete(
+        raw,
+        source=source,
+        repository="royhsu-work/investment-strategy",
+        token=_TEST_TOKEN,
+        current_revision=_REVISION,
+        authorized_change=change,
+        request_comment_id=6019133874,
+        accepted_authorization_revision="ac7aebd7c2ac81b3227986350544307cadb221cc",
+        accepted_intent=True,
+    )
+    assert complete is (materialization_proven and checkpoint_proven)
+    assert observed == (["issue-comment"] if materialization_proven else [])
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=TypeError,
+    reason="G2 RED: canonical forward correction satisfaction interface is not yet implemented",
+)
+def test_legacy_322_untrusted_forward_mapping_cannot_release_original_effects() -> None:
+    """RED: the canonical consumer has no independently verified correction seam.
+
+    A new materialization witness must not be mistaken for the old physical
+    witness, nor can it discharge the separately accepted SLICE_CHECKPOINT.
+    This is a pre-review contract test, not a fabricated live correction.
+    """
+    source = WorkerRequest(322, "executor", "implement-change")
+    change = "restore-no-work-idle-discovery"
+    materialize = StagedEffect(
+        kind=effects.GITHUB_MUTATION_KIND,
+        payload_json=json.dumps(
+            {"issue_number": 322, "operation": "application-materialize"},
+            sort_keys=True,
+        ),
+    )
+    checkpoint = StagedEffect(
+        kind="issue-comment",
+        payload_json=json.dumps(
+            {"issue_number": 322, "body": "SLICE_CHECKPOINT\nWorkflow: #322"},
+            sort_keys=True,
+        ),
+    )
+    raw = _raw(
+        issue_number=322,
+        change=change,
+        result_kind="ready",
+        requested_effects=[
+            {"kind": effect.kind, "payload_json": effect.payload_json}
+            for effect in (materialize, checkpoint)
+        ],
+    )
+    # In production this input must be independently reconstructed from
+    # current reviewed GitHub sources, never accepted on its own assertion.
+    accepted_decision_sha256 = "9c545558249285ec6d4fa632970dfa7157774d75bf2b6e46889e240a175cbd54"
+    correction_mapping = {
+        "original_request_comment_id": 6019133874,
+        "accepted_decision_sha256": accepted_decision_sha256,
+        "human_decision_comment_id": 6313995887,
+        "change": change,
+        "bindings": [
+            {
+                "ordinal": index,
+                "original_payload_sha256": hashlib.sha256(
+                    effect.payload_json.encode("utf-8")
+                ).hexdigest(),
+                "obligation": obligation,
+            }
+            for index, (effect, obligation) in enumerate(
+                ((materialize, "materialization"), (checkpoint, "slice-checkpoint"))
+            )
+        ],
+    }
+    canonical_postconditions = cast(
+        Callable[..., bool], effects.consequence_postconditions_complete
+    )
+    assert not canonical_postconditions(
+        raw,
+        source=source,
+        repository="royhsu-work/investment-strategy",
+        token=_TEST_TOKEN,
+        current_revision=_REVISION,
+        authorized_change=change,
+        request_comment_id=6019133874,
+        accepted_authorization_revision="ac7aebd7c2ac81b3227986350544307cadb221cc",
+        accepted_intent=True,
+        forward_correction_satisfaction=correction_mapping,
+    )
