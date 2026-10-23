@@ -5231,7 +5231,7 @@ def test_original_ready_preformal_entry_has_no_result_cycle(
                 },
                 "base": {
                     "ref": "main",
-                    "sha": _RECOVERY_BASE,
+                    "sha": "1" * 40 if carrier_merged else _RECOVERY_BASE,
                     "repo": {"full_name": "royhsu-work/investment-strategy"},
                 },
             }
@@ -5568,7 +5568,11 @@ def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
                     "ref": "agent/report-materialization-postcondition-failure",
                     "repo": {"full_name": repository},
                 },
-                "base": {"ref": "main", "sha": _RECOVERY_BASE, "repo": {"full_name": repository}},
+                "base": {
+                    "ref": "main",
+                    "sha": "1" * 40 if scenario == "merged" else _RECOVERY_BASE,
+                    "repo": {"full_name": repository},
+                },
             }
         if path == "git/ref/heads/agent/report-materialization-postcondition-failure":
             if scenario == "merged":

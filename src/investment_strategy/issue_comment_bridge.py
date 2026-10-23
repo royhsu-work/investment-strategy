@@ -1026,13 +1026,10 @@ def qualify_original_322_pre_formal(
                     carrier_qualified = True
             else:
                 merge_sha = pr.get("merge_commit_sha")
-                base_sha = base.get("sha") if isinstance(base, Mapping) else None
                 merged_at = pr.get("merged_at")
                 if (
                     not isinstance(merge_sha, str)
                     or _SHA.fullmatch(merge_sha) is None
-                    or not isinstance(base_sha, str)
-                    or _SHA.fullmatch(base_sha) is None
                     or not isinstance(merged_at, str)
                     or not merged_at.strip()
                 ):
@@ -1056,7 +1053,10 @@ def qualify_original_322_pre_formal(
                         merged_commit.get("sha") != merge_sha
                         or len(parents) != 2
                         or not all(isinstance(parent, Mapping) for parent in parents)
-                        or [parent.get("sha") for parent in parents] != [base_sha, head_sha]
+                        or not isinstance(parents[0].get("sha"), str)
+                        or _SHA.fullmatch(parents[0]["sha"]) is None
+                        or parents[0]["sha"] == head_sha
+                        or parents[1].get("sha") != head_sha
                         or lineage.get("status") not in {"identical", "ahead"}
                         or lineage.get("behind_by") != 0
                         or not isinstance(comparison_base, Mapping)
