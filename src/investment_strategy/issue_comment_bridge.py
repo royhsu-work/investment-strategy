@@ -185,7 +185,7 @@ def _strictest_recovery_status(*statuses: RecoveryPredicate) -> RecoveryPredicat
 
 
 def _recovery_task_disposition(raw_tasks: object) -> RecoveryPredicate:
-    """Check exact current approved task markers; never infer READY from prose."""
+    """Classify task progress only; a checked marker is never effect proof."""
 
     if not isinstance(raw_tasks, str):
         return "UNKNOWN"
@@ -194,6 +194,132 @@ def _recovery_task_disposition(raw_tasks: object) -> RecoveryPredicate:
     if re.search(r"(?m)^\s*- \[ \] \d+(?:\.\d+)?\s", raw_tasks):
         return "INCOMPLETE"
     if not all(f"- [x] {task}" in raw_tasks for task in ("0.42", "0.43", "0.44")):
+        return "INCOMPLETE"
+    return "COMPLETE"
+
+
+_RECOVERY_CORRECTION_FILES = frozenset(
+    {
+        ".github/workflows/scheduled-agent-application.yml",
+        "openspec/changes/restore-no-work-idle-discovery/tasks.md",
+        "src/investment_strategy/issue_comment_bridge.py",
+        "src/investment_strategy/scheduled_agent_effects.py",
+        "src/investment_strategy/scheduled_agent_formal_qualification.py",
+        "src/investment_strategy/scheduled_agent_idle_admission.py",
+        "src/investment_strategy/scheduled_agent_merge_acceptance.py",
+        "tests/fixtures/issue322-application-recovery.json",
+        "tests/test_issue_comment_bridge.py",
+        "tests/test_scheduled_agent_effects.py",
+        "tests/test_scheduled_agent_formal_qualification.py",
+        "tests/test_scheduled_agent_idle_admission.py",
+    }
+)
+_RECOVERY_NECESSARY_EXECUTABLE_FILES = frozenset(
+    {
+        "src/investment_strategy/issue_comment_bridge.py",
+        "src/investment_strategy/scheduled_agent_effects.py",
+        "tests/test_issue_comment_bridge.py",
+        "tests/test_scheduled_agent_effects.py",
+    }
+)
+
+
+def _recovery_correction_disposition(
+    repository: str,
+    token: str,
+    *,
+    reviewed_revision: str | None,
+    head_sha: str,
+    task_blob_sha: str,
+    read: GitHubReader,
+) -> RecoveryPredicate:
+    """Observe the actual corrective Git consequence, not its task checkbox.
+
+    The separately Human-authorized, content-addressed corrections have no
+    new normal Action/worker manifest. The immutable reviewed revision is the
+    source preimage, the PR head/tree is T_new, and the complete Git compare
+    plus exact tree blob identities is W_new. This does not certify old effects.
+    """
+    if reviewed_revision is None or _SHA.fullmatch(reviewed_revision) is None:
+        return "UNKNOWN"
+    if reviewed_revision == head_sha:
+        return "INCOMPLETE"
+    comparison = read(repository, token, f"compare/{reviewed_revision}...{head_sha}")
+    commit = read(repository, token, f"git/commits/{head_sha}")
+    if not isinstance(comparison, Mapping) or not isinstance(commit, Mapping):
+        return "UNKNOWN"
+    parents = commit.get("parents")
+    tree_ref = commit.get("tree")
+    tree_sha = tree_ref.get("sha") if isinstance(tree_ref, Mapping) else None
+    if (
+        commit.get("sha") != head_sha
+        or not isinstance(parents, list)
+        or not parents
+        or not all(
+            isinstance(parent, Mapping)
+            and isinstance(parent.get("sha"), str)
+            and _SHA.fullmatch(parent["sha"]) is not None
+            for parent in parents
+        )
+        or not isinstance(tree_sha, str)
+        or _SHA.fullmatch(tree_sha) is None
+    ):
+        return "CONFLICT"
+    listing = read(repository, token, f"git/trees/{tree_sha}?recursive=1")
+    if (
+        not isinstance(listing, Mapping)
+        or listing.get("truncated") is not False
+        or not isinstance(listing.get("tree"), list)
+    ):
+        return "UNKNOWN"
+    blobs: dict[str, str] = {}
+    for item in listing["tree"]:
+        if not isinstance(item, Mapping):
+            return "UNKNOWN"
+        path, sha = item.get("path"), item.get("sha")
+        if item.get("type") == "blob" and isinstance(path, str):
+            if path in blobs or not isinstance(sha, str) or _SHA.fullmatch(sha) is None:
+                return "CONFLICT"
+            blobs[path] = sha
+    if blobs.get("openspec/changes/restore-no-work-idle-discovery/tasks.md") != task_blob_sha:
+        return "CONFLICT"
+    files = comparison.get("files")
+    commits = comparison.get("commits")
+    ahead = comparison.get("ahead_by")
+    base = comparison.get("base_commit")
+    if (
+        comparison.get("status") != "ahead"
+        or not isinstance(base, Mapping)
+        or base.get("sha") != reviewed_revision
+    ):
+        return "CONFLICT"
+    if (
+        not isinstance(files, list)
+        or not isinstance(commits, list)
+        or not isinstance(ahead, int)
+        or ahead < 1
+        or ahead > 250
+        or len(commits) != ahead
+        or len(files) >= 300  # GitHub compare truncates changed files at 300.
+    ):
+        return "UNKNOWN"
+    changed: set[str] = set()
+    for file in files:
+        if not isinstance(file, Mapping):
+            return "UNKNOWN"
+        path, sha = file.get("filename"), file.get("sha")
+        if not isinstance(path, str) or not isinstance(sha, str) or _SHA.fullmatch(sha) is None:
+            return "UNKNOWN"
+        if path in changed or file.get("status") != "modified":
+            return "CONFLICT"
+        if blobs.get(path) != sha:
+            return "CONFLICT"
+        changed.add(path)
+    # Verified disjoint descendant changes are not obsolete-SHA blockers.
+    # Only the bounded correction paths count as its materialization witness;
+    # this recovery writes no repository files and cannot overwrite others.
+    correction_changes = changed & _RECOVERY_CORRECTION_FILES
+    if not _RECOVERY_NECESSARY_EXECUTABLE_FILES.issubset(correction_changes):
         return "INCOMPLETE"
     return "COMPLETE"
 
@@ -276,6 +402,66 @@ def _recovery_review_log_proves_checkout(log: str, repository: str, revision: st
     )
 
 
+def _latest_recovery_review(
+    reviews: object,
+    *,
+    repository: str,
+    issue_number: int,
+    change: str,
+    pr_number: int,
+) -> tuple[Mapping[str, object], dict[str, str]] | RecoveryReviewAdoption:
+    """Select the latest exact-R receipt without erasing earlier review history.
+
+    Corrected FINDINGS on a *different earlier revision* remain historical.
+    Same-R duplicate or contradictory verdicts never become a unique PASS.
+    """
+    unknown = RecoveryReviewAdoption("UNKNOWN", "recovery-review-source-incomplete")
+    conflict = RecoveryReviewAdoption("CONFLICT", "recovery-review-source-conflict")
+    if not isinstance(reviews, (list, tuple)):
+        return unknown
+    candidates: list[tuple[datetime, Mapping[str, object], dict[str, str]]] = []
+    seen_revisions: set[str] = set()
+    for review in reviews:
+        if not isinstance(review, Mapping) or not isinstance(review.get("body"), str):
+            return unknown
+        body = cast(str, review["body"])
+        if not body.startswith(_RECOVERY_REVIEW_MARKER):
+            continue
+        receipt = _recovery_review_receipt(body)
+        if receipt is None:
+            return conflict
+        if (
+            receipt["Repository"] != repository
+            or receipt["Issue"] != str(issue_number)
+            or receipt["Change"] != change
+            or receipt["PR"] != str(pr_number)
+            or review.get("commit_id") != receipt["Revision"]
+        ):
+            return conflict
+        if receipt["Revision"] in seen_revisions:
+            return conflict
+        seen_revisions.add(receipt["Revision"])
+        submitted_at = review.get("submitted_at")
+        if not isinstance(submitted_at, str):
+            return unknown
+        try:
+            stamp = datetime.fromisoformat(submitted_at.replace("Z", "+00:00"))
+        except ValueError:
+            return unknown
+        if stamp.utcoffset() is None:
+            return unknown
+        candidates.append((stamp, review, receipt))
+    if not candidates:
+        return unknown
+    candidates.sort(key=lambda item: item[0])
+    if len(candidates) > 1 and candidates[-1][0] == candidates[-2][0]:
+        return conflict
+    _stamp, review, receipt = candidates[-1]
+    if receipt["Disposition"] != "PASS":
+        return conflict
+    return review, receipt
+
+
 def qualify_recovery_openspec_review(
     *,
     repository: str,
@@ -330,36 +516,16 @@ def qualify_recovery_openspec_review(
         or not isinstance(threads, (list, tuple))
     ):
         return unknown
-    candidates: list[tuple[Mapping[str, object], dict[str, str]]] = []
-    for raw_review in reviews:
-        if not isinstance(raw_review, Mapping):
-            return unknown
-        review_body = raw_review.get("body")
-        if not isinstance(review_body, str):
-            return unknown
-        if not review_body.startswith(_RECOVERY_REVIEW_MARKER):
-            continue
-        receipt = _recovery_review_receipt(review_body)
-        if receipt is None:
-            return conflict
-        candidates.append((raw_review, receipt))
-    if not candidates:
-        return unknown
-    # A later FINDINGS receipt is not neutralized by earlier PASS, and two
-    # claimed PASS sources for one exact semantic R are not a unique review.
-    matching = [
-        (review, receipt)
-        for review, receipt in candidates
-        if receipt["Repository"] == repository
-        and receipt["Issue"] == str(issue_number)
-        and receipt["Change"] == change
-        and receipt["PR"] == str(pr_number)
-    ]
-    if not matching:
-        return conflict
-    if len(matching) != 1:
-        return conflict
-    review, receipt = matching[0]
+    selected = _latest_recovery_review(
+        reviews,
+        repository=repository,
+        issue_number=issue_number,
+        change=change,
+        pr_number=pr_number,
+    )
+    if isinstance(selected, RecoveryReviewAdoption):
+        return selected
+    review, receipt = selected
     revision = receipt["Revision"]
     review_id = review.get("node_id")
     user = review.get("user")
@@ -643,19 +809,18 @@ def read_recovery_openspec_review(
     source_read = _github_json if read is None else read
     try:
         reviews = _paged_list(repository, token, "pulls/340/reviews", read=source_read)
-        receipts = [
-            receipt
-            for item in reviews
-            if (receipt := _recovery_review_receipt(item.get("body"))) is not None
-        ]
-        if len(receipts) != 1:
-            return (
-                RecoveryReviewAdoption("CONFLICT", "recovery-review-receipt-cardinality")
-                if receipts
-                else unknown
-            )
-        revision = receipts[0]["Revision"]
-        run_id = int(receipts[0]["Validator-Run"])
+        selected = _latest_recovery_review(
+            reviews,
+            repository=repository,
+            issue_number=322,
+            change="restore-no-work-idle-discovery",
+            pr_number=340,
+        )
+        if isinstance(selected, RecoveryReviewAdoption):
+            return selected
+        _, receipt = selected
+        revision = receipt["Revision"]
+        run_id = int(receipt["Validator-Run"])
         commit = source_read(repository, token, f"commits/{revision}")
         human = source_read(repository, token, "issues/comments/6313995887")
         events = _paged_list(repository, token, "issues/322/timeline", read=source_read)
@@ -685,7 +850,7 @@ def read_recovery_openspec_review(
             else source_read(repository, token, f"compare/{revision}...{head_sha}")
         )
         baseline_comparison = source_read(
-            repository, token, f"compare/{receipts[0]['Baseline']}...{revision}"
+            repository, token, f"compare/{receipt['Baseline']}...{revision}"
         )
         reviewed_blobs = _recovery_normative_blobs(repository, token, revision, read=source_read)
         current_blobs = (
@@ -819,6 +984,7 @@ def qualify_original_322_pre_formal(
 
     pr = read(repository, token, "pulls/340")
     head_sha: str | None = None
+    task_blob_sha: str | None = None
     if not isinstance(pr, Mapping):
         predicates["M"] = "UNKNOWN"
     else:
@@ -861,6 +1027,8 @@ def qualify_original_322_pre_formal(
                 not isinstance(task_content, Mapping)
                 or task_content.get("encoding") != "base64"
                 or not isinstance(task_content.get("content"), str)
+                or not isinstance(task_content.get("sha"), str)
+                or _SHA.fullmatch(task_content["sha"]) is None
             ):
                 if predicates["M"] != "CONFLICT":
                     predicates["M"] = "UNKNOWN"
@@ -873,6 +1041,7 @@ def qualify_original_322_pre_formal(
                     predicates["M"] = "UNKNOWN"
                 else:
                     predicates["M"] = _recovery_task_disposition(tasks)
+                    task_blob_sha = cast(str, task_content["sha"])
 
     labels = current_issue.get("labels")
     approval_present = isinstance(labels, list) and any(
@@ -948,6 +1117,19 @@ def qualify_original_322_pre_formal(
                                 predicates["V"] = _strictest_recovery_status(
                                     predicates["V"], "CONFLICT"
                                 )
+
+        if predicates["M"] == "COMPLETE" and task_blob_sha is not None:
+            try:
+                predicates["M"] = _recovery_correction_disposition(
+                    repository,
+                    token,
+                    reviewed_revision=review.revision,
+                    head_sha=head_sha,
+                    task_blob_sha=task_blob_sha,
+                    read=read,
+                )
+            except (HTTPError, OSError, RuntimeError, ValueError, TypeError):
+                predicates["M"] = "UNKNOWN"
 
     # The original two-effect envelope is never replayed by this entry. Its
     # unobserved historical checkpoint does not classify a proposed new

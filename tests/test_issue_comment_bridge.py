@@ -4812,6 +4812,7 @@ def test_no_apply_job_inventory_requires_unique_positive_ids(
 _RECOVERY_R = "54af6323d224c96e42792b6fe83fd31158b88e8c"
 _RECOVERY_BASE = "5d5edd88357824722887ce9eba8da96b08f2aeb3"
 _RECOVERY_REVIEW_ID = "PRR_kwDOT0Uyc88AAAABTsE88Q"
+_RECOVERY_OLD_R = "553eccce7169785c6836abc1a03dee8fdf1b33ba"
 
 
 def _recovery_review_sources() -> dict[str, object]:
@@ -4887,6 +4888,59 @@ def _recovery_review_sources() -> dict[str, object]:
         "current_blobs": {"openspec/changes/restore-no-work-idle-discovery/design.md": "a" * 40},
         "threads": [],
     }
+
+
+def _recovery_prior_findings() -> dict[str, object]:
+    """The actual historical old-revision FINDINGS preceding the reviewed PASS."""
+    current = cast(list[dict[str, object]], _recovery_review_sources()["reviews"])[0]
+    return {
+        **current,
+        "id": 5613393788,
+        "node_id": "PRR_kwDOT0Uyc88AAAABTpWXfA",
+        "commit_id": _RECOVERY_OLD_R,
+        "submitted_at": "2026-10-22T12:10:00Z",
+        "body": cast(str, current["body"])
+        .replace(_RECOVERY_R, _RECOVERY_OLD_R)
+        .replace("Disposition: PASS", "Disposition: FINDINGS"),
+    }
+
+
+def test_322_recovery_review_latest_revision_pass_supersedes_historical_findings_red() -> None:
+    evidence = _recovery_review_sources()
+    cast(list[dict[str, object]], evidence["reviews"]).insert(0, _recovery_prior_findings())
+    result = bridge.qualify_recovery_openspec_review(
+        repository="royhsu-work/investment-strategy",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+        pr_number=340,
+        head_sha=_RECOVERY_R,
+        approval_label_present=True,
+        **evidence,
+    )
+    assert result.disposition == "COMPLETE", result.reason
+    assert result.revision == _RECOVERY_R
+
+
+@pytest.mark.parametrize("case", ["same-revision-conflict", "later-findings"])
+def test_322_review_keeps_applicable_duplicate_and_latest_findings_blocked(case: str) -> None:
+    evidence = _recovery_review_sources()
+    earlier = _recovery_prior_findings()
+    if case == "same-revision-conflict":
+        earlier["commit_id"] = _RECOVERY_R
+        earlier["body"] = cast(str, earlier["body"]).replace(_RECOVERY_OLD_R, _RECOVERY_R)
+    else:
+        earlier["submitted_at"] = "2026-10-22T16:00:00Z"
+    cast(list[dict[str, object]], evidence["reviews"]).insert(0, earlier)
+    result = bridge.qualify_recovery_openspec_review(
+        repository="royhsu-work/investment-strategy",
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+        pr_number=340,
+        head_sha=_RECOVERY_R,
+        approval_label_present=True,
+        **evidence,
+    )
+    assert result.disposition == "CONFLICT"
 
 
 def test_322_recovery_review_human_attestation_adoption_red() -> None:
@@ -5008,6 +5062,7 @@ def test_322_recovery_review_rejects_unqualified_sources_red(mutation: str, expe
 def test_322_review_source_reader_adopts_exact_r_without_formal_result() -> None:
     """Exercise the actual reader/consumer path, including trees and executed log."""
     sources = _recovery_review_sources()
+    cast(list[dict[str, object]], sources["reviews"]).insert(0, _recovery_prior_findings())
     paths: list[str] = []
 
     def read(_repository: str, _token: str, path: str) -> object:
@@ -5063,7 +5118,7 @@ def test_322_review_source_reader_adopts_exact_r_without_formal_result() -> None
 )
 @pytest.mark.parametrize("duplicate_checks", [False, True])
 @pytest.mark.parametrize("duplicate_formal", [False, True])
-@pytest.mark.parametrize("target_state", ["ok", "unreadable", "conflict"])
+@pytest.mark.parametrize("target_state", ["ok", "unreadable", "conflict", "missing-effect"])
 def test_original_ready_preformal_entry_has_no_result_cycle(
     unfinished: bool,
     expected: str,
@@ -5102,7 +5157,15 @@ def test_original_ready_preformal_entry_has_no_result_cycle(
             {"name": "human:approved"},
         ],
     }
-    head = _RECOVERY_R
+    head = "d" * 40
+    task_sha = "f" * 40
+    correction_files = {
+        "openspec/changes/restore-no-work-idle-discovery/tasks.md": task_sha,
+        "src/investment_strategy/issue_comment_bridge.py": "a" * 40,
+        "src/investment_strategy/scheduled_agent_effects.py": "b" * 40,
+        "tests/test_issue_comment_bridge.py": "c" * 40,
+        "tests/test_scheduled_agent_effects.py": "e" * 40,
+    }
     comments = [decision]
     if duplicate_formal:
         raw = bridge._application_owned_worker_result(
@@ -5146,11 +5209,44 @@ def test_original_ready_preformal_entry_has_no_result_cycle(
         if path == "git/ref/heads/agent/report-materialization-postcondition-failure":
             if target_state == "unreadable":
                 return None
-            return {"object": {"sha": head if target_state == "ok" else "b" * 40}}
+            return {
+                "object": {"sha": head if target_state in {"ok", "missing-effect"} else "b" * 40}
+            }
         if path == (
             "contents/openspec/changes/restore-no-work-idle-discovery/tasks.md?ref=" + head
         ):
-            return {"encoding": "base64", "content": base64.b64encode(tasks.encode()).decode()}
+            return {
+                "encoding": "base64",
+                "content": base64.b64encode(tasks.encode()).decode(),
+                "sha": task_sha,
+            }
+        if path == f"compare/{_RECOVERY_R}...{head}":
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "base_commit": {"sha": _RECOVERY_R},
+                "commits": [{"sha": head}],
+                "files": [
+                    {"filename": name, "sha": sha, "status": "modified"}
+                    for name, sha in correction_files.items()
+                    if target_state != "missing-effect"
+                    or name != "tests/test_scheduled_agent_effects.py"
+                ],
+            }
+        if path == f"git/commits/{head}":
+            return {
+                "sha": head,
+                "parents": [{"sha": _RECOVERY_R}],
+                "tree": {"sha": "9" * 40},
+            }
+        if path == f"git/trees/{'9' * 40}?recursive=1":
+            return {
+                "truncated": False,
+                "tree": [
+                    {"type": "blob", "path": name, "sha": sha}
+                    for name, sha in correction_files.items()
+                ],
+            }
         if path == f"commits/{head}/check-runs?per_page=100":
             checks = [
                 {
@@ -5186,7 +5282,9 @@ def test_original_ready_preformal_entry_has_no_result_cycle(
         review_read=lambda *_args, **_kwargs: bridge.RecoveryReviewAdoption(
             "COMPLETE", "recovery-review-adopted", _RECOVERY_REVIEW_ID, _RECOVERY_R
         ),
-        log_read=lambda *_args: cast(str, _recovery_review_sources()["validator_log"]),
+        log_read=lambda *_args: cast(str, _recovery_review_sources()["validator_log"]).replace(
+            _RECOVERY_R, head
+        ),
         expected_decision_digest=hashlib.sha256(cast(str, decision["body"]).encode()).hexdigest(),
     )
     target_disposition = (
@@ -5194,6 +5292,8 @@ def test_original_ready_preformal_entry_has_no_result_cycle(
         if target_state == "conflict"
         else "UNKNOWN"
         if target_state == "unreadable"
+        else "INCOMPLETE"
+        if target_state == "missing-effect"
         else expected
     )
     assert result.disposition == ("CONFLICT" if duplicate_formal else target_disposition), (
@@ -5302,6 +5402,353 @@ def test_original_322_exit_materializes_once_then_reconciles_without_replay(
     )
     assert second.state == "COMPLETE", second
     assert requested == ([["issue-comment"], []] if lost_after_formal_post else [["issue-comment"]])
+
+
+@pytest.mark.parametrize(
+    "scenario", ["normal", "lost-response", "disjoint", "conflict", "incomplete", "unknown"]
+)
+def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
+    monkeypatch: pytest.MonkeyPatch,
+    scenario: str,
+) -> None:
+    """Real application/review/effect/dispatch owners; only GitHub I/O is simulated."""
+    from investment_strategy import scheduled_agent_effects as effects
+    from investment_strategy import scheduled_agent_runtime as runtime
+
+    repository = "royhsu-work/investment-strategy"
+    head = "d" * 40
+    head_tree = "9" * 40
+    review_tree = "8" * 40
+    task_sha = "f" * 40
+    correction_files = {
+        "openspec/changes/restore-no-work-idle-discovery/tasks.md": task_sha,
+        "src/investment_strategy/issue_comment_bridge.py": "a" * 40,
+        "src/investment_strategy/scheduled_agent_effects.py": "b" * 40,
+        "tests/test_issue_comment_bridge.py": "c" * 40,
+        "tests/test_scheduled_agent_effects.py": "e" * 40,
+    }
+    tasks = "\n".join(
+        (
+            "## 0G. Forward Recovery",
+            "- [x] 0.42 **RED:** regression",
+            "- [x] 0.43 **GREEN:** implement",
+            "- [x] 0.44 **REFACTOR/VERIFY:** gates",
+        )
+    )
+    original_fixture = json.loads(
+        Path("tests/fixtures/issue322-application-recovery.json").read_text(encoding="utf-8")
+    )
+    decision = cast(dict[str, object], original_fixture["original_accepted_decision"])
+    record = bridge.parse_application_decision(decision["body"])
+    assert record is not None
+    assert record.request_comment_id == 6019133874
+    assert hashlib.sha256(cast(str, decision["body"]).encode()).hexdigest() == (
+        "9c545558249285ec6d4fa632970dfa7157774d75bf2b6e46889e240a175cbd54"
+    )
+    # The original accepted intent includes non-idempotent physical effects;
+    # only its formal projection may run in this recovery.
+    assert len(json.loads(record.raw_worker_result)["requested_effects"]) == 2
+    evidence = _recovery_review_sources()
+    cast(list[dict[str, object]], evidence["reviews"]).insert(0, _recovery_prior_findings())
+    issue: dict[str, object] = {
+        "number": 322,
+        "title": "Explore restoring NO_WORK idle discovery after Action-only dispatch",
+        "state": "open",
+        "created_at": "2026-09-22T15:39:54Z",
+        "closed_at": None,
+        "body": "Change: restore-no-work-idle-discovery",
+        "labels": [{"name": "action:implement-change"}, {"name": "human:approved"}],
+    }
+    comments: list[dict[str, object]] = [
+        decision,
+        *cast(list[dict[str, object]], evidence["issue_comments"]),
+    ]
+    timeline: list[dict[str, object]] = list(cast(list[dict[str, object]], evidence["events"]))
+    comment_posts = 0
+    route_patches = 0
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        assert _repository == repository
+        if path == "":
+            return {"default_branch": "main"}
+        if path == "issues/322":
+            return dict(issue)
+        if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
+            return list(comments)
+        if path.startswith("issues/322/comments?per_page=100&sort=created&direction=desc"):
+            return list(reversed(comments))
+        if path == "issues/322/timeline?per_page=100&page=1":
+            return list(timeline)
+        if path == "issues/comments/6313995887":
+            return evidence["original_human_comment"]
+        if path.startswith("issues/comments/"):
+            comment_id = int(path.rsplit("/", 1)[1])
+            return next((dict(item) for item in comments if item["id"] == comment_id), None)
+        if path == "pulls/340":
+            return {
+                "number": 340,
+                "state": "open",
+                "draft": False,
+                "head": {
+                    "sha": head,
+                    "ref": "agent/report-materialization-postcondition-failure",
+                    "repo": {"full_name": repository},
+                },
+                "base": {"ref": "main", "repo": {"full_name": repository}},
+            }
+        if path == "git/ref/heads/agent/report-materialization-postcondition-failure":
+            return {"object": {"sha": head}}
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": _RECOVERY_BASE}}
+        if path == f"contents/openspec/changes/restore-no-work-idle-discovery/tasks.md?ref={head}":
+            return {
+                "encoding": "base64",
+                "content": base64.b64encode(tasks.encode()).decode(),
+                "sha": task_sha,
+            }
+        if path == "pulls/340/reviews?per_page=100&page=1":
+            return evidence["reviews"]
+        if path == f"commits/{_RECOVERY_R}":
+            return evidence["commit"]
+        if path == "actions/runs/39795457767":
+            return evidence["validator"]
+        if path == "actions/runs/39795457767/jobs?per_page=100":
+            return {"total_count": 1, "jobs": [evidence["validator_job"]]}
+        if path == "actions/jobs/119881578427":
+            return evidence["validator_job"]
+        if path == "actions/jobs/111111111111":
+            return {"id": 111111111111, "name": "validate", "conclusion": "success"}
+        if path == f"compare/{_RECOVERY_BASE}...{_RECOVERY_R}":
+            return evidence["baseline_comparison"]
+        if path == f"compare/{_RECOVERY_R}...{head}":
+            if scenario == "unknown":
+                return None
+            compared_files = [
+                {"filename": name, "sha": sha, "status": "modified"}
+                for name, sha in correction_files.items()
+                if scenario != "incomplete" or name != "tests/test_scheduled_agent_effects.py"
+            ]
+            if scenario in {"disjoint", "conflict"}:
+                compared_files.append(
+                    {
+                        "filename": "README.md",
+                        "sha": "6" * 40 if scenario == "disjoint" else "5" * 40,
+                        "status": "modified",
+                    }
+                )
+            return {
+                "status": "ahead",
+                "ahead_by": 1,
+                "base_commit": {"sha": _RECOVERY_R},
+                "commits": [{"sha": head}],
+                "files": compared_files,
+            }
+        if path == f"compare/{record.authorization_revision}...{_RECOVERY_BASE}":
+            return {
+                "status": "ahead",
+                "behind_by": 0,
+                "base_commit": {"sha": record.authorization_revision},
+            }
+        if path == f"git/commits/{_RECOVERY_R}":
+            return {"tree": {"sha": review_tree}}
+        if path == f"git/commits/{head}":
+            return {
+                "sha": head,
+                "parents": [{"sha": _RECOVERY_R}],
+                "tree": {"sha": head_tree},
+            }
+        if path == f"git/trees/{review_tree}?recursive=1":
+            return {
+                "truncated": False,
+                "tree": [
+                    {
+                        "type": "blob",
+                        "path": "openspec/changes/restore-no-work-idle-discovery/design.md",
+                        "sha": "7" * 40,
+                    }
+                ],
+            }
+        if path == f"git/trees/{head_tree}?recursive=1":
+            return {
+                "truncated": False,
+                "tree": [
+                    {
+                        "type": "blob",
+                        "path": "openspec/changes/restore-no-work-idle-discovery/design.md",
+                        "sha": "7" * 40,
+                    },
+                    *[
+                        {"type": "blob", "path": name, "sha": sha}
+                        for name, sha in correction_files.items()
+                    ],
+                    {"type": "blob", "path": "README.md", "sha": "6" * 40},
+                ],
+            }
+        if path == f"commits/{head}/check-runs?per_page=100":
+            checks = [
+                {
+                    "name": name,
+                    "head_sha": head,
+                    "conclusion": "success",
+                    "details_url": f"https://github.com/{repository}/actions/runs/39795457767/job/111111111111",
+                }
+                for name in ("quality", "validate")
+            ]
+            return {"total_count": 2, "check_runs": checks}
+        raise AssertionError(f"unexpected GitHub read: {path}")
+
+    def github_io(
+        repo: str,
+        token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: Mapping[str, object] | None = None,
+        allow_not_found: bool = False,
+    ) -> object:
+        nonlocal comment_posts, route_patches
+        assert isinstance(allow_not_found, bool)
+        if method == "POST" and path == "issues/322/comments":
+            assert payload is not None and isinstance(payload.get("body"), str)
+            comment_posts += 1
+            comment = {
+                "id": 6900000000,
+                "body": payload["body"],
+                "created_at": "2026-10-22T16:00:01Z",
+                "updated_at": "2026-10-22T16:00:01Z",
+                "user": {"login": "github-actions[bot]"},
+                "performed_via_github_app": {"slug": "github-actions"},
+            }
+            comments.append(comment)
+            timeline.append(
+                {"id": 6900000000, "event": "commented", "created_at": comment["created_at"]}
+            )
+            if scenario == "lost-response":
+                raise OSError("GitHub saved formal comment; client response lost")
+            return comment
+        if method == "PATCH" and path == "issues/322":
+            assert payload is not None
+            assert "action:review-implementation" in cast(list[str], payload["labels"])
+            issue["labels"] = [{"name": label} for label in cast(list[str], payload["labels"])]
+            timeline.extend(
+                (
+                    {
+                        "id": 6900000001,
+                        "event": "unlabeled",
+                        "created_at": "2026-10-22T16:00:02Z",
+                        "label": {"name": "action:implement-change"},
+                    },
+                    {
+                        "id": 6900000002,
+                        "event": "labeled",
+                        "created_at": "2026-10-22T16:00:03Z",
+                        "label": {"name": "action:review-implementation"},
+                        "actor": {"login": "github-actions[bot]"},
+                        "performed_via_github_app": {"slug": "github-actions"},
+                    },
+                )
+            )
+            route_patches += 1
+            return dict(issue)
+        assert method == "GET"
+        return read(repo, token, path)
+
+    def transport_list(url: str, token: str) -> tuple[Mapping[str, object], ...]:
+        assert token == REVISION
+        assert url.startswith(f"https://api.github.com/repos/{repository}/")
+        path = url.split(f"/{repository}/", 1)[1]
+        if path == "issues?state=all&per_page=100&page=1":
+            return (dict(issue),)
+        if path == "issues/322/comments?per_page=100&sort=created&direction=desc":
+            return tuple(reversed(comments))
+        if path == "issues/322/timeline?per_page=100&page=1":
+            return tuple(timeline)
+        raise AssertionError(f"unexpected runtime listing: {path}")
+
+    def transport_object(url: str, token: str) -> Mapping[str, object]:
+        assert token == REVISION
+        path = url.split(f"/{repository}", 1)[1].removeprefix("/")
+        result = read(repository, token, path)
+        assert isinstance(result, Mapping)
+        return result
+
+    def checkout_log(_repo: str, _token: str, job_id: int) -> str:
+        assert job_id in {119881578427, 111111111111}
+        log = cast(str, evidence["validator_log"])
+        return log if job_id == 119881578427 else log.replace(_RECOVERY_R, head)
+
+    monkeypatch.setattr(bridge, "_github_json", github_io)
+    monkeypatch.setattr(effects, "_github_json", github_io)
+    monkeypatch.setattr(runtime, "_github_get_list_page", transport_list)
+    monkeypatch.setattr(runtime, "_github_get_object", transport_object)
+    review_defaults = bridge.read_recovery_openspec_review.__kwdefaults__
+    assert review_defaults is not None
+    monkeypatch.setitem(review_defaults, "log_read", checkout_log)
+    monkeypatch.setitem(review_defaults, "thread_read", lambda *_: [])
+
+    def invoke() -> bridge.ApplicationCompletion:
+        return bridge.apply_original_322_recovery_exit(
+            repository,
+            REVISION,
+            current_revision=_RECOVERY_BASE,
+            read=github_io,
+            log_read=checkout_log,
+        )
+
+    adoption = bridge.read_recovery_openspec_review(
+        repository,
+        REVISION,
+        head_sha=head,
+        approval_label_present=True,
+        issue_comments=tuple(comments),
+        read=github_io,
+        log_read=checkout_log,
+        thread_read=lambda *_: [],
+    )
+    assert adoption.disposition == ("UNKNOWN" if scenario == "unknown" else "COMPLETE"), adoption
+    pre = bridge.qualify_original_322_pre_formal(
+        repository=repository,
+        token=REVISION,
+        source=bridge.WorkerRequest(322, "executor", "implement-change"),
+        record=record,
+        issue_comments=tuple(comments),
+        current_issue=issue,
+        current_revision=_RECOVERY_BASE,
+        read=github_io,
+        log_read=checkout_log,
+    )
+    expected_pre = (
+        "CONFLICT"
+        if scenario == "conflict"
+        else "INCOMPLETE"
+        if scenario == "incomplete"
+        else "UNKNOWN"
+        if scenario == "unknown"
+        else "COMPLETE"
+    )
+    assert pre.disposition == expected_pre, pre.predicates
+    first = invoke()
+    assert first.state == ("COMPLETE" if scenario in {"normal", "disjoint"} else "INVALID"), first
+    if scenario in {"conflict", "incomplete", "unknown"}:
+        assert comment_posts == 0
+        assert route_patches == 0
+        assert len(comments) == 2  # no formal result was fabricated
+        return
+    assert comment_posts == 1
+    assert route_patches == (0 if scenario == "lost-response" else 1)
+    second = invoke()
+    assert second.state == "COMPLETE", second
+    assert comment_posts == 1  # fresh-read reconciliation, no duplicate formal write
+    assert route_patches == 1
+    assert "action:review-implementation" in [
+        label["name"] for label in cast(list[dict[str, object]], issue["labels"])
+    ]
+    fresh_wake = runtime.classify_dispatch(
+        runtime.acquire_current_github_preflight(repository, REVISION)
+    )
+    assert fresh_wake.disposition == "AUTHORIZE", fresh_wake
+    assert fresh_wake.selected_issue_id == 322
+    assert fresh_wake.selected_routing == ("reviewer", "review-implementation")
 
 
 def test_original_322_exit_incomplete_does_not_call_effect_owner(

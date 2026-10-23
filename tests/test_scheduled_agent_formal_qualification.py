@@ -545,6 +545,46 @@ def test_pending_successor_uses_the_same_binding_decision_shape() -> None:
     )
 
 
+def test_pending_formal_ignores_unrelated_human_label_without_relaxing_action_guard() -> None:
+    comment = _comment(
+        5,
+        action="implement-change",
+        role="executor",
+        result="ready",
+        successor="Reviewer / review-implementation",
+        request_id=55,
+    )
+    correlation = f"application:55:229:{_CHANGE}:executor:implement-change:ready:{_REVISION}"
+    lifecycle = [
+        {
+            "id": 4,
+            "event": "labeled",
+            "created_at": "2026-09-12T00:00:00Z",
+            "label": {"name": "human:approved"},
+        },
+        *_lifecycle_events([comment], pending=True),
+    ]
+
+    def decide(events: list[dict[str, object]]) -> QualificationDecision:
+        return _decision(
+            [comment],
+            current_routing=("executor", "implement-change"),
+            mode="pending",
+            expected_routing=("reviewer", "review-implementation"),
+            source_routing=("executor", "implement-change"),
+            expected_result_kind="ready",
+            expected_application_correlation=correlation,
+            lifecycle_events=events,
+        )
+
+    assert decide(lifecycle).provenance is ObservationProvenance.QUALIFIED
+    malformed = [
+        {**lifecycle[0], "label": {"name": "action:not-a-real-action"}},
+        *lifecycle[1:],
+    ]
+    assert decide(malformed).provenance is ObservationProvenance.INDETERMINATE
+
+
 def test_pending_historical_result_requires_explicit_descendant_binding() -> None:
     historical_revision = "b" * 40
     comment = _comment(
