@@ -2447,7 +2447,6 @@ def test_application_boundary_does_not_replay_dispatch_artifacts() -> None:
     assert "overwrite: true" in final_evidence_step
 
 
-
 def test_original_322_recovery_comment_is_bounded_to_the_existing_application_owner() -> None:
     """Transport must not invoke the normal effect path or mint a second Action."""
     workflow = Path(".github/workflows/scheduled-agent-application.yml").read_text(encoding="utf-8")
