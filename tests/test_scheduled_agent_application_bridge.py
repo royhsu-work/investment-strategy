@@ -2447,6 +2447,29 @@ def test_application_boundary_does_not_replay_dispatch_artifacts() -> None:
     assert "overwrite: true" in final_evidence_step
 
 
+
+def test_original_322_recovery_comment_is_bounded_to_the_existing_application_owner() -> None:
+    """Transport must not invoke the normal effect path or mint a second Action."""
+    workflow = Path(".github/workflows/scheduled-agent-application.yml").read_text(encoding="utf-8")
+    marker = "RECOVERY_EXIT_REQUEST 6019133874"
+    assert workflow.count("  apply:\n") == 1
+    assert workflow.count("startsWith(github.event.comment.body, 'EFFECT_REQUEST')") == 1
+    assert workflow.count("github.event.comment.body == '" + marker + "'") == 2
+    assert workflow.count("github.event.comment.user.login == 'royhsu-work'") == 2
+    assert workflow.count("github.event.issue.number == 322") == 2
+    assert "github.event.comment.body != '" + marker + "'" in workflow
+    recovery_step = workflow.split(
+        "      - name: Bounded original #322 recovery through existing application owner", 1
+    )[1].split("      - name: Upload exact application recovery evidence", 1)[0]
+    assert "inputs.recovery_exit_request_comment_id != ''" in recovery_step
+    assert (
+        "github.event_name == 'issue_comment' && '6019133874'"
+        " || inputs.recovery_exit_request_comment_id"
+    ) in recovery_step
+    assert '--recovery-exit-request-comment-id "$ORIGINAL_REQUEST"' in recovery_step
+    assert 'if [[ "$ORIGINAL_REQUEST" != "6019133874" ]]' in recovery_step
+
+
 def test_main_exits_at_carrier_boundary_before_formal_continuation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
