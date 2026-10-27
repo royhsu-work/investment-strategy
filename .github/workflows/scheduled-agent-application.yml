@@ -81,7 +81,10 @@ jobs:
     if: >-
       (github.event_name == 'issue_comment' &&
       (startsWith(github.event.comment.body, 'EFFECT_REQUEST') ||
-      startsWith(github.event.comment.body, 'APPLICATION_CONTINUATION'))) ||
+      startsWith(github.event.comment.body, 'APPLICATION_CONTINUATION') ||
+      (github.event.issue.number == 322 &&
+      github.event.comment.body == 'RECOVERY_EXIT_REQUEST 6019133874' &&
+      github.event.comment.user.login == 'royhsu-work'))) ||
       (github.event_name == 'workflow_dispatch' &&
       inputs.recovery_exit_request_comment_id != '')
     concurrency:
@@ -117,7 +120,9 @@ jobs:
 
       - name: Freshly authorize and apply repository-owned effects
         id: apply
-        if: github.event_name == 'issue_comment'
+        if: >-
+          github.event_name == 'issue_comment' &&
+          github.event.comment.body != 'RECOVERY_EXIT_REQUEST 6019133874'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -131,11 +136,17 @@ jobs:
           --recovery-evidence-path "$RUNNER_TEMP/application-recovery-evidence"
 
       - name: Bounded original #322 recovery through existing application owner
-        if: github.event_name == 'workflow_dispatch'
+        if: >-
+          (github.event_name == 'workflow_dispatch' &&
+          inputs.recovery_exit_request_comment_id != '') ||
+          (github.event_name == 'issue_comment' &&
+          github.event.issue.number == 322 &&
+          github.event.comment.body == 'RECOVERY_EXIT_REQUEST 6019133874' &&
+          github.event.comment.user.login == 'royhsu-work')
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          ORIGINAL_REQUEST: ${{ inputs.recovery_exit_request_comment_id }}
+          ORIGINAL_REQUEST: ${{ github.event_name == 'issue_comment' && '6019133874' || inputs.recovery_exit_request_comment_id }}
           PYTHONPATH: ${{ github.workspace }}/src
         shell: bash
         run: |
