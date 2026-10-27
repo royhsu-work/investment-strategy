@@ -997,9 +997,11 @@ def qualify_original_322_pre_formal(
         base_repo = base.get("repo") if isinstance(base, Mapping) else None
         head_sha = head.get("sha") if isinstance(head, Mapping) else None
         head_ref = head.get("ref") if isinstance(head, Mapping) else None
+        open_carrier = pr.get("state") == "open" and pr.get("merged") is not True
+        merged_carrier = pr.get("state") == "closed" and pr.get("merged") is True
         if (
             pr.get("number") != 340
-            or pr.get("state") != "open"
+            or not (open_carrier or merged_carrier)
             or pr.get("draft") is not False
             or not isinstance(head_sha, str)
             or _SHA.fullmatch(head_sha) is None
@@ -1012,18 +1014,61 @@ def qualify_original_322_pre_formal(
         ):
             predicates["M"] = "CONFLICT"
         else:
-            live_ref = read(repository, token, f"git/ref/heads/{head_ref}")
-            ref_object = live_ref.get("object") if isinstance(live_ref, Mapping) else None
-            if not isinstance(ref_object, Mapping):
-                predicates["M"] = "UNKNOWN"
-            elif ref_object.get("sha") != head_sha:
-                predicates["M"] = "CONFLICT"
+            carrier_qualified = False
+            if open_carrier:
+                live_ref = read(repository, token, f"git/ref/heads/{head_ref}")
+                ref_object = live_ref.get("object") if isinstance(live_ref, Mapping) else None
+                if not isinstance(ref_object, Mapping):
+                    predicates["M"] = "UNKNOWN"
+                elif ref_object.get("sha") != head_sha:
+                    predicates["M"] = "CONFLICT"
+                else:
+                    carrier_qualified = True
+            else:
+                merge_sha = pr.get("merge_commit_sha")
+                merged_at = pr.get("merged_at")
+                if (
+                    not isinstance(merge_sha, str)
+                    or _SHA.fullmatch(merge_sha) is None
+                    or not isinstance(merged_at, str)
+                    or not merged_at.strip()
+                ):
+                    predicates["M"] = "UNKNOWN"
+                else:
+                    merged_commit = read(repository, token, f"git/commits/{merge_sha}")
+                    lineage = read(repository, token, f"compare/{merge_sha}...{current_revision}")
+                    parents = (
+                        merged_commit.get("parents") if isinstance(merged_commit, Mapping) else None
+                    )
+                    comparison_base = (
+                        lineage.get("base_commit") if isinstance(lineage, Mapping) else None
+                    )
+                    if (
+                        not isinstance(merged_commit, Mapping)
+                        or not isinstance(parents, list)
+                        or not isinstance(lineage, Mapping)
+                    ):
+                        predicates["M"] = "UNKNOWN"
+                    elif (
+                        merged_commit.get("sha") != merge_sha
+                        or len(parents) != 2
+                        or not all(isinstance(parent, Mapping) for parent in parents)
+                        or not isinstance(parents[0].get("sha"), str)
+                        or _SHA.fullmatch(parents[0]["sha"]) is None
+                        or parents[0]["sha"] == head_sha
+                        or parents[1].get("sha") != head_sha
+                        or lineage.get("status") not in {"identical", "ahead"}
+                        or lineage.get("behind_by") != 0
+                        or not isinstance(comparison_base, Mapping)
+                        or comparison_base.get("sha") != merge_sha
+                    ):
+                        predicates["M"] = "CONFLICT"
+                    else:
+                        carrier_qualified = True
             task_path = f"openspec/changes/{record.change}/tasks.md"
             task_content = (
                 read(repository, token, f"contents/{task_path}?ref={head_sha}")
-                if predicates["M"] == "UNKNOWN"
-                and isinstance(ref_object, Mapping)
-                and ref_object.get("sha") == head_sha
+                if predicates["M"] == "UNKNOWN" and carrier_qualified
                 else None
             )
             if (
