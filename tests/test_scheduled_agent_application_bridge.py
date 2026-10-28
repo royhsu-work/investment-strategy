@@ -2959,9 +2959,9 @@ def test_original_322_pr_merge_review_gate_rejects_unreviewed_or_findings_head(
     output = tmp_path / "reviewed-head"
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     if review_matches_head and latest_is_pass:
-        exec(compile(script, "<recovery-review-gate>", "exec"), {})
+        exec(compile(script, "<recovery-review-gate>", "exec"), {})  # noqa: S102 - trusted checked-in workflow source
         assert output.read_text(encoding="utf-8") == f"head={head}\n"
     else:
         with pytest.raises(SystemExit, match="review"):
-            exec(compile(script, "<recovery-review-gate>", "exec"), {})
+            exec(compile(script, "<recovery-review-gate>", "exec"), {})  # noqa: S102 - trusted checked-in workflow source
         assert not output.exists()
