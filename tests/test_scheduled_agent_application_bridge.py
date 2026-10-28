@@ -2861,12 +2861,18 @@ def test_original_322_recovery_pr_merge_wake_is_exact_and_not_a_generic_effect_r
     assert workflow.count("github.event_name == 'pull_request_target'") == 3
     assert workflow.count("github.event.pull_request.merged == true") == 2
     assert workflow.count("github.event.pull_request.base.ref == 'main'") == 2
-    assert workflow.count(
-        "github.event.pull_request.head.repo.full_name == 'royhsu-work/investment-strategy'"
-    ) == 2
-    assert workflow.count(
-        "github.event.pull_request.head.ref == 'agent/issue322-pr-merge-recovery-trigger'"
-    ) == 2
+    assert (
+        workflow.count(
+            "github.event.pull_request.head.repo.full_name == 'royhsu-work/investment-strategy'"
+        )
+        == 2
+    )
+    assert (
+        workflow.count(
+            "github.event.pull_request.head.ref == 'agent/issue322-pr-merge-recovery-trigger'"
+        )
+        == 2
+    )
     normal_effect = workflow.split(
         "      - name: Freshly authorize and apply repository-owned effects", 1
     )[1].split(
@@ -2878,5 +2884,5 @@ def test_original_322_recovery_pr_merge_wake_is_exact_and_not_a_generic_effect_r
         "      - name: Bounded original #322 recovery through existing application owner", 1
     )[1].split("      - name: Upload exact application recovery evidence", 1)[0]
     assert "github.event.pull_request.merged == true" in bounded
-    assert "--recovery-exit-request-comment-id \"$ORIGINAL_REQUEST\"" in bounded
+    assert '--recovery-exit-request-comment-id "$ORIGINAL_REQUEST"' in bounded
     assert 'if [[ "$ORIGINAL_REQUEST" != "6019133874" ]]' in bounded
