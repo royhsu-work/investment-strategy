@@ -2462,8 +2462,8 @@ def test_original_322_recovery_comment_is_bounded_to_the_existing_application_ow
     )[1].split("      - name: Upload exact application recovery evidence", 1)[0]
     assert "inputs.recovery_exit_request_comment_id != ''" in recovery_step
     assert (
-        "github.event_name == 'issue_comment' && '6019133874'"
-        " || inputs.recovery_exit_request_comment_id"
+        "(github.event_name == 'pull_request_target' || github.event_name == 'issue_comment')"
+        " && '6019133874' || inputs.recovery_exit_request_comment_id"
     ) in recovery_step
     assert '--recovery-exit-request-comment-id "$ORIGINAL_REQUEST"' in recovery_step
     assert 'if [[ "$ORIGINAL_REQUEST" != "6019133874" ]]' in recovery_step
