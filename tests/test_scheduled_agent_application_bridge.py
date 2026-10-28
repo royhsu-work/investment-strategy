@@ -2943,6 +2943,7 @@ def test_original_322_pr_merge_review_gate_rejects_unreviewed_or_findings_head(
     ]
 
     def stub_urlopen(request: Request, timeout: int = 20) -> io.BytesIO:
+        payload: object
         if request.full_url.endswith("/pulls/388"):
             payload = pr
         elif "/pulls/388/reviews?" in request.full_url:
