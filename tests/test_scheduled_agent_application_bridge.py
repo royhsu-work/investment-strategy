@@ -2853,6 +2853,8 @@ def test_application_apply_job_uses_bounded_pending_queue() -> None:
     assert "group: scheduled-agent-effect-apply-${{ github.repository }}" in apply_header
     assert "cancel-in-progress: false" in apply_header
     assert "queue: max" in apply_header
+
+
 def test_original_322_recovery_pr_merge_wake_is_exact_and_not_a_generic_effect_request() -> None:
     """One merged maintenance PR may wake the existing application owner, not generic effects."""
     workflow = Path(".github/workflows/scheduled-agent-application.yml").read_text(encoding="utf-8")
