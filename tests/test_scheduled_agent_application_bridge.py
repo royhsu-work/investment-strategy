@@ -2853,3 +2853,30 @@ def test_application_apply_job_uses_bounded_pending_queue() -> None:
     assert "group: scheduled-agent-effect-apply-${{ github.repository }}" in apply_header
     assert "cancel-in-progress: false" in apply_header
     assert "queue: max" in apply_header
+def test_original_322_recovery_pr_merge_wake_is_exact_and_not_a_generic_effect_request() -> None:
+    """One merged maintenance PR may wake the existing application owner, not generic effects."""
+    workflow = Path(".github/workflows/scheduled-agent-application.yml").read_text(encoding="utf-8")
+    assert "  pull_request_target:\n    types: [closed]\n" in workflow
+    assert workflow.count("  apply:\n") == 1
+    assert workflow.count("github.event_name == 'pull_request_target'") == 3
+    assert workflow.count("github.event.pull_request.merged == true") == 2
+    assert workflow.count("github.event.pull_request.base.ref == 'main'") == 2
+    assert workflow.count(
+        "github.event.pull_request.head.repo.full_name == 'royhsu-work/investment-strategy'"
+    ) == 2
+    assert workflow.count(
+        "github.event.pull_request.head.ref == 'agent/issue322-pr-merge-recovery-trigger'"
+    ) == 2
+    normal_effect = workflow.split(
+        "      - name: Freshly authorize and apply repository-owned effects", 1
+    )[1].split(
+        "      - name: Bounded original #322 recovery through existing application owner", 1
+    )[0]
+    assert "github.event_name == 'issue_comment'" in normal_effect
+    assert "pull_request_target" not in normal_effect
+    bounded = workflow.split(
+        "      - name: Bounded original #322 recovery through existing application owner", 1
+    )[1].split("      - name: Upload exact application recovery evidence", 1)[0]
+    assert "github.event.pull_request.merged == true" in bounded
+    assert "--recovery-exit-request-comment-id \"$ORIGINAL_REQUEST\"" in bounded
+    assert 'if [[ "$ORIGINAL_REQUEST" != "6019133874" ]]' in bounded
