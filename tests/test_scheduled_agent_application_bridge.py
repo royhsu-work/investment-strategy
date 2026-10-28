@@ -2907,9 +2907,7 @@ def test_original_322_pr_merge_review_gate_rejects_unreviewed_or_findings_head(
     import textwrap
     from urllib.request import Request
 
-    workflow = Path(".github/workflows/scheduled-agent-application.yml").read_text(
-        encoding="utf-8"
-    )
+    workflow = Path(".github/workflows/scheduled-agent-application.yml").read_text(encoding="utf-8")
     section = workflow.split("      - name: Qualify #388 merged event", 1)[1].split(
         "      - name: Freshly authorize and apply repository-owned effects", 1
     )[0]
