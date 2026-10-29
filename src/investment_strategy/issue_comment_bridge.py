@@ -166,11 +166,11 @@ class RecoveryPreFormalQualification:
 def _recovery_predicate_result(
     predicates: Mapping[str, RecoveryPredicate],
 ) -> RecoveryPreFormalQualification:
-    """Use the fixed I/R/M/V/S/F set; never accept a model verdict."""
+    """Qualify only evidence relevant to the pending formal-result effect."""
 
-    if set(predicates) != {"I", "R", "M", "V", "S", "F"}:
+    if set(predicates) != {"I", "R", "M", "S", "F"}:
         raise ValueError("recovery predicate set is incomplete")
-    ordered = tuple((name, predicates[name]) for name in ("I", "R", "M", "V", "S", "F"))
+    ordered = tuple((name, predicates[name]) for name in ("I", "R", "M", "S", "F"))
     for disposition in ("CONFLICT", "UNKNOWN", "INCOMPLETE", "COMPLETE"):
         if disposition in predicates.values():
             return RecoveryPreFormalQualification(cast(RecoveryPredicate, disposition), ordered)
@@ -901,22 +901,21 @@ def qualify_original_322_pre_formal(
     current_issue: Mapping[str, object],
     current_revision: str,
     read: GitHubReader,
-    review_read: Callable[..., RecoveryReviewAdoption] = read_recovery_openspec_review,
-    log_read: Callable[[str, str, int], str] = _github_job_log,
     expected_request_id: int = _ORIGINAL_322_REQUEST,
     expected_decision_digest: str = _ORIGINAL_322_DECISION_DIGEST,
 ) -> RecoveryPreFormalQualification:
-    """Reconstruct I/R/M/V/S/F without requiring a prior ACTION_RESULT.
+    """Qualify one formal-result-only correction from current GitHub facts.
 
     This is a read-only source gate, not a write authorization by itself.
     GitHubEffectAdapter still owns fresh CAS, deduplication and postconditions
     for each eventual effect. Historical checkpoint/materialization uncertainty
-    does not enter the predicate set of a *new*, formal-result-only operation.
+    and prior semantic-review-to-correction comparisons do not enter the
+    predicate set of a *new*, formal-result-only operation. They remain
+    historical facts; the current implementation review remains a separate
+    successor Action and is not preemptively marked PASS here.
     """
 
-    predicates: dict[str, RecoveryPredicate] = dict.fromkeys(
-        ("I", "R", "M", "V", "S", "F"), "UNKNOWN"
-    )
+    predicates: dict[str, RecoveryPredicate] = dict.fromkeys(("I", "R", "M", "S", "F"), "UNKNOWN")
     if (
         repository != "royhsu-work/investment-strategy"
         or source != WorkerRequest(322, "executor", "implement-change")
@@ -961,12 +960,17 @@ def qualify_original_322_pre_formal(
         predicates["I"] = "COMPLETE"
 
     observation = normalize_github_issue(current_issue)
+    labels = current_issue.get("labels")
+    approval_present = isinstance(labels, list) and any(
+        isinstance(item, Mapping) and item.get("name") == "human:approved" for item in labels
+    )
     if observation is None or not observation.authoritative:
         predicates["R"] = "UNKNOWN"
     elif (
         observation.issue_number != 322
         or observation.change != record.change
         or observation.state != "open"
+        or not approval_present
         or observation.routing
         not in {("executor", "implement-change"), ("reviewer", "review-implementation")}
     ):
@@ -987,7 +991,6 @@ def qualify_original_322_pre_formal(
 
     pr = read(repository, token, "pulls/340")
     head_sha: str | None = None
-    task_blob_sha: str | None = None
     if not isinstance(pr, Mapping):
         predicates["M"] = "UNKNOWN"
     else:
@@ -1068,7 +1071,7 @@ def qualify_original_322_pre_formal(
             task_path = f"openspec/changes/{record.change}/tasks.md"
             task_content = (
                 read(repository, token, f"contents/{task_path}?ref={head_sha}")
-                if predicates["M"] == "UNKNOWN" and carrier_qualified
+                if carrier_qualified
                 else None
             )
             if (
@@ -1089,95 +1092,46 @@ def qualify_original_322_pre_formal(
                     predicates["M"] = "UNKNOWN"
                 else:
                     predicates["M"] = _recovery_task_disposition(tasks)
-                    task_blob_sha = cast(str, task_content["sha"])
-
-    labels = current_issue.get("labels")
-    approval_present = isinstance(labels, list) and any(
-        isinstance(item, Mapping) and item.get("name") == "human:approved" for item in labels
-    )
-    if head_sha is not None:
-        review = review_read(
-            repository,
-            token,
-            head_sha=head_sha,
-            approval_label_present=approval_present,
-            issue_comments=issue_comments,
-            read=read,
-        )
-        predicates["V"] = review.disposition
-        checks = read(repository, token, f"commits/{head_sha}/check-runs?per_page=100")
-        if (
-            not isinstance(checks, Mapping)
-            or not isinstance(checks.get("check_runs"), list)
-            or checks.get("total_count") != len(checks["check_runs"])
-        ):
-            predicates["V"] = _strictest_recovery_status(predicates["V"], "UNKNOWN")
-        else:
-            required = {
-                name: [
-                    item
-                    for item in checks["check_runs"]
-                    if isinstance(item, Mapping)
-                    and item.get("name") == name
-                    and item.get("head_sha") == head_sha
-                ]
-                for name in ("quality", "validate")
-            }
-            # Push and pull_request triggers can legitimately produce two
-            # check-runs of the same name on one exact head. Treat duplicate
-            # check *names* as independent source runs, not a conflicting
-            # semantic identity; each must pass at this head.
-            if any(not items for items in required.values()):
-                predicates["V"] = _strictest_recovery_status(predicates["V"], "UNKNOWN")
-            elif any(
-                item.get("conclusion") != "success" for items in required.values() for item in items
-            ):
-                predicates["V"] = _strictest_recovery_status(predicates["V"], "INCOMPLETE")
-            else:
-                for validation_run in required["validate"]:
-                    validation_details = validation_run.get("details_url")
-                    match = (
-                        None
-                        if not isinstance(validation_details, str)
-                        else re.fullmatch(
-                            rf"https://github\.com/{re.escape(repository)}/actions/runs/\d+/job/(\d+)",
-                            validation_details,
+                    if predicates["M"] == "COMPLETE":
+                        # Current PR-head content is relevant to READY. The
+                        # historical reviewed-R -> H diff is not: this new
+                        # operation writes only a formal result and routing.
+                        head_commit = read(repository, token, f"git/commits/{head_sha}")
+                        head_tree = (
+                            head_commit.get("tree") if isinstance(head_commit, Mapping) else None
                         )
-                    )
-                    if match is None or _positive_int_string(match[1]) is None:
-                        predicates["V"] = _strictest_recovery_status(predicates["V"], "UNKNOWN")
-                        continue
-                    job_id = int(match[1])
-                    job = read(repository, token, f"actions/jobs/{job_id}")
-                    if not isinstance(job, Mapping) or job.get("id") != job_id:
-                        predicates["V"] = _strictest_recovery_status(predicates["V"], "UNKNOWN")
-                    elif job.get("conclusion") != "success" or job.get("name") != "validate":
-                        predicates["V"] = _strictest_recovery_status(predicates["V"], "CONFLICT")
-                    else:
-                        try:
-                            validation_log = log_read(repository, token, job_id)
-                        except (HTTPError, OSError, RuntimeError, ValueError, UnicodeError):
-                            predicates["V"] = _strictest_recovery_status(predicates["V"], "UNKNOWN")
+                        tree_sha = head_tree.get("sha") if isinstance(head_tree, Mapping) else None
+                        if not isinstance(tree_sha, str) or _SHA.fullmatch(tree_sha) is None:
+                            predicates["M"] = "UNKNOWN"
                         else:
-                            if not _recovery_review_log_proves_checkout(
-                                validation_log, repository, head_sha
+                            listing = read(repository, token, f"git/trees/{tree_sha}?recursive=1")
+                            if (
+                                not isinstance(listing, Mapping)
+                                or listing.get("truncated") is not False
+                                or not isinstance(listing.get("tree"), list)
                             ):
-                                predicates["V"] = _strictest_recovery_status(
-                                    predicates["V"], "CONFLICT"
-                                )
-
-        if predicates["M"] == "COMPLETE" and task_blob_sha is not None:
-            try:
-                predicates["M"] = _recovery_correction_disposition(
-                    repository,
-                    token,
-                    reviewed_revision=review.revision,
-                    head_sha=head_sha,
-                    task_blob_sha=task_blob_sha,
-                    read=read,
-                )
-            except (HTTPError, OSError, RuntimeError, ValueError, TypeError):
-                predicates["M"] = "UNKNOWN"
+                                predicates["M"] = "UNKNOWN"
+                            else:
+                                blobs: dict[str, str] = {}
+                                for item in listing["tree"]:
+                                    if not isinstance(item, Mapping):
+                                        predicates["M"] = "UNKNOWN"
+                                        break
+                                    path, sha = item.get("path"), item.get("sha")
+                                    if item.get("type") == "blob" and isinstance(path, str):
+                                        if (
+                                            path in blobs
+                                            or not isinstance(sha, str)
+                                            or _SHA.fullmatch(sha) is None
+                                        ):
+                                            predicates["M"] = "CONFLICT"
+                                            break
+                                        blobs[path] = sha
+                                if predicates["M"] == "COMPLETE":
+                                    if blobs.get(task_path) != task_content["sha"]:
+                                        predicates["M"] = "CONFLICT"
+                                    elif not _RECOVERY_NECESSARY_EXECUTABLE_FILES.issubset(blobs):
+                                        predicates["M"] = "INCOMPLETE"
 
     # The original two-effect envelope is never replayed by this entry. Its
     # unobserved historical checkpoint does not classify a proposed new
@@ -1233,8 +1187,6 @@ def apply_original_322_recovery_exit(
     current_revision: str,
     read: GitHubReader | None = None,
     effect_apply: Callable[..., tuple[object, ApplyResult]] = run_guarded_effect_application,
-    review_read: Callable[..., RecoveryReviewAdoption] = read_recovery_openspec_review,
-    log_read: Callable[[str, str, int], str] = _github_job_log,
 ) -> ApplicationCompletion:
     """One existing application-owned correction, never a second semantic Action.
 
@@ -1288,8 +1240,6 @@ def apply_original_322_recovery_exit(
             current_issue=issue,
             current_revision=current_revision,
             read=source_read,
-            review_read=review_read,
-            log_read=log_read,
         )
     except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return ApplicationCompletion(
@@ -1411,8 +1361,6 @@ def apply_original_322_recovery_exit(
             current_issue=final_issue,
             current_revision=current_revision,
             read=source_read,
-            review_read=review_read,
-            log_read=log_read,
         )
     except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return ApplicationCompletion("INVALID", "recovery-exit-postcondition-unavailable")
