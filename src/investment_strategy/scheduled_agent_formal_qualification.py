@@ -532,6 +532,14 @@ def _interval_binds_successor(
         )
     if successor is None:
         return False
+    # Only action labels change workflow routing.  Human approval and other
+    # unrelated labels must not invalidate an independently bound successor.
+    relevant = tuple(
+        item
+        for item in relevant
+        if item.event not in {"labeled", "unlabeled"}
+        or (item.label is not None and item.label.startswith(_ACTION_LABEL_PREFIX))
+    )
     expected_label = f"{_ACTION_LABEL_PREFIX}{successor[1]}"
     label_indexes = tuple(index for index, item in enumerate(relevant) if item.event == "labeled")
     if not label_indexes or any(relevant[index].label != expected_label for index in label_indexes):
@@ -540,13 +548,20 @@ def _interval_binds_successor(
     if any(item.event != "unlabeled" for item in relevant[:first_label_index]):
         return False
 
-    # Once a formal result has bound its derived successor, an exact
-    # administrative close+unroute followed by reopen+restore of that same
-    # route is idempotent lifecycle restoration, not semantic ABA replay.
-    # Any different route, partial restoration, or extra lifecycle mutation
-    # remains unqualified.
+    # An administrative close/reopen that keeps the same action label is also
+    # inert: the closed Issue was ineligible, and the current route is still
+    # the originally bound successor.  A close+unroute/reopen+restore cycle
+    # remains supported.  Any different action, partial cycle, or extra route
+    # mutation remains unqualified; no semantic replay is authorized.
     cursor = first_label_index + 1
     while cursor < len(relevant):
+        if (
+            cursor + 1 < len(relevant)
+            and relevant[cursor].event == "closed"
+            and relevant[cursor + 1].event == "reopened"
+        ):
+            cursor += 2
+            continue
         cycle = relevant[cursor : cursor + 4]
         if len(cycle) != 4:
             return False
