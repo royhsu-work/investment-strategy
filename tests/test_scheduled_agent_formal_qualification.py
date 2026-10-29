@@ -585,6 +585,68 @@ def test_pending_formal_ignores_unrelated_human_label_without_relaxing_action_gu
     assert decide(malformed).provenance is ObservationProvenance.INDETERMINATE
 
 
+def test_pending_forward_result_ignores_closed_reopened_history_with_stable_action() -> None:
+    """A later accepted result may advance across unrelated admin-only history."""
+    reviewed = _comment(
+        10,
+        action="review-implementation",
+        role="reviewer",
+        result="findings",
+        successor="Executor / implement-change",
+        request_id=41,
+    )
+    ready = _comment(
+        20,
+        action="implement-change",
+        role="executor",
+        result="ready",
+        successor="Reviewer / review-implementation",
+        request_id=55,
+    )
+    lifecycle = _lifecycle_events([reviewed, ready], pending=True)
+    lifecycle[-1]["created_at"] = "2026-09-12T00:00:09Z"
+    lifecycle.extend(
+        [
+            {
+                "id": 100,
+                "event": "labeled",
+                "created_at": "2026-09-12T00:00:03Z",
+                "label": {"name": "human:approved"},
+            },
+            {"id": 101, "event": "closed", "created_at": "2026-09-12T00:00:04Z"},
+            {"id": 102, "event": "reopened", "created_at": "2026-09-12T00:00:04Z"},
+            {"id": 103, "event": "closed", "created_at": "2026-09-12T00:00:06Z"},
+            {"id": 104, "event": "reopened", "created_at": "2026-09-12T00:00:07Z"},
+        ]
+    )
+    correlation = f"application:55:229:{_CHANGE}:executor:implement-change:ready:{_REVISION}"
+
+    def decide(events: list[dict[str, object]]) -> QualificationDecision:
+        return _decision(
+            [reviewed, ready],
+            current_routing=("executor", "implement-change"),
+            mode="pending",
+            expected_routing=("reviewer", "review-implementation"),
+            source_routing=("executor", "implement-change"),
+            expected_result_kind="ready",
+            expected_application_correlation=correlation,
+            lifecycle_events=events,
+        )
+
+    assert decide(lifecycle).provenance is ObservationProvenance.QUALIFIED
+    # An actual routing change between close and reopen is not inert history.
+    unsafe = [
+        *lifecycle,
+        {
+            "id": 105,
+            "event": "labeled",
+            "created_at": "2026-09-12T00:00:08Z",
+            "label": {"name": "action:resolve-question"},
+        },
+    ]
+    assert decide(unsafe).provenance is ObservationProvenance.INDETERMINATE
+
+
 def test_pending_historical_result_requires_explicit_descendant_binding() -> None:
     historical_revision = "b" * 40
     comment = _comment(
