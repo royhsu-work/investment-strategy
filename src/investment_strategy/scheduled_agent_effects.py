@@ -560,10 +560,11 @@ def _implementation_checkpoint_effects_complete(
     ):
         return True
     if original_322_recovery:
-        # The sole Human-reviewed #322 pre-formal exit has already proved
-        # I/R/M/V/S/F at the caller. Only a new formal comment (or no effect
-        # when reconciling that exact comment) is allowed. The historical
-        # materialization/checkpoint cannot be replayed through this waiver.
+        # The #322 caller has qualified the accepted authority, current
+        # consequence and effect-relevant I/R/M/S/F pre-formal predicates.
+        # Only a new formal comment (or no effect when reconciling that exact
+        # comment) is allowed. Historical review/checkpoint/materialization
+        # effects cannot be replayed through this waiver.
         return bool(
             accepted_intent
             and batch.source.issue_number == 322

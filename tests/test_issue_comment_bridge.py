@@ -5326,12 +5326,6 @@ def test_original_ready_preformal_entry_has_no_result_cycle(
         current_issue=issue,
         current_revision=merge_sha if carrier_merged else _RECOVERY_BASE,
         read=read,
-        review_read=lambda *_args, **_kwargs: bridge.RecoveryReviewAdoption(
-            "COMPLETE", "recovery-review-adopted", _RECOVERY_REVIEW_ID, _RECOVERY_R
-        ),
-        log_read=lambda *_args: cast(str, _recovery_review_sources()["validator_log"]).replace(
-            _RECOVERY_R, head
-        ),
         expected_decision_digest=hashlib.sha256(cast(str, decision["body"]).encode()).hexdigest(),
     )
     target_disposition = (
@@ -5339,8 +5333,6 @@ def test_original_ready_preformal_entry_has_no_result_cycle(
         if target_state == "conflict"
         else "UNKNOWN"
         if target_state == "unreadable"
-        else "INCOMPLETE"
-        if target_state == "missing-effect"
         else expected
     )
     assert result.disposition == ("CONFLICT" if duplicate_formal else target_disposition), (
@@ -5351,7 +5343,7 @@ def test_original_ready_preformal_entry_has_no_result_cycle(
     assert result.blocking_predicates == tuple(
         name
         for name in ("M", "F")
-        if (name == "M" and (unfinished or target_state != "ok"))
+        if (name == "M" and (unfinished or target_state in {"unreadable", "conflict"}))
         or (name == "F" and duplicate_formal)
     )
 
@@ -5453,7 +5445,17 @@ def test_original_322_exit_materializes_once_then_reconciles_without_replay(
 
 @pytest.mark.parametrize(
     "scenario",
-    ["normal", "merged", "lost-response", "disjoint", "conflict", "incomplete", "unknown"],
+    [
+        "normal",
+        "merged",
+        "lost-response",
+        "disjoint",
+        "conflict",
+        "incomplete",
+        "unknown",
+        "no-current-approval",
+        "missing-current-file",
+    ],
 )
 def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
     monkeypatch: pytest.MonkeyPatch,
@@ -5508,6 +5510,8 @@ def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
         "body": "Change: restore-no-work-idle-discovery",
         "labels": [{"name": "action:implement-change"}, {"name": "human:approved"}],
     }
+    if scenario == "no-current-approval":
+        issue["labels"] = [{"name": "action:implement-change"}]
     comments: list[dict[str, object]] = [
         decision,
         *cast(list[dict[str, object]], evidence["issue_comments"]),
@@ -5669,6 +5673,8 @@ def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
                     *[
                         {"type": "blob", "path": name, "sha": sha}
                         for name, sha in correction_files.items()
+                        if scenario != "missing-current-file"
+                        or name != "src/investment_strategy/scheduled_agent_effects.py"
                     ],
                     {"type": "blob", "path": "README.md", "sha": "6" * 40},
                 ],
@@ -5781,7 +5787,6 @@ def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
             REVISION,
             current_revision=merge_sha if scenario == "merged" else _RECOVERY_BASE,
             read=github_io,
-            log_read=checkout_log,
             effect_apply=bridge.run_guarded_effect_application,
         )
 
@@ -5805,26 +5810,27 @@ def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
         current_issue=issue,
         current_revision=merge_sha if scenario == "merged" else _RECOVERY_BASE,
         read=github_io,
-        log_read=checkout_log,
     )
-    expected_pre = (
+    # The deliberately conflicting, incomplete or unavailable historical
+    # review-to-correction compare is irrelevant to this fresh formal effect.
+    # A qualified current carrier and task frontier remain mandatory.
+    assert pre.disposition == (
         "CONFLICT"
-        if scenario == "conflict"
+        if scenario == "no-current-approval"
         else "INCOMPLETE"
-        if scenario == "incomplete"
-        else "UNKNOWN"
-        if scenario == "unknown"
+        if scenario == "missing-current-file"
         else "COMPLETE"
-    )
-    assert pre.disposition == expected_pre, pre.predicates
+    ), pre.predicates
+    assert "V" not in dict(pre.predicates)
     first = invoke()
     assert first.state == (
-        "COMPLETE" if scenario in {"normal", "merged", "disjoint"} else "INVALID"
+        "INVALID"
+        if scenario in {"lost-response", "no-current-approval", "missing-current-file"}
+        else "COMPLETE"
     ), first
-    if scenario in {"conflict", "incomplete", "unknown"}:
+    if scenario in {"no-current-approval", "missing-current-file"}:
         assert comment_posts == 0
         assert route_patches == 0
-        assert len(comments) == 2  # no formal result was fabricated
         return
     assert comment_posts == 1
     assert route_patches == (0 if scenario == "lost-response" else 1)

@@ -64,6 +64,14 @@ The old diagnostic identified a contract conflict, not proof that the historical
 - [x] 0.43 **GREEN:** implement pre-formal I/R/M/V/S/F predicates at the existing application/consequence owners and bounded exact-R Human-authorized recovery-review evidence adoption. Reuse current canonical Human comment/event provenance for same-login Reviewer separation; never infer independence from a shared connector login or from the author/review receipt prose. No new Action, routing, registry or result type. Persist the immutable accepted `READY` formal result at most once only after pre-write COMPLETE; fresh-read and project only `review-implementation` with `next_action`. Reconcile lost responses read-only; preserve old UNKNOWN, no old effect replay, and fresh P/D, W/T, CAS and per-effect isolation for distinct corrections.
 - [x] 0.44 **REFACTOR/VERIFY:** run focused/full boundary tests, type/lint/static checks and exact-head validation; prove precise operation-specific blockers, duplicate formal-result and checkpoint NO_WRITE negatives, legal disjoint descendant SHA advance and preservation of prior witness, and one unambiguous consumer for result/route. Record evidence without claiming post-merge production acceptance.
 
+## 0H. 2026-10-29 evidence-relevance correction (material contract review required)
+
+The Human clarified that only evidence causally required by **this** formal-result-only effect may gate it. The former 0G I/R/M/V/S/F table and historical review-adoption verification remain historical implementation/audit work; they are not proof that unrelated V sources are necessary again when applying the already-accepted READY. Preserve all independently required review/validation gates for **new** semantic/code mutations, original accepted identity, fresh-current CAS, no-replay and actual postconditions.
+
+- [x] 0.45 **RED:** demonstrate that a historical review-to-head compare source can be unavailable while current accepted identity, approved Issue, PR carrier, implementation tree and formal-result dedup are qualified; original logic returns `UNKNOWN-M,V` rather than a lawful formal effect.
+- [x] 0.46 **GREEN:** qualify the new formal-only result using I/R/M/S/F and current PR/head/tree/task evidence, without a second historic V dependency; keep negative cases for missing current Human approval/current executable file, wrong PR/merge ancestry, duplicate result, and ambiguous response. Do not change ordinary checkpoint/review/merge owners.
+- [x] 0.47 **VERIFY:** re-run focused and complete pytest/Ruff/format/Mypy and strict OpenSpec validation on the final candidate. Required independent exact-revision OpenSpec Review, PR merge, real Production Recovery Exit, two normal Action/Commit wakes and native NO_WORK remain separate downstream lifecycle gates; these task checkboxes cannot certify them.
+
 
 ## 1. Contract and typed NO_WORK handoff
 
