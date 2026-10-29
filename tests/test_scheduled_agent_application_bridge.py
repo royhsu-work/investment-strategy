@@ -2462,8 +2462,8 @@ def test_original_322_recovery_comment_is_bounded_to_the_existing_application_ow
     )[1].split("      - name: Upload exact application recovery evidence", 1)[0]
     assert "inputs.recovery_exit_request_comment_id != ''" in recovery_step
     assert (
-        "github.event_name == 'issue_comment' && '6019133874'"
-        " || inputs.recovery_exit_request_comment_id"
+        "(github.event_name == 'pull_request_target' || github.event_name == 'issue_comment')"
+        " && '6019133874' || inputs.recovery_exit_request_comment_id"
     ) in recovery_step
     assert '--recovery-exit-request-comment-id "$ORIGINAL_REQUEST"' in recovery_step
     assert 'if [[ "$ORIGINAL_REQUEST" != "6019133874" ]]' in recovery_step
@@ -2853,3 +2853,114 @@ def test_application_apply_job_uses_bounded_pending_queue() -> None:
     assert "group: scheduled-agent-effect-apply-${{ github.repository }}" in apply_header
     assert "cancel-in-progress: false" in apply_header
     assert "queue: max" in apply_header
+
+
+def test_original_322_recovery_pr_merge_wake_is_exact_and_not_a_generic_effect_request() -> None:
+    """One merged maintenance PR may wake the existing application owner, not generic effects."""
+    workflow = Path(".github/workflows/scheduled-agent-application.yml").read_text(encoding="utf-8")
+    assert "  pull_request_target:\n    types: [closed]\n" in workflow
+    assert workflow.count("  apply:\n") == 1
+    assert workflow.count("github.event_name == 'pull_request_target'") == 4
+    assert workflow.count("github.event.pull_request.merged == true") == 3
+    assert workflow.count("github.event.pull_request.base.ref == 'main'") == 2
+    assert workflow.count("github.event.pull_request.number == 388") == 3
+    assert "steps.reviewed_merge.outputs.head == github.event.pull_request.head.sha" in workflow
+    assert (
+        workflow.count(
+            "github.event.pull_request.head.repo.full_name == 'royhsu-work/investment-strategy'"
+        )
+        == 2
+    )
+    assert (
+        workflow.count(
+            "github.event.pull_request.head.ref == 'agent/issue322-pr-merge-recovery-trigger'"
+        )
+        == 2
+    )
+    normal_effect = workflow.split(
+        "      - name: Freshly authorize and apply repository-owned effects", 1
+    )[1].split(
+        "      - name: Bounded original #322 recovery through existing application owner", 1
+    )[0]
+    assert "github.event_name == 'issue_comment'" in normal_effect
+    assert "pull_request_target" not in normal_effect
+    bounded = workflow.split(
+        "      - name: Bounded original #322 recovery through existing application owner", 1
+    )[1].split("      - name: Upload exact application recovery evidence", 1)[0]
+    assert "github.event.pull_request.merged == true" in bounded
+    assert '--recovery-exit-request-comment-id "$ORIGINAL_REQUEST"' in bounded
+    assert 'if [[ "$ORIGINAL_REQUEST" != "6019133874" ]]' in bounded
+
+
+@pytest.mark.parametrize(
+    ("review_matches_head", "latest_is_pass"),
+    [(True, True), (False, True), (True, False)],
+)
+def test_original_322_pr_merge_review_gate_rejects_unreviewed_or_findings_head(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    review_matches_head: bool,
+    latest_is_pass: bool,
+) -> None:
+    """The actual GitHub-event gate checks a fresh review's immutable commit_id."""
+    import io
+    import textwrap
+    from urllib.request import Request
+
+    workflow = Path(".github/workflows/scheduled-agent-application.yml").read_text(encoding="utf-8")
+    section = workflow.split("      - name: Qualify #388 merged event", 1)[1].split(
+        "      - name: Freshly authorize and apply repository-owned effects", 1
+    )[0]
+    script = textwrap.dedent(
+        section.split("          python - <<'PY'\n", 1)[1].split("\n          PY", 1)[0]
+    )
+    head = "e" * 40
+    reviewed = head if review_matches_head else "f" * 40
+    body = (
+        "Independent technical review: PASS (scoped transport change)\n"
+        if latest_is_pass
+        else "Independent technical review — FINDINGS (P1)\n"
+    ) + f"Revision: {reviewed}\n"
+    pr = {
+        "state": "closed",
+        "merged": True,
+        "base": {"ref": "main"},
+        "head": {
+            "sha": head,
+            "repo": {"full_name": _REPOSITORY},
+            "ref": "agent/issue322-pr-merge-recovery-trigger",
+        },
+    }
+    reviews = [
+        {
+            "id": 10,
+            "submitted_at": "2026-10-28T15:00:00Z",
+            "state": "COMMENTED",
+            "commit_id": reviewed,
+            "user": {"login": "royhsu-work"},
+            "body": body,
+        }
+    ]
+
+    def stub_urlopen(request: Request, timeout: int = 20) -> io.BytesIO:
+        payload: object
+        if request.full_url.endswith("/pulls/388"):
+            payload = pr
+        elif "/pulls/388/reviews?" in request.full_url:
+            payload = reviews
+        else:
+            raise AssertionError("unexpected GitHub read")
+        return io.BytesIO(json.dumps(payload).encode("utf-8"))
+
+    monkeypatch.setattr("urllib.request.urlopen", stub_urlopen)
+    monkeypatch.setenv("EXPECTED_HEAD", head)
+    monkeypatch.setenv("GITHUB_TOKEN", "test-only-token")
+    output = tmp_path / "reviewed-head"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    if review_matches_head and latest_is_pass:
+        exec(compile(script, "<recovery-review-gate>", "exec"), {})  # noqa: S102 - trusted checked-in workflow source
+        assert output.read_text(encoding="utf-8") == f"head={head}\n"
+    else:
+        with pytest.raises(SystemExit, match="review"):
+            exec(compile(script, "<recovery-review-gate>", "exec"), {})  # noqa: S102 - trusted checked-in workflow source
+        assert not output.exists()

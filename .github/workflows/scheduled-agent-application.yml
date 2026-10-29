@@ -5,6 +5,8 @@ run-name: Scheduled Agent Application ${{ github.event.comment.id || inputs.idle
 on:
   issue_comment:
     types: [created]
+  pull_request_target:
+    types: [closed]
   workflow_dispatch:
     inputs:
       idle_request_b64:
@@ -85,6 +87,12 @@ jobs:
       (github.event.issue.number == 322 &&
       github.event.comment.body == 'RECOVERY_EXIT_REQUEST 6019133874' &&
       github.event.comment.user.login == 'royhsu-work'))) ||
+      (github.event_name == 'pull_request_target' &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == 'royhsu-work/investment-strategy' &&
+      github.event.pull_request.head.ref == 'agent/issue322-pr-merge-recovery-trigger' &&
+      github.event.pull_request.number == 388) ||
       (github.event_name == 'workflow_dispatch' &&
       inputs.recovery_exit_request_comment_id != '')
     concurrency:
@@ -118,6 +126,77 @@ jobs:
         id: revision
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Qualify #388 merged event against fresh exact-head review
+        id: reviewed_merge
+        if: >-
+          github.event_name == 'pull_request_target' &&
+          github.event.pull_request.number == 388 &&
+          github.event.pull_request.merged == true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from urllib.request import Request, urlopen
+
+          repository = 'royhsu-work/investment-strategy'
+          head = os.environ['EXPECTED_HEAD']
+          if len(head) != 40 or any(c not in '0123456789abcdef' for c in head):
+              raise SystemExit('invalid merged PR head')
+
+          def fetch(path):
+              request = Request(
+                  f'https://api.github.com/repos/{repository}/{path}',
+                  headers={
+                      'Authorization': f"Bearer {os.environ['GITHUB_TOKEN']}",
+                      'Accept': 'application/vnd.github+json',
+                  },
+              )
+              with urlopen(request, timeout=20) as response:
+                  return json.load(response)
+
+          pr = fetch('pulls/388')
+          if not (
+              pr.get('state') == 'closed' and pr.get('merged') is True
+              and pr['base']['ref'] == 'main'
+              and pr['head']['repo']['full_name'] == repository
+              and pr['head']['ref'] == 'agent/issue322-pr-merge-recovery-trigger'
+              and pr['head']['sha'] == head
+          ):
+              raise SystemExit('merged PR identity/head not fresh-qualified')
+
+          reviews = []
+          for page in range(1, 11):
+              batch = fetch(f'pulls/388/reviews?per_page=100&page={page}')
+              if not isinstance(batch, list):
+                  raise SystemExit('review enumeration invalid')
+              reviews.extend(batch)
+              if len(batch) < 100:
+                  break
+          else:
+              raise SystemExit('review enumeration incomplete')
+          exact = [review for review in reviews if review.get('commit_id') == head]
+          if not exact:
+              raise SystemExit('no review on merged exact head')
+          latest = max(exact, key=lambda item: (item.get('submitted_at') or '', item['id']))
+          body = latest.get('body') or ''
+          first_line = body.splitlines()[0] if body else ''
+          if not (
+              latest.get('state') in {'COMMENTED', 'APPROVED'}
+              and latest.get('user', {}).get('login') == 'royhsu-work'
+              and first_line.startswith((
+                  'Independent technical review: PASS',
+                  'Independent technical review — PASS',
+              ))
+              and f'Revision: {head}' in body.splitlines()
+          ):
+              raise SystemExit('latest exact-head independent review is not PASS')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write(f'head={head}\n')
+          PY
       - name: Freshly authorize and apply repository-owned effects
         id: apply
         if: >-
@@ -142,11 +221,18 @@ jobs:
           (github.event_name == 'issue_comment' &&
           github.event.issue.number == 322 &&
           github.event.comment.body == 'RECOVERY_EXIT_REQUEST 6019133874' &&
-          github.event.comment.user.login == 'royhsu-work')
+          github.event.comment.user.login == 'royhsu-work') ||
+          (github.event_name == 'pull_request_target' &&
+          github.event.pull_request.merged == true &&
+          github.event.pull_request.base.ref == 'main' &&
+          github.event.pull_request.head.repo.full_name == 'royhsu-work/investment-strategy' &&
+          github.event.pull_request.head.ref == 'agent/issue322-pr-merge-recovery-trigger' &&
+          github.event.pull_request.number == 388 &&
+          steps.reviewed_merge.outputs.head == github.event.pull_request.head.sha)
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          ORIGINAL_REQUEST: ${{ github.event_name == 'issue_comment' && '6019133874' || inputs.recovery_exit_request_comment_id }}
+          ORIGINAL_REQUEST: ${{ (github.event_name == 'pull_request_target' || github.event_name == 'issue_comment') && '6019133874' || inputs.recovery_exit_request_comment_id }}
           PYTHONPATH: ${{ github.workspace }}/src
         shell: bash
         run: |
