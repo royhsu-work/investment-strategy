@@ -239,7 +239,9 @@ def test_merge_consequence_selects_only_the_exact_review_pass_head(
     head = "3" * 40
     calls: list[int] = []
     monkeypatch.setattr(
-        bridge, "current_reviewed_implementation_head", lambda *_args, **_kwargs: head
+        bridge,
+        "current_reviewed_implementation_head",
+        lambda *_args, **_kwargs: SimpleNamespace(head_sha=head, merged_sha=None),
     )
     monkeypatch.setattr(
         bridge,
