@@ -37,6 +37,7 @@ from investment_strategy.scheduled_agent_action_model import (
     ObservationProvenance as ModelObservationProvenance,
 )
 from investment_strategy.scheduled_agent_application_carrier import (
+    current_reviewed_implementation_head,
     qualify_implementation_carrier,
 )
 from investment_strategy.scheduled_agent_application_materialization import (
@@ -3589,17 +3590,41 @@ def merged_pr_readiness_complete(
     )
     if not _valid_branch(default_branch):
         return False
-    owner = repository.split("/", 1)[0] if "/" in repository else ""
-    candidates = _github_json(
-        repository,
-        token,
-        "pulls?state=all&head="
-        + quote(f"{owner}:{branch}", safe="")
-        + "&base="
-        + quote(cast(str, default_branch), safe="")
-        + "&per_page=100",
-    )
-    if not isinstance(candidates, list) or len(candidates) != 1:
+    reviewed = None
+    if merge_action == "merge-implementation-pr":
+        reviewed = current_reviewed_implementation_head(
+            repository,
+            token,
+            source=WorkerRequest(issue_number, "executor", "merge-implementation-pr"),
+            change=change,
+            current_revision=current_revision,
+            read=_github_json,
+        )
+        if reviewed is None:
+            return False
+        candidates = tuple(
+            item
+            for item in _paged_github_list(
+                repository,
+                token,
+                "pulls?state=all&base=" + quote(cast(str, default_branch), safe=""),
+            )
+            if isinstance(item.get("head"), Mapping)
+            and cast(Mapping[str, object], item["head"]).get("sha") == reviewed.head_sha
+        )
+    else:
+        owner = repository.split("/", 1)[0] if "/" in repository else ""
+        raw_candidates = _github_json(
+            repository,
+            token,
+            "pulls?state=all&head="
+            + quote(f"{owner}:{branch}", safe="")
+            + "&base="
+            + quote(cast(str, default_branch), safe="")
+            + "&per_page=100",
+        )
+        candidates = tuple(raw_candidates) if isinstance(raw_candidates, list) else ()
+    if len(candidates) != 1:
         return False
     summary = candidates[0]
     number = summary.get("number") if isinstance(summary, Mapping) else None
@@ -3607,6 +3632,12 @@ def merged_pr_readiness_complete(
         return False
     pull_request = _github_json(repository, token, f"pulls/{number}")
     if not isinstance(pull_request, Mapping):
+        return False
+    if (
+        reviewed is not None
+        and reviewed.merged_sha is not None
+        and pull_request.get("merge_commit_sha") != reviewed.merged_sha
+    ):
         return False
     head = pull_request.get("head")
     base = pull_request.get("base")
@@ -3616,7 +3647,7 @@ def merged_pr_readiness_complete(
         pull_request.get("number") != number
         or not isinstance(head, Mapping)
         or not isinstance(base, Mapping)
-        or head.get("ref") != branch
+        or (merge_action == "merge-archive-pr" and head.get("ref") != branch)
         or base.get("ref") != default_branch
         or not isinstance(head_repo, Mapping)
         or not isinstance(base_repo, Mapping)

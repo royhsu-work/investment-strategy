@@ -20,7 +20,9 @@ from urllib.request import Request, urlopen
 
 from investment_strategy.scheduled_agent_action_model import next_action, role_for
 from investment_strategy.scheduled_agent_application_carrier import (
+    _historical_carriers,
     canonical_implementation_branch,
+    current_reviewed_implementation_head,
     qualify_implementation_carrier,
 )
 from investment_strategy.scheduled_agent_application_materialization import (
@@ -1327,10 +1329,40 @@ def _machine_carrier_head(
     default_branch: str,
     current_revision: str,
 ) -> str:
-    """Resolve one exact open carrier when semantic ingress omitted a header."""
+    """Resolve the current implementation carrier using its governed lineage.
+
+    Review follows the exact accepted READY occurrence, including when its
+    implementation PR was merged before the delayed formal consequence.
+    """
 
     if canonical_implementation_branch(change) is None:
         return current_revision
+    review_predecessor = (
+        _review_predecessor_carrier(repository, token, source, change, current_revision)
+        if source.action == "review-implementation"
+        else None
+    )
+    if review_predecessor is not None and review_predecessor[0] is not None:
+        # An accepted materialization carries its own immutable PR identity.
+        # A later maintenance PR or unrelated newer Change carrier cannot
+        # silently replace the reviewed work product, even if its HEAD SHA
+        # was mistakenly copied into a delayed formal READY projection.
+        accepted_number = review_predecessor[0]
+        qualification = qualify_implementation_carrier(
+            repository=repository,
+            token=token,
+            source=source,
+            change=change,
+            pr_number=accepted_number,
+            current_revision=current_revision,
+        )
+        if (
+            qualification.disposition in {"QUALIFIED", "HISTORICAL_MERGED"}
+            and qualification.default_branch == default_branch
+            and isinstance(qualification.head_sha, str)
+        ):
+            return qualification.head_sha
+        raise RuntimeError("application accepted implementation carrier is not qualified")
     candidates = _paged_github_list(
         repository,
         token,
@@ -1355,12 +1387,172 @@ def _machine_carrier_head(
             or not isinstance(qualification.head_sha, str)
         ):
             continue
-        heads.append(qualification.head_sha)
+        if review_predecessor is None or qualification.head_sha == review_predecessor[1]:
+            heads.append(qualification.head_sha)
     if len(heads) > 1:
         raise RuntimeError("application carrier head is ambiguous")
-    if not heads:
-        raise RuntimeError("application implementation carrier is not freshly recognized")
-    return heads[0]
+    if heads:
+        return heads[0]
+
+    # The same qualification owner already admits immutable merged carriers
+    # for exact-head review.  An open-only discovery query must not make that
+    # legal review state unreachable after a default-branch merge.  This is
+    # review-only: a new implementation must never reuse an old merged head.
+    if source.action == "review-implementation":
+        history = _historical_carriers(
+            repository,
+            token,
+            issue_number=source.issue_number,
+            change=change,
+            default_branch=default_branch,
+            default_revision=current_revision,
+            read=_github_json,
+        )
+        if history:
+            number, _ = history[-1]
+            qualification = qualify_implementation_carrier(
+                repository=repository,
+                token=token,
+                source=source,
+                change=change,
+                pr_number=number,
+                current_revision=current_revision,
+            )
+            if (
+                qualification.disposition == "HISTORICAL_MERGED"
+                and qualification.default_branch == default_branch
+                and isinstance(qualification.head_sha, str)
+                and review_predecessor is not None
+                and qualification.head_sha == review_predecessor[1]
+            ):
+                return qualification.head_sha
+    raise RuntimeError("application implementation carrier is not freshly recognized")
+
+
+def _review_predecessor_carrier(
+    repository: str,
+    token: str,
+    source: WorkerRequest,
+    change: str,
+    current_revision: str,
+) -> tuple[int | None, str]:
+    """Bind review to its immediately preceding accepted READY work product.
+
+    A formal result is a state transition, not a new implementation event.
+    When accepted materialization exists, its immutable PR identity is the
+    stronger work-product evidence; a READY ``Revision`` is only its recorded
+    projection and cannot authorize selecting a maintenance PR.  Without an
+    accepted materialization, exact READY revision remains mandatory.
+    """
+
+    issue = _as_mapping(_github_json(repository, token, f"issues/{source.issue_number}"))
+    observation = None if issue is None else normalize_github_issue(issue)
+    if (
+        observation is None
+        or not observation.authoritative
+        or observation.state != "open"
+        or observation.change != change
+        or observation.routing != ("reviewer", "review-implementation")
+    ):
+        raise RuntimeError("application review predecessor current route is not qualified")
+    comments = _paged_github_list(
+        repository,
+        token,
+        f"issues/{source.issue_number}/comments?sort=created&direction=asc",
+    )
+    events = tuple(
+        event
+        for comment in comments
+        if (event := parse_formal_result(comment, current_revision=current_revision)) is not None
+    )
+    if not events:
+        raise RuntimeError("application review predecessor formal result is absent")
+    latest = None
+    for event in reversed(events):
+        if (
+            not event.valid
+            or event.issue_number != source.issue_number
+            or event.change != change
+            or not isinstance(event.revision, str)
+        ):
+            raise RuntimeError("application review predecessor formal identity is invalid")
+        if (event.role, event.action, event.result_kind) == (
+            "executor",
+            "implement-change",
+            "ready",
+        ):
+            latest = event
+            break
+        if (
+            (event.role, event.action, event.result_kind)
+            != ("reviewer", "review-implementation", "blocked")
+            or event.successor != ("reviewer", "review-implementation")
+            or event.revision != event.default_branch_revision
+        ):
+            raise RuntimeError("application review predecessor chain is not a legal self-loop")
+        if (
+            event.default_branch_revision != current_revision
+            and not _authorization_revision_is_ancestor(
+                repository,
+                token,
+                cast(str, event.default_branch_revision),
+                current_revision,
+            )
+        ):
+            raise RuntimeError("application review predecessor blocked evidence is stale")
+    if latest is None or latest.successor != ("reviewer", "review-implementation"):
+        raise RuntimeError("application review predecessor is not an accepted READY")
+    correlation = latest.application_correlation
+    parts = correlation.split(":") if isinstance(correlation, str) else []
+    if (
+        len(parts) != 8
+        or parts[0] != "application"
+        or not parts[1].isdigit()
+        or parts[2:]
+        != [
+            str(source.issue_number),
+            change,
+            "executor",
+            "implement-change",
+            "ready",
+            latest.default_branch_revision,
+        ]
+    ):
+        raise RuntimeError("application review predecessor correlation is invalid")
+    decisions = _application_decisions_for_request_id(
+        repository=repository,
+        token=token,
+        issue_number=source.issue_number,
+        request_comment_id=int(parts[1]),
+    )
+    if len(decisions) != 1:
+        raise RuntimeError("application review predecessor accepted intent is unavailable")
+    accepted = decisions[0]
+    if (
+        accepted.disposition != "ACCEPTED"
+        or accepted.issue_number != source.issue_number
+        or (accepted.role, accepted.action, accepted.change, accepted.result_kind)
+        != ("executor", "implement-change", change, "ready")
+    ):
+        raise RuntimeError("application review predecessor accepted identity is invalid")
+    ready_source = WorkerRequest(source.issue_number, "executor", "implement-change")
+    materializations = _materialization_effects(
+        accepted.raw_worker_result,
+        ready_source,
+        change=change,
+    )
+    if len(materializations) > 1:
+        raise RuntimeError("application review predecessor materialization is ambiguous")
+    if not materializations:
+        return None, cast(str, latest.revision)
+    materialization = find_materialization_payload(materializations[0], ready_source)
+    if (
+        materialization is None
+        or materialization.change != change
+        or materialization.pr_number is None
+    ):
+        raise RuntimeError("application review predecessor PR identity is incomplete")
+    return materialization.pr_number, cast(str, latest.revision)
 
 
 def _field_values(body: str, key: str) -> tuple[str, ...]:
@@ -1659,10 +1851,29 @@ def _fresh_merge_carrier(
     """Read the one exact merge carrier from current repository state."""
 
     branch = _merge_carrier_branch(source, change)
+    reviewed = None
+    if source.action == "merge-implementation-pr":
+        reviewed = current_reviewed_implementation_head(
+            repository,
+            token,
+            source=source,
+            change=change,
+            current_revision=current_revision,
+            read=_github_json,
+        )
+        if reviewed is None:
+            raise RuntimeError("fresh merge consequence has no qualified review predecessor")
     candidates: tuple[Mapping[str, object], ...]
     if source.action == "merge-implementation-pr" and requested_number is not None:
         detail = _github_json(repository, token, f"pulls/{requested_number}")
-        candidates = (detail,) if isinstance(detail, Mapping) else ()
+        detail_head = detail.get("head") if isinstance(detail, Mapping) else None
+        candidates = (
+            (cast(Mapping[str, object], detail),)
+            if isinstance(detail_head, Mapping)
+            and reviewed is not None
+            and detail_head.get("sha") == reviewed.head_sha
+            else ()
+        )
     elif source.action == "merge-implementation-pr":
         # Continuation carriers use a deterministic branch derived from the
         # already merged implementation history.  That branch is repository
@@ -1684,6 +1895,13 @@ def _fresh_merge_carrier(
             detail = _github_json(repository, token, f"pulls/{number}")
             if not isinstance(detail, Mapping):
                 raise RuntimeError("fresh implementation merge carrier is incomplete")
+            detail_head = detail.get("head")
+            if (
+                not isinstance(detail_head, Mapping)
+                or reviewed is None
+                or detail_head.get("sha") != reviewed.head_sha
+            ):
+                continue
             decision = qualify_implementation_carrier(
                 repository=repository,
                 token=token,
@@ -1711,6 +1929,12 @@ def _fresh_merge_carrier(
     if len(candidates) != 1:
         raise RuntimeError("fresh merge consequence carrier is missing or ambiguous")
     current = candidates[0]
+    if (
+        reviewed is not None
+        and reviewed.merged_sha is not None
+        and current.get("merge_commit_sha") != reviewed.merged_sha
+    ):
+        raise RuntimeError("fresh MERGED result is not bound to reviewed carrier merge commit")
     number = current.get("number")
     head = current.get("head")
     base = current.get("base")

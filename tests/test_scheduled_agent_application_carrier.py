@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -22,6 +23,169 @@ TEST_VALUE = "opaque-test-value"
 
 def _repo(name: str = REPOSITORY) -> dict[str, object]:
     return {"full_name": name}
+
+
+@pytest.mark.parametrize("result_kind", ["pass", "findings", "absent"])
+def test_merge_target_is_exact_current_review_pass_predecessor(
+    monkeypatch: pytest.MonkeyPatch, result_kind: str
+) -> None:
+    monkeypatch.setattr(
+        carrier,
+        "normalize_github_issue",
+        lambda *_args: SimpleNamespace(
+            authoritative=True,
+            state="open",
+            change=CHANGE,
+            routing=("executor", "merge-implementation-pr"),
+        ),
+    )
+    monkeypatch.setattr(carrier, "_paged_list", lambda *_args, **_kwargs: ({"id": 1},))
+    monkeypatch.setattr(
+        carrier,
+        "parse_formal_result",
+        lambda *_args, **_kwargs: (
+            None
+            if result_kind == "absent"
+            else SimpleNamespace(
+                valid=True,
+                issue_number=229,
+                change=CHANGE,
+                role="reviewer",
+                action="review-implementation",
+                result_kind=result_kind,
+                successor=("executor", "merge-implementation-pr"),
+                revision=HISTORICAL_HEAD,
+                default_branch_revision=MAIN,
+            )
+        ),
+    )
+    head = carrier.current_reviewed_implementation_head(
+        REPOSITORY,
+        TEST_VALUE,
+        source=WorkerRequest(229, "executor", "merge-implementation-pr"),
+        change=CHANGE,
+        current_revision=MAIN,
+        read=lambda *_args: {"number": 229},
+    )
+    assert head == (
+        carrier.ReviewedImplementationConsequence(HISTORICAL_HEAD, None)
+        if result_kind == "pass"
+        else None
+    )
+
+
+@pytest.mark.parametrize("blocked_revision", ["default", "historical-head", "unrelated"])
+def test_merge_blocked_self_loop_keeps_review_pass_head(
+    monkeypatch: pytest.MonkeyPatch, blocked_revision: str
+) -> None:
+    monkeypatch.setattr(
+        carrier,
+        "normalize_github_issue",
+        lambda *_args: SimpleNamespace(
+            authoritative=True,
+            state="open",
+            change=CHANGE,
+            routing=("executor", "merge-implementation-pr"),
+        ),
+    )
+    monkeypatch.setattr(carrier, "_paged_list", lambda *_args, **_kwargs: ({"id": 1}, {"id": 2}))
+    reviewed = SimpleNamespace(
+        valid=True,
+        issue_number=229,
+        change=CHANGE,
+        role="reviewer",
+        action="review-implementation",
+        result_kind="pass",
+        successor=("executor", "merge-implementation-pr"),
+        revision=HISTORICAL_HEAD,
+        default_branch_revision=MAIN,
+    )
+    blocked = SimpleNamespace(
+        valid=True,
+        issue_number=229,
+        change=CHANGE,
+        role="executor",
+        action="merge-implementation-pr",
+        result_kind="blocked",
+        successor=("executor", "merge-implementation-pr"),
+        revision={"default": MAIN, "historical-head": HISTORICAL_HEAD, "unrelated": HEAD}[
+            blocked_revision
+        ],
+        default_branch_revision=MAIN,
+    )
+    monkeypatch.setattr(
+        carrier,
+        "parse_formal_result",
+        lambda item, **_kwargs: reviewed if item["id"] == 1 else blocked,
+    )
+    actual = carrier.current_reviewed_implementation_head(
+        REPOSITORY,
+        TEST_VALUE,
+        source=WorkerRequest(229, "executor", "merge-implementation-pr"),
+        change=CHANGE,
+        current_revision=MAIN,
+        read=lambda *_args: {"number": 229},
+    )
+    assert actual == (
+        carrier.ReviewedImplementationConsequence(HISTORICAL_HEAD, None)
+        if blocked_revision != "unrelated"
+        else None
+    )
+
+
+@pytest.mark.parametrize("successor_routed", [False, True])
+def test_durable_merged_formal_keeps_exact_reviewed_head_across_routing(
+    monkeypatch: pytest.MonkeyPatch, successor_routed: bool
+) -> None:
+    monkeypatch.setattr(
+        carrier,
+        "normalize_github_issue",
+        lambda *_args: SimpleNamespace(
+            authoritative=True,
+            state="open",
+            change=CHANGE,
+            routing=("lead", "finalize-change")
+            if successor_routed
+            else ("executor", "merge-implementation-pr"),
+        ),
+    )
+    monkeypatch.setattr(carrier, "_paged_list", lambda *_args, **_kwargs: ({"id": 1}, {"id": 2}))
+    pass_event = SimpleNamespace(
+        valid=True,
+        issue_number=229,
+        change=CHANGE,
+        role="reviewer",
+        action="review-implementation",
+        result_kind="pass",
+        successor=("executor", "merge-implementation-pr"),
+        revision=HISTORICAL_HEAD,
+        default_branch_revision=MAIN,
+    )
+    merge_event = SimpleNamespace(
+        valid=True,
+        issue_number=229,
+        change=CHANGE,
+        role="executor",
+        action="merge-implementation-pr",
+        result_kind="merged",
+        successor=("lead", "finalize-change"),
+        revision=CONTINUATION_MERGE,
+        default_branch_revision=MAIN,
+    )
+    monkeypatch.setattr(
+        carrier,
+        "parse_formal_result",
+        lambda comment, **_kwargs: pass_event if comment["id"] == 1 else merge_event,
+    )
+    result = carrier.current_reviewed_implementation_head(
+        REPOSITORY,
+        TEST_VALUE,
+        source=WorkerRequest(229, "executor", "merge-implementation-pr"),
+        change=CHANGE,
+        current_revision=MAIN,
+        read=lambda *_args: {"number": 229},
+    )
+    assert result == carrier.ReviewedImplementationConsequence(HISTORICAL_HEAD, CONTINUATION_MERGE)
 
 
 def _pr(

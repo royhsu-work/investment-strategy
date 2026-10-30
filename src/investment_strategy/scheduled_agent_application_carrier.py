@@ -17,7 +17,11 @@ from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
-from investment_strategy.scheduled_agent_runtime import WorkerRequest
+from investment_strategy.scheduled_agent_formal_result import parse_formal_result
+from investment_strategy.scheduled_agent_runtime import (
+    WorkerRequest,
+    normalize_github_issue,
+)
 
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _CHANGE_LINE = re.compile(r"(?m)^Change:\s*([^\s]+)\s*$")
@@ -86,6 +90,14 @@ class ImplementationCarrierQualification:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class ReviewedImplementationConsequence:
+    """Exact review PASS head and optional already-posted MERGED consequence."""
+
+    head_sha: str
+    merged_sha: str | None
+
+
 def canonical_implementation_branch(change: str) -> str | None:
     """Return the strict initial implementation carrier branch."""
 
@@ -107,6 +119,126 @@ def deterministic_continuation_branch(change: str, historical_pr_number: int) ->
     """Derive the one allowed continuation branch from the verified history carrier."""
 
     return f"agent/{change}-continuation-{historical_pr_number}"
+
+
+def current_reviewed_implementation_head(
+    repository: str,
+    token: str,
+    *,
+    source: WorkerRequest,
+    change: str,
+    current_revision: str,
+    read: GitHubReader,
+) -> ReviewedImplementationConsequence | None:
+    """Find the exact reviewed work-product SHA for a pending merge Action.
+
+    A Change may have multiple already-merged continuation PRs.  The current
+    PASS predecessor, not branch order or an arbitrary merged candidate, owns
+    the next merge consequence.  The caller still qualifies the PR and gates.
+    """
+
+    if source.action != "merge-implementation-pr" or not _valid_sha(current_revision):
+        return None
+    issue = _as_mapping(cast(object, read(repository, token, f"issues/{source.issue_number}")))
+    observation = None if issue is None else normalize_github_issue(issue)
+    if (
+        observation is None
+        or not observation.authoritative
+        or observation.state != "open"
+        or observation.change != change
+        or observation.routing
+        not in {("executor", "merge-implementation-pr"), ("lead", "finalize-change")}
+    ):
+        return None
+    comments = _paged_list(
+        repository,
+        token,
+        f"issues/{source.issue_number}/comments?sort=created&direction=asc&",
+        read=read,
+    )
+    events = tuple(
+        event
+        for comment in comments
+        if (event := parse_formal_result(comment, current_revision=current_revision)) is not None
+    )
+    if not events:
+        return None
+    reviewed = None
+    merged_revision = None
+    blocked_revisions: list[tuple[str, str]] = []
+    for offset, event in enumerate(reversed(events)):
+        if (
+            not event.valid
+            or event.issue_number != source.issue_number
+            or event.change != change
+            or not _valid_sha(event.revision)
+        ):
+            return None
+        if (event.role, event.action, event.result_kind) == (
+            "reviewer",
+            "review-implementation",
+            "pass",
+        ):
+            if event.successor != ("executor", "merge-implementation-pr"):
+                return None
+            reviewed = event
+            break
+        if (event.role, event.action, event.result_kind) == (
+            "executor",
+            "merge-implementation-pr",
+            "merged",
+        ):
+            # Formal MERGED precedes the derived route patch and remains the
+            # current postcondition after it.  This is not a second merge.
+            if (
+                offset != 0
+                or merged_revision is not None
+                or event.successor != ("lead", "finalize-change")
+            ):
+                return None
+            merged_revision = event.revision
+            continue
+        # A blocked merge is a legal self-loop, not a new review.  New
+        # semantic intents carry DEFAULT_BRANCH; historical formal envelopes
+        # may carry the exact reviewed PR HEAD.  Neither creates a new PASS.
+        if (event.role, event.action) != (
+            "executor",
+            "merge-implementation-pr",
+        ) or (
+            event.result_kind != "blocked"
+            or event.successor != ("executor", "merge-implementation-pr")
+            or not _valid_sha(event.default_branch_revision)
+        ):
+            return None
+        if event.default_branch_revision != current_revision and not _compare_is_ancestor(
+            repository,
+            token,
+            ancestor=cast(str, event.default_branch_revision),
+            descendant=current_revision,
+            read=read,
+        ):
+            return None
+        blocked_revisions.append(
+            (cast(str, event.revision), cast(str, event.default_branch_revision))
+        )
+    if (
+        reviewed is None
+        or not _valid_sha(reviewed.default_branch_revision)
+        or any(
+            revision not in {reviewed.revision, default} for revision, default in blocked_revisions
+        )
+        or (observation.routing == ("lead", "finalize-change") and merged_revision is None)
+    ):
+        return None
+    if reviewed.default_branch_revision != current_revision and not _compare_is_ancestor(
+        repository,
+        token,
+        ancestor=cast(str, reviewed.default_branch_revision),
+        descendant=current_revision,
+        read=read,
+    ):
+        return None
+    return ReviewedImplementationConsequence(cast(str, reviewed.revision), merged_revision)
 
 
 def _valid_sha(value: object) -> bool:

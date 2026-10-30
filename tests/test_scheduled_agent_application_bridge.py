@@ -8,6 +8,7 @@ import json
 import sys
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -150,6 +151,295 @@ def test_semantic_finalize_result_revision_uses_default_branch_without_carrier(
         )
         == _REVISION
     )
+
+
+def test_review_discovers_only_the_last_freshly_qualified_merged_change_carrier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A late READY after merge must review the real Change, not a repair PR."""
+
+    change = "restore-no-work-idle-discovery"
+    historical = (
+        (324, {"head": {"sha": "1" * 40}}),
+        (347, {"head": {"sha": "2" * 40}}),
+        (353, {"head": {"sha": "3" * 40}}),
+    )
+    calls: list[int] = []
+    monkeypatch.setattr(bridge, "_review_predecessor_carrier", lambda *_args: (353, "9" * 40))
+    monkeypatch.setattr(bridge, "_paged_github_list", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(bridge, "_historical_carriers", lambda *_args, **_kwargs: historical)
+
+    def qualify(**kwargs: object) -> SimpleNamespace:
+        number = cast(int, kwargs["pr_number"])
+        calls.append(number)
+        return SimpleNamespace(
+            disposition="HISTORICAL_MERGED",
+            default_branch="main",
+            head_sha="3" * 40,
+        )
+
+    monkeypatch.setattr(bridge, "qualify_implementation_carrier", qualify)
+    assert (
+        bridge._machine_carrier_head(
+            repository=_REPOSITORY,
+            token=_REPOSITORY,
+            source=WorkerRequest(322, "reviewer", "review-implementation"),
+            change=change,
+            default_branch="main",
+            current_revision=_REVISION,
+        )
+        == "3" * 40
+    )
+    assert calls == [353]  # Repair PR #340 is not the accepted Change materialization.
+
+
+@pytest.mark.parametrize("scenario", ["no-history", "ambiguous", "unqualified", "new-slice"])
+def test_merged_carrier_discovery_fails_closed_outside_exact_review(
+    monkeypatch: pytest.MonkeyPatch, scenario: str
+) -> None:
+    monkeypatch.setattr(bridge, "_paged_github_list", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(bridge, "_review_predecessor_carrier", lambda *_args: (None, "3" * 40))
+    historical = (
+        None
+        if scenario == "ambiguous"
+        else ()
+        if scenario == "no-history"
+        else ((353, {"head": {"sha": "3" * 40}}),)
+    )
+    monkeypatch.setattr(bridge, "_historical_carriers", lambda *_args, **_kwargs: historical)
+    monkeypatch.setattr(
+        bridge,
+        "qualify_implementation_carrier",
+        lambda **_kwargs: SimpleNamespace(
+            disposition="INDETERMINATE" if scenario == "unqualified" else "HISTORICAL_MERGED",
+            default_branch="main",
+            head_sha="3" * 40,
+        ),
+    )
+    source = (
+        WorkerRequest(322, "executor", "implement-change")
+        if scenario == "new-slice"
+        else WorkerRequest(322, "reviewer", "review-implementation")
+    )
+    with pytest.raises(RuntimeError, match="carrier is not freshly recognized"):
+        bridge._machine_carrier_head(
+            repository=_REPOSITORY,
+            token=_REPOSITORY,
+            source=source,
+            change="restore-no-work-idle-discovery",
+            default_branch="main",
+            current_revision=_REVISION,
+        )
+
+
+def test_merge_consequence_selects_only_the_exact_review_pass_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    change = "restore-no-work-idle-discovery"
+    head = "3" * 40
+    calls: list[int] = []
+    monkeypatch.setattr(
+        bridge,
+        "current_reviewed_implementation_head",
+        lambda *_args, **_kwargs: SimpleNamespace(head_sha=head, merged_sha=None),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_paged_github_list",
+        lambda *_args, **_kwargs: (
+            {"number": 324},
+            {"number": 347},
+            {"number": 353},
+        ),
+    )
+
+    def read(_repo: str, _token: str, path: str) -> dict[str, object]:
+        number = int(path.split("/")[-1])
+        return {
+            "number": number,
+            "state": "closed",
+            "merged": True,
+            "body": "Refs #322",
+            "head": {
+                "sha": str({324: "1", 347: "2", 353: "3"}[number]) * 40,
+                "ref": "agent/restore-no-work-idle-discovery-continuation-347",
+                "repo": {"full_name": _REPOSITORY},
+            },
+            "base": {"ref": "main", "repo": {"full_name": _REPOSITORY}},
+        }
+
+    monkeypatch.setattr(bridge, "_github_json", read)
+
+    def qualify(**kwargs: object) -> SimpleNamespace:
+        calls.append(cast(int, kwargs["pr_number"]))
+        return SimpleNamespace(disposition="HISTORICAL_MERGED")
+
+    monkeypatch.setattr(bridge, "qualify_implementation_carrier", qualify)
+    result = bridge._fresh_merge_carrier(
+        repository=_REPOSITORY,
+        token=_REPOSITORY,
+        source=WorkerRequest(322, "executor", "merge-implementation-pr"),
+        change=change,
+        current_revision=_REVISION,
+        default_branch="main",
+    )
+    assert result["number"] == 353
+    assert calls == [353]
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    ["accepted", "missing-decision", "wrong-identity", "ambiguous-effect", "missing-effect"],
+)
+def test_review_predecessor_uses_accepted_implementation_not_ready_projection(
+    monkeypatch: pytest.MonkeyPatch, scenario: str
+) -> None:
+    """READY is a transition: its revision cannot replace accepted PR identity."""
+
+    change = "restore-no-work-idle-discovery"
+    issue = SimpleNamespace(
+        authoritative=True,
+        state="open",
+        change=change,
+        routing=("reviewer", "review-implementation"),
+    )
+    fake_event = SimpleNamespace(
+        valid=True,
+        issue_number=322,
+        change=change,
+        role="executor",
+        action="implement-change",
+        result_kind="ready",
+        successor=("reviewer", "review-implementation"),
+        revision="a" * 40,  # Maintenance PR HEAD mistakenly written by old Recovery.
+        default_branch_revision=_REVISION,
+        application_correlation=f"application:6019133874:322:{change}:executor:implement-change:ready:{_REVISION}",
+    )
+    monkeypatch.setattr(bridge, "_github_json", lambda *_args: {"number": 322})
+    monkeypatch.setattr(bridge, "normalize_github_issue", lambda *_args: issue)
+    monkeypatch.setattr(bridge, "_paged_github_list", lambda *_args: ({"id": 1},))
+    monkeypatch.setattr(bridge, "parse_formal_result", lambda *_args, **_kwargs: fake_event)
+    decision = SimpleNamespace(
+        disposition="ACCEPTED" if scenario != "wrong-identity" else "REJECTED",
+        issue_number=322,
+        role="executor",
+        action="implement-change",
+        change=change,
+        result_kind="ready",
+        raw_worker_result="{}",
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_application_decisions_for_request_id",
+        lambda **_kwargs: () if scenario == "missing-decision" else (decision,),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_materialization_effects",
+        lambda *_args, **_kwargs: (
+            ()
+            if scenario == "missing-effect"
+            else ({"operation": "application-materialize"},)
+            * (2 if scenario == "ambiguous-effect" else 1)
+        ),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "find_materialization_payload",
+        lambda *_args: SimpleNamespace(change=change, pr_number=353),
+    )
+    if scenario in {"accepted", "missing-effect"}:
+        assert bridge._review_predecessor_carrier(
+            _REPOSITORY,
+            _REPOSITORY,
+            WorkerRequest(322, "reviewer", "review-implementation"),
+            change,
+            _REVISION,
+        ) == ((None, "a" * 40) if scenario == "missing-effect" else (353, "a" * 40))
+    else:
+        with pytest.raises(RuntimeError, match="review predecessor"):
+            bridge._review_predecessor_carrier(
+                _REPOSITORY,
+                _REPOSITORY,
+                WorkerRequest(322, "reviewer", "review-implementation"),
+                change,
+                _REVISION,
+            )
+
+
+@pytest.mark.parametrize("blocked_revision_matches_default", [True, False])
+def test_review_blocked_self_loop_preserves_accepted_ready_work_product(
+    monkeypatch: pytest.MonkeyPatch, blocked_revision_matches_default: bool
+) -> None:
+    change = "restore-no-work-idle-discovery"
+    ready = SimpleNamespace(
+        valid=True,
+        issue_number=322,
+        change=change,
+        role="executor",
+        action="implement-change",
+        result_kind="ready",
+        revision="a" * 40,
+        default_branch_revision=_REVISION,
+        successor=("reviewer", "review-implementation"),
+        application_correlation=(
+            f"application:6019133874:322:{change}:executor:implement-change:ready:{_REVISION}"
+        ),
+    )
+    blocked = SimpleNamespace(
+        valid=True,
+        issue_number=322,
+        change=change,
+        role="reviewer",
+        action="review-implementation",
+        result_kind="blocked",
+        revision=_REVISION if blocked_revision_matches_default else "b" * 40,
+        default_branch_revision=_REVISION,
+        successor=("reviewer", "review-implementation"),
+    )
+    monkeypatch.setattr(bridge, "_github_json", lambda *_args: {"number": 322})
+    monkeypatch.setattr(
+        bridge,
+        "normalize_github_issue",
+        lambda *_args: SimpleNamespace(
+            authoritative=True,
+            state="open",
+            change=change,
+            routing=("reviewer", "review-implementation"),
+        ),
+    )
+    monkeypatch.setattr(bridge, "_paged_github_list", lambda *_args: ({"id": 1}, {"id": 2}))
+    monkeypatch.setattr(
+        bridge, "parse_formal_result", lambda raw, **_kwargs: ready if raw["id"] == 1 else blocked
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_application_decisions_for_request_id",
+        lambda **_kwargs: (
+            SimpleNamespace(
+                disposition="ACCEPTED",
+                issue_number=322,
+                role="executor",
+                action="implement-change",
+                change=change,
+                result_kind="ready",
+                raw_worker_result="{}",
+            ),
+        ),
+    )
+    monkeypatch.setattr(bridge, "_materialization_effects", lambda *_args, **_kwargs: ())
+    args = (
+        _REPOSITORY,
+        _REPOSITORY,
+        WorkerRequest(322, "reviewer", "review-implementation"),
+        change,
+        _REVISION,
+    )
+    if blocked_revision_matches_default:
+        assert bridge._review_predecessor_carrier(*args) == (None, "a" * 40)
+    else:
+        with pytest.raises(RuntimeError, match="not a legal self-loop"):
+            bridge._review_predecessor_carrier(*args)
 
 
 def _preflight(
