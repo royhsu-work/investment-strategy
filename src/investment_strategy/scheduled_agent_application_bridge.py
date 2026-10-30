@@ -1467,16 +1467,40 @@ def _review_predecessor_carrier(
     )
     if not events:
         raise RuntimeError("application review predecessor formal result is absent")
-    latest = events[-1]
-    if (
-        not latest.valid
-        or latest.issue_number != source.issue_number
-        or latest.change != change
-        or (latest.role, latest.action, latest.result_kind)
-        != ("executor", "implement-change", "ready")
-        or latest.successor != ("reviewer", "review-implementation")
-        or not isinstance(latest.revision, str)
-    ):
+    latest = None
+    for event in reversed(events):
+        if (
+            not event.valid
+            or event.issue_number != source.issue_number
+            or event.change != change
+            or not isinstance(event.revision, str)
+        ):
+            raise RuntimeError("application review predecessor formal identity is invalid")
+        if (event.role, event.action, event.result_kind) == (
+            "executor",
+            "implement-change",
+            "ready",
+        ):
+            latest = event
+            break
+        if (
+            (event.role, event.action, event.result_kind)
+            != ("reviewer", "review-implementation", "blocked")
+            or event.successor != ("reviewer", "review-implementation")
+            or event.revision != event.default_branch_revision
+        ):
+            raise RuntimeError("application review predecessor chain is not a legal self-loop")
+        if (
+            event.default_branch_revision != current_revision
+            and not _authorization_revision_is_ancestor(
+                repository,
+                token,
+                cast(str, event.default_branch_revision),
+                current_revision,
+            )
+        ):
+            raise RuntimeError("application review predecessor blocked evidence is stale")
+    if latest is None or latest.successor != ("reviewer", "review-implementation"):
         raise RuntimeError("application review predecessor is not an accepted READY")
     correlation = latest.application_correlation
     parts = correlation.split(":") if isinstance(correlation, str) else []
@@ -1520,7 +1544,7 @@ def _review_predecessor_carrier(
     if len(materializations) > 1:
         raise RuntimeError("application review predecessor materialization is ambiguous")
     if not materializations:
-        return None, latest.revision
+        return None, cast(str, latest.revision)
     materialization = find_materialization_payload(materializations[0], ready_source)
     if (
         materialization is None
@@ -1528,7 +1552,7 @@ def _review_predecessor_carrier(
         or materialization.pr_number is None
     ):
         raise RuntimeError("application review predecessor PR identity is incomplete")
-    return materialization.pr_number, latest.revision
+    return materialization.pr_number, cast(str, latest.revision)
 
 
 def _field_values(body: str, key: str) -> tuple[str, ...]:
