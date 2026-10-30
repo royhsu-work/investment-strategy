@@ -365,6 +365,81 @@ def test_review_predecessor_uses_accepted_implementation_not_ready_projection(
             )
 
 
+@pytest.mark.parametrize("blocked_revision_matches_default", [True, False])
+def test_review_blocked_self_loop_preserves_accepted_ready_work_product(
+    monkeypatch: pytest.MonkeyPatch, blocked_revision_matches_default: bool
+) -> None:
+    change = "restore-no-work-idle-discovery"
+    ready = SimpleNamespace(
+        valid=True,
+        issue_number=322,
+        change=change,
+        role="executor",
+        action="implement-change",
+        result_kind="ready",
+        revision="a" * 40,
+        default_branch_revision=_REVISION,
+        successor=("reviewer", "review-implementation"),
+        application_correlation=(
+            f"application:6019133874:322:{change}:executor:implement-change:ready:{_REVISION}"
+        ),
+    )
+    blocked = SimpleNamespace(
+        valid=True,
+        issue_number=322,
+        change=change,
+        role="reviewer",
+        action="review-implementation",
+        result_kind="blocked",
+        revision=_REVISION if blocked_revision_matches_default else "b" * 40,
+        default_branch_revision=_REVISION,
+        successor=("reviewer", "review-implementation"),
+    )
+    monkeypatch.setattr(bridge, "_github_json", lambda *_args: {"number": 322})
+    monkeypatch.setattr(
+        bridge,
+        "normalize_github_issue",
+        lambda *_args: SimpleNamespace(
+            authoritative=True,
+            state="open",
+            change=change,
+            routing=("reviewer", "review-implementation"),
+        ),
+    )
+    monkeypatch.setattr(bridge, "_paged_github_list", lambda *_args: ({"id": 1}, {"id": 2}))
+    monkeypatch.setattr(
+        bridge, "parse_formal_result", lambda raw, **_kwargs: ready if raw["id"] == 1 else blocked
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_application_decisions_for_request_id",
+        lambda **_kwargs: (
+            SimpleNamespace(
+                disposition="ACCEPTED",
+                issue_number=322,
+                role="executor",
+                action="implement-change",
+                change=change,
+                result_kind="ready",
+                raw_worker_result="{}",
+            ),
+        ),
+    )
+    monkeypatch.setattr(bridge, "_materialization_effects", lambda *_args, **_kwargs: ())
+    args = (
+        _REPOSITORY,
+        _REPOSITORY,
+        WorkerRequest(322, "reviewer", "review-implementation"),
+        change,
+        _REVISION,
+    )
+    if blocked_revision_matches_default:
+        assert bridge._review_predecessor_carrier(*args) == (None, "a" * 40)
+    else:
+        with pytest.raises(RuntimeError, match="not a legal self-loop"):
+            bridge._review_predecessor_carrier(*args)
+
+
 def _preflight(
     *,
     action: str = "explore-change",
