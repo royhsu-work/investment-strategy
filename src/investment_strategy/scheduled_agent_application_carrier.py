@@ -165,7 +165,9 @@ def current_reviewed_implementation_head(
         ):
             return None
         if (event.role, event.action, event.result_kind) == (
-            "reviewer", "review-implementation", "pass"
+            "reviewer",
+            "review-implementation",
+            "pass",
         ):
             if event.successor != ("executor", "merge-implementation-pr"):
                 return None
@@ -173,10 +175,10 @@ def current_reviewed_implementation_head(
             break
         # A blocked merge is a legal self-loop, not a new review.  Keep the
         # exact reviewed HEAD across retries and reject changed work products.
-        if (
-            (event.role, event.action) != ("executor", "merge-implementation-pr")
-            or event.successor != ("executor", "merge-implementation-pr")
-        ):
+        if (event.role, event.action) != (
+            "executor",
+            "merge-implementation-pr",
+        ) or event.successor != ("executor", "merge-implementation-pr"):
             return None
         pending_merge_revisions.append(cast(str, event.revision))
     if (
