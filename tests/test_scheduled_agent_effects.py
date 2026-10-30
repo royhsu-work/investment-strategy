@@ -102,7 +102,9 @@ def test_merged_readiness_uses_reviewed_continuation_not_first_merged_carrier(
         ),
     )
     monkeypatch.setattr(
-        effects, "current_reviewed_implementation_head", lambda *_args, **_kwargs: reviewed_head
+        effects,
+        "current_reviewed_implementation_head",
+        lambda *_args, **_kwargs: SimpleNamespace(head_sha=reviewed_head, merged_sha=None),
     )
     monkeypatch.setattr(
         effects,
@@ -115,6 +117,111 @@ def test_merged_readiness_uses_reviewed_continuation_not_first_merged_carrier(
         issue_number=322,
         action="merge-implementation-pr",
         change="restore-no-work-idle-discovery",
+        current_revision=_REVISION,
+    )
+
+
+@pytest.mark.parametrize("routed", [False, True])
+def test_merged_readiness_survives_formal_post_and_successor_route(
+    monkeypatch: pytest.MonkeyPatch, routed: bool
+) -> None:
+    """No second merge Action is needed after the formal MERGED commit is durable."""
+
+    from investment_strategy import scheduled_agent_application_carrier as carrier
+
+    repo = "royhsu-work/investment-strategy"
+    head_sha, merge_sha = "3" * 40, "7" * 40
+    change = "restore-no-work-idle-discovery"
+    pr = {
+        "number": 353,
+        "state": "closed",
+        "merged": True,
+        "merged_at": "2026-10-08T16:39:42Z",
+        "merge_commit_sha": merge_sha,
+        "head": {
+            "sha": head_sha,
+            "ref": "agent/restore-no-work-idle-discovery-continuation-347",
+            "repo": {"full_name": repo},
+        },
+        "base": {"ref": "main", "repo": {"full_name": repo}},
+    }
+    events = (
+        SimpleNamespace(
+            valid=True,
+            issue_number=322,
+            change=change,
+            role="reviewer",
+            action="review-implementation",
+            result_kind="pass",
+            successor=("executor", "merge-implementation-pr"),
+            revision=head_sha,
+            default_branch_revision=_REVISION,
+        ),
+        SimpleNamespace(
+            valid=True,
+            issue_number=322,
+            change=change,
+            role="executor",
+            action="merge-implementation-pr",
+            result_kind="merged",
+            successor=("lead", "finalize-change"),
+            revision=merge_sha,
+            default_branch_revision=_REVISION,
+        ),
+    )
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        if path == "":
+            return {"default_branch": "main"}
+        if path == "issues/322":
+            return {"number": 322}
+        if path.startswith("issues/322/comments?"):
+            return [{"id": 1}, {"id": 2}]
+        if path == "pulls/353":
+            return pr
+        if path == f"compare/{merge_sha}...{_REVISION}":
+            return {"status": "ahead", "behind_by": 0, "base_commit": {"sha": merge_sha}}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(effects, "_github_json", read)
+    monkeypatch.setattr(
+        effects, "_paged_github_list", lambda *_args: ({"number": 353, "head": {"sha": head_sha}},)
+    )
+    monkeypatch.setattr(
+        effects,
+        "qualify_implementation_carrier",
+        lambda **_kwargs: SimpleNamespace(disposition="HISTORICAL_MERGED"),
+    )
+    monkeypatch.setattr(
+        carrier,
+        "normalize_github_issue",
+        lambda *_args: SimpleNamespace(
+            authoritative=True,
+            state="open",
+            change=change,
+            routing=("lead", "finalize-change")
+            if routed
+            else ("executor", "merge-implementation-pr"),
+        ),
+    )
+    monkeypatch.setattr(
+        carrier, "parse_formal_result", lambda raw, **_kwargs: events[raw["id"] - 1]
+    )
+    assert effects.merged_pr_readiness_complete(
+        repository=repo,
+        token=_TEST_TOKEN,
+        issue_number=322,
+        action="merge-implementation-pr",
+        change=change,
+        current_revision=_REVISION,
+    )
+    events[1].revision = "9" * 40
+    assert not effects.merged_pr_readiness_complete(
+        repository=repo,
+        token=_TEST_TOKEN,
+        issue_number=322,
+        action="merge-implementation-pr",
+        change=change,
         current_revision=_REVISION,
     )
 
