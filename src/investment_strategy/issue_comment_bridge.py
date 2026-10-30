@@ -31,12 +31,17 @@ from investment_strategy.scheduled_agent_application_bridge import (
     ApplicationRecoveryArtifact,
     ApplicationRequest,
     _application_owned_worker_result,
+    _materialization_effects,
     application_continuation_correlation,
     dispatch_correlation_for,
     parse_application_continuation_request,
     parse_application_request,
     read_application_recovery_artifact,
     render_application_continuation_request,
+)
+from investment_strategy.scheduled_agent_application_carrier import qualify_implementation_carrier
+from investment_strategy.scheduled_agent_application_materialization import (
+    find_materialization_payload,
 )
 from investment_strategy.scheduled_agent_carrier import (
     CarrierOutcomeReport,
@@ -1287,11 +1292,38 @@ def apply_original_322_recovery_exit(
             return ApplicationCompletion("INVALID", "recovery-exit-formal-correlation-conflict")
         prior_formal_correlation = events[0].application_correlation
 
-    pr = source_read(repository, token, "pulls/340")
-    head = pr.get("head") if isinstance(pr, Mapping) else None
-    head_sha = head.get("sha") if isinstance(head, Mapping) else None
-    if not isinstance(head_sha, str) or _SHA.fullmatch(head_sha) is None:
-        return ApplicationCompletion("INVALID", "recovery-exit-implementation-head-unavailable")
+    # The review gate for the maintenance repair is distinct from the
+    # immutable implementation materialization of the accepted request.
+    # Its PR HEAD must never become the READY work-product revision.
+    try:
+        materializations = _materialization_effects(
+            record.raw_worker_result, source, change=record.change
+        )
+        if len(materializations) != 1:
+            raise RuntimeError("accepted implementation materialization is not unique")
+        materialization = find_materialization_payload(materializations[0], source)
+        if (
+            materialization is None
+            or materialization.change != record.change
+            or materialization.pr_number is None
+        ):
+            raise RuntimeError("accepted implementation PR is incomplete")
+        carrier = qualify_implementation_carrier(
+            repository=repository,
+            token=token,
+            source=source,
+            change=record.change,
+            pr_number=materialization.pr_number,
+            current_revision=current_revision,
+            read=source_read,
+        )
+        if carrier.disposition not in {"QUALIFIED", "HISTORICAL_MERGED"} or not isinstance(
+            carrier.head_sha, str
+        ):
+            raise RuntimeError("accepted implementation PR is not qualified")
+        head_sha = carrier.head_sha
+    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+        return ApplicationCompletion("INVALID", "recovery-exit-accepted-implementation-unavailable")
     try:
         worker = _application_worker_for_record(record, source)
         decoded = json.loads(record.raw_worker_result)
