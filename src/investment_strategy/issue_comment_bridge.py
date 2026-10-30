@@ -3273,41 +3273,52 @@ def _preaccept_exception_repair_status(
             matches.append(comment)
     if not matches:
         return "NONE"
-    if len(matches) != 1:
-        return "INVALID"
-    body = cast(str, matches[0]["body"])
-    run_id = one(body, "Run-ID: ")
-    run_attempt = one(body, "Run-Attempt: ")
-    original_revision = one(body, "Revision: ")
-    if (
-        one(body, "Workflow: ") != f"#{source.issue_number}"
-        or one(body, "Role: ") != source.role
-        or one(body, "Action: ") != source.action
-        or one(body, "Mutation-Outcome: ") != "NO_APPLICATION_WRITE_ATTEMPTED"
-        or one(body, "Classification: ") != "UNCLASSIFIED_EXECUTION_EXCEPTION"
-        or not isinstance(original_revision, str)
-        or _SHA.fullmatch(original_revision) is None
-        or not isinstance(run_id, str)
-        or not run_id.isdecimal()
-        or int(run_id) <= 0
-        or not isinstance(run_attempt, str)
-        or not run_attempt.isdecimal()
-        or int(run_attempt) <= 0
-        or one(body, "Exception-Correlation: ")
-        != f"application:{run_id}:{run_attempt}:{request_comment_id}"
-    ):
-        return "INVALID"
+    # One GitHub run can have several completed attempts. Every attempt has
+    # its own immutable exception correlation. Older attempts are historical,
+    # not competing current-frontier ingresses or an application retry count.
+    attempts: dict[int, tuple[int, str]] = {}
+    for comment in matches:
+        body = cast(str, comment["body"])
+        run_id = one(body, "Run-ID: ")
+        run_attempt = one(body, "Run-Attempt: ")
+        original_revision = one(body, "Revision: ")
+        if (
+            one(body, "Workflow: ") != f"#{source.issue_number}"
+            or one(body, "Role: ") != source.role
+            or one(body, "Action: ") != source.action
+            or one(body, "Mutation-Outcome: ") != "NO_APPLICATION_WRITE_ATTEMPTED"
+            or one(body, "Classification: ") != "UNCLASSIFIED_EXECUTION_EXCEPTION"
+            or not isinstance(original_revision, str)
+            or _SHA.fullmatch(original_revision) is None
+            or not isinstance(run_id, str)
+            or not run_id.isdecimal()
+            or int(run_id) <= 0
+            or not isinstance(run_attempt, str)
+            or not run_attempt.isdecimal()
+            or int(run_attempt) <= 0
+            or one(body, "Exception-Correlation: ")
+            != f"application:{run_id}:{run_attempt}:{request_comment_id}"
+        ):
+            return "INVALID"
+        attempt_number = int(run_attempt)
+        if attempt_number in attempts:
+            # A duplicate in the same attempt cannot be dismissed as a rerun.
+            return "INVALID"
+        attempts[attempt_number] = (int(run_id), original_revision)
     runs = _application_runs(repository, token, request_comment_id, read=read)
     if runs is None or len(runs) != 1:
         return "INVALID"
     run = runs[0]
+    latest_attempt = _positive_int(run.get("run_attempt"))
     if (
-        run.get("id") != int(run_id)
-        or run.get("run_attempt") != int(run_attempt)
+        latest_attempt is None
+        or max(attempts) > latest_attempt
+        or any(run.get("id") != recorded_run_id for recorded_run_id, _ in attempts.values())
         or run.get("status") != "completed"
         or run.get("conclusion") not in _TERMINAL_NO_ACCEPT_CONCLUSIONS
     ):
         return "INVALID"
+    _recorded_run_id, original_revision = attempts[max(attempts)]
     if original_revision == current_revision:
         return "BLOCKED"
     try:
