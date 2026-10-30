@@ -120,6 +120,35 @@ def test_workflow_run_history_fails_closed_on_concurrent_pagination_drift() -> N
     )
 
 
+def test_unfiltered_workflow_history_rejects_missing_event_provenance() -> None:
+    runs: list[dict[str, object]] = [
+        {"id": index, "event": "issue_comment", "display_title": "other"}
+        for index in range(1, 1102)
+    ]
+    runs[101]["event"] = None
+    runs[101]["display_title"] = bridge.render_application_run_name(901)
+
+    def read(repository: str, token: str, path: str) -> object:
+        query = parse_qs(urlsplit(path).query)
+        page = int(query["page"][0])
+        selected = (
+            [run for run in runs if run["event"] == "issue_comment"]
+            if query.get("event") == ["issue_comment"]
+            else runs
+        )
+        return {
+            "total_count": len(selected),
+            "workflow_runs": selected[(page - 1) * 100 : page * 100],
+        }
+
+    assert (
+        bridge._application_runs(  # noqa: SLF001
+            "royhsu-work/investment-strategy", "token", 901, read=read
+        )
+        is None
+    )
+
+
 @pytest.mark.parametrize("fault", ["short", "duplicate", "changed_count"])
 def test_small_workflow_run_history_requires_complete_stable_pages(fault: str) -> None:
     def read(repository: str, token: str, path: str) -> object:
