@@ -1851,9 +1851,9 @@ def _fresh_merge_carrier(
     """Read the one exact merge carrier from current repository state."""
 
     branch = _merge_carrier_branch(source, change)
-    reviewed_head = None
+    reviewed = None
     if source.action == "merge-implementation-pr":
-        reviewed_head = current_reviewed_implementation_head(
+        reviewed = current_reviewed_implementation_head(
             repository,
             token,
             source=source,
@@ -1861,7 +1861,7 @@ def _fresh_merge_carrier(
             current_revision=current_revision,
             read=_github_json,
         )
-        if reviewed_head is None:
+        if reviewed is None:
             raise RuntimeError("fresh merge consequence has no qualified review predecessor")
     candidates: tuple[Mapping[str, object], ...]
     if source.action == "merge-implementation-pr" and requested_number is not None:
@@ -1869,7 +1869,9 @@ def _fresh_merge_carrier(
         detail_head = detail.get("head") if isinstance(detail, Mapping) else None
         candidates = (
             (cast(Mapping[str, object], detail),)
-            if isinstance(detail_head, Mapping) and detail_head.get("sha") == reviewed_head
+            if isinstance(detail_head, Mapping)
+            and reviewed is not None
+            and detail_head.get("sha") == reviewed.head_sha
             else ()
         )
     elif source.action == "merge-implementation-pr":
@@ -1894,7 +1896,11 @@ def _fresh_merge_carrier(
             if not isinstance(detail, Mapping):
                 raise RuntimeError("fresh implementation merge carrier is incomplete")
             detail_head = detail.get("head")
-            if not isinstance(detail_head, Mapping) or detail_head.get("sha") != reviewed_head:
+            if (
+                not isinstance(detail_head, Mapping)
+                or reviewed is None
+                or detail_head.get("sha") != reviewed.head_sha
+            ):
                 continue
             decision = qualify_implementation_carrier(
                 repository=repository,
@@ -1923,6 +1929,12 @@ def _fresh_merge_carrier(
     if len(candidates) != 1:
         raise RuntimeError("fresh merge consequence carrier is missing or ambiguous")
     current = candidates[0]
+    if (
+        reviewed is not None
+        and reviewed.merged_sha is not None
+        and current.get("merge_commit_sha") != reviewed.merged_sha
+    ):
+        raise RuntimeError("fresh MERGED result is not bound to reviewed carrier merge commit")
     number = current.get("number")
     head = current.get("head")
     base = current.get("base")
