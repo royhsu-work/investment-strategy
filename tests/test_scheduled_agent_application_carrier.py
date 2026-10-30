@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -22,6 +23,51 @@ TEST_VALUE = "opaque-test-value"
 
 def _repo(name: str = REPOSITORY) -> dict[str, object]:
     return {"full_name": name}
+
+
+@pytest.mark.parametrize("result_kind", ["pass", "findings", "absent"])
+def test_merge_target_is_exact_current_review_pass_predecessor(
+    monkeypatch: pytest.MonkeyPatch, result_kind: str
+) -> None:
+    monkeypatch.setattr(
+        carrier,
+        "normalize_github_issue",
+        lambda *_args: SimpleNamespace(
+            authoritative=True,
+            state="open",
+            change=CHANGE,
+            routing=("executor", "merge-implementation-pr"),
+        ),
+    )
+    monkeypatch.setattr(carrier, "_paged_list", lambda *_args, **_kwargs: ({"id": 1},))
+    monkeypatch.setattr(
+        carrier,
+        "parse_formal_result",
+        lambda *_args, **_kwargs: (
+            None
+            if result_kind == "absent"
+            else SimpleNamespace(
+                valid=True,
+                issue_number=229,
+                change=CHANGE,
+                role="reviewer",
+                action="review-implementation",
+                result_kind=result_kind,
+                successor=("executor", "merge-implementation-pr"),
+                revision=HISTORICAL_HEAD,
+                default_branch_revision=MAIN,
+            )
+        ),
+    )
+    head = carrier.current_reviewed_implementation_head(
+        REPOSITORY,
+        TEST_VALUE,
+        source=WorkerRequest(229, "executor", "merge-implementation-pr"),
+        change=CHANGE,
+        current_revision=MAIN,
+        read=lambda *_args: {"number": 229},
+    )
+    assert head == (HISTORICAL_HEAD if result_kind == "pass" else None)
 
 
 def _pr(
