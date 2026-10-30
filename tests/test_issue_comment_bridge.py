@@ -9,6 +9,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Literal, cast
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -41,6 +42,82 @@ _RECOVERY_TEST_FIELDS = {
     "failure_evidence_sha256": "2" * 64,
     "recovery_episode_sha256": "3" * 64,
 }
+
+
+def test_workflow_run_history_reads_beyond_filtered_thousand_without_weakening_identity() -> None:
+    """A 1,000-result search cap must not hide an older matching Action run."""
+
+    application_title = bridge.render_application_run_name(901)
+    dispatch_title = bridge.render_dispatch_run_name(902)
+    runs = [
+        {
+            "id": index,
+            "event": "push" if index == 1 else "issue_comment",
+            "display_title": (
+                application_title
+                if index in {1, 1206}
+                else dispatch_title
+                if index == 1205
+                else "unrelated"
+            ),
+        }
+        for index in range(1, 1207)
+    ]
+    paths: list[str] = []
+
+    def read(repository: str, token: str, path: str) -> object:
+        assert repository == "royhsu-work/investment-strategy"
+        assert token
+        paths.append(path)
+        query = parse_qs(urlsplit(path).query)
+        page = int(query["page"][0])
+        filtered = query.get("event") == ["issue_comment"]
+        selected = [run for run in runs if run["event"] == "issue_comment"] if filtered else runs
+        return {
+            "total_count": len(selected),
+            "workflow_runs": selected[(page - 1) * 100 : page * 100],
+        }
+
+    assert [
+        run["id"]
+        for run in bridge._application_runs(  # noqa: SLF001
+            "royhsu-work/investment-strategy", "token", 901, read=read
+        )
+        or ()
+    ] == [1206]
+    assert [
+        run["id"]
+        for run in bridge._dispatch_runs_for_request(  # noqa: SLF001
+            "royhsu-work/investment-strategy", "token", 902, read=read
+        )
+        or ()
+    ] == [1205]
+    assert any("event=issue_comment" in path for path in paths)
+    assert any("event=issue_comment" not in path for path in paths)
+
+
+def test_workflow_run_history_fails_closed_on_concurrent_pagination_drift() -> None:
+    def read(repository: str, token: str, path: str) -> object:
+        query = parse_qs(urlsplit(path).query)
+        page = int(query["page"][0])
+        filtered = query.get("event") == ["issue_comment"]
+        count = 1201 if filtered else 1202
+        if not filtered and page == 2:
+            count += 1
+        return {
+            "total_count": count,
+            "workflow_runs": [
+                {"id": index, "event": "issue_comment", "display_title": "unrelated"}
+                for index in range((page - 1) * 100 + 1, min(page * 100, count) + 1)
+            ],
+        }
+
+    assert (
+        bridge._application_runs(  # noqa: SLF001
+            "royhsu-work/investment-strategy", "token", 901, read=read
+        )
+        is None
+    )
 
 
 def _event(
