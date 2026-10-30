@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Literal, cast
 
 import pytest
@@ -5387,6 +5388,28 @@ def test_original_322_exit_materializes_once_then_reconciles_without_replay(
     monkeypatch.setattr(bridge, "_authorization_ancestry", lambda *_args, **_kw: ())
     monkeypatch.setattr(
         bridge,
+        "_materialization_effects",
+        lambda *_args, **_kwargs: ({"operation": "application-materialize"},),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "find_materialization_payload",
+        lambda *_args: SimpleNamespace(change="restore-no-work-idle-discovery", pr_number=353),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "qualify_implementation_carrier",
+        lambda **kwargs: (
+            SimpleNamespace(
+                disposition="HISTORICAL_MERGED",
+                head_sha="e" * 40,  # Not the maintenance PR #340 HEAD.
+            )
+            if kwargs["pr_number"] == 353
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        bridge,
         "qualify_original_322_pre_formal",
         lambda **_kw: bridge.RecoveryPreFormalQualification(
             "COMPLETE", tuple((name, "COMPLETE") for name in "IRMVSF")
@@ -5432,6 +5455,8 @@ def test_original_322_exit_materializes_once_then_reconciles_without_replay(
     )
     assert first.state == ("INVALID" if lost_after_formal_post else "COMPLETE"), first
     assert requested == [["issue-comment"]]
+    assert "Revision: " + "e" * 40 in str(comments[-1]["body"])
+    assert "Revision: " + _RECOVERY_R not in str(comments[-1]["body"])
     second = bridge.apply_original_322_recovery_exit(
         "royhsu-work/investment-strategy",
         "token",
@@ -5840,6 +5865,18 @@ def test_original_322_recovery_exit_real_owners_from_ready_to_successor(
         return log if job_id == 119881578427 else log.replace(_RECOVERY_R, head)
 
     monkeypatch.setattr(bridge, "_github_json", github_io)
+    monkeypatch.setattr(
+        bridge,
+        "qualify_implementation_carrier",
+        lambda **kwargs: (
+            SimpleNamespace(
+                disposition="HISTORICAL_MERGED" if merged_carrier else "QUALIFIED",
+                head_sha=head,
+            )
+            if kwargs["pr_number"] == 353
+            else None
+        ),
+    )
     monkeypatch.setattr(effects, "_github_json", github_io)
     monkeypatch.setattr(runtime, "_github_get_list_page", transport_list)
     monkeypatch.setattr(runtime, "_github_get_object", transport_object)
