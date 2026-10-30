@@ -6,6 +6,7 @@ import hashlib
 import inspect
 import json
 from collections.abc import Callable, Mapping
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -53,6 +54,69 @@ _REVISION = "a" * 40
 _TEST_TOKEN = "test-token"  # noqa: S105
 _CHANGE = "simplify-scheduled-agent-control-plane"
 _REQUEST_COMMENT_ID = 1003
+
+
+def test_merged_readiness_uses_reviewed_continuation_not_first_merged_carrier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Three historical merged PRs must not make the oldest one's merge sufficient."""
+
+    reviewed_head = "3" * 40
+    merge_sha = "7" * 40
+    repository = "royhsu-work/investment-strategy"
+    pr = {
+        "number": 353,
+        "state": "closed",
+        "merged": True,
+        "merged_at": "2026-10-20T00:00:00Z",
+        "merge_commit_sha": merge_sha,
+        "head": {
+            "ref": "agent/restore-no-work-idle-discovery-continuation-347",
+            "sha": reviewed_head,
+            "repo": {"full_name": repository},
+        },
+        "base": {"ref": "main", "repo": {"full_name": repository}},
+    }
+
+    def github(_repository: str, _token: str, path: str) -> object:
+        if path == "":
+            return {"default_branch": "main"}
+        if path == "pulls/353":
+            return pr
+        if path == f"compare/{merge_sha}...{_REVISION}":
+            return {
+                "status": "ahead",
+                "behind_by": 0,
+                "base_commit": {"sha": merge_sha},
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(effects, "_github_json", github)
+    monkeypatch.setattr(
+        effects,
+        "_paged_github_list",
+        lambda *_args: (
+            {"number": 324, "head": {"sha": "1" * 40}},
+            {"number": 347, "head": {"sha": "2" * 40}},
+            {"number": 353, "head": {"sha": reviewed_head}},
+        ),
+    )
+    monkeypatch.setattr(
+        effects, "current_reviewed_implementation_head", lambda *_args, **_kwargs: reviewed_head
+    )
+    monkeypatch.setattr(
+        effects,
+        "qualify_implementation_carrier",
+        lambda **_kwargs: SimpleNamespace(disposition="HISTORICAL_MERGED"),
+    )
+    assert effects.merged_pr_readiness_complete(
+        repository=repository,
+        token=_TEST_TOKEN,
+        issue_number=322,
+        action="merge-implementation-pr",
+        change="restore-no-work-idle-discovery",
+        current_revision=_REVISION,
+    )
 
 
 def _preflight(
