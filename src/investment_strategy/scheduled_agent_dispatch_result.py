@@ -15,6 +15,7 @@ from investment_strategy.issue_comment_bridge import (
     parse_dispatch_result_document,
     parse_dispatch_run_name,
 )
+from investment_strategy.scheduled_agent_carrier import github_repository_api_url
 
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -42,7 +43,7 @@ def _github_json(repository: str, token: str, api_path: str) -> object:
     if _REPOSITORY.fullmatch(repository) is None or not token:
         raise RuntimeError("repository/token identity is invalid")
     request = Request(  # noqa: S310 - fixed trusted GitHub API host
-        f"https://api.github.com/repos/{repository}/{api_path.lstrip('/')}",
+        github_repository_api_url(repository, api_path),
         headers={
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {token}",
@@ -62,7 +63,7 @@ def _github_bytes(repository: str, token: str, api_path: str) -> bytes:
     if _REPOSITORY.fullmatch(repository) is None or not token:
         raise RuntimeError("repository/token identity is invalid")
     request = Request(  # noqa: S310 - fixed trusted GitHub API host
-        f"https://api.github.com/repos/{repository}/{api_path.lstrip('/')}",
+        github_repository_api_url(repository, api_path),
         headers={
             "Accept": "application/octet-stream",
             "Authorization": f"Bearer {token}",

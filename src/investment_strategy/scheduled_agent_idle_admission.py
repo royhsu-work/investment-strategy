@@ -25,6 +25,7 @@ from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from investment_strategy.scheduled_agent_carrier import github_repository_api_url
 from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
 from investment_strategy.scheduled_agent_dispatch_result import fetch_dispatch_result
 from investment_strategy.scheduled_agent_runtime import acquire_current_github_preflight
@@ -538,8 +539,8 @@ def _github_json(
     method: str = "GET",
     payload: Mapping[str, object] | None = None,
 ) -> object | None:
-    request = Request(
-        f"https://api.github.com/repos/{repository}/{api_path.lstrip('/')}",
+    request = Request(  # noqa: S310 - fixed trusted GitHub API host
+        github_repository_api_url(repository, api_path),
         headers={
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {token}",
