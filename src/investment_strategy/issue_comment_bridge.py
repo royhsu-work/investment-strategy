@@ -1981,18 +1981,48 @@ def _complete_workflow_runs(
             return None
         return tuple(run for run in complete_runs if run.get("event") == "issue_comment")
 
-    runs: list[Mapping[str, object]] = []
+    if total_count is not None and (type(total_count) is not int or total_count < 0):
+        return None
+    if isinstance(total_count, int):
+        count_pages = max(1, (total_count + 99) // 100)
+        with ThreadPoolExecutor(max_workers=min(8, count_pages)) as pool:
+            remaining = tuple(pool.map(lambda n: page(n, filtered=True), range(2, count_pages + 1)))
+        payloads = (first, *remaining)
+        filtered_runs: list[Mapping[str, object]] = []
+        for index, payload in enumerate(payloads):
+            if payload is None or payload.get("total_count") != total_count:
+                return None
+            raw_runs = payload["workflow_runs"]
+            if not isinstance(raw_runs, list) or len(raw_runs) != min(
+                100, total_count - index * 100
+            ):
+                return None
+            for run in raw_runs:
+                if not isinstance(run, Mapping) or type(run.get("id")) is not int:
+                    return None
+                filtered_runs.append(cast(Mapping[str, object], run))
+        ids = [cast(int, run["id"]) for run in filtered_runs]
+        if len(ids) != len(set(ids)):
+            return None
+        return tuple(filtered_runs)
+
+    # Legacy injected readers may omit the GitHub total_count field. A short
+    # final page is still an explicit pagination terminator, but the search
+    # cannot prove completeness at GitHub's 1,000-result filtered cap.
+    legacy_runs: list[Mapping[str, object]] = []
     current = first
     number = 1
     while True:
         raw_runs = current["workflow_runs"]
-        if not isinstance(raw_runs, list):
+        if not isinstance(raw_runs, list) or current.get("total_count") is not None:
             return None
         if any(not isinstance(run, Mapping) for run in raw_runs):
             return None
-        runs.extend(cast(list[Mapping[str, object]], raw_runs))
+        legacy_runs.extend(cast(list[Mapping[str, object]], raw_runs))
         if len(raw_runs) < 100:
-            return tuple(runs)
+            return tuple(legacy_runs)
+        if len(legacy_runs) >= 1000:
+            return None
         number += 1
         next_page = page(number, filtered=True)
         if next_page is None:
@@ -2031,15 +2061,21 @@ def _prior_dispatch_handoff_reason(
             if parse_dispatch_request(body) is None:
                 return "application-completion-carrier-prior-dispatch-incomplete"
             prior_ids.append(comment_id)
+    if not prior_ids:
+        return None
+    # One read-only history observation for this handoff classification.
+    # Never re-fetch the same full workflow history once per prior request;
+    # the indexed snapshot is not shared across a later mutation boundary.
+    all_runs = _complete_workflow_runs(repository, token, _DISPATCH_WORKFLOW, read=read)
+    if all_runs is None:
+        return "application-completion-carrier-prior-dispatch-unavailable"
+    by_title: dict[str, list[Mapping[str, object]]] = {}
+    for run in all_runs:
+        title = run.get("display_title")
+        if isinstance(title, str):
+            by_title.setdefault(title, []).append(run)
     for prior_comment_id in sorted(prior_ids, reverse=True):
-        runs = _dispatch_runs_for_request(
-            repository,
-            token,
-            prior_comment_id,
-            read=read,
-        )
-        if runs is None:
-            return "application-completion-carrier-prior-dispatch-unavailable"
+        runs = by_title.get(render_dispatch_run_name(prior_comment_id), [])
         if not runs:
             return "application-completion-carrier-prior-dispatch-incomplete"
         if len(runs) != 1:
