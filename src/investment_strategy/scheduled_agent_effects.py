@@ -3590,8 +3590,9 @@ def merged_pr_readiness_complete(
     )
     if not _valid_branch(default_branch):
         return False
+    reviewed = None
     if merge_action == "merge-implementation-pr":
-        reviewed_head = current_reviewed_implementation_head(
+        reviewed = current_reviewed_implementation_head(
             repository,
             token,
             source=WorkerRequest(issue_number, "executor", "merge-implementation-pr"),
@@ -3599,7 +3600,7 @@ def merged_pr_readiness_complete(
             current_revision=current_revision,
             read=_github_json,
         )
-        if reviewed_head is None:
+        if reviewed is None:
             return False
         candidates = tuple(
             item
@@ -3609,7 +3610,7 @@ def merged_pr_readiness_complete(
                 "pulls?state=all&base=" + quote(cast(str, default_branch), safe=""),
             )
             if isinstance(item.get("head"), Mapping)
-            and cast(Mapping[str, object], item["head"]).get("sha") == reviewed_head
+            and cast(Mapping[str, object], item["head"]).get("sha") == reviewed.head_sha
         )
     else:
         owner = repository.split("/", 1)[0] if "/" in repository else ""
@@ -3631,6 +3632,12 @@ def merged_pr_readiness_complete(
         return False
     pull_request = _github_json(repository, token, f"pulls/{number}")
     if not isinstance(pull_request, Mapping):
+        return False
+    if (
+        reviewed is not None
+        and reviewed.merged_sha is not None
+        and pull_request.get("merge_commit_sha") != reviewed.merged_sha
+    ):
         return False
     head = pull_request.get("head")
     base = pull_request.get("base")
