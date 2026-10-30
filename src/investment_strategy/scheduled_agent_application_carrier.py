@@ -154,8 +154,8 @@ def current_reviewed_implementation_head(
     )
     if not events:
         return None
-    pending_merge_revisions: list[str] = []
     reviewed = None
+    blocked_revisions: list[tuple[str, str]] = []
     for event in reversed(events):
         if (
             not event.valid
@@ -173,18 +173,35 @@ def current_reviewed_implementation_head(
                 return None
             reviewed = event
             break
-        # A blocked merge is a legal self-loop, not a new review.  Keep the
-        # exact reviewed HEAD across retries and reject changed work products.
+        # A blocked merge is a legal self-loop, not a new review.  New
+        # semantic intents carry DEFAULT_BRANCH; historical formal envelopes
+        # may carry the exact reviewed PR HEAD.  Neither creates a new PASS.
         if (event.role, event.action) != (
             "executor",
             "merge-implementation-pr",
-        ) or event.successor != ("executor", "merge-implementation-pr"):
+        ) or (
+            event.result_kind != "blocked"
+            or event.successor != ("executor", "merge-implementation-pr")
+            or not _valid_sha(event.default_branch_revision)
+        ):
             return None
-        pending_merge_revisions.append(cast(str, event.revision))
+        if event.default_branch_revision != current_revision and not _compare_is_ancestor(
+            repository,
+            token,
+            ancestor=cast(str, event.default_branch_revision),
+            descendant=current_revision,
+            read=read,
+        ):
+            return None
+        blocked_revisions.append(
+            (cast(str, event.revision), cast(str, event.default_branch_revision))
+        )
     if (
         reviewed is None
-        or any(revision != reviewed.revision for revision in pending_merge_revisions)
         or not _valid_sha(reviewed.default_branch_revision)
+        or any(
+            revision not in {reviewed.revision, default} for revision, default in blocked_revisions
+        )
     ):
         return None
     if reviewed.default_branch_revision != current_revision and not _compare_is_ancestor(
