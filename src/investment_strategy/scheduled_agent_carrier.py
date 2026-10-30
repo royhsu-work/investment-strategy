@@ -21,6 +21,14 @@ _ARTIFACT_REDIRECT_HOST = re.compile(
 _MAX_CARRIER_ARTIFACT_BYTES = 65_536
 
 
+def github_repository_api_url(repository: str, api_path: str) -> str:
+    """Use the canonical repository root for empty and nonempty API paths."""
+
+    root = f"https://api.github.com/repos/{repository}"
+    relative = api_path.lstrip("/")
+    return root if not relative else f"{root}/{relative}"
+
+
 class _NoRedirect(HTTPRedirectHandler):
     """Expose a signed GitHub artifact redirect without forwarding the API bearer token."""
 
@@ -41,7 +49,7 @@ def read_github_artifact_bytes(repository: str, token: str, api_path: str) -> by
     if _REPOSITORY.fullmatch(repository) is None or not token:
         raise RuntimeError("repository/token identity is invalid")
     request = Request(  # noqa: S310 - fixed trusted GitHub API host
-        f"https://api.github.com/repos/{repository}/{api_path.lstrip('/')}",
+        github_repository_api_url(repository, api_path),
         headers={
             "Accept": "application/octet-stream",
             "Authorization": f"Bearer {token}",

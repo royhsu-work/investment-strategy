@@ -47,6 +47,7 @@ from investment_strategy.scheduled_agent_application_materialization import (
 from investment_strategy.scheduled_agent_carrier import (
     CarrierOutcomeReport,
     QualifiedCarrierPlan,
+    github_repository_api_url,
     parse_carrier_outcome_report,
     parse_carrier_plan_document,
     parse_qualified_carrier_document,
@@ -1409,6 +1410,7 @@ PreacceptClassification = Literal[
     "ACCEPTED",
     "LIVE_PREACCEPT",
     "TERMINAL_NO_ACCEPT",
+    "NEEDS_REPAIR",
     "REJECTED",
     "INVALID",
     "UNKNOWN",
@@ -1500,7 +1502,7 @@ def parse_application_run_name(run_name: str) -> int | None:
 
 def _github_json(repository: str, token: str, api_path: str) -> object | None:
     request = Request(  # noqa: S310 - fixed trusted GitHub API host
-        f"https://api.github.com/repos/{repository}/{api_path.lstrip('/')}",
+        github_repository_api_url(repository, api_path),
         headers={
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {token}",
@@ -3238,6 +3240,121 @@ def _effect_request_matches_source(
     )
 
 
+def _preaccept_exception_repair_status(
+    *,
+    repository: str,
+    token: str,
+    source: WorkerRequest,
+    request_comment_id: int,
+    issue_comments: tuple[Mapping[str, object], ...],
+    current_revision: str,
+    read: GitHubReader,
+) -> Literal["NONE", "BLOCKED", "REPAIRED", "INVALID"]:
+    """Bound an observed execution defect to a material application-code advance.
+
+    This consumes the existing EXECUTION_EXCEPTION evidence surface, not a
+    retry counter or routing state. A source change permits fresh normal
+    reauthorization, but never accepts an old pre-ACCEPT request or replays a
+    write. Missing/contradictory provenance cannot release a failed effect.
+    """
+
+    def one(body: str, field: str) -> str | None:
+        matches = [line[len(field) :] for line in body.splitlines() if line.startswith(field)]
+        return matches[0] if len(matches) == 1 and matches[0] else None
+
+    matches: list[Mapping[str, object]] = []
+    for comment in issue_comments:
+        if not is_github_actions_comment(comment):
+            continue
+        body = comment.get("body")
+        if not isinstance(body, str) or not body.startswith("EXECUTION_EXCEPTION\n"):
+            continue
+        if one(body, "Request-Comment-ID: ") == str(request_comment_id):
+            matches.append(comment)
+    if not matches:
+        return "NONE"
+    # One GitHub run can have several completed attempts. Every attempt has
+    # its own immutable exception correlation. Older attempts are historical,
+    # not competing current-frontier ingresses or an application retry count.
+    attempts: dict[int, tuple[int, str]] = {}
+    for comment in matches:
+        body = cast(str, comment["body"])
+        run_id = one(body, "Run-ID: ")
+        run_attempt = one(body, "Run-Attempt: ")
+        original_revision = one(body, "Revision: ")
+        if (
+            one(body, "Workflow: ") != f"#{source.issue_number}"
+            or one(body, "Role: ") != source.role
+            or one(body, "Action: ") != source.action
+            or one(body, "Mutation-Outcome: ") != "NO_APPLICATION_WRITE_ATTEMPTED"
+            or one(body, "Classification: ") != "UNCLASSIFIED_EXECUTION_EXCEPTION"
+            or not isinstance(original_revision, str)
+            or _SHA.fullmatch(original_revision) is None
+            or not isinstance(run_id, str)
+            or not run_id.isdecimal()
+            or int(run_id) <= 0
+            or not isinstance(run_attempt, str)
+            or not run_attempt.isdecimal()
+            or int(run_attempt) <= 0
+            or one(body, "Exception-Correlation: ")
+            != f"application:{run_id}:{run_attempt}:{request_comment_id}"
+        ):
+            return "INVALID"
+        attempt_number = int(run_attempt)
+        if attempt_number in attempts:
+            # A duplicate in the same attempt cannot be dismissed as a rerun.
+            return "INVALID"
+        attempts[attempt_number] = (int(run_id), original_revision)
+    runs = _application_runs(repository, token, request_comment_id, read=read)
+    if runs is None or len(runs) != 1:
+        return "INVALID"
+    run = runs[0]
+    latest_attempt = _positive_int(run.get("run_attempt"))
+    if (
+        latest_attempt is None
+        or max(attempts) > latest_attempt
+        or any(run.get("id") != recorded_run_id for recorded_run_id, _ in attempts.values())
+        or run.get("status") != "completed"
+        or run.get("conclusion") not in _TERMINAL_NO_ACCEPT_CONCLUSIONS
+    ):
+        return "INVALID"
+    _recorded_run_id, original_revision = attempts[max(attempts)]
+    if original_revision == current_revision:
+        return "BLOCKED"
+    try:
+        comparison = read(repository, token, f"compare/{original_revision}...{current_revision}")
+    except (HTTPError, OSError, ValueError, json.JSONDecodeError):
+        return "INVALID"
+    if not isinstance(comparison, Mapping):
+        return "INVALID"
+    base = comparison.get("base_commit")
+    files = comparison.get("files")
+    if (
+        comparison.get("status") != "ahead"
+        or not isinstance(base, Mapping)
+        or base.get("sha") != original_revision
+        or not isinstance(files, list)
+        or len(files) >= 300
+        or any(not isinstance(item, Mapping) for item in files)
+    ):
+        return "INVALID"
+    relevant = any(
+        isinstance(item.get("filename"), str)
+        and (
+            cast(str, item["filename"]).startswith("src/investment_strategy/scheduled_agent_")
+            or item["filename"]
+            in {
+                "src/investment_strategy/issue_comment_bridge.py",
+                "src/investment_strategy/workflow_dispatch.py",
+                ".github/workflows/scheduled-agent-application.yml",
+            }
+        )
+        for item in files
+        if isinstance(item, Mapping)
+    )
+    return "REPAIRED" if relevant else "BLOCKED"
+
+
 def _classify_ingress_candidate(
     *,
     repository: str,
@@ -3274,6 +3391,20 @@ def _classify_ingress_candidate(
         return "LIVE_PREACCEPT"
     if state.state != "REJECTED":
         return "UNKNOWN" if "not-yet-observable" in state.reason else "INVALID"
+
+    exception_status = _preaccept_exception_repair_status(
+        repository=repository,
+        token=token,
+        source=source,
+        request_comment_id=candidate.request_comment_id,
+        issue_comments=issue_comments,
+        current_revision=current_revision,
+        read=read,
+    )
+    if exception_status == "INVALID":
+        return "INVALID"
+    if exception_status == "BLOCKED":
+        return "NEEDS_REPAIR"
 
     # Historical pre-protocol requests require an independent inertness proof;
     # current protocol terminal failures already carry the application-owned
@@ -4387,6 +4518,16 @@ def qualify_application_completion(
         return ApplicationCompletion(
             "INVALID",
             "application-completion-preaccept-evidence-unknown",
+        )
+
+    needs_repair = [
+        request_id for request_id, state in classifications.items() if state == "NEEDS_REPAIR"
+    ]
+    if needs_repair:
+        return ApplicationCompletion(
+            "INVALID",
+            "application-completion-execution-exception-requires-lead",
+            request_comment_id=needs_repair[0] if len(needs_repair) == 1 else None,
         )
 
     live_request_ids = {

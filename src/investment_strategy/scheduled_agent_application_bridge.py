@@ -9,7 +9,9 @@ import hashlib
 import json
 import os
 import re
+import sys
 import time
+import traceback
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -33,6 +35,7 @@ from investment_strategy.scheduled_agent_application_materialization import (
 from investment_strategy.scheduled_agent_carrier import (
     CarrierRequired,
     carrier_plan_document,
+    github_repository_api_url,
     read_github_artifact_bytes,
 )
 from investment_strategy.scheduled_agent_checkin import is_runtime_checkin_issue
@@ -147,6 +150,23 @@ class ApplicationRecoveryArtifact:
     recovery_attempt: int
     continuation_eligible: bool
     document: Mapping[str, object]
+
+
+@dataclass
+class ApplicationExceptionContext:
+    """Invocation-local observations, never routing or continuation authority."""
+
+    repository: str | None = None
+    token: str | None = None
+    revision: str | None = None
+    source: WorkerRequest | None = None
+    change: str | None = None
+    request_comment_id: int | None = None
+    trigger_comment_id: int | None = None
+    run_attempt: int = 1
+    evidence_path: str | None = None
+    stage: str = "application-bootstrap"
+    mutation_attempted: bool = False
 
 
 _APPLICATION_RECOVERY_ARTIFACT = "application-recovery-evidence"
@@ -856,8 +876,8 @@ def _github_json(
     allow_not_found: bool = False,
 ) -> object:
     data = None if payload is None else json.dumps(payload).encode("utf-8")
-    request = Request(
-        f"https://api.github.com/repos/{repository}/{api_path.lstrip('/')}",
+    request = Request(  # noqa: S310 - fixed trusted GitHub API host
+        github_repository_api_url(repository, api_path),
         data=data,
         method=method,
         headers={
@@ -4389,7 +4409,152 @@ def _write_application_recovery_evidence(
             output.write(f"recovery_evidence_path={path}\n")
 
 
+def _record_application_exception(context: ApplicationExceptionContext, exc: Exception) -> None:
+    """Retain a catchable failure without manufacturing ACCEPT or a route.
+
+    A run-scoped artifact survives even when a separate GitHub comment write
+    cannot be freshly qualified. The comment is audit evidence only, not a
+    substitute decision, an Action result, or permission to replay an effect.
+    """
+
+    token = context.token or ""
+
+    def redacted(value: str) -> str:
+        return value.replace(token, "***") if token else value
+
+    raw_run_id = os.environ.get("GITHUB_RUN_ID", "")
+    run_id = _positive_int(int(raw_run_id)) if raw_run_id.isdecimal() else None
+    source = context.source
+    raw_error = redacted(str(exc))
+    correlation = (
+        f"application:{run_id}:{context.run_attempt}:{context.request_comment_id}"
+        if run_id is not None and context.request_comment_id is not None
+        else None
+    )
+    mutation_status = (
+        "UNKNOWN_REQUIRES_FRESH_RECONCILIATION"
+        if context.mutation_attempted
+        else "NO_APPLICATION_WRITE_ATTEMPTED"
+    )
+    document: dict[str, object] = {
+        "schema": "scheduled-agent-execution-exception/v1",
+        "repository": context.repository,
+        "issue_number": None if source is None else source.issue_number,
+        "role": None if source is None else source.role,
+        "action": None if source is None else source.action,
+        "change": context.change,
+        "revision": context.revision,
+        "request_comment_id": context.request_comment_id,
+        "trigger_comment_id": context.trigger_comment_id,
+        "run_id": run_id,
+        "run_attempt": context.run_attempt,
+        "attempted_operation": context.stage,
+        "exception_type": type(exc).__qualname__,
+        "raw_error": raw_error,
+        "raw_traceback": redacted("".join(traceback.format_exception(exc))),
+        "mutation_status": mutation_status,
+        "unfinished_boundary": context.stage,
+        "classification": "UNCLASSIFIED_EXECUTION_EXCEPTION",
+    }
+    if context.evidence_path:
+        try:
+            Path(context.evidence_path).write_text(
+                json.dumps(document, sort_keys=True, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            output_path = os.environ.get("GITHUB_OUTPUT")
+            if output_path:
+                with Path(output_path).open("a", encoding="utf-8") as output:
+                    output.write(f"execution_exception_path={context.evidence_path}\n")
+        except OSError as persistence_error:
+            print(f"Execution exception artifact unavailable: {persistence_error}", file=sys.stderr)
+
+    if (
+        source is None
+        or context.repository is None
+        or not token
+        or context.change is None
+        or context.revision is None
+        or context.request_comment_id is None
+        or correlation is None
+    ):
+        return
+    # Freshly qualify the exact issue before writing an audit comment. A
+    # changed route or unreadable issue prohibits this optional write; the
+    # independently emitted run artifact still captures the actual failure.
+    current = _github_json(context.repository, token, f"issues/{source.issue_number}")
+    current_issue = _as_mapping(current)
+    if current_issue is None or current_issue.get("state") != "open":
+        return
+    current_labels = current_issue.get("labels")
+    if not isinstance(current_labels, list) or not any(
+        isinstance(label, Mapping) and label.get("name") == f"action:{source.action}"
+        for label in current_labels
+    ):
+        return
+    current_body = current_issue.get("body")
+    if not isinstance(current_body, str) or _CHANGE_LINE.findall(current_body) != [context.change]:
+        return
+    lines = [
+        "EXECUTION_EXCEPTION",
+        f"Workflow: #{source.issue_number}",
+        f"Change: {context.change}",
+        f"Action: {source.action}",
+        f"Role: {source.role}",
+        "Result: execution-exception",
+        f"Revision: {context.revision}",
+        f"Request-Comment-ID: {context.request_comment_id}",
+        f"Run-ID: {run_id}",
+        f"Run-Attempt: {context.run_attempt}",
+        f"Exception-Correlation: {correlation}",
+        f"Attempted-Operation: {context.stage}",
+        f"Raw-Error: {raw_error}",
+        f"Mutation-Outcome: {mutation_status}",
+        f"Unfinished-Work: {context.stage}",
+        "Classification: UNCLASSIFIED_EXECUTION_EXCEPTION",
+        "Disposition: fresh-reconcile-or-bounded-Lead-repair; no automatic routing",
+    ]
+    message = "\n".join(lines)
+    endpoint = f"issues/{source.issue_number}/comments"
+
+    def matching_comments() -> tuple[Mapping[str, object], ...]:
+        return tuple(
+            comment
+            for comment in _paged_github_list(context.repository or "", token, endpoint)
+            if isinstance(comment.get("body"), str)
+            and f"Exception-Correlation: {correlation}" in cast(str, comment["body"]).splitlines()
+        )
+
+    existing = matching_comments()
+    if len(existing) > 1 or (existing and existing[0].get("body") != message):
+        return
+    if not existing:
+        _github_json(context.repository, token, endpoint, method="POST", payload={"body": message})
+    verified = matching_comments()
+    if len(verified) != 1 or verified[0].get("body") != message:
+        raise RuntimeError("EXECUTION_EXCEPTION postcondition is not uniquely observable")
+
+
 def main() -> int:
+    """Apply an exact worker result and capture exceptions at its outer boundary."""
+
+    context = ApplicationExceptionContext()
+    try:
+        return _main_unprotected(context)
+    except Exception as exc:
+        try:
+            _record_application_exception(context, exc)
+        except Exception as capture_error:
+            # The original exception remains primary; an uncertain audit write
+            # must never be retried blindly or obscure the failed boundary.
+            print(
+                f"Execution exception evidence persistence failed: {capture_error}",
+                file=sys.stderr,
+            )
+        raise
+
+
+def _main_unprotected(context: ApplicationExceptionContext) -> int:
     """Apply one worker result after fresh repository authorization."""
 
     parser = argparse.ArgumentParser()
@@ -4400,7 +4565,11 @@ def main() -> int:
     parser.add_argument("--validated-revision")
     parser.add_argument("--run-attempt", type=int, default=1)
     parser.add_argument("--recovery-evidence-path")
+    parser.add_argument("--exception-evidence-path")
     args = parser.parse_args()
+    context.revision = args.revision
+    context.run_attempt = args.run_attempt
+    context.evidence_path = args.exception_evidence_path
     if args.run_attempt <= 0:
         raise ValueError("run attempt must be positive")
 
@@ -4408,6 +4577,8 @@ def main() -> int:
     token = os.environ.get("GITHUB_TOKEN")
     if not repository or not token:
         raise RuntimeError("GITHUB_REPOSITORY and GITHUB_TOKEN are required")
+    context.repository = repository
+    context.token = token
 
     event = _as_mapping(_load_json(args.event_path))
     if event is None:
@@ -4417,6 +4588,7 @@ def main() -> int:
     if not isinstance(body, str):
         return 0
     event_comment_id = _positive_int(None if event_comment is None else event_comment.get("id"))
+    context.trigger_comment_id = event_comment_id
     accepted_intent: ApplicationDecisionRecord | None = None
     accepted_raw_worker_result: str | None = None
     continuation: ApplicationContinuationRequest | None = None
@@ -4577,6 +4749,8 @@ def main() -> int:
         return 0
     if plan.source is None or plan.raw_worker_result is None or plan.request_comment_id is None:
         raise RuntimeError("application plan is missing validated source/result/request identity")
+    context.source = plan.source
+    context.request_comment_id = plan.request_comment_id
 
     if accepted_intent is None and (body_mutated or args.run_attempt > 1 or args.validation_passed):
         accepted_intent = _application_decision_for_request(
@@ -4595,6 +4769,8 @@ def main() -> int:
     )
     if effective_change is None:
         raise RuntimeError("application plan has no fresh machine-owned Change")
+    context.change = effective_change
+    context.stage = "pre-accept-worker-result-qualification"
     if accepted_intent is not None:
         if accepted_intent.disposition == "REJECTED":
             _write_carrier_outputs(ApplyResult(False, "application-rejected"))
@@ -4684,12 +4860,15 @@ def main() -> int:
         )
 
     pending_continuation = plan.pending_continuation
+    context.stage = "application-effect-preparation"
     if (
         first_activation
         and accepted_intent is not None
         and request.authorization_revision != args.revision
     ):
         pending_continuation = True
+    if first_activation and materialization is not None and accepted_intent is not None:
+        context.mutation_attempted = True
     if (
         first_activation
         and materialization is not None
@@ -4748,6 +4927,8 @@ def main() -> int:
             authorized_change=plan.change,
         )
 
+    context.stage = "application-effect-and-postcondition"
+    context.mutation_attempted = True
     try:
         if first_activation and args.validation_passed:
             batch, result = run_guarded_effect_application(

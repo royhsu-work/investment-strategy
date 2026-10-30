@@ -7,9 +7,13 @@ import hashlib
 import json
 import sys
 from datetime import date
+from email.message import Message
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
+from urllib.error import HTTPError
+from urllib.request import Request
 
 import pytest
 
@@ -63,6 +67,188 @@ _TEST_PREDECESSOR_ARTIFACT_ID = 9003
 _TEST_PREDECESSOR_ARTIFACT_DIGEST = "sha256:" + "1" * 64
 _TEST_FAILURE_EVIDENCE_SHA256 = "2" * 64
 _TEST_RECOVERY_EPISODE_SHA256 = "3" * 64
+
+
+@pytest.mark.parametrize(
+    ("api_path", "expected_url"),
+    [
+        ("", "https://api.github.com/repos/royhsu-work/investment-strategy"),
+        ("/pulls/390", "https://api.github.com/repos/royhsu-work/investment-strategy/pulls/390"),
+    ],
+)
+def test_application_github_url_has_exact_root_and_nonempty_path(
+    monkeypatch: pytest.MonkeyPatch, api_path: str, expected_url: str
+) -> None:
+    visited: list[str] = []
+
+    def github_get(request: Request, *, timeout: int) -> BytesIO:
+        assert timeout == 30
+        url = request.full_url
+        visited.append(url)
+        if url.endswith("/investment-strategy/"):
+            raise HTTPError(url, 404, "repository root with trailing slash", Message(), None)
+        return BytesIO(b'{"default_branch":"main"}')
+
+    monkeypatch.setattr(bridge, "urlopen", github_get)
+    assert bridge._github_json(_REPOSITORY, "token", api_path) == {"default_branch": "main"}
+    assert visited == [expected_url]
+
+
+def test_preaccept_404_keeps_exception_evidence_and_never_forges_accept(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = WorkerRequest(322, "executor", "merge-implementation-pr")
+    worker = _worker_result(action=source.action, role=source.role, result_kind="merged")
+    worker["issue_number"] = source.issue_number
+    worker["change"] = "restore-no-work-idle-discovery"
+    request_body = _effect_request(worker)
+    event_path = tmp_path / "event.json"
+    event_path.write_text(json.dumps(_event(request_body)), encoding="utf-8")
+    evidence_path = tmp_path / "execution-exception.json"
+    output_path = tmp_path / "github-output.txt"
+    github_comments: list[dict[str, object]] = []
+    mutations: list[str] = []
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", _REPOSITORY)
+    monkeypatch.setenv("GITHUB_TOKEN", "test-private-token")
+    monkeypatch.setenv("GITHUB_RUN_ID", "41036535846")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output_path))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "scheduled_agent_application_bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            _REVISION,
+            "--default-branch",
+            "main",
+            "--exception-evidence-path",
+            str(evidence_path),
+        ],
+    )
+    monkeypatch.setattr(bridge, "_fresh_event_observation", lambda *_args: False)
+    monkeypatch.setattr(
+        bridge,
+        "acquire_current_github_preflight",
+        lambda *_args: _preflight(
+            issue_number=322, action=source.action, change="restore-no-work-idle-discovery"
+        ),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "plan_application",
+        lambda **_kwargs: bridge.ApplicationPlan(
+            should_apply=True,
+            source=source,
+            raw_worker_result=json.dumps(worker),
+            change="restore-no-work-idle-discovery",
+            request_comment_id=102,
+        ),
+    )
+
+    def failed_qualification(*_args: object, **_kwargs: object) -> str:
+        raise HTTPError(
+            "https://api.github.com/repos/owner/repo/", 404, "Not Found", Message(), None
+        )
+
+    monkeypatch.setattr(bridge, "_fresh_application_worker_result", failed_qualification)
+    monkeypatch.setattr(
+        bridge,
+        "run_guarded_effect_application",
+        lambda *_args, **_kwargs: pytest.fail("pre-ACCEPT exception cannot apply effects"),
+    )
+
+    def github_io(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, object] | None = None,
+    ) -> object:
+        if path == "issues/322":
+            return {
+                "state": "open",
+                "body": "Change: restore-no-work-idle-discovery\n",
+                "labels": [{"name": "action:merge-implementation-pr"}],
+            }
+        if path == "issues/322/comments?per_page=100&page=1":
+            return github_comments
+        if path == "issues/322/comments" and method == "POST":
+            assert payload is not None
+            mutations.append(path)
+            github_comments.append({"id": 123, "body": payload["body"]})
+            return {"id": 123}
+        raise AssertionError(f"unexpected API {method} {path}")
+
+    monkeypatch.setattr(bridge, "_github_json", github_io)
+
+    with pytest.raises(HTTPError, match="HTTP Error 404"):
+        bridge.main()
+
+    document = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert document["schema"] == "scheduled-agent-execution-exception/v1"
+    assert (document["issue_number"], document["action"], document["request_comment_id"]) == (
+        322,
+        "merge-implementation-pr",
+        102,
+    )
+    assert document["run_id"] == 41036535846
+    assert document["raw_error"] == "HTTP Error 404: Not Found"
+    assert document["mutation_status"] == "NO_APPLICATION_WRITE_ATTEMPTED"
+    assert document["unfinished_boundary"] == "pre-accept-worker-result-qualification"
+    assert "test-private-token" not in evidence_path.read_text(encoding="utf-8")
+    assert output_path.read_text(encoding="utf-8") == (
+        f"execution_exception_path={evidence_path}\n"
+    )
+    assert mutations == ["issues/322/comments"]
+    assert len(github_comments) == 1
+    assert str(github_comments[0]["body"]).startswith("EXECUTION_EXCEPTION\nWorkflow: #322")
+    assert "Disposition: fresh-reconcile-or-bounded-Lead-repair" in str(github_comments[0]["body"])
+    # Repeating the handler for the same run/attempt must not append a second
+    # record, manufacture ACCEPT, or enter effect execution.
+    with pytest.raises(HTTPError, match="HTTP Error 404"):
+        bridge.main()
+    assert mutations == ["issues/322/comments"]
+
+
+def test_application_workflow_uploads_exception_even_when_apply_fails() -> None:
+    workflow = Path(".github/workflows/scheduled-agent-application.yml").read_text(encoding="utf-8")
+    assert (
+        workflow.count(
+            '--exception-evidence-path "$RUNNER_TEMP/application-execution-exception.json"'
+        )
+        == 2
+    )
+    assert "if: always() && steps.apply.outputs.execution_exception_path != ''" in workflow
+    assert (
+        "if: always() && steps.post_validation_apply.outputs.execution_exception_path != ''"
+        in workflow
+    )
+    assert workflow.count("name: application-execution-exception") == 2
+
+
+def test_uncertain_effect_exception_does_not_claim_no_write(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    context = bridge.ApplicationExceptionContext(
+        repository=_REPOSITORY,
+        revision=_REVISION,
+        source=WorkerRequest(322, "executor", "merge-implementation-pr"),
+        change="restore-no-work-idle-discovery",
+        request_comment_id=102,
+        evidence_path=str(tmp_path / "execution-exception.json"),
+        stage="application-effect-and-postcondition",
+        mutation_attempted=True,
+    )
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    bridge._record_application_exception(context, RuntimeError("lost write response"))
+    document = json.loads((tmp_path / "execution-exception.json").read_text(encoding="utf-8"))
+    assert document["mutation_status"] == "UNKNOWN_REQUIRES_FRESH_RECONCILIATION"
+    assert document["raw_error"] == "lost write response"
 
 
 def _worker_result(
@@ -2912,7 +3098,7 @@ def test_application_failed_effect_is_not_lost_from_actions_log_contract() -> No
     """The normal application failure summary must preserve bounded effect identity."""
     import inspect
 
-    main_source = inspect.getsource(bridge.main)
+    main_source = inspect.getsource(bridge._main_unprotected)
     assert '"failure_evidence": _public_failure_diagnostics(result)' in main_source
 
 
@@ -3124,7 +3310,7 @@ def test_cli_checkpoint_revision_is_bound_to_fresh_proven_target_not_unverified_
     """CLI echo is evidence transport, never the materialized checkpoint authority."""
     import inspect
 
-    main_source = inspect.getsource(bridge.main)
+    main_source = inspect.getsource(bridge._main_unprotected)
     assert "validated_materialization_revision=args.validated_revision" not in main_source
     assert (
         main_source.count(
@@ -3195,7 +3381,6 @@ def test_original_322_pr_merge_review_gate_rejects_unreviewed_or_findings_head(
     """The actual GitHub-event gate checks a fresh review's immutable commit_id."""
     import io
     import textwrap
-    from urllib.request import Request
 
     workflow = Path(".github/workflows/scheduled-agent-application.yml").read_text(encoding="utf-8")
     section = workflow.split("      - name: Qualify #388 merged event", 1)[1].split(

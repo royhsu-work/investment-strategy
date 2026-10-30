@@ -213,6 +213,7 @@ jobs:
           --default-branch "${{ github.event.repository.default_branch }}"
           --run-attempt "${{ github.run_attempt }}"
           --recovery-evidence-path "$RUNNER_TEMP/application-recovery-evidence"
+          --exception-evidence-path "$RUNNER_TEMP/application-execution-exception.json"
 
       - name: Bounded original #322 recovery through existing application owner
         if: >-
@@ -250,6 +251,17 @@ jobs:
         with:
           name: application-recovery-evidence
           path: ${{ steps.apply.outputs.recovery_evidence_path }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true
+
+      - name: Upload pre-ACCEPT or interrupted application exception evidence
+        if: always() && steps.apply.outputs.execution_exception_path != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: application-execution-exception
+          path: ${{ steps.apply.outputs.execution_exception_path }}
           archive: false
           if-no-files-found: error
           retention-days: 90
@@ -386,6 +398,7 @@ jobs:
           --default-branch "${{ github.event.repository.default_branch }}"
           --run-attempt "${{ github.run_attempt }}"
           --recovery-evidence-path "$RUNNER_TEMP/application-recovery-evidence"
+          --exception-evidence-path "$RUNNER_TEMP/application-execution-exception.json"
           --validation-passed
           --validated-revision "${{ steps.validation.outputs.validation_target_revision }}"
 
@@ -395,6 +408,17 @@ jobs:
         with:
           name: application-recovery-evidence
           path: ${{ steps.post_validation_apply.outputs.recovery_evidence_path }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true
+
+      - name: Upload post-validation application exception evidence
+        if: always() && steps.post_validation_apply.outputs.execution_exception_path != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: application-execution-exception
+          path: ${{ steps.post_validation_apply.outputs.execution_exception_path }}
           archive: false
           if-no-files-found: error
           retention-days: 90

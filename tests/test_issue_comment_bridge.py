@@ -1605,6 +1605,172 @@ def _completion_matrix_reader(
     return fake_read
 
 
+@pytest.mark.parametrize(
+    ("changed", "expected_state", "expected_reason"),
+    [
+        (None, "INVALID", "application-completion-execution-exception-requires-lead"),
+        (
+            "README.md",
+            "INVALID",
+            "application-completion-execution-exception-requires-lead",
+        ),
+        (
+            "src/investment_strategy/scheduled_agent_application_bridge.py",
+            "REJECTED",
+            "application-completion-terminal-no-accept",
+        ),
+    ],
+)
+def test_preaccept_exception_blocks_unchanged_code_but_recovers_after_application_repair(
+    changed: str | None, expected_state: str, expected_reason: str
+) -> None:
+    """A stable executable defect does not cause hourly semantic redispatch."""
+
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    request_revision = bridge._APPLICATION_DECISION_PROTOCOL_REVISION
+    current_revision = request_revision if changed is None else "a" * 40
+    request = _effect_request_comment(
+        comment_id=654,
+        created_at="2026-09-18T01:00:00Z",
+        authorization_revision=request_revision,
+    )
+    exception_body = "\n".join(
+        (
+            "EXECUTION_EXCEPTION",
+            "Workflow: #138",
+            "Change: unset",
+            "Action: explore-change",
+            "Role: lead",
+            f"Revision: {request_revision}",
+            "Request-Comment-ID: 654",
+            "Run-ID: 9000",
+            "Run-Attempt: 1",
+            "Exception-Correlation: application:9000:1:654",
+            "Mutation-Outcome: NO_APPLICATION_WRITE_ATTEMPTED",
+            "Classification: UNCLASSIFIED_EXECUTION_EXCEPTION",
+        )
+    )
+    exception_comment = {
+        "id": 701,
+        "body": exception_body,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    base_read = _completion_matrix_reader([request])
+
+    def read(repository: str, token: str, path: str) -> object:
+        if path.startswith("issues/138/comments?"):
+            return [exception_comment]
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 9000,
+                        "display_title": "Scheduled Agent Application 654",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "head_sha": request_revision,
+                        "run_attempt": 1,
+                    }
+                ]
+            }
+        if path == f"compare/{request_revision}...{current_revision}":
+            return {
+                "status": "ahead",
+                "base_commit": {"sha": request_revision},
+                "files": [{"filename": changed}],
+            }
+        return base_read(repository, token, path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=current_revision,
+        read=read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+    assert (completion.state, completion.reason) == (expected_state, expected_reason)
+    assert completion.request_comment_id == 654
+
+
+@pytest.mark.parametrize(
+    ("attempts", "latest_attempt", "repaired", "expected"),
+    [
+        ((1, 2), 2, False, "BLOCKED"),
+        ((1, 2), 2, True, "REPAIRED"),
+        ((1,), 2, True, "REPAIRED"),
+        ((1, 1), 2, True, "INVALID"),
+        ((1, 3), 2, True, "INVALID"),
+    ],
+)
+def test_preaccept_execution_exception_distinguishes_reruns_from_duplicate_receipts(
+    attempts: tuple[int, ...], latest_attempt: int, repaired: bool, expected: str
+) -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    revision = bridge._APPLICATION_DECISION_PROTOCOL_REVISION
+    current_revision = "a" * 40 if repaired else revision
+    comments = []
+    for index, attempt in enumerate(attempts):
+        comments.append(
+            {
+                "id": 800 + index,
+                "user": {"login": "github-actions[bot]"},
+                "performed_via_github_app": {"slug": "github-actions"},
+                "body": "\n".join(
+                    (
+                        "EXECUTION_EXCEPTION",
+                        "Workflow: #138",
+                        "Change: unset",
+                        "Action: explore-change",
+                        "Role: lead",
+                        f"Revision: {revision}",
+                        "Request-Comment-ID: 654",
+                        "Run-ID: 9000",
+                        f"Run-Attempt: {attempt}",
+                        f"Exception-Correlation: application:9000:{attempt}:654",
+                        "Mutation-Outcome: NO_APPLICATION_WRITE_ATTEMPTED",
+                        "Classification: UNCLASSIFIED_EXECUTION_EXCEPTION",
+                    )
+                ),
+            }
+        )
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 9000,
+                        "display_title": "Scheduled Agent Application 654",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "run_attempt": latest_attempt,
+                    }
+                ]
+            }
+        if path == f"compare/{revision}...{current_revision}":
+            return {
+                "status": "ahead",
+                "base_commit": {"sha": revision},
+                "files": [
+                    {"filename": "src/investment_strategy/scheduled_agent_application_bridge.py"}
+                ],
+            }
+        raise AssertionError(path)
+
+    result = bridge._preaccept_exception_repair_status(
+        repository="owner/repo",
+        token=REVISION,
+        source=source,
+        request_comment_id=654,
+        issue_comments=tuple(comments),
+        current_revision=current_revision,
+        read=read,
+    )
+    assert result == expected
+
+
 @pytest.mark.parametrize("count", (1, 2, 3))
 @pytest.mark.parametrize("terminal_conclusion", ("failure", "cancelled", "timed_out", "skipped"))
 def test_terminal_preactcept_candidates_do_not_compete_by_raw_cardinality(
