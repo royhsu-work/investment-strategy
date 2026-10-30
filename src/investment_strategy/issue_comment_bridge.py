@@ -1973,7 +1973,11 @@ def _complete_workflow_runs(
             if not isinstance(raw_runs, list):
                 return None
             for run in raw_runs:
-                if not isinstance(run, Mapping) or not isinstance(run.get("id"), int):
+                if (
+                    not isinstance(run, Mapping)
+                    or type(run.get("id")) is not int
+                    or not isinstance(run.get("event"), str)
+                ):
                     return None
                 complete_runs.append(cast(Mapping[str, object], run))
         ids = [cast(int, run["id"]) for run in complete_runs]
