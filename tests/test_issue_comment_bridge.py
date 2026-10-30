@@ -9,6 +9,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Literal, cast
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -41,6 +42,213 @@ _RECOVERY_TEST_FIELDS = {
     "failure_evidence_sha256": "2" * 64,
     "recovery_episode_sha256": "3" * 64,
 }
+
+
+def test_workflow_run_history_reads_beyond_filtered_thousand_without_weakening_identity() -> None:
+    """A 1,000-result search cap must not hide an older matching Action run."""
+
+    application_title = bridge.render_application_run_name(901)
+    dispatch_title = bridge.render_dispatch_run_name(902)
+    runs = [
+        {
+            "id": index,
+            "event": "push" if index == 1 else "issue_comment",
+            "display_title": (
+                application_title
+                if index in {1, 1206}
+                else dispatch_title
+                if index == 1205
+                else "unrelated"
+            ),
+        }
+        for index in range(1, 1207)
+    ]
+    paths: list[str] = []
+
+    def read(repository: str, token: str, path: str) -> object:
+        assert repository == "royhsu-work/investment-strategy"
+        assert token
+        paths.append(path)
+        query = parse_qs(urlsplit(path).query)
+        page = int(query["page"][0])
+        filtered = query.get("event") == ["issue_comment"]
+        selected = [run for run in runs if run["event"] == "issue_comment"] if filtered else runs
+        return {
+            "total_count": len(selected),
+            "workflow_runs": selected[(page - 1) * 100 : page * 100],
+        }
+
+    assert [
+        run["id"]
+        for run in bridge._application_runs(  # noqa: SLF001
+            "royhsu-work/investment-strategy", "token", 901, read=read
+        )
+        or ()
+    ] == [1206]
+    assert [
+        run["id"]
+        for run in bridge._dispatch_runs_for_request(  # noqa: SLF001
+            "royhsu-work/investment-strategy", "token", 902, read=read
+        )
+        or ()
+    ] == [1205]
+    assert any("event=issue_comment" in path for path in paths)
+    assert any("event=issue_comment" not in path for path in paths)
+
+
+def test_workflow_run_history_fails_closed_on_concurrent_pagination_drift() -> None:
+    def read(repository: str, token: str, path: str) -> object:
+        query = parse_qs(urlsplit(path).query)
+        page = int(query["page"][0])
+        filtered = query.get("event") == ["issue_comment"]
+        count = 1201 if filtered else 1202
+        if not filtered and page == 2:
+            count += 1
+        return {
+            "total_count": count,
+            "workflow_runs": [
+                {"id": index, "event": "issue_comment", "display_title": "unrelated"}
+                for index in range((page - 1) * 100 + 1, min(page * 100, count) + 1)
+            ],
+        }
+
+    assert (
+        bridge._application_runs(  # noqa: SLF001
+            "royhsu-work/investment-strategy", "token", 901, read=read
+        )
+        is None
+    )
+
+
+def test_unfiltered_workflow_history_rejects_missing_event_provenance() -> None:
+    runs: list[dict[str, object]] = [
+        {"id": index, "event": "issue_comment", "display_title": "other"}
+        for index in range(1, 1102)
+    ]
+    runs[101]["event"] = None
+    runs[101]["display_title"] = bridge.render_application_run_name(901)
+
+    def read(repository: str, token: str, path: str) -> object:
+        query = parse_qs(urlsplit(path).query)
+        page = int(query["page"][0])
+        selected = (
+            [run for run in runs if run["event"] == "issue_comment"]
+            if query.get("event") == ["issue_comment"]
+            else runs
+        )
+        return {
+            "total_count": len(selected),
+            "workflow_runs": selected[(page - 1) * 100 : page * 100],
+        }
+
+    assert (
+        bridge._application_runs(  # noqa: SLF001
+            "royhsu-work/investment-strategy", "token", 901, read=read
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("fault", ["short", "duplicate", "changed_count"])
+def test_small_workflow_run_history_requires_complete_stable_pages(fault: str) -> None:
+    def read(repository: str, token: str, path: str) -> object:
+        query = parse_qs(urlsplit(path).query)
+        page = int(query["page"][0])
+        count = 102 if fault == "changed_count" and page == 2 else 101
+        runs = (
+            [{"id": n, "display_title": "other"} for n in range(1, 101)]
+            if page == 1
+            else []
+            if fault == "short"
+            else [{"id": 1 if fault == "duplicate" else 101, "display_title": "other"}]
+        )
+        return {"total_count": count, "workflow_runs": runs}
+
+    assert (
+        bridge._application_runs(  # noqa: SLF001
+            "royhsu-work/investment-strategy", "token", 901, read=read
+        )
+        is None
+    )
+
+
+def test_prior_dispatch_handoff_indexes_run_history_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    previous = (91, 92)
+    artifacts: dict[int, bytes] = {
+        request_id + 500: json.dumps(
+            {
+                "schema": bridge.DISPATCH_RESULT_SCHEMA,
+                "request_comment_id": request_id,
+                "default_branch_revision": REVISION,
+                "disposition": "AUTHORIZE",
+                "issue_number": 322,
+                "action": "review-implementation",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        for request_id in previous
+    }
+    history_reads = 0
+
+    def read(repository: str, token: str, path: str) -> object:
+        nonlocal history_reads
+        if path.startswith("actions/workflows/scheduled-agent-bridge.yml/runs?"):
+            history_reads += 1
+            return {
+                "total_count": 2,
+                "workflow_runs": [
+                    {
+                        "id": request_id + 400,
+                        "display_title": bridge.render_dispatch_run_name(request_id),
+                        "status": "completed",
+                        "head_sha": REVISION,
+                    }
+                    for request_id in previous
+                ],
+            }
+        for request_id in previous:
+            if path == f"actions/runs/{request_id + 400}/artifacts?per_page=100":
+                raw = artifacts[request_id + 500]
+                return {
+                    "total_count": 1,
+                    "artifacts": [
+                        {
+                            "id": request_id + 500,
+                            "name": "dispatch-result.json",
+                            "expired": False,
+                            "digest": f"sha256:{hashlib.sha256(raw).hexdigest()}",
+                            "workflow_run": {"id": request_id + 400, "head_sha": REVISION},
+                        }
+                    ],
+                }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(
+        bridge,
+        "read_github_artifact_bytes",
+        lambda repository, token, path: artifacts[int(path.split("/")[2])],
+    )
+    assert (
+        bridge._prior_dispatch_handoff_reason(  # noqa: SLF001
+            "owner/repo",
+            "token",
+            recent_comments=tuple(
+                _trusted_connector_comment(
+                    request_id, "DISPATCH_REQUEST\nRequested-At: 2026-10-30T00:00:00Z"
+                )
+                for request_id in previous
+            ),
+            owner="owner",
+            current_dispatch_request_comment_id=93,
+            plan_id="carrier-plan-" + "e" * 64,
+            read=read,
+        )
+        is None
+    )
+    assert history_reads == 1
 
 
 def _event(

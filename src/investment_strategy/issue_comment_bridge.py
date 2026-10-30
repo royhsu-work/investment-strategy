@@ -10,6 +10,7 @@ import json
 import os
 import re
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1906,27 +1907,131 @@ def _dispatch_runs_for_request(
 ) -> tuple[Mapping[str, object], ...] | None:
     """Read all bridge runs for one earlier transport comment."""
 
+    runs = _complete_workflow_runs(repository, token, _DISPATCH_WORKFLOW, read=read)
+    if runs is None:
+        return None
     title = render_dispatch_run_name(request_comment_id)
-    page = 1
-    matches: list[Mapping[str, object]] = []
+    return tuple(run for run in runs if run.get("display_title") == title)
+
+
+def _complete_workflow_runs(
+    repository: str,
+    token: str,
+    workflow: str,
+    *,
+    read: GitHubReader,
+) -> tuple[Mapping[str, object], ...] | None:
+    """Read complete issue-comment runs without GitHub's filtered 1,000-run cap.
+
+    GitHub caps event-filtered workflow-run searches at 1,000 results even when
+    ``total_count`` reports more.  The unfiltered endpoint is paginated without
+    that search cap.  Fetch its independent pages concurrently and fail closed
+    if the run count changes while constructing the observation.
+    """
+
+    path = f"actions/workflows/{quote(workflow, safe='')}/runs"
+
+    def page(number: int, *, filtered: bool) -> Mapping[str, object] | None:
+        params: dict[str, str | int] = {"per_page": 100, "page": number}
+        if filtered:
+            params = {"event": "issue_comment", **params}
+        payload = read(repository, token, f"{path}?{urlencode(params)}")
+        if not isinstance(payload, Mapping) or not isinstance(payload.get("workflow_runs"), list):
+            return None
+        return payload
+
+    first = page(1, filtered=True)
+    if first is None:
+        return None
+    total_count = first.get("total_count")
+    if type(total_count) is int and total_count > 1000:
+        first = page(1, filtered=False)
+        if first is None:
+            return None
+        unfiltered_count = first.get("total_count")
+        if type(unfiltered_count) is not int or unfiltered_count < total_count:
+            return None
+        pages = (unfiltered_count + 99) // 100
+        if pages == 0:
+            return None
+        with ThreadPoolExecutor(max_workers=min(8, pages)) as pool:
+            remaining = tuple(pool.map(lambda n: page(n, filtered=False), range(2, pages + 1)))
+        payloads = (first, *remaining)
+        if any(
+            payload is None
+            or payload.get("total_count") != unfiltered_count
+            or len(cast(list[object], payload["workflow_runs"]))
+            != min(100, unfiltered_count - index * 100)
+            for index, payload in enumerate(payloads)
+        ):
+            return None
+        complete_runs: list[Mapping[str, object]] = []
+        for payload in payloads:
+            if payload is None:
+                return None
+            raw_runs = payload["workflow_runs"]
+            if not isinstance(raw_runs, list):
+                return None
+            for run in raw_runs:
+                if (
+                    not isinstance(run, Mapping)
+                    or type(run.get("id")) is not int
+                    or not isinstance(run.get("event"), str)
+                ):
+                    return None
+                complete_runs.append(cast(Mapping[str, object], run))
+        ids = [cast(int, run["id"]) for run in complete_runs]
+        if len(ids) != len(set(ids)):
+            return None
+        return tuple(run for run in complete_runs if run.get("event") == "issue_comment")
+
+    if total_count is not None and (type(total_count) is not int or total_count < 0):
+        return None
+    if isinstance(total_count, int):
+        count_pages = max(1, (total_count + 99) // 100)
+        with ThreadPoolExecutor(max_workers=min(8, count_pages)) as pool:
+            remaining = tuple(pool.map(lambda n: page(n, filtered=True), range(2, count_pages + 1)))
+        payloads = (first, *remaining)
+        filtered_runs: list[Mapping[str, object]] = []
+        for index, payload in enumerate(payloads):
+            if payload is None or payload.get("total_count") != total_count:
+                return None
+            raw_runs = payload["workflow_runs"]
+            if not isinstance(raw_runs, list) or len(raw_runs) != min(
+                100, total_count - index * 100
+            ):
+                return None
+            for run in raw_runs:
+                if not isinstance(run, Mapping) or type(run.get("id")) is not int:
+                    return None
+                filtered_runs.append(cast(Mapping[str, object], run))
+        ids = [cast(int, run["id"]) for run in filtered_runs]
+        if len(ids) != len(set(ids)):
+            return None
+        return tuple(filtered_runs)
+
+    # Legacy injected readers may omit the GitHub total_count field. A short
+    # final page is still an explicit pagination terminator, but the search
+    # cannot prove completeness at GitHub's 1,000-result filtered cap.
+    legacy_runs: list[Mapping[str, object]] = []
+    current = first
+    number = 1
     while True:
-        query = urlencode({"event": "issue_comment", "per_page": 100, "page": page})
-        payload = read(
-            repository,
-            token,
-            f"actions/workflows/{quote(_DISPATCH_WORKFLOW, safe='')}/runs?{query}",
-        )
-        if not isinstance(payload, Mapping):
+        raw_runs = current["workflow_runs"]
+        if not isinstance(raw_runs, list) or current.get("total_count") is not None:
             return None
-        raw_runs = payload.get("workflow_runs")
-        if not isinstance(raw_runs, list):
+        if any(not isinstance(run, Mapping) for run in raw_runs):
             return None
-        for raw in raw_runs:
-            if isinstance(raw, Mapping) and raw.get("display_title") == title:
-                matches.append(cast(Mapping[str, object], raw))
+        legacy_runs.extend(cast(list[Mapping[str, object]], raw_runs))
         if len(raw_runs) < 100:
-            return tuple(matches)
-        page += 1
+            return tuple(legacy_runs)
+        if len(legacy_runs) >= 1000:
+            return None
+        number += 1
+        next_page = page(number, filtered=True)
+        if next_page is None:
+            return None
+        current = next_page
 
 
 def _prior_dispatch_handoff_reason(
@@ -1960,15 +2065,21 @@ def _prior_dispatch_handoff_reason(
             if parse_dispatch_request(body) is None:
                 return "application-completion-carrier-prior-dispatch-incomplete"
             prior_ids.append(comment_id)
+    if not prior_ids:
+        return None
+    # One read-only history observation for this handoff classification.
+    # Never re-fetch the same full workflow history once per prior request;
+    # the indexed snapshot is not shared across a later mutation boundary.
+    all_runs = _complete_workflow_runs(repository, token, _DISPATCH_WORKFLOW, read=read)
+    if all_runs is None:
+        return "application-completion-carrier-prior-dispatch-unavailable"
+    by_title: dict[str, list[Mapping[str, object]]] = {}
+    for run in all_runs:
+        title = run.get("display_title")
+        if isinstance(title, str):
+            by_title.setdefault(title, []).append(run)
     for prior_comment_id in sorted(prior_ids, reverse=True):
-        runs = _dispatch_runs_for_request(
-            repository,
-            token,
-            prior_comment_id,
-            read=read,
-        )
-        if runs is None:
-            return "application-completion-carrier-prior-dispatch-unavailable"
+        runs = by_title.get(render_dispatch_run_name(prior_comment_id), [])
         if not runs:
             return "application-completion-carrier-prior-dispatch-incomplete"
         if len(runs) != 1:
@@ -2301,27 +2412,10 @@ def _application_runs(
 
     transport_ids = transport_comment_ids or (request_comment_id,)
     titles = {render_application_run_name(comment_id) for comment_id in transport_ids}
-    page = 1
-    matches: list[Mapping[str, object]] = []
-    while True:
-        query = urlencode({"event": "issue_comment", "per_page": 100, "page": page})
-        payload = read(
-            repository,
-            token,
-            f"actions/workflows/{quote(_APPLICATION_WORKFLOW, safe='')}/runs?{query}",
-        )
-        if not isinstance(payload, Mapping):
-            return None
-        raw_runs = payload.get("workflow_runs")
-        if not isinstance(raw_runs, list):
-            return None
-        for raw in raw_runs:
-            if isinstance(raw, Mapping) and raw.get("display_title") in titles:
-                matches.append(cast(Mapping[str, object], raw))
-        if len(raw_runs) < 100:
-            break
-        page += 1
-    return tuple(matches)
+    runs = _complete_workflow_runs(repository, token, _APPLICATION_WORKFLOW, read=read)
+    if runs is None:
+        return None
+    return tuple(run for run in runs if run.get("display_title") in titles)
 
 
 def _preaccept_application_state(
