@@ -53,6 +53,7 @@ class GitHubSequence:
     def __init__(self) -> None:
         fixtures = Path(__file__).parent / "fixtures"
         self.comments = json.loads((fixtures / "issue229-comments.json").read_text())
+        self.runtime_comments: list[dict[str, object]] = []
         self.timeline = json.loads((fixtures / "issue229-timeline.json").read_text())
         self.main = MAIN
         self.action = "merge-implementation-pr"
@@ -197,6 +198,8 @@ class GitHubSequence:
             return self.issue()
         if route == "issues/229/comments":
             return paged(self.comments)
+        if route == "issues/243/comments":
+            return paged(self.runtime_comments)
         if route == "issues/229/timeline":
             return paged(self.timeline)
         if route.startswith("actions/runs/") and self.recovery_predecessor is not None:
@@ -489,7 +492,7 @@ class GitHubSequence:
                 "user": {"login": "royhsu-work"},
                 "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
             }
-            self.comments.append(self.requests[event_comment_id])
+            self.runtime_comments.append(self.requests[event_comment_id])
         else:
             decision = classify_dispatch(runtime.acquire_current_github_preflight(REPO, "test"))
             assert decision.disposition == "AUTHORIZE", decision
