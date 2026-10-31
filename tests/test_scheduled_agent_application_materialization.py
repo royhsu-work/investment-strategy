@@ -1791,6 +1791,86 @@ def _prove_git(
     )
 
 
+def test_merged_carrier_new_correction_survives_github_compare_commit_cap(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ancestry/path proof does not need GitHub's complete 310-commit list."""
+
+    historical_base = proof_git.base
+    historical_head = proof_git.commit(
+        {proof_git.path: "earlier correction"}, "Earlier Change", (historical_base,)
+    )
+    proof_git.set_head(historical_head)
+    merged = proof_git.commit(
+        {proof_git.path: "earlier correction"},
+        "Merge earlier Change",
+        (historical_base, historical_head),
+    )
+    proof_git.prs[0].update(
+        state="closed", merged=True, merged_at="2026-10-03T00:00:00Z", merge_commit_sha=merged
+    )
+    proof_git.main = proof_git.commit(
+        {"README.md": "new unrelated maintenance"}, "Later main", (merged,)
+    )
+    proof_git.base = proof_git.main
+    proof_git.authorization = proof_git.main
+
+    original_comparison = proof_git.comparison
+
+    def capped_comparison(base: str, revision: str) -> dict[str, object]:
+        comparison = original_comparison(base, revision)
+        if (base, revision) == (historical_base, proof_git.main):
+            # Real GitHub: ahead_by=310, commits=250, but a complete 2-path diff.
+            comparison["ahead_by"] = 310
+            comparison["total_commits"] = 310
+            comparison["commits"] = [{"sha": f"{number:040x}"} for number in range(250)]
+        return comparison
+
+    monkeypatch.setattr(proof_git, "comparison", capped_comparison)
+    proof = _prove_git(proof_git)
+
+    assert proof.disposition == "INCOMPLETE", proof
+    assert proof.application_request is not None
+    assert proof_git.mutations == []
+    # A witness enumerator still may not silently treat 250 of 310 as complete.
+    with pytest.raises(materialization._IncompleteGitHubObservation):
+        materialization._proof_comparison(
+            proof_git.repository, _TOKEN, historical_base, proof_git.main
+        )
+
+
+@pytest.mark.parametrize("invalid", ["capped-files", "wrong-merge-base"])
+def test_long_history_ancestry_preserves_missing_file_and_lineage_guards(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid: str,
+) -> None:
+    proof_git.main = proof_git.commit(
+        {"README.md": "later unrelated maintenance"}, "Later main", (proof_git.base,)
+    )
+    original_comparison = proof_git.comparison
+
+    def incomplete_comparison(base: str, revision: str) -> dict[str, object]:
+        comparison = original_comparison(base, revision)
+        comparison["ahead_by"] = 310
+        comparison["total_commits"] = 310
+        comparison["commits"] = [{"sha": f"{number:040x}"} for number in range(250)]
+        if invalid == "capped-files":
+            comparison["files"] = [
+                {"filename": f"file-{number}", "status": "modified"} for number in range(300)
+            ]
+        else:
+            comparison["merge_base_commit"] = {"sha": "f" * 40}
+        return comparison
+
+    monkeypatch.setattr(proof_git, "comparison", incomplete_comparison)
+    with pytest.raises((materialization._IncompleteGitHubObservation, RuntimeError)):
+        materialization._proof_ancestry(
+            proof_git.repository, _TOKEN, proof_git.base, proof_git.main
+        )
+
+
 def test_canonical_proof_separates_current_target_from_immutable_git_witness(
     proof_git: _ProofGitRepository,
 ) -> None:

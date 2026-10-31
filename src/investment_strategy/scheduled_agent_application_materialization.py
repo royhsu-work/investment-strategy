@@ -1739,10 +1739,54 @@ def _proof_comparison(
 
 
 def _proof_ancestry(repository: str, token: str, ancestor: str, revision: str) -> frozenset[str]:
-    comparison, _commits, paths = _proof_comparison(repository, token, ancestor, revision)
-    if comparison.get("behind_by") != 0:
+    """Prove ancestry and changed paths without enumerating every intervening commit.
+
+    GitHub compare reports the graph relation and the complete diff separately
+    from its capped commit list.  A merged carrier may be hundreds of commits
+    behind current main; that cap cannot invalidate an otherwise complete
+    ancestry/path observation.  Witness proof still uses _proof_comparison and
+    requires the entire commit enumeration.
+    """
+    comparison = _as_mapping(_github_json(repository, token, f"compare/{ancestor}...{revision}"))
+    base = None if comparison is None else _as_mapping(comparison.get("base_commit"))
+    merge_base = None if comparison is None else _as_mapping(comparison.get("merge_base_commit"))
+    ahead = None if comparison is None else comparison.get("ahead_by")
+    behind = None if comparison is None else comparison.get("behind_by")
+    raw_files = None if comparison is None else comparison.get("files")
+    if (
+        comparison is None
+        or base is None
+        or base.get("sha") != ancestor
+        or merge_base is None
+        or not _valid_sha(merge_base.get("sha"))
+        or comparison.get("too_large") is True
+        or not isinstance(ahead, int)
+        or isinstance(ahead, bool)
+        or ahead < 0
+        or not isinstance(behind, int)
+        or isinstance(behind, bool)
+        or behind < 0
+        or comparison.get("total_commits") != ahead
+        or not isinstance(raw_files, list)
+        or len(raw_files) >= 300
+        or comparison.get("status") not in {"ahead", "identical", "behind", "diverged"}
+    ):
+        raise _IncompleteGitHubObservation("materialization ancestry observation is incomplete")
+    if behind != 0 or merge_base.get("sha") != ancestor:
         raise RuntimeError("materialization required ancestry is broken")
-    return paths
+    if comparison.get("status") != ("ahead" if ahead else "identical"):
+        raise RuntimeError("materialization ancestry observations contradict")
+    if not ahead and ancestor != revision:
+        raise RuntimeError("materialization identical graph revisions contradict")
+    try:
+        paths = _comparison_paths_from_file_entries(
+            raw_files, malformed_error="materialization graph paths are incomplete"
+        )
+    except RuntimeError as error:
+        if str(error) != "materialization graph paths are incomplete":
+            raise
+        raise _IncompleteGitHubObservation(str(error)) from error
+    return frozenset(paths)
 
 
 def _proof_commit(
