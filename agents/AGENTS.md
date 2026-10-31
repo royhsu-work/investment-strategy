@@ -152,16 +152,11 @@ A material semantic correction reuses the existing Change and PR, then obtains a
 review of the resulting exact revision.
 
 Content ingress is content-addressed: the semantic worker may create unreferenced blobs and submit an
-exact path/blob/current-SHA manifest. Repository application owns the exact tree, commit, and ref
-construction decision and verifies parent, tree, ref, PR head, and file postconditions. It normally
-creates the Git objects itself. If the accepted manifest includes a workflow file that its scoped
-Actions token cannot write, the application hands the same exact blob/tree/parent/ref inputs to the
-existing replaceable carrier for Git-object construction and non-force exact-head ref update. This
-does not grant the carrier new semantic authority or permit unplanned writes; failed or ambiguous
-outcomes are fresh-reconciled, never replayed by guesswork. Complete content is not passed through
-Issue comments. The normal worker effect capability does not include Issue creation or direct ref
-creation/update. Any PR/ref effect is application-bound to the authorized Change, repository,
-default branch, and exact current target before mutation.
+exact path/blob/current-SHA manifest. Repository application constructs the tree, commit, and ref
+without force and verifies parent, tree, ref, PR head, and file postconditions. Complete content is
+not passed through Issue comments. The normal worker effect capability does not include Issue creation
+or direct ref creation/update. Any PR/ref effect is application-bound to the authorized Change,
+repository, default branch, and exact current target before mutation.
 
 Exact-R validation checks the target repository/revision, validator checkout HEAD == R, the qualified
 pinned OpenSpec baseline, and strict validation PASS. Eligibility is derived from the governed
