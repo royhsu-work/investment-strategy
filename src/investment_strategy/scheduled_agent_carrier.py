@@ -51,7 +51,7 @@ def read_github_artifact_bytes(repository: str, token: str, api_path: str) -> by
     request = Request(  # noqa: S310 - fixed trusted GitHub API host
         github_repository_api_url(repository, api_path),
         headers={
-            "Accept": "application/octet-stream",
+            "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {token}",
             "X-GitHub-Api-Version": "2022-11-28",
         },

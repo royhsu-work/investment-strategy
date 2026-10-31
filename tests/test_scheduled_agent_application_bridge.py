@@ -18,6 +18,7 @@ from urllib.request import Request
 import pytest
 
 import investment_strategy.scheduled_agent_application_bridge as bridge
+import investment_strategy.scheduled_agent_carrier as carrier
 from investment_strategy.scheduled_agent_action_model import (
     ApplicationRejection,
     ApplicationRejectionKind,
@@ -67,6 +68,47 @@ _TEST_PREDECESSOR_ARTIFACT_ID = 9003
 _TEST_PREDECESSOR_ARTIFACT_DIGEST = "sha256:" + "1" * 64
 _TEST_FAILURE_EVIDENCE_SHA256 = "2" * 64
 _TEST_RECOVERY_EPISODE_SHA256 = "3" * 64
+
+
+def test_application_artifact_reader_uses_github_api_media_type_for_raw_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GitHub's artifact API rejects octet-stream before issuing its redirect."""
+    signed = "https://results.actions.githubusercontent.com/raw-artifact"
+    raw = b'{"schema":"application-recovery"}\n'
+    observed: list[str] = []
+
+    class ApiOpener:
+        def open(self, request: Request, timeout: int) -> BytesIO:
+            assert timeout == 30
+            observed.append("api")
+            assert request.get_header("Authorization") == "Bearer test-token"
+            if request.get_header("Accept") != "application/vnd.github+json":
+                raise HTTPError(request.full_url, 415, "Unsupported Media Type", Message(), None)
+            headers = Message()
+            headers["Location"] = signed
+            raise HTTPError(request.full_url, 302, "Found", headers, None)
+
+    class RedirectOpener:
+        def open(self, request: Request, timeout: int) -> BytesIO:
+            assert timeout == 30
+            observed.append("redirect")
+            assert request.full_url == signed
+            assert request.get_header("Authorization") is None
+            return BytesIO(raw)
+
+    monkeypatch.setattr(
+        carrier,
+        "build_opener",
+        lambda *handlers: ApiOpener() if handlers else RedirectOpener(),
+    )
+    assert (
+        carrier.read_github_artifact_bytes(
+            _REPOSITORY, "test-token", "actions/artifacts/13034637193/zip"
+        )
+        == raw
+    )
+    assert observed == ["api", "redirect"]
 
 
 @pytest.mark.parametrize(
