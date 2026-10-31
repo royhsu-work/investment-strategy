@@ -4120,24 +4120,33 @@ def qualify_application_continuation_predecessor(
     continuation: ApplicationContinuationRequest,
     *,
     current_comment_id: int,
+    transport_issue_number: int,
     read: Callable[[str, str, str], object] | None = None,
     artifact_reader: Callable[[str, str, str], bytes] | None = None,
 ) -> ApplicationRecoveryArtifact | None:
     """Verify the exact prior artifact and reject duplicate continuation branches."""
 
     api_read = _github_json if read is None else read
-    comments = _paged_github_list(
+    if _strict_positive_int(transport_issue_number) is None:
+        return None
+    # The accepted decision belongs to the formal Issue.  The continuation is
+    # a bounded runtime-shard transport, never a formal Issue comment.
+    decision_comments = _paged_github_list(
         repository,
         token,
         f"issues/{continuation.issue_number}/comments?sort=created&direction=asc",
     )
+    transport_comments = _paged_github_list(
+        repository,
+        token,
+        f"issues/{transport_issue_number}/comments?sort=created&direction=asc",
+    )
     copies = []
     accepted_bodies = []
-    for comment in comments:
+    for comment in decision_comments:
         if not isinstance(comment, Mapping):
             continue
         body = comment.get("body")
-        comment_id = _positive_int(comment.get("id"))
         if is_github_actions_comment(comment) and isinstance(body, str):
             record = parse_application_decision(body)
             if (
@@ -4146,6 +4155,12 @@ def qualify_application_continuation_predecessor(
                 and record.disposition == "ACCEPTED"
             ):
                 accepted_bodies.append(body)
+    trusted_current = False
+    for comment in transport_comments:
+        if not isinstance(comment, Mapping):
+            continue
+        body = comment.get("body")
+        comment_id = _positive_int(comment.get("id"))
         parsed = parse_application_continuation_request(body) if isinstance(body, str) else None
         if (
             parsed is not None
@@ -4153,7 +4168,17 @@ def qualify_application_continuation_predecessor(
             and comment_id is not None
         ):
             copies.append(comment_id)
-    if len(copies) != 1 or copies[0] != current_comment_id or len(accepted_bodies) != 1:
+            if comment_id == current_comment_id:
+                trusted_current = (
+                    _trusted_connector_comment(comment, repository.split("/", 1)[0])
+                    and parsed == continuation
+                )
+    if (
+        len(copies) != 1
+        or copies[0] != current_comment_id
+        or not trusted_current
+        or len(accepted_bodies) != 1
+    ):
         return None
     decision_sha256 = hashlib.sha256(accepted_bodies[0].encode("utf-8")).hexdigest()
     if decision_sha256 != continuation.accepted_decision_sha256:
@@ -4655,11 +4680,18 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             or expected_correlation != continuation.continuation_correlation
         ):
             raise ValueError("application continuation correlation is invalid")
+        event_issue = _as_mapping(event.get("issue"))
+        transport_issue_number = (
+            None if event_issue is None else _positive_int(event_issue.get("number"))
+        )
+        if transport_issue_number is None:
+            raise ValueError("application continuation transport Issue is invalid")
         predecessor_evidence = qualify_application_continuation_predecessor(
             repository,
             token,
             continuation,
             current_comment_id=event_comment_id,
+            transport_issue_number=transport_issue_number,
         )
         if predecessor_evidence is None:
             raise ValueError("application continuation predecessor evidence is invalid")
