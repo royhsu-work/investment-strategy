@@ -2793,6 +2793,92 @@ def test_actual_implementation_constructor_is_proved_by_fresh_consumers(
     assert proof_git.mutations == before
 
 
+def test_workflow_file_implementation_delegates_git_objects_to_existing_carrier(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A workflow-file manifest never reaches the scoped Actions Git writes."""
+    import investment_strategy.scheduled_agent_application_carrier as carrier
+
+    proof_git.source = WorkerRequest(322, "executor", "implement-change")
+    proof_git.routing = proof_git.source.action
+    proof_git.path = f"openspec/changes/{_CHANGE}/tasks.md"
+    proof_git.base = proof_git.commit(
+        {proof_git.path: "- [ ] 1.1 Implement\n"}, "Approved tasks", (proof_git.base,)
+    )
+    proof_git.main = proof_git.authorization = proof_git.base
+    proof_git.set_head(proof_git.base)
+    proof_git.desired = proof_git.blob("- [x] 1.1 Implement\n")
+    workflow_path = ".github/workflows/scheduled-agent-checkin.yml"
+    workflow_blob = proof_git.blob("name: Runtime shard rollover\n")
+    payload = proof_git.payload()
+    cast(list[dict[str, object]], payload["files"]).append(
+        {"path": workflow_path, "blob_sha": workflow_blob, "expected_sha": None}
+    )
+    monkeypatch.setattr(proof_git, "payload", lambda: payload)
+    monkeypatch.setattr(carrier, "_github_json", proof_git.api)
+
+    # This must succeed without allowing the application to write even Git
+    # objects. Every requested path and blob stays fixed in the one plan.
+    assert _prove_git(proof_git).disposition == "INCOMPLETE"
+    with pytest.raises(CarrierRequired) as raised:
+        _apply_git(proof_git)
+    plan = raised.value.plan
+    assert proof_git.mutations == []
+    assert plan.operation == "pull-request-head-update"
+    assert plan.force is False
+    assert plan.expected["ref_sha"] == proof_git.base
+    assert plan.expected["default_branch_sha"] == proof_git.main
+    assert plan.expected["file_preimages"] == [
+        {"path": proof_git.path, "sha": proof_git.entries(proof_git.base)[proof_git.path]["sha"]},
+        {"path": workflow_path, "sha": None},
+    ]
+    assert plan.requested["commit_parents"] == [proof_git.base]
+    assert plan.requested["base_tree_sha"] == proof_git.git(
+        "rev-parse", f"{proof_git.base}^{{tree}}"
+    )
+    assert {
+        entry["path"]: entry["sha"]
+        for entry in cast(list[dict[str, object]], plan.requested["tree_elements"])
+    } == {
+        proof_git.path: proof_git.desired,
+        workflow_path: workflow_blob,
+    }
+
+    # Simulate the already-configured connector's exact tree/commit/ref
+    # actuator. The repository-owned proof, not its return value, completes
+    # application materialization on a later fresh read.
+    proof_git.allow_writes = True
+    tree = cast(
+        dict[str, str],
+        proof_git.write(
+            "git/trees",
+            {
+                "base_tree": plan.requested["base_tree_sha"],
+                "tree": plan.requested["tree_elements"],
+            },
+        ),
+    )
+    commit = cast(
+        dict[str, str],
+        proof_git.write(
+            "git/commits",
+            {
+                "tree": tree["sha"],
+                "parents": plan.requested["commit_parents"],
+                "message": plan.requested["commit_message"],
+            },
+        ),
+    )
+    proof_git.set_head(commit["sha"])
+    proof = _prove_git(proof_git)
+    assert proof.disposition == "COMPLETE", proof
+    assert proof.target is not None and proof.target.revision == commit["sha"]
+    before = list(proof_git.mutations)
+    assert _apply_git(proof_git) == proof.target
+    assert proof_git.mutations == before
+
+
 @pytest.mark.parametrize("prefix", ["decision", "tree", "commit", "ref", "pr", "merge"])
 def test_separate_process_reconstructs_only_persisted_git_evidence(
     proof_git: _ProofGitRepository,

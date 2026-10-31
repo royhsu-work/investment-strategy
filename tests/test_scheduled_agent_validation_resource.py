@@ -46,6 +46,33 @@ def test_candidate_checkout_uses_actions_compatible_basic_auth() -> None:
     assert "GITHUB_TOKEN" not in environment
 
 
+def test_candidate_verification_cannot_write_parent_actions_command_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    for key in (
+        "GITHUB_OUTPUT",
+        "GITHUB_ENV",
+        "GITHUB_PATH",
+        "GITHUB_STEP_SUMMARY",
+        "GITHUB_STATE",
+    ):
+        monkeypatch.setenv(key, str(tmp_path / key))
+
+    environment = resource._candidate_subprocess_environment(_FIXTURE_VALUE)
+
+    assert not any(
+        key in environment
+        for key in (
+            "GITHUB_OUTPUT",
+            "GITHUB_ENV",
+            "GITHUB_PATH",
+            "GITHUB_STEP_SUMMARY",
+            "GITHUB_STATE",
+        )
+    )
+
+
 def test_github_json_uses_repository_endpoint_for_empty_api_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
