@@ -53,7 +53,7 @@ class GitHubSequence:
     def __init__(self) -> None:
         fixtures = Path(__file__).parent / "fixtures"
         self.comments = json.loads((fixtures / "issue229-comments.json").read_text())
-        self.runtime_comments: list[dict[str, object]] = []
+        self.runtime_comments: list[object] = []
         self.timeline = json.loads((fixtures / "issue229-timeline.json").read_text())
         self.main = MAIN
         self.action = "merge-implementation-pr"
