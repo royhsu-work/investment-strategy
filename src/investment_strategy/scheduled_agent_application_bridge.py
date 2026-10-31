@@ -31,6 +31,7 @@ from investment_strategy.scheduled_agent_application_materialization import (
     find_materialization_payload,
     materialization_requires_validation,
     observe_materialization_target,
+    prove_materialization,
 )
 from investment_strategy.scheduled_agent_carrier import (
     CarrierRequired,
@@ -48,6 +49,7 @@ from investment_strategy.scheduled_agent_effects import (
     ApplicationDecisionRecord,
     ApplyResult,
     GitHubEffectAdapter,
+    StagedEffect,
     _archive_branch,
     _archive_ref,
     _references_issue,
@@ -2796,8 +2798,10 @@ def _fresh_non_control_effects(
     return effects
 
 
-def _rebind_application_result_revision(raw_worker_result: str, revision: str) -> str:
-    """Bind a deferred formal result to its fresh materialization postcondition."""
+def _rebind_application_result_revision(
+    raw_worker_result: str, revision: str, *, rebind_checkpoint: bool = True
+) -> str:
+    """Bind deferred checkpoint/formal evidence to a proven materialized head."""
 
     if _SHA.fullmatch(revision) is None:
         raise ValueError("application result revision is invalid")
@@ -2823,7 +2827,12 @@ def _rebind_application_result_revision(raw_worker_result: str, revision: str) -
             updated_requested.append(raw_effect)
             continue
         body = payload.get("body") if isinstance(payload, Mapping) else None
-        if not isinstance(body, str) or _marker(body) not in _FORMAL_RESULT_MARKERS:
+        if not isinstance(body, str) or _marker(body) not in (
+            _FORMAL_RESULT_MARKERS | {"SLICE_CHECKPOINT"}
+        ):
+            updated_requested.append(raw_effect)
+            continue
+        if _marker(body) == "SLICE_CHECKPOINT" and not rebind_checkpoint:
             updated_requested.append(raw_effect)
             continue
         lines = body.splitlines()
@@ -2839,11 +2848,53 @@ def _rebind_application_result_revision(raw_worker_result: str, revision: str) -
         updated_effect = dict(raw_effect)
         updated_effect["payload_json"] = json.dumps(updated_payload, sort_keys=True)
         updated_requested.append(updated_effect)
-        decoded["result_content"] = updated_body
+        if _marker(body) in _FORMAL_RESULT_MARKERS:
+            decoded["result_content"] = updated_body
         rebound = True
     if rebound:
         decoded["requested_effects"] = updated_requested
     return json.dumps(decoded, sort_keys=True, separators=(",", ":"))
+
+
+def _accepted_checkpoint_already_durable(
+    raw_worker_result: str,
+    *,
+    source: WorkerRequest,
+    repository: str,
+    token: str,
+    current_revision: str,
+    request_comment_id: int,
+) -> bool:
+    """Use the canonical trusted comment observer before altering a checkpoint.
+
+    A partial accepted invocation may have written its old, exact checkpoint
+    but lost the formal-result response. Rebinding that durable comment to a
+    later carrier head would create a duplicate. The existing trusted comment
+    is reconciled read-only; only a genuinely absent checkpoint may be bound
+    to the newly proven head.
+    """
+    parsed = parse_worker_result(raw_worker_result, source)
+    checkpoints = [
+        StagedEffect(effect.kind, effect.payload_json)
+        for effect in parsed.requested_effects
+        if effect.kind == "issue-comment"
+        and isinstance((payload := _effect_payload({"payload_json": effect.payload_json})), Mapping)
+        and isinstance(payload.get("body"), str)
+        and _marker(cast(str, payload["body"])) == "SLICE_CHECKPOINT"
+    ]
+    if len(checkpoints) != 1:
+        raise RuntimeError("accepted implementation checkpoint identity is incomplete")
+    adapter = GitHubEffectAdapter(
+        repository,
+        token,
+        source,
+        authorized_change=parsed.change,
+        current_revision=current_revision,
+        expected_result_kind=parsed.typed_result.result.kind.value,
+        request_comment_id=request_comment_id,
+        accepted_intent=True,
+    )
+    return adapter.observe_postcondition(checkpoints[0])
 
 
 def _activation_result_body(
@@ -4891,6 +4942,39 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             parsed_materialization, plan.source
         )
 
+    # Post-ACCEPT Executor slices have already passed candidate verification,
+    # but their checkpoint is a distinct non-idempotent, revision-bound effect.
+    # First construct the exact carrier without comments or routing; only a
+    # later fresh proof of its actual head may bind and persist the checkpoint.
+    defer_accepted_checkpoint = False
+    if (
+        accepted_intent is not None
+        and plan.source.role == "executor"
+        and plan.source.action == "implement-change"
+        and materialization is not None
+        and not requires_validation
+    ):
+        checkpoint_proof = prove_materialization(
+            materialization,
+            plan.source,
+            repository=repository,
+            token=token,
+            current_revision=args.revision,
+            default_branch=args.default_branch,
+            accepted_authorization_revision=request.authorization_revision,
+            allow_pending_continuation=plan.pending_continuation,
+            accepted_intent=True,
+        )
+        if checkpoint_proof.disposition == "COMPLETE":
+            target = checkpoint_proof.target
+        elif checkpoint_proof.disposition == "INCOMPLETE":
+            defer_accepted_checkpoint = True
+        else:
+            raise RuntimeError(
+                checkpoint_proof.reason
+                or "accepted implementation materialization proof is unavailable"
+            )
+
     pending_continuation = plan.pending_continuation
     context.stage = "application-effect-preparation"
     if (
@@ -4948,10 +5032,26 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
     elif args.validation_passed:
         raise RuntimeError("EFFECT_REQUEST validation completion has no materialization")
 
+    checkpoint_already_durable = False
     if target is not None:
+        if (
+            accepted_intent is not None
+            and plan.source.role == "executor"
+            and plan.source.action == "implement-change"
+            and not requires_validation
+        ):
+            checkpoint_already_durable = _accepted_checkpoint_already_durable(
+                application_worker_result,
+                source=plan.source,
+                repository=repository,
+                token=token,
+                current_revision=args.revision,
+                request_comment_id=plan.request_comment_id,
+            )
         application_worker_result = _rebind_application_result_revision(
             application_worker_result,
             target.revision,
+            rebind_checkpoint=not checkpoint_already_durable,
         )
         worker_result = parse_worker_result(
             application_worker_result,
@@ -5006,11 +5106,17 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
                 repository=repository,
                 token=token,
                 current_revision=args.revision,
-                apply_derived=not requires_validation or args.validation_passed,
+                apply_derived=(
+                    (not requires_validation or args.validation_passed)
+                    and not defer_accepted_checkpoint
+                ),
                 materialization_promote_change=args.validation_passed,
-                validated_materialization_revision=(None if target is None else target.revision),
+                validated_materialization_revision=(
+                    None if target is None or checkpoint_already_durable else target.revision
+                ),
                 request_comment_id=plan.request_comment_id,
-                defer_issue_comments=requires_validation and not args.validation_passed,
+                defer_issue_comments=(requires_validation and not args.validation_passed)
+                or defer_accepted_checkpoint,
                 allow_pending_continuation=pending_continuation,
                 pending_application_correlation=plan.pending_application_correlation,
                 application_request_body=application_request_body,

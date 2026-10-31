@@ -3427,8 +3427,203 @@ def test_cli_checkpoint_revision_is_bound_to_fresh_proven_target_not_unverified_
         main_source.count(
             "validated_materialization_revision=(None if target is None else target.revision)"
         )
-        == 2
+        == 1
     )
+    assert (
+        "None if target is None or checkpoint_already_durable else target.revision" in main_source
+    )
+
+
+def test_accepted_checkpoint_and_formal_projection_rebind_only_after_proven_target() -> None:
+    checkpoint = "\n".join(
+        (
+            "SLICE_CHECKPOINT",
+            "Workflow: #322",
+            f"Change: {_CHANGE}",
+            "Action: implement-change",
+            "Role: executor",
+            "Completed-Tasks: 5.1",
+            f"Revision: {_REVISION}",
+            "Application-Correlation: accepted-original",
+            "Gate-Evidence: all gates passed",
+            "Remaining-Approved-Boundary: review-implementation",
+        )
+    )
+    formal = "\n".join(
+        (
+            "ACTION_RESULT",
+            "Workflow: #322",
+            f"Change: {_CHANGE}",
+            "Action: implement-change",
+            "Role: executor",
+            "Result: READY",
+            f"Revision: {_REVISION}",
+            "Default-Branch-Revision: " + _REVISION,
+            "Application-Correlation: accepted-original",
+        )
+    )
+    result = _worker_result(action="implement-change", role="executor", result_kind="ready")
+    result["change"] = _CHANGE
+    result["requested_effects"] = [
+        {"kind": "issue-comment", "payload_json": json.dumps({"body": body, "issue_number": 322})}
+        for body in (checkpoint, formal)
+    ]
+    rebound = json.loads(bridge._rebind_application_result_revision(json.dumps(result), "b" * 40))
+    rebound_bodies = [
+        json.loads(effect["payload_json"])["body"] for effect in rebound["requested_effects"]
+    ]
+    assert f"Revision: {'b' * 40}" in rebound_bodies[0].splitlines()
+    assert f"Revision: {'b' * 40}" in rebound_bodies[1].splitlines()
+    assert "Completed-Tasks: 5.1" in rebound_bodies[0]
+    assert "Gate-Evidence: all gates passed" in rebound_bodies[0]
+    assert rebound["result_content"] == rebound_bodies[1]
+
+
+@pytest.mark.parametrize("materialized", [False, True])
+def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proof(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    materialized: bool,
+) -> None:
+    """Phase B first creates its carrier, then binds a checkpoint on a fresh wake."""
+    source = WorkerRequest(138, "executor", "implement-change")
+    revision = "b" * 40
+    materialization = {
+        "issue_number": 138,
+        "operation": "application-materialize",
+        "expected_change": _CHANGE,
+        "change": _CHANGE,
+        "branch": f"agent/{_CHANGE}",
+        "base_sha": _REVISION,
+        "message": "Accepted implementation slice",
+        "pr_number": 178,
+        "files": [
+            {
+                "path": f"openspec/changes/{_CHANGE}/tasks.md",
+                "blob_sha": "c" * 40,
+                "expected_sha": "a" * 40,
+            }
+        ],
+    }
+    checkpoint = "\n".join(
+        (
+            "SLICE_CHECKPOINT",
+            "Workflow: #138",
+            f"Change: {_CHANGE}",
+            "Action: implement-change",
+            "Role: executor",
+            "Completed-Tasks: 5.1",
+            f"Revision: {_REVISION}",
+            "Application-Correlation: original",
+            "Gate-Evidence: verified gates",
+            "Remaining-Approved-Boundary: implementation review",
+        )
+    )
+    formal = "\n".join(
+        (
+            "ACTION_RESULT",
+            "Workflow: #138",
+            f"Change: {_CHANGE}",
+            "Action: implement-change",
+            "Role: executor",
+            "Result: READY",
+            f"Revision: {_REVISION}",
+            f"Default-Branch-Revision: {_REVISION}",
+            "Application-Correlation: original",
+        )
+    )
+    worker = _worker_result(action=source.action, role=source.role, result_kind="ready")
+    worker["change"] = _CHANGE
+    worker["_semantic_intent_version"] = 2
+    worker["requested_effects"] = [
+        {"kind": "github-mutation", "payload_json": json.dumps(materialization)},
+        {
+            "kind": "issue-comment",
+            "payload_json": json.dumps({"issue_number": 138, "body": checkpoint}),
+        },
+        {
+            "kind": "issue-comment",
+            "payload_json": json.dumps({"issue_number": 138, "body": formal}),
+        },
+    ]
+    raw = json.dumps(worker, sort_keys=True, separators=(",", ":"))
+    body = _effect_request(worker)
+    accepted = _accepted_record(raw, body, source=source, change=_CHANGE, result_kind="ready")
+    event_path = tmp_path / "event.json"
+    event_path.write_text(json.dumps(_event(body)), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_REPOSITORY", _REPOSITORY)
+    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "scheduled_agent_application_bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            _REVISION,
+            "--default-branch",
+            "main",
+            "--run-attempt",
+            "2",
+        ],
+    )
+    monkeypatch.setattr(bridge, "_application_decision_for_request", lambda **_kw: accepted)
+    monkeypatch.setattr(bridge, "_accepted_worker_result_for_continuation", lambda **_kw: raw)
+    monkeypatch.setattr(
+        bridge, "_fresh_event_observation", lambda *_args: pytest.fail("replayed transport")
+    )
+    monkeypatch.setattr(
+        bridge,
+        "acquire_current_github_preflight",
+        lambda *_args: _preflight(action=source.action, issue_number=138, change=_CHANGE),
+    )
+    monkeypatch.setattr(bridge, "_fresh_application_worker_result", lambda *_args, **_kw: raw)
+    monkeypatch.setattr(bridge, "_write_application_recovery_evidence", lambda *_args, **_kw: None)
+    target = ValidationResourceTarget(
+        repository=_REPOSITORY,
+        revision=revision,
+        correlation="effect-request-138",
+        pr_number=178,
+        change=_CHANGE,
+        validation_required=False,
+    )
+    monkeypatch.setattr(
+        bridge,
+        "prove_materialization",
+        lambda *_args, **_kw: type(
+            "Proof",
+            (),
+            {
+                "disposition": "COMPLETE" if materialized else "INCOMPLETE",
+                "target": target if materialized else None,
+                "reason": None,
+            },
+        )(),
+    )
+    monkeypatch.setattr(bridge, "_accepted_checkpoint_already_durable", lambda *_a, **_k: False)
+    calls: list[dict[str, object]] = []
+
+    def fake_apply(raw_result: str, **kwargs: object) -> tuple[EffectBatch, bridge.ApplyResult]:
+        calls.append({"raw": json.loads(raw_result), **kwargs})
+        return EffectBatch(source=source, effects=()), bridge.ApplyResult(False, "controlled-stop")
+
+    monkeypatch.setattr(bridge, "run_guarded_effect_application", fake_apply)
+    assert bridge.main() == 1
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["accepted_intent"] is True
+    assert call["apply_derived"] is materialized
+    assert call["defer_issue_comments"] is (not materialized)
+    assert call["validated_materialization_revision"] == (revision if materialized else None)
+    projected = cast(dict[str, object], call["raw"])
+    projected_effects = cast(list[dict[str, str]], projected["requested_effects"])
+    bodies = [
+        json.loads(effect["payload_json"])["body"]
+        for effect in projected_effects
+        if effect["kind"] == "issue-comment"
+    ]
+    assert (f"Revision: {revision}" in bodies[0].splitlines()) is materialized
 
 
 def test_application_apply_job_uses_bounded_pending_queue() -> None:
