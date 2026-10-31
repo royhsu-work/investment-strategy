@@ -1106,3 +1106,89 @@ Before emitting another carrier handoff, the bridge SHALL inspect every earlier 
 - WHEN another fresh dispatch evaluates the accepted intent
 - THEN it searches the complete earlier request chain
 - AND it still fails closed on the older unreported Plan-ID
+### Requirement: Missing current-day Runtime shard uses a bounded event-triggered Check-in handoff
+
+If the repository's current Asia/Taipei Runtime shard is absent, the Scheduled Agent SHALL fresh-read a complete authoritative all-state Runtime Issue set and SHALL select the latest *unique eligible existing older* shard, without assuming the immediately preceding day exists. Eligibility SHALL require canonical shard date/Issue identity and a verified ability to add a normal comment, including closed but commentable/unlocked Issues only when that capability is established. Duplicate date identities, future/invalid/locked shards, missing permissions, and incomplete or contradictory evidence MUST fail closed.
+
+Before any write the Agent SHALL recheck that today's valid shard is still absent, that the selected older shard is still uniquely eligible, and that no already valid ROLLOVER_REQUEST exists for that requested day. The request SHALL be a strict bounded three-line transport comment (plus final newline): ROLLOVER_REQUEST; Requested-Day: YYYY-MM-DD; Source-Shard: N. It SHALL include no Issue/Change/Role/Action routing decision. If an equivalent valid request already exists, the Agent SHALL exit without another write. Following a verified comment write, the Agent SHALL end that wake: it SHALL NOT create the day's shard, await/poll Check-in, use an older shard for DISPATCH_REQUEST, or execute normal dispatch.
+
+The repository-native GitHub cron SHALL remain an independent trigger. The Check-in workflow SHALL also accept an actual issue_comment.created ROLLOVER_REQUEST event, verify the genuine external actor, exact created comment and enclosing canonical older Runtime Issue, strict request body, repository, requested current local day, and fresh current GitHub state, then invoke the *same* repository-owned Check-in/rollover implementation used by cron. Both triggers SHALL share existing serialized non-cancelling repository concurrency, unique current-day creation/readback and safe older-shard retirement. Duplicate/reordered/stale/untrusted events SHALL produce no unsafe effects; ambiguous creation or postconditions MUST fail closed or reconcile read-only. The design MUST NOT depend on GITHUB_TOKEN-authored comments generating a second Actions event.
+
+After successful Check-in, a separate later fresh Scheduled Agent wake SHALL independently read the new shard, current default branch and repository workflow state and perform normal executable dispatch. Neither a transport comment nor Check-in success SHALL be represented as an ACTION_RESULT, routing mutation, Recovery Exit or NO_WORK/Idle Discovery acceptance.
+
+#### Scenario: Cron independently establishes the local day's shard
+
+- GIVEN no external ROLLOVER_REQUEST is sent and the scheduled native Check-in cron fires
+- WHEN its existing Check-in owner observes a missing unique current-day shard
+- THEN it establishes and verifies that shard before retiring older open shards
+- AND the cron does not require any external Scheduled Agent or comment event
+
+#### Scenario: Missing yesterday and multiple days are handled without a fixed predecessor
+
+- GIVEN today's Runtime shard is missing and the immediately previous date is also missing
+- AND a single valid older commentable Runtime shard is the latest eligible existing shard
+- WHEN the Scheduled Agent performs its pre-dispatch transport check
+- THEN it fresh-qualifies that older shard and posts at most one exact ROLLOVER_REQUEST there
+- AND it exits without DISPATCH_REQUEST, direct rollover or same-wake Action execution
+
+#### Scenario: Today's shard already exists
+
+- GIVEN one valid open Runtime shard for the current Asia/Taipei date
+- WHEN a Scheduled Agent wakes
+- THEN it does not post a ROLLOVER_REQUEST
+- AND it follows ordinary fresh repository-owned dispatch
+
+#### Scenario: Existing same-day request is deduplicated
+
+- GIVEN today's shard is absent and a valid same-day ROLLOVER_REQUEST already exists on a qualified Runtime shard
+- WHEN another Scheduled Agent wakes
+- THEN it does not create a duplicate request or alternate carrier
+- AND it ends the bounded transport wake without polling or normal dispatch
+
+#### Scenario: Ambiguous, invalid or unwriteable older shard
+
+- GIVEN incomplete all-state Issue pages, duplicate latest dates, invalid canonical identities, a locked or unwriteable candidate, or no eligible existing shard
+- WHEN the Agent attempts missing-day handoff
+- THEN it fails closed with no substitute Issue, no guessed previous date and no transport comment
+
+#### Scenario: Closed older shard is used only when the event path is proven
+
+- GIVEN the latest unique canonical older shard is closed
+- WHEN its comment capability and created-event delivery are independently verified as usable
+- THEN the Agent may post the exact request without reopening it
+- AND an unverified or locked closed shard is not assumed safe
+
+#### Scenario: Native event requalifies the request before rollover
+
+- GIVEN a genuine trusted external connector actor creates an exact ROLLOVER_REQUEST comment on an eligible older shard
+- WHEN GitHub Actions delivers issue_comment.created to the Check-in workflow
+- THEN Check-in fresh-verifies comment identity, actor, body, target, requested local day and repository state
+- AND only the existing Check-in owner may establish today's shard and verify its postconditions before old-shard retirement
+
+#### Scenario: Wrong actor, body, date or target cannot create a shard
+
+- GIVEN a forged, stale, duplicated, malformed or wrong-Issue ROLLOVER_REQUEST event
+- WHEN the Check-in workflow validates its created comment against current GitHub state
+- THEN it rejects or safely deduplicates the event without unsafe creation, routing or retirement
+
+#### Scenario: Concurrent cron and comment are idempotent
+
+- GIVEN the native cron and a valid comment event race for a missing current-day shard
+- WHEN both enter the existing repository-scoped non-cancelling Check-in concurrency boundary
+- THEN fresh reobservation permits exactly one unique current-day shard
+- AND later invocations reconcile the result, preserving incomplete older request/run/result chains and avoiding duplicate creation or premature close
+
+#### Scenario: GITHUB_TOKEN does not establish the event contract
+
+- GIVEN a comment is authored by a GitHub Actions GITHUB_TOKEN
+- WHEN no new issue_comment.created workflow is delivered
+- THEN no implementation or test claims that comment delivery proved a native event trigger
+- AND end-to-end acceptance requires a real externally authored event and matching Actions run
+
+#### Scenario: Later fresh wake resumes normal dispatch
+
+- GIVEN the comment-triggered Check-in successfully established a unique today-shard and safely retired older open shards
+- WHEN a separate subsequent Scheduled Agent wake begins
+- THEN it freshly reads the current default branch and authoritative repository-wide workflow state
+- AND only then may it obtain a repository-owned Action selection, leaving #322 routing unchanged by the rollover itself
+
