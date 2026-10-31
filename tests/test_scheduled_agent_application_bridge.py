@@ -18,6 +18,7 @@ from urllib.request import Request
 import pytest
 
 import investment_strategy.scheduled_agent_application_bridge as bridge
+import investment_strategy.scheduled_agent_carrier as carrier
 from investment_strategy.scheduled_agent_action_model import (
     ApplicationRejection,
     ApplicationRejectionKind,
@@ -67,6 +68,47 @@ _TEST_PREDECESSOR_ARTIFACT_ID = 9003
 _TEST_PREDECESSOR_ARTIFACT_DIGEST = "sha256:" + "1" * 64
 _TEST_FAILURE_EVIDENCE_SHA256 = "2" * 64
 _TEST_RECOVERY_EPISODE_SHA256 = "3" * 64
+
+
+def test_application_artifact_reader_uses_github_api_media_type_for_raw_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GitHub's artifact API rejects octet-stream before issuing its redirect."""
+    signed = "https://results.actions.githubusercontent.com/raw-artifact"
+    raw = b'{"schema":"application-recovery"}\n'
+    observed: list[str] = []
+
+    class ApiOpener:
+        def open(self, request: Request, timeout: int) -> BytesIO:
+            assert timeout == 30
+            observed.append("api")
+            assert request.get_header("Authorization") == "Bearer test-token"
+            if request.get_header("Accept") != "application/vnd.github+json":
+                raise HTTPError(request.full_url, 415, "Unsupported Media Type", Message(), None)
+            headers = Message()
+            headers["Location"] = signed
+            raise HTTPError(request.full_url, 302, "Found", headers, None)
+
+    class RedirectOpener:
+        def open(self, request: Request, timeout: int) -> BytesIO:
+            assert timeout == 30
+            observed.append("redirect")
+            assert request.full_url == signed
+            assert request.get_header("Authorization") is None
+            return BytesIO(raw)
+
+    monkeypatch.setattr(
+        carrier,
+        "build_opener",
+        lambda *handlers: ApiOpener() if handlers else RedirectOpener(),
+    )
+    assert (
+        carrier.read_github_artifact_bytes(
+            _REPOSITORY, "test-token", "actions/artifacts/13034637193/zip"
+        )
+        == raw
+    )
+    assert observed == ["api", "redirect"]
 
 
 @pytest.mark.parametrize(
@@ -1741,6 +1783,75 @@ def test_application_continuation_is_content_addressed_and_strict() -> None:
         parse_application_continuation_request(rendered.replace("Issue: 138", "Issue: 0138"))
         is None
     )
+
+
+@pytest.mark.parametrize("invalid", [None, "duplicate", "untrusted", "missing-accept"])
+def test_continuation_predecessor_qualifies_runtime_shard_transport_separately_from_formal_issue(
+    monkeypatch: pytest.MonkeyPatch,
+    invalid: str | None,
+) -> None:
+    """Accepted decisions live on #322; continuation comments live on the daily shard."""
+    decision_body = "accepted decision"
+    digest = hashlib.sha256(decision_body.encode()).hexdigest()
+    body = render_application_continuation_request(
+        repository=_REPOSITORY,
+        issue_number=322,
+        original_request_comment_id=102,
+        accepted_decision_sha256=digest,
+        predecessor_run_id=_TEST_PREDECESSOR_RUN_ID,
+        predecessor_run_attempt=_TEST_PREDECESSOR_RUN_ATTEMPT,
+        predecessor_job_id=_TEST_PREDECESSOR_JOB_ID,
+        predecessor_artifact_id=_TEST_PREDECESSOR_ARTIFACT_ID,
+        predecessor_artifact_digest=_TEST_PREDECESSOR_ARTIFACT_DIGEST,
+        failure_evidence_sha256=_TEST_FAILURE_EVIDENCE_SHA256,
+        recovery_episode_sha256=_TEST_RECOVERY_EPISODE_SHA256,
+    )
+    continuation = parse_application_continuation_request(body)
+    assert continuation is not None
+    formal = [{"id": 105, "body": decision_body}]
+    transport = [_connector_comment(404, body, trusted=invalid != "untrusted")]
+    if invalid == "duplicate":
+        transport.append(_connector_comment(405, body))
+    if invalid == "missing-accept":
+        formal.clear()
+
+    def read_comments(_repo: str, _token: str, path: str) -> list[dict[str, object]]:
+        if path == "issues/322/comments?sort=created&direction=asc":
+            return formal
+        if path == "issues/396/comments?sort=created&direction=asc":
+            return transport
+        pytest.fail(f"unexpected comment source: {path}")
+
+    monkeypatch.setattr(bridge, "_paged_github_list", read_comments)
+    monkeypatch.setattr(
+        bridge,
+        "parse_application_decision",
+        lambda value: (
+            SimpleNamespace(request_comment_id=102, disposition="ACCEPTED")
+            if value == decision_body
+            else None
+        ),
+    )
+    monkeypatch.setattr(bridge, "is_github_actions_comment", lambda item: item in formal)
+    evidence = SimpleNamespace(
+        artifact_id=_TEST_PREDECESSOR_ARTIFACT_ID,
+        artifact_digest=_TEST_PREDECESSOR_ARTIFACT_DIGEST,
+        failure_evidence_sha256=_TEST_FAILURE_EVIDENCE_SHA256,
+        recovery_episode_sha256=_TEST_RECOVERY_EPISODE_SHA256,
+        continuation_eligible=True,
+        document={"prior_failure_evidence_sha256": []},
+    )
+    monkeypatch.setattr(
+        bridge, "read_application_recovery_artifact", lambda *_args, **_kwargs: evidence
+    )
+    observed = bridge.qualify_application_continuation_predecessor(
+        _REPOSITORY,
+        "token",
+        continuation,
+        current_comment_id=404,
+        transport_issue_number=396,
+    )
+    assert (observed is evidence) == (invalid is None)
 
 
 def test_accepted_continuation_binds_original_request_not_relay_comment() -> None:
