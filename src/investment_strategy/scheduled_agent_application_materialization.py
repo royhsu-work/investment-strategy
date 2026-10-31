@@ -1257,6 +1257,78 @@ def _implementation_carrier_plan(
     )
 
 
+def _implementation_object_carrier_plan(
+    request: MaterializationRequest,
+    source: WorkerRequest,
+    *,
+    repository: str,
+    token: str,
+    default_branch: str,
+    current_revision: str,
+    current_head: str,
+    base_tree_sha: str,
+    tree_elements: list[dict[str, object]],
+    parents: list[str],
+    message: str,
+) -> CarrierPlan:
+    """Delegate Git object writes to the existing exact-head carrier actuator.
+
+    The Actions token cannot author workflow-file trees.  This is the same
+    pull-request-head-update capability, with the construction inputs fixed by
+    the accepted manifest rather than an already-created commit SHA.  The
+    actuator may construct only those objects and CAS this exact PR ref; the
+    application independently proves the resulting Git history on continuation.
+    """
+    if request.pr_number is None:
+        raise RuntimeError("implementation object carrier requires an exact PR")
+    pr = _as_mapping(cast(object, _github_json(repository, token, f"pulls/{request.pr_number}")))
+    if pr is None:
+        raise RuntimeError("implementation object carrier PR observation is unavailable")
+    carrier_ref = f"refs/heads/{request.branch}"
+    file_preimages = [{"path": file.path, "sha": file.expected_sha} for file in request.files]
+    file_postimages = [{"path": file.path, "sha": file.blob_sha} for file in request.files]
+    return make_carrier_plan(
+        repository=repository,
+        issue_number=source.issue_number,
+        change=request.expected_change,
+        action=source.action,
+        authorization_revision=current_revision,
+        operation="pull-request-head-update",
+        target={
+            "repository": repository,
+            "pull_request_number": request.pr_number,
+            "ref": carrier_ref,
+        },
+        expected={
+            "ref": carrier_ref,
+            "ref_sha": current_head,
+            "pull_request": carrier_pr_identity(pr),
+            "default_branch": default_branch,
+            "default_branch_sha": current_revision,
+            "file_preimages": file_preimages,
+        },
+        requested={
+            "ref": carrier_ref,
+            "force": False,
+            "pull_request_number": request.pr_number,
+            "expected_head_sha": current_head,
+            "base_tree_sha": base_tree_sha,
+            "tree_elements": tree_elements,
+            "commit_parents": parents,
+            "commit_message": message,
+        },
+        expected_postcondition={
+            "ref": carrier_ref,
+            "pull_request_number": request.pr_number,
+            "state": "open",
+            "merged": False,
+            "commit_parents": parents,
+            "commit_message": message,
+            "file_postimages": file_postimages,
+        },
+    )
+
+
 def _materialize_implementation_target(
     request: MaterializationRequest,
     source: WorkerRequest,
@@ -1314,6 +1386,35 @@ def _materialize_implementation_target(
         message = request.message
 
     tree_sha = base_tree_sha
+    if any(file.path.startswith(".github/workflows/") for file in request.files):
+        # Keep the repository-owned authorization/meaning decision inside the
+        # application. GitHub's scoped Actions token cannot construct a tree
+        # containing workflow changes, whereas the existing replaceable carrier
+        # has an already-configured GitHub connector for exact Git writes.
+        _fresh_implementation_write_authorization(
+            request,
+            source,
+            repository=repository,
+            token=token,
+            default_branch=default_branch,
+            current_revision=current_revision,
+            expected_head=current_head,
+        )
+        raise CarrierRequired(
+            _implementation_object_carrier_plan(
+                request,
+                source,
+                repository=repository,
+                token=token,
+                default_branch=default_branch,
+                current_revision=current_revision,
+                current_head=current_head,
+                base_tree_sha=base_tree_sha,
+                tree_elements=tree_elements,
+                parents=parents,
+                message=message,
+            )
+        )
     if tree_elements:
         _fresh_implementation_write_authorization(
             request,

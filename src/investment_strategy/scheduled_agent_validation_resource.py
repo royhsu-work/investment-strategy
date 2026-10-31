@@ -948,6 +948,14 @@ _VERIFICATION_SECRET_ENVIRONMENT_KEYS = frozenset(
         "ACTIONS_RUNTIME_TOKEN",
         "GH_TOKEN",
         "GITHUB_TOKEN",
+        # Candidate pytest is untrusted checkout code. It must never inherit
+        # the parent application step's runner command files: tests can write
+        # fake recovery output paths without knowing any repository token.
+        "GITHUB_OUTPUT",
+        "GITHUB_ENV",
+        "GITHUB_PATH",
+        "GITHUB_STEP_SUMMARY",
+        "GITHUB_STATE",
     }
 )
 
