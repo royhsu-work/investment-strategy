@@ -3356,6 +3356,134 @@ def test_recovery_artifact_reader_propagates_transient_download_failure() -> Non
         )
 
 
+@pytest.mark.parametrize(
+    ("run_attempt", "comparison_status", "comparison_base", "expected_qualified"),
+    [
+        (3, "ahead", "4" * 40, True),
+        (1, "ahead", "4" * 40, False),
+        (3, "diverged", "4" * 40, False),
+        (3, "ahead", "9" * 40, False),
+        (3, None, "4" * 40, False),
+    ],
+)
+def test_recovery_reader_binds_rerun_checkout_to_immutable_original_run_head(
+    run_attempt: int,
+    comparison_status: str | None,
+    comparison_base: str,
+    expected_qualified: bool,
+) -> None:
+    """An old run rerun from fresh main keeps its original GitHub head_sha.
+
+    Its exact current checkout is independently attested by Application's
+    uploaded artifact. Require a strict descendant of the immutable initial
+    head for attempt >1; a divergent or unverified revision stays unavailable.
+    """
+    run_id, job_id, artifact_id, request_comment_id = 7001, 7002, 7003, 91
+    original_head, checkout = "4" * 40, "5" * 40
+    accepted_sha = "a" * 64
+    failure = {"reason": "carrier_required", "mutation_status": "not-complete"}
+    document = {
+        "schema": "scheduled-agent-application-recovery/v1",
+        "repository": _REPOSITORY,
+        "issue_number": 322,
+        "role": "executor",
+        "action": "implement-change",
+        "request_comment_id": request_comment_id,
+        "accepted_decision_sha256": accepted_sha,
+        "trigger_comment_id": request_comment_id,
+        "run_id": run_id,
+        "run_attempt": run_attempt,
+        "current_revision": checkout,
+        "authorization_revision": original_head,
+        "recovery_attempt": 1,
+        "recovery_episode_sha256": "b" * 64,
+        "prior_failure_evidence_sha256": [],
+        "predecessor": None,
+        "failure_evidence": failure,
+        "failure_evidence_sha256": bridge._canonical_sha256(failure),
+        "continuation_eligible": True,
+    }
+    raw = json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    digest = f"sha256:{hashlib.sha256(raw).hexdigest()}"
+    seen: list[str] = []
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        seen.append(path)
+        if path == f"actions/runs/{run_id}":
+            return {
+                "id": run_id,
+                "run_attempt": run_attempt,
+                "status": "completed",
+                "head_sha": original_head,
+                "display_title": f"Scheduled Agent Application {request_comment_id}",
+            }
+        if path == f"actions/runs/{run_id}/jobs":
+            return {
+                "jobs": [
+                    {
+                        "id": job_id,
+                        "name": "apply",
+                        "run_attempt": run_attempt,
+                        "status": "completed",
+                        "conclusion": "success",
+                        "steps": [
+                            {
+                                "name": "Upload exact application recovery evidence",
+                                "conclusion": "success",
+                            }
+                        ],
+                    }
+                ]
+            }
+        if path == f"actions/runs/{run_id}/artifacts?per_page=100":
+            return {
+                "artifacts": [
+                    {
+                        "id": artifact_id,
+                        "name": "application-recovery-evidence",
+                        "digest": digest,
+                        "expired": False,
+                        "workflow_run": {"id": run_id, "head_sha": original_head},
+                    }
+                ]
+            }
+        if path == f"compare/{original_head}...{checkout}":
+            if comparison_status is None:
+                raise OSError("comparison unavailable")
+            return {
+                "status": comparison_status,
+                "base_commit": {"sha": comparison_base},
+                "merge_base_commit": {"sha": comparison_base},
+                "ahead_by": 2,
+                "behind_by": 0 if comparison_status == "ahead" else 2,
+            }
+        raise AssertionError(f"unexpected read: {path}")
+
+    try:
+        observed = bridge.read_application_recovery_artifact(
+            _REPOSITORY,
+            "test-token",
+            run_id=run_id,
+            run_attempt=run_attempt,
+            job_id=job_id,
+            request_comment_id=request_comment_id,
+            accepted_decision_sha256=accepted_sha,
+            read=read,
+            artifact_reader=lambda *_args: raw,
+        )
+    except OSError:
+        if comparison_status is not None:
+            raise
+        observed = None
+    assert (observed is not None) is expected_qualified
+    if expected_qualified:
+        assert observed is not None
+        assert observed.document["current_revision"] == checkout
+        assert f"compare/{original_head}...{checkout}" in seen
+    if run_attempt == 1:
+        assert f"compare/{original_head}...{checkout}" not in seen
+
+
 @pytest.mark.parametrize("has_upload_step", [False, True])
 def test_strict_recovery_reader_distinguishes_legacy_absence_from_missing_uploaded_artifact(
     has_upload_step: bool,
