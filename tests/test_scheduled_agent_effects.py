@@ -5101,7 +5101,9 @@ def test_legacy_322_completed_materialization_does_not_launder_unknown_checkpoin
     def observe_checkpoint(self: GitHubEffectAdapter, effect: StagedEffect) -> bool:
         assert self.pending_application_correlation == formal_correlation
         observed.append(effect.kind)
-        body = cast(str, effects._effect_payload(effect)["body"])
+        payload = effects._effect_payload(effect)
+        assert payload is not None
+        body = cast(str, payload["body"])
         # The durable Application checkpoint is bound to its proven carrier
         # head, not the obsolete revision in the accepted worker template.
         return checkpoint_proven and f"Revision: {'b' * 40}" in body
@@ -5125,7 +5127,7 @@ def test_legacy_322_completed_materialization_does_not_launder_unknown_checkpoin
 
 @pytest.mark.parametrize(
     ("original_durable", "rebound_durable", "expected"),
-    [(False, False, False), (True, False, True), (False, True, True), (True, True, False)],
+    [(False, False, False), (True, False, False), (False, True, True), (True, True, False)],
 )
 def test_read_only_checkpoint_completion_accepts_one_exact_revision_binding(
     monkeypatch: pytest.MonkeyPatch,
@@ -5160,7 +5162,9 @@ def test_read_only_checkpoint_completion_accepts_one_exact_revision_binding(
     observed: list[str] = []
 
     def observe(_self: GitHubEffectAdapter, candidate: StagedEffect) -> bool:
-        body = cast(str, effects._effect_payload(candidate)["body"])
+        payload = effects._effect_payload(candidate)
+        assert payload is not None
+        body = cast(str, payload["body"])
         observed.append(body)
         return (original_durable and f"Revision: {original}" in body) or (
             rebound_durable and f"Revision: {materialized}" in body

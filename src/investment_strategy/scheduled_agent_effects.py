@@ -3757,12 +3757,13 @@ def _bound_checkpoint_postcondition(
     adapter: GitHubEffectAdapter,
     materialized_revision: str | None,
 ) -> bool:
-    """Observe the original or proven-head checkpoint, but never accept both.
+    """Require the proven-head checkpoint without accepting stale/duplicate proof.
 
     An immutable accepted intent carries the pre-carrier revision. Application
     legally binds its deferred checkpoint to the independently proven carrier
     head; the completion reader must observe that same durable effect without
-    rewriting or reposting the accepted comment.
+    rewriting or reposting the accepted comment. A predecessor-only checkpoint
+    cannot prove the new target after a carrier update.
     """
     original_complete = adapter.observe_postcondition(effect)
     if materialized_revision is None:
@@ -3790,7 +3791,7 @@ def _bound_checkpoint_postcondition(
         derived=effect.derived,
     )
     rebound_complete = adapter.observe_postcondition(rebound)
-    return original_complete != rebound_complete
+    return rebound_complete and not original_complete
 
 
 def consequence_postconditions_complete(
