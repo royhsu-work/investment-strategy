@@ -1319,6 +1319,10 @@ def _machine_result_revision(
             change=change,
             default_branch=default_branch,
             current_revision=current_revision,
+            allow_reconciliation_findings=(
+                source.action == "review-implementation"
+                and worker.typed_result.result.kind.value == "findings"
+            ),
         )
     parsed = find_materialization_payload(materializations[0], source)
     if parsed is None or parsed.change != change or parsed.pr_number is None:
@@ -1350,6 +1354,7 @@ def _machine_carrier_head(
     change: str,
     default_branch: str,
     current_revision: str,
+    allow_reconciliation_findings: bool = False,
 ) -> str:
     """Resolve the current implementation carrier using its governed lineage.
 
@@ -1379,10 +1384,21 @@ def _machine_carrier_head(
             current_revision=current_revision,
         )
         if (
-            qualification.disposition in {"QUALIFIED", "HISTORICAL_MERGED"}
+            (
+                qualification.disposition in {"QUALIFIED", "HISTORICAL_MERGED"}
+                or (
+                    allow_reconciliation_findings
+                    and qualification.disposition == "RECONCILIATION_REQUIRED"
+                )
+            )
             and qualification.default_branch == default_branch
             and isinstance(qualification.head_sha, str)
         ):
+            # A rejected implementation head can still be reviewed exactly
+            # after unrelated default-branch maintenance advanced.  Returning
+            # FINDINGS to Executor permits its existing carrier-reconciliation
+            # owner to fix that head.  PASS (and every merge transition) must
+            # retain strict QUALIFIED/HISTORICAL_MERGED ancestry.
             return qualification.head_sha
         raise RuntimeError("application accepted implementation carrier is not qualified")
     candidates = _paged_github_list(
