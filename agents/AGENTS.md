@@ -195,6 +195,15 @@ The Asia/Taipei daily shard is only a bounded trigger-and-audit transport. It re
 one exact Actions run, and that run's structured result. It carries no Issue/Change/Action authority,
 successor state, lifecycle state, retry state, or mailbox semantics.
 
+Before any normal dispatch request, the Scheduled Agent first checks the unique current-day Runtime
+shard. When it is missing, the Agent follows the bounded external connector handoff in
+`agents/scheduled-task-migration.md`: it fresh-qualifies the latest uniquely eligible existing older
+shard and any same-day `ROLLOVER_REQUEST`, posts at most one exact request after a fresh recheck, and
+ends the wake without dispatch, direct shard creation, polling, or same-wake Action work. The native
+GitHub Check-in cron remains independent; only the existing Check-in owner handles the genuine
+`issue_comment: created` request and the later Scheduled Agent wake starts fresh. This pre-dispatch
+transport check cannot create another Action, route, state machine or Human authority.
+
 Rollover establishes and observes today's shard before retiring the older shard. An in-flight
 request-to-run-to-result chain remains valid. Missing, duplicate, expired, failed, cancelled,
 uncorrelated, or stale transport evidence fails closed. External slot count, cadence, notification,

@@ -100,6 +100,18 @@ External Scheduled Task configuration and production acceptance are deployment/l
 - [x] 4.1 Run focused idle contract, application, bridge, dispatch, advisory, and unchanged-Human-frontier tests on the final implementation head.
 - [x] 4.2 Run full regression, type checks, lint, and repository workflow/static invariant checks on the final implementation head; require remote Python Quality on that exact head.
 - [x] 4.3 Run strict OpenSpec validation on this corrected exact OpenSpec revision and again on the final implementation head as required.
+
+## 5. Missing daily Runtime shard — same-Change Human-approved transport slice
+
+Human authority for this additional delivery obligation: #322 comment 6530126961. These are implementable tasks; native event and post-lifecycle outcomes remain acceptance gates below.
+
+- [x] 5.1 RED: pin real Check-in date/identity parsing and reproduce missing-today fallback failure for one/multiple skipped days, latest unique older shard (open or verified commentable closed), duplicate/locked/invalid/future candidates, same-day already existing, and missing/partial paginated GitHub evidence; verify failures result in no writes.
+- [x] 5.2 GREEN: implement the smallest pre-dispatch bootstrap handoff that leaves a deduplicated exact ROLLOVER_REQUEST on the latest uniquely eligible existing shard and exits; preserve ordinary today-shard dispatch and prevent any same-wake Role/Action selection, polling or shard creation.
+- [x] 5.3 RED: reproduce untrusted, duplicate, stale and GITHUB_TOKEN-suppressed issue_comment events; concurrently exercise the existing cron and comment-triggered Check-in owner, creation unknown/postcondition lag, repeated wake and multiple missed days; prove no duplicate shard or premature retirement can be accepted.
+- [x] 5.4 GREEN: add the guarded issue_comment.created Check-in entry and reuse scheduled_agent_checkin.py with fresh event/source/target/date validation, existing repository concurrency, unique create/readback and safe old-shard retirement; no new Action or Check-in state machine.
+- [x] 5.5 REFACTOR/VERIFY: exercise full regression, Ruff, mypy, exact-head Python Quality and strict OpenSpec for the slice; preserve WIP=1, one Action/wake, NO_WORK idle parent, no replay/no rewind, and failure evidence. Do not mark event-run or later dispatch acceptance complete on fixture-only results.
+
+
 ## Native production evidence (not implementation task markers)
 
 - Execute the former 0.25 physical Chat connector operation from an actual native Lead Workflow wake, with exact plan, fresh precondition/postcondition reads and durable `APPLICATION_CARRIER_OUTCOME` evidence; no fake connector run counts.

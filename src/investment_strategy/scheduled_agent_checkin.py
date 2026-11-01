@@ -22,6 +22,11 @@ _REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _ALLOWED_HTTP_METHODS = {"GET", "POST", "PATCH"}
 _CREATE_POSTCONDITION_ATTEMPTS = 10
 _CREATE_POSTCONDITION_DELAY_SECONDS = 1.0
+_ROLLOVER_REQUEST = re.compile(
+    r"\AROLLOVER_REQUEST\nRequested-Day: ([0-9]{4}-[0-9]{2}-[0-9]{2})\n"
+    r"Source-Shard: ([1-9][0-9]*)\n\Z"
+)
+_TRUSTED_EXTERNAL_APP = "chatgpt-codex-connector"
 
 
 class CheckinDisposition(StrEnum):
@@ -51,6 +56,16 @@ class RolloverPlan:
     today: date
     current_issue_number: int | None
     retire_issue_numbers: tuple[int, ...]
+    reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RolloverHandoff:
+    """Ephemeral pre-dispatch decision, never a workflow or Check-in state."""
+
+    source_issue_number: int | None = None
+    current_issue_number: int | None = None
+    already_requested: bool = False
     reason: str | None = None
 
 
@@ -87,6 +102,119 @@ def checkin_body(day: date) -> str:
         )
         + "\n"
     )
+
+
+def rollover_request_body(day: date, source_issue_number: int) -> str:
+    """Render the bounded comment handed to the existing Check-in owner."""
+
+    if not _positive_issue_number(source_issue_number) or isinstance(day, datetime):
+        raise ValueError("rollover request requires an exact day and source Issue")
+    return (
+        f"ROLLOVER_REQUEST\nRequested-Day: {day.isoformat()}\nSource-Shard: {source_issue_number}\n"
+    )
+
+
+def parse_rollover_request(body: object) -> tuple[date, int] | None:
+    """Reject near matches, extra fields, noncanonical dates and missing newlines."""
+
+    if not isinstance(body, str):
+        return None
+    match = _ROLLOVER_REQUEST.fullmatch(body)
+    if match is None:
+        return None
+    try:
+        day = date.fromisoformat(match.group(1))
+        issue_number = int(match.group(2))
+    except ValueError:
+        return None
+    if day.isoformat() != match.group(1) or not _positive_issue_number(issue_number):
+        return None
+    return day, issue_number
+
+
+def _trusted_external_comment(comment: Mapping[str, object], actor_login: str) -> bool:
+    user = comment.get("user")
+    app = comment.get("performed_via_github_app")
+    return (
+        isinstance(user, Mapping)
+        and user.get("login") == actor_login
+        and isinstance(app, Mapping)
+        and app.get("slug") == _TRUSTED_EXTERNAL_APP
+    )
+
+
+def plan_rollover_handoff(
+    payloads: Sequence[Mapping[str, object]],
+    today: date,
+    *,
+    commentable_issue_numbers: frozenset[int],
+    comments_by_issue: Mapping[int, Sequence[Mapping[str, object]]],
+    actor_login: str,
+) -> RolloverHandoff:
+    """Choose an older shard only from complete externally verified observations.
+
+    The agent must independently establish real comment capability, gather every
+    all-state Issue/comment page and fresh-recheck before writing.  This pure
+    selector has no GitHub write capability and cannot authorize dispatch.
+    """
+
+    if not actor_login or not all(_positive_issue_number(n) for n in commentable_issue_numbers):
+        return RolloverHandoff(reason="comment-authority-incomplete")
+    plan = plan_rollover(payloads, today)
+    if plan.disposition is CheckinDisposition.FAIL_CLOSED:
+        return RolloverHandoff(reason=plan.reason or "invalid-runtime-shards")
+    if plan.current_issue_number is not None:
+        return RolloverHandoff(current_issue_number=plan.current_issue_number)
+
+    older: list[tuple[date, int, bool]] = []
+    seen_dates: set[date] = set()
+    for payload in payloads:
+        if not _looks_like_runtime_issue(payload):
+            continue
+        day = parse_checkin_day(payload)
+        number = _issue_number(payload.get("number"))
+        if day is None or number is None or day >= today:
+            return RolloverHandoff(reason="invalid-runtime-identity")
+        if day in seen_dates:
+            return RolloverHandoff(reason="duplicate-runtime-date")
+        seen_dates.add(day)
+        locked = payload.get("locked")
+        if not isinstance(locked, bool):
+            return RolloverHandoff(reason="runtime-comment-capability-incomplete")
+        if number not in comments_by_issue:
+            return RolloverHandoff(reason="runtime-comment-history-incomplete")
+        older.append((day, number, locked))
+
+    already_requested = False
+    for _day, number, _locked in older:
+        for comment in comments_by_issue[number]:
+            body = comment.get("body")
+            if not isinstance(body, str):
+                return RolloverHandoff(reason="runtime-comment-incomplete")
+            if not body.startswith("ROLLOVER_REQUEST"):
+                continue
+            parsed = parse_rollover_request(body)
+            if parsed is None:
+                return RolloverHandoff(reason="ambiguous-rollover-request")
+            requested_day, requested_source = parsed
+            if requested_day != today:
+                continue
+            if requested_source != number or not _trusted_external_comment(comment, actor_login):
+                return RolloverHandoff(reason="unqualified-rollover-request")
+            if already_requested:
+                return RolloverHandoff(reason="duplicate-rollover-request")
+            already_requested = True
+    if already_requested:
+        return RolloverHandoff(already_requested=True)
+
+    eligible = sorted(
+        (day, number)
+        for day, number, locked in older
+        if not locked and number in commentable_issue_numbers
+    )
+    if not eligible:
+        return RolloverHandoff(reason="no-unique-commentable-older-shard")
+    return RolloverHandoff(source_issue_number=eligible[-1][1])
 
 
 def _positive_issue_number(value: object) -> bool:
@@ -321,6 +449,136 @@ def _github_issue(repository: str, token: str, issue_number: int) -> Mapping[str
     return cast(Mapping[str, object], raw)
 
 
+def _github_comments(
+    repository: str, token: str, issue_number: int
+) -> tuple[Mapping[str, object], ...]:
+    """Collect complete, ordered GitHub comment evidence without guessing pages."""
+
+    page = 1
+    comments: list[Mapping[str, object]] = []
+    while True:
+        raw = _github_json(
+            repository, token, f"/issues/{issue_number}/comments?per_page=100&page={page}"
+        )
+        if not isinstance(raw, list):
+            raise RuntimeError("GitHub Issue comments are incomplete")
+        for item in raw:
+            if not isinstance(item, Mapping):
+                raise RuntimeError("GitHub Issue comment is malformed")
+            comments.append(cast(Mapping[str, object], item))
+        if len(raw) < 100:
+            return tuple(comments)
+        page += 1
+
+
+def qualify_rollover_comment_event(
+    repository: str,
+    token: str,
+    event: Mapping[str, object],
+    *,
+    today: date,
+    actor_login: str,
+) -> int | None:
+    """Check one real external created event before using ordinary Check-in.
+
+    The event itself gives no mutation authority: re-read the exact comment,
+    source Issue, all-state shards and same-day request history first.
+    """
+
+    repository_parts = repository.split("/")
+    approved_actor = repository_parts[0] if len(repository_parts) == 2 else ""
+    event_repo = event.get("repository")
+    sender = event.get("sender")
+    event_issue = event.get("issue")
+    event_comment = event.get("comment")
+    if (
+        event.get("action") != "created"
+        or not isinstance(event_repo, Mapping)
+        or event_repo.get("full_name") != repository
+        or not isinstance(sender, Mapping)
+        or sender.get("login") != actor_login
+        or not approved_actor
+        or actor_login != approved_actor
+        or not isinstance(event_issue, Mapping)
+        or "pull_request" in event_issue
+        or not isinstance(event_comment, Mapping)
+        or not actor_login
+    ):
+        return None
+    source_number = _issue_number(event_issue.get("number"))
+    comment_id = _issue_number(event_comment.get("id"))
+    parsed = parse_rollover_request(event_comment.get("body"))
+    if source_number is None or comment_id is None or parsed != (today, source_number):
+        return None
+
+    observed_comment = _github_json(repository, token, f"/issues/comments/{comment_id}")
+    if (
+        not isinstance(observed_comment, Mapping)
+        or observed_comment.get("id") != comment_id
+        or observed_comment.get("body") != event_comment.get("body")
+        or not _trusted_external_comment(observed_comment, actor_login)
+    ):
+        return None
+    fresh_source = _github_issue(repository, token, source_number)
+    source_day = parse_checkin_day(fresh_source)
+    if (
+        _issue_number(fresh_source.get("number")) != source_number
+        or source_day is None
+        or source_day >= today
+        or fresh_source.get("title") != event_issue.get("title")
+        or fresh_source.get("locked") is not False
+        or fresh_source.get("state") not in {"open", "closed"}
+    ):
+        return None
+
+    issues = _github_issues(repository, token)
+    full_plan = plan_rollover(issues, today)
+    if full_plan.disposition is CheckinDisposition.FAIL_CLOSED:
+        return None
+    older = tuple(
+        issue
+        for issue in issues
+        if _looks_like_runtime_issue(issue)
+        and parse_checkin_day(issue) is not None
+        and cast(date, parse_checkin_day(issue)) < today
+    )
+    if source_number not in {_issue_number(item.get("number")) for item in older}:
+        return None
+    # A created event proves this source was externally commentable.  A more
+    # recent unlocked older shard makes this source selection stale, even if
+    # that shard's capability is not yet provable from event metadata.
+    available = sorted(
+        (cast(date, parse_checkin_day(item)), _issue_number(item.get("number")))
+        for item in older
+        if item.get("locked") is False
+    )
+    if not available or available[-1][1] != source_number:
+        return None
+    comments_by_issue: dict[int, tuple[Mapping[str, object], ...]] = {}
+    for item in older:
+        number = _issue_number(item.get("number"))
+        if number is None:
+            return None
+        comments_by_issue[number] = _github_comments(repository, token, number)
+    handoff = plan_rollover_handoff(
+        older,
+        today,
+        commentable_issue_numbers=frozenset({source_number}),
+        comments_by_issue=comments_by_issue,
+        actor_login=actor_login,
+    )
+    if not handoff.already_requested or handoff.reason is not None:
+        return None
+    same_day = [
+        comment
+        for comment in comments_by_issue[source_number]
+        if parse_rollover_request(comment.get("body")) == (today, source_number)
+    ]
+    if len(same_day) != 1 or same_day[0].get("id") != comment_id:
+        return None
+    return source_number
+
+
 def _verify_shard(
     payload: Mapping[str, object],
     *,
@@ -348,6 +606,19 @@ def _create_shard(repository: str, token: str, day: date) -> int:
     if not isinstance(raw, Mapping):
         raise RuntimeError("GitHub shard creation returned a non-object")
     return _verify_shard(cast(Mapping[str, object], raw), day=day, expected_state="open")
+
+
+def _create_or_reconcile_shard(repository: str, token: str, today: date) -> int:
+    """On an ambiguous create response, observe; never blindly replay POST."""
+
+    try:
+        return _create_shard(repository, token, today)
+    except RuntimeError:
+        _, plan = _fresh_rollover(repository, token, today)
+        _require_plan(plan)
+        if plan.current_issue_number is None:
+            raise
+        return plan.current_issue_number
 
 
 def _observe_created_shard(
@@ -442,13 +713,33 @@ def main() -> int:
         raise RuntimeError("GITHUB_REPOSITORY and GITHUB_TOKEN are required")
 
     today = taipei_day()
+    if os.environ.get("GITHUB_EVENT_NAME") == "issue_comment":
+        event_path = os.environ.get("GITHUB_EVENT_PATH")
+        actor_login = os.environ.get("GITHUB_ACTOR")
+        if not event_path or not actor_login:
+            raise RuntimeError("comment event identity is incomplete")
+        with open(event_path, encoding="utf-8") as handle:
+            event = json.load(handle)
+        if not isinstance(event, Mapping):
+            raise RuntimeError("comment event is malformed")
+        source = qualify_rollover_comment_event(
+            repository,
+            token,
+            event,
+            today=today,
+            actor_login=actor_login,
+        )
+        if source is None:
+            print(json.dumps({"event": "rollover-request-ignored"}, sort_keys=True))
+            return 0
+
     _, plan = _fresh_rollover(repository, token, today)
     _require_plan(plan)
 
     created_issue: int | None = None
     retired: list[int] = []
     if plan.disposition is CheckinDisposition.CREATE:
-        created_issue = _create_shard(repository, token, today)
+        created_issue = _create_or_reconcile_shard(repository, token, today)
         plan = _observe_created_shard(repository, token, today, created_issue)
     elif plan.disposition is CheckinDisposition.SELECTED:
         if plan.current_issue_number is None:

@@ -764,51 +764,6 @@ A substantive recovery transition SHALL be eligible without a fixed numerical at
 - THEN it performs no application rerun or semantic replay
 - AND it returns the existing evidence-bound fail-closed disposition
 
-### Requirement: Verified implementation slices persist a bounded coordination-Issue checkpoint
-
-For `Executor / implement-change`, after an approved vertical slice reaches successful `VERIFY`, Executor MUST persist all satisfied task markers for that slice and MUST persist exactly one bounded checkpoint comment on the persistent coordination Issue before beginning the next slice or handing off.
-
-The checkpoint comment MUST use the canonical `SLICE_CHECKPOINT` presentation contract when that contract is active on the default branch and MUST identify the completed slice or task IDs, the durable checkpoint or verified revision, the required VERIFY/gate result, and the remaining approved work or handoff target. Before template activation, the same evidence fields remain required by the then-authoritative workflow contract even if presentation is not yet canonical. The comment SHALL summarize the completion boundary and MUST NOT replace the PR/commit, task markers, or CI evidence as their respective sources of truth.
-
-Narrow historical recovery exception: the already-accepted #322 `Executor / implement-change / READY` application (request comment `6019133874`, accepted-decision comment `6019173711`) predates recoverable checkpoint evidence. During **pre-formal-result Recovery Exit qualification only**, the absence or unavailability of its historical `SLICE_CHECKPOINT` SHALL NOT itself be a mandatory completion predicate. The application MUST independently verify current task/implementation/required-gate postconditions and MUST prevent replay or duplication of an uncertain non-idempotent comment/effect; an unverified hazardous side effect blocks only the operation that can repeat it. It MUST retain historical UNKNOWN and MUST NOT infer the comment was absent, completed, or informational from a file witness. Every future fresh Executor slice and all other accepted applications remain subject to the ordinary checkpoint requirement above.
-
-RED/GREEN/refactor/test-trigger/compatibility-correction commits and ordinary governed artifact or task-marker edits inside the same not-yet-complete slice MUST NOT independently require coordination-Issue progress comments. This requirement is completion-boundary observability only and MUST NOT introduce periodic heartbeat, progress percentage, `status:in-progress`, lock, claim, lease, retry counter, hidden ownership state, or other live execution machinery.
-
-#### Scenario: Verified slice completes before another slice begins
-
-- GIVEN Executor completes an approved vertical slice
-- AND the slice's required VERIFY and repository gates succeed
-- WHEN Executor prepares to continue implementation
-- THEN all satisfied task markers for that slice are durably persisted
-- AND exactly one bounded `SLICE_CHECKPOINT`-equivalent completion record is durably recorded on the persistent coordination Issue using the currently authoritative presentation contract
-- AND the checkpoint identifies the completed work, durable revision, gate result, and remaining work
-- AND only then may Executor begin the next approved slice
-
-#### Scenario: Work continues inside an unverified slice
-
-- GIVEN Executor is performing RED, GREEN, refactor, test-trigger, compatibility correction, or ordinary artifact/task edits inside one approved slice
-- AND that slice has not yet reached successful VERIFY
-- WHEN those intermediate mutations are persisted
-- THEN Git/PR/task evidence remains the detailed source of truth
-- AND no additional implementation-progress Issue comment is required solely for those mutations
-
-#### Scenario: Task markers persisted but checkpoint write was interrupted
-
-- GIVEN a prior Executor run successfully verified a slice and durably persisted its satisfied task markers
-- BUT the run ended before the required coordination-Issue checkpoint was persisted
-- WHEN a later Executor run reconstructs the active implementation state
-- THEN it does not rerun or clear the already verified slice merely to recreate progress
-- AND it persists the missing bounded checkpoint from current durable evidence using the currently authoritative presentation contract before beginning another slice or handing off
-
-#### Scenario: Legacy accepted READY is qualified without inventing its checkpoint
-
-- GIVEN the exact #322 accepted application identified by request `6019133874` and decision `6019173711`
-- AND its historical checkpoint write is UNKNOWN while current task, implementation, and applicable gates can be independently observed
-- WHEN the existing application evaluates pre-formal-result Recovery Exit without scheduling another Executor slice
-- THEN it does not demand or forge a replacement historical `SLICE_CHECKPOINT` as a positive completion predicate
-- AND it blocks any prospective operation that could duplicate the uncertain comment or other irreversible effect until the specific deduplication/safety predicate is proven
-- AND later fresh Executor slices still persist their ordinary verified-slice checkpoint before handoff
-
 ### Requirement: Legacy Forward Correction is independently authorized and never replays accepted semantic work
 
 Historical accepted intent `I`, decision digest, `A/B`, original physical plan, original `ACTION_RESULT` meaning, and incomplete/unknown run and effect history SHALL remain immutable. A completed historical run which never had the recovery-upload step SHALL NOT be required to manufacture that artifact as the sole means of **preparing, reviewing or verifying separately Human-approved corrective maintenance**. Its missing artifact alone is neither a proof of original mutation, a missing write, an actual conflicting write nor authority for `PLAN_SUPERSEDED`, old-plan replay, semantic result, routing or fresh write. Incomplete current GitHub source evidence is `UNKNOWN(reason)`, a proven inconsistent source target is `CONTRADICTORY(reason)`, and both prohibit unsafe effects.
@@ -1106,3 +1061,89 @@ Before emitting another carrier handoff, the bridge SHALL inspect every earlier 
 - WHEN another fresh dispatch evaluates the accepted intent
 - THEN it searches the complete earlier request chain
 - AND it still fails closed on the older unreported Plan-ID
+### Requirement: Missing current-day Runtime shard uses a bounded event-triggered Check-in handoff
+
+If the repository's current Asia/Taipei Runtime shard is absent, the Scheduled Agent SHALL fresh-read a complete authoritative all-state Runtime Issue set and SHALL select the latest *unique eligible existing older* shard, without assuming the immediately preceding day exists. Eligibility SHALL require canonical shard date/Issue identity and a verified ability to add a normal comment, including closed but commentable/unlocked Issues only when that capability is established. Duplicate date identities, future/invalid/locked shards, missing permissions, and incomplete or contradictory evidence MUST fail closed.
+
+Before any write the Agent SHALL recheck that today's valid shard is still absent, that the selected older shard is still uniquely eligible, and that no already valid ROLLOVER_REQUEST exists for that requested day. The request SHALL be a strict bounded three-line transport comment (plus final newline): ROLLOVER_REQUEST; Requested-Day: YYYY-MM-DD; Source-Shard: N. It SHALL include no Issue/Change/Role/Action routing decision. If an equivalent valid request already exists, the Agent SHALL exit without another write. Following a verified comment write, the Agent SHALL end that wake: it SHALL NOT create the day's shard, await/poll Check-in, use an older shard for DISPATCH_REQUEST, or execute normal dispatch.
+
+The repository-native GitHub cron SHALL remain an independent trigger. The Check-in workflow SHALL also accept an actual issue_comment.created ROLLOVER_REQUEST event, verify the genuine external actor, exact created comment and enclosing canonical older Runtime Issue, strict request body, repository, requested current local day, and fresh current GitHub state, then invoke the *same* repository-owned Check-in/rollover implementation used by cron. Both triggers SHALL share existing serialized non-cancelling repository concurrency, unique current-day creation/readback and safe older-shard retirement. Duplicate/reordered/stale/untrusted events SHALL produce no unsafe effects; ambiguous creation or postconditions MUST fail closed or reconcile read-only. The design MUST NOT depend on GITHUB_TOKEN-authored comments generating a second Actions event.
+
+After successful Check-in, a separate later fresh Scheduled Agent wake SHALL independently read the new shard, current default branch and repository workflow state and perform normal executable dispatch. Neither a transport comment nor Check-in success SHALL be represented as an ACTION_RESULT, routing mutation, Recovery Exit or NO_WORK/Idle Discovery acceptance.
+
+#### Scenario: Cron independently establishes the local day's shard
+
+- GIVEN no external ROLLOVER_REQUEST is sent and the scheduled native Check-in cron fires
+- WHEN its existing Check-in owner observes a missing unique current-day shard
+- THEN it establishes and verifies that shard before retiring older open shards
+- AND the cron does not require any external Scheduled Agent or comment event
+
+#### Scenario: Missing yesterday and multiple days are handled without a fixed predecessor
+
+- GIVEN today's Runtime shard is missing and the immediately previous date is also missing
+- AND a single valid older commentable Runtime shard is the latest eligible existing shard
+- WHEN the Scheduled Agent performs its pre-dispatch transport check
+- THEN it fresh-qualifies that older shard and posts at most one exact ROLLOVER_REQUEST there
+- AND it exits without DISPATCH_REQUEST, direct rollover or same-wake Action execution
+
+#### Scenario: Today's shard already exists
+
+- GIVEN one valid open Runtime shard for the current Asia/Taipei date
+- WHEN a Scheduled Agent wakes
+- THEN it does not post a ROLLOVER_REQUEST
+- AND it follows ordinary fresh repository-owned dispatch
+
+#### Scenario: Existing same-day request is deduplicated
+
+- GIVEN today's shard is absent and a valid same-day ROLLOVER_REQUEST already exists on a qualified Runtime shard
+- WHEN another Scheduled Agent wakes
+- THEN it does not create a duplicate request or alternate carrier
+- AND it ends the bounded transport wake without polling or normal dispatch
+
+#### Scenario: Ambiguous, invalid or unwriteable older shard
+
+- GIVEN incomplete all-state Issue pages, duplicate latest dates, invalid canonical identities, a locked or unwriteable candidate, or no eligible existing shard
+- WHEN the Agent attempts missing-day handoff
+- THEN it fails closed with no substitute Issue, no guessed previous date and no transport comment
+
+#### Scenario: Closed older shard is used only when the event path is proven
+
+- GIVEN the latest unique canonical older shard is closed
+- WHEN its comment capability and created-event delivery are independently verified as usable
+- THEN the Agent may post the exact request without reopening it
+- AND an unverified or locked closed shard is not assumed safe
+
+#### Scenario: Native event requalifies the request before rollover
+
+- GIVEN a genuine trusted external connector actor creates an exact ROLLOVER_REQUEST comment on an eligible older shard
+- WHEN GitHub Actions delivers issue_comment.created to the Check-in workflow
+- THEN Check-in fresh-verifies comment identity, actor, body, target, requested local day and repository state
+- AND only the existing Check-in owner may establish today's shard and verify its postconditions before old-shard retirement
+
+#### Scenario: Wrong actor, body, date or target cannot create a shard
+
+- GIVEN a forged, stale, duplicated, malformed or wrong-Issue ROLLOVER_REQUEST event
+- WHEN the Check-in workflow validates its created comment against current GitHub state
+- THEN it rejects or safely deduplicates the event without unsafe creation, routing or retirement
+
+#### Scenario: Concurrent cron and comment are idempotent
+
+- GIVEN the native cron and a valid comment event race for a missing current-day shard
+- WHEN both enter the existing repository-scoped non-cancelling Check-in concurrency boundary
+- THEN fresh reobservation permits exactly one unique current-day shard
+- AND later invocations reconcile the result, preserving incomplete older request/run/result chains and avoiding duplicate creation or premature close
+
+#### Scenario: GITHUB_TOKEN does not establish the event contract
+
+- GIVEN a comment is authored by a GitHub Actions GITHUB_TOKEN
+- WHEN no new issue_comment.created workflow is delivered
+- THEN no implementation or test claims that comment delivery proved a native event trigger
+- AND end-to-end acceptance requires a real externally authored event and matching Actions run
+
+#### Scenario: Later fresh wake resumes normal dispatch
+
+- GIVEN the comment-triggered Check-in successfully established a unique today-shard and safely retired older open shards
+- WHEN a separate subsequent Scheduled Agent wake begins
+- THEN it freshly reads the current default branch and authoritative repository-wide workflow state
+- AND only then may it obtain a repository-owned Action selection, leaving #322 routing unchanged by the rollover itself
+
