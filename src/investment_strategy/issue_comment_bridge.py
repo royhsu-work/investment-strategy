@@ -2631,6 +2631,7 @@ def _fresh_completion_postconditions(
     accepted_authorization_revision: str,
     authorized_change: str,
     request_comment_id: int,
+    observed_application_correlation: str | None = None,
 ) -> bool:
     """Use the single positive consequence owner for logical commit."""
 
@@ -2652,6 +2653,7 @@ def _fresh_completion_postconditions(
         # the normal routing transition, without widening source authority.
         allow_accepted_successor=True,
         accepted_intent=True,
+        observed_application_correlation=observed_application_correlation,
     )
 
 
@@ -2802,6 +2804,7 @@ def _formal_consequence(
             authorized_change=record.change,
             request_comment_id=record.request_comment_id,
             accepted_authorization_revision=record.authorization_revision,
+            observed_application_correlation=canonical_event.application_correlation,
         )
     ):
         return False

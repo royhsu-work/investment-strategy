@@ -1319,6 +1319,10 @@ def _machine_result_revision(
             change=change,
             default_branch=default_branch,
             current_revision=current_revision,
+            allow_reconciliation_findings=(
+                source.action == "review-implementation"
+                and worker.typed_result.result.kind.value == "findings"
+            ),
         )
     parsed = find_materialization_payload(materializations[0], source)
     if parsed is None or parsed.change != change or parsed.pr_number is None:
@@ -1350,6 +1354,7 @@ def _machine_carrier_head(
     change: str,
     default_branch: str,
     current_revision: str,
+    allow_reconciliation_findings: bool = False,
 ) -> str:
     """Resolve the current implementation carrier using its governed lineage.
 
@@ -1379,10 +1384,22 @@ def _machine_carrier_head(
             current_revision=current_revision,
         )
         if (
-            qualification.disposition in {"QUALIFIED", "HISTORICAL_MERGED"}
+            (
+                qualification.disposition in {"QUALIFIED", "HISTORICAL_MERGED"}
+                or (
+                    allow_reconciliation_findings
+                    and qualification.disposition == "RECONCILIATION_REQUIRED"
+                    and qualification.head_sha == review_predecessor[1]
+                )
+            )
             and qualification.default_branch == default_branch
             and isinstance(qualification.head_sha, str)
         ):
+            # A rejected implementation head can still be reviewed exactly
+            # after unrelated default-branch maintenance advanced.  Returning
+            # FINDINGS to Executor permits its existing carrier-reconciliation
+            # owner to fix that head.  PASS (and every merge transition) must
+            # retain strict QUALIFIED/HISTORICAL_MERGED ancestry.
             return qualification.head_sha
         raise RuntimeError("application accepted implementation carrier is not qualified")
     candidates = _paged_github_list(
@@ -4110,7 +4127,8 @@ def read_application_recovery_artifact(
         or document.get("accepted_decision_sha256") != accepted_decision_sha256
         or document.get("run_id") != run_id
         or document.get("run_attempt") != run_attempt
-        or document.get("current_revision") != run.get("head_sha")
+        or not isinstance(document.get("current_revision"), str)
+        or _SHA.fullmatch(cast(str, document["current_revision"])) is None
         or not isinstance(document.get("role"), str)
         or not isinstance(document.get("action"), str)
         or not isinstance(authorization_revision, str)
@@ -4149,6 +4167,35 @@ def read_application_recovery_artifact(
         or predecessor.get("failure_evidence_sha256") not in prior_failures
     ):
         return unavailable()
+    # A rerun retains the original workflow run's immutable head_sha even
+    # though its explicit default-branch checkout is fresh. The uploaded
+    # evidence records that checked-out revision, so accept a different SHA
+    # only for an actual rerun with independently verified ancestry. Keep the
+    # original exact equality for first attempts and fail closed on divergence.
+    checked_out_revision = cast(str, document["current_revision"])
+    original_run_head = cast(str, run["head_sha"])
+    if checked_out_revision != original_run_head:
+        if run_attempt <= 1 or _SHA.fullmatch(original_run_head) is None:
+            return unavailable()
+        comparison = _as_mapping(
+            api_read(repository, token, f"compare/{original_run_head}...{checked_out_revision}")
+        )
+        base_commit = None if comparison is None else _as_mapping(comparison.get("base_commit"))
+        merge_base = (
+            None if comparison is None else _as_mapping(comparison.get("merge_base_commit"))
+        )
+        if (
+            comparison is None
+            or comparison.get("status") != "ahead"
+            or comparison.get("behind_by") != 0
+            or type(comparison.get("ahead_by")) is not int
+            or cast(int, comparison["ahead_by"]) <= 0
+            or base_commit is None
+            or base_commit.get("sha") != original_run_head
+            or merge_base is None
+            or merge_base.get("sha") != original_run_head
+        ):
+            return unavailable()
     return ApplicationRecoveryArtifact(
         run_id=run_id,
         run_attempt=run_attempt,

@@ -314,6 +314,66 @@ def test_event_checkin_requires_real_created_connector_comment_and_rechecks_gith
         )
 
 
+def test_rollover_comment_matching_nonowner_actor_and_connector_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """GITHUB_ACTOR and event.sender agree even for an unapproved account."""
+
+    today = date(2026, 11, 2)
+    old = dict(_issue(301, date(2026, 10, 27)), locked=False)
+    comment = {
+        "id": 9001,
+        "body": checkin.rollover_request_body(today, 301),
+        "user": {"login": "attacker"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+    event = {
+        "action": "created",
+        "repository": {"full_name": "royhsu-work/investment-strategy"},
+        "sender": {"login": "attacker"},
+        "issue": old,
+        "comment": comment,
+    }
+
+    def github(_repository: str, _token: str, path: str, **_kw: object) -> object:
+        if path == "/issues/301":
+            return old
+        if path == "/issues/comments/9001":
+            return comment
+        if path == "/issues/301/comments?per_page=100&page=1":
+            return [comment]
+        raise AssertionError(path)
+
+    monkeypatch.setattr(checkin, "_github_json", github)
+    monkeypatch.setattr(checkin, "_github_issues", lambda *_args: (old,))
+    assert (
+        checkin.qualify_rollover_comment_event(
+            "royhsu-work/investment-strategy",
+            "token",
+            event,
+            today=today,
+            actor_login="attacker",
+        )
+        is None
+    )
+
+    event_path = tmp_path / "unapproved-connector-comment.json"
+    event_path.write_text(json.dumps(event), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "royhsu-work/investment-strategy")
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "issue_comment")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
+    monkeypatch.setenv("GITHUB_ACTOR", "attacker")
+    monkeypatch.setattr(checkin, "taipei_day", lambda: today)
+    monkeypatch.setattr(
+        checkin,
+        "_fresh_rollover",
+        lambda *_args: pytest.fail("unapproved actor must not reach Check-in mutation"),
+    )
+    assert checkin.main() == 0
+
+
 def test_unknown_create_result_never_blindly_creates_a_second_shard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

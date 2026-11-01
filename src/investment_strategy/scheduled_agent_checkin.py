@@ -485,6 +485,8 @@ def qualify_rollover_comment_event(
     source Issue, all-state shards and same-day request history first.
     """
 
+    repository_parts = repository.split("/")
+    approved_actor = repository_parts[0] if len(repository_parts) == 2 else ""
     event_repo = event.get("repository")
     sender = event.get("sender")
     event_issue = event.get("issue")
@@ -495,6 +497,8 @@ def qualify_rollover_comment_event(
         or event_repo.get("full_name") != repository
         or not isinstance(sender, Mapping)
         or sender.get("login") != actor_login
+        or not approved_actor
+        or actor_login != approved_actor
         or not isinstance(event_issue, Mapping)
         or "pull_request" in event_issue
         or not isinstance(event_comment, Mapping)
