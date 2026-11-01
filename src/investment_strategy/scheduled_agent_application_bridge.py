@@ -1389,6 +1389,7 @@ def _machine_carrier_head(
                 or (
                     allow_reconciliation_findings
                     and qualification.disposition == "RECONCILIATION_REQUIRED"
+                    and qualification.head_sha == review_predecessor[1]
                 )
             )
             and qualification.default_branch == default_branch

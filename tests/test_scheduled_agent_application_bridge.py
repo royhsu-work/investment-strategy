@@ -422,18 +422,20 @@ def test_review_discovers_only_the_last_freshly_qualified_merged_change_carrier(
 
 
 @pytest.mark.parametrize(
-    ("result_kind", "carrier_disposition", "permitted"),
+    ("result_kind", "carrier_disposition", "ready_head_matches", "permitted"),
     [
-        ("findings", "RECONCILIATION_REQUIRED", True),
-        ("pass", "RECONCILIATION_REQUIRED", False),
-        ("findings", "INDETERMINATE", False),
-        ("pass", "QUALIFIED", True),
+        ("findings", "RECONCILIATION_REQUIRED", True, True),
+        ("findings", "RECONCILIATION_REQUIRED", False, False),
+        ("pass", "RECONCILIATION_REQUIRED", True, False),
+        ("findings", "INDETERMINATE", True, False),
+        ("pass", "QUALIFIED", True, True),
     ],
 )
 def test_review_findings_can_return_to_executor_without_qualifying_stale_head_for_pass(
     monkeypatch: pytest.MonkeyPatch,
     result_kind: str,
     carrier_disposition: str,
+    ready_head_matches: bool,
     permitted: bool,
 ) -> None:
     """Only FINDINGS may consume an accepted PR needing base reconciliation."""
@@ -442,7 +444,8 @@ def test_review_findings_can_return_to_executor_without_qualifying_stale_head_fo
     source = WorkerRequest(322, "reviewer", "review-implementation")
     head = "e" * 40
     calls: list[int] = []
-    monkeypatch.setattr(bridge, "_review_predecessor_carrier", lambda *_args: (398, head))
+    ready_head = head if ready_head_matches else "d" * 40
+    monkeypatch.setattr(bridge, "_review_predecessor_carrier", lambda *_args: (398, ready_head))
 
     def qualify(**kwargs: object) -> SimpleNamespace:
         calls.append(cast(int, kwargs["pr_number"]))
