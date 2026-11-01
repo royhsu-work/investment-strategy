@@ -421,6 +421,73 @@ def test_review_discovers_only_the_last_freshly_qualified_merged_change_carrier(
     assert calls == [353]  # Repair PR #340 is not the accepted Change materialization.
 
 
+@pytest.mark.parametrize(
+    ("result_kind", "carrier_disposition", "ready_head_matches", "permitted"),
+    [
+        ("findings", "RECONCILIATION_REQUIRED", True, True),
+        ("findings", "RECONCILIATION_REQUIRED", False, False),
+        ("pass", "RECONCILIATION_REQUIRED", True, False),
+        ("findings", "INDETERMINATE", True, False),
+        ("pass", "QUALIFIED", True, True),
+    ],
+)
+def test_review_findings_can_return_to_executor_without_qualifying_stale_head_for_pass(
+    monkeypatch: pytest.MonkeyPatch,
+    result_kind: str,
+    carrier_disposition: str,
+    ready_head_matches: bool,
+    permitted: bool,
+) -> None:
+    """Only FINDINGS may consume an accepted PR needing base reconciliation."""
+
+    change = "restore-no-work-idle-discovery"
+    source = WorkerRequest(322, "reviewer", "review-implementation")
+    head = "e" * 40
+    calls: list[int] = []
+    ready_head = head if ready_head_matches else "d" * 40
+    monkeypatch.setattr(bridge, "_review_predecessor_carrier", lambda *_args: (398, ready_head))
+
+    def qualify(**kwargs: object) -> SimpleNamespace:
+        calls.append(cast(int, kwargs["pr_number"]))
+        return SimpleNamespace(
+            disposition=carrier_disposition,
+            default_branch="main",
+            head_sha=head,
+        )
+
+    monkeypatch.setattr(bridge, "qualify_implementation_carrier", qualify)
+    raw = json.dumps(
+        {
+            "issue_number": 322,
+            "role": source.role,
+            "action": source.action,
+            "change": change,
+            "result_kind": result_kind,
+            "evidence_ref": "https://github.com/royhsu-work/investment-strategy/pull/398",
+            "result_content": "independent exact-head review",
+            "requested_effects": [],
+        }
+    )
+
+    def revision() -> str:
+        return bridge._machine_result_revision(
+            raw,
+            source,
+            change=change,
+            repository=_REPOSITORY,
+            token=_REPOSITORY,
+            current_revision=_REVISION,
+            default_branch="main",
+        )
+
+    if permitted:
+        assert revision() == head
+    else:
+        with pytest.raises(RuntimeError, match="accepted implementation carrier"):
+            revision()
+    assert calls == [398]  # The earlier accepted PR identity is mandatory.
+
+
 @pytest.mark.parametrize("scenario", ["no-history", "ambiguous", "unqualified", "new-slice"])
 def test_merged_carrier_discovery_fails_closed_outside_exact_review(
     monkeypatch: pytest.MonkeyPatch, scenario: str
