@@ -5069,6 +5069,13 @@ def test_legacy_322_completed_materialization_does_not_launder_unknown_checkpoin
         ],
     )
     observed: list[str] = []
+    formal_correlation = effects.formal_application_correlation(
+        source,
+        change=change,
+        result_kind="ready",
+        current_revision="f" * 40,
+        request_comment_id=6019133874,
+    )
 
     # The historical source remains UNKNOWN. A positive old target here is
     # hypothetical proof-isolation coverage, never a claim that #322 has one.
@@ -5092,8 +5099,12 @@ def test_legacy_322_completed_materialization_does_not_launder_unknown_checkpoin
     )
 
     def observe_checkpoint(self: GitHubEffectAdapter, effect: StagedEffect) -> bool:
+        assert self.pending_application_correlation == formal_correlation
         observed.append(effect.kind)
-        return checkpoint_proven
+        body = cast(str, effects._effect_payload(effect)["body"])
+        # The durable Application checkpoint is bound to its proven carrier
+        # head, not the obsolete revision in the accepted worker template.
+        return checkpoint_proven and f"Revision: {'b' * 40}" in body
 
     monkeypatch.setattr(GitHubEffectAdapter, "observe_postcondition", observe_checkpoint)
     complete = effects.consequence_postconditions_complete(
@@ -5106,9 +5117,67 @@ def test_legacy_322_completed_materialization_does_not_launder_unknown_checkpoin
         request_comment_id=6019133874,
         accepted_authorization_revision="ac7aebd7c2ac81b3227986350544307cadb221cc",
         accepted_intent=True,
+        observed_application_correlation=formal_correlation,
     )
     assert complete is (materialization_proven and checkpoint_proven)
-    assert observed == (["issue-comment"] if materialization_proven else [])
+    assert observed == (["issue-comment", "issue-comment"] if materialization_proven else [])
+
+
+@pytest.mark.parametrize(
+    ("original_durable", "rebound_durable", "expected"),
+    [(False, False, False), (True, False, True), (False, True, True), (True, True, False)],
+)
+def test_read_only_checkpoint_completion_accepts_one_exact_revision_binding(
+    monkeypatch: pytest.MonkeyPatch,
+    original_durable: bool,
+    rebound_durable: bool,
+    expected: bool,
+) -> None:
+    """A prior durable checkpoint and a head-rebound one must never both pass."""
+    source = WorkerRequest(322, "executor", "implement-change")
+    original, materialized = "3" * 40, "4" * 40
+    effect = StagedEffect(
+        "issue-comment",
+        json.dumps(
+            {
+                "issue_number": 322,
+                "body": "SLICE_CHECKPOINT\nWorkflow: #322\n"
+                f"Revision: {original}\nApplication-Correlation: pending",
+            },
+            sort_keys=True,
+        ),
+    )
+    adapter = GitHubEffectAdapter(
+        "owner/repo",
+        _TEST_TOKEN,
+        source,
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        expected_result_kind="ready",
+        request_comment_id=902,
+        accepted_intent=True,
+    )
+    observed: list[str] = []
+
+    def observe(_self: GitHubEffectAdapter, candidate: StagedEffect) -> bool:
+        body = cast(str, effects._effect_payload(candidate)["body"])
+        observed.append(body)
+        return (original_durable and f"Revision: {original}" in body) or (
+            rebound_durable and f"Revision: {materialized}" in body
+        )
+
+    monkeypatch.setattr(GitHubEffectAdapter, "observe_postcondition", observe)
+    assert (
+        effects._bound_checkpoint_postcondition(
+            effect,
+            adapter=adapter,
+            materialized_revision=materialized,
+        )
+        is expected
+    )
+    assert len(observed) == 2
+    assert f"Revision: {original}" in observed[0]
+    assert f"Revision: {materialized}" in observed[1]
 
 
 @pytest.mark.xfail(

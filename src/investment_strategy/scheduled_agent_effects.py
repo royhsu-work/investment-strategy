@@ -3751,6 +3751,48 @@ def _fresh_materialization_target(
     return target
 
 
+def _bound_checkpoint_postcondition(
+    effect: StagedEffect,
+    *,
+    adapter: GitHubEffectAdapter,
+    materialized_revision: str | None,
+) -> bool:
+    """Observe the original or proven-head checkpoint, but never accept both.
+
+    An immutable accepted intent carries the pre-carrier revision. Application
+    legally binds its deferred checkpoint to the independently proven carrier
+    head; the completion reader must observe that same durable effect without
+    rewriting or reposting the accepted comment.
+    """
+    original_complete = adapter.observe_postcondition(effect)
+    if materialized_revision is None:
+        return original_complete
+    if not _valid_sha(materialized_revision):
+        return False
+    payload = _effect_payload(effect)
+    if payload is None:
+        return False
+    body = payload.get("body")
+    if not isinstance(body, str):
+        return False
+    lines = body.splitlines()
+    indexes = [index for index, line in enumerate(lines) if line.startswith("Revision: ")]
+    if len(indexes) != 1:
+        return False
+    if lines[indexes[0]] == f"Revision: {materialized_revision}":
+        return original_complete
+    lines[indexes[0]] = f"Revision: {materialized_revision}"
+    rebound_payload = dict(payload)
+    rebound_payload["body"] = "\n".join(lines) + ("\n" if body.endswith("\n") else "")
+    rebound = StagedEffect(
+        effect.kind,
+        json.dumps(rebound_payload, sort_keys=True),
+        derived=effect.derived,
+    )
+    rebound_complete = adapter.observe_postcondition(rebound)
+    return original_complete != rebound_complete
+
+
 def consequence_postconditions_complete(
     raw_worker_result: str,
     *,
@@ -3764,6 +3806,7 @@ def consequence_postconditions_complete(
     accepted_authorization_revision: str | None = None,
     allow_accepted_successor: bool = False,
     accepted_intent: bool = False,
+    observed_application_correlation: str | None = None,
 ) -> bool:
     """Prove the affirmative consequence contract from fresh repository state.
 
@@ -3879,7 +3922,9 @@ def consequence_postconditions_complete(
             expected_result_kind=batch.typed_result.result.kind.value,
             request_comment_id=request_comment_id,
             accepted_intent=accepted_intent,
+            pending_application_correlation=observed_application_correlation,
         )
+        materialized_revision: str | None = None
         if spec.evidence_target is EvidenceTarget.IMPLEMENTATION_PR_HEAD:
             materializations = tuple(
                 effect
@@ -3891,9 +3936,10 @@ def consequence_postconditions_complete(
                 return False
             if materializations:
                 payload = _effect_payload(materializations[0])
-                if (
-                    payload is None
-                    or _fresh_materialization_target(
+                target = (
+                    None
+                    if payload is None
+                    else _fresh_materialization_target(
                         payload,
                         adapter=adapter,
                         source=source,
@@ -3901,9 +3947,10 @@ def consequence_postconditions_complete(
                         allow_pending_continuation=allow_pending_continuation,
                         accepted_successor_routing=accepted_successor_routing,
                     )
-                    is None
-                ):
+                )
+                if target is None:
                     return False
+                materialized_revision = target.revision
         for effect in batch.effects:
             payload = _effect_payload(effect)
             if effect.kind == GITHUB_MUTATION_KIND and payload is not None:
@@ -3929,7 +3976,14 @@ def consequence_postconditions_complete(
         )
         if len(checkpoints) > 1:
             return False
-        return all(adapter.observe_postcondition(effect) for effect in checkpoints)
+        return all(
+            _bound_checkpoint_postcondition(
+                effect,
+                adapter=adapter,
+                materialized_revision=materialized_revision,
+            )
+            for effect in checkpoints
+        )
     except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return False
 
