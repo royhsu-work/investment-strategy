@@ -40,6 +40,9 @@ _RECOVERY_MARKER = "APPLICATION_RECOVERY"
 _RECOVERY_REASON = "partial-first-activation"
 _RECOVERY_SOURCE = ("lead", "propose-change")
 _RECOVERY_TARGET = ("lead", "resolve-question")
+_EXCEPTION_322_REQUEST_PREFIX = (
+    "application:6568245475:322:restore-no-work-idle-discovery:executor:implement-change:ready:"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +92,7 @@ class QualificationInput:
     lifecycle_events: tuple[IssueLifecycleEvent, ...]
     authorization_ancestry: tuple[tuple[str, str], ...] = ()
     allow_successor_frontier: bool = False
+    one_time_human_handoff: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -403,7 +407,17 @@ def build_qualification_input(
     events: list[FormalLifecycleEvent] = []
     checkpoint_events: list[FormalLifecycleEvent] = []
     recovery_events: list[AdministrativeRecoveryEvent] = []
+    human_handoffs = 0
     for comment in comments:
+        actor = comment.get("user")
+        if (
+            comment.get("id") == 6569195457
+            and isinstance(actor, Mapping)
+            and actor.get("login") == "royhsu-work"
+            and isinstance(comment.get("body"), str)
+            and "一次性 Lead 接管紀錄" in cast(str, comment["body"])
+        ):
+            human_handoffs += 1
         recovery_event = _recovery_event_from_payload(
             comment,
             current_revision=current_revision,
@@ -447,6 +461,7 @@ def build_qualification_input(
         lifecycle_events=lifecycle_tuple,
         authorization_ancestry=authorization_ancestry,
         allow_successor_frontier=allow_successor_frontier,
+        one_time_human_handoff=human_handoffs == 1,
     )
 
 
@@ -824,6 +839,47 @@ def _qualify_administrative_recovery_predecessor(
     return _qualified("administrative-recovery-precedes-formal", recovery)
 
 
+def _one_time_322_handoff_interval(
+    qualification: QualificationInput,
+    previous: FormalLifecycleEvent,
+    current: FormalLifecycleEvent,
+) -> bool:
+    """Permit only the proven Human Lead detour before the original READY.
+
+    No synthetic formal is created. Every subsequent Action and its label
+    binding still passes through the unchanged qualifier.
+    """
+
+    if not (
+        qualification.one_time_human_handoff
+        and qualification.issue_number == 322
+        and qualification.change == "restore-no-work-idle-discovery"
+        and previous.comment_id == 6567424875
+        and previous.role == "reviewer"
+        and previous.action == "review-implementation"
+        and previous.result_kind == "findings"
+        and previous.successor == ("executor", "implement-change")
+        and current.role == "executor"
+        and current.action == "implement-change"
+        and current.result_kind == "ready"
+        and current.revision == "ddd6b3f5a19b879e427aee313334aeab6a43a241"
+        and current.successor == ("reviewer", "review-implementation")
+        and isinstance(current.application_correlation, str)
+        and current.application_correlation.startswith(_EXCEPTION_322_REQUEST_PREFIX)
+        and isinstance(current.comment_id, int)
+        and current.comment_id > 6569195457
+    ):
+        return False
+    interval = _event_interval(previous, current, qualification.lifecycle_events)
+    if interval is None or any(item.event in {"closed", "reopened"} for item in interval):
+        return False
+    return any(
+        item.event == "labeled" and item.label == "action:resolve-question" for item in interval
+    ) and any(
+        item.event == "labeled" and item.label == "action:implement-change" for item in interval
+    )
+
+
 def qualify_current_formal_consequence(
     qualification: QualificationInput,
 ) -> QualificationDecision:
@@ -897,7 +953,12 @@ def qualify_current_formal_consequence(
 
     if qualification.mode == "current":
         for index in range(len(suffix)):
-            if not _formal_interval_is_bound(suffix, index, qualification.lifecycle_events):
+            if not _formal_interval_is_bound(
+                suffix, index, qualification.lifecycle_events
+            ) and not (
+                index + 1 < len(suffix)
+                and _one_time_322_handoff_interval(qualification, suffix[index], suffix[index + 1])
+            ):
                 return _indeterminate("issue-lifecycle-binding-incomplete", suffix[index])
         if qualification.state == "open":
             if (

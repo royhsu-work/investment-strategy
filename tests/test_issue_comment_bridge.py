@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import sys
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, date, datetime
@@ -5721,6 +5722,218 @@ def test_original_ready_preformal_entry_has_no_result_cycle(
         if (name == "M" and (unfinished or target_state in {"unreadable", "conflict"}))
         or (name == "F" and duplicate_formal)
     )
+
+
+@pytest.mark.parametrize(
+    "variant", [None, "head-moved", "human-missing", "competing", "lost-before-formal"]
+)
+def test_one_time_322_exception_reuses_existing_owner_without_git_writes(
+    monkeypatch: pytest.MonkeyPatch,
+    variant: str | None,
+) -> None:
+    change = "restore-no-work-idle-discovery"
+    head = "ddd6b3f5a19b879e427aee313334aeab6a43a241"
+    branch = "agent/restore-no-work-idle-discovery-continuation-398"
+    revision = "e8556f2da1126e6bbef0e8595a1c51a1e21169cf"
+    request = _effect_request_comment(
+        comment_id=6568245475,
+        created_at="2026-11-02T00:00:00Z",
+        action="implement-change",
+        role="executor",
+        result_kind="ready",
+        issue_number=322,
+        change=change,
+    )
+    decision = _application_decision_comment(request, comment_id=6568278353)
+    comments = [
+        {
+            "id": 6567424875,
+            "body": (
+                "REVIEW_RESULT\nWorkflow: #322\n"
+                f"Change: {change}\nRole: reviewer\nAction: review-implementation\n"
+                "Result: FINDINGS\n"
+                f"Revision: {'8' * 40}\nDefault-Branch-Revision: {revision}\n"
+                f"Application-Correlation: application:6567405847:322:{change}:"
+                f"reviewer:review-implementation:findings:{revision}\n"
+                "Repository-derived successor: Executor / implement-change"
+            ),
+            "user": {"login": "github-actions[bot]"},
+            "performed_via_github_app": {"slug": "github-actions"},
+        },
+        decision,
+        {
+            "id": 6569195457,
+            "body": "## #322 一次性 Lead 接管紀錄",
+            "user": {"login": "royhsu-work"},
+        },
+    ]
+    if variant == "competing":
+        comments.append(_application_decision_comment(request, comment_id=6569200000))
+    issue = {
+        "number": 322,
+        "title": "Restore idle",
+        "state": "open",
+        "created_at": "2026-09-22T00:00:00Z",
+        "closed_at": None,
+        "body": f"Change: {change}",
+        "labels": [{"name": "action:resolve-question"}, {"name": "human:approved"}],
+    }
+    if variant == "human-missing":
+        issue["labels"] = [{"name": "action:resolve-question"}]
+    pr = {
+        "number": 408,
+        "state": "open",
+        "draft": False,
+        "merged": False,
+        "head": {
+            "sha": "f" * 40 if variant == "head-moved" else head,
+            "ref": branch,
+            "repo": {"full_name": "royhsu-work/investment-strategy"},
+        },
+        "base": {"ref": "main"},
+    }
+    mutations: list[str] = []
+
+    def read(_repo: str, _token: str, path: str) -> object:
+        if path == "issues/322":
+            return json.loads(json.dumps(issue))
+        if path.startswith("issues/322/comments?"):
+            return list(comments) if "page=1" in path else []
+        if path.startswith("issues/322/timeline?"):
+            return []
+        if path == "pulls/408":
+            return pr
+        if path == f"git/ref/heads/{branch}":
+            return {"object": {"sha": head}}
+        raise AssertionError(path)
+
+    def write(_repo: str, _token: str, path: str, **kwargs: object) -> object:
+        mutations.append(path)
+        assert path == "issues/322"
+        assert kwargs["method"] == "PATCH"
+        payload = kwargs["payload"]
+        assert isinstance(payload, dict)
+        issue["labels"] = [{"name": name} for name in payload["labels"]]
+        return issue
+
+    applications: list[int] = []
+
+    def existing_owner(_repo: str, _token: str, **kwargs: object) -> bridge.ApplicationCompletion:
+        assert kwargs["request_id"] == 6568245475
+        applications.append(6568245475)
+        assert kwargs["decision_digest"] == bridge._EXCEPTION_322_DECISION_DIGEST
+        assert kwargs["carrier_pr"] == 408
+        if variant == "lost-before-formal" and len(applications) == 1:
+            return bridge.ApplicationCompletion("INVALID", "interrupted")
+        assert issue["labels"] in (
+            [{"name": "human:approved"}, {"name": "action:implement-change"}],
+            [{"name": "human:approved"}, {"name": "action:review-implementation"}],
+        )
+        issue["labels"] = [
+            {"name": "human:approved"},
+            {"name": "action:review-implementation"},
+        ]
+        return bridge.ApplicationCompletion("COMPLETE", "existing-owner-completed")
+
+    monkeypatch.setattr(bridge, "_authorization_ancestry", lambda *args, **kwargs: ())
+    monkeypatch.setattr(
+        bridge, "_accepted_decision_sha256", lambda *args: bridge._EXCEPTION_322_DECISION_DIGEST
+    )
+    monkeypatch.setattr(bridge, "_materialization_effects", lambda *args, **kwargs: ({},))
+    monkeypatch.setattr(
+        bridge,
+        "find_materialization_payload",
+        lambda *args: SimpleNamespace(pr_number=408, branch=branch, files=(object(),) * 7),
+    )
+    monkeypatch.setattr(bridge, "_proof_witness", lambda *args, **kwargs: head)
+    monkeypatch.setattr(bridge, "apply_original_322_recovery_exit", existing_owner)
+    formal = bridge.FormalLifecycleEvent(
+        comment_id=6573000000,
+        issue_number=322,
+        change=change,
+        role="executor",
+        action="implement-change",
+        result_kind="ready",
+        revision=head,
+        default_branch_revision=revision,
+        application_correlation=f"application:6568245475:322:{change}:executor:implement-change:ready:{revision}",
+        successor=("reviewer", "review-implementation"),
+        terminal=False,
+        valid=True,
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_derive_frontier",
+        lambda **kwargs: (SimpleNamespace(event=formal), True),
+    )
+
+    def invoke() -> bridge.ApplicationCompletion:
+        return bridge.apply_one_time_322_exception(
+            "royhsu-work/investment-strategy",
+            "test",
+            current_revision=revision,
+            read=read,
+            write=write,
+        )
+
+    first = invoke()
+    if variant in {"head-moved", "human-missing", "competing"}:
+        assert first.state == "INVALID"
+        assert mutations == [] and applications == []
+        return
+    if variant == "lost-before-formal":
+        assert first.state == "INVALID"
+        assert mutations == ["issues/322"]
+    else:
+        assert first.state == "COMPLETE", first
+    assert invoke().state == "COMPLETE"
+    assert mutations == ["issues/322"]
+    assert applications == [6568245475, 6568245475]
+
+
+def test_one_time_322_exception_requires_native_human_comment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "issue_comment_bridge",
+            "--revision",
+            "e" * 40,
+            "--recovery-exit-request-comment-id",
+            "6568245475",
+        ],
+    )
+    monkeypatch.setenv("GITHUB_REPOSITORY", "royhsu-work/investment-strategy")
+    monkeypatch.setenv("GITHUB_TOKEN", "test")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+    with pytest.raises(RuntimeError, match="native issue_comment"):
+        bridge.main()
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "issue_comment")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", "accepted322-one-time-event.json")
+    event = {
+        "action": "created",
+        "issue": {"number": 322},
+        "repository": {"full_name": "royhsu-work/investment-strategy"},
+        "comment": {
+            "body": "RECOVERY_EXIT_REQUEST 6568245475",
+            "user": {"login": "untrusted-user"},
+        },
+    }
+    monkeypatch.setattr(bridge, "_load_json", lambda path: event)
+    with pytest.raises(RuntimeError, match="Human-authorized"):
+        bridge.main()
+    cast(dict[str, object], event["comment"])["user"] = {"login": "royhsu-work"}
+    calls: list[int] = []
+
+    def apply_exception(*args: object, **kwargs: object) -> bridge.ApplicationCompletion:
+        calls.append(6568245475)
+        return bridge.ApplicationCompletion("COMPLETE", "qualified")
+
+    monkeypatch.setattr(bridge, "apply_one_time_322_exception", apply_exception)
+    assert bridge.main() == 0
+    assert calls == [6568245475]
 
 
 @pytest.mark.parametrize("lost_after_formal_post", [False, True])

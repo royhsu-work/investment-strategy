@@ -40,8 +40,12 @@ from investment_strategy.scheduled_agent_application_bridge import (
     read_application_recovery_artifact,
     render_application_continuation_request,
 )
+from investment_strategy.scheduled_agent_application_bridge import (
+    _github_json as _application_github_json,
+)
 from investment_strategy.scheduled_agent_application_carrier import qualify_implementation_carrier
 from investment_strategy.scheduled_agent_application_materialization import (
+    _proof_witness,
     find_materialization_payload,
 )
 from investment_strategy.scheduled_agent_carrier import (
@@ -896,6 +900,10 @@ def read_recovery_openspec_review(
 
 _ORIGINAL_322_REQUEST = 6019133874
 _ORIGINAL_322_DECISION_DIGEST = "9c545558249285ec6d4fa632970dfa7157774d75bf2b6e46889e240a175cbd54"
+_EXCEPTION_322_REQUEST = 6568245475
+_EXCEPTION_322_DECISION_DIGEST = "2422cfdd6724d29db124b3e9770912c0d1ad3a3a1a6493f2f07ddd9c87f4fb50"
+_EXCEPTION_322_HEAD = "ddd6b3f5a19b879e427aee313334aeab6a43a241"
+_EXCEPTION_322_BRANCH = "agent/restore-no-work-idle-discovery-continuation-398"
 
 
 def qualify_original_322_pre_formal(
@@ -910,6 +918,8 @@ def qualify_original_322_pre_formal(
     read: GitHubReader,
     expected_request_id: int = _ORIGINAL_322_REQUEST,
     expected_decision_digest: str = _ORIGINAL_322_DECISION_DIGEST,
+    expected_pr_number: int = 340,
+    expected_pr_branch: str = "agent/report-materialization-postcondition-failure",
 ) -> RecoveryPreFormalQualification:
     """Qualify one formal-result-only correction from current GitHub facts.
 
@@ -996,7 +1006,7 @@ def qualify_original_322_pre_formal(
         except (TypeError, ValueError):
             predicates["R"] = "CONFLICT"
 
-    pr = read(repository, token, "pulls/340")
+    pr = read(repository, token, f"pulls/{expected_pr_number}")
     head_sha: str | None = None
     if not isinstance(pr, Mapping):
         predicates["M"] = "UNKNOWN"
@@ -1010,12 +1020,12 @@ def qualify_original_322_pre_formal(
         open_carrier = pr.get("state") == "open" and pr.get("merged") is not True
         merged_carrier = pr.get("state") == "closed" and pr.get("merged") is True
         if (
-            pr.get("number") != 340
+            pr.get("number") != expected_pr_number
             or not (open_carrier or merged_carrier)
             or pr.get("draft") is not False
             or not isinstance(head_sha, str)
             or _SHA.fullmatch(head_sha) is None
-            or head_ref != "agent/report-materialization-postcondition-failure"
+            or head_ref != expected_pr_branch
             or not isinstance(head_repo, Mapping)
             or head_repo.get("full_name") != repository
             or not isinstance(base_repo, Mapping)
@@ -1194,6 +1204,10 @@ def apply_original_322_recovery_exit(
     current_revision: str,
     read: GitHubReader | None = None,
     effect_apply: Callable[..., tuple[object, ApplyResult]] = run_guarded_effect_application,
+    request_id: int = _ORIGINAL_322_REQUEST,
+    decision_digest: str = _ORIGINAL_322_DECISION_DIGEST,
+    carrier_pr: int = 340,
+    carrier_branch: str = "agent/report-materialization-postcondition-failure",
 ) -> ApplicationCompletion:
     """One existing application-owned correction, never a second semantic Action.
 
@@ -1221,7 +1235,7 @@ def apply_original_322_recovery_exit(
             for item in second
             if is_github_actions_comment(item)
             and (record := parse_application_decision(item.get("body"))) is not None
-            and record.request_comment_id == _ORIGINAL_322_REQUEST
+            and record.request_comment_id == request_id
             and record.disposition == "ACCEPTED"
         ]
         if len(decisions) != 1:
@@ -1247,17 +1261,21 @@ def apply_original_322_recovery_exit(
             current_issue=issue,
             current_revision=current_revision,
             read=source_read,
+            expected_request_id=request_id,
+            expected_decision_digest=decision_digest,
+            expected_pr_number=carrier_pr,
+            expected_pr_branch=carrier_branch,
         )
     except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return ApplicationCompletion(
-            "INVALID", "recovery-exit-authoritative-source-unavailable", _ORIGINAL_322_REQUEST
+            "INVALID", "recovery-exit-authoritative-source-unavailable", request_id
         )
     if evidence.disposition != "COMPLETE":
         return ApplicationCompletion(
             "INVALID",
             f"recovery-exit-{evidence.disposition.lower()}-"
             + ",".join(evidence.blocking_predicates),
-            _ORIGINAL_322_REQUEST,
+            request_id,
         )
     current_observation = normalize_github_issue(issue)
     if current_observation is None:
@@ -1266,7 +1284,7 @@ def apply_original_322_recovery_exit(
         # Only the already-proven formal result and successor may be observed;
         # this path performs zero writes after an ambiguous/lost response.
         return ApplicationCompletion(
-            "COMPLETE", "recovery-exit-existing-formal-successor", _ORIGINAL_322_REQUEST
+            "COMPLETE", "recovery-exit-existing-formal-successor", request_id
         )
     if current_observation.routing != ("executor", "implement-change"):
         return ApplicationCompletion("INVALID", "recovery-exit-frontier-conflict")
@@ -1274,7 +1292,7 @@ def apply_original_322_recovery_exit(
     already_formal = any(
         isinstance(item.get("body"), str)
         and cast(str, item["body"]).splitlines()[:1] == ["ACTION_RESULT"]
-        and f"application:{_ORIGINAL_322_REQUEST}:322:" in cast(str, item["body"])
+        and f"application:{request_id}:322:" in cast(str, item["body"])
         for item in second
     )
     prior_formal_correlation = None
@@ -1286,8 +1304,7 @@ def apply_original_322_recovery_exit(
             and event.valid
             and isinstance(event.application_correlation, str)
             and event.application_correlation.startswith(
-                f"application:{_ORIGINAL_322_REQUEST}:322:{record.change}:"
-                "executor:implement-change:ready:"
+                f"application:{request_id}:322:{record.change}:executor:implement-change:ready:"
             )
         ]
         if len(events) != 1:
@@ -1395,6 +1412,10 @@ def apply_original_322_recovery_exit(
             current_issue=final_issue,
             current_revision=current_revision,
             read=source_read,
+            expected_request_id=request_id,
+            expected_decision_digest=decision_digest,
+            expected_pr_number=carrier_pr,
+            expected_pr_branch=carrier_branch,
         )
     except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return ApplicationCompletion("INVALID", "recovery-exit-postcondition-unavailable")
@@ -1404,6 +1425,232 @@ def apply_original_322_recovery_exit(
     if observation is None or observation.routing != ("reviewer", "review-implementation"):
         return ApplicationCompletion("INVALID", "recovery-exit-successor-not-observed")
     return ApplicationCompletion("COMPLETE", "recovery-exit-formal-successor-observed")
+
+
+def apply_one_time_322_exception(
+    repository: str,
+    token: str,
+    *,
+    current_revision: str,
+    read: GitHubReader | None = None,
+    write: Callable[..., object] | None = None,
+    effect_apply: Callable[..., tuple[object, ApplyResult]] = run_guarded_effect_application,
+) -> ApplicationCompletion:
+    """Repair the exact Human-handoff interval, then reuse the shipped owner.
+
+    The only permitted mutations are a fresh, bounded label correction and
+    the original Application's real formal result plus derived successor.
+    The accepted PR, materialization and task checkpoint are read-only.
+    """
+
+    source_read = _github_json if read is None else read
+    source_write = _application_github_json if write is None else write
+
+    def fail(reason: str) -> ApplicationCompletion:
+        return ApplicationCompletion("INVALID", f"exception-322-{reason}", _EXCEPTION_322_REQUEST)
+
+    source = WorkerRequest(322, "executor", "implement-change")
+    try:
+        comments = _paged_list(
+            repository, token, "issues/322/comments?sort=created&direction=asc", read=source_read
+        )
+        if comments != _paged_list(
+            repository, token, "issues/322/comments?sort=created&direction=asc", read=source_read
+        ):
+            return fail("comment-snapshot-changed")
+        issue = source_read(repository, token, "issues/322")
+        observation = normalize_github_issue(issue) if isinstance(issue, Mapping) else None
+        labels = issue.get("labels") if isinstance(issue, Mapping) else None
+        names = (
+            [item.get("name") for item in labels if isinstance(item, Mapping)]
+            if isinstance(labels, list)
+            else []
+        )
+        if (
+            repository != "royhsu-work/investment-strategy"
+            or observation is None
+            or not observation.authoritative
+            or observation.issue_number != 322
+            or observation.change != "restore-no-work-idle-discovery"
+            or observation.state != "open"
+            or observation.routing
+            not in {
+                ("lead", "resolve-question"),
+                ("executor", "implement-change"),
+                ("reviewer", "review-implementation"),
+            }
+            or "human:approved" not in names
+        ):
+            return fail("source-not-qualified")
+        accepted = [
+            (index, record)
+            for index, item in enumerate(comments)
+            if is_github_actions_comment(item)
+            and (record := parse_application_decision(item.get("body"))) is not None
+            and record.disposition == "ACCEPTED"
+            and record.issue_number == 322
+        ]
+        exact = [
+            (index, record)
+            for index, record in accepted
+            if record.request_comment_id == _EXCEPTION_322_REQUEST
+        ]
+        if len(exact) != 1 or any(index > exact[0][0] for index, _ in accepted):
+            return fail("accepted-owner-not-unique")
+        record = exact[0][1]
+        if (
+            _accepted_decision_sha256(record, comments) != _EXCEPTION_322_DECISION_DIGEST
+            or _application_worker_for_record(record, source) is None
+            or _authorization_ancestry(
+                repository,
+                token,
+                authorization_revision=record.authorization_revision,
+                current_revision=current_revision,
+                read=source_read,
+            )
+            is None
+        ):
+            return fail("accepted-intent-unqualified")
+        handoff = [item for item in comments if item.get("id") == 6569195457]
+        if (
+            len(handoff) != 1
+            or not isinstance(handoff[0].get("user"), Mapping)
+            or cast(Mapping[str, object], handoff[0]["user"]).get("login") != "royhsu-work"
+            or not isinstance(handoff[0].get("body"), str)
+            or "一次性 Lead 接管紀錄" not in cast(str, handoff[0]["body"])
+        ):
+            return fail("human-handoff-unqualified")
+        predecessor = [item for item in comments if item.get("id") == 6567424875]
+        predecessor_event = (
+            parse_formal_result(predecessor[0], current_revision=current_revision)
+            if len(predecessor) == 1 and is_github_actions_comment(predecessor[0])
+            else None
+        )
+        if (
+            predecessor_event is None
+            or not predecessor_event.valid
+            or (predecessor_event.role, predecessor_event.action, predecessor_event.result_kind)
+            != ("reviewer", "review-implementation", "findings")
+            or predecessor_event.successor != ("executor", "implement-change")
+            or any(
+                item.get("id") != 6567424875
+                and isinstance(item.get("id"), int)
+                and cast(int, item["id"]) > 6567424875
+                and is_github_actions_comment(item)
+                and (event := parse_formal_result(item, current_revision=current_revision))
+                is not None
+                and event.valid
+                and not (
+                    event.application_correlation is not None
+                    and event.application_correlation.startswith(
+                        f"application:{_EXCEPTION_322_REQUEST}:322:{record.change}:executor:implement-change:ready:"
+                    )
+                )
+                for item in comments
+            )
+        ):
+            return fail("formal-predecessor-conflict")
+        effects = _materialization_effects(record.raw_worker_result, source, change=record.change)
+        materialization = (
+            find_materialization_payload(effects[0], source) if len(effects) == 1 else None
+        )
+        if (
+            materialization is None
+            or materialization.pr_number != 408
+            or materialization.branch != _EXCEPTION_322_BRANCH
+            or len(materialization.files) != 7
+        ):
+            return fail("accepted-manifest-unqualified")
+        pr = source_read(repository, token, "pulls/408")
+        head = pr.get("head") if isinstance(pr, Mapping) else None
+        base = pr.get("base") if isinstance(pr, Mapping) else None
+        ref = source_read(repository, token, f"git/ref/heads/{_EXCEPTION_322_BRANCH}")
+        obj = ref.get("object") if isinstance(ref, Mapping) else None
+        if (
+            not isinstance(pr, Mapping)
+            or pr.get("number") != 408
+            or pr.get("state") != "open"
+            or pr.get("draft") is not False
+            or pr.get("merged") is True
+            or not isinstance(head, Mapping)
+            or head.get("sha") != _EXCEPTION_322_HEAD
+            or head.get("ref") != _EXCEPTION_322_BRANCH
+            or not isinstance(head.get("repo"), Mapping)
+            or head["repo"].get("full_name") != repository
+            or not isinstance(base, Mapping)
+            or base.get("ref") != "main"
+            or not isinstance(obj, Mapping)
+            or obj.get("sha") != _EXCEPTION_322_HEAD
+            or _proof_witness(
+                materialization,
+                repository=repository,
+                token=token,
+                revision=_EXCEPTION_322_HEAD,
+                current_revision=current_revision,
+            )
+            != _EXCEPTION_322_HEAD
+        ):
+            return fail("accepted-git-witness-unqualified")
+        if observation.routing == ("lead", "resolve-question"):
+            if source_read(repository, token, "issues/322") != issue:
+                return fail("source-changed-before-label")
+            corrected = [
+                name for name in names if isinstance(name, str) and not name.startswith("action:")
+            ]
+            source_write(
+                repository,
+                token,
+                "issues/322",
+                method="PATCH",
+                payload={"labels": [*corrected, "action:implement-change"]},
+            )
+    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+        return fail("authoritative-proof-unavailable")
+
+    result = apply_original_322_recovery_exit(
+        repository,
+        token,
+        current_revision=current_revision,
+        read=source_read,
+        effect_apply=effect_apply,
+        request_id=_EXCEPTION_322_REQUEST,
+        decision_digest=_EXCEPTION_322_DECISION_DIGEST,
+        carrier_pr=408,
+        carrier_branch=_EXCEPTION_322_BRANCH,
+    )
+    if result.state != "COMPLETE":
+        return result
+    try:
+        final_issue = source_read(repository, token, "issues/322")
+        final_comments = _paged_list(
+            repository, token, "issues/322/comments?sort=created&direction=asc", read=source_read
+        )
+        timeline = _paged_list(repository, token, "issues/322/timeline", read=source_read)
+        frontier, qualified = _derive_frontier(
+            repository=repository,
+            token=token,
+            source=WorkerRequest(322, "reviewer", "review-implementation"),
+            current_issue=cast(Mapping[str, object], final_issue),
+            issue_comments=final_comments,
+            lifecycle_events=timeline,
+            current_revision=current_revision,
+            read=source_read,
+        )
+    except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+        return fail("frontier-proof-unavailable")
+    if (
+        not qualified
+        or frontier is None
+        or not isinstance(frontier.event, FormalLifecycleEvent)
+        or not isinstance(frontier.event.application_correlation, str)
+        or not frontier.event.application_correlation.startswith(
+            f"application:{_EXCEPTION_322_REQUEST}:322:restore-no-work-idle-discovery:executor:implement-change:ready:"
+        )
+    ):
+        return fail("reviewer-frontier-not-qualified")
+    return ApplicationCompletion(
+        "COMPLETE", "exception-322-formal-reviewer-qualified", _EXCEPTION_322_REQUEST
+    )
 
 
 PreacceptClassification = Literal[
@@ -4895,7 +5142,8 @@ def main() -> int:
 
     if args.recovery_exit_request_comment_id is not None:
         if (
-            args.recovery_exit_request_comment_id != _ORIGINAL_322_REQUEST
+            args.recovery_exit_request_comment_id
+            not in {_ORIGINAL_322_REQUEST, _EXCEPTION_322_REQUEST}
             or args.event_path is not None
             or args.github_output is not None
             or args.result_payload is not None
@@ -4906,9 +5154,36 @@ def main() -> int:
         token = os.environ.get("GITHUB_TOKEN")
         if repository != "royhsu-work/investment-strategy" or not token:
             raise RuntimeError("recovery requires the exact repository and GitHub token")
-        completion = apply_original_322_recovery_exit(
-            repository, token, current_revision=args.revision
-        )
+        if args.recovery_exit_request_comment_id == _EXCEPTION_322_REQUEST:
+            if os.environ.get("GITHUB_EVENT_NAME") != "issue_comment":
+                raise RuntimeError("one-time exception requires native issue_comment ingress")
+            event_path = os.environ.get("GITHUB_EVENT_PATH")
+            if not event_path:
+                raise RuntimeError("exception event unavailable")
+            event = _require_mapping(_load_json(Path(event_path)), "exception event")
+            issue = event.get("issue")
+            comment = event.get("comment")
+            actor = comment.get("user") if isinstance(comment, Mapping) else None
+            event_repository = event.get("repository")
+            if not (
+                event.get("action") == "created"
+                and isinstance(issue, Mapping)
+                and issue.get("number") == 322
+                and isinstance(comment, Mapping)
+                and comment.get("body") == f"RECOVERY_EXIT_REQUEST {_EXCEPTION_322_REQUEST}"
+                and isinstance(actor, Mapping)
+                and actor.get("login") == "royhsu-work"
+                and isinstance(event_repository, Mapping)
+                and event_repository.get("full_name") == repository
+            ):
+                raise RuntimeError("one-time exception event is not Human-authorized")
+            completion = apply_one_time_322_exception(
+                repository, token, current_revision=args.revision
+            )
+        else:
+            completion = apply_original_322_recovery_exit(
+                repository, token, current_revision=args.revision
+            )
         print(f"recovery_exit={completion.state}; reason={completion.reason}")
         return 0 if completion.state == "COMPLETE" else 1
 

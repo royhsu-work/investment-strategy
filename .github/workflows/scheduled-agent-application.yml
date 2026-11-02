@@ -85,7 +85,8 @@ jobs:
       (startsWith(github.event.comment.body, 'EFFECT_REQUEST') ||
       startsWith(github.event.comment.body, 'APPLICATION_CONTINUATION') ||
       (github.event.issue.number == 322 &&
-      github.event.comment.body == 'RECOVERY_EXIT_REQUEST 6019133874' &&
+      (github.event.comment.body == 'RECOVERY_EXIT_REQUEST 6019133874' ||
+      github.event.comment.body == 'RECOVERY_EXIT_REQUEST 6568245475') &&
       github.event.comment.user.login == 'royhsu-work'))) ||
       (github.event_name == 'pull_request_target' &&
       github.event.pull_request.merged == true &&
@@ -202,6 +203,7 @@ jobs:
         if: >-
           github.event_name == 'issue_comment' &&
           github.event.comment.body != 'RECOVERY_EXIT_REQUEST 6019133874'
+          && github.event.comment.body != 'RECOVERY_EXIT_REQUEST 6568245475'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -221,7 +223,8 @@ jobs:
           inputs.recovery_exit_request_comment_id != '') ||
           (github.event_name == 'issue_comment' &&
           github.event.issue.number == 322 &&
-          github.event.comment.body == 'RECOVERY_EXIT_REQUEST 6019133874' &&
+          (github.event.comment.body == 'RECOVERY_EXIT_REQUEST 6019133874' ||
+          github.event.comment.body == 'RECOVERY_EXIT_REQUEST 6568245475') &&
           github.event.comment.user.login == 'royhsu-work') ||
           (github.event_name == 'pull_request_target' &&
           github.event.pull_request.merged == true &&
@@ -233,13 +236,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          ORIGINAL_REQUEST: ${{ (github.event_name == 'pull_request_target' || github.event_name == 'issue_comment') && '6019133874' || inputs.recovery_exit_request_comment_id }}
+          ORIGINAL_REQUEST: ${{ github.event_name == 'issue_comment' && github.event.comment.body == 'RECOVERY_EXIT_REQUEST 6568245475' && '6568245475' || (github.event_name == 'pull_request_target' || github.event_name == 'issue_comment') && '6019133874' || inputs.recovery_exit_request_comment_id }}
           PYTHONPATH: ${{ github.workspace }}/src
         shell: bash
         run: |
           if [[ "$ORIGINAL_REQUEST" != "6019133874" ]]; then
-            echo "::error::Only exact historical #322 recovery is authorized"
-            exit 1
+            if [[ "$ORIGINAL_REQUEST" != "6568245475" ]]; then
+              echo "::error::Only exact Human-authorized #322 recovery is permitted"
+              exit 1
+            fi
           fi
           uv run python -m investment_strategy.issue_comment_bridge \
             --recovery-exit-request-comment-id "$ORIGINAL_REQUEST" \

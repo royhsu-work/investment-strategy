@@ -167,6 +167,112 @@ def _decision(
     return qualify_current_formal_consequence(qualification_input)
 
 
+def test_exact_322_human_handoff_allows_only_accepted_ready_interval() -> None:
+    """A Human detour can bind one real READY, never an unsigned substitute."""
+
+    change = "restore-no-work-idle-discovery"
+    previous = _comment(
+        6567424875,
+        action="review-implementation",
+        role="reviewer",
+        result="findings",
+        successor="Executor / implement-change",
+        request_id=6567405847,
+        change=change,
+        issue_number=322,
+    )
+    ready = _comment(
+        6573000001,
+        action="implement-change",
+        role="executor",
+        result="ready",
+        successor="Reviewer / review-implementation",
+        request_id=6568245475,
+        revision="ddd6b3f5a19b879e427aee313334aeab6a43a241",
+        change=change,
+        issue_number=322,
+    )
+    handoff: dict[str, object] = {
+        "id": 6569195457,
+        "user": {"login": "royhsu-work"},
+        "body": "## #322 一次性 Lead 接管紀錄",
+    }
+    timeline = _lifecycle_events([previous, ready])
+    timeline.extend(
+        [
+            {
+                "id": 10030,
+                "event": "unlabeled",
+                "created_at": "2026-09-12T00:00:03Z",
+                "label": {"name": "action:implement-change"},
+            },
+            {
+                "id": 10031,
+                "event": "labeled",
+                "created_at": "2026-09-12T00:00:03Z",
+                "label": {"name": "action:resolve-question"},
+            },
+            {
+                "id": 10032,
+                "event": "unlabeled",
+                "created_at": "2026-09-12T00:00:04Z",
+                "label": {"name": "action:resolve-question"},
+            },
+            {
+                "id": 10033,
+                "event": "labeled",
+                "created_at": "2026-09-12T00:00:04Z",
+                "label": {"name": "action:implement-change"},
+            },
+        ]
+    )
+    for supplied in ([previous, ready], [previous, handoff, ready]):
+        qualification = build_qualification_input(
+            issue_number=322,
+            change=change,
+            state="open",
+            current_routing=("reviewer", "review-implementation"),
+            comments=supplied,
+            current_revision=_REVISION,
+            lifecycle_events=timeline,
+        )
+        decision = qualify_current_formal_consequence(qualification)
+        assert decision.qualified is (len(supplied) == 3), decision.reason
+    next_review = _comment(
+        6573000100,
+        action="review-implementation",
+        role="reviewer",
+        result="pass",
+        successor="Executor / merge-implementation-pr",
+        request_id=6573000050,
+        change=change,
+        issue_number=322,
+    )
+    future_timeline = _lifecycle_events([previous, ready, next_review])
+    future_timeline.extend(timeline[-4:])
+    following = build_qualification_input(
+        issue_number=322,
+        change=change,
+        state="open",
+        current_routing=("executor", "merge-implementation-pr"),
+        comments=[previous, handoff, ready, next_review],
+        current_revision=_REVISION,
+        lifecycle_events=future_timeline,
+    )
+    assert qualify_current_formal_consequence(following).qualified
+    handoff["user"] = {"login": "untrusted-user"}
+    bad = build_qualification_input(
+        issue_number=322,
+        change=change,
+        state="open",
+        current_routing=("reviewer", "review-implementation"),
+        comments=[previous, handoff, ready],
+        current_revision=_REVISION,
+        lifecycle_events=timeline,
+    )
+    assert not qualify_current_formal_consequence(bad).qualified
+
+
 def test_accepted_intent_reconciles_after_successor_lifecycle_binding() -> None:
     comment = _comment(
         1,
