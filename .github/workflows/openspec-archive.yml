@@ -389,3 +389,35 @@ jobs:
             echo "- Archive head: \`$head_sha\`"
             echo "- Carrier mode: \`$CARRIER_MODE\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record exact successful-request candidate head
+        if: steps.completion.outputs.should_archive == 'true' && steps.classify.outputs.mode == 'request'
+        shell: bash
+        env:
+          CHANGE: ${{ steps.classify.outputs.change }}
+          ISSUE_NUMBER: ${{ steps.linkage.outputs.issue_number }}
+          REQUEST_REVISION: ${{ steps.classify.outputs.request_revision }}
+          REQUEST_KEY: ${{ inputs.request_key }}
+          TARGET_BRANCH: ${{ steps.branch.outputs.target_branch }}
+        run: |
+          jq -cn \
+            --arg schema 'openspec-archive-handoff/v1' \
+            --argjson run_id "$GITHUB_RUN_ID" \
+            --argjson run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson issue_number "$ISSUE_NUMBER" \
+            --arg change "$CHANGE" \
+            --arg source_revision "$REQUEST_REVISION" \
+            --arg request_key "$REQUEST_KEY" \
+            --arg branch "$TARGET_BRANCH" \
+            --arg head_sha "$(git rev-parse HEAD)" \
+            '{schema:$schema,run_id:$run_id,run_attempt:$run_attempt,issue_number:$issue_number,change:$change,source_revision:$source_revision,request_key:$request_key,branch:$branch,head_sha:$head_sha}' \
+            > "$RUNNER_TEMP/archive-handoff.json"
+
+      - name: Publish exact Archive handoff evidence
+        if: steps.completion.outputs.should_archive == 'true' && steps.classify.outputs.mode == 'request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: openspec-archive-handoff
+          path: ${{ runner.temp }}/archive-handoff.json
+          if-no-files-found: error
+          retention-days: 90

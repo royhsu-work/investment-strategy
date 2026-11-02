@@ -2983,6 +2983,11 @@ def test_application_archive_workflow_dispatch_is_exact_revision_and_idempotent(
         authorized_change=_CHANGE,
         current_revision=revision,
     )
+    monkeypatch.setattr(
+        adapter,
+        "_archive_producer_state_for_dispatch",
+        lambda _payload: "success" if runs else "absent",
+    )
     effect = StagedEffect(
         kind="github-mutation",
         payload_json=json.dumps(
@@ -3081,6 +3086,42 @@ def test_failed_archive_workflow_run_is_not_dispatch_postcondition(
     )
 
     assert not adapter.observe_postcondition(effect)
+
+
+@pytest.mark.parametrize("producer", ("pending", "conflict"))
+def test_archive_producer_dispatch_does_not_duplicate_inflight_or_failed_run(
+    monkeypatch: pytest.MonkeyPatch, producer: str
+) -> None:
+    """A retry cannot POST another exact request against an existing run."""
+    revision = "d" * 40
+    adapter = GitHubEffectAdapter(
+        "royhsu-work/investment-strategy",
+        "token",
+        WorkerRequest(138, "lead", "finalize-change"),
+        authorized_change=_CHANGE,
+        current_revision=revision,
+    )
+    monkeypatch.setattr(adapter, "_archive_producer_state_for_dispatch", lambda _payload: producer)
+    monkeypatch.setattr(
+        effects,
+        "_github_json",
+        lambda *_args, **_kwargs: pytest.fail("duplicate dispatch"),
+    )
+    payload = {
+        "issue_number": 138,
+        "operation": "workflow-dispatch",
+        "workflow_id": "openspec-archive.yml",
+        "ref": "main",
+        "inputs": {
+            "change": _CHANGE,
+            "issue": "138",
+            "revision": revision,
+            "request_key": f"archive-138-{revision}",
+        },
+    }
+    effect = StagedEffect(kind="github-mutation", payload_json=json.dumps(payload))
+    with pytest.raises(RuntimeError, match="pending or contradictory"):
+        adapter._apply_github_mutation(effect, payload)
 
 
 def test_accepted_archive_dispatch_reconciles_after_safe_main_advance(

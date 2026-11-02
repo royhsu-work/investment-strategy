@@ -35,6 +35,8 @@ from investment_strategy.scheduled_agent_application_materialization import (
 )
 from investment_strategy.scheduled_agent_archive_freshness import (
     archive_branch_matches_current_change,
+    archive_producer_state,
+    archive_stale_branch_is_recoverable,
 )
 from investment_strategy.scheduled_agent_carrier import (
     CarrierRequired,
@@ -2076,23 +2078,49 @@ def _fresh_archive_state(
     current_revision: str,
     default_branch: str,
 ) -> tuple[str, str | None, str | None]:
-    """Return ``missing-branch``, ``missing-pr``, ``ready`` or ``conflict``."""
+    """Qualify current producer proof before selecting a bounded archive effect."""
 
     branch = _archive_branch(change)
     if branch is None:
         raise RuntimeError("archive consequence branch identity is invalid")
     branch_sha = _fresh_branch_head(repository, token, branch)
+    producer = archive_producer_state(
+        _github_json,
+        repository=repository,
+        token=token,
+        issue_number=issue_number,
+        change=change,
+        source_revision=current_revision,
+        default_branch=default_branch,
+        archive_revision=branch_sha,
+    )
+    if producer == "pending":
+        return "pending-run", branch, branch_sha
+    if producer == "conflict":
+        return "conflict", branch, branch_sha
     if branch_sha is None:
-        return "missing-branch", branch, None
-    if not archive_branch_matches_current_change(
+        return ("missing-run" if producer == "absent" else "conflict"), branch, None
+    current_snapshot = archive_branch_matches_current_change(
         _github_json,
         repository=repository,
         token=token,
         change=change,
         source_revision=current_revision,
         archive_revision=branch_sha,
-    ):
-        return "conflict", branch, branch_sha
+    )
+    if not current_snapshot:
+        if producer != "absent" or not archive_stale_branch_is_recoverable(
+            _github_json,
+            repository=repository,
+            token=token,
+            change=change,
+            source_revision=current_revision,
+            archive_revision=branch_sha,
+        ):
+            return "conflict", branch, branch_sha
+        return "missing-run", branch, branch_sha
+    if producer == "absent":
+        return "missing-run", branch, branch_sha
     candidates = _fresh_pull_requests(
         repository,
         token,
@@ -2623,7 +2651,7 @@ def _fresh_application_worker_result(
             current_revision=current_revision,
             default_branch=default_branch,
         )
-        if state == "missing-branch":
+        if state == "missing-run":
             semantic_effects.append(
                 _effect_document(
                     GITHUB_MUTATION_KIND,
@@ -2652,6 +2680,8 @@ def _fresh_application_worker_result(
             )
         elif state == "conflict":
             raise RuntimeError("archive pull-request consequence is contradictory")
+        elif state == "pending-run":
+            raise RuntimeError("archive producer request is already in progress")
         else:
             semantic_effects.extend(
                 _fresh_non_control_effects(

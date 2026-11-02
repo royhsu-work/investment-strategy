@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import os
 import subprocess
@@ -9,10 +11,12 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 from typing import Literal, cast
+from zipfile import ZipFile
 
 import pytest
 
 import investment_strategy.scheduled_agent_application_bridge as bridge
+import investment_strategy.scheduled_agent_archive_freshness as freshness
 import investment_strategy.scheduled_agent_effects as effects
 import investment_strategy.scheduled_agent_validation_resource as resource
 from investment_strategy.scheduled_agent_action_model import TRANSITIONS, Action, ResultKind
@@ -149,6 +153,238 @@ def test_archive_provenance_accepts_exact_current_archive_snapshot() -> None:
         change=_CHANGE,
         source_revision=_MAIN,
         archive_revision=_ARCHIVE_HEAD,
+    )
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    (
+        ("success", "success"),
+        ("missing", "absent"),
+        ("pending", "pending"),
+        ("failed", "conflict"),
+        ("duplicate", "conflict"),
+        ("wrong-source", "conflict"),
+        ("missing-artifact", "conflict"),
+        ("bad-digest", "conflict"),
+        ("wrong-head", "conflict"),
+        ("wrong-issue", "conflict"),
+        ("missing-ref", "conflict"),
+    ),
+)
+def test_archive_producer_exact_run_and_head_proof(case: str, expected: str) -> None:
+    """A GitHub run name alone cannot authorize an Archive PR/head."""
+    run_id = 87654
+    handoff = {
+        "schema": "openspec-archive-handoff/v1",
+        "run_id": run_id,
+        "run_attempt": 1,
+        "issue_number": 234,
+        "change": _CHANGE,
+        "source_revision": _MAIN,
+        "request_key": f"archive-234-{_MAIN}",
+        "branch": f"agent/archive-{_CHANGE}",
+        "head_sha": "9" * 40 if case == "wrong-head" else _ARCHIVE_HEAD,
+    }
+    if case == "wrong-issue":
+        handoff["issue_number"] = 333
+    buffer = io.BytesIO()
+    with ZipFile(buffer, "w") as zipped:
+        zipped.writestr("archive-handoff.json", json.dumps(handoff))
+    zipped_bytes = buffer.getvalue()
+    run = {
+        "id": run_id,
+        "run_attempt": 1,
+        "display_title": f"OpenSpec Archive archive-234-{_MAIN}",
+        "path": ".github/workflows/openspec-archive.yml",
+        "event": "workflow_dispatch",
+        "head_branch": "main",
+        "head_sha": "f" * 40 if case == "wrong-source" else _MAIN,
+        "status": "in_progress" if case == "pending" else "completed",
+        "conclusion": "failure" if case == "failed" else "success",
+    }
+
+    def fake_read(_repo: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/openspec-archive.yml/runs?"):
+            return {
+                "workflow_runs": []
+                if case == "missing"
+                else [run, run]
+                if case == "duplicate"
+                else [run]
+            }
+        if path == f"actions/runs/{run_id}/artifacts?name=openspec-archive-handoff&per_page=100":
+            if case == "missing-artifact":
+                return {"artifacts": []}
+            digest = "f" * 64 if case == "bad-digest" else hashlib.sha256(zipped_bytes).hexdigest()
+            return {
+                "artifacts": [
+                    {
+                        "id": 4321,
+                        "name": "openspec-archive-handoff",
+                        "expired": False,
+                        "digest": f"sha256:{digest}",
+                    }
+                ]
+            }
+        raise AssertionError(path)
+
+    assert (
+        freshness.archive_producer_state(
+            fake_read,
+            repository=_REPOSITORY,
+            token=_TOKEN,
+            issue_number=234,
+            change=_CHANGE,
+            source_revision=_MAIN,
+            default_branch="main",
+            archive_revision=None if case == "missing-ref" else _ARCHIVE_HEAD,
+            download=lambda _repo, _token, _id: zipped_bytes,
+        )
+        == expected
+    )
+
+
+def test_archive_application_and_lifecycle_share_proven_run_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the same successful run/head permits creation and later readiness."""
+    branch = f"agent/archive-{_CHANGE}"
+    run_id = 87654
+    handoff = {
+        "schema": "openspec-archive-handoff/v1",
+        "run_id": run_id,
+        "run_attempt": 1,
+        "issue_number": 234,
+        "change": _CHANGE,
+        "source_revision": _MAIN,
+        "request_key": f"archive-234-{_MAIN}",
+        "branch": branch,
+        "head_sha": _ARCHIVE_HEAD,
+    }
+    buffer = io.BytesIO()
+    with ZipFile(buffer, "w") as zipped:
+        zipped.writestr("archive-handoff.json", json.dumps(handoff))
+    zip_bytes = buffer.getvalue()
+    monkeypatch.setattr(freshness, "_download_archive_handoff", lambda *_args: zip_bytes)
+    pr = {
+        "number": 301,
+        "state": "open",
+        "merged": False,
+        "draft": False,
+        "title": f"Archive OpenSpec change {_CHANGE}",
+        "body": f"Archive OpenSpec change `{_CHANGE}`.\n\nRefs #234\n",
+        "head": {"ref": branch, "sha": _ARCHIVE_HEAD, "repo": {"full_name": _REPOSITORY}},
+        "base": {"ref": "main", "sha": _MAIN, "repo": {"full_name": _REPOSITORY}},
+    }
+    ready = False
+    run_good = True
+
+    def fake_read(_repo: str, _token: str, path: str, **_kwargs: object) -> object:
+        if path == "":
+            return {"default_branch": "main"}
+        if path == f"git/ref/heads/{branch}":
+            return {"object": {"sha": _ARCHIVE_HEAD}}
+        if path.startswith("actions/workflows/openspec-archive.yml/runs?"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": run_id,
+                        "run_attempt": 1,
+                        "display_title": f"OpenSpec Archive archive-234-{_MAIN}",
+                        "path": ".github/workflows/openspec-archive.yml",
+                        "event": "workflow_dispatch",
+                        "head_branch": "main",
+                        "head_sha": _MAIN,
+                        "status": "completed",
+                        "conclusion": "success" if run_good else "failure",
+                    }
+                ]
+            }
+        if path == f"actions/runs/{run_id}/artifacts?name=openspec-archive-handoff&per_page=100":
+            return {
+                "artifacts": [
+                    {
+                        "id": 4321,
+                        "name": "openspec-archive-handoff",
+                        "expired": False,
+                        "digest": f"sha256:{hashlib.sha256(zip_bytes).hexdigest()}",
+                    }
+                ]
+            }
+        if path.startswith("pulls?state=all"):
+            return [pr] if ready else []
+        if path == "pulls/301":
+            return pr
+        evidence = _current_archive_evidence(path)
+        if evidence is not None:
+            return evidence
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "_github_json", fake_read)
+    monkeypatch.setattr(effects, "_github_json", fake_read)
+    state, found_branch, head = bridge._fresh_archive_state(
+        _REPOSITORY,
+        _TOKEN,
+        issue_number=234,
+        change=_CHANGE,
+        current_revision=_MAIN,
+        default_branch="main",
+    )
+    assert (state, found_branch, head) == ("missing-pr", branch, _ARCHIVE_HEAD)
+    result = json.loads(
+        bridge._fresh_application_worker_result(
+            _archive_ready_worker(),
+            source=WorkerRequest(234, "lead", "finalize-change"),
+            change=_CHANGE,
+            repository=_REPOSITORY,
+            token=_TOKEN,
+            current_revision=_MAIN,
+            default_branch="main",
+            request_comment_id=9001,
+        )
+    )
+    assert (
+        json.loads(result["requested_effects"][0]["payload_json"])["operation"]
+        == "pull-request-create"
+    )
+    ready = True
+    assert (
+        bridge._fresh_archive_state(
+            _REPOSITORY,
+            _TOKEN,
+            issue_number=234,
+            change=_CHANGE,
+            current_revision=_MAIN,
+            default_branch="main",
+        )[0]
+        == "ready"
+    )
+    assert effects.archive_pr_readiness_complete(
+        repository=_REPOSITORY,
+        token=_TOKEN,
+        issue_number=234,
+        change=_CHANGE,
+        current_revision=_MAIN,
+    )
+    run_good = False
+    assert (
+        bridge._fresh_archive_state(
+            _REPOSITORY,
+            _TOKEN,
+            issue_number=234,
+            change=_CHANGE,
+            current_revision=_MAIN,
+            default_branch="main",
+        )[0]
+        == "conflict"
+    )
+    assert not effects.archive_pr_readiness_complete(
+        repository=_REPOSITORY,
+        token=_TOKEN,
+        issue_number=234,
+        change=_CHANGE,
+        current_revision=_MAIN,
     )
 
 
@@ -375,7 +611,7 @@ json.dump(out, sys.stdout, sort_keys=True)
         assert projections == baseline, prefix
 
 
-def test_archive_snapshot_derives_only_missing_archive_pr(
+def test_archive_snapshot_waits_for_producer_proof_before_archive_pr(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     branch = f"agent/archive-{_CHANGE}"
@@ -392,6 +628,8 @@ def test_archive_snapshot_derives_only_missing_archive_pr(
             return {"object": {"sha": _ARCHIVE_HEAD}}
         if path.startswith("pulls?state=all"):
             return []
+        if path.startswith("actions/workflows/openspec-archive.yml/runs?"):
+            return {"workflow_runs": []}
         evidence = _current_archive_evidence(path)
         if evidence is not None:
             return evidence
@@ -413,22 +651,18 @@ def test_archive_snapshot_derives_only_missing_archive_pr(
     assert len(effects) == 1
     assert effects[0]["kind"] == "github-mutation"
     create = json.loads(effects[0]["payload_json"])
-    assert create == {
-        "base": "main",
-        "body": bridge._archive_pr_body(_CHANGE, 234),
-        "draft": False,
-        "expected_head_sha": _ARCHIVE_HEAD,
-        "head": branch,
-        "issue_number": 234,
-        "operation": "pull-request-create",
-        "title": f"Archive OpenSpec change {_CHANGE}",
-    }
+    assert create == bridge._fresh_workflow_dispatch_payload(
+        issue_number=234,
+        change=_CHANGE,
+        current_revision=_MAIN,
+        default_branch="main",
+    )
 
 
 def test_archive_snapshot_rejects_observed_322_stale_archive_branch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The actual #322 old ref must never authorize a new Archive PR."""
+    """The real old #322 ref can request one non-force producer regeneration."""
     change = "restore-no-work-idle-discovery"
     source = "328843882a2aaae51b6bbe3274d70882e94d5569"
     stale = "eb15b4c2362cd0910fc2601be69f679b18d54bd1"
@@ -444,8 +678,45 @@ def test_archive_snapshot_rejects_observed_322_stale_archive_branch(
             return {"object": {"sha": stale}}
         if path.startswith("pulls?state=all"):
             return []
+        if path.startswith("actions/workflows/openspec-archive.yml/runs?"):
+            return {"workflow_runs": []}
         if path == f"compare/{source}...{stale}":
-            return {"status": "diverged", "behind_by": 77, "ahead_by": 1}
+            return {
+                "status": "diverged",
+                "behind_by": 77,
+                "ahead_by": 1,
+                "merge_base_commit": {"sha": "7" * 40},
+            }
+        if path == f"git/trees/{source}?recursive=1":
+            return {
+                "truncated": False,
+                "tree": [
+                    {"type": "blob", "path": f"openspec/changes/{change}/{name}", "sha": "1" * 40}
+                    for name in (
+                        "proposal.md",
+                        "design.md",
+                        "tasks.md",
+                        "specs/scheduled-agent-workflow/spec.md",
+                    )
+                ],
+            }
+        if path == f"git/trees/{stale}?recursive=1":
+            return {
+                "truncated": False,
+                "tree": [
+                    {
+                        "type": "blob",
+                        "path": f"openspec/changes/archive/2026-10-23-{change}/{name}",
+                        "sha": "2" * 40,
+                    }
+                    for name in (
+                        "proposal.md",
+                        "design.md",
+                        "tasks.md",
+                        "specs/scheduled-agent-workflow/spec.md",
+                    )
+                ],
+            }
         raise AssertionError(path)
 
     monkeypatch.setattr(bridge, "_github_json", fake_read)
@@ -457,7 +728,57 @@ def test_archive_snapshot_rejects_observed_322_stale_archive_branch(
         current_revision=source,
         default_branch="main",
     )
-    assert (state, actual_branch, actual_sha) == ("conflict", branch, stale)
+    assert (state, actual_branch, actual_sha) == ("missing-run", branch, stale)
+
+
+@pytest.mark.parametrize("failure", ("foreign", "duplicate", "unrelated", "truncated"))
+def test_archive_stale_branch_recovery_rejects_competing_history(failure: str) -> None:
+    """Only one common-ancestral historical Change is eligible for forward recovery."""
+    change = "restore-no-work-idle-discovery"
+    source = "328843882a2aaae51b6bbe3274d70882e94d5569"
+    stale = "eb15b4c2362cd0910fc2601be69f679b18d54bd1"
+    names = ("proposal.md", "design.md", "tasks.md", "specs/scheduled-agent-workflow/spec.md")
+
+    def fake_read(_repo: str, _token: str, path: str) -> object:
+        if path.startswith("compare/"):
+            return {
+                "status": "diverged",
+                "behind_by": 77,
+                "ahead_by": 1,
+                "merge_base_commit": None if failure == "unrelated" else {"sha": "7" * 40},
+            }
+        if path == f"git/trees/{source}?recursive=1":
+            return {
+                "truncated": False,
+                "tree": [
+                    {"type": "blob", "path": f"openspec/changes/{change}/{name}", "sha": "1" * 40}
+                    for name in names
+                ],
+            }
+        if path == f"git/trees/{stale}?recursive=1":
+            root = f"openspec/changes/archive/2026-10-23-{change}"
+            files = [{"type": "blob", "path": f"{root}/{name}", "sha": "2" * 40} for name in names]
+            if failure == "foreign":
+                files[0]["path"] = f"{root}/other.md"
+            elif failure == "duplicate":
+                files.append(
+                    {
+                        "type": "blob",
+                        "path": f"openspec/changes/archive/2026-11-01-{change}/tasks.md",
+                        "sha": "3" * 40,
+                    }
+                )
+            return {"truncated": failure == "truncated", "tree": files}
+        raise AssertionError(path)
+
+    assert not freshness.archive_stale_branch_is_recoverable(
+        fake_read,
+        repository=_REPOSITORY,
+        token=_TOKEN,
+        change=change,
+        source_revision=source,
+        archive_revision=stale,
+    )
 
 
 def test_322_post_merge_checkpoint_rejects_new_code_until_open_continuation(
@@ -589,12 +910,19 @@ def test_recovered_semantic_intent_rebuilds_formal_after_pr_carrier(
             return [full_pr] if ready else []
         if path == "pulls/301":
             return full_pr
+        if path.startswith("actions/workflows/openspec-archive.yml/runs?"):
+            return {"workflow_runs": []}
         evidence = _current_archive_evidence(path)
         if evidence is not None:
             return evidence
         raise AssertionError(path)
 
     monkeypatch.setattr(bridge, "_github_json", fake_read)
+    monkeypatch.setattr(
+        bridge,
+        "archive_producer_state",
+        lambda *_args, **_kwargs: "success" if ready else "absent",
+    )
     source = WorkerRequest(234, "lead", "finalize-change")
     first = bridge._fresh_application_worker_result(
         _archive_ready_worker(),
@@ -671,6 +999,15 @@ def test_archive_ready_requires_current_non_draft_exact_pr(
         raise AssertionError(path)
 
     monkeypatch.setattr(effects, "_github_json", fake_read)
+    monkeypatch.setattr(effects, "archive_producer_state", lambda *_a, **_kw: "absent")
+    assert not effects.archive_pr_readiness_complete(
+        repository=_REPOSITORY,
+        token=_TOKEN,
+        issue_number=234,
+        change=_CHANGE,
+        current_revision=_MAIN,
+    )
+    monkeypatch.setattr(effects, "archive_producer_state", lambda *_a, **_kw: "success")
     assert effects.archive_pr_readiness_complete(
         repository=_REPOSITORY,
         token=_TOKEN,

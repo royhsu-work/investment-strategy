@@ -50,6 +50,7 @@ from investment_strategy.scheduled_agent_application_materialization import (
 )
 from investment_strategy.scheduled_agent_archive_freshness import (
     archive_branch_matches_current_change,
+    archive_producer_state,
 )
 from investment_strategy.scheduled_agent_carrier import (
     CarrierPlan,
@@ -1005,6 +1006,20 @@ def archive_pr_readiness_complete(
         change=change,
         source_revision=current_revision,
         archive_revision=cast(str, branch_sha),
+    ):
+        return False
+    if (
+        archive_producer_state(
+            _github_json,
+            repository=repository,
+            token=token,
+            issue_number=issue_number,
+            change=change,
+            source_revision=current_revision,
+            default_branch=cast(str, default_branch),
+            archive_revision=cast(str, branch_sha),
+        )
+        != "success"
     ):
         return False
     owner = repository.split("/", 1)[0] if "/" in repository else ""
@@ -2168,6 +2183,34 @@ class GitHubEffectAdapter:
                 time.sleep(_WORKFLOW_DISPATCH_OBSERVATION_DELAY_SECONDS)
         return False
 
+    def _archive_producer_state_for_dispatch(self, payload: Mapping[str, object]) -> str:
+        """Recheck the exact request before a potentially duplicate producer POST."""
+        inputs = cast(Mapping[str, object], payload["inputs"])
+        change = cast(str, inputs["change"])
+        branch = _archive_branch(change)
+        if branch is None:
+            return "conflict"
+        ref = _github_json(
+            self.repository,
+            self.token,
+            _ref_api_path(f"refs/heads/{branch}"),
+            allow_not_found=True,
+        )
+        obj = ref.get("object") if isinstance(ref, Mapping) else None
+        head = obj.get("sha") if isinstance(obj, Mapping) else None
+        if head is not None and not _valid_sha(head):
+            return "conflict"
+        return archive_producer_state(
+            _github_json,
+            repository=self.repository,
+            token=self.token,
+            issue_number=self.source.issue_number,
+            change=change,
+            source_revision=cast(str, inputs["revision"]),
+            default_branch=cast(str, payload["ref"]),
+            archive_revision=cast(str | None, head),
+        )
+
     def _historical_merged_pr(
         self,
         payload: Mapping[str, object],
@@ -2964,8 +3007,16 @@ class GitHubEffectAdapter:
             )
             return
         if operation == "workflow-dispatch":
-            if self._existing_workflow_dispatch(payload) is not None:
+            # An immutable accepted dispatch can reconcile its historical
+            # successful request without creating a new current-source run.
+            # Archive PR/readiness still requires the fresh shared proof.
+            if self.accepted_intent and self._existing_workflow_dispatch(payload) is not None:
                 return
+            producer = self._archive_producer_state_for_dispatch(payload)
+            if producer == "success":
+                return
+            if producer != "absent":
+                raise RuntimeError("archive producer request is pending or contradictory")
             inputs = cast(Mapping[str, object], payload["inputs"])
             _github_json(
                 self.repository,
