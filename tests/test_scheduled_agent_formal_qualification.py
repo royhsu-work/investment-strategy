@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import pytest
+
 from investment_strategy.scheduled_agent_formal_qualification import (
     QualificationDecision,
     build_qualification_input,
+    derive_current_frontier,
     qualify_current_formal_consequence,
 )
 from investment_strategy.scheduled_agent_formal_result import parse_formal_result
@@ -1092,6 +1095,172 @@ def test_administrative_recovery_rejects_unbound_current_change_formal_shape() -
     decision = qualify_current_formal_consequence(qualification_input)
     assert decision.provenance is ObservationProvenance.INDETERMINATE
     assert decision.reason == "administrative-recovery-competing-formal-evidence"
+
+
+def _accepted_322_recovery_fixture(
+    *,
+    signed: bool = True,
+    later_review: bool = False,
+    superseded: bool = False,
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    change = "restore-no-work-idle-discovery"
+    predecessor = _comment(
+        180,
+        action="review-implementation",
+        role="reviewer",
+        result="findings",
+        successor="Executor / implement-change",
+        request_id=6567405847,
+        change=change,
+        issue_number=322,
+    )
+    accepted = _comment(
+        200,
+        action="implement-change",
+        role="executor",
+        result="ready",
+        successor="Reviewer / review-implementation",
+        request_id=6568245475,
+        change=change,
+        issue_number=322,
+    )
+    recovery = {
+        "id": 210,
+        "body": (
+            "APPLICATION_RECOVERY\n"
+            "Workflow: #322\n"
+            f"Change: {change}\n"
+            "Source: Lead / resolve-question\n"
+            "Target: Reviewer / review-implementation\n"
+            f"Default-Branch-Revision: {_REVISION}\n"
+            f"Failed-Authorization-Revision: {'b' * 40}\n"
+            "Request-Comment-ID: 6568245475\n"
+            "Reason: interrupted-accepted-implementation-completed"
+        ),
+        "user": {"login": "github-actions[bot]" if signed else "royhsu-work"},
+        "performed_via_github_app": {
+            "slug": "github-actions" if signed else "chatgpt-codex-connector"
+        },
+    }
+    events = [
+        (180, "commented", None),
+        (181, "unlabeled", "action:review-implementation"),
+        (182, "labeled", "action:implement-change"),
+        (190, "unlabeled", "action:implement-change"),
+        (191, "labeled", "action:resolve-question"),
+        (195, "unlabeled", "action:resolve-question"),
+        (196, "labeled", "action:implement-change"),
+        (200, "commented", None),
+        (201, "unlabeled", "action:implement-change"),
+        (202, "labeled", "action:review-implementation"),
+        (210, "commented", None),
+    ]
+    comments = [predecessor, accepted, recovery]
+    if later_review:
+        comments.append(
+            _comment(
+                220,
+                action="review-implementation",
+                role="reviewer",
+                result="pass",
+                successor="Executor / merge-implementation-pr",
+                request_id=22001,
+                change=change,
+                issue_number=322,
+            )
+        )
+        events.extend(
+            [
+                (220, "commented", None),
+                (221, "unlabeled", "action:review-implementation"),
+                (222, "labeled", "action:merge-implementation-pr"),
+            ]
+        )
+    if superseded:
+        events.extend(
+            [
+                (230, "unlabeled", "action:review-implementation"),
+                (231, "labeled", "action:resolve-question"),
+            ]
+        )
+    timeline = [
+        {
+            "id": event_id,
+            "event": event,
+            "created_at": f"2026-11-02T00:{index:02d}:00Z",
+            **({"label": {"name": label}} if label is not None else {}),
+        }
+        for index, (event_id, event, label) in enumerate(events)
+    ]
+    return comments, timeline
+
+
+def test_accepted_322_recovery_restores_only_exact_signed_successor() -> None:
+    change = "restore-no-work-idle-discovery"
+    comments, lifecycle = _accepted_322_recovery_fixture()
+    qualification = build_qualification_input(
+        issue_number=322,
+        change=change,
+        state="open",
+        current_routing=("reviewer", "review-implementation"),
+        comments=comments,
+        current_revision=_REVISION,
+        lifecycle_events=lifecycle,
+    )
+    assert derive_current_frontier(qualification) is not None
+    decision = qualify_current_formal_consequence(qualification)
+    assert decision.provenance is ObservationProvenance.QUALIFIED, decision
+    assert decision.reason == "current-accepted-implementation-recovery-qualified"
+
+    # The same out-of-band Lead ABA without the signed application attestation
+    # is intentionally not a current formal frontier.
+    without_recovery = build_qualification_input(
+        issue_number=322,
+        change=change,
+        state="open",
+        current_routing=("reviewer", "review-implementation"),
+        comments=comments[:2],
+        current_revision=_REVISION,
+        lifecycle_events=lifecycle,
+    )
+    assert derive_current_frontier(without_recovery) is None
+
+
+@pytest.mark.parametrize("variant", ["unsigned", "superseded", "wrong-route"])
+def test_accepted_322_recovery_rejects_unproven_or_superseded_state(variant: str) -> None:
+    comments, lifecycle = _accepted_322_recovery_fixture(
+        signed=variant != "unsigned", superseded=variant == "superseded"
+    )
+    qualification = build_qualification_input(
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+        state="open",
+        current_routing=(
+            ("lead", "resolve-question")
+            if variant == "wrong-route"
+            else ("reviewer", "review-implementation")
+        ),
+        comments=comments,
+        current_revision=_REVISION,
+        lifecycle_events=lifecycle,
+    )
+    assert derive_current_frontier(qualification) is None
+
+
+def test_accepted_322_recovery_is_historical_after_next_real_reviewer_result() -> None:
+    comments, lifecycle = _accepted_322_recovery_fixture(later_review=True)
+    qualification = build_qualification_input(
+        issue_number=322,
+        change="restore-no-work-idle-discovery",
+        state="open",
+        current_routing=("executor", "merge-implementation-pr"),
+        comments=comments,
+        current_revision=_REVISION,
+        lifecycle_events=lifecycle,
+    )
+    decision = qualify_current_formal_consequence(qualification)
+    assert decision.provenance is ObservationProvenance.QUALIFIED, decision
+    assert decision.reason == "current-formal-route-qualified"
 
 
 def test_application_owned_lowercase_successor_is_reconciled() -> None:

@@ -3111,16 +3111,18 @@ def test_original_322_recovery_comment_is_bounded_to_the_existing_application_ow
     assert workflow.count("github.event.comment.user.login == 'royhsu-work'") == 2
     assert workflow.count("github.event.issue.number == 322") == 2
     assert "github.event.comment.body != '" + marker + "'" in workflow
+    assert "github.event.comment.body != 'RECOVERY_EXIT_REQUEST 6568245475'" in workflow
     recovery_step = workflow.split(
         "      - name: Bounded original #322 recovery through existing application owner", 1
     )[1].split("      - name: Upload exact application recovery evidence", 1)[0]
     assert "inputs.recovery_exit_request_comment_id != ''" in recovery_step
-    assert (
-        "(github.event_name == 'pull_request_target' || github.event_name == 'issue_comment')"
-        " && '6019133874' || inputs.recovery_exit_request_comment_id"
-    ) in recovery_step
+    assert "github.event.comment.body == 'RECOVERY_EXIT_REQUEST 6568245475'" in recovery_step
+    assert "'6568245475' || '6019133874'" in recovery_step
     assert '--recovery-exit-request-comment-id "$ORIGINAL_REQUEST"' in recovery_step
-    assert 'if [[ "$ORIGINAL_REQUEST" != "6019133874" ]]' in recovery_step
+    assert (
+        '"$ORIGINAL_REQUEST" != "6019133874" && "$ORIGINAL_REQUEST" != "6568245475"'
+        in recovery_step
+    )
 
 
 def test_main_exits_at_carrier_boundary_before_formal_continuation(
@@ -3866,7 +3868,7 @@ def test_original_322_recovery_pr_merge_wake_is_exact_and_not_a_generic_effect_r
     )[1].split("      - name: Upload exact application recovery evidence", 1)[0]
     assert "github.event.pull_request.merged == true" in bounded
     assert '--recovery-exit-request-comment-id "$ORIGINAL_REQUEST"' in bounded
-    assert 'if [[ "$ORIGINAL_REQUEST" != "6019133874" ]]' in bounded
+    assert '"$ORIGINAL_REQUEST" != "6019133874" && "$ORIGINAL_REQUEST" != "6568245475"' in bounded
 
 
 @pytest.mark.parametrize(

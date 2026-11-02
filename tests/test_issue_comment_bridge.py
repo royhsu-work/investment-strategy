@@ -5723,6 +5723,243 @@ def test_original_ready_preformal_entry_has_no_result_cycle(
     )
 
 
+@pytest.mark.parametrize(
+    "invalid_source",
+    [
+        None,
+        "head-moved",
+        "human-missing",
+        "decision-competing",
+        "lost-before-result",
+        "lost-after-result",
+        "lost-after-formal-post",
+    ],
+)
+def test_accepted_322_recovery_reconciles_once_without_replaying_git(
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_source: str | None,
+) -> None:
+    """Accepted #322 recovery only formalizes the exact durable old intent."""
+
+    from investment_strategy.scheduled_agent_application_materialization import (
+        MaterializationRequest,
+    )
+
+    change = "restore-no-work-idle-discovery"
+    old_main = "328843882a2aaae51b6bbe3274d70882e94d5569"
+    current_main = "e8556f2da1126e6bbef0e8595a1c51a1e21169cf"
+    head = "ddd6b3f5a19b879e427aee313334aeab6a43a241"
+    branch = "agent/restore-no-work-idle-discovery-continuation-398"
+    requested = _effect_request_comment(
+        comment_id=6568245475,
+        created_at="2026-11-02T00:00:00Z",
+        action="implement-change",
+        role="executor",
+        result_kind="ready",
+        issue_number=322,
+        change=change,
+        authorization_revision=old_main,
+    )
+    decision = _application_decision_comment(requested, comment_id=6568278353)
+    predecessor = {
+        "id": 6567424875,
+        "body": (
+            "REVIEW_RESULT\nWorkflow: #322\n"
+            f"Change: {change}\nAction: review-implementation\nRole: reviewer\n"
+            "Result: FINDINGS\n"
+            f"Revision: {'8' * 40}\nDefault-Branch-Revision: {old_main}\n"
+            f"Application-Correlation: application:6567405847:322:{change}:"
+            f"reviewer:review-implementation:findings:{old_main}\n"
+            "Repository-derived successor: Executor / implement-change"
+        ),
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+    }
+    handoff = {
+        "id": 6569195457,
+        "body": "## #322 一次性 Lead 接管紀錄",
+        "user": {"login": "royhsu-work"},
+    }
+    comments = [predecessor, decision, handoff]
+    if invalid_source == "decision-competing":
+        comments.append(_application_decision_comment(requested, comment_id=6569199000))
+    issue = {
+        "number": 322,
+        "title": "Restore idle discovery",
+        "state": "open",
+        "created_at": "2026-09-22T00:00:00Z",
+        "closed_at": None,
+        "body": f"Change: {change}",
+        "labels": [{"name": "action:resolve-question"}, {"name": "human:approved"}],
+    }
+    if invalid_source == "human-missing":
+        issue["labels"] = [{"name": "action:resolve-question"}]
+    pr = {
+        "number": 408,
+        "state": "open",
+        "draft": False,
+        "merged": False,
+        "head": {
+            "sha": "a" * 40 if invalid_source == "head-moved" else head,
+            "ref": branch,
+            "repo": {"full_name": "royhsu-work/investment-strategy"},
+        },
+        "base": {"ref": "main"},
+    }
+    manifest = MaterializationRequest(
+        issue_number=322,
+        expected_change=change,
+        change=change,
+        branch=branch,
+        base_sha="89a6b12180bce10ce92655e8fa138b723775dbd6",
+        message="Accepted physical materialization",
+        files=cast(tuple, (object(),) * 7),
+        pr_number=408,
+    )
+    mutations: list[str] = []
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path == "issues/322":
+            return json.loads(json.dumps(issue))
+        if path == "pulls/408":
+            return pr
+        if path == f"git/ref/heads/{branch}":
+            return {"object": {"sha": head}}
+        if path.startswith("issues/322/comments?"):
+            return list(comments) if "page=1" in path else []
+        if path.startswith("issues/322/timeline?"):
+            return []
+        raise AssertionError(path)
+
+    def write(_repository: str, _token: str, path: str, **kwargs: object) -> object:
+        mutations.append(path)
+        payload = kwargs["payload"]
+        assert isinstance(payload, dict)
+        if path == "issues/322":
+            issue["labels"] = [{"name": item} for item in payload["labels"]]
+            return issue
+        if path == "issues/322/comments":
+            comments.append(
+                {
+                    "id": 6571000000,
+                    "body": payload["body"],
+                    "user": {"login": "github-actions[bot]"},
+                    "performed_via_github_app": {"slug": "github-actions"},
+                }
+            )
+            return {"id": 6571000000}
+        raise AssertionError(path)
+
+    effects: list[str] = []
+
+    def apply_effect(raw: str, **kwargs: object) -> tuple[object, bridge.ApplyResult]:
+        effects.append(raw)
+        if invalid_source == "lost-before-result" and len(effects) == 1:
+            raise RuntimeError("interrupted before formal result")
+        assert kwargs["original_322_recovery"] is True
+        assert kwargs["accepted_intent"] is True
+        decoded = json.loads(raw)
+        assert all(item.get("kind") == "issue-comment" for item in decoded["requested_effects"])
+        assert issue["labels"] == [
+            {"name": "human:approved"},
+            {"name": "action:implement-change"},
+        ]
+        if invalid_source == "lost-after-formal-post" and len(effects) == 2:
+            assert decoded["requested_effects"] == []
+            assert isinstance(kwargs["pending_application_correlation"], str)
+            issue["labels"] = [
+                {"name": "human:approved"},
+                {"name": "action:review-implementation"},
+            ]
+            return object(), bridge.ApplyResult(True, "reconciled without formal post")
+        comments.append(
+            {
+                "id": 6570000000,
+                "body": (
+                    "ACTION_RESULT\nWorkflow: #322\n"
+                    f"Change: {change}\nRole: executor\nAction: implement-change\n"
+                    "Result: READY\n"
+                    f"Revision: {head}\nDefault-Branch-Revision: {current_main}\n"
+                    f"Application-Correlation: application:6568245475:322:{change}:"
+                    f"executor:implement-change:ready:{current_main}\n"
+                    "Repository-derived successor: Reviewer / review-implementation"
+                ),
+                "user": {"login": "github-actions[bot]"},
+                "performed_via_github_app": {"slug": "github-actions"},
+            }
+        )
+        issue["labels"] = [
+            {"name": "human:approved"},
+            {"name": "action:review-implementation"},
+        ]
+        if invalid_source == "lost-after-formal-post" and len(effects) == 1:
+            issue["labels"] = [
+                {"name": "human:approved"},
+                {"name": "action:implement-change"},
+            ]
+            return object(), bridge.ApplyResult(False, "response lost before routing")
+        if invalid_source == "lost-after-result" and len(effects) == 1:
+            return object(), bridge.ApplyResult(False, "response lost after durable result")
+        return object(), bridge.ApplyResult(True, "applied")
+
+    monkeypatch.setattr(bridge, "_authorization_ancestry", lambda *args, **kwargs: ())
+    monkeypatch.setattr(
+        bridge, "_accepted_decision_sha256", lambda *args: bridge._ACCEPTED_322_DECISION_DIGEST
+    )
+    monkeypatch.setattr(
+        bridge, "_materialization_effects", lambda *args, **kwargs: ({"operation": "test"},)
+    )
+    monkeypatch.setattr(bridge, "find_materialization_payload", lambda *args: manifest)
+    monkeypatch.setattr(
+        bridge,
+        "_derive_frontier",
+        lambda **kwargs: (
+            SimpleNamespace(
+                decision=SimpleNamespace(
+                    reason="current-accepted-implementation-recovery-qualified"
+                )
+            ),
+            True,
+        ),
+    )
+
+    def invoke() -> bridge.ApplicationCompletion:
+        return bridge.apply_accepted_322_recovery_exit(
+            "royhsu-work/investment-strategy",
+            "test",
+            current_revision=current_main,
+            read=read,
+            write=write,
+            effect_apply=apply_effect,
+            prove_witness=lambda *args, **kwargs: head,
+        )
+
+    first = invoke()
+    if invalid_source in {"head-moved", "human-missing", "decision-competing"}:
+        assert first.state == "INVALID", first
+        assert mutations == [] and effects == []
+        return
+    if invalid_source in {"lost-before-result", "lost-after-result", "lost-after-formal-post"}:
+        assert first.state == "INVALID", first
+        assert mutations == ["issues/322"]
+    else:
+        assert first.state == "COMPLETE", first
+    second = invoke()
+    assert second.state == "COMPLETE", second
+    assert mutations == ["issues/322", "issues/322/comments"]
+    assert len(effects) == (
+        2 if invalid_source in {"lost-before-result", "lost-after-formal-post"} else 1
+    )
+    assert (
+        sum(
+            isinstance(item.get("body"), str)
+            and cast(str, item["body"]).startswith("ACTION_RESULT\n")
+            for item in comments
+        )
+        == 1
+    )
+
+
 @pytest.mark.parametrize("lost_after_formal_post", [False, True])
 def test_original_322_exit_materializes_once_then_reconciles_without_replay(
     monkeypatch: pytest.MonkeyPatch,

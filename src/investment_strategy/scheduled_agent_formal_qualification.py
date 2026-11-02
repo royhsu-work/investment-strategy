@@ -9,7 +9,7 @@ owns no workflow state, cursor, registry, or carrier.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, cast
 
 from investment_strategy.scheduled_agent_action_model import (
@@ -40,6 +40,12 @@ _RECOVERY_MARKER = "APPLICATION_RECOVERY"
 _RECOVERY_REASON = "partial-first-activation"
 _RECOVERY_SOURCE = ("lead", "propose-change")
 _RECOVERY_TARGET = ("lead", "resolve-question")
+_ACCEPTED_RECOVERY_REASON = "interrupted-accepted-implementation-completed"
+_ACCEPTED_RECOVERY_ISSUE = 322
+_ACCEPTED_RECOVERY_CHANGE = "restore-no-work-idle-discovery"
+_ACCEPTED_RECOVERY_REQUEST = 6568245475
+_ACCEPTED_RECOVERY_SOURCE = ("lead", "resolve-question")
+_ACCEPTED_RECOVERY_TARGET = ("reviewer", "review-implementation")
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,16 +174,25 @@ def _recovery_event_from_payload(
     valid_comment_id = (
         isinstance(comment_id, int) and not isinstance(comment_id, bool) and comment_id > 0
     )
+    valid_legacy = (
+        source == _RECOVERY_SOURCE and target == _RECOVERY_TARGET and reason == _RECOVERY_REASON
+    )
+    valid_accepted_recovery = (
+        issue_number == _ACCEPTED_RECOVERY_ISSUE
+        and change == _ACCEPTED_RECOVERY_CHANGE
+        and source == _ACCEPTED_RECOVERY_SOURCE
+        and target == _ACCEPTED_RECOVERY_TARGET
+        and request_comment_id == _ACCEPTED_RECOVERY_REQUEST
+        and reason == _ACCEPTED_RECOVERY_REASON
+    )
     valid = (
         valid_comment_id
         and issue_number is not None
         and change not in {None, "", "unset"}
-        and source == _RECOVERY_SOURCE
-        and target == _RECOVERY_TARGET
+        and (valid_legacy or valid_accepted_recovery)
         and _valid_sha(default_branch_revision)
         and _valid_sha(failed_authorization_revision)
         and request_comment_id is not None
-        and reason == _RECOVERY_REASON
         and current_revision is not None
     )
     return AdministrativeRecoveryEvent(
@@ -824,6 +839,131 @@ def _qualify_administrative_recovery_predecessor(
     return _qualified("administrative-recovery-precedes-formal", recovery)
 
 
+def _qualify_accepted_implementation_recovery(
+    qualification: QualificationInput,
+) -> QualificationDecision:
+    """Resume only the Actions-attested completion of #322's exact accepted intent.
+
+    This marker is written *after* the canonical application materializes the
+    original READY result and its successor. It does not reinterpret or erase
+    the out-of-band Issue routing interval that preceded the repair.
+    """
+
+    recovery = qualification.recovery_events[-1]
+    if (
+        len(qualification.recovery_events) != 1
+        or not recovery.valid
+        or recovery.reason != _ACCEPTED_RECOVERY_REASON
+        or recovery.issue_number != _ACCEPTED_RECOVERY_ISSUE
+        or recovery.change != _ACCEPTED_RECOVERY_CHANGE
+        or recovery.request_comment_id != _ACCEPTED_RECOVERY_REQUEST
+        or recovery.source != _ACCEPTED_RECOVERY_SOURCE
+        or recovery.target != _ACCEPTED_RECOVERY_TARGET
+        or qualification.issue_number != _ACCEPTED_RECOVERY_ISSUE
+        or qualification.change != _ACCEPTED_RECOVERY_CHANGE
+    ):
+        return _indeterminate("accepted-recovery-evidence-incomplete", recovery)
+    if (
+        recovery.default_branch_revision != qualification.current_revision
+        and (
+            recovery.default_branch_revision,
+            qualification.current_revision,
+        )
+        not in qualification.authorization_ancestry
+    ):
+        return _indeterminate("accepted-recovery-evidence-stale", recovery)
+    recovery_order = _comment_order_key(recovery, qualification.lifecycle_events)
+    if recovery_order is None:
+        return _indeterminate("accepted-recovery-timeline-unavailable", recovery)
+
+    accepted = tuple(
+        event
+        for event in qualification.events
+        if event.valid
+        and event.issue_number == _ACCEPTED_RECOVERY_ISSUE
+        and event.change == _ACCEPTED_RECOVERY_CHANGE
+        and event.role == "executor"
+        and event.action == "implement-change"
+        and event.result_kind == "ready"
+        and event.successor == _ACCEPTED_RECOVERY_TARGET
+        and isinstance(event.application_correlation, str)
+        and event.application_correlation.startswith(
+            f"application:{_ACCEPTED_RECOVERY_REQUEST}:322:"
+            f"{_ACCEPTED_RECOVERY_CHANGE}:executor:implement-change:ready:"
+        )
+        and (order := _comment_order_key(event, qualification.lifecycle_events)) is not None
+        and order < recovery_order
+    )
+    if len(accepted) != 1:
+        return _indeterminate("accepted-recovery-formal-result-not-unique", recovery)
+    accepted_order = _comment_order_key(accepted[0], qualification.lifecycle_events)
+    if accepted_order is None:
+        return _indeterminate("accepted-recovery-formal-ordering-incomplete", recovery)
+    competing = tuple(
+        event
+        for event in qualification.events
+        if event is not accepted[0]
+        and (order := _comment_order_key(event, qualification.lifecycle_events)) is not None
+        and accepted_order < order <= recovery_order
+    )
+    if competing:
+        return _indeterminate("accepted-recovery-competing-formal-evidence", recovery)
+    # Only one normal, derived READY successor mutation may separate the
+    # accepted formal event from its attesting administrative marker.
+    between = _event_interval(accepted[0], recovery, qualification.lifecycle_events)
+    if between is None or not _interval_binds_successor(between, _ACCEPTED_RECOVERY_TARGET, False):
+        return _indeterminate("accepted-recovery-successor-binding-incomplete", recovery)
+
+    following = tuple(
+        event
+        for event in qualification.events
+        if (order := _comment_order_key(event, qualification.lifecycle_events)) is not None
+        and order > recovery_order
+    )
+    if following:
+        first = following[0]
+        interval = _event_interval(recovery, first, qualification.lifecycle_events)
+        if (
+            first.role != _ACCEPTED_RECOVERY_TARGET[0]
+            or first.action != _ACCEPTED_RECOVERY_TARGET[1]
+            or interval is None
+            or any(
+                item.event in {"closed", "reopened"}
+                or (
+                    item.event in {"labeled", "unlabeled"}
+                    and item.label is not None
+                    and item.label.startswith(_ACTION_LABEL_PREFIX)
+                )
+                for item in interval
+            )
+        ):
+            return _indeterminate("accepted-recovery-successor-superseded", recovery)
+        # A valid marker supplies the starting routing provenance; subsequent
+        # formal results must still satisfy the unchanged normal qualifier.
+        return qualify_current_formal_consequence(
+            replace(qualification, recovery_events=(), events=following)
+        )
+
+    if (
+        qualification.mode != "current"
+        or qualification.state != "open"
+        or qualification.current_routing != _ACCEPTED_RECOVERY_TARGET
+    ):
+        return _indeterminate("accepted-recovery-current-route-invalid", recovery)
+    after = _event_interval(recovery, None, qualification.lifecycle_events)
+    if after is None or any(
+        event.event in {"closed", "reopened"}
+        or (
+            event.event in {"labeled", "unlabeled"}
+            and event.label is not None
+            and event.label.startswith(_ACTION_LABEL_PREFIX)
+        )
+        for event in after
+    ):
+        return _indeterminate("accepted-recovery-postcondition-not-qualified", recovery)
+    return _qualified("current-accepted-implementation-recovery-qualified", recovery)
+
+
 def qualify_current_formal_consequence(
     qualification: QualificationInput,
 ) -> QualificationDecision:
@@ -842,6 +982,11 @@ def qualify_current_formal_consequence(
         return _indeterminate("qualification-input-incomplete")
     if not _lifecycle_integrity(qualification.lifecycle_events):
         return _indeterminate("issue-lifecycle-evidence-incomplete")
+    if (
+        qualification.recovery_events
+        and qualification.recovery_events[-1].reason == _ACCEPTED_RECOVERY_REASON
+    ):
+        return _qualify_accepted_implementation_recovery(qualification)
     if qualification.recovery_events:
         competing = tuple(
             event for event in qualification.events if event.change == qualification.change
