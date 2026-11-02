@@ -1028,7 +1028,9 @@ def qualify_current_formal_consequence(
         if not duplicate_reuses_bound_successor:
             return _indeterminate("accepted-successor-lifecycle-binding-incomplete", latest)
     for index in range(len(suffix) - 1):
-        if not _formal_interval_is_bound(suffix, index, qualification.lifecycle_events):
+        if not _formal_interval_is_bound(
+            suffix, index, qualification.lifecycle_events
+        ) and not _one_time_322_handoff_interval(qualification, suffix[index], suffix[index + 1]):
             return _indeterminate("issue-lifecycle-binding-incomplete", suffix[index])
 
     if qualification.expected_terminal:

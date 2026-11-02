@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from investment_strategy.scheduled_agent_formal_qualification import (
     QualificationDecision,
     build_qualification_input,
@@ -238,6 +240,29 @@ def test_exact_322_human_handoff_allows_only_accepted_ready_interval() -> None:
         )
         decision = qualify_current_formal_consequence(qualification)
         assert decision.qualified is (len(supplied) == 3), decision.reason
+    pending_timeline = _lifecycle_events([previous, ready], pending=True)
+    pending_timeline.extend(timeline[-4:])
+    pending = build_qualification_input(
+        issue_number=322,
+        change=change,
+        state="open",
+        current_routing=("executor", "implement-change"),
+        comments=[previous, handoff, ready],
+        current_revision=_REVISION,
+        mode="pending",
+        source_routing=("executor", "implement-change"),
+        expected_routing=("reviewer", "review-implementation"),
+        expected_result_kind="ready",
+        expected_application_correlation=(
+            f"application:6568245475:322:{change}:executor:implement-change:ready:{_REVISION}"
+        ),
+        lifecycle_events=pending_timeline,
+    )
+    pending_decision = qualify_current_formal_consequence(pending)
+    assert pending_decision.qualified, pending_decision.reason
+    assert not qualify_current_formal_consequence(
+        replace(pending, one_time_human_handoff=False)
+    ).qualified
     next_review = _comment(
         6573000100,
         action="review-implementation",
