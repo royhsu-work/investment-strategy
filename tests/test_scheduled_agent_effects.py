@@ -335,6 +335,159 @@ def test_original_322_recovery_projects_only_qualified_formal_and_successor(
     )
 
 
+@pytest.mark.parametrize(
+    (
+        "formal_result_observed",
+        "materialization_proven",
+        "checkpoint_count",
+        "correlation_matches_intent",
+        "expected",
+        "expected_checkpoint_observations",
+        "checkpoint_identity_matches",
+    ),
+    (
+        (False, True, 1, True, False, 1, True),
+        (True, True, 1, True, True, 0, True),
+        (True, False, 1, True, False, 0, True),
+        (True, True, 2, True, False, 0, True),
+        (True, True, 1, False, False, 0, True),
+        (True, True, 0, True, True, 0, True),
+        (True, True, 1, True, False, 0, False),
+    ),
+)
+def test_committed_implementation_result_settles_checkpoint_once(
+    monkeypatch: pytest.MonkeyPatch,
+    formal_result_observed: bool,
+    materialization_proven: bool,
+    checkpoint_count: int,
+    correlation_matches_intent: bool,
+    expected: bool,
+    expected_checkpoint_observations: int,
+    checkpoint_identity_matches: bool,
+) -> None:
+    """A committed result does not replay checkpoint history or bypass current carrier proof."""
+    source = WorkerRequest(322, "executor", "implement-change")
+    change = "restore-no-work-idle-discovery"
+    materialize = {
+        "issue_number": 322,
+        "operation": "application-materialize",
+        "expected_change": change,
+        "change": change,
+        "branch": "agent/restore-no-work-idle-discovery-continuation-398",
+        "base_sha": _REVISION,
+        "message": "Continue the approved verified slice",
+        "pr_number": 408,
+        "files": [
+            {
+                "path": "openspec/changes/restore-no-work-idle-discovery/tasks.md",
+                "blob_sha": "b" * 40,
+                "expected_sha": "a" * 40,
+            }
+        ],
+    }
+    checkpoint = "\n".join(
+        (
+            "SLICE_CHECKPOINT",
+            f"Workflow: #{322 if checkpoint_identity_matches else 321}",
+            f"Change: {change}",
+            "Action: implement-change",
+            "Role: executor",
+            "Completed-Tasks: 6.1,6.2,6.3,6.4",
+            f"Revision: {_REVISION}",
+            "Application-Correlation: pending-application-binding",
+            "Gate-Evidence: exact-head checks passed",
+            "Remaining-Approved-Boundary: implementation review and merge",
+        )
+    )
+    requested_effects = [
+        {
+            "kind": effects.GITHUB_MUTATION_KIND,
+            "payload_json": json.dumps(materialize, sort_keys=True),
+        },
+        *[
+            {
+                "kind": "issue-comment",
+                "payload_json": json.dumps(
+                    {"issue_number": 322, "body": checkpoint}, sort_keys=True
+                ),
+            }
+            for _ in range(checkpoint_count)
+        ],
+    ]
+    raw = _raw(
+        issue_number=322,
+        action="implement-change",
+        role="executor",
+        change=change,
+        result_kind="ready",
+        requested_effects=requested_effects,
+    )
+    target = (
+        ValidationResourceTarget(
+            repository="royhsu-work/investment-strategy",
+            revision="c" * 40,
+            correlation="effect-request-322",
+            pr_number=408,
+            change=change,
+            branch="agent/restore-no-work-idle-discovery-continuation-398",
+            validation_required=True,
+        )
+        if materialization_proven
+        else None
+    )
+    monkeypatch.setattr(
+        effects,
+        "_fresh_materialization_target",
+        lambda *_args, **_kwargs: target,
+    )
+    observed: list[StagedEffect] = []
+
+    def observe_checkpoint(
+        effect: StagedEffect,
+        *,
+        adapter: GitHubEffectAdapter,
+        materialized_revision: str | None,
+    ) -> bool:
+        del adapter, materialized_revision
+        observed.append(effect)
+        return False
+
+    monkeypatch.setattr(effects, "_bound_checkpoint_postcondition", observe_checkpoint)
+    correlation = effects.formal_application_correlation(
+        source,
+        change=change,
+        result_kind="ready",
+        current_revision=_REVISION,
+        request_comment_id=_REQUEST_COMMENT_ID,
+    )
+    if not correlation_matches_intent:
+        correlation = effects.formal_application_correlation(
+            source,
+            change=change,
+            result_kind="ready",
+            current_revision=_REVISION,
+            request_comment_id=_REQUEST_COMMENT_ID + 1,
+        )
+
+    complete = effects.consequence_postconditions_complete(
+        raw,
+        source=source,
+        repository="royhsu-work/investment-strategy",
+        token=_TEST_TOKEN,
+        current_revision=_REVISION,
+        authorized_change=change,
+        request_comment_id=_REQUEST_COMMENT_ID,
+        accepted_authorization_revision=_REVISION,
+        accepted_intent=True,
+        allow_accepted_successor=True,
+        observed_application_correlation=correlation,
+        formal_result_observed=formal_result_observed,
+    )
+
+    assert complete is expected
+    assert len(observed) == expected_checkpoint_observations
+
+
 def _protocol_decision() -> ActionApplicationDecision:
     source = ActionSource(138, _CHANGE, Action.IMPLEMENT_CHANGE, _REVISION)
     result = BoundedActionResult(

@@ -1215,6 +1215,140 @@ def test_accepted_formal_result_waits_for_consequence_postconditions(
     assert completion.job_id is None
 
 
+def test_committed_ready_releases_fresh_dispatch_without_reopening_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A committed formal READY is monotonic while current carrier proof stays fresh."""
+    source = bridge.WorkerRequest(322, "reviewer", "review-implementation")
+    change = "restore-no-work-idle-discovery"
+    checkpoint = "\n".join(
+        (
+            "SLICE_CHECKPOINT",
+            "Workflow: #322",
+            f"Change: {change}",
+            "Action: implement-change",
+            "Role: executor",
+            "Completed-Tasks: 6.1,6.2,6.3,6.4",
+            f"Revision: {REVISION}",
+            "Application-Correlation: checkpoint-correlation",
+            "Gate-Evidence: current exact-head checks passed",
+            "Remaining-Approved-Boundary: implementation review and merge",
+        )
+    )
+    worker = {
+        "issue_number": 322,
+        "role": "executor",
+        "action": "implement-change",
+        "change": change,
+        "result_kind": "ready",
+        "evidence_ref": "https://github.com/royhsu-work/investment-strategy/pull/408",
+        "result_content": "READY after the verified 6.1-6.4 slice.",
+        "requested_effects": [
+            {
+                "kind": "github-mutation",
+                "payload_json": json.dumps(
+                    {
+                        "issue_number": 322,
+                        "operation": "application-materialize",
+                        "expected_change": change,
+                        "change": change,
+                        "branch": "agent/restore-no-work-idle-discovery-continuation-398",
+                        "base_sha": REVISION,
+                        "pr_number": 408,
+                        "files": [
+                            {
+                                "path": "openspec/changes/restore-no-work-idle-discovery/tasks.md",
+                                "blob_sha": "a" * 40,
+                                "expected_sha": "b" * 40,
+                            }
+                        ],
+                    },
+                    sort_keys=True,
+                ),
+            },
+            {
+                "kind": "issue-comment",
+                "payload_json": json.dumps(
+                    {"issue_number": 322, "body": checkpoint}, sort_keys=True
+                ),
+            },
+        ],
+    }
+    raw = json.dumps(worker, sort_keys=True, separators=(",", ":"))
+    request = {
+        "id": 90,
+        "body": "\n".join(
+            (
+                "EFFECT_REQUEST",
+                f"Authorization-Revision: {REVISION}",
+                f"Worker-Result-B64: {base64.b64encode(raw.encode()).decode('ascii')}",
+            )
+        ),
+        "created_at": "2026-09-18T01:00:00Z",
+        "user": {"login": "owner"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
+    decision = _application_decision_comment(request, comment_id=91)
+    formal = _formal_frontier_comment(
+        100,
+        action="implement-change",
+        role="executor",
+        result="ready",
+        successor="Reviewer / review-implementation",
+        request_id=90,
+        change=change,
+        issue_number=322,
+    )
+    comments = [request, decision, formal]
+    issue = {
+        **_current_source_issue(),
+        "number": 322,
+        "title": "Explore restoring NO_WORK idle discovery after Action-only dispatch",
+        "labels": [
+            {"name": "human:approved"},
+            {"name": "action:review-implementation"},
+        ],
+        "body": f"Change: {change}",
+    }
+    observed: list[bool] = []
+
+    def settled_consequence(_raw: str, **kwargs: object) -> bool:
+        observed.append(kwargs.get("formal_result_observed") is True)
+        return kwargs.get("formal_result_observed") is True
+
+    monkeypatch.setattr(bridge, "consequence_postconditions_complete", settled_consequence)
+    monkeypatch.setattr(
+        bridge,
+        "_application_job",
+        lambda *_args, **_kwargs: bridge.ApplicationCompletion(
+            "NONE", "application-completion-none"
+        ),
+    )
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return comments
+        if path.startswith("issues/322/comments?"):
+            return comments
+        if path == "issues/322":
+            return issue
+        if path.startswith("issues/322/timeline?"):
+            return _frontier_lifecycle([(100, "implement-change", "review-implementation")])
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=read,
+        now=datetime(2026, 9, 18, 3, 0, tzinfo=UTC),
+    )
+
+    assert completion == bridge.ApplicationCompletion("NONE", "application-completion-none")
+    assert observed == [True]
+
+
 def test_completed_formal_result_at_safe_ancestor_is_not_resumed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

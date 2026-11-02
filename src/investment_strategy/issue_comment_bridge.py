@@ -2912,7 +2912,7 @@ def _fresh_completion_postconditions(
     request_comment_id: int,
     observed_application_correlation: str | None = None,
 ) -> bool:
-    """Use the single positive consequence owner for logical commit."""
+    """Reobserve current consequences after the formal result is qualified."""
 
     return consequence_postconditions_complete(
         raw_worker_result,
@@ -2933,6 +2933,9 @@ def _fresh_completion_postconditions(
         allow_accepted_successor=True,
         accepted_intent=True,
         observed_application_correlation=observed_application_correlation,
+        # This helper is called only after the exact existing formal result
+        # and its source-bound correlation have qualified above.
+        formal_result_observed=True,
     )
 
 
