@@ -1208,6 +1208,7 @@ def apply_original_322_recovery_exit(
     decision_digest: str = _ORIGINAL_322_DECISION_DIGEST,
     carrier_pr: int = 340,
     carrier_branch: str = "agent/report-materialization-postcondition-failure",
+    prequalified_accepted_head: str | None = None,
 ) -> ApplicationCompletion:
     """One existing application-owned correction, never a second semantic Action.
 
@@ -1327,20 +1328,50 @@ def apply_original_322_recovery_exit(
             or materialization.pr_number is None
         ):
             raise RuntimeError("accepted implementation PR is incomplete")
-        carrier = qualify_implementation_carrier(
-            repository=repository,
-            token=token,
-            source=source,
-            change=record.change,
-            pr_number=materialization.pr_number,
-            current_revision=current_revision,
-            read=source_read,
-        )
-        if carrier.disposition not in {"QUALIFIED", "HISTORICAL_MERGED"} or not isinstance(
-            carrier.head_sha, str
-        ):
-            raise RuntimeError("accepted implementation PR is not qualified")
-        head_sha = carrier.head_sha
+        if prequalified_accepted_head is not None:
+            # #322's immutable accepted commit is proven by the caller's
+            # seven-file Git witness. A later unrelated main advance is NOT
+            # a reason to rewrite PR #408 before emitting READY: freshness
+            # reconciliation belongs to the subsequent review/merge Action.
+            if (
+                request_id != _EXCEPTION_322_REQUEST
+                or carrier_pr != 408
+                or carrier_branch != _EXCEPTION_322_BRANCH
+                or prequalified_accepted_head != _EXCEPTION_322_HEAD
+                or materialization.pr_number != 408
+                or materialization.branch != _EXCEPTION_322_BRANCH
+            ):
+                raise RuntimeError("accepted exception identity mismatch")
+            pr = source_read(repository, token, "pulls/408")
+            head = pr.get("head") if isinstance(pr, Mapping) else None
+            ref = source_read(repository, token, f"git/ref/heads/{_EXCEPTION_322_BRANCH}")
+            ref_obj = ref.get("object") if isinstance(ref, Mapping) else None
+            if (
+                not isinstance(pr, Mapping)
+                or pr.get("state") != "open"
+                or pr.get("merged") is True
+                or not isinstance(head, Mapping)
+                or head.get("sha") != _EXCEPTION_322_HEAD
+                or not isinstance(ref_obj, Mapping)
+                or ref_obj.get("sha") != _EXCEPTION_322_HEAD
+            ):
+                raise RuntimeError("accepted exception carrier changed")
+            head_sha = _EXCEPTION_322_HEAD
+        else:
+            carrier = qualify_implementation_carrier(
+                repository=repository,
+                token=token,
+                source=source,
+                change=record.change,
+                pr_number=materialization.pr_number,
+                current_revision=current_revision,
+                read=source_read,
+            )
+            if carrier.disposition not in {"QUALIFIED", "HISTORICAL_MERGED"} or not isinstance(
+                carrier.head_sha, str
+            ):
+                raise RuntimeError("accepted implementation PR is not qualified")
+            head_sha = carrier.head_sha
     except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return ApplicationCompletion("INVALID", "recovery-exit-accepted-implementation-unavailable")
     try:
@@ -1617,6 +1648,7 @@ def apply_one_time_322_exception(
         decision_digest=_EXCEPTION_322_DECISION_DIGEST,
         carrier_pr=408,
         carrier_branch=_EXCEPTION_322_BRANCH,
+        prequalified_accepted_head=_EXCEPTION_322_HEAD,
     )
     if result.state != "COMPLETE":
         return result

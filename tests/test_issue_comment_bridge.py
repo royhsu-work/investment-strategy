@@ -5823,6 +5823,7 @@ def test_one_time_322_exception_reuses_existing_owner_without_git_writes(
         applications.append(6568245475)
         assert kwargs["decision_digest"] == bridge._EXCEPTION_322_DECISION_DIGEST
         assert kwargs["carrier_pr"] == 408
+        assert kwargs["prequalified_accepted_head"] == head
         if variant == "lost-before-formal" and len(applications) == 1:
             return bridge.ApplicationCompletion("INVALID", "interrupted")
         assert issue["labels"] in (
@@ -5937,13 +5938,19 @@ def test_one_time_322_exception_requires_native_human_comment(
 
 
 @pytest.mark.parametrize("lost_after_formal_post", [False, True])
+@pytest.mark.parametrize("exception_accepted", [False, True])
 def test_original_322_exit_materializes_once_then_reconciles_without_replay(
     monkeypatch: pytest.MonkeyPatch,
     lost_after_formal_post: bool,
+    exception_accepted: bool,
 ) -> None:
     """The actual application entry never replays the accepted physical plan."""
+    exception_head = "ddd6b3f5a19b879e427aee313334aeab6a43a241"
+    exception_branch = "agent/restore-no-work-idle-discovery-continuation-398"
+    request_id = 6568245475 if exception_accepted else 6019133874
+    expected_head = exception_head if exception_accepted else "e" * 40
     request = _effect_request_comment(
-        comment_id=6019133874,
+        comment_id=request_id,
         created_at="2026-10-07T02:00:00Z",
         action="implement-change",
         role="executor",
@@ -5970,6 +5977,10 @@ def test_original_322_exit_materializes_once_then_reconciles_without_replay(
             return dict(issue)
         if path == "pulls/340":
             return {"head": {"sha": _RECOVERY_R}}
+        if path == "pulls/408" and exception_accepted:
+            return {"state": "open", "merged": False, "head": {"sha": exception_head}}
+        if path == f"git/ref/heads/{exception_branch}" and exception_accepted:
+            return {"object": {"sha": exception_head}}
         raise AssertionError(path)
 
     monkeypatch.setattr(bridge, "_authorization_ancestry", lambda *_args, **_kw: ())
@@ -5981,7 +5992,11 @@ def test_original_322_exit_materializes_once_then_reconciles_without_replay(
     monkeypatch.setattr(
         bridge,
         "find_materialization_payload",
-        lambda *_args: SimpleNamespace(change="restore-no-work-idle-discovery", pr_number=353),
+        lambda *_args: SimpleNamespace(
+            change="restore-no-work-idle-discovery",
+            pr_number=408 if exception_accepted else 353,
+            branch=exception_branch if exception_accepted else "agent/unused",
+        ),
     )
     monkeypatch.setattr(
         bridge,
@@ -5991,7 +6006,7 @@ def test_original_322_exit_materializes_once_then_reconciles_without_replay(
                 disposition="HISTORICAL_MERGED",
                 head_sha="e" * 40,  # Not the maintenance PR #340 HEAD.
             )
-            if kwargs["pr_number"] == 353
+            if not exception_accepted and kwargs["pr_number"] == 353
             else None
         ),
     )
@@ -6033,24 +6048,34 @@ def test_original_322_exit_materializes_once_then_reconciles_without_replay(
         ]
         return object(), bridge.ApplyResult(True, "applied")
 
-    first = bridge.apply_original_322_recovery_exit(
-        "royhsu-work/investment-strategy",
-        "token",
-        current_revision=_RECOVERY_BASE,
-        read=read,
-        effect_apply=apply,
-    )
+    def invoke() -> bridge.ApplicationCompletion:
+        return bridge.apply_original_322_recovery_exit(
+            "royhsu-work/investment-strategy",
+            "token",
+            current_revision=_RECOVERY_BASE,
+            read=read,
+            effect_apply=apply,
+            request_id=request_id,
+            decision_digest=(
+                bridge._EXCEPTION_322_DECISION_DIGEST
+                if exception_accepted
+                else bridge._ORIGINAL_322_DECISION_DIGEST
+            ),
+            carrier_pr=408 if exception_accepted else 340,
+            carrier_branch=(
+                exception_branch
+                if exception_accepted
+                else "agent/report-materialization-postcondition-failure"
+            ),
+            prequalified_accepted_head=exception_head if exception_accepted else None,
+        )
+
+    first = invoke()
     assert first.state == ("INVALID" if lost_after_formal_post else "COMPLETE"), first
     assert requested == [["issue-comment"]]
-    assert "Revision: " + "e" * 40 in str(comments[-1]["body"])
+    assert "Revision: " + expected_head in str(comments[-1]["body"])
     assert "Revision: " + _RECOVERY_R not in str(comments[-1]["body"])
-    second = bridge.apply_original_322_recovery_exit(
-        "royhsu-work/investment-strategy",
-        "token",
-        current_revision=_RECOVERY_BASE,
-        read=read,
-        effect_apply=apply,
-    )
+    second = invoke()
     assert second.state == "COMPLETE", second
     assert requested == ([["issue-comment"], []] if lost_after_formal_post else [["issue-comment"]])
 
