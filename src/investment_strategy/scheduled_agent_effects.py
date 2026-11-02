@@ -3808,14 +3808,17 @@ def consequence_postconditions_complete(
     allow_accepted_successor: bool = False,
     accepted_intent: bool = False,
     observed_application_correlation: str | None = None,
+    formal_result_observed: bool = False,
 ) -> bool:
     """Prove the affirmative consequence contract from fresh repository state.
 
-    The accepted worker envelope is only the immutable semantic input.  This
-    function deliberately does not require its historical repository-control
-    effect list to be replayable.  A legacy envelope remains readable as
-    migration evidence, while the legal transition's consequence spec owns
-    the current commit predicate.
+    The accepted worker envelope is only the immutable semantic input. A
+    caller may set ``formal_result_observed`` only after qualifying the exact
+    durable result and correlation. That post-commit observation still proves
+    the current consequence, but does not replay a non-idempotent checkpoint
+    that the producer already settled at the formal commit boundary. Normal
+    pre-commit effect application leaves this flag false and retains the full
+    checkpoint postcondition.
     """
 
     try:
@@ -3839,6 +3842,29 @@ def consequence_postconditions_complete(
             batch.typed_result.result.kind,
         )
         change = batch.typed_result.change
+        if formal_result_observed:
+            correlation_fields = (
+                ()
+                if observed_application_correlation is None
+                else tuple(observed_application_correlation.split(":"))
+            )
+            expected_correlation_prefix = (
+                "application",
+                str(request_comment_id),
+                str(source.issue_number),
+                change,
+                source.role,
+                source.action,
+                batch.typed_result.result.kind.value,
+            )
+            if (
+                not accepted_intent
+                or _positive_comment_id(request_comment_id) is None
+                or len(correlation_fields) != 8
+                or correlation_fields[:7] != expected_correlation_prefix
+                or not _valid_sha(correlation_fields[7])
+            ):
+                return False
         if spec.evidence_target is EvidenceTarget.ARCHIVE_PR_HEAD:
             return archive_pr_readiness_complete(
                 repository=repository,
@@ -3965,8 +3991,8 @@ def consequence_postconditions_complete(
                 } and not adapter._observe_github_mutation(effect, payload):
                     return False
         # READY and MORE_IMPLEMENTATION_REQUIRED use IMPLEMENTATION_PR_HEAD,
-        # not MATERIALIZED_REVISION. The PR witness cannot silently satisfy
-        # a separately accepted, non-idempotent SLICE_CHECKPOINT comment.
+        # not MATERIALIZED_REVISION. Before formal commit, the PR witness
+        # cannot silently satisfy the separately accepted checkpoint effect.
         checkpoints = tuple(
             effect
             for effect in batch.effects
@@ -3977,6 +4003,44 @@ def consequence_postconditions_complete(
         )
         if len(checkpoints) > 1:
             return False
+        if formal_result_observed and batch.typed_result.action == ModelAction.IMPLEMENT_CHANGE:
+            if checkpoints:
+                if len(materializations) != 1:
+                    return False
+                materialization_payload = _effect_payload(materializations[0])
+                checkpoint_payload = _effect_payload(checkpoints[0])
+                if materialization_payload is None or checkpoint_payload is None:
+                    return False
+                try:
+                    materialization_request = find_materialization_payload(
+                        materialization_payload,
+                        source,
+                    )
+                except ValueError:
+                    return False
+                checkpoint_body = checkpoint_payload.get("body")
+                if (
+                    materialization_request is None
+                    or not isinstance(checkpoint_body, str)
+                    or _slice_checkpoint_completed_task_ids(
+                        checkpoint_body,
+                        source=source,
+                        change=change,
+                        request=materialization_request,
+                    )
+                    is None
+                ):
+                    return False
+            # The already-qualified formal result is the commit boundary for
+            # this immutable intent. If it contains a checkpoint effect, the
+            # formal result settles that history once; a later process must
+            # not replay its non-idempotent comment. Intents without a
+            # checkpoint have no such obligation. Current carrier and
+            # materialization checks above still run first.
+            return batch.typed_result.result.kind in {
+                ResultKind.READY,
+                ResultKind.MORE_IMPLEMENTATION_REQUIRED,
+            }
         return all(
             _bound_checkpoint_postcondition(
                 effect,
