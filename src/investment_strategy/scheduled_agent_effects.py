@@ -48,6 +48,9 @@ from investment_strategy.scheduled_agent_application_materialization import (
     observe_materialization_target,
     prove_materialization,
 )
+from investment_strategy.scheduled_agent_archive_freshness import (
+    archive_branch_matches_current_change,
+)
 from investment_strategy.scheduled_agent_carrier import (
     CarrierPlan,
     CarrierRequired,
@@ -994,6 +997,15 @@ def archive_pr_readiness_complete(
     branch_object = branch_ref.get("object") if isinstance(branch_ref, Mapping) else None
     branch_sha = branch_object.get("sha") if isinstance(branch_object, Mapping) else None
     if not _valid_sha(branch_sha):
+        return False
+    if not archive_branch_matches_current_change(
+        _github_json,
+        repository=repository,
+        token=token,
+        change=change,
+        source_revision=current_revision,
+        archive_revision=cast(str, branch_sha),
+    ):
         return False
     owner = repository.split("/", 1)[0] if "/" in repository else ""
     query = (

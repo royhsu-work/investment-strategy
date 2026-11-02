@@ -112,6 +112,16 @@ Human authority for this additional delivery obligation: #322 comment 6530126961
 - [x] 5.5 REFACTOR/VERIFY: exercise full regression, Ruff, mypy, exact-head Python Quality and strict OpenSpec for the slice; preserve WIP=1, one Action/wake, NO_WORK idle parent, no replay/no rewind, and failure evidence. Do not mark event-run or later dispatch acceptance complete on fixture-only results.
 
 
+## 6. Post-merge archive-freshness correction — pending Executor slice
+
+Current source: #322 `finalize-change / SPEC_BLOCKER` and subsequent Executor `implement-change / SPEC_BLOCKER` against main `328843882a2aaae51b6bbe3274d70882e94d5569`. The earlier 54 checked tasks remain completed historical work. This new slice records the actual unfinished repair, not a replay or synthetic checkbox for the previous implementation. The immutable PR #398 and its merged task checkpoint cannot authorize new source writes; a fresh Lead-authored task revision, independent OpenSpec review and one qualified open continuation carrier are prerequisites for this Executor slice.
+
+- [x] 6.1 **RED:** reproduce the stale archive branch being incorrectly reused after the Change gained tasks 5.1–5.5 and main advanced; also exercise historical merged/checkpoint rejection for a new multi-file implementation manifest. Prove that an unchanged historical task-only reconciliation stays valid and that a new implementation write must instead use the reviewed pending slice and a qualified open continuation.
+- [x] 6.2 **GREEN:** correct the existing OpenSpec archive producer to regenerate the exact current approved Change from fresh main, preserving the branch's unrelated safe contents only where proven; reject ambiguous, stale, conflicting and concurrent branch state before any consequential write. Do not force, delete, or recreate the historical merged carrier.
+- [x] 6.3 **GREEN:** correct the application-owned Archive PR/source-provenance guard so an obsolete archive branch cannot be accepted merely because its Archive PR is missing. Preserve exact source ancestry, byte-identical current Change contents and qualified carrier postconditions; reuse the existing canonical materialization/qualification owners for the implementation continuation.
+- [x] 6.4 **REFACTOR/VERIFY:** exercise production-shaped fixture tests of the post-merge Lead task revision, exact reviewed pending-task state, open deterministic continuation, one Executor task/checkpoint plus source/test materialization, and safe recovery/Archive preparation. Verify no duplicate PR/commit/ref, no historical checkpoint fabrication, no stale write or route rewind; run the full pytest, Ruff, mypy, workflow/static and strict OpenSpec gates on the exact candidate revision. Actual independent reviews, merge and Archive remain separate lifecycle gates, not task markers.
+
+
 ## Native production evidence (not implementation task markers)
 
 - Execute the former 0.25 physical Chat connector operation from an actual native Lead Workflow wake, with exact plan, fresh precondition/postcondition reads and durable `APPLICATION_CARRIER_OUTCOME` evidence; no fake connector run counts.

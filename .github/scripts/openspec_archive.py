@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 from typing import NoReturn
@@ -15,6 +16,7 @@ GENERATED_PURPOSE = re.compile(
 
 ARCHIVE_REQUEST_ACTION = "finalize-change"
 _ARCHIVE_REVISION = re.compile(r"^[0-9a-f]{40}$")
+_ARCHIVE_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def _archive_request_key(issue_number: str, revision: str) -> str:
@@ -435,6 +437,92 @@ def _purpose_preserve(args: argparse.Namespace) -> None:
             _fail(f"Canonical Purpose placeholder remains for {capability}")
 
 
+def _git(*arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(  # noqa: S603 - fixed git executable and validated revisions
+        ["git", *arguments],  # noqa: S607 - standard git CLI on the Actions runner
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if check and result.returncode:
+        _fail(f"Archive git evidence unavailable: git {arguments[0]}: {result.stderr.strip()}")
+    return result
+
+
+def _git_tree(revision: str, path: str) -> str | None:
+    result = _git("rev-parse", "--verify", f"{revision}:{path}", check=False)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def _archive_roots(branch: str, change: str) -> set[str]:
+    paths = _git("ls-tree", "-r", "--name-only", branch, "--", "openspec/changes/archive").stdout
+    return {
+        "/".join(path.split("/")[:4])
+        for path in paths.splitlines()
+        if len(path.split("/")) >= 5
+        and path.startswith("openspec/changes/archive/")
+        and path.split("/")[3].endswith(f"-{change}")
+        and _ARCHIVE_DATE.fullmatch(path.split("/")[3][:10])
+    }
+
+
+def _archived_snapshot_matches(source: str, branch: str, change: str, archive_root: str) -> bool:
+    prefix = f"openspec/changes/{change}"
+    source_tree = _git_tree(source, prefix)
+    if source_tree is None:
+        _fail(f"Approved source has no active OpenSpec change: {change}")
+    if _git_tree(branch, prefix) is not None:
+        return False
+
+    if _git_tree(branch, archive_root) != source_tree:
+        return False
+
+    delta = _git("ls-tree", "-r", "--name-only", source, "--", f"{prefix}/specs").stdout
+    for path in delta.splitlines():
+        parts = path.split("/")
+        if (
+            len(parts) == 6
+            and parts[-1] == "spec.md"
+            and _git_tree(branch, f"openspec/specs/{parts[4]}/spec.md") is None
+        ):
+            return False
+    return True
+
+
+def _branch_state(args: argparse.Namespace) -> None:
+    """Reuse only a current archive; otherwise regenerate with old history preserved."""
+    change = _validate_change_name(args.change)
+    source = args.source_sha
+    branch = args.branch_sha
+    if _ARCHIVE_REVISION.fullmatch(source) is None:
+        _fail("Archive source revision is invalid")
+    if _git("cat-file", "-e", f"{source}^{{commit}}", check=False).returncode:
+        _fail("Archive source commit does not exist locally")
+    if not branch:
+        if _git_tree(source, f"openspec/changes/{change}") is None:
+            _fail(f"Approved source has no active OpenSpec change: {change}")
+        _emit(branch_mode="new")
+        return
+    if _ARCHIVE_REVISION.fullmatch(branch) is None:
+        _fail("Existing archive branch revision is invalid")
+    if _git("cat-file", "-e", f"{branch}^{{commit}}", check=False).returncode:
+        _fail("Existing archive branch commit does not exist locally")
+    if _git("merge-base", source, branch, check=False).returncode:
+        _fail("Existing archive branch has no common history with approved source")
+    archive_roots = _archive_roots(branch, change)
+    if len(archive_roots) != 1:
+        _fail("Existing archive branch has missing or ambiguous Change archive roots")
+    is_current_descendant = (
+        _git("merge-base", "--is-ancestor", source, branch, check=False).returncode == 0
+    )
+    if is_current_descendant and _archived_snapshot_matches(
+        source, branch, change, next(iter(archive_roots))
+    ):
+        _emit(branch_mode="reuse")
+        return
+    _emit(branch_mode="regenerate")
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="OpenSpec archive workflow helper")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -478,6 +566,12 @@ def _parser() -> argparse.ArgumentParser:
     purpose_preserve.add_argument("--snapshot-file", required=True)
     purpose_preserve.add_argument("--specs-root", default="openspec/specs")
     purpose_preserve.set_defaults(handler=_purpose_preserve)
+
+    branch_state = subparsers.add_parser("branch-state")
+    branch_state.add_argument("--change", required=True)
+    branch_state.add_argument("--source-sha", required=True)
+    branch_state.add_argument("--branch-sha", default="")
+    branch_state.set_defaults(handler=_branch_state)
 
     return parser
 

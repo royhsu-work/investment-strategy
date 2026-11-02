@@ -211,25 +211,43 @@ jobs:
         run: |
           target_branch="agent/archive-$CHANGE"
           git check-ref-format --branch "$target_branch"
-          if git ls-remote --exit-code --heads origin "refs/heads/$target_branch" >/dev/null 2>&1; then
+          source_sha="$(git rev-parse HEAD)"
+          branch_sha=""
+          remote_line="$(git ls-remote --heads origin "refs/heads/$target_branch")"
+          if [[ -n "$remote_line" ]]; then
             git fetch origin "refs/heads/$target_branch:refs/remotes/origin/$target_branch"
-            git switch --detach "refs/remotes/origin/$target_branch"
-            existing="true"
-          else
+            branch_sha="$(git rev-parse "refs/remotes/origin/$target_branch")"
+          fi
+          state="$(python .github/scripts/openspec_archive.py branch-state \
+            --change "$CHANGE" \
+            --source-sha "$source_sha" \
+            --branch-sha "$branch_sha")"
+          echo "$state" >> "$GITHUB_OUTPUT"
+          branch_mode="${state#branch_mode=}"
+          if [[ "$branch_mode" == "reuse" ]]; then
+            git switch --detach "$branch_sha"
+          elif [[ "$branch_mode" == "regenerate" ]]; then
             git switch -c "$target_branch"
-            existing="false"
+            # The old archive commit remains a parent. This is a forward-only
+            # reconciliation from the exact approved source, never a rewind.
+            git merge --no-ff --no-commit -s ours "$branch_sha"
+          elif [[ "$branch_mode" == "new" ]]; then
+            git switch -c "$target_branch"
+          else
+            echo "::error::Unrecognized archive branch state: $state"
+            exit 1
           fi
           echo "target_branch=$target_branch" >> "$GITHUB_OUTPUT"
-          echo "existing=$existing" >> "$GITHUB_OUTPUT"
+          echo "observed_branch_sha=$branch_sha" >> "$GITHUB_OUTPUT"
 
       - name: Archive change with OpenSpec CLI
-        if: steps.completion.outputs.should_archive == 'true' && steps.branch.outputs.existing == 'false'
+        if: steps.completion.outputs.should_archive == 'true' && steps.branch.outputs.branch_mode != 'reuse'
         env:
           CHANGE: ${{ steps.classify.outputs.change }}
         run: openspec archive "$CHANGE" --yes
 
       - name: Preserve and verify canonical Purpose
-        if: steps.completion.outputs.should_archive == 'true' && steps.branch.outputs.existing == 'false'
+        if: steps.completion.outputs.should_archive == 'true' && steps.branch.outputs.branch_mode != 'reuse'
         run: |
           python .github/scripts/openspec_archive.py purpose-preserve \
             --snapshot-file "$RUNNER_TEMP/openspec-purpose.json"
@@ -246,9 +264,10 @@ jobs:
           find openspec/changes/archive -maxdepth 1 -type d -name "*-$CHANGE" -print -quit | grep -q .
 
       - name: Commit and push archive branch
-        if: steps.completion.outputs.should_archive == 'true' && steps.branch.outputs.existing == 'false'
+        if: steps.completion.outputs.should_archive == 'true' && steps.branch.outputs.branch_mode != 'reuse'
         env:
           CHANGE: ${{ steps.classify.outputs.change }}
+          OBSERVED_BRANCH_SHA: ${{ steps.branch.outputs.observed_branch_sha }}
         shell: bash
         run: |
           target_branch="agent/archive-$CHANGE"
@@ -257,6 +276,12 @@ jobs:
           git add -A
           git diff --cached --quiet && { echo "No archive changes produced"; exit 1; }
           git commit -m "chore(openspec): archive $CHANGE"
+          current_line="$(git ls-remote --heads origin "refs/heads/$target_branch")"
+          current_branch_sha="${current_line%%$'\t'*}"
+          if [[ "$current_branch_sha" != "$OBSERVED_BRANCH_SHA" ]]; then
+            echo "::error::Archive branch changed during generation; no push attempted"
+            exit 1
+          fi
           git push -u origin HEAD:"$target_branch"
 
       - name: Prepare non-closing Archive PR linkage

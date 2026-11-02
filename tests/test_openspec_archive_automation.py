@@ -9,10 +9,10 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / ".github/scripts/openspec_archive.py"
 
 
-def _run(*args: str) -> subprocess.CompletedProcess[str]:
+def _run(*args: str, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]:
     return subprocess.run(  # noqa: S603 - fixed interpreter and repository-owned script
         [sys.executable, str(SCRIPT), *args],
-        cwd=ROOT,
+        cwd=cwd,
         check=False,
         capture_output=True,
         text=True,
@@ -452,7 +452,7 @@ def test_archive_workflow_keeps_reviewed_lifecycle_guards() -> None:
         "gh api --paginate",
         "openspec list --json",
         "openspec validate",
-        "git ls-remote --exit-code --heads",
+        "git ls-remote --heads",
         "openspec archive",
         "agent/archive-$CHANGE",
         'git push -u origin HEAD:"$target_branch"',
@@ -469,6 +469,116 @@ def test_archive_workflow_keeps_reviewed_lifecycle_guards() -> None:
     assert '--issue-number "$REQUEST_ISSUE"' not in workflow
     assert '"$issue_number" != "$REQUEST_ISSUE"' in workflow
     assert "printf 'issue_number=%s\\n' \"$REQUEST_ISSUE\"" in workflow
+
+
+def test_existing_archive_ref_never_skips_archive_freshness_check() -> None:
+    workflow = (ROOT / ".github/workflows/openspec-archive.yml").read_text(encoding="utf-8")
+    assert "steps.branch.outputs.existing == 'false'" not in workflow
+    assert "branch-state" in workflow
+    assert "git merge --no-ff --no-commit -s ours" in workflow
+    assert "git push --force" not in workflow
+    assert "Archive branch changed during generation" in workflow
+
+
+def test_stale_archive_branch_regenerates_forward_only_and_then_reuses(
+    tmp_path: Path,
+) -> None:
+    """Real Git parents and archived task blobs survive stale-ref reconciliation."""
+
+    def git(*args: str) -> str:
+        return subprocess.run(  # noqa: S603 - fixed git fixture command
+            ["git", *args],  # noqa: S607 - local isolated fixture repository
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    git("init", "-b", "main")
+    git("config", "user.name", "Archive Test")
+    git("config", "user.email", "archive-test@example.invalid")
+    active = tmp_path / "openspec/changes/restore-no-work-idle-discovery"
+    active.mkdir(parents=True)
+    (active / "tasks.md").write_text("- [x] old tasks\n", encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-m", "original source")
+    git("switch", "-c", "old-archive")
+    archived = tmp_path / "openspec/changes/archive/2026-10-23-restore-no-work-idle-discovery"
+    archived.parent.mkdir(parents=True)
+    active.rename(archived)
+    git("add", "-A")
+    git("commit", "-m", "old archive")
+    old_sha = git("rev-parse", "HEAD")
+
+    git("switch", "main")
+    (active / "tasks.md").write_text(
+        "- [x] old tasks\n- [x] approved runtime shard 5.5\n", encoding="utf-8"
+    )
+    git("add", "-A")
+    git("commit", "-m", "approved expanded tasks")
+    approved_sha = git("rev-parse", "HEAD")
+    stale = _run(
+        "branch-state",
+        "--change",
+        "restore-no-work-idle-discovery",
+        "--source-sha",
+        approved_sha,
+        "--branch-sha",
+        old_sha,
+        cwd=tmp_path,
+    )
+    assert stale.returncode == 0, stale.stderr
+    assert stale.stdout.strip() == "branch_mode=regenerate"
+
+    git("switch", "-c", "agent/archive-restore-no-work-idle-discovery")
+    git("merge", "--no-ff", "--no-commit", "-s", "ours", old_sha)
+    target = tmp_path / "openspec/changes/archive/2026-11-01-restore-no-work-idle-discovery"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    active.rename(target)
+    git("add", "-A")
+    git("commit", "-m", "regenerated current archive")
+    archive_sha = git("rev-parse", "HEAD")
+    assert git("rev-list", "--parents", "-n", "1", archive_sha).split() == [
+        archive_sha,
+        approved_sha,
+        old_sha,
+    ]
+    assert git("show", f"{archive_sha}:{target.relative_to(tmp_path)}/tasks.md").endswith(
+        "approved runtime shard 5.5"
+    )
+    reuse = _run(
+        "branch-state",
+        "--change",
+        "restore-no-work-idle-discovery",
+        "--source-sha",
+        approved_sha,
+        "--branch-sha",
+        archive_sha,
+        cwd=tmp_path,
+    )
+    assert reuse.returncode == 0, reuse.stderr
+    assert reuse.stdout.strip() == "branch_mode=reuse"
+
+    # Two archival dates on the same ref are contradictory provenance, not
+    # permission to choose either date or silently rewrite an ambiguous ref.
+    second = tmp_path / "openspec/changes/archive/2026-10-23-restore-no-work-idle-discovery"
+    second.mkdir()
+    (second / "tasks.md").write_text("- [x] old tasks\n", encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-m", "ambiguous second archive root")
+    ambiguous_sha = git("rev-parse", "HEAD")
+    ambiguous = _run(
+        "branch-state",
+        "--change",
+        "restore-no-work-idle-discovery",
+        "--source-sha",
+        approved_sha,
+        "--branch-sha",
+        ambiguous_sha,
+        cwd=tmp_path,
+    )
+    assert ambiguous.returncode != 0
+    assert "ambiguous Change archive roots" in ambiguous.stderr
 
 
 def test_readme_documents_state_driven_archive_contract() -> None:
