@@ -33,6 +33,9 @@ from investment_strategy.scheduled_agent_application_materialization import (
     observe_materialization_target,
     prove_materialization,
 )
+from investment_strategy.scheduled_agent_archive_freshness import (
+    archive_branch_matches_current_change,
+)
 from investment_strategy.scheduled_agent_carrier import (
     CarrierRequired,
     carrier_plan_document,
@@ -2081,6 +2084,15 @@ def _fresh_archive_state(
     branch_sha = _fresh_branch_head(repository, token, branch)
     if branch_sha is None:
         return "missing-branch", branch, None
+    if not archive_branch_matches_current_change(
+        _github_json,
+        repository=repository,
+        token=token,
+        change=change,
+        source_revision=current_revision,
+        archive_revision=branch_sha,
+    ):
+        return "conflict", branch, branch_sha
     candidates = _fresh_pull_requests(
         repository,
         token,
