@@ -1978,6 +1978,16 @@ def _proof_overlay(
         raise RuntimeError("materialization reconciliation overwrites unrelated content")
 
 
+def _effective_materialization_paths(request: MaterializationRequest) -> frozenset[str]:
+    """Paths that the accepted manifest actually requires Git to change.
+
+    An entry whose desired blob already equals its proven preimage remains
+    part of the immutable content contract, but it cannot appear in a Git diff.
+    """
+
+    return frozenset(file.path for file in request.files if file.blob_sha != file.expected_sha)
+
+
 def _proof_witness(
     request: MaterializationRequest,
     *,
@@ -2030,7 +2040,7 @@ def _proof_witness(
                 raise RuntimeError("materialization accepted commit has wrong desired blobs")
             if len(parents) == 1:
                 delta = _proof_ancestry(repository, token, parents[0], sha)
-                if delta != desired_paths:
+                if delta != _effective_materialization_paths(request):
                     raise RuntimeError("materialization accepted mutation changes unrelated paths")
             else:
                 _proof_overlay(
@@ -2109,7 +2119,6 @@ def _accepted_preimage_projection(
     )
     if comparison.get("behind_by") != 0:
         return request
-    desired_paths = frozenset(file.path for file in request.files)
     candidates: list[MaterializationRequest] = []
     for revision in commits:
         commit, parents = _proof_commit(repository, token, revision)
@@ -2117,14 +2126,16 @@ def _accepted_preimage_projection(
             continue
         if commit.get("message") != request.message:
             continue
-        if _proof_ancestry(repository, token, request.base_sha, revision) != desired_paths:
-            continue
         projected = _request_with_observed_preimage(
             request,
             repository=repository,
             token=token,
             revision=request.base_sha,
         )
+        if _proof_ancestry(
+            repository, token, request.base_sha, revision
+        ) != _effective_materialization_paths(projected):
+            continue
         if _manifest_is_current(
             projected,
             repository=repository,

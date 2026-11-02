@@ -2687,6 +2687,87 @@ def test_accepted_write_commit_recovers_exact_parent_preimage(
     assert proof_git.mutations == []
 
 
+def test_accepted_seven_file_manifest_proves_six_effective_changes(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reviewed, unchanged task checkpoint is not a seventh Git path delta."""
+
+    proof_git.source = WorkerRequest(322, "executor", "implement-change")
+    proof_git.routing = "implement-change"
+    monkeypatch.setattr(
+        materialization, "_qualified_implementation_decision", lambda *_args, **_kwargs: None
+    )
+    tasks_path = f"openspec/changes/{_CHANGE}/tasks.md"
+    unchanged_tasks = "- [x] Previously accepted task\n"
+    base = proof_git.commit({tasks_path: unchanged_tasks}, "Earlier checkpoint", (proof_git.base,))
+    proof_git.base = base
+    proof_git.authorization = base
+    proof_git.main = base
+    proof_git.set_head(base)
+
+    changed_contents = {
+        "src/investment_strategy/scheduled_agent_application_bridge.py": "accepted A",
+        "src/investment_strategy/scheduled_agent_effects.py": "accepted B",
+        "src/investment_strategy/scheduled_agent_merge_acceptance.py": "accepted C",
+        "src/investment_strategy/scheduled_agent_validation_resource.py": "accepted D",
+        "tests/test_scheduled_agent_application_bridge.py": "test A",
+        "tests/test_scheduled_agent_effects.py": "test B",
+    }
+    payload = proof_git.payload()
+    payload["files"] = [
+        {
+            "path": path,
+            "blob_sha": proof_git.blob(content),
+            "expected_sha": proof_git.entries(base).get(path, {}).get("sha"),
+        }
+        for path, content in changed_contents.items()
+    ]
+    tasks_sha = proof_git.entries(base)[tasks_path]["sha"]
+    cast(list[dict[str, object]], payload["files"]).append(
+        {"path": tasks_path, "blob_sha": tasks_sha, "expected_sha": tasks_sha}
+    )
+
+    accepted = proof_git.commit(changed_contents, proof_git.message, (base,))
+    proof_git.set_head(accepted)
+    proof = _prove_payload_git(proof_git, payload, accepted_intent=True)
+
+    assert proof.disposition == "COMPLETE", proof
+    assert proof.witness is not None and proof.witness.revision == accepted
+    assert proof_git.mutations == []
+
+
+def test_accepted_noop_manifest_still_rejects_unrelated_commit_delta(
+    proof_git: _ProofGitRepository,
+) -> None:
+    """No-op tolerance must not admit any path outside effective accepted writes."""
+
+    tasks_path = f"openspec/changes/{_CHANGE}/tasks.md"
+    base = proof_git.commit({tasks_path: "unchanged"}, "Earlier checkpoint", (proof_git.base,))
+    proof_git.base = base
+    proof_git.authorization = base
+    proof_git.main = base
+    proof_git.set_head(base)
+
+    payload = proof_git.payload()
+    tasks_sha = proof_git.entries(base)[tasks_path]["sha"]
+    cast(list[dict[str, object]], payload["files"]).append(
+        {"path": tasks_path, "blob_sha": tasks_sha, "expected_sha": tasks_sha}
+    )
+    accepted = proof_git.commit(
+        {proof_git.path: "accepted content", "unrelated.txt": "unapproved"},
+        proof_git.message,
+        (base,),
+    )
+    proof_git.set_head(accepted)
+
+    proof = _prove_payload_git(proof_git, payload, accepted_intent=True)
+
+    assert proof.disposition == "CONTRADICTORY", proof
+    assert proof.witness is None
+    assert proof_git.mutations == []
+
+
 def test_missing_first_branch_recovers_after_disjoint_default_advance(
     proof_git: _ProofGitRepository,
 ) -> None:
