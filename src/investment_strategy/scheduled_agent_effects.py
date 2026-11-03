@@ -3707,6 +3707,7 @@ def _fresh_materialization_target(
     current_revision: str,
     allow_pending_continuation: bool,
     accepted_successor_routing: tuple[str, str] | None = None,
+    committed_formal_result: bool = False,
 ) -> ValidationResourceTarget | None:
     """Reconstruct one exact current materialization target from GitHub truth."""
 
@@ -3728,6 +3729,7 @@ def _fresh_materialization_target(
                 accepted_intent=adapter.accepted_intent,
             )
         else:
+            extra = {"committed_formal_result": True} if committed_formal_result else {}
             target = observe_materialization_target(
                 payload,
                 source,
@@ -3739,6 +3741,7 @@ def _fresh_materialization_target(
                 allow_pending_continuation=allow_pending_continuation,
                 accepted_successor_routing=accepted_successor_routing,
                 accepted_intent=adapter.accepted_intent,
+                **extra,
             )
     except (HTTPError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
         return None
@@ -3973,6 +3976,10 @@ def consequence_postconditions_complete(
                         current_revision=current_revision,
                         allow_pending_continuation=allow_pending_continuation,
                         accepted_successor_routing=accepted_successor_routing,
+                        committed_formal_result=(
+                            formal_result_observed
+                            and batch.typed_result.action == ModelAction.IMPLEMENT_CHANGE
+                        ),
                     )
                 )
                 if target is None:

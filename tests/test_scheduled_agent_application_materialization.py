@@ -2437,6 +2437,139 @@ def test_canonical_consumers_share_proof_across_evolution_and_successor(
     assert proof_git.mutations == []
 
 
+def test_committed_executor_witness_is_not_reopened_by_later_default_overlap(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real Git graph: a committed implementation is not an unmerged PR write request."""
+
+    proof_git.source = WorkerRequest(322, "executor", "implement-change")
+    proof_git.path = "src/investment_strategy/scheduled_agent_effects.py"
+    proof_git.branch = f"agent/{_CHANGE}"
+    proof_git.base = proof_git.commit(
+        {proof_git.path: "preimage"}, "Executor base", (proof_git.base,)
+    )
+    proof_git.authorization = proof_git.base
+    proof_git.main = proof_git.base
+    proof_git.desired = proof_git.blob("accepted implementation")
+    proof_git.prs.clear()
+    proof_git.install_pr(324, proof_git.branch, proof_git.base)
+    accepted = proof_git.commit(
+        {proof_git.path: "accepted implementation"}, proof_git.message, (proof_git.base,)
+    )
+    proof_git.set_head(accepted)
+    proof_git.main = proof_git.commit(
+        {proof_git.path: "later Application repair"}, "Fix completion", (proof_git.base,)
+    )
+    proof_git.routing = "review-implementation"
+    # This test targets the materialization owner, not the independent
+    # implementation carrier review gate.
+    monkeypatch.setattr(
+        materialization, "_qualified_implementation_decision", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_k: proof_git.prs[0])
+
+    def prove(*, committed: bool) -> materialization.MaterializationProof:
+        return materialization.prove_materialization(
+            proof_git.payload(),
+            proof_git.source,
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            default_branch="main",
+            accepted_authorization_revision=proof_git.authorization,
+            allow_pending_continuation=True,
+            accepted_successor_routing=("reviewer", "review-implementation"),
+            accepted_intent=True,
+            committed_formal_result=committed,
+        )
+
+    precommit = prove(committed=False)
+    assert precommit.disposition == "CONTRADICTORY", precommit
+    assert precommit.reason == "materialization required ancestry is broken"
+    completed = prove(committed=True)
+    assert completed.disposition == "COMPLETE", completed
+    assert completed.witness is not None and completed.witness.revision == accepted
+    assert completed.target is not None and completed.target.revision == accepted
+    assert proof_git.mutations == []
+
+    # Exercise the actual Application consequence owner, including the
+    # already-qualified formal-result correlation and bounded checkpoint.
+    # Neither the consequence function nor the materialization observer is stubbed.
+    from investment_strategy import scheduled_agent_effects as effects
+
+    monkeypatch.setattr(effects, "_github_json", proof_git.api)
+    checkpoint = "\n".join(
+        (
+            "SLICE_CHECKPOINT",
+            "Workflow: #322",
+            f"Change: {_CHANGE}",
+            "Action: implement-change",
+            "Role: executor",
+            "Completed-Tasks: 6.1,6.2",
+            f"Revision: {proof_git.base}",
+            "Application-Correlation: settled-correlation",
+            "Gate-Evidence: exact-head validation",
+            "Remaining-Approved-Boundary: implementation review and merge",
+        )
+    )
+    raw = json.dumps(
+        {
+            "issue_number": 322,
+            "role": "executor",
+            "action": "implement-change",
+            "change": _CHANGE,
+            "result_kind": "ready",
+            "evidence_ref": "accepted-implementation",
+            "result_content": "Completed implementation slice.",
+            "requested_effects": [
+                {"kind": "github-mutation", "payload_json": json.dumps(proof_git.payload())},
+                {
+                    "kind": "issue-comment",
+                    "payload_json": json.dumps({"issue_number": 322, "body": checkpoint}),
+                },
+            ],
+        }
+    )
+    correlation = effects.formal_application_correlation(
+        proof_git.source,
+        change=_CHANGE,
+        result_kind="ready",
+        current_revision=proof_git.main,
+        request_comment_id=123,
+    )
+
+    def consequence(*, committed: bool, observed_correlation: str) -> bool:
+        return effects.consequence_postconditions_complete(
+            raw,
+            source=proof_git.source,
+            repository=proof_git.repository,
+            token=_TOKEN,
+            current_revision=proof_git.main,
+            authorized_change=_CHANGE,
+            request_comment_id=123,
+            accepted_authorization_revision=proof_git.authorization,
+            allow_pending_continuation=True,
+            allow_accepted_successor=True,
+            accepted_intent=True,
+            observed_application_correlation=observed_correlation,
+            formal_result_observed=committed,
+        )
+
+    assert not consequence(committed=False, observed_correlation=correlation)
+    assert consequence(committed=True, observed_correlation=correlation)
+    assert not consequence(committed=True, observed_correlation=correlation + "-stale")
+    assert proof_git.mutations == []
+
+    # The same mode cannot turn a different current carrier into the accepted result.
+    forged = proof_git.commit(
+        {proof_git.path: "unaccepted content"}, "Unaccepted overwrite", (proof_git.base,)
+    )
+    proof_git.set_head(forged)
+    assert prove(committed=True).disposition != "COMPLETE"
+    assert proof_git.mutations == []
+
+
 @pytest.mark.parametrize(
     "failure",
     [
