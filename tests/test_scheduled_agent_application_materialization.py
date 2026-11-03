@@ -92,6 +92,90 @@ def test_existing_change_materialization_requires_current_pr_and_preserves_expec
     assert materialization_requires_validation(request, source)
 
 
+def test_formally_retired_change_can_request_application_owned_fresh_main_carrier() -> None:
+    source = WorkerRequest(169, "executor", "implement-change")
+    payload = _payload(expected_change=_CHANGE)
+    payload["branch"] = f"agent/{_CHANGE}-supersedes-408"
+    payload["pr_number"] = None
+    payload["base_sha"] = _BASE
+    request = parse_materialization_payload(payload, source)
+
+    assert request.pr_number is None
+    assert request.branch == payload["branch"]
+    assert request.base_sha == _BASE
+
+
+@pytest.mark.parametrize("formal", [True, False])
+def test_supersession_materializer_creates_only_one_fresh_main_child_and_requires_pr_carrier(
+    monkeypatch: pytest.MonkeyPatch, formal: bool
+) -> None:
+    source = WorkerRequest(169, "executor", "implement-change")
+    raw = _payload(expected_change=_CHANGE)
+    raw["branch"] = f"agent/{_CHANGE}-supersedes-408"
+    raw["pr_number"] = None
+    request = parse_materialization_payload(raw, source)
+    created_head = "c" * 40
+    refs: dict[str, str] = {}
+    writes: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        materialization,
+        "qualify_supersession_branch",
+        lambda **_kwargs: formal,
+    )
+    monkeypatch.setattr(
+        materialization,
+        "_branch_head",
+        lambda *_args: refs.get(request.branch),
+    )
+    monkeypatch.setattr(materialization, "_create_revision", lambda *_args, **_kwargs: created_head)
+    monkeypatch.setattr(materialization, "_verify_revision", lambda *_args: None)
+    monkeypatch.setattr(materialization, "_matching_prs", lambda *_args: [])
+
+    def fake_github_json(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: object = None,
+    ) -> object:
+        writes.append((path, payload))
+        if path != "git/refs" or method != "POST" or not isinstance(payload, dict):
+            raise AssertionError(path)
+        assert payload == {"ref": f"refs/heads/{request.branch}", "sha": created_head}
+        refs[request.branch] = created_head
+        return {"ref": request.branch}
+
+    monkeypatch.setattr(materialization, "_github_json", fake_github_json)
+    if formal:
+        with pytest.raises(CarrierRequired) as raised:
+            materialization._ensure_new_carrier(
+                request,
+                source,
+                repository="owner/repo",
+                token=_TOKEN,
+                default_branch="main",
+                authorization_revision=_BASE,
+                supersession=True,
+            )
+        assert raised.value.plan.operation == "pull-request-create"
+        assert raised.value.plan.expected["base_sha"] == _BASE
+        assert refs == {request.branch: created_head}
+        assert len(writes) == 1
+    else:
+        with pytest.raises(RuntimeError, match="no formal retirement authority"):
+            materialization._ensure_new_carrier(
+                request,
+                source,
+                repository="owner/repo",
+                token=_TOKEN,
+                default_branch="main",
+                authorization_revision=_BASE,
+                supersession=True,
+            )
+        assert not writes
+
+
 @pytest.mark.parametrize(
     ("failure", "expected_error"),
     (

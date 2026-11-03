@@ -21,6 +21,7 @@ from investment_strategy.scheduled_agent_application_carrier import (
     _claimed_open_carriers,
     _historical_carriers,
     qualify_implementation_carrier,
+    qualify_supersession_branch,
 )
 from investment_strategy.scheduled_agent_carrier import (
     CarrierPlan,
@@ -245,7 +246,17 @@ def parse_materialization_payload(
         if any(not file.path.startswith(prefix) for file in files):
             raise ValueError("first Change materialization path is outside the Change")
     else:
-        if normalized_pr is None:
+        supersession = bool(
+            normalized_pr is None
+            and source.role == "executor"
+            and source.action == _IMPLEMENTATION_ACTION
+            and re.fullmatch(
+                rf"agent/{re.escape(cast(str, change))}-supersedes-[1-9][0-9]*",
+                cast(str, branch),
+            )
+            and files
+        )
+        if normalized_pr is None and not supersession:
             raise ValueError("existing Change materialization requires an exact PR")
         if normalized_expected != change:
             raise ValueError("existing Change materialization Change identity is inconsistent")
@@ -699,9 +710,26 @@ def _ensure_new_carrier(
     token: str,
     default_branch: str,
     authorization_revision: str,
+    supersession: bool = False,
     before_write: Callable[[], None] | None = None,
 ) -> tuple[str, int]:
-    _verify_new_carrier_base_is_empty(request, repository=repository, token=token)
+    if supersession:
+        if not qualify_supersession_branch(
+            repository=repository,
+            token=token,
+            issue_number=source.issue_number,
+            change=request.change,
+            branch=request.branch,
+            current_revision=authorization_revision,
+        ):
+            raise RuntimeError("application supersession has no formal retirement authority")
+        if any(file.path.startswith(".github/workflows/") for file in request.files):
+            # The native GitHub Actions token cannot author workflow updates.
+            # First establish a bounded non-workflow carrier; subsequent
+            # implement-change slices use the existing PR-head actuator.
+            raise RuntimeError("supersession first slice requires the non-workflow carrier")
+    else:
+        _verify_new_carrier_base_is_empty(request, repository=repository, token=token)
     revision = _branch_head(repository, token, request.branch)
     if revision is None:
         revision = _create_revision(repository, token, request, before_write=before_write)
@@ -1670,6 +1698,27 @@ def _construct_materialization(
             _persist_change(request, repository=repository, token=token)
         return target
 
+    if request.pr_number is None:
+        if request.base_sha != current_revision:
+            raise RuntimeError("supersession branch must start at fresh default revision")
+        revision, pr_number = _ensure_new_carrier(
+            request,
+            source,
+            repository=repository,
+            token=token,
+            default_branch=default_branch,
+            authorization_revision=current_revision,
+            supersession=True,
+            before_write=before_write,
+        )
+        return _target(
+            request,
+            repository=repository,
+            revision=revision,
+            pr_number=pr_number,
+            validation_required=True,
+        )
+
     return _existing_target(
         request,
         source,
@@ -2226,7 +2275,11 @@ def prove_materialization(
             source_current = _current_authorized_request(repository, token) == source
         if not source_current:
             raise RuntimeError("materialization source dispatch is stale")
-        if source.role == "executor" and source.action == _IMPLEMENTATION_ACTION:
+        if (
+            source.role == "executor"
+            and source.action == _IMPLEMENTATION_ACTION
+            and request.pr_number is not None
+        ):
             _qualified_implementation_decision(
                 request,
                 source,
@@ -2234,6 +2287,22 @@ def prove_materialization(
                 token=token,
                 current_revision=current_revision,
             )
+        elif request.pr_number is None and request.expected_change != "unset":
+            if any(file.path.startswith(".github/workflows/") for file in request.files):
+                raise RuntimeError("supersession first slice must defer workflow changes")
+            if not qualify_supersession_branch(
+                repository=repository,
+                token=token,
+                issue_number=source.issue_number,
+                change=request.change,
+                branch=request.branch,
+                current_revision=current_revision,
+            ):
+                raise RuntimeError("supersession requires formal retirement")
+            if request.base_sha != current_revision:
+                if not committed_formal_result or not accepted_intent:
+                    raise RuntimeError("supersession has no fresh-main precommit authorization")
+                _proof_ancestry(repository, token, request.base_sha, current_revision)
         default_advance = _proof_ancestry(repository, token, accepted_revision, current_revision)
         if request.expected_change == "unset":
             _tree, preimage_entries = _revision_tree_snapshot(repository, token, request.base_sha)

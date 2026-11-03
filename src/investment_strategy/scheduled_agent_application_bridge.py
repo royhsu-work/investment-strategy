@@ -26,6 +26,7 @@ from investment_strategy.scheduled_agent_application_carrier import (
     canonical_implementation_branch,
     current_reviewed_implementation_head,
     qualify_implementation_carrier,
+    qualify_supersession_branch,
 )
 from investment_strategy.scheduled_agent_application_materialization import (
     find_materialization_payload,
@@ -1326,8 +1327,24 @@ def _machine_result_revision(
             ),
         )
     parsed = find_materialization_payload(materializations[0], source)
-    if parsed is None or parsed.change != change or parsed.pr_number is None:
+    if parsed is None or parsed.change != change:
         raise RuntimeError("application materialization carrier identity is incomplete")
+    if parsed.pr_number is None:
+        if (
+            parsed.base_sha == current_revision
+            and source.role == "executor"
+            and source.action == "implement-change"
+            and qualify_supersession_branch(
+                repository=repository,
+                token=token,
+                issue_number=source.issue_number,
+                change=change,
+                branch=parsed.branch,
+                current_revision=current_revision,
+            )
+        ):
+            return current_revision
+        raise RuntimeError("application supersession materialization is unqualified")
     qualification = qualify_implementation_carrier(
         repository=repository,
         token=token,
@@ -1586,12 +1603,44 @@ def _review_predecessor_carrier(
     if not materializations:
         return None, cast(str, latest.revision)
     materialization = find_materialization_payload(materializations[0], ready_source)
-    if (
-        materialization is None
-        or materialization.change != change
-        or materialization.pr_number is None
-    ):
+    if materialization is None or materialization.change != change:
         raise RuntimeError("application review predecessor PR identity is incomplete")
+    if materialization.pr_number is None:
+        if not qualify_supersession_branch(
+            repository=repository,
+            token=token,
+            issue_number=source.issue_number,
+            change=change,
+            branch=materialization.branch,
+            current_revision=current_revision,
+        ):
+            raise RuntimeError("accepted supersession lost formal retirement authority")
+        owner = repository.split("/", 1)[0]
+        candidates = _paged_github_list(
+            repository,
+            token,
+            f"pulls?{urlencode({'state': 'all', 'head': f'{owner}:{materialization.branch}'})}",
+        )
+        if len(candidates) != 1:
+            raise RuntimeError("accepted supersession PR identity is missing or ambiguous")
+        candidate_number = _positive_int(candidates[0].get("number"))
+        if candidate_number is None:
+            raise RuntimeError("accepted supersession PR number is unavailable")
+        qualification = qualify_implementation_carrier(
+            repository=repository,
+            token=token,
+            source=source,
+            change=change,
+            pr_number=candidate_number,
+            current_revision=current_revision,
+        )
+        if (
+            qualification.disposition not in {"QUALIFIED", "RECONCILIATION_REQUIRED"}
+            or qualification.branch != materialization.branch
+            or qualification.head_sha != latest.revision
+        ):
+            raise RuntimeError("accepted supersession PR is not an exact READY successor")
+        return candidate_number, cast(str, latest.revision)
     return materialization.pr_number, cast(str, latest.revision)
 
 

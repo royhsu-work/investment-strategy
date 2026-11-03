@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import cast
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -203,6 +204,7 @@ def _pr(
     return {
         "number": number,
         "state": state,
+        "draft": False,
         "merged": merged,
         "merged_at": merged_at,
         "merge_commit_sha": merge_commit_sha,
@@ -269,6 +271,8 @@ def _fake_github(
     branch_ref_sha: str | None = HEAD,
     default_revision: str = MAIN,
     issue_body: str | None = None,
+    formal_comments: list[dict[str, object]] | None = None,
+    routing_timeline: list[dict[str, object]] | None = None,
 ) -> Callable[..., object | None]:
     current = current_pr or _continuation_pr()
     historical = (
@@ -302,6 +306,10 @@ def _fake_github(
             return {"object": {"sha": default_revision}}
         if api_path == "issues/229":
             return {"number": 229, "state": "open", "body": body}
+        if api_path.startswith("issues/229/comments?"):
+            return [] if formal_comments is None else formal_comments
+        if api_path.startswith("issues/229/timeline?"):
+            return [] if routing_timeline is None else routing_timeline
         if api_path == f"pulls/{current['number']}":
             return current
         if historical is not None and api_path == f"pulls/{historical['number']}":
@@ -310,6 +318,7 @@ def _fake_github(
             if api_path == f"pulls/{continuation['number']}":
                 return continuation
         if api_path.startswith("pulls?") and "state=closed" in api_path:
+            requested_head = parse_qs(urlsplit(api_path).query).get("head", [None])[0]
             closed_candidates = [
                 candidate
                 for candidate in ([historical] if historical is not None else [])
@@ -317,10 +326,8 @@ def _fake_github(
                 + ([current] if current.get("merged") is True else [])
                 if isinstance(candidate, dict)
                 and isinstance(candidate.get("head"), dict)
-                and str(cast(dict[str, object], candidate["head"]).get("ref", "")).replace(
-                    "/", "%2F"
-                )
-                in api_path
+                and requested_head
+                == f"royhsu-work:{cast(dict[str, object], candidate['head']).get('ref', '')}"
             ]
             deduplicated = {
                 cast(int, candidate["number"]): candidate for candidate in closed_candidates
@@ -428,6 +435,237 @@ def test_code_only_continuation_is_qualified_from_historical_evidence(
     assert decision.pr_number == 236
     assert decision.branch == f"agent/{CHANGE}-continuation-232"
     assert decision.historical_pr_number == 232
+
+
+def _supersession_formal_comments(old_head: str) -> list[dict[str, object]]:
+    def result(
+        *,
+        comment_id: int,
+        role: str,
+        action: str,
+        result_kind: str,
+        successor: str,
+        timestamp: str,
+    ) -> dict[str, object]:
+        marker = "REVIEW_RESULT" if role == "reviewer" else "ACTION_RESULT"
+        return {
+            "id": comment_id,
+            "user": {"login": "github-actions[bot]"},
+            "performed_via_github_app": {"slug": "github-actions"},
+            "created_at": timestamp,
+            "body": "\n".join(
+                (
+                    marker,
+                    "Workflow: #229",
+                    f"Change: {CHANGE}",
+                    f"Role: {role}",
+                    f"Action: {action}",
+                    f"Result: {result_kind.upper()}",
+                    f"Revision: {old_head}",
+                    f"Default-Branch-Revision: {MAIN}",
+                    "Application-Correlation: "
+                    f"application:{comment_id + 100}:229:{CHANGE}:"
+                    f"{role}:{action}:{result_kind}:{MAIN}",
+                    f"Repository-derived successor: {successor}",
+                )
+            ),
+        }
+
+    return [
+        result(
+            comment_id=900,
+            role="executor",
+            action="implement-change",
+            result_kind="ready",
+            successor="Reviewer / review-implementation",
+            timestamp="2026-11-03T01:00:00Z",
+        ),
+        result(
+            comment_id=901,
+            role="reviewer",
+            action="review-implementation",
+            result_kind="findings",
+            successor="Executor / implement-change",
+            timestamp="2026-11-03T02:00:00Z",
+        ),
+    ]
+
+
+def _supersession_routing_timeline() -> list[dict[str, object]]:
+    return [
+        {
+            "id": 9010,
+            "event": "unlabeled",
+            "label": {"name": "action:review-implementation"},
+            "actor": {"login": "github-actions[bot]"},
+            "created_at": "2026-11-03T02:01:00Z",
+        },
+        {
+            "id": 9011,
+            "event": "labeled",
+            "label": {"name": "action:implement-change"},
+            "actor": {"login": "github-actions[bot]"},
+            "created_at": "2026-11-03T02:01:00Z",
+        },
+    ]
+
+
+@pytest.mark.parametrize(
+    ("retired", "findings", "expected"),
+    [
+        (True, True, "QUALIFIED"),
+        (True, False, "INDETERMINATE"),
+        (False, True, "INDETERMINATE"),
+    ],
+)
+def test_superseded_unmerged_carrier_requires_formal_findings_before_fresh_main_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+    retired: bool,
+    findings: bool,
+    expected: str,
+) -> None:
+    """Closed-unmerged history is replaceable only after an exact legal handoff."""
+
+    old_head = "5" * 40
+    retired_pr = _continuation_pr(head_sha=old_head)
+    retired_pr.update(
+        state="closed" if retired else "open",
+        merged=False,
+        closed_at="2026-11-03T03:00:00Z" if retired else None,
+    )
+    replacement_pr = _continuation_pr(
+        number=237,
+        branch=f"agent/{CHANGE}-supersedes-236",
+    )
+    github = _fake_github(
+        current_pr=replacement_pr,
+        merged_continuations=[retired_pr],
+        open_prs=[replacement_pr],
+        formal_comments=_supersession_formal_comments(old_head) if findings else [],
+        routing_timeline=_supersession_routing_timeline(),
+    )
+    monkeypatch.setattr(carrier, "_github_json", github)
+    decision = carrier.qualify_implementation_carrier(
+        repository=REPOSITORY,
+        token=TEST_VALUE,
+        source=_source(),
+        change=CHANGE,
+        pr_number=237,
+        current_revision=MAIN,
+    )
+    assert decision.disposition == expected, decision.reason
+    if expected == "QUALIFIED":
+        assert decision.head_sha == HEAD
+        assert decision.branch == f"agent/{CHANGE}-supersedes-236"
+
+
+def test_merged_supersession_becomes_immutable_historical_lineage_for_finalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_head = "5" * 40
+    retired = _continuation_pr(head_sha=old_head)
+    retired.update(state="closed", merged=False, closed_at="2026-11-03T03:00:00Z")
+    replacement = _continuation_pr(number=237, branch=f"agent/{CHANGE}-supersedes-236")
+    replacement.update(
+        state="closed",
+        merged=True,
+        merged_at="2026-11-03T04:00:00Z",
+        merge_commit_sha="7" * 40,
+    )
+    github = _fake_github(
+        current_pr=replacement,
+        merged_continuations=[retired],
+        open_prs=[],
+        formal_comments=_supersession_formal_comments(old_head),
+        routing_timeline=_supersession_routing_timeline(),
+    )
+    monkeypatch.setattr(carrier, "_github_json", github)
+    historical = carrier._historical_carriers(
+        REPOSITORY,
+        TEST_VALUE,
+        issue_number=229,
+        change=CHANGE,
+        default_branch="main",
+        default_revision=MAIN,
+        read=github,
+    )
+    assert historical is not None
+    assert [number for number, _pr in historical] == [232, 237]
+    decision = carrier.qualify_implementation_carrier(
+        repository=REPOSITORY,
+        token=TEST_VALUE,
+        source=WorkerRequest(229, "executor", "merge-implementation-pr"),
+        change=CHANGE,
+        pr_number=237,
+        current_revision=MAIN,
+    )
+    assert decision.disposition == "HISTORICAL_MERGED", decision.reason
+
+
+@pytest.mark.parametrize(
+    "invalid_evidence",
+    [
+        "missing-routing",
+        "manual-routing",
+        "closed-before-findings",
+        "wrong-ready-head",
+        "wrong-issue",
+        "draft-retired",
+        "duplicate-retired",
+        "competing-open",
+    ],
+)
+def test_supersession_fails_closed_for_unqualified_review_or_retirement(
+    monkeypatch: pytest.MonkeyPatch, invalid_evidence: str
+) -> None:
+    old_head = "5" * 40
+    old_pr = _continuation_pr(head_sha=old_head)
+    old_pr.update(
+        state="closed",
+        merged=False,
+        closed_at="2026-11-03T03:00:00Z",
+    )
+    new_pr = _continuation_pr(number=237, branch=f"agent/{CHANGE}-supersedes-236")
+    formal = _supersession_formal_comments(old_head)
+    timeline = _supersession_routing_timeline()
+    continuations = [old_pr]
+    opens = [new_pr]
+    if invalid_evidence == "missing-routing":
+        timeline.clear()
+    elif invalid_evidence == "manual-routing":
+        timeline[1]["actor"] = {"login": "royhsu-work"}
+    elif invalid_evidence == "closed-before-findings":
+        old_pr["closed_at"] = "2026-11-03T01:30:00Z"
+    elif invalid_evidence == "wrong-ready-head":
+        formal = _supersession_formal_comments("6" * 40)
+    elif invalid_evidence == "wrong-issue":
+        old_pr["body"] = "Refs #888"
+    elif invalid_evidence == "draft-retired":
+        old_pr["draft"] = True
+    elif invalid_evidence == "duplicate-retired":
+        duplicate = _continuation_pr(number=238, head_sha="6" * 40)
+        duplicate.update(state="closed", merged=False, closed_at=old_pr["closed_at"])
+        continuations.append(duplicate)
+    else:
+        competitor = _continuation_pr(number=239, head_sha="6" * 40)
+        opens.append(competitor)
+    github = _fake_github(
+        current_pr=new_pr,
+        merged_continuations=continuations,
+        open_prs=opens,
+        formal_comments=formal,
+        routing_timeline=timeline,
+    )
+    monkeypatch.setattr(carrier, "_github_json", github)
+    result = carrier.qualify_implementation_carrier(
+        repository=REPOSITORY,
+        token=TEST_VALUE,
+        source=_source(),
+        change=CHANGE,
+        pr_number=237,
+        current_revision=MAIN,
+    )
+    assert result.disposition == "INDETERMINATE", invalid_evidence
 
 
 def test_diverged_continuation_is_recognized_only_for_reconciliation(
