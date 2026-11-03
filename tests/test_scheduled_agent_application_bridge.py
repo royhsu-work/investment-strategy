@@ -662,6 +662,85 @@ def test_review_predecessor_uses_accepted_implementation_not_ready_projection(
             )
 
 
+@pytest.mark.parametrize("disposition", ["QUALIFIED", "RECONCILIATION_REQUIRED", "INDETERMINATE"])
+def test_review_predecessor_resolves_application_owned_supersession_without_borrowing_old_pr(
+    monkeypatch: pytest.MonkeyPatch, disposition: str
+) -> None:
+    change = "restore-no-work-idle-discovery"
+    branch = f"agent/{change}-supersedes-408"
+    fresh_head = "a" * 40
+    ready = SimpleNamespace(
+        valid=True,
+        issue_number=322,
+        change=change,
+        role="executor",
+        action="implement-change",
+        result_kind="ready",
+        successor=("reviewer", "review-implementation"),
+        revision=fresh_head,
+        default_branch_revision=_REVISION,
+        application_correlation=f"application:6019133874:322:{change}:executor:implement-change:ready:{_REVISION}",
+    )
+    monkeypatch.setattr(bridge, "_github_json", lambda *_args: {"number": 322})
+    monkeypatch.setattr(
+        bridge,
+        "normalize_github_issue",
+        lambda *_args: SimpleNamespace(
+            authoritative=True,
+            state="open",
+            change=change,
+            routing=("reviewer", "review-implementation"),
+        ),
+    )
+    monkeypatch.setattr(bridge, "_paged_github_list", lambda *_args: ({"number": 519},))
+    monkeypatch.setattr(bridge, "parse_formal_result", lambda *_args, **_kwargs: ready)
+    monkeypatch.setattr(
+        bridge,
+        "_application_decisions_for_request_id",
+        lambda **_kwargs: (
+            SimpleNamespace(
+                disposition="ACCEPTED",
+                issue_number=322,
+                role="executor",
+                action="implement-change",
+                change=change,
+                result_kind="ready",
+                raw_worker_result="{}",
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_materialization_effects",
+        lambda *_args, **_kwargs: ({"operation": "application-materialize"},),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "find_materialization_payload",
+        lambda *_args: SimpleNamespace(change=change, branch=branch, pr_number=None),
+    )
+    monkeypatch.setattr(bridge, "qualify_supersession_branch", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        bridge,
+        "qualify_implementation_carrier",
+        lambda **_kwargs: SimpleNamespace(
+            disposition=disposition, branch=branch, head_sha=fresh_head
+        ),
+    )
+    args = (
+        _REPOSITORY,
+        _REPOSITORY,
+        WorkerRequest(322, "reviewer", "review-implementation"),
+        change,
+        _REVISION,
+    )
+    if disposition == "INDETERMINATE":
+        with pytest.raises(RuntimeError, match="exact READY successor"):
+            bridge._review_predecessor_carrier(*args)
+    else:
+        assert bridge._review_predecessor_carrier(*args) == (519, fresh_head)
+
+
 @pytest.mark.parametrize("blocked_revision_matches_default", [True, False])
 def test_review_blocked_self_loop_preserves_accepted_ready_work_product(
     monkeypatch: pytest.MonkeyPatch, blocked_revision_matches_default: bool

@@ -39,6 +39,7 @@ from investment_strategy.scheduled_agent_action_model import (
 from investment_strategy.scheduled_agent_application_carrier import (
     current_reviewed_implementation_head,
     qualify_implementation_carrier,
+    qualify_supersession_branch,
 )
 from investment_strategy.scheduled_agent_application_materialization import (
     MaterializationRequest,
@@ -76,6 +77,7 @@ from investment_strategy.scheduled_agent_validation_resource import (
     completed_task_bookkeeping_is_current,
     task_checkpoint_is_exact,
     verify_implementation_candidate,
+    work_product_path_allowed,
 )
 from investment_strategy.scheduled_agent_worker import parse_worker_result
 from investment_strategy.workflow_dispatch import (
@@ -646,7 +648,6 @@ def _implementation_checkpoint_effects_complete(
     if (
         request.expected_change != decision.source.change
         or request.change != decision.source.change
-        or request.pr_number is None
         or len(task_files) != 1
         or task_files[0].expected_sha is None
         or completed_task_ids is None
@@ -1603,36 +1604,54 @@ class GitHubEffectAdapter:
     ) -> bool:
         """Validate one checkpoint against the canonical carrier decision and task slice."""
 
-        if request.pr_number is None or not _valid_sha(self.current_revision):
+        if not _valid_sha(self.current_revision):
             return False
-        decision = qualify_implementation_carrier(
-            repository=self.repository,
-            token=self.token,
-            source=self.source,
-            change=request.change,
-            pr_number=request.pr_number,
-            current_revision=cast(str, self.current_revision),
-            read=_github_json,
-        )
-        if (
-            decision.disposition
-            not in {"QUALIFIED", "RECONCILIATION_REQUIRED", "HISTORICAL_MERGED"}
-            or decision.branch != request.branch
-            or decision.head_sha is None
-            or request.base_sha != decision.head_sha
-        ):
-            return False
-        if decision.disposition == "HISTORICAL_MERGED" and (
-            request.base_sha != decision.head_sha
-            or not completed_task_bookkeeping_is_current(
-                self.repository,
-                self.token,
+        if request.pr_number is None:
+            candidate_ref = self._default_branch()
+            if (
+                candidate_ref is None
+                or request.base_sha != self.current_revision
+                or not qualify_supersession_branch(
+                    repository=self.repository,
+                    token=self.token,
+                    issue_number=self.source.issue_number,
+                    change=request.change,
+                    branch=request.branch,
+                    current_revision=cast(str, self.current_revision),
+                    read=_github_json,
+                )
+            ):
+                return False
+        else:
+            candidate_ref = request.branch
+            decision = qualify_implementation_carrier(
+                repository=self.repository,
+                token=self.token,
+                source=self.source,
                 change=request.change,
-                revision=decision.head_sha,
-                files=request.files,
+                pr_number=request.pr_number,
+                current_revision=cast(str, self.current_revision),
+                read=_github_json,
             )
-        ):
-            return False
+            if (
+                decision.disposition
+                not in {"QUALIFIED", "RECONCILIATION_REQUIRED", "HISTORICAL_MERGED"}
+                or decision.branch != request.branch
+                or decision.head_sha is None
+                or request.base_sha != decision.head_sha
+            ):
+                return False
+            if decision.disposition == "HISTORICAL_MERGED" and (
+                request.base_sha != decision.head_sha
+                or not completed_task_bookkeeping_is_current(
+                    self.repository,
+                    self.token,
+                    change=request.change,
+                    revision=decision.head_sha,
+                    files=request.files,
+                )
+            ):
+                return False
         task_files = tuple(
             file
             for file in request.files
@@ -1653,7 +1672,7 @@ class GitHubEffectAdapter:
             self.repository,
             self.token,
             base_sha=request.base_sha,
-            base_ref=request.branch,
+            base_ref=candidate_ref,
             current_revision=cast(str, self.current_revision),
             files=request.files,
         )
@@ -2557,6 +2576,21 @@ class GitHubEffectAdapter:
                 if "expected_head_sha" in payload:
                     return False
                 expected_branch = source_branch
+            elif (
+                self.source.action == "implement-change"
+                and "expected_head_sha" not in payload
+                and _valid_sha(self.current_revision)
+                and qualify_supersession_branch(
+                    repository=self.repository,
+                    token=self.token,
+                    issue_number=self.source.issue_number,
+                    change=observation.change,
+                    branch=requested_branch,
+                    current_revision=cast(str, self.current_revision),
+                    read=_github_json,
+                )
+            ):
+                expected_branch = requested_branch
             else:
                 return False
             if expected_branch is None:
@@ -2579,6 +2613,41 @@ class GitHubEffectAdapter:
             base_object = base_ref.get("object")
             if not isinstance(head_object, Mapping) or not isinstance(base_object, Mapping):
                 return False
+            if expected_branch not in {source_branch, archive_branch}:
+                head_sha = head_object.get("sha")
+                if not _valid_sha(head_sha) or not _valid_sha(self.current_revision):
+                    return False
+                comparison = _github_json(
+                    self.repository,
+                    self.token,
+                    f"compare/{self.current_revision}...{head_sha}",
+                )
+                base_commit = (
+                    comparison.get("base_commit") if isinstance(comparison, Mapping) else None
+                )
+                changed = comparison.get("files") if isinstance(comparison, Mapping) else None
+                if (
+                    not isinstance(comparison, Mapping)
+                    or comparison.get("status") != "ahead"
+                    or comparison.get("behind_by") != 0
+                    or not isinstance(comparison.get("ahead_by"), int)
+                    or cast(int, comparison["ahead_by"]) < 1
+                    or not isinstance(base_commit, Mapping)
+                    or base_commit.get("sha") != self.current_revision
+                    or not isinstance(changed, list)
+                    or not changed
+                    or len(changed) >= 300
+                    or comparison.get("too_large") is True
+                    or any(
+                        not isinstance(file, Mapping)
+                        or not isinstance(file.get("filename"), str)
+                        or not work_product_path_allowed(
+                            self.source, observation.change, cast(str, file["filename"])
+                        )
+                        for file in changed
+                    )
+                ):
+                    return False
             if requested_branch == archive_branch and not (
                 head_object.get("sha") == payload.get("expected_head_sha")
                 and _valid_sha(self.current_revision)

@@ -8,10 +8,12 @@ instead of reconstructing branch identity independently.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal, cast
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
@@ -119,6 +121,12 @@ def deterministic_continuation_branch(change: str, historical_pr_number: int) ->
     """Derive the one allowed continuation branch from the verified history carrier."""
 
     return f"agent/{change}-continuation-{historical_pr_number}"
+
+
+def deterministic_supersession_branch(change: str, retired_pr_number: int) -> str:
+    """Distinct successor to a formally rejected and closed-unmerged carrier."""
+
+    return f"agent/{change}-supersedes-{retired_pr_number}"
 
 
 def current_reviewed_implementation_head(
@@ -653,7 +661,98 @@ def _historical_carriers(
         if len(matches) > 1:
             return None
         if not matches:
-            return tuple(result)
+            # An unmerged retired carrier is not a merged ancestor. It may,
+            # however, identify exactly one later merged supersession when
+            # Application FINDINGS and the routing transition are independently
+            # proven before its closure. This is historical lineage discovery,
+            # never permission to use the retired HEAD as an implementation.
+            retired_numbers = []
+            for summary in candidates:
+                number = summary.get("number")
+                if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+                    continue
+                detail = _as_mapping(read(repository, token, f"pulls/{number}"))
+                if (
+                    detail is not None
+                    and detail.get("state") == "closed"
+                    and detail.get("merged") is False
+                    and detail.get("merged_at") is None
+                    and _pr_identity_is_coherent(
+                        detail,
+                        repository=repository,
+                        issue_number=issue_number,
+                        default_branch=default_branch,
+                    )
+                    is not None
+                ):
+                    retired_numbers.append(number)
+            if len(retired_numbers) > 1:
+                return None
+            if not retired_numbers:
+                return tuple(result)
+            retired_number = retired_numbers[0]
+            supersession_branch = deterministic_supersession_branch(change, retired_number)
+            if supersession_branch is None or not _formally_superseded_closed_carrier(
+                repository,
+                token,
+                issue_number=issue_number,
+                change=change,
+                default_branch=default_branch,
+                historical_pr_number=result[-1][0] if result else None,
+                retired_number=retired_number,
+                read=read,
+            ):
+                return tuple(result)
+            replacement_query = urlencode(
+                {
+                    "state": "closed",
+                    "head": f"{owner}:{supersession_branch}",
+                    "base": default_branch,
+                }
+            )
+            replacements = _paged_list(repository, token, f"pulls?{replacement_query}&", read=read)
+            merged_replacements: list[tuple[int, Mapping[str, object]]] = []
+            for summary in replacements:
+                number = summary.get("number")
+                if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+                    continue
+                replacement = _as_mapping(read(repository, token, f"pulls/{number}"))
+                if replacement is None:
+                    raise RuntimeError("supersession historical PR evidence is incomplete")
+                identity = _pr_identity_is_coherent(
+                    replacement,
+                    repository=repository,
+                    issue_number=issue_number,
+                    default_branch=default_branch,
+                )
+                merge_sha = replacement.get("merge_commit_sha")
+                active_changes, _has_code = _pr_active_changes(repository, token, number, read=read)
+                if (
+                    identity is not None
+                    and identity[0] == supersession_branch
+                    and _is_merged_pr(replacement)
+                    and not any(active != change for active in active_changes)
+                    and _valid_sha(merge_sha)
+                    and _compare_is_ancestor(
+                        repository,
+                        token,
+                        ancestor=cast(str, merge_sha),
+                        descendant=default_revision,
+                        read=read,
+                    )
+                ):
+                    merged_replacements.append((number, replacement))
+            if len(merged_replacements) > 1:
+                return None
+            if not merged_replacements:
+                return tuple(result)
+            number, pr = merged_replacements[0]
+            if number in seen_numbers:
+                return None
+            seen_numbers.add(number)
+            result.append((number, pr))
+            expected_branch = deterministic_continuation_branch(change, number)
+            continue
 
         number, pr = matches[0]
         if number in seen_numbers:
@@ -682,6 +781,7 @@ def _claimed_open_carriers(
     if canonical is None:
         return ()
     continuation = re.compile(rf"^{re.escape(canonical)}-continuation-([1-9][0-9]*)$")
+    supersession = re.compile(rf"^{re.escape(canonical)}-supersedes-([1-9][0-9]*)$")
     result: list[Mapping[str, object]] = []
     for pr in prs:
         identity = _pr_identity_is_coherent(
@@ -693,9 +793,417 @@ def _claimed_open_carriers(
         if identity is None:
             continue
         branch, _head_sha = identity
-        if branch == canonical or continuation.fullmatch(branch) is not None:
+        if (
+            branch == canonical
+            or continuation.fullmatch(branch) is not None
+            or supersession.fullmatch(branch) is not None
+        ):
             result.append(pr)
     return tuple(result)
+
+
+def _timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        result = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return result if result.utcoffset() is not None else None
+
+
+def _canonical_intent_effect_json(raw_intent: str) -> str | None:
+    """Compare accepted effect values, not incidental inner JSON serialization.
+
+    The immutable request body and accepted decision retain their own exact
+    hashes. Only the schema-defined nested `payload_json` field is decoded for
+    semantic equality; all other intent fields remain in the comparison.
+    """
+
+    try:
+        intent = json.loads(raw_intent)
+        if not isinstance(intent, dict) or not isinstance(intent.get("requested_effects"), list):
+            return None
+        normalized_effects = []
+        for effect in intent["requested_effects"]:
+            if not isinstance(effect, dict) or not isinstance(effect.get("payload_json"), str):
+                return None
+            payload = json.loads(effect["payload_json"])
+            if not isinstance(payload, dict):
+                return None
+            normalized_effects.append(
+                {
+                    **effect,
+                    "payload_json": json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                }
+            )
+    except (TypeError, ValueError):
+        return None
+    intent["requested_effects"] = normalized_effects
+    return json.dumps(intent, sort_keys=True, separators=(",", ":"))
+
+
+def _accepted_formal_result_is_proven(
+    repository: str,
+    token: str,
+    *,
+    issue_number: int,
+    change: str,
+    retired_number: int,
+    retired_branch: str,
+    event: object,
+    comments: tuple[Mapping[str, object], ...],
+    read: GitHubReader,
+) -> bool:
+    """Bind a formal transition to one immutable accepted Application intent.
+
+    A bot-authored formal comment alone is not proof of Application acceptance.
+    This reuses the existing decision/ingress parsers and checks their source
+    objects, including the exact request body hash, without creating state.
+    """
+
+    # Import at call time because the Application effects/bridge modules use
+    # this carrier qualifier. No competing parser or new authority is added.
+    from investment_strategy.scheduled_agent_application_bridge import (
+        dispatch_correlation_for,
+        parse_application_request,
+    )
+    from investment_strategy.scheduled_agent_effects import (
+        parse_application_decision,
+        semantic_intent_payload,
+    )
+
+    correlation = getattr(event, "application_correlation", None)
+    parts = correlation.split(":") if isinstance(correlation, str) else []
+    role = getattr(event, "role", None)
+    action = getattr(event, "action", None)
+    result = getattr(event, "result_kind", None)
+    default_revision = getattr(event, "default_branch_revision", None)
+    if (
+        len(parts) != 8
+        or parts[0] != "application"
+        or not parts[1].isdigit()
+        or parts[2:7] != [str(issue_number), change, role, action, result]
+        or parts[7] != default_revision
+        or not _valid_sha(default_revision)
+    ):
+        return False
+    request_id = int(parts[1])
+    decisions = []
+    for comment in comments:
+        user = _as_mapping(comment.get("user"))
+        app = _as_mapping(comment.get("performed_via_github_app"))
+        if (
+            user is None
+            or user.get("login") != "github-actions[bot]"
+            or app is None
+            or app.get("slug") != "github-actions"
+        ):
+            continue
+        decision = parse_application_decision(comment.get("body"))
+        if decision is not None and decision.request_comment_id == request_id:
+            decisions.append(decision)
+    if len(decisions) != 1:
+        return False
+    decision = decisions[0]
+    if (
+        decision.disposition != "ACCEPTED"
+        or (decision.issue_number, decision.change) != (issue_number, change)
+        or (decision.role, decision.action, decision.result_kind) != (role, action, result)
+        or (
+            decision.authorization_revision != default_revision
+            and not _compare_is_ancestor(
+                repository,
+                token,
+                ancestor=decision.authorization_revision,
+                descendant=cast(str, default_revision),
+                read=read,
+            )
+        )
+    ):
+        return False
+    request = _as_mapping(read(repository, token, f"issues/comments/{request_id}"))
+    if request is None or request.get("id") != request_id:
+        return False
+    user = _as_mapping(request.get("user"))
+    app = _as_mapping(request.get("performed_via_github_app"))
+    body = request.get("body")
+    if (
+        user is None
+        or user.get("login") != repository.split("/", 1)[0]
+        or app is None
+        or app.get("slug") != "chatgpt-codex-connector"
+        or not isinstance(body, str)
+        or hashlib.sha256(body.encode("utf-8")).hexdigest() != decision.request_body_sha256
+    ):
+        return False
+    try:
+        ingress = parse_application_request(body)
+        if ingress is None:
+            return False
+        source = WorkerRequest(issue_number, cast(str, role), cast(str, action))
+        ingress_intent = _canonical_intent_effect_json(
+            semantic_intent_payload(ingress.raw_worker_result)
+        )
+        accepted_intent = _canonical_intent_effect_json(decision.raw_worker_result)
+        if (
+            ingress.authorization_revision != decision.authorization_revision
+            or ingress.dispatch_correlation
+            != dispatch_correlation_for(repository, source, decision.authorization_revision)
+            or ingress_intent is None
+            or ingress_intent != accepted_intent
+        ):
+            return False
+        intent = json.loads(decision.raw_worker_result)
+    except (TypeError, ValueError):
+        return False
+    if (
+        not isinstance(intent, Mapping)
+        or (intent.get("issue_number"), intent.get("role"), intent.get("action"))
+        != (issue_number, role, action)
+        or (intent.get("change"), intent.get("result_kind")) != (change, result)
+    ):
+        return False
+    if (role, action, result) == ("executor", "implement-change", "ready"):
+        effects = intent.get("requested_effects")
+        if not isinstance(effects, list):
+            return False
+        carriers = []
+        for effect in effects:
+            if not isinstance(effect, Mapping) or effect.get("kind") != "github-mutation":
+                continue
+            raw = effect.get("payload_json")
+            try:
+                payload = json.loads(raw) if isinstance(raw, str) else None
+            except ValueError:
+                return False
+            if (
+                isinstance(payload, Mapping)
+                and payload.get("operation") == "application-materialize"
+            ):
+                carriers.append(payload)
+        if len(carriers) != 1 or (carriers[0].get("pr_number"), carriers[0].get("branch")) != (
+            retired_number,
+            retired_branch,
+        ):
+            return False
+    return True
+
+
+def _formally_superseded_closed_carrier(
+    repository: str,
+    token: str,
+    *,
+    issue_number: int,
+    change: str,
+    default_branch: str,
+    historical_pr_number: int | None,
+    retired_number: int,
+    read: GitHubReader,
+) -> bool:
+    """Prove retirement without giving a closed PR or prose any routing authority.
+
+    The existing application-owned READY -> Reviewer FINDINGS -> implement-change
+    transition must precede the closed-unmerged PR event. No past READY, PASS,
+    CI, or old branch head is transferred to the replacement.
+    """
+
+    retired = _as_mapping(read(repository, token, f"pulls/{retired_number}"))
+    if retired is None or retired.get("number") != retired_number:
+        return False
+    identity = _pr_identity_is_coherent(
+        retired,
+        repository=repository,
+        issue_number=issue_number,
+        default_branch=default_branch,
+    )
+    expected_branch = (
+        canonical_implementation_branch(change)
+        if historical_pr_number is None
+        else deterministic_continuation_branch(change, historical_pr_number)
+    )
+    closed_at = _timestamp(retired.get("closed_at"))
+    if (
+        identity is None
+        or identity[0] != expected_branch
+        or retired.get("state") != "closed"
+        or retired.get("merged") is not False
+        or retired.get("merged_at") is not None
+        or retired.get("draft") is not False
+        or closed_at is None
+    ):
+        return False
+    owner = repository.split("/", 1)[0]
+    matching = _paged_list(
+        repository,
+        token,
+        f"pulls?{urlencode({'state': 'closed', 'head': f'{owner}:{expected_branch}'})}",
+        read=read,
+    )
+    if len(matching) != 1 or matching[0].get("number") != retired_number:
+        return False
+    active_changes, _has_code = _pr_active_changes(repository, token, retired_number, read=read)
+    if any(active_change != change for active_change in active_changes):
+        return False
+    comments = _paged_list(
+        repository,
+        token,
+        f"issues/{issue_number}/comments?sort=created&direction=asc",
+        read=read,
+    )
+    relevant: list[tuple[object, datetime]] = []
+    for comment in comments:
+        formal = parse_formal_result(comment, current_revision=None)
+        if formal is None:
+            continue
+        if not formal.valid or (formal.issue_number, formal.change) != (issue_number, change):
+            return False
+        if formal.revision == identity[1]:
+            at = _timestamp(comment.get("created_at"))
+            if at is None:
+                return False
+            relevant.append((formal, at))
+    if len(relevant) < 2:
+        return False
+    ready, _ready_at = relevant[-2]
+    findings, findings_at = relevant[-1]
+    formal_transition = bool(
+        getattr(ready, "role", None) == "executor"
+        and getattr(ready, "action", None) == "implement-change"
+        and getattr(ready, "result_kind", None) == "ready"
+        and getattr(ready, "successor", None) == ("reviewer", "review-implementation")
+        and getattr(findings, "role", None) == "reviewer"
+        and getattr(findings, "action", None) == "review-implementation"
+        and getattr(findings, "result_kind", None) == "findings"
+        and getattr(findings, "successor", None) == ("executor", "implement-change")
+        and _ready_at < findings_at <= closed_at
+    )
+    if not formal_transition:
+        return False
+    if not all(
+        _accepted_formal_result_is_proven(
+            repository,
+            token,
+            issue_number=issue_number,
+            change=change,
+            retired_number=retired_number,
+            retired_branch=expected_branch,
+            event=event,
+            comments=comments,
+            read=read,
+        )
+        for event in (ready, findings)
+    ):
+        return False
+    timeline = _paged_list(
+        repository,
+        token,
+        f"issues/{issue_number}/timeline",
+        read=read,
+    )
+    routed: list[tuple[str, str]] = []
+    for entry in timeline:
+        event = entry.get("event")
+        label = _as_mapping(entry.get("label"))
+        name = None if label is None else label.get("name")
+        if event not in {"labeled", "unlabeled"} or not isinstance(name, str):
+            continue
+        at = _timestamp(entry.get("created_at"))
+        if at is None:
+            return False
+        if not (findings_at <= at <= closed_at) or not name.startswith("action:"):
+            continue
+        actor = _as_mapping(entry.get("actor"))
+        if actor is None or actor.get("login") != "github-actions[bot]":
+            return False
+        routed.append((cast(str, event), name))
+    return sorted(routed) == [
+        ("labeled", "action:implement-change"),
+        ("unlabeled", "action:review-implementation"),
+    ]
+
+
+def qualify_supersession_branch(
+    *,
+    repository: str,
+    token: str,
+    issue_number: int,
+    change: str,
+    branch: str,
+    current_revision: str,
+    read: GitHubReader | None = None,
+) -> bool:
+    """Read-only permission for the sole branch derived from retired GitHub truth.
+
+    This cannot close a PR, move a ref, select an Action, or create a result.
+    A real application-owned FINDINGS transition and later PR closure supply
+    the supersession evidence. The new work product must independently qualify.
+    """
+
+    reader = _github_json if read is None else read
+    canonical = canonical_implementation_branch(change)
+    if canonical is None or not _valid_sha(current_revision):
+        return False
+    match = re.fullmatch(rf"{re.escape(canonical)}-supersedes-([1-9][0-9]*)", branch)
+    if match is None:
+        return False
+    default_branch, default_revision = _repository_default(repository, token, read=reader)
+    if default_branch is None or default_revision != current_revision:
+        return False
+    issue = _as_mapping(reader(repository, token, f"issues/{issue_number}"))
+    if issue is None or issue.get("state") != "open" or _change_from_issue(issue) != change:
+        return False
+    historical = _historical_carriers(
+        repository,
+        token,
+        issue_number=issue_number,
+        change=change,
+        default_branch=default_branch,
+        default_revision=current_revision,
+        read=reader,
+    )
+    if historical is None:
+        return False
+    competing = _claimed_open_carriers(
+        repository,
+        token,
+        issue_number=issue_number,
+        change=change,
+        default_branch=default_branch,
+        read=reader,
+    )
+    if any(
+        not isinstance(pr.get("head"), Mapping)
+        or cast(Mapping[str, object], pr["head"]).get("ref") != branch
+        for pr in competing
+    ):
+        return False
+    historical_index = next(
+        (
+            index
+            for index, (_number, pr) in enumerate(historical)
+            if isinstance(pr.get("head"), Mapping)
+            and cast(Mapping[str, object], pr["head"]).get("ref") == branch
+        ),
+        None,
+    )
+    predecessor_number = (
+        historical[historical_index - 1][0]
+        if historical_index is not None and historical_index > 0
+        else historical[-1][0]
+        if historical_index is None and historical
+        else None
+    )
+    return _formally_superseded_closed_carrier(
+        repository,
+        token,
+        issue_number=issue_number,
+        change=change,
+        default_branch=default_branch,
+        historical_pr_number=predecessor_number,
+        retired_number=int(match.group(1)),
+        read=reader,
+    )
 
 
 def _indeterminate(
@@ -952,7 +1460,19 @@ def qualify_change_carrier(
                 change, predecessor_number
             )
             historical_reason = "merged-continuation-carrier-qualified"
-        if branch != expected_historical_branch or any(
+        approved_historical_branch = branch == expected_historical_branch or (
+            branch.startswith(f"{canonical}-supersedes-")
+            and qualify_supersession_branch(
+                repository=repository,
+                token=token,
+                issue_number=source.issue_number,
+                change=change,
+                branch=branch,
+                current_revision=current_revision,
+                read=reader,
+            )
+        )
+        if not approved_historical_branch or any(
             active_change != change for active_change in active_changes
         ):
             return _indeterminate(
@@ -997,27 +1517,30 @@ def qualify_change_carrier(
         )
 
     if historical_pr_number is None:
-        if branch != canonical:
-            return _indeterminate(
-                repository=repository,
-                source=source,
-                change=change,
-                pr_number=pr_number,
-                reason="initial-carrier-branch-is-not-canonical",
-                branch=branch,
-                head_sha=head_sha,
-                default_branch=default_branch,
-                default_revision=default_revision,
-            )
+        expected_continuation = canonical
     else:
         expected_continuation = deterministic_continuation_branch(change, historical_pr_number)
-        if branch != expected_continuation:
+    if branch != expected_continuation:
+        replacement = re.fullmatch(rf"{re.escape(canonical)}-supersedes-([1-9][0-9]*)", branch)
+        if replacement is None or not qualify_supersession_branch(
+            repository=repository,
+            token=token,
+            issue_number=source.issue_number,
+            change=change,
+            branch=branch,
+            current_revision=current_revision,
+            read=reader,
+        ):
             return _indeterminate(
                 repository=repository,
                 source=source,
                 change=change,
                 pr_number=pr_number,
-                reason="carrier-branch-is-not-deterministic-continuation",
+                reason=(
+                    "initial-carrier-branch-is-not-canonical"
+                    if historical_pr_number is None
+                    else "carrier-branch-is-not-deterministic-continuation"
+                ),
                 branch=branch,
                 head_sha=head_sha,
                 default_branch=default_branch,
@@ -1219,6 +1742,8 @@ __all__ = [
     "ImplementationCarrierQualification",
     "canonical_implementation_branch",
     "deterministic_continuation_branch",
+    "deterministic_supersession_branch",
+    "qualify_supersession_branch",
     "qualify_change_carrier",
     "qualify_implementation_carrier",
 ]

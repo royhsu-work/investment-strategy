@@ -4693,6 +4693,81 @@ def test_pull_request_create_discovery_rejects_same_head_competing_base(
     assert all("&base=" not in path for path in reads if path.startswith("pulls?state=all"))
 
 
+@pytest.mark.parametrize(
+    ("formal_supersession", "fresh_main_parent", "allowed"),
+    [(True, True, True), (False, True, False), (True, False, False)],
+)
+def test_executor_create_replacement_pr_requires_formal_retirement_and_fresh_main_ancestry(
+    monkeypatch: pytest.MonkeyPatch,
+    formal_supersession: bool,
+    fresh_main_parent: bool,
+    allowed: bool,
+) -> None:
+    """An existing Change's retired carrier cannot authorize an arbitrary PR."""
+
+    branch = f"agent/{_CHANGE}-supersedes-408"
+    branch_head = "b" * 40
+    issue = {
+        "number": 138,
+        "state": "open",
+        "body": f"Change: {_CHANGE}\n",
+        "labels": [{"name": "action:implement-change"}],
+        "created_at": "2026-11-03T00:00:00Z",
+        "closed_at": None,
+    }
+
+    def read(_repository: str, _token: str, path: str, **_kwargs: object) -> object:
+        if path == "":
+            return {"default_branch": "main"}
+        if path == "issues/138":
+            return issue
+        if path == "git/ref/heads/main":
+            return {"object": {"sha": _REVISION}}
+        if path == f"git/ref/heads/{branch}":
+            return {"object": {"sha": branch_head}}
+        if path == f"compare/{_REVISION}...{branch_head}":
+            return {
+                "status": "ahead" if fresh_main_parent else "diverged",
+                "base_commit": {"sha": _REVISION},
+                "ahead_by": 1,
+                "behind_by": 0 if fresh_main_parent else 1,
+                "files": [{"filename": f"openspec/changes/{_CHANGE}/tasks.md"}],
+            }
+        if path.startswith("pulls?state=all"):
+            return []
+        raise AssertionError(path)
+
+    monkeypatch.setattr(effects, "_github_json", read)
+    monkeypatch.setattr(
+        effects,
+        "qualify_supersession_branch",
+        lambda **_kwargs: formal_supersession,
+    )
+    adapter = GitHubEffectAdapter(
+        "owner/repo",
+        _TEST_TOKEN,
+        WorkerRequest(138, "executor", "implement-change"),
+        authorized_change=_CHANGE,
+        current_revision=_REVISION,
+        expected_result_kind="more-implementation-required",
+    )
+    effect = StagedEffect(
+        kind="github-mutation",
+        payload_json=json.dumps(
+            {
+                "issue_number": 138,
+                "operation": "pull-request-create",
+                "title": "Rebuild approved implementation from current main",
+                "body": "Approved implementation supersession.\n\nRefs #138",
+                "head": branch,
+                "base": "main",
+                "draft": False,
+            }
+        ),
+    )
+    assert adapter.guard(effect) is allowed
+
+
 def test_pending_accepted_continuation_cannot_hide_competing_formal_work() -> None:
     from investment_strategy.workflow_dispatch import ObservationProvenance, classify_dispatch
 
