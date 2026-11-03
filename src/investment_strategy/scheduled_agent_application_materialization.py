@@ -2160,6 +2160,7 @@ def prove_materialization(
     allow_pending_continuation: bool = False,
     accepted_successor_routing: tuple[str, str] | None = None,
     accepted_intent: bool = False,
+    committed_formal_result: bool = False,
 ) -> MaterializationProof:
     """The sole read-only owner of materialized durable consequence completion.
 
@@ -2169,6 +2170,12 @@ def prove_materialization(
     unreadable authoritative sources return UNKNOWN, distinct from proven conflicts.
     """
     try:
+        if committed_formal_result and (
+            source.action != _IMPLEMENTATION_ACTION
+            or not accepted_intent
+            or accepted_successor_routing is None
+        ):
+            raise RuntimeError("materialization committed result is not source-qualified")
         request = parse_materialization_payload(payload, source)
         if (
             source.role == "executor"
@@ -2538,23 +2545,32 @@ def prove_materialization(
         # commit, so importing disjoint main history is not mistaken for a
         # semantic edit by this source Action.
         _proof_ancestry(repository, token, witness_revision, revision)
-        if default_advance.intersection(file.path for file in request.files):
+        if not committed_formal_result and default_advance.intersection(
+            file.path for file in request.files
+        ):
             _proof_ancestry(repository, token, witness_revision, current_revision)
-        # Compare current default against carrier history without confusing the
-        # mutation preimage with a historical default-branch base.
-        comparison, _commits, _paths = _proof_comparison(
-            repository, token, current_revision, revision
-        )
-        merge_base = cast(Mapping[str, object], comparison["merge_base_commit"])
-        default_paths = _proof_ancestry(
-            repository, token, cast(str, merge_base["sha"]), current_revision
-        )
-        carrier_paths = _proof_ancestry(repository, token, cast(str, merge_base["sha"]), revision)
-        for path in default_paths & carrier_paths:
-            if _content_sha_at(repository, token, path=path, revision=current_revision) != (
-                _content_sha_at(repository, token, path=path, revision=revision)
-            ):
-                raise RuntimeError("materialization carrier overlaps default-branch changes")
+        # Before formal commit, competing default-branch edits remain a write
+        # safety gate. After the exact result was committed, they are a future
+        # review/merge concern, not grounds to undo the immutable prior Action.
+        # The accepted witness and current PR identity still qualify above.
+        if not committed_formal_result:
+            # Compare current default against carrier history without confusing
+            # the mutation preimage with a historical default-branch base.
+            comparison, _commits, _paths = _proof_comparison(
+                repository, token, current_revision, revision
+            )
+            merge_base = cast(Mapping[str, object], comparison["merge_base_commit"])
+            default_paths = _proof_ancestry(
+                repository, token, cast(str, merge_base["sha"]), current_revision
+            )
+            carrier_paths = _proof_ancestry(
+                repository, token, cast(str, merge_base["sha"]), revision
+            )
+            for path in default_paths & carrier_paths:
+                if _content_sha_at(repository, token, path=path, revision=current_revision) != (
+                    _content_sha_at(repository, token, path=path, revision=revision)
+                ):
+                    raise RuntimeError("materialization carrier overlaps default-branch changes")
         # A reconciliation after the accepted mutation must preserve the exact
         # application overlay, even when its final desired blobs were later changed.
         _lineage, descendants, _paths = _proof_comparison(
@@ -2666,6 +2682,7 @@ def observe_materialization_target(
     allow_pending_continuation: bool = False,
     accepted_successor_routing: tuple[str, str] | None = None,
     accepted_intent: bool = False,
+    committed_formal_result: bool = False,
 ) -> ValidationResourceTarget:
     """Reconstruct the current qualified target using the canonical proof."""
     proof = prove_materialization(
@@ -2679,6 +2696,7 @@ def observe_materialization_target(
         allow_pending_continuation=allow_pending_continuation,
         accepted_successor_routing=accepted_successor_routing,
         accepted_intent=accepted_intent,
+        committed_formal_result=committed_formal_result,
     )
     if proof.disposition != "COMPLETE" or proof.target is None:
         raise RuntimeError(proof.reason or "application materialization is incomplete")

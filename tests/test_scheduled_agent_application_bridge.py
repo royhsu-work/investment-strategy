@@ -3797,6 +3797,8 @@ def test_accepted_implementation_stages_checkpoint_only_after_fresh_carrier_proo
         )(),
     )
     monkeypatch.setattr(bridge, "_accepted_checkpoint_already_durable", lambda *_a, **_k: False)
+    # This scenario is explicitly precommit; no authoritative formal result exists.
+    monkeypatch.setattr(bridge, "_qualified_committed_implementation_result", lambda **_kw: None)
     calls: list[dict[str, object]] = []
 
     def fake_apply(raw_result: str, **kwargs: object) -> tuple[EffectBatch, bridge.ApplyResult]:
