@@ -177,6 +177,95 @@ def test_supersession_materializer_creates_only_one_fresh_main_child_and_require
 
 
 @pytest.mark.parametrize(
+    ("failure", "reason"),
+    (
+        (None, None),
+        ("missing-branch", "pending branch is absent"),
+        ("overlapping-main", "overlaps default advance"),
+        ("unqualified-retirement", "lost formal retirement"),
+        ("not-pending", "source dispatch is stale"),
+        ("existing-pr", "already has a PR"),
+    ),
+)
+def test_interrupted_supersession_branch_completes_only_missing_pr_after_disjoint_main_advance(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str | None,
+    reason: str | None,
+) -> None:
+    source = WorkerRequest(169, "executor", "implement-change")
+    payload = _payload(expected_change=_CHANGE)
+    payload["branch"] = f"agent/{_CHANGE}-supersedes-408"
+    payload["pr_number"] = None
+    advanced_main = "d" * 40
+    branch_head = "c" * 40
+    writes: list[str] = []
+    monkeypatch.setattr(
+        materialization,
+        "_pending_source_is_current",
+        lambda *_args, **_kwargs: failure != "not-pending",
+    )
+    monkeypatch.setattr(materialization, "_current_default_branch", lambda *_args: "main")
+    monkeypatch.setattr(materialization, "_ref_head_sha", lambda *_args: advanced_main)
+    monkeypatch.setattr(
+        materialization,
+        "qualify_supersession_branch",
+        lambda **_kwargs: failure != "unqualified-retirement",
+    )
+    monkeypatch.setattr(
+        materialization,
+        "_branch_head",
+        lambda *_args: None if failure == "missing-branch" else branch_head,
+    )
+    monkeypatch.setattr(materialization, "_verify_revision", lambda *_args: None)
+    monkeypatch.setattr(
+        materialization,
+        "_matching_prs",
+        lambda *_args: [{"number": 414}] if failure == "existing-pr" else [],
+    )
+    monkeypatch.setattr(
+        materialization,
+        "_proof_ancestry",
+        lambda *_args: (
+            frozenset({f"openspec/changes/{_CHANGE}/proposal.md"})
+            if failure == "overlapping-main"
+            else frozenset()
+        ),
+    )
+
+    def read(
+        _repository: str,
+        _token: str,
+        path: str,
+        *,
+        method: str = "GET",
+        **_kwargs: object,
+    ) -> object:
+        if method != "GET":
+            writes.append(path)
+            raise AssertionError("interrupted carrier must not repeat a Git write")
+        if path == "issues/169":
+            return {"state": "open", "body": f"Change: {_CHANGE}\n"}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(materialization, "_github_json", read)
+    with pytest.raises(RuntimeError if reason else CarrierRequired, match=reason) as raised:
+        materialization._construct_materialization(
+            payload,
+            source,
+            repository="owner/repo",
+            token=_TOKEN,
+            current_revision=advanced_main,
+            default_branch="main",
+            allow_pending_continuation=True,
+        )
+    if reason is None:
+        assert isinstance(raised.value, CarrierRequired)
+        assert raised.value.plan.operation == "pull-request-create"
+        assert raised.value.plan.expected["base_sha"] == advanced_main
+    assert not writes
+
+
+@pytest.mark.parametrize(
     ("failure", "expected_error"),
     (
         (None, None),
@@ -2338,6 +2427,40 @@ def _prove_payload_git(
         accepted_authorization_revision=fixture.authorization,
         accepted_intent=accepted_intent,
     )
+
+
+def test_pending_supersession_read_only_proof_uses_real_git_witness_after_disjoint_advance(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = proof_git
+    fixture.source = WorkerRequest(322, "executor", "implement-change")
+    fixture.routing = fixture.source.action
+    fixture.branch = f"agent/{_CHANGE}-supersedes-408"
+    fixture.path = "src/investment_strategy/pending_supersession.py"
+    fixture.first_create = True
+    fixture.prs.clear()
+    child = fixture.commit({fixture.path: "accepted content"}, fixture.message, (fixture.base,))
+    fixture.git("update-ref", f"refs/heads/{fixture.branch}", child)
+    fixture.main = fixture.commit({"docs/other.md": "unrelated"}, "Unrelated", (fixture.base,))
+    monkeypatch.setattr(materialization, "qualify_supersession_branch", lambda **_kw: True)
+    monkeypatch.setattr(
+        materialization, "_pending_source_is_current", lambda *_args, **_kwargs: True
+    )
+    request = fixture.payload()
+    proof = materialization.prove_materialization(
+        request,
+        fixture.source,
+        repository=fixture.repository,
+        token=_TOKEN,
+        current_revision=fixture.main,
+        default_branch="main",
+        accepted_authorization_revision=fixture.base,
+        allow_pending_continuation=True,
+        accepted_intent=True,
+    )
+    assert proof.disposition == "INCOMPLETE", proof
+    assert fixture.mutations == []
 
 
 def test_apply_then_fresh_proof_and_every_read_consumer_reuses_git_consequence(

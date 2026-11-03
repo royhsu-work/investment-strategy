@@ -1700,7 +1700,39 @@ def _construct_materialization(
 
     if request.pr_number is None:
         if request.base_sha != current_revision:
-            raise RuntimeError("supersession branch must start at fresh default revision")
+            if not allow_pending_continuation:
+                raise RuntimeError("supersession branch must start at fresh default revision")
+            # The accepted first commit may already exist when a PR actuator
+            # was interrupted. Do not author a second commit from the stale
+            # base: only finish the missing PR for the proven existing ref.
+            advance = _proof_ancestry(repository, token, request.base_sha, current_revision)
+            if advance.intersection(file.path for file in request.files):
+                raise RuntimeError("supersession pending branch overlaps default advance")
+            if not qualify_supersession_branch(
+                repository=repository,
+                token=token,
+                issue_number=source.issue_number,
+                change=request.change,
+                branch=request.branch,
+                current_revision=current_revision,
+            ):
+                raise RuntimeError("supersession pending branch lost formal retirement")
+            orphan_revision = _branch_head(repository, token, request.branch)
+            if orphan_revision is None:
+                raise RuntimeError("supersession pending branch is absent after default advance")
+            _verify_revision(repository, token, request, orphan_revision)
+            if _matching_prs(repository, token, request.branch):
+                raise RuntimeError("supersession pending branch already has a PR")
+            raise CarrierRequired(
+                _new_carrier_pr_plan(
+                    request,
+                    source,
+                    repository=repository,
+                    default_branch=default_branch,
+                    authorization_revision=current_revision,
+                    revision=orphan_revision,
+                )
+            )
         revision, pr_number = _ensure_new_carrier(
             request,
             source,
@@ -2300,9 +2332,25 @@ def prove_materialization(
             ):
                 raise RuntimeError("supersession requires formal retirement")
             if request.base_sha != current_revision:
-                if not committed_formal_result or not accepted_intent:
-                    raise RuntimeError("supersession has no fresh-main precommit authorization")
-                _proof_ancestry(repository, token, request.base_sha, current_revision)
+                advance = _proof_ancestry(repository, token, request.base_sha, current_revision)
+                if not (committed_formal_result and accepted_intent):
+                    if not allow_pending_continuation or not accepted_intent:
+                        raise RuntimeError("supersession has no fresh-main precommit authorization")
+                    if advance.intersection(file.path for file in request.files):
+                        raise RuntimeError("supersession pending branch overlaps default advance")
+                    orphan_head = _branch_head(repository, token, request.branch)
+                    if (
+                        orphan_head is None
+                        or _proof_witness(
+                            request,
+                            repository=repository,
+                            token=token,
+                            revision=orphan_head,
+                            current_revision=current_revision,
+                        )
+                        != orphan_head
+                    ):
+                        raise RuntimeError("supersession pending branch lacks exact commit witness")
         default_advance = _proof_ancestry(repository, token, accepted_revision, current_revision)
         if request.expected_change == "unset":
             _tree, preimage_entries = _revision_tree_snapshot(repository, token, request.base_sha)

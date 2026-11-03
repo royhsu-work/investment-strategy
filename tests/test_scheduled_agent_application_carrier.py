@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import cast
@@ -273,6 +276,7 @@ def _fake_github(
     issue_body: str | None = None,
     formal_comments: list[dict[str, object]] | None = None,
     routing_timeline: list[dict[str, object]] | None = None,
+    request_comments: dict[int, dict[str, object]] | None = None,
 ) -> Callable[..., object | None]:
     current = current_pr or _continuation_pr()
     historical = (
@@ -308,6 +312,9 @@ def _fake_github(
             return {"number": 229, "state": "open", "body": body}
         if api_path.startswith("issues/229/comments?"):
             return [] if formal_comments is None else formal_comments
+        if api_path.startswith("issues/comments/"):
+            identifier = int(api_path.rsplit("/", 1)[1])
+            return (request_comments or {}).get(identifier)
         if api_path.startswith("issues/229/timeline?"):
             return [] if routing_timeline is None else routing_timeline
         if api_path == f"pulls/{current['number']}":
@@ -510,6 +517,102 @@ def _supersession_routing_timeline() -> list[dict[str, object]]:
     ]
 
 
+def _accepted_supersession_comments(
+    old_head: str,
+    *,
+    carrier_number: int = 236,
+) -> tuple[list[dict[str, object]], dict[int, dict[str, object]]]:
+    """Use real ingress/decision parsers to bind both formal results to requests."""
+
+    from investment_strategy.scheduled_agent_application_bridge import (
+        ApplicationRequest,
+        dispatch_correlation_for,
+        render_application_request,
+    )
+
+    formal = _supersession_formal_comments(old_head)
+    requests: dict[int, dict[str, object]] = {}
+    for entry in tuple(formal):
+        body = cast(str, entry["body"])
+        fields = dict(line.split(": ", 1) for line in body.splitlines()[1:])
+        role = fields["Role"]
+        action = fields["Action"]
+        result_kind = fields["Result"].lower()
+        request_id = cast(int, entry["id"]) + 100
+        effects = []
+        if result_kind == "ready":
+            effects.append(
+                {
+                    "kind": "github-mutation",
+                    "payload_json": json.dumps(
+                        {
+                            "operation": "application-materialize",
+                            "pr_number": carrier_number,
+                            "branch": f"agent/{CHANGE}-continuation-232",
+                        }
+                    ),
+                }
+            )
+        raw_result = json.dumps(
+            {
+                "issue_number": 229,
+                "role": role,
+                "action": action,
+                "change": CHANGE,
+                "result_kind": result_kind,
+                "requested_effects": effects,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        request_body = render_application_request(
+            ApplicationRequest(
+                authorization_revision=MAIN,
+                raw_worker_result=raw_result,
+                dispatch_correlation=dispatch_correlation_for(
+                    REPOSITORY, WorkerRequest(229, role, action), MAIN
+                ),
+            )
+        )
+        requests[request_id] = {
+            "id": request_id,
+            "body": request_body,
+            "user": {"login": "royhsu-work"},
+            "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+        }
+
+        def sha(value: str) -> str:
+            return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+        decision_body = "\n".join(
+            (
+                "APPLICATION_DECISION",
+                f"Request-Comment: {request_id}",
+                f"Request-Body-SHA256: {sha(request_body)}",
+                f"Authorization-Revision: {MAIN}",
+                "Issue: 229",
+                f"Role: {role}",
+                f"Action: {action}",
+                f"Change: {CHANGE}",
+                f"Result-Kind: {result_kind}",
+                "Disposition: ACCEPTED",
+                f"Worker-Result-SHA256: {sha(raw_result)}",
+                f"Application-Intent-B64: {base64.b64encode(raw_result.encode()).decode()}",
+                "Reason: accepted",
+            )
+        )
+        formal.append(
+            {
+                "id": request_id + 100,
+                "body": decision_body,
+                "user": {"login": "github-actions[bot]"},
+                "performed_via_github_app": {"slug": "github-actions"},
+                "created_at": "2026-11-03T01:00:00Z",
+            }
+        )
+    return formal, requests
+
+
 @pytest.mark.parametrize(
     ("retired", "findings", "expected"),
     [
@@ -537,12 +640,14 @@ def test_superseded_unmerged_carrier_requires_formal_findings_before_fresh_main_
         number=237,
         branch=f"agent/{CHANGE}-supersedes-236",
     )
+    accepted_comments, requests = _accepted_supersession_comments(old_head)
     github = _fake_github(
         current_pr=replacement_pr,
         merged_continuations=[retired_pr],
         open_prs=[replacement_pr],
-        formal_comments=_supersession_formal_comments(old_head) if findings else [],
+        formal_comments=accepted_comments if findings else [],
         routing_timeline=_supersession_routing_timeline(),
+        request_comments=requests,
     )
     monkeypatch.setattr(carrier, "_github_json", github)
     decision = carrier.qualify_implementation_carrier(
@@ -559,6 +664,74 @@ def test_superseded_unmerged_carrier_requires_formal_findings_before_fresh_main_
         assert decision.branch == f"agent/{CHANGE}-supersedes-236"
 
 
+def test_supersession_rejects_bot_shaped_results_without_accepted_application_decisions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_head = "5" * 40
+    retired = _continuation_pr(head_sha=old_head)
+    retired.update(state="closed", merged=False, closed_at="2026-11-03T03:00:00Z")
+    replacement = _continuation_pr(number=237, branch=f"agent/{CHANGE}-supersedes-236")
+    fake = _fake_github(
+        current_pr=replacement,
+        merged_continuations=[retired],
+        open_prs=[replacement],
+        formal_comments=_supersession_formal_comments(old_head),
+        routing_timeline=_supersession_routing_timeline(),
+    )
+    monkeypatch.setattr(carrier, "_github_json", fake)
+    assert not carrier.qualify_supersession_branch(
+        repository=REPOSITORY,
+        token=TEST_VALUE,
+        issue_number=229,
+        change=CHANGE,
+        branch=f"agent/{CHANGE}-supersedes-236",
+        current_revision=MAIN,
+    )
+
+
+@pytest.mark.parametrize(
+    "invalid_provenance",
+    ("unaccepted", "tampered-request", "foreign-actor", "wrong-retired-pr", "missing-decision"),
+)
+def test_supersession_rejects_decision_or_ingress_without_exact_causal_binding(
+    monkeypatch: pytest.MonkeyPatch, invalid_provenance: str
+) -> None:
+    old_head = "5" * 40
+    old = _continuation_pr(head_sha=old_head)
+    old.update(state="closed", merged=False, closed_at="2026-11-03T03:00:00Z")
+    replacement = _continuation_pr(number=237, branch=f"agent/{CHANGE}-supersedes-236")
+    formal, requests = _accepted_supersession_comments(
+        old_head, carrier_number=999 if invalid_provenance == "wrong-retired-pr" else 236
+    )
+    if invalid_provenance == "unaccepted":
+        formal[2]["body"] = cast(str, formal[2]["body"]).replace(
+            "Disposition: ACCEPTED", "Disposition: REJECTED"
+        )
+    elif invalid_provenance == "tampered-request":
+        requests[1000]["body"] = f"{requests[1000]['body']}\n"
+    elif invalid_provenance == "foreign-actor":
+        requests[1000]["user"] = {"login": "untrusted-user"}
+    elif invalid_provenance == "missing-decision":
+        formal.pop(2)
+    github = _fake_github(
+        current_pr=replacement,
+        merged_continuations=[old],
+        open_prs=[replacement],
+        formal_comments=formal,
+        request_comments=requests,
+        routing_timeline=_supersession_routing_timeline(),
+    )
+    monkeypatch.setattr(carrier, "_github_json", github)
+    assert not carrier.qualify_supersession_branch(
+        repository=REPOSITORY,
+        token=TEST_VALUE,
+        issue_number=229,
+        change=CHANGE,
+        branch=f"agent/{CHANGE}-supersedes-236",
+        current_revision=MAIN,
+    )
+
+
 def test_merged_supersession_becomes_immutable_historical_lineage_for_finalization(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -572,12 +745,14 @@ def test_merged_supersession_becomes_immutable_historical_lineage_for_finalizati
         merged_at="2026-11-03T04:00:00Z",
         merge_commit_sha="7" * 40,
     )
+    accepted_comments, requests = _accepted_supersession_comments(old_head)
     github = _fake_github(
         current_pr=replacement,
         merged_continuations=[retired],
         open_prs=[],
-        formal_comments=_supersession_formal_comments(old_head),
+        formal_comments=accepted_comments,
         routing_timeline=_supersession_routing_timeline(),
+        request_comments=requests,
     )
     monkeypatch.setattr(carrier, "_github_json", github)
     historical = carrier._historical_carriers(
@@ -626,7 +801,7 @@ def test_supersession_fails_closed_for_unqualified_review_or_retirement(
         closed_at="2026-11-03T03:00:00Z",
     )
     new_pr = _continuation_pr(number=237, branch=f"agent/{CHANGE}-supersedes-236")
-    formal = _supersession_formal_comments(old_head)
+    formal, requests = _accepted_supersession_comments(old_head)
     timeline = _supersession_routing_timeline()
     continuations = [old_pr]
     opens = [new_pr]
@@ -637,7 +812,7 @@ def test_supersession_fails_closed_for_unqualified_review_or_retirement(
     elif invalid_evidence == "closed-before-findings":
         old_pr["closed_at"] = "2026-11-03T01:30:00Z"
     elif invalid_evidence == "wrong-ready-head":
-        formal = _supersession_formal_comments("6" * 40)
+        formal, requests = _accepted_supersession_comments("6" * 40)
     elif invalid_evidence == "wrong-issue":
         old_pr["body"] = "Refs #888"
     elif invalid_evidence == "draft-retired":
@@ -655,6 +830,7 @@ def test_supersession_fails_closed_for_unqualified_review_or_retirement(
         open_prs=opens,
         formal_comments=formal,
         routing_timeline=timeline,
+        request_comments=requests,
     )
     monkeypatch.setattr(carrier, "_github_json", github)
     result = carrier.qualify_implementation_carrier(

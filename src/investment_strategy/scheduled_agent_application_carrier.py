@@ -8,6 +8,7 @@ instead of reconstructing branch identity independently.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Callable, Mapping
@@ -811,6 +812,148 @@ def _timestamp(value: object) -> datetime | None:
     return result if result.utcoffset() is not None else None
 
 
+def _accepted_formal_result_is_proven(
+    repository: str,
+    token: str,
+    *,
+    issue_number: int,
+    change: str,
+    retired_number: int,
+    retired_branch: str,
+    event: object,
+    comments: tuple[Mapping[str, object], ...],
+    read: GitHubReader,
+) -> bool:
+    """Bind a formal transition to one immutable accepted Application intent.
+
+    A bot-authored formal comment alone is not proof of Application acceptance.
+    This reuses the existing decision/ingress parsers and checks their source
+    objects, including the exact request body hash, without creating state.
+    """
+
+    # Import at call time because the Application effects/bridge modules use
+    # this carrier qualifier. No competing parser or new authority is added.
+    from investment_strategy.scheduled_agent_application_bridge import (
+        dispatch_correlation_for,
+        parse_application_request,
+    )
+    from investment_strategy.scheduled_agent_effects import (
+        parse_application_decision,
+        semantic_intent_payload,
+    )
+
+    correlation = getattr(event, "application_correlation", None)
+    parts = correlation.split(":") if isinstance(correlation, str) else []
+    role = getattr(event, "role", None)
+    action = getattr(event, "action", None)
+    result = getattr(event, "result_kind", None)
+    default_revision = getattr(event, "default_branch_revision", None)
+    if (
+        len(parts) != 8
+        or parts[0] != "application"
+        or not parts[1].isdigit()
+        or parts[2:7] != [str(issue_number), change, role, action, result]
+        or parts[7] != default_revision
+        or not _valid_sha(default_revision)
+    ):
+        return False
+    request_id = int(parts[1])
+    decisions = []
+    for comment in comments:
+        user = _as_mapping(comment.get("user"))
+        app = _as_mapping(comment.get("performed_via_github_app"))
+        if (
+            user is None
+            or user.get("login") != "github-actions[bot]"
+            or app is None
+            or app.get("slug") != "github-actions"
+        ):
+            continue
+        decision = parse_application_decision(comment.get("body"))
+        if decision is not None and decision.request_comment_id == request_id:
+            decisions.append(decision)
+    if len(decisions) != 1:
+        return False
+    decision = decisions[0]
+    if (
+        decision.disposition != "ACCEPTED"
+        or (decision.issue_number, decision.change) != (issue_number, change)
+        or (decision.role, decision.action, decision.result_kind) != (role, action, result)
+        or (
+            decision.authorization_revision != default_revision
+            and not _compare_is_ancestor(
+                repository,
+                token,
+                ancestor=decision.authorization_revision,
+                descendant=cast(str, default_revision),
+                read=read,
+            )
+        )
+    ):
+        return False
+    request = _as_mapping(read(repository, token, f"issues/comments/{request_id}"))
+    if request is None or request.get("id") != request_id:
+        return False
+    user = _as_mapping(request.get("user"))
+    app = _as_mapping(request.get("performed_via_github_app"))
+    body = request.get("body")
+    if (
+        user is None
+        or user.get("login") != repository.split("/", 1)[0]
+        or app is None
+        or app.get("slug") != "chatgpt-codex-connector"
+        or not isinstance(body, str)
+        or hashlib.sha256(body.encode("utf-8")).hexdigest() != decision.request_body_sha256
+    ):
+        return False
+    try:
+        ingress = parse_application_request(body)
+        if ingress is None:
+            return False
+        source = WorkerRequest(issue_number, cast(str, role), cast(str, action))
+        if (
+            ingress.authorization_revision != decision.authorization_revision
+            or ingress.dispatch_correlation
+            != dispatch_correlation_for(repository, source, decision.authorization_revision)
+            or semantic_intent_payload(ingress.raw_worker_result) != decision.raw_worker_result
+        ):
+            return False
+        intent = json.loads(decision.raw_worker_result)
+    except (TypeError, ValueError):
+        return False
+    if (
+        not isinstance(intent, Mapping)
+        or (intent.get("issue_number"), intent.get("role"), intent.get("action"))
+        != (issue_number, role, action)
+        or (intent.get("change"), intent.get("result_kind")) != (change, result)
+    ):
+        return False
+    if (role, action, result) == ("executor", "implement-change", "ready"):
+        effects = intent.get("requested_effects")
+        if not isinstance(effects, list):
+            return False
+        carriers = []
+        for effect in effects:
+            if not isinstance(effect, Mapping) or effect.get("kind") != "github-mutation":
+                continue
+            raw = effect.get("payload_json")
+            try:
+                payload = json.loads(raw) if isinstance(raw, str) else None
+            except ValueError:
+                return False
+            if (
+                isinstance(payload, Mapping)
+                and payload.get("operation") == "application-materialize"
+            ):
+                carriers.append(payload)
+        if len(carriers) != 1 or (carriers[0].get("pr_number"), carriers[0].get("branch")) != (
+            retired_number,
+            retired_branch,
+        ):
+            return False
+    return True
+
+
 def _formally_superseded_closed_carrier(
     repository: str,
     token: str,
@@ -900,6 +1043,21 @@ def _formally_superseded_closed_carrier(
         and _ready_at < findings_at <= closed_at
     )
     if not formal_transition:
+        return False
+    if not all(
+        _accepted_formal_result_is_proven(
+            repository,
+            token,
+            issue_number=issue_number,
+            change=change,
+            retired_number=retired_number,
+            retired_branch=expected_branch,
+            event=event,
+            comments=comments,
+            read=read,
+        )
+        for event in (ready, findings)
+    ):
         return False
     timeline = _paged_list(
         repository,
