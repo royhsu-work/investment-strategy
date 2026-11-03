@@ -812,6 +812,37 @@ def _timestamp(value: object) -> datetime | None:
     return result if result.utcoffset() is not None else None
 
 
+def _canonical_intent_effect_json(raw_intent: str) -> str | None:
+    """Compare accepted effect values, not incidental inner JSON serialization.
+
+    The immutable request body and accepted decision retain their own exact
+    hashes. Only the schema-defined nested `payload_json` field is decoded for
+    semantic equality; all other intent fields remain in the comparison.
+    """
+
+    try:
+        intent = json.loads(raw_intent)
+        if not isinstance(intent, dict) or not isinstance(intent.get("requested_effects"), list):
+            return None
+        normalized_effects = []
+        for effect in intent["requested_effects"]:
+            if not isinstance(effect, dict) or not isinstance(effect.get("payload_json"), str):
+                return None
+            payload = json.loads(effect["payload_json"])
+            if not isinstance(payload, dict):
+                return None
+            normalized_effects.append(
+                {
+                    **effect,
+                    "payload_json": json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                }
+            )
+    except (TypeError, ValueError):
+        return None
+    intent["requested_effects"] = normalized_effects
+    return json.dumps(intent, sort_keys=True, separators=(",", ":"))
+
+
 def _accepted_formal_result_is_proven(
     repository: str,
     token: str,
@@ -911,11 +942,16 @@ def _accepted_formal_result_is_proven(
         if ingress is None:
             return False
         source = WorkerRequest(issue_number, cast(str, role), cast(str, action))
+        ingress_intent = _canonical_intent_effect_json(
+            semantic_intent_payload(ingress.raw_worker_result)
+        )
+        accepted_intent = _canonical_intent_effect_json(decision.raw_worker_result)
         if (
             ingress.authorization_revision != decision.authorization_revision
             or ingress.dispatch_correlation
             != dispatch_correlation_for(repository, source, decision.authorization_revision)
-            or semantic_intent_payload(ingress.raw_worker_result) != decision.raw_worker_result
+            or ingress_intent is None
+            or ingress_intent != accepted_intent
         ):
             return False
         intent = json.loads(decision.raw_worker_result)

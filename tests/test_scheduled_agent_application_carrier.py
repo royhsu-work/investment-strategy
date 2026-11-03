@@ -521,6 +521,8 @@ def _accepted_supersession_comments(
     old_head: str,
     *,
     carrier_number: int = 236,
+    reformat_accepted_effects: bool = False,
+    tamper_accepted_effect: bool = False,
 ) -> tuple[list[dict[str, object]], dict[int, dict[str, object]]]:
     """Use real ingress/decision parsers to bind both formal results to requests."""
 
@@ -555,6 +557,7 @@ def _accepted_supersession_comments(
             )
         raw_result = json.dumps(
             {
+                "_semantic_intent_version": 2,
                 "issue_number": 229,
                 "role": role,
                 "action": action,
@@ -584,6 +587,15 @@ def _accepted_supersession_comments(
         def sha(value: str) -> str:
             return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
+        accepted_result = raw_result
+        if reformat_accepted_effects or tamper_accepted_effect:
+            accepted = json.loads(raw_result)
+            for effect in accepted["requested_effects"]:
+                nested = json.loads(effect["payload_json"])
+                if tamper_accepted_effect:
+                    nested["unapproved_field"] = "mutated"
+                effect["payload_json"] = json.dumps(nested, sort_keys=True)
+            accepted_result = json.dumps(accepted, sort_keys=True, separators=(",", ":"))
         decision_body = "\n".join(
             (
                 "APPLICATION_DECISION",
@@ -596,8 +608,8 @@ def _accepted_supersession_comments(
                 f"Change: {CHANGE}",
                 f"Result-Kind: {result_kind}",
                 "Disposition: ACCEPTED",
-                f"Worker-Result-SHA256: {sha(raw_result)}",
-                f"Application-Intent-B64: {base64.b64encode(raw_result.encode()).decode()}",
+                f"Worker-Result-SHA256: {sha(accepted_result)}",
+                f"Application-Intent-B64: {base64.b64encode(accepted_result.encode()).decode()}",
                 "Reason: accepted",
             )
         )
@@ -686,6 +698,44 @@ def test_supersession_rejects_bot_shaped_results_without_accepted_application_de
         change=CHANGE,
         branch=f"agent/{CHANGE}-supersedes-236",
         current_revision=MAIN,
+    )
+
+
+@pytest.mark.parametrize("tamper_accepted_effect", (False, True))
+def test_supersession_preserves_accepted_intent_semantics_across_nested_json_serialization(
+    monkeypatch: pytest.MonkeyPatch,
+    tamper_accepted_effect: bool,
+) -> None:
+    """#322 regression: real ACCEPTED intent reformatted inner payload_json strings."""
+
+    old_head = "5" * 40
+    old = _continuation_pr(head_sha=old_head)
+    old.update(state="closed", merged=False, closed_at="2026-11-03T03:00:00Z")
+    replacement = _continuation_pr(number=237, branch=f"agent/{CHANGE}-supersedes-236")
+    formal, requests = _accepted_supersession_comments(
+        old_head,
+        reformat_accepted_effects=True,
+        tamper_accepted_effect=tamper_accepted_effect,
+    )
+    github = _fake_github(
+        current_pr=replacement,
+        merged_continuations=[old],
+        open_prs=[replacement],
+        formal_comments=formal,
+        request_comments=requests,
+        routing_timeline=_supersession_routing_timeline(),
+    )
+    monkeypatch.setattr(carrier, "_github_json", github)
+    assert (
+        carrier.qualify_supersession_branch(
+            repository=REPOSITORY,
+            token=TEST_VALUE,
+            issue_number=229,
+            change=CHANGE,
+            branch=f"agent/{CHANGE}-supersedes-236",
+            current_revision=MAIN,
+        )
+        is not tamper_accepted_effect
     )
 
 
