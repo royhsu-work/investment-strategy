@@ -92,12 +92,22 @@ def test_existing_change_materialization_requires_current_pr_and_preserves_expec
     assert materialization_requires_validation(request, source)
 
 
-def test_formally_retired_change_can_request_application_owned_fresh_main_carrier() -> None:
-    source = WorkerRequest(169, "executor", "implement-change")
+@pytest.mark.parametrize(
+    ("role", "action", "path"),
+    [
+        ("executor", "implement-change", "src/investment_strategy/example.py"),
+        ("lead", "resolve-question", f"openspec/changes/{_CHANGE}/tasks.md"),
+    ],
+)
+def test_formally_retired_change_can_request_application_owned_fresh_main_carrier(
+    role: str, action: str, path: str
+) -> None:
+    source = WorkerRequest(169, role, action)
     payload = _payload(expected_change=_CHANGE)
     payload["branch"] = f"agent/{_CHANGE}-supersedes-408"
     payload["pr_number"] = None
     payload["base_sha"] = _BASE
+    payload["files"] = [{"path": path, "blob_sha": _BLOB, "expected_sha": _BASE}]
     request = parse_materialization_payload(payload, source)
 
     assert request.pr_number is None
@@ -105,14 +115,45 @@ def test_formally_retired_change_can_request_application_owned_fresh_main_carrie
     assert request.base_sha == _BASE
 
 
-@pytest.mark.parametrize("formal", [True, False])
-def test_supersession_materializer_creates_only_one_fresh_main_child_and_requires_pr_carrier(
-    monkeypatch: pytest.MonkeyPatch, formal: bool
+@pytest.mark.parametrize(
+    ("role", "action", "path"),
+    [
+        ("lead", "resolve-question", "src/investment_strategy/example.py"),
+        ("lead", "propose-change", f"openspec/changes/{_CHANGE}/tasks.md"),
+        ("reviewer", "review-openspec", f"openspec/changes/{_CHANGE}/tasks.md"),
+    ],
+)
+def test_supersession_first_carrier_rejects_out_of_capability_or_action(
+    role: str, action: str, path: str
 ) -> None:
-    source = WorkerRequest(169, "executor", "implement-change")
+    payload = _payload(expected_change=_CHANGE)
+    payload["branch"] = f"agent/{_CHANGE}-supersedes-408"
+    payload["pr_number"] = None
+    payload["files"] = [{"path": path, "blob_sha": _BLOB, "expected_sha": _BASE}]
+    with pytest.raises(ValueError, match="requires an exact PR|outside Action capability"):
+        parse_materialization_payload(payload, WorkerRequest(169, role, action))
+
+
+@pytest.mark.parametrize("formal", [True, False])
+@pytest.mark.parametrize(
+    ("role", "action"),
+    [("executor", "implement-change"), ("lead", "resolve-question")],
+)
+def test_supersession_materializer_creates_only_one_fresh_main_child_and_requires_pr_carrier(
+    monkeypatch: pytest.MonkeyPatch, formal: bool, role: str, action: str
+) -> None:
+    source = WorkerRequest(169, role, action)
     raw = _payload(expected_change=_CHANGE)
     raw["branch"] = f"agent/{_CHANGE}-supersedes-408"
     raw["pr_number"] = None
+    if role == "lead":
+        raw["files"] = [
+            {
+                "path": f"openspec/changes/{_CHANGE}/tasks.md",
+                "blob_sha": _BLOB,
+                "expected_sha": _BASE,
+            }
+        ]
     request = parse_materialization_payload(raw, source)
     created_head = "c" * 40
     refs: dict[str, str] = {}

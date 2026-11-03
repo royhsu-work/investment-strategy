@@ -4697,11 +4697,19 @@ def test_pull_request_create_discovery_rejects_same_head_competing_base(
     ("formal_supersession", "fresh_main_parent", "allowed"),
     [(True, True, True), (False, True, False), (True, False, False)],
 )
-def test_executor_create_replacement_pr_requires_formal_retirement_and_fresh_main_ancestry(
+@pytest.mark.parametrize(
+    ("role", "action"),
+    [("executor", "implement-change"), ("lead", "resolve-question")],
+)
+@pytest.mark.parametrize("out_of_capability", [False, True])
+def test_mapped_owner_create_replacement_pr_requires_formal_retirement_and_fresh_main_ancestry(
     monkeypatch: pytest.MonkeyPatch,
     formal_supersession: bool,
     fresh_main_parent: bool,
     allowed: bool,
+    role: str,
+    action: str,
+    out_of_capability: bool,
 ) -> None:
     """An existing Change's retired carrier cannot authorize an arbitrary PR."""
 
@@ -4711,7 +4719,7 @@ def test_executor_create_replacement_pr_requires_formal_retirement_and_fresh_mai
         "number": 138,
         "state": "open",
         "body": f"Change: {_CHANGE}\n",
-        "labels": [{"name": "action:implement-change"}],
+        "labels": [{"name": f"action:{action}"}],
         "created_at": "2026-11-03T00:00:00Z",
         "closed_at": None,
     }
@@ -4731,7 +4739,15 @@ def test_executor_create_replacement_pr_requires_formal_retirement_and_fresh_mai
                 "base_commit": {"sha": _REVISION},
                 "ahead_by": 1,
                 "behind_by": 0 if fresh_main_parent else 1,
-                "files": [{"filename": f"openspec/changes/{_CHANGE}/tasks.md"}],
+                "files": [
+                    {
+                        "filename": (
+                            "src/investment_strategy/example.py"
+                            if out_of_capability
+                            else f"openspec/changes/{_CHANGE}/tasks.md"
+                        )
+                    }
+                ],
             }
         if path.startswith("pulls?state=all"):
             return []
@@ -4746,7 +4762,7 @@ def test_executor_create_replacement_pr_requires_formal_retirement_and_fresh_mai
     adapter = GitHubEffectAdapter(
         "owner/repo",
         _TEST_TOKEN,
-        WorkerRequest(138, "executor", "implement-change"),
+        WorkerRequest(138, role, action),
         authorized_change=_CHANGE,
         current_revision=_REVISION,
         expected_result_kind="more-implementation-required",
@@ -4765,7 +4781,7 @@ def test_executor_create_replacement_pr_requires_formal_retirement_and_fresh_mai
             }
         ),
     )
-    assert adapter.guard(effect) is allowed
+    assert adapter.guard(effect) is (allowed and (role == "executor" or not out_of_capability))
 
 
 def test_pending_accepted_continuation_cannot_hide_competing_formal_work() -> None:
