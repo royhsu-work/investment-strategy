@@ -54,6 +54,7 @@ from investment_strategy.scheduled_agent_effects import (
     _archive_ref,
     _references_issue,
     _source_branch,
+    consequence_postconditions_complete,
     formal_application_correlation,
     merged_pr_readiness_complete,
     parse_application_decision,
@@ -2873,6 +2874,105 @@ def _rebind_application_result_revision(
     return json.dumps(decoded, sort_keys=True, separators=(",", ":"))
 
 
+def _qualified_committed_implementation_result(
+    *,
+    repository: str,
+    token: str,
+    source: WorkerRequest,
+    worker_result: WorkerActionResult,
+    change: str,
+    current_revision: str,
+    request_comment_id: int,
+) -> tuple[str, str, tuple[str, str]] | None:
+    """Reuse the canonical formal frontier before treating ACCEPT as committed.
+
+    ACCEPT alone cannot settle an implementation. Only its exact Actions
+    ACTION_RESULT, still qualified as the current successor, ends the
+    historical materialization write boundary. Return revision, correlation,
+    and successor for the already committed consequence.
+    """
+    if source.role != "executor" or source.action != "implement-change":
+        return None
+    successor = next_action(worker_result.typed_result.action, worker_result.typed_result.result)
+    if successor is None:
+        return None
+    successor_routing = (role_for(successor).value, successor.value)
+    issue = _as_mapping(_github_json(repository, token, f"issues/{source.issue_number}"))
+    observation = None if issue is None else normalize_github_issue(issue)
+    if (
+        observation is None
+        or not observation.authoritative
+        or observation.issue_number != source.issue_number
+        or observation.state != "open"
+        or observation.change != change
+        or observation.routing != successor_routing
+    ):
+        return None
+    comments = _paged_github_list(
+        repository, token, f"issues/{source.issue_number}/comments?sort=created"
+    )
+    lifecycle = _paged_github_list(repository, token, f"issues/{source.issue_number}/timeline")
+    qualification = build_qualification_input(
+        issue_number=source.issue_number,
+        change=change,
+        state=observation.state,
+        current_routing=observation.routing,
+        comments=comments,
+        lifecycle_events=lifecycle,
+        current_revision=current_revision,
+        mode="current",
+        expected_routing=successor_routing,
+    )
+    if not qualification.events:
+        return None
+    latest = qualification.events[-1]
+    if latest.default_branch_revision is None:
+        return None
+    if latest.default_branch_revision != current_revision:
+        if not _authorization_revision_is_ancestor(
+            repository, token, latest.default_branch_revision, current_revision
+        ):
+            return None
+        qualification = replace(
+            qualification,
+            authorization_ancestry=((latest.default_branch_revision, current_revision),),
+        )
+    decision = qualify_current_formal_consequence(qualification)
+    event = decision.event
+    if (
+        not decision.qualified
+        or not isinstance(event, FormalLifecycleEvent)
+        or not event.valid
+        or event.issue_number != source.issue_number
+        or event.change != change
+        or (event.role, event.action) != (source.role, source.action)
+        or event.result_kind != worker_result.typed_result.result.kind.value
+        or event.successor != successor_routing
+        or event.revision is None
+        or event.application_correlation is None
+    ):
+        return None
+    original = [
+        comment
+        for comment in comments
+        if comment.get("id") == event.comment_id
+        and parse_formal_result(comment, current_revision=current_revision) == event
+    ]
+    if len(original) != 1:
+        # A synthetic checkpoint frontier is not a committed ACTION_RESULT.
+        return None
+    expected_correlation = formal_application_correlation(
+        source,
+        change=change,
+        result_kind=event.result_kind,
+        current_revision=event.application_correlation.rsplit(":", 1)[-1],
+        request_comment_id=request_comment_id,
+    )
+    if event.application_correlation != expected_correlation:
+        return None
+    return event.revision, event.application_correlation, successor_routing
+
+
 def _accepted_checkpoint_already_durable(
     raw_worker_result: str,
     *,
@@ -5001,6 +5101,15 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         and materialization is not None
         and not requires_validation
     ):
+        committed_result = _qualified_committed_implementation_result(
+            repository=repository,
+            token=token,
+            source=plan.source,
+            worker_result=worker_result,
+            change=effective_change,
+            current_revision=args.revision,
+            request_comment_id=plan.request_comment_id,
+        )
         checkpoint_proof = prove_materialization(
             materialization,
             plan.source,
@@ -5011,10 +5120,44 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
             accepted_authorization_revision=request.authorization_revision,
             allow_pending_continuation=plan.pending_continuation,
             accepted_intent=True,
+            accepted_successor_routing=(None if committed_result is None else committed_result[2]),
+            committed_formal_result=committed_result is not None,
         )
         if checkpoint_proof.disposition == "COMPLETE":
             target = checkpoint_proof.target
-        elif checkpoint_proof.disposition == "INCOMPLETE":
+            if committed_result is not None:
+                if (
+                    checkpoint_proof.witness is None
+                    or checkpoint_proof.witness.revision != committed_result[0]
+                    or target is None
+                    or target.revision != committed_result[0]
+                ):
+                    raise RuntimeError(
+                        "committed implementation witness differs from formal result"
+                    )
+                if not consequence_postconditions_complete(
+                    semantic_worker_result,
+                    source=plan.source,
+                    repository=repository,
+                    token=token,
+                    current_revision=args.revision,
+                    authorized_change=effective_change,
+                    request_comment_id=plan.request_comment_id,
+                    allow_pending_continuation=plan.pending_continuation,
+                    accepted_authorization_revision=request.authorization_revision,
+                    allow_accepted_successor=True,
+                    accepted_intent=True,
+                    observed_application_correlation=committed_result[1],
+                    formal_result_observed=True,
+                ):
+                    raise RuntimeError("committed implementation consequence is not complete")
+                # The formal result and its derived successor are already
+                # durable. No checkpoint, carrier, formal comment, or routing
+                # effect may be reapplied by this historical accepted request.
+                _write_carrier_outputs(ApplyResult(True, "already-formally-committed"))
+                _write_validation_outputs(None)
+                return 0
+        elif checkpoint_proof.disposition == "INCOMPLETE" and committed_result is None:
             defer_accepted_checkpoint = True
         else:
             raise RuntimeError(

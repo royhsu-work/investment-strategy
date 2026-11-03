@@ -2571,6 +2571,248 @@ def test_committed_executor_witness_is_not_reopened_by_later_default_overlap(
 
 
 @pytest.mark.parametrize(
+    "formal_state", ["committed", "absent", "wrong-request", "wrong-revision", "unqualified"]
+)
+def test_native_application_bridge_uses_only_the_exact_committed_executor_result(
+    proof_git: _ProofGitRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    formal_state: str,
+) -> None:
+    """The native Bridge entrypoint must prove, not assume, the formal commit boundary."""
+    import base64
+    import hashlib
+    import sys
+    from datetime import date
+
+    from investment_strategy import scheduled_agent_application_bridge as bridge
+    from investment_strategy import scheduled_agent_effects as effects
+    from investment_strategy.scheduled_agent_checkin import checkin_title
+    from investment_strategy.scheduled_agent_effects import (
+        ApplicationDecisionRecord,
+        ApplyResult,
+        EffectBatch,
+        formal_application_correlation,
+    )
+    from investment_strategy.scheduled_agent_runtime import (
+        GitHubIssueObservation,
+        acquire_dispatch_preflight,
+    )
+    from investment_strategy.workflow_dispatch import ObservationProvenance
+
+    source = WorkerRequest(322, "executor", "implement-change")
+    proof_git.source = source
+    proof_git.path = "src/investment_strategy/scheduled_agent_effects.py"
+    proof_git.branch = f"agent/{_CHANGE}"
+    proof_git.base = proof_git.commit(
+        {proof_git.path: "preimage"}, "Executor base", (proof_git.base,)
+    )
+    proof_git.authorization = proof_git.base
+    proof_git.main = proof_git.base
+    proof_git.desired = proof_git.blob("accepted implementation")
+    proof_git.prs.clear()
+    proof_git.install_pr(324, proof_git.branch, proof_git.base)
+    accepted_revision = proof_git.commit(
+        {proof_git.path: "accepted implementation"}, proof_git.message, (proof_git.base,)
+    )
+    proof_git.set_head(accepted_revision)
+    proof_git.main = proof_git.commit(
+        {proof_git.path: "later Application repair"}, "Fix completion", (proof_git.base,)
+    )
+    proof_git.routing = "review-implementation"
+    monkeypatch.setattr(
+        materialization, "_qualified_implementation_decision", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(materialization, "_open_pr_payload", lambda **_k: proof_git.prs[0])
+
+    worker = {
+        "issue_number": 322,
+        "role": "executor",
+        "action": "implement-change",
+        "change": _CHANGE,
+        "result_kind": "ready",
+        "evidence_ref": "accepted-implementation",
+        "result_content": "Implementation was accepted.",
+        "requested_effects": [
+            {"kind": "github-mutation", "payload_json": json.dumps(proof_git.payload())},
+        ],
+    }
+    raw = json.dumps(worker, sort_keys=True, separators=(",", ":"))
+    request_id = 123
+    request_body = "\n".join(
+        (
+            "EFFECT_REQUEST",
+            f"Authorization-Revision: {proof_git.authorization}",
+            "Worker-Result-B64: " + base64.b64encode(raw.encode()).decode(),
+        )
+    )
+    accepted = ApplicationDecisionRecord(
+        request_comment_id=request_id,
+        request_body_sha256=hashlib.sha256(request_body.encode()).hexdigest(),
+        authorization_revision=proof_git.authorization,
+        issue_number=322,
+        role=source.role,
+        action=source.action,
+        change=_CHANGE,
+        result_kind="ready",
+        disposition="ACCEPTED",
+        worker_result_sha256=hashlib.sha256(raw.encode()).hexdigest(),
+        raw_worker_result=raw,
+        reason="accepted",
+    )
+    event_file = tmp_path / "event.json"
+    event_file.write_text(
+        json.dumps(
+            {
+                "action": "created",
+                "issue": {
+                    "number": 412,
+                    "title": checkin_title(date(2026, 11, 2)),
+                    "state": "open",
+                    "labels": [],
+                },
+                "comment": {
+                    "id": request_id,
+                    "body": request_body,
+                    "user": {"login": "proof-owner"},
+                    "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    correlation = formal_application_correlation(
+        source,
+        change=_CHANGE,
+        result_kind="ready",
+        current_revision=proof_git.authorization,
+        request_comment_id=request_id if formal_state != "wrong-request" else request_id + 1,
+    )
+    formal_revision = proof_git.base if formal_state == "wrong-revision" else accepted_revision
+    formal_body = "\n".join(
+        (
+            "ACTION_RESULT",
+            "Workflow: #322",
+            f"Change: {_CHANGE}",
+            "Role: executor",
+            "Action: implement-change",
+            "Result: READY",
+            f"Revision: {formal_revision}",
+            f"Default-Branch-Revision: {proof_git.authorization}",
+            f"Application-Correlation: {correlation}",
+            "Repository-derived successor: Reviewer / review-implementation",
+            "Evidence: accepted implementation",
+        )
+    )
+    comments = (
+        []
+        if formal_state == "absent"
+        else [
+            {
+                "id": 456,
+                "body": formal_body,
+                "user": {"login": "github-actions[bot]"},
+                "performed_via_github_app": {"slug": "github-actions"},
+            }
+        ]
+    )
+    timeline = [
+        {"id": 456, "event": "commented", "created_at": "2026-11-02T01:00:00Z"},
+        {
+            "id": 457,
+            "event": "unlabeled",
+            "label": {"name": "action:implement-change"},
+            "created_at": "2026-11-02T01:01:00Z",
+        },
+        {
+            "id": 458,
+            "event": "labeled",
+            "label": {"name": "action:review-implementation"},
+            "created_at": "2026-11-02T01:02:00Z",
+        },
+    ]
+    if formal_state == "unqualified":
+        timeline = timeline[:-1]
+
+    def github_read(repository: str, token: str, path: str, **kwargs: object) -> object:
+        if path == "issues/322":
+            return proof_git.api(repository, token, path, **kwargs)
+        if path.startswith("issues/322/comments?"):
+            return comments
+        if path.startswith("issues/322/timeline"):
+            return timeline
+        return proof_git.api(repository, token, path, **kwargs)
+
+    monkeypatch.setattr(bridge, "_github_json", github_read)
+    monkeypatch.setattr(effects, "_github_json", proof_git.api)
+    monkeypatch.setattr(bridge, "_application_decision_for_request", lambda **_kw: accepted)
+    monkeypatch.setattr(bridge, "_accepted_worker_result_for_continuation", lambda **_kw: raw)
+    monkeypatch.setattr(bridge, "_fresh_application_worker_result", lambda *_a, **_kw: raw)
+    monkeypatch.setattr(bridge, "_accepted_checkpoint_already_durable", lambda *_a, **_kw: True)
+    monkeypatch.setattr(bridge, "_record_application_exception", lambda *_a: None)
+    monkeypatch.setattr(bridge, "_write_application_recovery_evidence", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        bridge,
+        "acquire_current_github_preflight",
+        lambda *_a: acquire_dispatch_preflight(
+            observations=(
+                GitHubIssueObservation(
+                    issue_number=322,
+                    change=_CHANGE,
+                    routing=("reviewer", "review-implementation"),
+                    state="open",
+                    created_order=1,
+                    authoritative=True,
+                    current_state_provenance=ObservationProvenance.QUALIFIED,
+                ),
+            ),
+            source_total_count=1,
+            incomplete_results=False,
+            exhausted=True,
+            human_authorized=True,
+        ),
+    )
+    applied: list[dict[str, object]] = []
+
+    def controlled_stop(_raw: str, **kwargs: object) -> tuple[EffectBatch, ApplyResult]:
+        applied.append(kwargs)
+        return EffectBatch(source=source, effects=()), ApplyResult(False, "controlled-stop")
+
+    monkeypatch.setattr(bridge, "run_guarded_effect_application", controlled_stop)
+    monkeypatch.setenv("GITHUB_REPOSITORY", proof_git.repository)
+    monkeypatch.setenv("GITHUB_TOKEN", _TOKEN)
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "scheduled_agent_application_bridge",
+            "--event-path",
+            str(event_file),
+            "--revision",
+            proof_git.main,
+            "--default-branch",
+            "main",
+            "--run-attempt",
+            "2",
+        ],
+    )
+    if formal_state == "committed":
+        assert bridge.main() == 0
+        assert applied == []  # Formally committed history must not replay effects.
+    else:
+        reason = (
+            "committed implementation witness differs from formal result"
+            if formal_state == "wrong-revision"
+            else "materialization required ancestry is broken"
+        )
+        with pytest.raises(RuntimeError, match=reason):
+            bridge.main()
+        assert applied == []
+    assert proof_git.mutations == []
+
+
+@pytest.mark.parametrize(
     "failure",
     [
         "wrong-blob",
