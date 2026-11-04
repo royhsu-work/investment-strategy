@@ -776,6 +776,61 @@ def test_supersession_qualifies_only_retired_head_formal_results(
     )
 
 
+@pytest.mark.parametrize(
+    ("malformation", "expected"),
+    [
+        ("duplicate-retired-head", False),
+        ("malformed-retired-head", False),
+        ("duplicate-unrelated-heads", True),
+    ],
+)
+def test_supersession_rejects_ambiguous_formal_revision_claiming_retired_head(
+    monkeypatch: pytest.MonkeyPatch,
+    malformation: str,
+    expected: bool,
+) -> None:
+    """Malformed claims naming retired HEAD fail closed; unrelated history remains isolated."""
+
+    old_head = "5" * 40
+    retired = _continuation_pr(head_sha=old_head)
+    retired.update(state="closed", merged=False, closed_at="2026-11-03T03:00:00Z")
+    replacement = _continuation_pr(number=237, branch=f"agent/{CHANGE}-supersedes-236")
+    formal, requests = _accepted_supersession_comments(old_head)
+
+    malformed = dict(formal[1])
+    malformed["id"] = 902
+    malformed["created_at"] = "2026-11-03T02:30:00Z"
+    revision_lines = {
+        "duplicate-retired-head": f"Revision: {old_head}\nRevision: {'4' * 40}",
+        "malformed-retired-head": f"Revision: `{old_head}` (ambiguous)",
+        "duplicate-unrelated-heads": f"Revision: {'4' * 40}\nRevision: {'3' * 40}",
+    }[malformation]
+    malformed["body"] = cast(str, malformed["body"]).replace(
+        f"Revision: {old_head}", revision_lines, 1
+    )
+
+    github = _fake_github(
+        current_pr=replacement,
+        merged_continuations=[retired],
+        open_prs=[replacement],
+        formal_comments=[*formal, malformed],
+        request_comments=requests,
+        routing_timeline=_supersession_routing_timeline(),
+    )
+    monkeypatch.setattr(carrier, "_github_json", github)
+    assert (
+        carrier.qualify_supersession_branch(
+            repository=REPOSITORY,
+            token=TEST_VALUE,
+            issue_number=229,
+            change=CHANGE,
+            branch=f"agent/{CHANGE}-supersedes-236",
+            current_revision=MAIN,
+        )
+        is expected
+    )
+
+
 @pytest.mark.parametrize("tamper_accepted_effect", (False, True))
 def test_supersession_preserves_accepted_intent_semantics_across_nested_json_serialization(
     monkeypatch: pytest.MonkeyPatch,
