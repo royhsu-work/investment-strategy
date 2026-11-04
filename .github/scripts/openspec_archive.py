@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 from typing import NoReturn
@@ -435,6 +436,65 @@ def _purpose_preserve(args: argparse.Namespace) -> None:
             _fail(f"Canonical Purpose placeholder remains for {capability}")
 
 
+def _git_blobs(revision: str) -> dict[str, str]:
+    if _ARCHIVE_REVISION.fullmatch(revision) is None:
+        _fail("Archive source/head revision is invalid")
+    command = subprocess.run(  # noqa: S603, S607 - trusted Git CLI with SHA-only input
+        ["git", "ls-tree", "-r", "-z", revision],  # noqa: S607
+        capture_output=True,
+        check=False,
+    )
+    if command.returncode != 0:
+        _fail("Unable to read complete archive Git tree")
+    result: dict[str, str] = {}
+    for record in command.stdout.split(b"\0"):
+        if not record:
+            continue
+        try:
+            metadata, raw_path = record.split(b"\t", 1)
+            mode, kind, sha = metadata.decode("ascii").split(" ", 2)
+            path = raw_path.decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            _fail("Archive Git tree contains an invalid record")
+        if kind != "blob" or mode not in {"100644", "100755", "120000"}:
+            _fail("Archive Git tree contains an unsupported entry")
+        if path in result or _ARCHIVE_REVISION.fullmatch(sha) is None:
+            _fail("Archive Git tree contains an ambiguous blob")
+        result[path] = sha
+    return result
+
+
+def _source_proof(args: argparse.Namespace) -> None:
+    """Verify exactly one archived Change copy from the fresh source tree."""
+
+    change = _validate_change_name(args.change)
+    source = _git_blobs(args.source_sha)
+    archived = _git_blobs(args.archive_sha)
+    ancestor = subprocess.run(  # noqa: S603, S607 - trusted Git CLI with SHA inputs
+        ["git", "merge-base", "--is-ancestor", args.source_sha, args.archive_sha],  # noqa: S607
+        check=False,
+        capture_output=True,
+    )
+    if ancestor.returncode != 0:
+        _fail("Archive branch does not descend from its current source")
+    prefix = f"openspec/changes/{change}/"
+    original = {p[len(prefix) :]: sha for p, sha in source.items() if p.startswith(prefix)}
+    if not original or any(p.startswith(prefix) for p in archived):
+        _fail("Archive is missing the active Change source or retained its active copy")
+    pattern = re.compile(
+        rf"^openspec/changes/archive/(\d{{4}}-\d{{2}}-\d{{2}}-{re.escape(change)})/(.+)$"
+    )
+    directories: dict[str, dict[str, str]] = {}
+    for path, sha in archived.items():
+        matched = pattern.fullmatch(path)
+        if matched is not None:
+            files = directories.setdefault(matched.group(1), {})
+            files[matched.group(2)] = sha
+    if len(directories) != 1 or next(iter(directories.values())) != original:
+        _fail("Archive source is stale or its Change copy is not byte-identical")
+    _emit(source_sha=args.source_sha, archive_sha=args.archive_sha, source_proof="true")
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="OpenSpec archive workflow helper")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -478,6 +538,12 @@ def _parser() -> argparse.ArgumentParser:
     purpose_preserve.add_argument("--snapshot-file", required=True)
     purpose_preserve.add_argument("--specs-root", default="openspec/specs")
     purpose_preserve.set_defaults(handler=_purpose_preserve)
+
+    source_proof = subparsers.add_parser("source-proof")
+    source_proof.add_argument("--change", required=True)
+    source_proof.add_argument("--source-sha", required=True)
+    source_proof.add_argument("--archive-sha", required=True)
+    source_proof.set_defaults(handler=_source_proof)
 
     return parser
 

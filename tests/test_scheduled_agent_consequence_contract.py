@@ -415,6 +415,11 @@ def test_archive_ready_requires_current_non_draft_exact_pr(
         raise AssertionError(path)
 
     monkeypatch.setattr(effects, "_github_json", fake_read)
+    monkeypatch.setattr(
+        effects,
+        "archive_source_matches_current",
+        lambda **_: True,
+    )
     assert effects.archive_pr_readiness_complete(
         repository=_REPOSITORY,
         token=_TOKEN,
@@ -440,6 +445,129 @@ def test_archive_ready_requires_current_non_draft_exact_pr(
         issue_number=234,
         change=_CHANGE,
         current_revision=_MAIN,
+    )
+
+
+def test_archive_ready_rejects_obsolete_source_despite_exact_pr_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An old archive ref and an exact linked PR are not source freshness."""
+
+    branch = f"agent/archive-{_CHANGE}"
+    pr = {
+        "number": 301,
+        "state": "open",
+        "merged": False,
+        "draft": False,
+        "title": f"Archive OpenSpec change {_CHANGE}",
+        "body": "Refs #234\n",
+        "head": {
+            "ref": branch,
+            "sha": _ARCHIVE_HEAD,
+            "repo": {"full_name": _REPOSITORY},
+        },
+        "base": {
+            "ref": "main",
+            "sha": _MAIN,
+            "repo": {"full_name": _REPOSITORY},
+        },
+    }
+
+    def stale_read(
+        _repository: str,
+        _token: str,
+        path: str,
+        **_kwargs: object,
+    ) -> object:
+        if path == "":
+            return {"default_branch": "main"}
+        if path == f"git/ref/heads/{branch}":
+            return {"object": {"sha": _ARCHIVE_HEAD}}
+        if path.startswith("pulls?state=all"):
+            return [pr]
+        if path == "pulls/301":
+            return pr
+        # Deliberately no current-source Git tree/provenance proof.
+        return None
+
+    monkeypatch.setattr(effects, "_github_json", stale_read)
+    assert not effects.archive_pr_readiness_complete(
+        repository=_REPOSITORY,
+        token=_TOKEN,
+        issue_number=234,
+        change=_CHANGE,
+        current_revision=_MAIN,
+    )
+
+
+@pytest.mark.parametrize(
+    ("defect", "allowed"),
+    [
+        ("none", True),
+        ("stale-ancestor", False),
+        ("missing-file", False),
+        ("wrong-bytes", False),
+        ("duplicate-archive", False),
+        ("retained-active", False),
+        ("truncated", False),
+    ],
+)
+def test_archive_source_proof_is_exact_and_closed_on_incomplete_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    defect: str,
+    allowed: bool,
+) -> None:
+    original_path = f"openspec/changes/{_CHANGE}/tasks.md"
+    archived_path = f"openspec/changes/archive/2026-11-04-{_CHANGE}/tasks.md"
+    original_blob = "e" * 40
+    source_tree = [{"type": "blob", "path": original_path, "sha": original_blob}]
+    archived_tree = [
+        {
+            "type": "blob",
+            "path": archived_path,
+            "sha": "f" * 40 if defect == "wrong-bytes" else original_blob,
+        }
+    ]
+    if defect == "missing-file":
+        archived_tree = []
+    elif defect == "duplicate-archive":
+        archived_tree.append(
+            {
+                "type": "blob",
+                "path": f"openspec/changes/archive/2026-11-03-{_CHANGE}/tasks.md",
+                "sha": original_blob,
+            }
+        )
+    elif defect == "retained-active":
+        archived_tree.append(source_tree[0])
+
+    def read(_repo: str, _token: str, path: str, **_kw: object) -> object:
+        if path == f"compare/{_MAIN}...{_ARCHIVE_HEAD}":
+            return {
+                "status": "behind" if defect == "stale-ancestor" else "ahead",
+                "behind_by": 1 if defect == "stale-ancestor" else 0,
+                "base_commit": {"sha": _MAIN},
+            }
+        if path == f"git/commits/{_MAIN}":
+            return {"sha": _MAIN, "tree": {"sha": "c" * 40}}
+        if path == f"git/commits/{_ARCHIVE_HEAD}":
+            return {"sha": _ARCHIVE_HEAD, "tree": {"sha": "d" * 40}}
+        if path == f"git/trees/{'c' * 40}?recursive=1":
+            return {"truncated": False, "tree": source_tree}
+        if path == f"git/trees/{'d' * 40}?recursive=1":
+            return {"truncated": defect == "truncated", "tree": archived_tree}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(effects, "_github_json", read)
+    assert (
+        effects.archive_source_matches_current(
+            repository=_REPOSITORY,
+            token=_TOKEN,
+            change=_CHANGE,
+            current_revision=_MAIN,
+            archive_revision=_ARCHIVE_HEAD,
+        )
+        is allowed
     )
 
 

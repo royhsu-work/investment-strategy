@@ -3546,6 +3546,7 @@ def test_archive_pull_request_create_binds_exact_branch_head(
         raise AssertionError(f"unexpected GitHub call: {method} {path} {payload!r}")
 
     monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    monkeypatch.setattr(effects, "archive_source_matches_current", lambda **_: True)
     adapter = GitHubEffectAdapter(
         repository,
         archive_revision,
@@ -3641,6 +3642,7 @@ def test_archive_pull_request_create_reuses_exact_existing_carrier(
         raise AssertionError(f"unexpected GitHub call: {method} {path}")
 
     monkeypatch.setattr(effects, "_github_json", fake_github_json)
+    monkeypatch.setattr(effects, "archive_source_matches_current", lambda **_: True)
     adapter = GitHubEffectAdapter(
         repository,
         archive_revision,

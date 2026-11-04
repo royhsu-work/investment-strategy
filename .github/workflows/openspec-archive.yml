@@ -160,6 +160,23 @@ jobs:
         with:
           node-version: 22
 
+      - name: Reacquire current default-branch archive source
+        if: steps.classify.outputs.action == 'evaluate'
+        id: source
+        env:
+          REQUEST_MODE: ${{ steps.classify.outputs.mode }}
+          REQUEST_REVISION: ${{ steps.classify.outputs.request_revision }}
+        shell: bash
+        run: |
+          git fetch origin refs/heads/main:refs/remotes/origin/main
+          source_sha="$(git rev-parse refs/remotes/origin/main)"
+          if [[ "$REQUEST_MODE" == "request" && "$source_sha" != "$REQUEST_REVISION" ]]; then
+            echo "::error::Archive request's approved source is stale"
+            exit 1
+          fi
+          git switch --detach "$source_sha"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+
       - name: Install qualified OpenSpec baseline
         if: steps.classify.outputs.action == 'evaluate'
         shell: bash
@@ -211,25 +228,27 @@ jobs:
         run: |
           target_branch="agent/archive-$CHANGE"
           git check-ref-format --branch "$target_branch"
-          if git ls-remote --exit-code --heads origin "refs/heads/$target_branch" >/dev/null 2>&1; then
-            git fetch origin "refs/heads/$target_branch:refs/remotes/origin/$target_branch"
-            git switch --detach "refs/remotes/origin/$target_branch"
-            existing="true"
-          else
-            git switch -c "$target_branch"
-            existing="false"
-          fi
+          remote_status=0
+          git ls-remote --exit-code --heads origin "refs/heads/$target_branch" >/dev/null ||
+            remote_status=$?
+          case "$remote_status" in
+            0)
+              git fetch origin "refs/heads/$target_branch:refs/remotes/origin/$target_branch"
+              old_head="$(git rev-parse "refs/remotes/origin/$target_branch")" ;;
+            2) old_head="" ;;
+            *) echo "::error::Archive branch lookup unavailable"; exit 1 ;;
+          esac
           echo "target_branch=$target_branch" >> "$GITHUB_OUTPUT"
-          echo "existing=$existing" >> "$GITHUB_OUTPUT"
+          echo "old_head=$old_head" >> "$GITHUB_OUTPUT"
 
       - name: Archive change with OpenSpec CLI
-        if: steps.completion.outputs.should_archive == 'true' && steps.branch.outputs.existing == 'false'
+        if: steps.completion.outputs.should_archive == 'true'
         env:
           CHANGE: ${{ steps.classify.outputs.change }}
         run: openspec archive "$CHANGE" --yes
 
       - name: Preserve and verify canonical Purpose
-        if: steps.completion.outputs.should_archive == 'true' && steps.branch.outputs.existing == 'false'
+        if: steps.completion.outputs.should_archive == 'true'
         run: |
           python .github/scripts/openspec_archive.py purpose-preserve \
             --snapshot-file "$RUNNER_TEMP/openspec-purpose.json"
@@ -246,9 +265,11 @@ jobs:
           find openspec/changes/archive -maxdepth 1 -type d -name "*-$CHANGE" -print -quit | grep -q .
 
       - name: Commit and push archive branch
-        if: steps.completion.outputs.should_archive == 'true' && steps.branch.outputs.existing == 'false'
+        if: steps.completion.outputs.should_archive == 'true'
         env:
           CHANGE: ${{ steps.classify.outputs.change }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          OLD_HEAD: ${{ steps.branch.outputs.old_head }}
         shell: bash
         run: |
           target_branch="agent/archive-$CHANGE"
@@ -257,7 +278,75 @@ jobs:
           git add -A
           git diff --cached --quiet && { echo "No archive changes produced"; exit 1; }
           git commit -m "chore(openspec): archive $CHANGE"
+
+          # Old branches may be reused only through a freshly regenerated
+          # current-source tree and a guarded non-force descendant update.
+          if [[ -n "$OLD_HEAD" ]]; then
+            mapfile -t old_archives < <(
+              git ls-tree -r --name-only "$OLD_HEAD" openspec/changes/archive |
+                grep -E "^openspec/changes/archive/[0-9]{4}-[0-9]{2}-[0-9]{2}-$CHANGE/" |
+                cut -d/ -f4 | sort -u
+            )
+            if [[ "${#old_archives[@]}" != 1 ]]; then
+              echo "::error::Existing archive ref has missing or ambiguous Change history"
+              exit 1
+            fi
+            if git ls-tree -r --name-only "$OLD_HEAD" "openspec/changes/$CHANGE" | grep -q .; then
+              echo "::error::Existing archive ref still contains an active Change"
+              exit 1
+            fi
+            mapfile -t bases < <(git merge-base --all "$SOURCE_SHA" "$OLD_HEAD")
+            if [[ "${#bases[@]}" != 1 ]]; then
+              echo "::error::Archive source/old branch ancestry is ambiguous"
+              exit 1
+            fi
+            ancestor="${bases[0]}"
+            git merge-base --is-ancestor "$ancestor" "$SOURCE_SHA"
+            while IFS= read -r -d '' path; do
+              archive_owned=false
+              case "$path" in
+                "openspec/changes/$CHANGE/"*|openspec/changes/archive/*-"$CHANGE/"*)
+                  archive_owned=true ;;
+                openspec/specs/*)
+                  capability="${path#openspec/specs/}"
+                  capability="${capability%%/*}"
+                  if [[ -d "openspec/changes/archive" ]] &&
+                    find openspec/changes/archive -maxdepth 3 -path "*-$CHANGE/specs/$capability" -type d | grep -q .; then
+                    archive_owned=true
+                  fi ;;
+              esac
+              if [[ "$archive_owned" == true ]]; then
+                continue
+              fi
+              if ! git diff --quiet "$ancestor" "$SOURCE_SHA" -- "$path" ||
+                 ! git diff --quiet "$ancestor" HEAD -- "$path"; then
+                echo "::error::Conflicting unrelated archive branch path: $path"
+                exit 1
+              fi
+              if git cat-file -e "$OLD_HEAD:$path" 2>/dev/null; then
+                git restore --source "$OLD_HEAD" --staged --worktree -- "$path"
+              else
+                git rm -f --ignore-unmatch -- "$path"
+              fi
+            done < <(git diff --name-only -z "$ancestor" "$OLD_HEAD")
+            if ! git diff --cached --quiet; then
+              git commit --amend --no-edit
+            fi
+            git merge --no-ff -s ours "$OLD_HEAD" -m "chore(openspec): preserve prior archive ref ancestry"
+          fi
+
+          python .github/scripts/openspec_archive.py source-proof \
+            --change "$CHANGE" --source-sha "$SOURCE_SHA" \
+            --archive-sha "$(git rev-parse HEAD)"
+
+          # Reject concurrent main or target movement rather than overwriting.
+          git fetch origin refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse refs/remotes/origin/main)" = "$SOURCE_SHA"
+          observed_old="$(git ls-remote --heads origin "refs/heads/$target_branch" | cut -f1)"
+          test "$observed_old" = "$OLD_HEAD"
           git push -u origin HEAD:"$target_branch"
+          observed_new="$(git ls-remote --heads origin "refs/heads/$target_branch" | cut -f1)"
+          test "$observed_new" = "$(git rev-parse HEAD)"
 
       - name: Prepare non-closing Archive PR linkage
         if: steps.completion.outputs.should_archive == 'true'

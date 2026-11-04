@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / ".github/scripts/openspec_archive.py"
@@ -469,6 +473,138 @@ def test_archive_workflow_keeps_reviewed_lifecycle_guards() -> None:
     assert '--issue-number "$REQUEST_ISSUE"' not in workflow
     assert '"$issue_number" != "$REQUEST_ISSUE"' in workflow
     assert "printf 'issue_number=%s\\n' \"$REQUEST_ISSUE\"" in workflow
+
+
+def test_existing_archive_branch_must_rebuild_against_fresh_source() -> None:
+    """A syntactically valid old archive cannot substitute for today's Change."""
+
+    workflow = (ROOT / ".github/workflows/openspec-archive.yml").read_text(encoding="utf-8")
+    # This was the #322 regression: the branch existed from an older main,
+    # so the producer silently skipped both the archive and its commit.
+    assert "steps.branch.outputs.existing == 'false'" not in workflow
+    assert 'openspec archive "$CHANGE" --yes' in workflow
+    assert "git push --force" not in workflow
+    assert '2) old_head=""' in workflow
+    assert "Archive branch lookup unavailable" in workflow
+
+
+def _git(repo: Path, *arguments: str) -> str:
+    result = subprocess.run(  # noqa: S603, S607 - only test-owned Git fixtures
+        ["git", *arguments],  # noqa: S607
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def _archive_publish_script() -> str:
+    workflow = (ROOT / ".github/workflows/openspec-archive.yml").read_text(encoding="utf-8")
+    section = workflow.split("      - name: Commit and push archive branch\n", 1)[1]
+    section = section.split("\n      - name: ", 1)[0]
+    lines = section.split("        run: |\n", 1)[1].splitlines()
+    return "\n".join(line[10:] if line.startswith("          ") else line for line in lines)
+
+
+def _archive_git_fixture(
+    tmp_path: Path,
+    *,
+    unrelated: bool = False,
+    conflict: bool = False,
+    ambiguous: bool = False,
+) -> tuple[Path, str, str, Path]:
+    remote = tmp_path / "remote.git"
+    work = tmp_path / "work"
+    remote.mkdir()
+    work.mkdir()
+    _git(remote, "init", "--bare", "--initial-branch=main")
+    _git(work, "init", "--initial-branch=main")
+    _git(work, "config", "user.name", "Archive test")
+    _git(work, "config", "user.email", "archive@example.test")
+    _git(work, "remote", "add", "origin", str(remote))
+
+    change = work / "openspec/changes/change-a"
+    change.mkdir(parents=True)
+    (change / "proposal.md").write_text("approved proposal\n", encoding="utf-8")
+    (change / "tasks.md").write_text("old tasks\n", encoding="utf-8")
+    script = work / ".github/scripts/openspec_archive.py"
+    script.parent.mkdir(parents=True)
+    shutil.copyfile(SCRIPT, script)
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "base")
+    _git(work, "push", "origin", "main")
+
+    _git(work, "switch", "-c", "agent/archive-change-a")
+    old_archive = work / "openspec/changes/archive/2026-11-01-change-a"
+    old_archive.parent.mkdir(parents=True)
+    shutil.move(str(change), old_archive)
+    if ambiguous:
+        second_archive = old_archive.parent / "2026-11-02-change-a"
+        shutil.copytree(old_archive, second_archive)
+    if unrelated:
+        (work / "notes.txt").write_text("preserve me\n", encoding="utf-8")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "old archive")
+    old_head = _git(work, "rev-parse", "HEAD")
+    _git(work, "push", "origin", "HEAD:agent/archive-change-a")
+
+    _git(work, "switch", "main")
+    (change / "tasks.md").write_text("current approved tasks\n", encoding="utf-8")
+    if conflict:
+        (work / "notes.txt").write_text("different main edit\n", encoding="utf-8")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "new main")
+    source_sha = _git(work, "rev-parse", "HEAD")
+    _git(work, "push", "origin", "main")
+
+    _git(work, "switch", "--detach", "HEAD")
+    new_archive = work / "openspec/changes/archive/2026-11-04-change-a"
+    shutil.move(str(change), new_archive)
+    return work, source_sha, old_head, remote
+
+
+@pytest.mark.parametrize(
+    ("unrelated", "conflict", "ambiguous"),
+    [(False, False, False), (True, False, False), (True, True, False), (False, False, True)],
+)
+def test_archive_producer_refreshes_old_branch_without_forcing_or_losing_unrelated_changes(
+    tmp_path: Path, unrelated: bool, conflict: bool, ambiguous: bool
+) -> None:
+    work, source_sha, old_head, remote = _archive_git_fixture(
+        tmp_path, unrelated=unrelated, conflict=conflict, ambiguous=ambiguous
+    )
+    environment = dict(os.environ)
+    environment.update(CHANGE="change-a", SOURCE_SHA=source_sha, OLD_HEAD=old_head)
+    result = subprocess.run(  # noqa: S603, S607 - exact repository-owned workflow step
+        ["bash", "-euo", "pipefail", "-c", _archive_publish_script()],  # noqa: S607
+        cwd=work,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    new_head = _git(remote, "rev-parse", "refs/heads/agent/archive-change-a")
+    if ambiguous:
+        assert result.returncode != 0
+        assert "missing or ambiguous Change history" in result.stdout
+        assert new_head == old_head
+        return
+    if conflict:
+        assert result.returncode != 0
+        assert "Conflicting unrelated archive branch path" in result.stdout
+        assert new_head == old_head
+        return
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert new_head != old_head
+    _git(work, "merge-base", "--is-ancestor", old_head, new_head)
+    _git(work, "merge-base", "--is-ancestor", source_sha, new_head)
+    assert (
+        _git(work, "show", f"{new_head}:openspec/changes/archive/2026-11-04-change-a/tasks.md")
+        == "current approved tasks"
+    )
+    if unrelated:
+        assert _git(work, "show", f"{new_head}:notes.txt") == "preserve me"
 
 
 def test_readme_documents_state_driven_archive_contract() -> None:

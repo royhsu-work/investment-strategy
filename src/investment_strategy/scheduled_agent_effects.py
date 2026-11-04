@@ -947,6 +947,99 @@ def _references_issue(body: object, issue_number: int) -> bool:
     )
 
 
+def archive_source_matches_current(
+    *,
+    repository: str,
+    token: str,
+    change: str,
+    current_revision: str,
+    archive_revision: str,
+) -> bool:
+    """Qualify the archive branch against one exact current Change source.
+
+    Archive CLI execution is owned by the existing workflow. This read-only
+    application boundary proves that the exact source files the CLI consumed
+    appear byte-for-byte in its single archive directory, and that the branch
+    descends from the current main commit. An old but well-formed archive is
+    insufficient, regardless of whether its PR already exists.
+    """
+
+    if (
+        not _valid_sha(current_revision)
+        or not _valid_sha(archive_revision)
+        or not isinstance(change, str)
+        or re.fullmatch(r"[a-z0-9][a-z0-9-]*", change) is None
+    ):
+        return False
+
+    comparison = _github_json(repository, token, f"compare/{current_revision}...{archive_revision}")
+    base = comparison.get("base_commit") if isinstance(comparison, Mapping) else None
+    if (
+        not isinstance(comparison, Mapping)
+        or comparison.get("status") != "ahead"
+        or comparison.get("behind_by") != 0
+        or not isinstance(base, Mapping)
+        or base.get("sha") != current_revision
+    ):
+        return False
+
+    def blobs_for_revision(revision: str) -> dict[str, str] | None:
+        commit = _github_json(repository, token, f"git/commits/{revision}")
+        tree = commit.get("tree") if isinstance(commit, Mapping) else None
+        tree_sha = tree.get("sha") if isinstance(tree, Mapping) else None
+        if (
+            not isinstance(commit, Mapping)
+            or commit.get("sha") != revision
+            or not _valid_sha(tree_sha)
+        ):
+            return None
+        listing = _github_json(repository, token, f"git/trees/{tree_sha}?recursive=1")
+        if (
+            not isinstance(listing, Mapping)
+            or listing.get("truncated") is not False
+            or not isinstance(listing.get("tree"), list)
+        ):
+            return None
+        result: dict[str, str] = {}
+        for entry in listing["tree"]:
+            if not isinstance(entry, Mapping):
+                return None
+            if entry.get("type") != "blob":
+                continue
+            path, sha = entry.get("path"), entry.get("sha")
+            if not isinstance(path, str) or not _valid_sha(sha) or path in result:
+                return None
+            result[path] = cast(str, sha)
+        return result
+
+    source = blobs_for_revision(current_revision)
+    archived = blobs_for_revision(archive_revision)
+    if source is None or archived is None:
+        return False
+
+    source_prefix = f"openspec/changes/{change}/"
+    source_change = {
+        path[len(source_prefix) :]: sha
+        for path, sha in source.items()
+        if path.startswith(source_prefix)
+    }
+    if not source_change or any(path.startswith(source_prefix) for path in archived):
+        return False
+
+    archive_pattern = re.compile(
+        rf"^openspec/changes/archive/(\d{{4}}-\d{{2}}-\d{{2}}-{re.escape(change)})/(.+)$"
+    )
+    archived_changes: dict[str, dict[str, str]] = {}
+    for path, sha in archived.items():
+        match = archive_pattern.fullmatch(path)
+        if match is not None:
+            by_path = archived_changes.setdefault(match.group(1), {})
+            if match.group(2) in by_path:
+                return False
+            by_path[match.group(2)] = sha
+    return len(archived_changes) == 1 and next(iter(archived_changes.values())) == source_change
+
+
 def archive_pr_readiness_complete(
     *,
     repository: str,
@@ -995,6 +1088,14 @@ def archive_pr_readiness_complete(
     branch_object = branch_ref.get("object") if isinstance(branch_ref, Mapping) else None
     branch_sha = branch_object.get("sha") if isinstance(branch_object, Mapping) else None
     if not _valid_sha(branch_sha):
+        return False
+    if not archive_source_matches_current(
+        repository=repository,
+        token=token,
+        change=change,
+        current_revision=current_revision,
+        archive_revision=cast(str, branch_sha),
+    ):
         return False
     owner = repository.split("/", 1)[0] if "/" in repository else ""
     query = (
@@ -2653,6 +2754,13 @@ class GitHubEffectAdapter:
                 head_object.get("sha") == payload.get("expected_head_sha")
                 and _valid_sha(self.current_revision)
                 and base_object.get("sha") == self.current_revision
+                and archive_source_matches_current(
+                    repository=self.repository,
+                    token=self.token,
+                    change=observation.change,
+                    current_revision=cast(str, self.current_revision),
+                    archive_revision=cast(str, head_object.get("sha")),
+                )
             ):
                 return False
             if self._existing_pull_request_for_create(payload) is not None:

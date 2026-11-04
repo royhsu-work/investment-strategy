@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 
@@ -90,6 +90,81 @@ def test_existing_change_materialization_requires_current_pr_and_preserves_expec
     assert request.pr_number == 201
     assert request.files[0].expected_sha is None
     assert materialization_requires_validation(request, source)
+
+
+@pytest.mark.parametrize("historical", [True, False])
+def test_postmerge_new_executor_manifest_requires_pending_open_continuation(
+    monkeypatch: pytest.MonkeyPatch,
+    historical: bool,
+) -> None:
+    """A merged task checkpoint cannot authorize new code or test writes."""
+
+    source = WorkerRequest(169, "executor", "implement-change")
+    branch = f"agent/{_CHANGE}-supersedes-408"
+    head = "d" * 40
+    payload = _payload(expected_change=_CHANGE)
+    payload.update({"branch": branch, "pr_number": 418, "base_sha": head})
+    payload["files"] = [
+        {
+            "path": f"openspec/changes/{_CHANGE}/tasks.md",
+            "blob_sha": "e" * 40,
+            "expected_sha": "f" * 40,
+        },
+        {
+            "path": "src/investment_strategy/scheduled_agent_effects.py",
+            "blob_sha": "a" * 40,
+            "expected_sha": "b" * 40,
+        },
+        {
+            "path": "tests/test_scheduled_agent_effects.py",
+            "blob_sha": "c" * 40,
+            "expected_sha": "d" * 40,
+        },
+    ]
+    request = parse_materialization_payload(payload, source)
+    disposition: Literal["HISTORICAL_MERGED", "QUALIFIED"] = (
+        "HISTORICAL_MERGED" if historical else "QUALIFIED"
+    )
+    decision = materialization.ImplementationCarrierQualification(
+        disposition=disposition,
+        reason="fixture-reviewed-carrier",
+        repository="owner/repo",
+        issue_number=169,
+        change=_CHANGE,
+        action=source.action,
+        pr_number=418,
+        branch=branch,
+        head_sha=head,
+        default_branch="main",
+        default_revision=_BASE,
+    )
+    monkeypatch.setattr(materialization, "qualify_implementation_carrier", lambda **_: decision)
+    monkeypatch.setattr(
+        materialization,
+        "completed_task_bookkeeping_is_current",
+        lambda *_args, **_kwargs: False,
+    )
+
+    if historical:
+        with pytest.raises(RuntimeError, match="historical implementation only permits"):
+            materialization._qualified_implementation_decision(
+                request,
+                source,
+                repository="owner/repo",
+                token=_TOKEN,
+                current_revision=_BASE,
+            )
+    else:
+        assert (
+            materialization._qualified_implementation_decision(
+                request,
+                source,
+                repository="owner/repo",
+                token=_TOKEN,
+                current_revision=_BASE,
+            )
+            == decision
+        )
 
 
 @pytest.mark.parametrize(
