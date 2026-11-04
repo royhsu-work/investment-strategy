@@ -2577,7 +2577,8 @@ class GitHubEffectAdapter:
                     return False
                 expected_branch = source_branch
             elif (
-                self.source.action == "implement-change"
+                (self.source.role, self.source.action)
+                in {("executor", "implement-change"), ("lead", "resolve-question")}
                 and "expected_head_sha" not in payload
                 and _valid_sha(self.current_revision)
                 and qualify_supersession_branch(

@@ -246,10 +246,16 @@ def parse_materialization_payload(
         if any(not file.path.startswith(prefix) for file in files):
             raise ValueError("first Change materialization path is outside the Change")
     else:
+        # The formally retired carrier can be replaced by the mapped owner of
+        # the next unfinished work: Lead first restores the approved OpenSpec
+        # tasks, while Executor may subsequently implement the reviewed slice.
+        supersession_owner = (source.role, source.action) in {
+            ("lead", "resolve-question"),
+            ("executor", _IMPLEMENTATION_ACTION),
+        }
         supersession = bool(
             normalized_pr is None
-            and source.role == "executor"
-            and source.action == _IMPLEMENTATION_ACTION
+            and supersession_owner
             and re.fullmatch(
                 rf"agent/{re.escape(cast(str, change))}-supersedes-[1-9][0-9]*",
                 cast(str, branch),
