@@ -1054,15 +1054,33 @@ def _formally_superseded_closed_carrier(
     relevant: list[tuple[object, datetime]] = []
     for comment in comments:
         formal = parse_formal_result(comment, current_revision=None)
+        # Retirement is an exact-head consequence. Historical formal results
+        # for other revisions (including pre-activation Change: unset) cannot
+        # qualify or invalidate this one retired carrier.
         if formal is None:
+            continue
+        if formal.revision != identity[1]:
+            # A malformed/duplicated Revision becomes None in the formal
+            # parser. Do not silently discard a record that explicitly claims
+            # this retired HEAD among its conflicting revision values.
+            body = comment.get("body")
+            if (
+                formal.revision is None
+                and isinstance(body, str)
+                and re.search(
+                    rf"(?m)^Revision:[ \t]*.*(?<![0-9a-f]){re.escape(identity[1])}(?![0-9a-f])",
+                    body,
+                    flags=re.IGNORECASE,
+                )
+            ):
+                return False
             continue
         if not formal.valid or (formal.issue_number, formal.change) != (issue_number, change):
             return False
-        if formal.revision == identity[1]:
-            at = _timestamp(comment.get("created_at"))
-            if at is None:
-                return False
-            relevant.append((formal, at))
+        at = _timestamp(comment.get("created_at"))
+        if at is None:
+            return False
+        relevant.append((formal, at))
     if len(relevant) < 2:
         return False
     ready, _ready_at = relevant[-2]
