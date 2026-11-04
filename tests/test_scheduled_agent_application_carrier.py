@@ -701,6 +701,81 @@ def test_supersession_rejects_bot_shaped_results_without_accepted_application_de
     )
 
 
+@pytest.mark.parametrize("same_retired_head", (False, True))
+def test_supersession_qualifies_only_retired_head_formal_results(
+    monkeypatch: pytest.MonkeyPatch,
+    same_retired_head: bool,
+) -> None:
+    """#322: early Change: unset and old malformed results are not retirement gates."""
+
+    old_head = "5" * 40
+    old = _continuation_pr(head_sha=old_head)
+    old.update(state="closed", merged=False, closed_at="2026-11-03T03:00:00Z")
+    replacement = _continuation_pr(number=237, branch=f"agent/{CHANGE}-supersedes-236")
+    formal, requests = _accepted_supersession_comments(old_head)
+    earlier_head = old_head if same_retired_head else "4" * 40
+    historical = {
+        "id": 700,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+        "created_at": "2026-09-22T16:52:31Z",
+        "body": "\n".join(
+            (
+                "ACTION_RESULT",
+                "Workflow: #229",
+                "Change: unset",
+                "Role: lead",
+                "Action: explore-change",
+                "Result: PROPOSAL_READY",
+                f"Revision: {earlier_head}",
+                f"Default-Branch-Revision: {earlier_head}",
+                "Application-Correlation: "
+                f"application:699:229:unset:lead:explore-change:proposal-ready:{earlier_head}",
+                "Repository-derived successor: Lead / propose-change",
+            )
+        ),
+    }
+    legacy = {
+        "id": 701,
+        "user": {"login": "github-actions[bot]"},
+        "performed_via_github_app": {"slug": "github-actions"},
+        "created_at": "2026-09-22T17:52:19Z",
+        "body": "\n".join(
+            (
+                "ACTION_RESULT",
+                "Workflow: #229",
+                "Change: unset",
+                "Role: lead",
+                "Action: propose-change",
+                "Result: READY_FOR_OPENSPEC_REVIEW",
+                f"Revision: {'3' * 40}",
+                f"Default-Branch-Revision: {'3' * 40}",
+                "Evidence: Legacy formal record without Application-Correlation",
+            )
+        ),
+    }
+    github = _fake_github(
+        current_pr=replacement,
+        merged_continuations=[old],
+        open_prs=[replacement],
+        formal_comments=[historical, legacy, *formal],
+        request_comments=requests,
+        routing_timeline=_supersession_routing_timeline(),
+    )
+    monkeypatch.setattr(carrier, "_github_json", github)
+    assert (
+        carrier.qualify_supersession_branch(
+            repository=REPOSITORY,
+            token=TEST_VALUE,
+            issue_number=229,
+            change=CHANGE,
+            branch=f"agent/{CHANGE}-supersedes-236",
+            current_revision=MAIN,
+        )
+        is not same_retired_head
+    )
+
+
 @pytest.mark.parametrize("tamper_accepted_effect", (False, True))
 def test_supersession_preserves_accepted_intent_semantics_across_nested_json_serialization(
     monkeypatch: pytest.MonkeyPatch,

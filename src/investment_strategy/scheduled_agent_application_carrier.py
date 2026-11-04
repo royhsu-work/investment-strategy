@@ -1054,15 +1054,17 @@ def _formally_superseded_closed_carrier(
     relevant: list[tuple[object, datetime]] = []
     for comment in comments:
         formal = parse_formal_result(comment, current_revision=None)
-        if formal is None:
+        # Retirement is an exact-head consequence. Historical formal results
+        # for other revisions (including pre-activation Change: unset) cannot
+        # qualify or invalidate this one retired carrier.
+        if formal is None or formal.revision != identity[1]:
             continue
         if not formal.valid or (formal.issue_number, formal.change) != (issue_number, change):
             return False
-        if formal.revision == identity[1]:
-            at = _timestamp(comment.get("created_at"))
-            if at is None:
-                return False
-            relevant.append((formal, at))
+        at = _timestamp(comment.get("created_at"))
+        if at is None:
+            return False
+        relevant.append((formal, at))
     if len(relevant) < 2:
         return False
     ready, _ready_at = relevant[-2]
