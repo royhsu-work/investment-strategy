@@ -607,6 +607,88 @@ def test_archive_producer_refreshes_old_branch_without_forcing_or_losing_unrelat
         assert _git(work, "show", f"{new_head}:notes.txt") == "preserve me"
 
 
+def test_archive_producer_reuses_current_source_without_second_commit(
+    tmp_path: Path,
+) -> None:
+    """Replaying the approved source must not move the archive head."""
+
+    work, source_sha, old_head, remote = _archive_git_fixture(tmp_path)
+    environment = dict(os.environ)
+    environment.update(CHANGE="change-a", SOURCE_SHA=source_sha, OLD_HEAD=old_head)
+    first = subprocess.run(  # noqa: S603, S607 - exact repository-owned workflow step
+        ["bash", "-euo", "pipefail", "-c", _archive_publish_script()],  # noqa: S607
+        cwd=work,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert first.returncode == 0, first.stderr + first.stdout
+    published_head = _git(remote, "rev-parse", "refs/heads/agent/archive-change-a")
+
+    # Re-evaluate the exact same main on another day. A second OpenSpec CLI
+    # archive can choose a different YYYY-MM-DD directory, but this is still
+    # the same approved Change and must reuse its already-current branch.
+    _git(work, "switch", "--detach", source_sha)
+    change = work / "openspec/changes/change-a"
+    later_archive = work / "openspec/changes/archive/2026-11-05-change-a"
+    later_archive.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(change), later_archive)
+    environment["OLD_HEAD"] = published_head
+    second = subprocess.run(  # noqa: S603, S607 - exact repository-owned workflow step
+        ["bash", "-euo", "pipefail", "-c", _archive_publish_script()],  # noqa: S607
+        cwd=work,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert second.returncode == 0, second.stderr + second.stdout
+    assert _git(remote, "rev-parse", "refs/heads/agent/archive-change-a") == published_head
+    assert "Already-current archive branch" in second.stdout
+
+
+def test_archive_producer_rejects_current_source_with_conflicting_canonical_effects(
+    tmp_path: Path,
+) -> None:
+    """Matching archived Change bytes cannot conceal a divergent canonical spec."""
+
+    work, source_sha, old_head, remote = _archive_git_fixture(tmp_path)
+    environment = dict(os.environ)
+    environment.update(CHANGE="change-a", SOURCE_SHA=source_sha, OLD_HEAD=old_head)
+    first = subprocess.run(  # noqa: S603, S607 - exact repository-owned workflow step
+        ["bash", "-euo", "pipefail", "-c", _archive_publish_script()],  # noqa: S607
+        cwd=work,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert first.returncode == 0, first.stderr + first.stdout
+    published_head = _git(remote, "rev-parse", "refs/heads/agent/archive-change-a")
+
+    _git(work, "switch", "--detach", source_sha)
+    change = work / "openspec/changes/change-a"
+    later_archive = work / "openspec/changes/archive/2026-11-05-change-a"
+    later_archive.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(change), later_archive)
+    canonical = work / "openspec/specs/change-a/spec.md"
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_text("unexpected canonical revision\n", encoding="utf-8")
+    environment["OLD_HEAD"] = published_head
+    second = subprocess.run(  # noqa: S603, S607 - exact repository-owned workflow step
+        ["bash", "-euo", "pipefail", "-c", _archive_publish_script()],  # noqa: S607
+        cwd=work,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert second.returncode != 0
+    assert "conflicting canonical spec effects" in second.stdout
+    assert _git(remote, "rev-parse", "refs/heads/agent/archive-change-a") == published_head
+
+
 def test_readme_documents_state_driven_archive_contract() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 

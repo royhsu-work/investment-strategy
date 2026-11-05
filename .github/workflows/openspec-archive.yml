@@ -277,6 +277,28 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git diff --cached --quiet && { echo "No archive changes produced"; exit 1; }
+
+          # OpenSpec may choose a different date-stamped archive directory
+          # on a later wake. An already-current branch is nevertheless the
+          # same approved consequence when its archived Change is byte-identical
+          # to SOURCE_SHA and all canonical spec effects match this fresh CLI
+          # projection. Reuse without creating another commit or moving the ref.
+          if [[ -n "$OLD_HEAD" ]] &&
+            python .github/scripts/openspec_archive.py source-proof \
+              --change "$CHANGE" --source-sha "$SOURCE_SHA" \
+              --archive-sha "$OLD_HEAD" >/dev/null; then
+            if ! git diff --quiet "$OLD_HEAD" -- openspec/specs; then
+              echo "::error::Already-current archive source has conflicting canonical spec effects"
+              exit 1
+            fi
+            git fetch origin refs/heads/main:refs/remotes/origin/main
+            test "$(git rev-parse refs/remotes/origin/main)" = "$SOURCE_SHA"
+            observed_old="$(git ls-remote --heads origin "refs/heads/$target_branch" | cut -f1)"
+            test "$observed_old" = "$OLD_HEAD"
+            echo "Already-current archive branch: $OLD_HEAD (no commit or push)"
+            exit 0
+          fi
+
           git commit -m "chore(openspec): archive $CHANGE"
 
           # Old branches may be reused only through a freshly regenerated
