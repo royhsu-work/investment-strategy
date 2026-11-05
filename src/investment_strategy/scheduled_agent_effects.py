@@ -8,7 +8,10 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
@@ -947,6 +950,117 @@ def _references_issue(body: object, issue_number: int) -> bool:
     )
 
 
+def _project_archive_canonical_spec_blobs(
+    *, current_revision: str, change: str
+) -> dict[str, str] | None:
+    """Replay the pinned *producer* CLI in disposable local space, without GitHub writes.
+
+    The application must not infer canonical OpenSpec effects from an archived
+    Change copy.  This uses the same OpenSpec CLI and Purpose preservation
+    helper as the archive producer; it does not implement a second canonicalizer.
+    The source checkout is required to be the exact freshly observed main SHA.
+    """
+
+    root = Path(__file__).resolve().parents[2]
+    script = root / ".github/scripts/openspec_archive.py"
+    try:
+        head = subprocess.run(  # noqa: S603 - fixed Git invocation
+            ["git", "rev-parse", "HEAD"],  # noqa: S607
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+        if head.returncode != 0 or head.stdout.strip() != current_revision:
+            return None
+        status = subprocess.run(  # noqa: S603 - fixed Git invocation
+            ["git", "status", "--porcelain", "--untracked-files=all", "--", "openspec"],  # noqa: S607
+            cwd=root,
+            capture_output=True,
+            check=False,
+            timeout=15,
+        )
+        if status.returncode != 0 or status.stdout:
+            return None
+        version = (root / ".github/openspec-version").read_text(encoding="utf-8").strip()
+        if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) is None:
+            return None
+        if not script.is_file():
+            return None
+        source_root = root / "openspec"
+        if not source_root.is_dir() or any(p.is_symlink() for p in source_root.rglob("*")):
+            return None
+        # Do not forward GitHub credentials into the npm/CLI subprocess.
+        process_env = {
+            key: os.environ[key] for key in ("PATH", "HOME", "TMPDIR") if key in os.environ
+        }
+        process_env.update({"CI": "1", "NO_COLOR": "1"})
+        cli = [
+            "npm",
+            "exec",
+            "--yes",
+            f"--package=@fission-ai/openspec@{version}",
+            "--",
+            "openspec",
+        ]
+        with tempfile.TemporaryDirectory(prefix="openspec-archive-proof-") as directory:
+            workspace = Path(directory)
+            shutil.copytree(source_root, workspace / "openspec")
+            snapshot = workspace / "purpose.json"
+
+            def run(command: list[str]) -> bool:
+                result = subprocess.run(  # noqa: S603 - fixed trusted producer commands
+                    command,
+                    cwd=workspace,
+                    env=process_env,
+                    capture_output=True,
+                    check=False,
+                    timeout=180,
+                )
+                return result.returncode == 0
+
+            if not run(
+                [
+                    sys.executable,
+                    str(script),
+                    "purpose-snapshot",
+                    "--change",
+                    change,
+                    "--snapshot-file",
+                    str(snapshot),
+                ]
+            ):
+                return None
+            if not run([*cli, "archive", change, "--yes"]):
+                return None
+            if not run(
+                [sys.executable, str(script), "purpose-preserve", "--snapshot-file", str(snapshot)]
+            ):
+                return None
+            if not run([*cli, "validate", "--all", "--strict", "--json", "--no-interactive"]):
+                return None
+            if (workspace / "openspec/changes" / change).exists():
+                return None
+            spec_root = workspace / "openspec/specs"
+            if not spec_root.is_dir():
+                return None
+            result_blobs: dict[str, str] = {}
+            for path in sorted(spec_root.rglob("*")):
+                if path.is_symlink():
+                    return None
+                if not path.is_file():
+                    continue
+                content = path.read_bytes()
+                git_blob = b"blob " + str(len(content)).encode("ascii") + b"\0" + content
+                result_blobs[path.relative_to(workspace).as_posix()] = hashlib.sha1(  # noqa: S324 - Git SHA-1 object identity
+                    git_blob
+                ).hexdigest()
+            return result_blobs
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+
+
 def archive_source_matches_current(
     *,
     repository: str,
@@ -1037,7 +1151,19 @@ def archive_source_matches_current(
             if match.group(2) in by_path:
                 return False
             by_path[match.group(2)] = sha
-    return len(archived_changes) == 1 and next(iter(archived_changes.values())) == source_change
+    if len(archived_changes) != 1 or next(iter(archived_changes.values())) != source_change:
+        return False
+
+    # A matching Change directory alone does not prove that openspec archive
+    # produced the canonical spec projection.  Reject missing, corrupt, or
+    # otherwise unproven spec effects even when an Archive PR already exists.
+    expected_specs = _project_archive_canonical_spec_blobs(
+        current_revision=current_revision, change=change
+    )
+    archive_specs = {
+        path: sha for path, sha in archived.items() if path.startswith("openspec/specs/")
+    }
+    return expected_specs is not None and archive_specs == expected_specs
 
 
 def archive_pr_readiness_complete(

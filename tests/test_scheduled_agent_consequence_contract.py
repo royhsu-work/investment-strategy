@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -510,6 +511,8 @@ def test_archive_ready_rejects_obsolete_source_despite_exact_pr_metadata(
         ("duplicate-archive", False),
         ("retained-active", False),
         ("truncated", False),
+        ("corrupt-canonical-spec", False),
+        ("missing-canonical-spec", False),
     ],
 )
 def test_archive_source_proof_is_exact_and_closed_on_incomplete_evidence(
@@ -519,17 +522,22 @@ def test_archive_source_proof_is_exact_and_closed_on_incomplete_evidence(
 ) -> None:
     original_path = f"openspec/changes/{_CHANGE}/tasks.md"
     archived_path = f"openspec/changes/archive/2026-11-04-{_CHANGE}/tasks.md"
+    canonical_path = "openspec/specs/scheduled-agent-workflow/spec.md"
     original_blob = "e" * 40
-    source_tree = [{"type": "blob", "path": original_path, "sha": original_blob}]
+    source_tree = [
+        {"type": "blob", "path": original_path, "sha": original_blob},
+        {"type": "blob", "path": canonical_path, "sha": "1" * 40},
+    ]
     archived_tree = [
         {
             "type": "blob",
             "path": archived_path,
             "sha": "f" * 40 if defect == "wrong-bytes" else original_blob,
-        }
+        },
+        {"type": "blob", "path": canonical_path, "sha": "2" * 40},
     ]
     if defect == "missing-file":
-        archived_tree = []
+        archived_tree = [archived_tree[1]]
     elif defect == "duplicate-archive":
         archived_tree.append(
             {
@@ -540,6 +548,10 @@ def test_archive_source_proof_is_exact_and_closed_on_incomplete_evidence(
         )
     elif defect == "retained-active":
         archived_tree.append(source_tree[0])
+    elif defect == "corrupt-canonical-spec":
+        archived_tree[1]["sha"] = "3" * 40
+    elif defect == "missing-canonical-spec":
+        archived_tree.pop()
 
     def read(_repo: str, _token: str, path: str, **_kw: object) -> object:
         if path == f"compare/{_MAIN}...{_ARCHIVE_HEAD}":
@@ -559,6 +571,12 @@ def test_archive_source_proof_is_exact_and_closed_on_incomplete_evidence(
         raise AssertionError(path)
 
     monkeypatch.setattr(effects, "_github_json", read)
+    monkeypatch.setattr(
+        effects,
+        "_project_archive_canonical_spec_blobs",
+        lambda **_kwargs: {canonical_path: "2" * 40},
+        raising=False,
+    )
     assert (
         effects.archive_source_matches_current(
             repository=_REPOSITORY,
@@ -569,6 +587,80 @@ def test_archive_source_proof_is_exact_and_closed_on_incomplete_evidence(
         )
         is allowed
     )
+
+
+@pytest.mark.parametrize(
+    ("defect", "expected"),
+    [
+        ("none", True),
+        ("dirty-source", False),
+        ("wrong-checkout", False),
+        ("archive-cli-failed", False),
+        ("canonical-validation-failed", False),
+    ],
+)
+def test_archive_projection_reuses_pinned_producer_and_scrubs_credentials(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    defect: str,
+    expected: bool,
+) -> None:
+    root = tmp_path / "source"
+    (root / ".github/scripts").mkdir(parents=True)
+    (root / ".github/openspec-version").write_text("1.2.3\n", encoding="utf-8")
+    (root / ".github/scripts/openspec_archive.py").write_text(
+        "# trusted producer fixture\n", encoding="utf-8"
+    )
+    change_dir = root / "openspec/changes" / _CHANGE
+    change_dir.mkdir(parents=True)
+    (change_dir / "proposal.md").write_text("source\n", encoding="utf-8")
+    source_spec = root / "openspec/specs/scheduled-agent-workflow/spec.md"
+    source_spec.parent.mkdir(parents=True)
+    source_spec.write_text("original canonical\n", encoding="utf-8")
+    monkeypatch.setattr(
+        effects, "__file__", str(root / "src/investment_strategy/scheduled_agent_effects.py")
+    )
+    monkeypatch.setenv("GITHUB_TOKEN", "must-not-reach-cli")
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[object]:
+        if command[:2] == ["git", "rev-parse"]:
+            return subprocess.CompletedProcess(
+                command, 0, stdout="b" * 40 if defect == "wrong-checkout" else _MAIN
+            )
+        if command[:2] == ["git", "status"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=b" M openspec/specs/x/spec.md" if defect == "dirty-source" else b"",
+            )
+        assert "GITHUB_TOKEN" not in cast(dict[str, str], kwargs["env"])
+        workspace = Path(cast(str, kwargs["cwd"]))
+        if "purpose-snapshot" in command:
+            (workspace / "purpose.json").write_text("{}", encoding="utf-8")
+        if command[:2] == ["npm", "exec"] and "archive" in command:
+            if defect == "archive-cli-failed":
+                return subprocess.CompletedProcess(command, 1)
+            (workspace / "openspec/changes" / _CHANGE / "proposal.md").unlink()
+            (workspace / "openspec/changes" / _CHANGE).rmdir()
+            (workspace / "openspec/specs/scheduled-agent-workflow/spec.md").write_text(
+                "projected canonical\n", encoding="utf-8"
+            )
+        if command[:2] == ["npm", "exec"] and "validate" in command:
+            return subprocess.CompletedProcess(
+                command, 1 if defect == "canonical-validation-failed" else 0
+            )
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(effects.subprocess, "run", fake_run)
+    observed = effects._project_archive_canonical_spec_blobs(current_revision=_MAIN, change=_CHANGE)
+    if not expected:
+        assert observed is None
+    else:
+        content = b"projected canonical\n"
+        expected_sha = hashlib.sha1(  # noqa: S324 - expected Git blob identity
+            b"blob " + str(len(content)).encode() + b"\0" + content
+        ).hexdigest()
+        assert observed == {"openspec/specs/scheduled-agent-workflow/spec.md": expected_sha}
 
 
 def test_merge_intent_derives_exact_merge_carrier_before_formal_result(
