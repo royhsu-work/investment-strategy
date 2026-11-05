@@ -542,14 +542,21 @@ def test_merge_consequence_selects_only_the_exact_review_pass_head(
         bridge,
         "_paged_github_list",
         lambda *_args, **_kwargs: (
-            {"number": 324},
-            {"number": 347},
-            {"number": 353},
+            {"number": 324, "head": {"sha": "1" * 40}},
+            {"number": 347, "head": {"sha": "2" * 40}},
+            {"number": 353, "head": {"sha": head}},
         ),
     )
 
+    detail_reads: list[int] = []
+
     def read(_repo: str, _token: str, path: str) -> dict[str, object]:
         number = int(path.split("/")[-1])
+        detail_reads.append(number)
+        if number != 353:
+            # A transient failure on unrelated history must not interrupt
+            # the already reviewed exact-head merge carrier.
+            raise HTTPError(path, 503, "Service Unavailable", Message(), None)
         return {
             "number": number,
             "state": "closed",
@@ -579,7 +586,41 @@ def test_merge_consequence_selects_only_the_exact_review_pass_head(
         default_branch="main",
     )
     assert result["number"] == 353
+    assert detail_reads == [353]
     assert calls == [353]
+
+
+@pytest.mark.parametrize(
+    "summary",
+    [
+        {"number": 353},
+        {"number": 353, "head": {}},
+        {"number": 353, "head": {"sha": "invalid"}},
+    ],
+)
+def test_merge_consequence_rejects_incomplete_historical_summary(
+    monkeypatch: pytest.MonkeyPatch, summary: dict[str, object]
+) -> None:
+    monkeypatch.setattr(
+        bridge,
+        "current_reviewed_implementation_head",
+        lambda *_args, **_kwargs: SimpleNamespace(head_sha="3" * 40, merged_sha=None),
+    )
+    monkeypatch.setattr(bridge, "_paged_github_list", lambda *_args, **_kwargs: (summary,))
+    monkeypatch.setattr(
+        bridge,
+        "_github_json",
+        lambda *_args, **_kwargs: pytest.fail("unqualified summary cannot reach PR detail"),
+    )
+    with pytest.raises(RuntimeError, match="summary is incomplete"):
+        bridge._fresh_merge_carrier(
+            repository=_REPOSITORY,
+            token=_REPOSITORY,
+            source=WorkerRequest(322, "executor", "merge-implementation-pr"),
+            change="restore-no-work-idle-discovery",
+            current_revision=_REVISION,
+            default_branch="main",
+        )
 
 
 @pytest.mark.parametrize(
