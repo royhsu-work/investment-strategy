@@ -1981,6 +1981,19 @@ def _fresh_merge_carrier(
             number = summary.get("number")
             if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
                 continue
+            # The independent PASS pins one immutable PR head.  List summaries
+            # already expose that head; do not detail-fetch unrelated history.
+            # A missing summary identity is indeterminate, never a reason to
+            # skip a potentially relevant carrier.
+            summary_head = summary.get("head")
+            if (
+                not isinstance(summary_head, Mapping)
+                or not isinstance(summary_head.get("sha"), str)
+                or _SHA.fullmatch(cast(str, summary_head["sha"])) is None
+            ):
+                raise RuntimeError("fresh implementation merge carrier summary is incomplete")
+            if reviewed is None or summary_head["sha"] != reviewed.head_sha:
+                continue
             detail = _github_json(repository, token, f"pulls/{number}")
             if not isinstance(detail, Mapping):
                 raise RuntimeError("fresh implementation merge carrier is incomplete")
