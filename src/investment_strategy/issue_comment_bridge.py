@@ -3088,8 +3088,9 @@ def _proven_aborted_predecessors(
     """Retire only an earlier, provably no-write ACCEPTED merge occurrence.
 
     A new EFFECT_REQUEST cannot compete indefinitely with the earlier failed
-    ACCEPT. A newer source event (not a higher numeric ID) and a fresh exact
-    abort proof are both mandatory before the old occurrence becomes history.
+    ACCEPT. An independently qualified ingress after the old ACCEPTED decision
+    (not a later decision or higher numeric ID), plus a fresh exact abort proof,
+    is mandatory before the old occurrence becomes history.
     """
 
     def source_timestamp(value: str | None) -> datetime | None:
@@ -3101,17 +3102,26 @@ def _proven_aborted_predecessors(
             return None
         return parsed.astimezone(UTC) if parsed.tzinfo is not None else None
 
-    all_times = tuple(
-        stamp
-        for value in (*ingress_times.values(), *decision_times.values())
-        if (stamp := source_timestamp(value)) is not None
-    )
+    # A contradictory or missing Actions decision timestamp for any competing
+    # ACCEPTED occurrence makes ordering indeterminate for the whole set.
+    if any(
+        record.disposition == "ACCEPTED"
+        and source_timestamp(decision_times.get(record.request_comment_id)) is None
+        for record in records
+    ):
+        return set()
+
     retired: set[int] = set()
     for record in records:
         if record.disposition != "ACCEPTED":
             continue
         old_time = source_timestamp(decision_times.get(record.request_comment_id))
-        if old_time is None or not any(other > old_time for other in all_times):
+        if old_time is None or not any(
+            request_id != record.request_comment_id
+            and (ingress_time := source_timestamp(created_at)) is not None
+            and ingress_time > old_time
+            for request_id, created_at in ingress_times.items()
+        ):
             continue
         digest = _accepted_decision_sha256(record, issue_comments)
         if digest is None:
@@ -4894,18 +4904,27 @@ def qualify_application_completion(
             )
         return ApplicationCompletion("INVALID", "application-completion-current-frontier-invalid")
 
-    decisions_by_request: dict[int, tuple[ApplicationDecisionRecord, ...]] = {}
-    decision_created_at: dict[int, str | None] = {}
+    qualified_decision_events: dict[int, list[tuple[ApplicationDecisionRecord, str | None]]] = {}
     for comment in issue_comments:
+        if not is_github_actions_comment(comment):
+            continue
         record = parse_application_decision(comment.get("body"))
         if record is None:
             continue
-        decisions_by_request.setdefault(record.request_comment_id, ())
-        decisions_by_request[record.request_comment_id] = (
-            *decisions_by_request[record.request_comment_id],
-            record,
+        qualified_decision_events.setdefault(record.request_comment_id, []).append(
+            (record, _comment_time(comment))
         )
-        decision_created_at[record.request_comment_id] = _comment_time(comment)
+    decisions_by_request = {
+        request_id: tuple(record for record, _ in events)
+        for request_id, events in qualified_decision_events.items()
+    }
+    # An ordering timestamp belongs to exactly one provenance-qualified Actions
+    # decision event. Copies from other actors, duplicate/contradictory Actions
+    # decisions, and missing timestamps cannot authorize predecessor retirement.
+    decision_created_at = {
+        request_id: events[0][1] if len(events) == 1 else None
+        for request_id, events in qualified_decision_events.items()
+    }
 
     # An unbound transport cannot own this source, but it is not safe to erase
     # it from observation.  A terminal exact application run with no ACCEPT is

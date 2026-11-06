@@ -3320,6 +3320,134 @@ def test_distinct_accepted_requests_never_alias_by_equal_payload() -> None:
     assert completion.reason == "application-completion-accepted-ambiguous"
 
 
+@pytest.mark.parametrize("alteration", ["copied", "duplicate", "missing-time"])
+def test_accepted_ordering_never_uses_untrusted_or_ambiguous_decision_time(
+    monkeypatch: pytest.MonkeyPatch, alteration: str
+) -> None:
+    """Only the unique Actions decision event can timestamp an ACCEPTED intent."""
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    old_request = _effect_request_comment(comment_id=654, created_at="2026-09-18T01:00:00Z")
+    # This ingress precedes the old ACCEPTED decision, despite a later ACCEPT
+    # decision for the competing request.
+    new_request = _effect_request_comment(comment_id=655, created_at="2026-09-18T01:15:00Z")
+    old_decision = {
+        **_application_decision_comment(old_request, comment_id=700),
+        "created_at": "2026-09-18T01:30:00Z",
+    }
+    new_decision = {
+        **_application_decision_comment(new_request, comment_id=701),
+        "created_at": "2026-09-18T01:31:00Z",
+    }
+    decisions = [old_decision, new_decision]
+    if alteration == "copied":
+        # A non-Actions actor re-posts the exact accepted record with an
+        # earlier timestamp. It must not overwrite the trusted 01:30 source.
+        decisions.append(
+            {
+                **old_decision,
+                "id": 702,
+                "created_at": "2026-09-18T01:10:00Z",
+                "user": {"login": "unrelated-user"},
+                "performed_via_github_app": None,
+            }
+        )
+    elif alteration == "duplicate":
+        decisions.append({**old_decision, "id": 702, "created_at": "2026-09-18T01:10:00Z"})
+    else:
+        decisions[0] = {**old_decision, "created_at": None}
+
+    # Neither an early ingress nor a copied/ambiguous timestamp can authorize
+    # pre-write retirement, even if a job could otherwise prove ABORTED.
+    observed_jobs: list[int] = []
+
+    def application_job(
+        _repository: str, _token: str, request_id: int, **_kwargs: object
+    ) -> bridge.ApplicationCompletion:
+        observed_jobs.append(request_id)
+        return bridge.ApplicationCompletion("ABORTED", "test-no-effect", request_id)
+
+    monkeypatch.setattr(bridge, "_application_job", application_job)
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [old_request, new_request]
+        if path.startswith("issues/138/comments?"):
+            return decisions
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return _preactivation_admission()
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+    assert completion.state == "AMBIGUOUS"
+    assert completion.reason == "application-completion-accepted-ambiguous"
+    assert observed_jobs == []
+
+
+def test_proven_prewrite_abort_yields_to_qualified_later_ingress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    old_request = _effect_request_comment(comment_id=654, created_at="2026-09-18T01:00:00Z")
+    new_request = _effect_request_comment(comment_id=655, created_at="2026-09-18T01:10:00Z")
+    old_decision = {
+        **_application_decision_comment(old_request, comment_id=700),
+        "created_at": "2026-09-18T01:05:00Z",
+    }
+    new_decision = {
+        **_application_decision_comment(new_request, comment_id=701),
+        "created_at": "2026-09-18T01:20:00Z",
+    }
+    aborted_ids: list[int] = []
+    resumed_ids: list[int] = []
+
+    def application_job(
+        _repository: str, _token: str, request_id: int, **_kwargs: object
+    ) -> bridge.ApplicationCompletion:
+        aborted_ids.append(request_id)
+        return bridge.ApplicationCompletion("ABORTED", "proven-no-write", request_id)
+
+    def accepted_state(**kwargs: object) -> bridge.ApplicationCompletion:
+        record = kwargs["record"]
+        assert isinstance(record, bridge.ApplicationDecisionRecord)
+        resumed_ids.append(record.request_comment_id)
+        return bridge.ApplicationCompletion("RESUMABLE", "test-current", record.request_comment_id)
+
+    monkeypatch.setattr(bridge, "_application_job", application_job)
+    monkeypatch.setattr(bridge, "_accepted_application_state", accepted_state)
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [old_request, new_request]
+        if path.startswith("issues/138/comments?"):
+            return [old_decision, new_decision]
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return _preactivation_admission()
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+    assert completion == bridge.ApplicationCompletion("RESUMABLE", "test-current", 655)
+    assert aborted_ids == [654]
+    assert resumed_ids == [655]
+
+
 def test_completed_formal_result_uses_fresh_revision_for_postconditions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5391,18 +5519,21 @@ def test_merge_prewrite_reconciliation_refuses_unavailable_github_reads(
 
 
 @pytest.mark.parametrize(
-    ("new_time", "completion_state", "expected_retired"),
+    ("new_ingress_time", "new_decision_time", "completion_state", "expected_retired"),
     [
-        ("2026-11-06T03:00:01Z", "ABORTED", {90}),
-        ("2026-11-06T03:00:01Z", "INVALID", set()),
-        ("2026-11-06T02:59:59Z", "ABORTED", {91}),
-        ("2026-11-06T03:00:00Z", "ABORTED", set()),
-        (None, "ABORTED", set()),
+        ("2026-11-06T03:00:01Z", "2026-11-06T03:00:02Z", "ABORTED", {90}),
+        ("2026-11-06T03:00:01Z", "2026-11-06T03:00:02Z", "INVALID", set()),
+        # A later decision does NOT turn an earlier ingress into a new request.
+        ("2026-11-06T02:59:59Z", "2026-11-06T03:00:01Z", "ABORTED", set()),
+        ("2026-11-06T03:00:00Z", "2026-11-06T03:00:01Z", "ABORTED", set()),
+        (None, "2026-11-06T03:00:01Z", "ABORTED", set()),
+        ("2026-11-06T03:00:01Z", None, "ABORTED", set()),
     ],
 )
 def test_fresh_no_write_abort_retires_only_an_earlier_accepted_occurrence(
     monkeypatch: pytest.MonkeyPatch,
-    new_time: str | None,
+    new_ingress_time: str | None,
+    new_decision_time: str | None,
     completion_state: str,
     expected_retired: set[int],
 ) -> None:
@@ -5426,18 +5557,14 @@ def test_fresh_no_write_abort_retires_only_an_earlier_accepted_occurrence(
         "royhsu-work/investment-strategy",
         "test-token",
         records=[old, new],
-        ingress_times={91: new_time},
-        decision_times={90: "2026-11-06T03:00:00Z", 91: new_time},
+        ingress_times={91: new_ingress_time},
+        decision_times={90: "2026-11-06T03:00:00Z", 91: new_decision_time},
         issue_comments=(),
         read=lambda *_args: pytest.fail("mock application job should own the reads"),
     )
     assert retired == expected_retired
     expected_observed = (
-        [90]
-        if new_time == "2026-11-06T03:00:01Z"
-        else [91]
-        if new_time == "2026-11-06T02:59:59Z"
-        else []
+        [90] if new_ingress_time == "2026-11-06T03:00:01Z" and new_decision_time is not None else []
     )
     assert observed_requests == expected_observed
 
