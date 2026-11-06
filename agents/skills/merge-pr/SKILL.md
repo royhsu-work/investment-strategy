@@ -15,6 +15,24 @@ requires its immutable historical head, merge metadata, exact repositories/base/
 default-branch revision and ancestry, and the matching revision-bound PASS; this is a read-only
 idempotent reconciliation path.
 
+Do not treat `main` advancing or PR/main Git divergence alone as a merge conflict. Use the
+application-owned carrier qualifier and fresh GitHub integration evidence to distinguish an
+unchanged, safely mergeable HEAD from `RECONCILIATION_REQUIRED`, unavailable evidence, and a
+confirmed Git conflict. Disjoint, mergeable divergence does not itself stale exact-head review;
+the separate CI, independent review, current Human input and merge gates still apply. If an
+actual branch reconciliation changes HEAD, return to the governed implementation/review path;
+never carry the old PASS or CI to the new head.
+
+When a deterministic, still-current prerequisite makes this merge Action incapable of completing
+(including an implementation-owned reconciliation or confirmed conflict), do not emit `MERGED`
+with an effect known to fail, or return an unchanged `BLOCKED` self-loop. Return the existing
+`LIFECYCLE_VIOLATION` result with exact guard and no mutation, so the executable model sends
+diagnosis to Lead / resolve-question. That later Action may legally return implementation to
+Executor and a new exact-head Reviewer gate. Use `BLOCKED` only for a bounded, actually changing
+external prerequisite; unavailable evidence remains fail-closed and requires fresh observation.
+An already ACCEPTED merge intent is immutable: neither this instruction nor a later retry may
+replace its result, assume an aborted write, or replay a merge with unknown postconditions.
+
 For merge-implementation-pr, require review-implementation PASS for exact head and implementation
 completion. For merge-archive-pr, additionally require review-archive PASS, archive preparation,
 terminal evidence, and known safe cleanup. Never infer the phase from a generic merge label or prose.

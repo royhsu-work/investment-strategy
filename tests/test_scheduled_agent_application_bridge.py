@@ -3511,6 +3511,90 @@ def test_public_failure_diagnostics_never_exposes_untrusted_guard_reason() -> No
     assert untrusted_value not in json.dumps(diagnostics)
 
 
+def test_merge_precondition_failure_is_diagnosable_without_leaking_raw_evidence() -> None:
+    rejection = ApplicationRejection(
+        ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+        json.dumps(
+            {"issue": 322, "change": _CHANGE, "pr": 418, "head": _REVISION, "failed_predicates": []}
+        ),
+        json.dumps(
+            {
+                "failed_predicates": ["current_carrier", "exact_review"],
+                "snapshot": {"raw_private_field": "REDACT_ME"},
+            }
+        ),
+    )
+    evidence = EffectRecoveryEvidence(
+        failed_effect_index=0,
+        failed_effect_kind="github-mutation",
+        failed_effect_sha256="a" * 64,
+        completed_effect_indexes=(),
+        completed_effect_sha256=(),
+        mutation_status="not-complete",
+        unfinished_boundary="effect-precondition",
+        rejection=rejection,
+    )
+    diagnostic = bridge._public_failure_diagnostics(
+        bridge.ApplyResult(False, "effect precondition rejected", recovery_evidence=evidence)
+    )
+    assert diagnostic is not None
+    assert diagnostic["merge_failed_predicates"] == ["current_carrier", "exact_review"]
+    assert "REDACT_ME" not in json.dumps(diagnostic)
+
+
+def test_nonprogressing_merge_rejection_cannot_authorize_identical_continuation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = WorkerRequest(138, "executor", "merge-implementation-pr")
+    worker = _worker_result(action=source.action, role=source.role, result_kind="merged")
+    worker["change"] = _CHANGE
+    raw = json.dumps(worker, sort_keys=True, separators=(",", ":"))
+    body = _effect_request(worker)
+    record = _accepted_record(raw, body, source=source, change=_CHANGE, result_kind="merged")
+    monkeypatch.setattr(
+        bridge,
+        "_application_decision_comment_for_request",
+        lambda **_kwargs: (record, "accepted decision"),
+    )
+    monkeypatch.setenv("GITHUB_RUN_ID", "7001")
+    rejection = ApplicationRejection(
+        ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+        "expected exact head/current gate",
+        "observed stale head/current gate",
+    )
+    evidence = EffectRecoveryEvidence(
+        failed_effect_index=0,
+        failed_effect_kind="github-mutation",
+        failed_effect_sha256="a" * 64,
+        completed_effect_indexes=(),
+        completed_effect_sha256=(),
+        mutation_status="not-complete",
+        unfinished_boundary="effect-precondition",
+        rejection=rejection,
+    )
+    output = tmp_path / "merge-rejection.json"
+    bridge._write_application_recovery_evidence(
+        str(output),
+        result=bridge.ApplyResult(
+            False, "effect precondition rejected", recovery_evidence=evidence
+        ),
+        repository=_REPOSITORY,
+        token=_REVISION,
+        source=source,
+        request_comment_id=record.request_comment_id,
+        trigger_comment_id=404,
+        authorization_revision=_REVISION,
+        current_revision=_REVISION,
+        run_attempt=1,
+        continuation=None,
+        predecessor=None,
+    )
+    document = json.loads(output.read_text(encoding="utf-8"))
+    assert document["continuation_eligible"] is False
+    assert document["failure_evidence"]["mutation_status"] == "not-complete"
+    assert document["failure_evidence"]["completed_effect_indexes"] == []
+
+
 def test_recovery_artifact_reader_propagates_transient_download_failure() -> None:
     """An observed upload followed by a failed download is unavailable, not absent."""
     run_id, job_id, artifact_id = 7001, 7002, 7003

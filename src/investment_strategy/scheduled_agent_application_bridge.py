@@ -4521,6 +4521,36 @@ def _public_failure_diagnostics(result: ApplyResult) -> dict[str, object] | None
             }
         ):
             summary["guard_reason"] = observed["reason"]
+        # Merge acceptance itself constructs this bounded envelope. Expose only
+        # known predicate names, never the PR/comment/payload or raw transport
+        # response. It distinguishes a durable gate failure from API failure.
+        merge_predicates = frozenset(
+            {
+                "complete",
+                "current_carrier",
+                "exact_head",
+                "exact_review",
+                "required_checks",
+                "non_closing_linkage",
+                "native_closing_preflight",
+                "no_contradiction",
+                "human_freshness",
+            }
+        )
+        if (
+            isinstance(expected, Mapping)
+            and set(expected) == {"issue", "change", "pr", "head", "failed_predicates"}
+            and expected.get("failed_predicates") == []
+            and isinstance(observed, Mapping)
+            and set(observed) == {"failed_predicates", "snapshot"}
+            and isinstance(observed.get("failed_predicates"), list)
+            and bool(observed["failed_predicates"])
+            and all(
+                isinstance(item, str) and item in merge_predicates
+                for item in observed["failed_predicates"]
+            )
+        ):
+            summary["merge_failed_predicates"] = sorted(set(observed["failed_predicates"]))
     return summary
 
 
@@ -4665,7 +4695,14 @@ def _write_application_recovery_evidence(
         and not recovery.completed_effect_indexes
         and not recovery.completed_effect_sha256
     )
-    continuation_eligible = result.carrier_plan is not None or safe_precondition_rejection
+    # A rejected merge is not a retryable actuator plan: the exact unchanged
+    # accepted head/gate/precondition must first be corrected by a fresh legal
+    # semantic Action. Replaying the same accepted MERGED plan against an
+    # unchanged deterministic rejection is a permanent no-progress loop.
+    continuation_eligible = result.carrier_plan is not None or (
+        safe_precondition_rejection
+        and source.action not in {"merge-implementation-pr", "merge-archive-pr"}
+    )
     document = {
         "schema": _APPLICATION_RECOVERY_SCHEMA,
         "repository": repository,
