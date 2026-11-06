@@ -1474,13 +1474,20 @@ def _github_json(
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    try:
-        with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
-            raw = response.read()
-    except HTTPError as exc:
-        if allow_not_found and exc.code == 404:
-            return None
-        raise
+    # This is a transport retry for an idempotent GET, not an Action/effect
+    # retry.  A lost response to POST/PATCH/DELETE has an unknown mutation
+    # outcome and must never be submitted again by this adapter.
+    for attempt in range(3):
+        try:
+            with urlopen(request, timeout=30) as response:  # noqa: S310 - trusted API host
+                raw = response.read()
+            break
+        except HTTPError as exc:
+            if allow_not_found and exc.code == 404:
+                return None
+            if method != "GET" or exc.code not in {502, 503, 504} or attempt == 2:
+                raise
+            time.sleep(0.25 * (2**attempt))
     if not raw:
         return None
     return json.loads(raw.decode("utf-8"))
