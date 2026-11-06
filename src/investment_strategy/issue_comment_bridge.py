@@ -2449,19 +2449,46 @@ def _qualified_unapplied_terminal_carrier_effect(
     run_id: int,
     run_attempt: int,
     read: GitHubReader,
+    source_issue_comments: tuple[Mapping[str, object], ...] | None,
+    current_issue: Mapping[str, object] | None,
 ) -> bool:
     """Reconcile a terminal Application against immutable effects, not errors.
 
     Carrier-only PR mutations are *never* written by the Application job.  A
     complete, current-attempt artifact inventory and skipped carrier/successor
     steps prove that this invocation handed no writer an executable plan.
-    An ABORTED decision additionally needs a fresh negative postcondition for
-    the exact carrier-only PR operation. For merge, an open PR is also a
-    monotonic witness: merged PRs cannot be reopened. For mutable operations,
-    absence of an authorized carrier writer (not merely a differing field)
-    is essential. Unrecognized effect kinds remain UNKNOWN. HTTP status,
-    exception contents, and traceback are deliberately irrelevant.
+    ABORTED additionally needs a *monotonic* negative postcondition: an
+    already-created PR cannot disappear and a merged PR cannot reopen. For
+    mutable update/ready effects the current mismatch does not prove an
+    earlier idempotent success never reached the formal/derived writers;
+    these cases remain UNKNOWN. HTTP status, exception content and traceback
+    are deliberately irrelevant.
     """
+
+    # The first apply step can itself publish an application-owned formal
+    # ACTION_RESULT and a derived successor after a carrier-only PR operation
+    # is already satisfied. Skipped *later* workflow steps do not exclude
+    # these partial writes. The caller supplies a complete source-Issue
+    # history and the current routing observation; neither is optional proof.
+    observation = normalize_github_issue(current_issue) if current_issue is not None else None
+    if (
+        source_issue_comments is None
+        or observation is None
+        or not observation.authoritative
+        or observation.issue_number != record.issue_number
+        or observation.state != "open"
+        or observation.routing != (record.role, record.action)
+        or observation.change not in {record.change, "unset"}
+    ):
+        return False
+    correlation_prefix = (
+        f"Application-Correlation: application:{record.request_comment_id}:{record.issue_number}:"
+    )
+    if any(
+        not isinstance(comment.get("body"), str) or correlation_prefix in cast(str, comment["body"])
+        for comment in source_issue_comments
+    ):
+        return False
 
     steps = job.get("steps")
     if (
@@ -2554,13 +2581,7 @@ def _qualified_unapplied_terminal_carrier_effect(
         return False
     operation = payload.get("operation")
     if (
-        operation
-        not in {
-            "pull-request-create",
-            "pull-request-update",
-            "pull-request-ready",
-            "pull-request-merge",
-        }
+        operation not in {"pull-request-create", "pull-request-merge"}
         or payload.get("issue_number") != record.issue_number
         or (operation == "pull-request-merge" and record.result_kind != "merged")
     ):
@@ -2590,10 +2611,11 @@ def _qualified_unapplied_terminal_carrier_effect(
     ):
         return False
 
-    # The carrier plan is the *only* writer path for these four PR operations.
-    # A fresh negative postcondition determines whether the requested Effect
-    # is still absent. Nothing is replayed: a new dispatch must requalify the
-    # full source and target, including changed heads or default branches.
+    # Only immutable creation/merge consequences have a monotonic negative
+    # witness. A mutable PR field/draft state can change *after* the first
+    # apply step has already persisted a formal result. Neither the missing
+    # carrier plan nor a now-different field proves no prior partial write.
+    # Nothing is replayed: a new dispatch must requalify the full source.
     if operation == "pull-request-create":
         branch = payload.get("head")
         base_ref = payload.get("base")
@@ -2643,20 +2665,8 @@ def _qualified_unapplied_terminal_carrier_effect(
     )
     if not identity_matches:
         return False
-    if operation == "pull-request-merge":
-        # This final observation is monotonic; historical merges cannot hide.
-        return True
-    if operation == "pull-request-ready":
-        return pr.get("draft") is True
-    fields = payload.get("fields")
-    return (
-        isinstance(fields, Mapping)
-        and bool(fields)
-        and any(
-            (base.get("ref") if name == "base" else pr.get(name)) != value
-            for name, value in fields.items()
-        )
-    )
+    # This final observation is monotonic; historical merges cannot hide.
+    return identity_matches
 
 
 def _application_job(
@@ -2670,6 +2680,8 @@ def _application_job(
     accepted_decision_sha256: str | None = None,
     recent_comments: tuple[Mapping[str, object], ...] = (),
     current_dispatch_request_comment_id: int | None = None,
+    source_issue_comments: tuple[Mapping[str, object], ...] | None = None,
+    current_issue: Mapping[str, object] | None = None,
 ) -> ApplicationCompletion:
     """Locate one exact application run and prefer its durable carrier handoff."""
 
@@ -2750,6 +2762,8 @@ def _application_job(
                 run_id=run_id,
                 run_attempt=run_attempt,
                 read=read,
+                source_issue_comments=source_issue_comments,
+                current_issue=current_issue,
             ):
                 return ApplicationCompletion(
                     "ABORTED",
@@ -3109,6 +3123,7 @@ def _proven_aborted_predecessors(
     ingress_times: Mapping[int, str | None],
     decision_times: Mapping[int, str | None],
     issue_comments: tuple[Mapping[str, object], ...],
+    current_issue: Mapping[str, object],
     read: GitHubReader,
 ) -> set[int]:
     """Retire only an earlier, provably no-write ACCEPTED merge occurrence.
@@ -3160,6 +3175,8 @@ def _proven_aborted_predecessors(
                 read=read,
                 record=record,
                 accepted_decision_sha256=digest,
+                source_issue_comments=issue_comments,
+                current_issue=current_issue,
             )
         except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
             continue
@@ -3618,6 +3635,8 @@ def _accepted_application_state(
             accepted_decision_sha256=accepted_decision_sha256,
             recent_comments=recent_comments,
             current_dispatch_request_comment_id=current_dispatch_request_comment_id,
+            source_issue_comments=issue_comments,
+            current_issue=current_issue,
         )
         if resumed.state == "RESUMABLE":
             return resumed
@@ -3689,6 +3708,8 @@ def _accepted_application_state(
             accepted_decision_sha256=accepted_decision_sha256,
             recent_comments=recent_comments,
             current_dispatch_request_comment_id=current_dispatch_request_comment_id,
+            source_issue_comments=issue_comments,
+            current_issue=current_issue,
         )
     if successor is not None and observation.routing == expected_routing:
         return ApplicationCompletion(
@@ -5094,6 +5115,7 @@ def qualify_application_completion(
                 for record in relevant_decisions
             },
             issue_comments=issue_comments,
+            current_issue=cast(Mapping[str, object], issue),
             read=read,
         )
         relevant_decisions = [

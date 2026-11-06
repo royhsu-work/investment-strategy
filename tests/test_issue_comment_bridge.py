@@ -5385,6 +5385,18 @@ def _failed_prewrite_merge_fixture(
     return record, run, job, json.dumps(document).encode("utf-8"), ingress_comment
 
 
+def _terminal_carrier_issue(action: str) -> dict[str, object]:
+    return {
+        "number": 322,
+        "title": "Restore NO_WORK idle discovery",
+        "state": "open",
+        "created_at": "2026-09-22T15:39:54Z",
+        "closed_at": None,
+        "body": "Change: restore-no-work-idle-discovery",
+        "labels": [{"name": f"action:{action}"}, {"name": "human:approved"}],
+    }
+
+
 @pytest.mark.parametrize(
     "alteration",
     [
@@ -5418,6 +5430,8 @@ def _failed_prewrite_merge_fixture(
         "merged-pr",
         "closed-unmerged-pr",
         "missing-pr",
+        "partial-formal-write",
+        "successor-routing-write",
     ],
 )
 @pytest.mark.parametrize("action", ["merge-implementation-pr", "merge-archive-pr"])
@@ -5530,6 +5544,24 @@ def test_terminal_merge_effect_reconciles_without_error_semantics(
         raw_document = b"not JSON"
 
     reads: list[str] = []
+    source_comments: tuple[Mapping[str, object], ...] = ()
+    current_issue = _terminal_carrier_issue(action)
+    if alteration == "partial-formal-write":
+        source_comments = (
+            {
+                "id": 101,
+                "body": (
+                    "ACTION_RESULT\n"
+                    "Application-Correlation: application:90:322:executor:"
+                    f"{action}:merged:{REVISION}\n"
+                ),
+            },
+        )
+    if alteration == "successor-routing-write":
+        current_issue["labels"] = [
+            {"name": "action:resolve-question"},
+            {"name": "human:approved"},
+        ]
 
     def read(repository: str, token: str, path: str) -> object:
         assert repository == "royhsu-work/investment-strategy"
@@ -5579,6 +5611,8 @@ def test_terminal_merge_effect_reconciles_without_error_semantics(
         read=read,
         record=record,
         accepted_decision_sha256="a" * 64,
+        source_issue_comments=source_comments,
+        current_issue=current_issue,
     )
 
     if alteration in {
@@ -5610,9 +5644,9 @@ def test_terminal_merge_effect_reconciles_without_error_semantics(
     [
         ("pull-request-create", True, "ABORTED"),
         ("pull-request-create", False, "INVALID"),
-        ("pull-request-update", True, "ABORTED"),
+        ("pull-request-update", True, "INVALID"),
         ("pull-request-update", False, "INVALID"),
-        ("pull-request-ready", True, "ABORTED"),
+        ("pull-request-ready", True, "INVALID"),
         ("pull-request-ready", False, "INVALID"),
         ("issue-update", True, "INVALID"),
     ],
@@ -5702,6 +5736,8 @@ def test_terminal_carrier_effect_reconciles_by_operation_postcondition(
         read=read,
         record=record,
         accepted_decision_sha256="a" * 64,
+        source_issue_comments=(),
+        current_issue=_terminal_carrier_issue("implement-change"),
     )
     assert completion.state == expected_state
     if expected_state == "ABORTED":
@@ -5732,9 +5768,87 @@ def test_merge_prewrite_reconciliation_refuses_unavailable_github_reads(
         read=read,
         record=record,
         accepted_decision_sha256="a" * 64,
+        source_issue_comments=(),
+        current_issue=_terminal_carrier_issue("merge-implementation-pr"),
     )
     assert completion.state == "INVALID"
     assert completion.reason == "application-completion-effect-evidence-unavailable"
+
+
+@pytest.mark.parametrize(
+    ("partial_formal", "successor_routing", "retired"),
+    [
+        (False, False, {90}),
+        (True, False, set()),
+        (False, True, set()),
+        (True, True, set()),
+    ],
+)
+def test_new_ingress_cannot_retire_an_accepted_partial_write(
+    monkeypatch: pytest.MonkeyPatch,
+    partial_formal: bool,
+    successor_routing: bool,
+    retired: set[int],
+) -> None:
+    """Exercise predecessor retirement through the actual terminal job owner."""
+
+    old, run, job, _diagnostic, ingress = _failed_prewrite_merge_fixture()
+    issue = _terminal_carrier_issue("merge-implementation-pr")
+    if successor_routing:
+        issue["labels"] = [
+            {"name": "action:resolve-question"},
+            {"name": "human:approved"},
+        ]
+    source_comments: tuple[Mapping[str, object], ...] = (
+        (
+            {
+                "id": 115,
+                "body": (
+                    "ACTION_RESULT\n"
+                    "Application-Correlation: application:90:322:executor:"
+                    "merge-implementation-pr:merged:shadow\n"
+                ),
+            },
+        )
+        if partial_formal
+        else ()
+    )
+
+    def read(repository: str, _token: str, path: str) -> object:
+        assert repository == "royhsu-work/investment-strategy"
+        if path.startswith("actions/workflows/"):
+            return {"workflow_runs": [run]}
+        if path == "actions/runs/777/jobs":
+            return {"jobs": [job]}
+        if path == "issues/comments/90":
+            return ingress
+        if path == "actions/runs/777/artifacts?per_page=100":
+            return {"total_count": 0, "artifacts": []}
+        if path == "pulls/418":
+            return {
+                "number": 418,
+                "state": "open",
+                "merged": False,
+                "head": {"repo": {"full_name": repository}, "sha": "4" * 40},
+                "base": {"repo": {"full_name": repository}, "ref": "main"},
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "_accepted_decision_sha256", lambda *_args: "a" * 64)
+    monkeypatch.setattr(bridge, "read_application_recovery_artifact", lambda *_a, **_kw: None)
+    assert (
+        bridge._proven_aborted_predecessors(
+            "royhsu-work/investment-strategy",
+            "test-token",
+            records=[old],
+            ingress_times={91: "2026-11-06T03:00:01Z"},
+            decision_times={90: "2026-11-06T03:00:00Z"},
+            issue_comments=source_comments,
+            current_issue=issue,
+            read=read,
+        )
+        == retired
+    )
 
 
 @pytest.mark.parametrize(
@@ -5779,6 +5893,7 @@ def test_fresh_no_write_abort_retires_only_an_earlier_accepted_occurrence(
         ingress_times={91: new_ingress_time},
         decision_times={90: "2026-11-06T03:00:00Z", 91: new_decision_time},
         issue_comments=(),
+        current_issue=_terminal_carrier_issue("merge-implementation-pr"),
         read=lambda *_args: pytest.fail("mock application job should own the reads"),
     )
     assert retired == expected_retired
