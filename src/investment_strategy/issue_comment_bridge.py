@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
@@ -1788,8 +1789,17 @@ def _github_json(repository: str, token: str, api_path: str) -> object | None:
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed trusted GitHub API host
-        raw = response.read()
+    # Repository observations are GET-only; transient gateway failures are
+    # retryable, whereas an unknown mutation outcome never is.
+    for attempt in range(3):
+        try:
+            with urlopen(request, timeout=30) as response:  # noqa: S310 - trusted API host
+                raw = response.read()
+            break
+        except HTTPError as exc:
+            if exc.code not in {502, 503, 504} or attempt == 2:
+                raise
+            time.sleep(0.25 * (2**attempt))
     return None if not raw else json.loads(raw.decode("utf-8"))
 
 
@@ -2428,6 +2438,200 @@ def _prior_dispatch_handoff_reason(
     return None
 
 
+def _qualified_unapplied_merge_exception(
+    repository: str,
+    token: str,
+    *,
+    record: ApplicationDecisionRecord,
+    run: Mapping[str, object],
+    job: Mapping[str, object],
+    run_id: int,
+    run_attempt: int,
+    read: GitHubReader,
+) -> bool:
+    """Prove that an accepted merge stopped at a read-only carrier-plan boundary.
+
+    Only the immutable, single-effect merge request qualifies. The exception
+    artifact proves the failed Python call stack; a fresh PR observation proves
+    that no merge effect occurred. Neither a generic 5xx nor an UNKNOWN
+    mutation marker alone authorizes another Action.
+    """
+
+    steps = job.get("steps")
+    if (
+        record.disposition != "ACCEPTED"
+        or record.action not in {"merge-implementation-pr", "merge-archive-pr"}
+        or record.role != "executor"
+        or run_attempt != 1
+        or run.get("status") != "completed"
+        or run.get("conclusion") != "failure"
+        or job.get("status") != "completed"
+        or job.get("conclusion") != "failure"
+        or not isinstance(steps, list)
+    ):
+        return False
+    conclusions: dict[str, str] = {}
+    for step in steps:
+        if not isinstance(step, Mapping):
+            return False
+        name = step.get("name")
+        conclusion = step.get("conclusion")
+        if not isinstance(name, str) or not isinstance(conclusion, str) or name in conclusions:
+            return False
+        conclusions[name] = conclusion
+    if (
+        conclusions.get("Freshly authorize and apply repository-owned effects") != "failure"
+        or conclusions.get("Upload exact application recovery evidence") != "skipped"
+        or conclusions.get("Upload pre-ACCEPT or interrupted application exception evidence")
+        != "success"
+        or any(
+            conclusions.get(name) not in {"skipped", None}
+            for name in (
+                "Persist exact external carrier plan",
+                "Upload exact external carrier plan",
+                "Persist the derived successor after exact validation",
+                "Upload final exact application recovery evidence",
+                "Upload post-validation application exception evidence",
+            )
+        )
+    ):
+        return False
+
+    try:
+        intent = json.loads(record.raw_worker_result)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(intent, Mapping) or intent.get("result_kind") != "merged":
+        return False
+    effects = intent.get("requested_effects")
+    if not isinstance(effects, list) or len(effects) != 1:
+        return False
+    effect = effects[0]
+    if not isinstance(effect, Mapping) or effect.get("kind") != "github-mutation":
+        return False
+    payload_json = effect.get("payload_json")
+    if not isinstance(payload_json, str):
+        return False
+    try:
+        payload = json.loads(payload_json)
+    except ValueError:
+        return False
+    if not isinstance(payload, Mapping):
+        return False
+    number = _positive_int(payload.get("number"))
+    expected_head = payload.get("expected_head_sha")
+    if (
+        payload.get("operation") != "pull-request-merge"
+        or payload.get("issue_number") != record.issue_number
+        or number is None
+        or not isinstance(expected_head, str)
+        or _SHA.fullmatch(expected_head) is None
+    ):
+        return False
+
+    artifacts_payload = read(repository, token, f"actions/runs/{run_id}/artifacts?per_page=100")
+    if not isinstance(artifacts_payload, Mapping):
+        return False
+    artifacts = artifacts_payload.get("artifacts")
+    total_count = artifacts_payload.get("total_count")
+    if (
+        not isinstance(artifacts, list)
+        or type(total_count) is not int
+        or total_count != len(artifacts)
+    ):
+        return False
+    matching = [
+        item
+        for item in artifacts
+        if isinstance(item, Mapping)
+        and item.get("name")
+        in {"application-execution-exception", "application-execution-exception.json"}
+    ]
+    if len(matching) != 1:
+        return False
+    artifact = matching[0]
+    artifact_id = _positive_int(artifact.get("id"))
+    digest = artifact.get("digest")
+    artifact_run = artifact.get("workflow_run")
+    if (
+        artifact_id is None
+        or artifact.get("expired") is not False
+        or not isinstance(digest, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
+        or not isinstance(artifact_run, Mapping)
+        or artifact_run.get("id") != run_id
+        or artifact_run.get("head_sha") != run.get("head_sha")
+    ):
+        return False
+    raw = read_github_artifact_bytes(repository, token, f"actions/artifacts/{artifact_id}/zip")
+    if not raw or len(raw) > 65_536 or f"sha256:{hashlib.sha256(raw).hexdigest()}" != digest:
+        return False
+    try:
+        document = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return False
+    if not isinstance(document, Mapping):
+        return False
+    traceback_text = document.get("raw_traceback")
+    if (
+        document.get("schema") != "scheduled-agent-execution-exception/v1"
+        or document.get("repository") != repository
+        or document.get("issue_number") != record.issue_number
+        or document.get("role") != record.role
+        or document.get("action") != record.action
+        or document.get("change") != record.change
+        or document.get("request_comment_id") != record.request_comment_id
+        or document.get("run_id") != run_id
+        or document.get("run_attempt") != run_attempt
+        or document.get("revision") != run.get("head_sha")
+        or document.get("attempted_operation") != "application-effect-and-postcondition"
+        or document.get("mutation_status") != "UNKNOWN_REQUIRES_FRESH_RECONCILIATION"
+        or document.get("exception_type") != "HTTPError"
+        or not isinstance(document.get("raw_error"), str)
+        or not any(
+            f"HTTP Error {status}:" in cast(str, document["raw_error"])
+            for status in (502, 503, 504)
+        )
+        or not isinstance(traceback_text, str)
+        or not all(
+            f"in {frame}" in traceback_text
+            for frame in (
+                "_carrier_plan_for_github_mutation",
+                "_source_pull_request",
+                "_github_json",
+            )
+        )
+        or run.get("display_title")
+        != f"Scheduled Agent Application {document.get('trigger_comment_id')}"
+    ):
+        return False
+
+    # The effect list contains only the PR merge, whose actual writer is a
+    # separate, not-yet-created carrier. The failed call stack is within its
+    # read-only plan qualification. The PR must still be open and unmerged;
+    # the head is re-qualified by the *next* fresh semantic Action, so moving
+    # main during maintenance does not replay the stale accepted head.
+    pr = read(repository, token, f"pulls/{number}")
+    if not isinstance(pr, Mapping):
+        return False
+    head = pr.get("head")
+    base = pr.get("base")
+    if not isinstance(head, Mapping) or not isinstance(base, Mapping):
+        return False
+    head_repo = head.get("repo")
+    base_repo = base.get("repo")
+    return (
+        pr.get("number") == number
+        and pr.get("state") == "open"
+        and pr.get("merged") is False
+        and isinstance(head_repo, Mapping)
+        and head_repo.get("full_name") == repository
+        and isinstance(base_repo, Mapping)
+        and base_repo.get("full_name") == repository
+        and base.get("ref") == "main"
+    )
+
+
 def _application_job(
     repository: str,
     token: str,
@@ -2503,6 +2707,35 @@ def _application_job(
             "application-completion-job-identity-incomplete",
             request_comment_id=request_comment_id,
         )
+
+    # A failed, accepted merge application may have stopped while *reading*
+    # the proposed carrier plan, before any repository effect was written.
+    # The already-defined ABORTED disposition releases only that proven
+    # no-effect invocation for a new, freshly selected Action. It never
+    # replays the old EFFECT_REQUEST or represents an ambiguous write as safe.
+    if record is not None and accepted_decision_sha256 is not None:
+        try:
+            if _qualified_unapplied_merge_exception(
+                repository,
+                token,
+                record=record,
+                run=run,
+                job=job,
+                run_id=run_id,
+                run_attempt=run_attempt,
+                read=read,
+            ):
+                return ApplicationCompletion(
+                    "ABORTED",
+                    "application-completion-prewrite-carrier-read-failed",
+                    request_comment_id=request_comment_id,
+                )
+        except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
+            return ApplicationCompletion(
+                "INVALID",
+                "application-completion-exception-evidence-unavailable",
+                request_comment_id=request_comment_id,
+            )
 
     recovery_artifact = None
     if (
@@ -2840,6 +3073,63 @@ def _application_decisions(
         for record in (parse_application_decision(comment.get("body")),)
         if record is not None
     )
+
+
+def _proven_aborted_predecessors(
+    repository: str,
+    token: str,
+    *,
+    records: list[ApplicationDecisionRecord],
+    ingress_times: Mapping[int, str | None],
+    decision_times: Mapping[int, str | None],
+    issue_comments: tuple[Mapping[str, object], ...],
+    read: GitHubReader,
+) -> set[int]:
+    """Retire only an earlier, provably no-write ACCEPTED merge occurrence.
+
+    A new EFFECT_REQUEST cannot compete indefinitely with the earlier failed
+    ACCEPT. A newer source event (not a higher numeric ID) and a fresh exact
+    abort proof are both mandatory before the old occurrence becomes history.
+    """
+
+    def source_timestamp(value: str | None) -> datetime | None:
+        if value is None:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed.astimezone(UTC) if parsed.tzinfo is not None else None
+
+    all_times = tuple(
+        stamp
+        for value in (*ingress_times.values(), *decision_times.values())
+        if (stamp := source_timestamp(value)) is not None
+    )
+    retired: set[int] = set()
+    for record in records:
+        if record.disposition != "ACCEPTED":
+            continue
+        old_time = source_timestamp(decision_times.get(record.request_comment_id))
+        if old_time is None or not any(other > old_time for other in all_times):
+            continue
+        digest = _accepted_decision_sha256(record, issue_comments)
+        if digest is None:
+            continue
+        try:
+            consequence = _application_job(
+                repository,
+                token,
+                record.request_comment_id,
+                read=read,
+                record=record,
+                accepted_decision_sha256=digest,
+            )
+        except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
+            continue
+        if consequence.state == "ABORTED":
+            retired.add(record.request_comment_id)
+    return retired
 
 
 def _application_worker_for_record(
@@ -4742,6 +5032,29 @@ def qualify_application_completion(
         if current_request_ids or current_invalid_request_ids or current_frontier_decisions
         else predecessor_decisions
     )
+    # Proven pre-write failures can be terminal without a formal ACTION_RESULT:
+    # no repository effect occurred to warrant a semantic successor. When a
+    # genuinely newer ingress is observed, retire that one no-effect ACCEPT
+    # instead of allowing two immutable accepts to create a permanent loop.
+    if relevant_decisions and (current_request_ids or len(relevant_decisions) > 1):
+        aborted_ids = _proven_aborted_predecessors(
+            repository,
+            token,
+            records=relevant_decisions,
+            ingress_times={
+                request_id: ingress_created_at.get(request_id) for request_id in current_request_ids
+            },
+            decision_times={
+                record.request_comment_id: decision_created_at.get(record.request_comment_id)
+                for record in relevant_decisions
+            },
+            issue_comments=issue_comments,
+            read=read,
+        )
+        relevant_decisions = [
+            record for record in relevant_decisions if record.request_comment_id not in aborted_ids
+        ]
+        current_request_ids.difference_update(aborted_ids)
     accepted = [record for record in relevant_decisions if record.disposition == "ACCEPTED"]
     accepted_request_ids = {record.request_comment_id for record in accepted}
     frontier_correlation = (

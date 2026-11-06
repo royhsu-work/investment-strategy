@@ -70,6 +70,39 @@ _TEST_FAILURE_EVIDENCE_SHA256 = "2" * 64
 _TEST_RECOVERY_EPISODE_SHA256 = "3" * 64
 
 
+@pytest.mark.parametrize("method", ["GET", "POST", "PATCH"])
+def test_application_read_retry_does_not_repeat_write_after_gateway_timeout(
+    monkeypatch: pytest.MonkeyPatch, method: str
+) -> None:
+    attempts: list[str] = []
+    delays: list[float] = []
+
+    def urlopen(request: Request, *, timeout: int) -> BytesIO:
+        assert timeout == 30
+        attempts.append(request.get_method())
+        if method == "GET" and len(attempts) == 3:
+            return BytesIO(b'{"ok":true}')
+        raise HTTPError(request.full_url, 504, "Gateway Timeout", Message(), None)
+
+    monkeypatch.setattr(bridge, "urlopen", urlopen)
+    monkeypatch.setattr(bridge.time, "sleep", delays.append)
+    if method == "GET":
+        assert bridge._github_json(_REPOSITORY, "test-token", "pulls/418") == {"ok": True}
+        assert attempts == ["GET"] * 3
+        assert delays == [0.25, 0.5]
+    else:
+        with pytest.raises(HTTPError, match="504"):
+            bridge._github_json(
+                _REPOSITORY,
+                "test-token",
+                "issues/322",
+                method=method,
+                payload={"example": True},
+            )
+        assert attempts == [method]
+        assert delays == []
+
+
 def test_application_artifact_reader_uses_github_api_media_type_for_raw_artifacts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
