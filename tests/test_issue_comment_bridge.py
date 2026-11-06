@@ -3610,6 +3610,105 @@ def _qualified_recovery_fixture(
     )
 
 
+def test_interrupted_merge_recovery_is_relayed_by_existing_dispatch_wake(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Normal dispatch relays the original ACCEPTED intent, not a fresh MERGED Action.
+
+    This covers the durable recovery-comment / missing-route window without
+    introducing another cron, synthetic result, or repository mutation.
+    """
+
+    source = bridge.WorkerRequest(138, "executor", "merge-implementation-pr")
+    original_request = _effect_request_comment(
+        comment_id=654,
+        created_at="2026-09-18T01:00:00Z",
+        issue_number=source.issue_number,
+        role=source.role,
+        action=source.action,
+        result_kind="merged",
+    )
+    decision_comment = _application_decision_comment(original_request)
+    decision_body = cast(str, decision_comment["body"])
+    decision_digest = hashlib.sha256(decision_body.encode()).hexdigest()
+    recovery = _qualified_recovery_fixture(
+        accepted_decision_sha256=decision_digest,
+        request_comment_id=654,
+    )
+    preflight = SimpleNamespace(
+        human_authorized=True,
+        enumeration=SimpleNamespace(
+            incomplete_results=False,
+            exhausted=True,
+            source_total_count=1,
+            observed_count=1,
+        ),
+        issues=(
+            SimpleNamespace(
+                issue_number=138,
+                state="open",
+                change="restore-no-work-idle-discovery",
+                routing=(source.role, source.action),
+                created_order=1,
+            ),
+        ),
+    )
+    unqualified = replace(_decision("FAIL_CLOSED"), reason="observations-unqualified")
+    observed: list[bridge.WorkerRequest] = []
+
+    def completion(
+        _repo: str, _token: str, *, source: bridge.WorkerRequest, **_kw: object
+    ) -> bridge.ApplicationCompletion:
+        observed.append(source)
+        return bridge.ApplicationCompletion(
+            "RESUMABLE",
+            "application-completion-continuation-required",
+            request_comment_id=654,
+            recovery_artifact=recovery,
+        )
+
+    monkeypatch.setattr(bridge, "acquire_current_github_preflight", lambda *_args: preflight)
+    monkeypatch.setattr(bridge, "classify_dispatch", lambda _preflight: unqualified)
+    monkeypatch.setattr(bridge, "qualify_application_completion", completion)
+    monkeypatch.setattr(bridge, "_paged_list", lambda *_args, **_kwargs: (decision_comment,))
+    monkeypatch.setattr(bridge, "apply_derived_human_wait", lambda decision, **_kw: decision)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+    monkeypatch.setenv("GITHUB_TOKEN", "test")
+    event_path = tmp_path / "dispatch-event.json"
+    outputs_path = tmp_path / "dispatch-outputs"
+    payload_path = tmp_path / "dispatch-result.json"
+    event_path.write_text(json.dumps(_event()), encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "issue-comment-bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            REVISION,
+            "--github-output",
+            str(outputs_path),
+            "--result-payload",
+            str(payload_path),
+        ],
+    )
+
+    assert bridge.main() == 0
+    assert observed == [source]
+    result = bridge.parse_dispatch_result_document(payload_path.read_bytes())
+    assert result.disposition == "FAIL_CLOSED"
+    assert result.reason == "application-completion-continuation-required"
+    assert result.application_continuation is not None
+    continuation = bridge.parse_application_continuation_request(result.application_continuation)
+    assert continuation is not None
+    assert continuation.original_request_comment_id == 654
+    assert continuation.accepted_decision_sha256 == decision_digest
+    assert continuation.predecessor_artifact_id == recovery.artifact_id
+    assert continuation.failure_evidence_sha256 == recovery.failure_evidence_sha256
+    assert "should_emit=true" in outputs_path.read_text(encoding="utf-8")
+
+
 def _trusted_connector_comment(comment_id: int, body: str) -> dict[str, object]:
     return {
         "id": comment_id,

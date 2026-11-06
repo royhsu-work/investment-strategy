@@ -5097,11 +5097,11 @@ def _write_application_recovery_evidence(
     run_attempt: int,
     continuation: ApplicationContinuationRequest | None,
     predecessor: ApplicationRecoveryArtifact | None,
-) -> None:
+) -> bool:
     """Persist a bounded, content-addressed application boundary for later reads."""
 
     if path is None:
-        return
+        return False
     try:
         decision = _application_decision_comment_for_request(
             repository=repository,
@@ -5110,9 +5110,9 @@ def _write_application_recovery_evidence(
             request_comment_id=request_comment_id,
         )
     except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
-        return
+        return False
     if decision is None:
-        return
+        return False
     accepted_record, accepted_body = decision
     if (
         accepted_record.disposition != "ACCEPTED"
@@ -5120,16 +5120,16 @@ def _write_application_recovery_evidence(
         or accepted_record.role != source.role
         or accepted_record.action != source.action
     ):
-        return
+        return False
     accepted_sha256 = hashlib.sha256(accepted_body.encode("utf-8")).hexdigest()
     if continuation is not None and continuation.accepted_decision_sha256 != accepted_sha256:
-        return
+        return False
     try:
         run_id = int(os.environ.get("GITHUB_RUN_ID", ""))
     except ValueError:
-        return
+        return False
     if _strict_positive_int(run_id) is None or _strict_positive_int(run_attempt) is None:
-        return
+        return False
 
     failure_evidence = _recovery_failure_document(result)
     failure_evidence_sha256 = _canonical_sha256(failure_evidence)
@@ -5212,11 +5212,12 @@ def _write_application_recovery_evidence(
             encoding="utf-8",
         )
     except OSError:
-        return
+        return False
     output_path = os.environ.get("GITHUB_OUTPUT")
     if output_path:
         with Path(output_path).open("a", encoding="utf-8") as output:
             output.write(f"recovery_evidence_path={path}\n")
+    return bool(output_path)
 
 
 def _record_application_exception(context: ApplicationExceptionContext, exc: Exception) -> None:
@@ -5995,19 +5996,39 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         )
         return 0
 
+    # A zero-write rejection may need an administrative comment and routing
+    # write. Its recoverable predecessor artifact must be available to the
+    # existing normal-dispatch APPLICATION_CONTINUATION channel *before*
+    # either GitHub write, including if the process fails after the comment.
+    recovery_evidence_written = False
     if (
         not result.applied
         and result.carrier_plan is None
-        and _recover_deterministic_accepted_merge_failure(
+        and plan.source.action in {"merge-implementation-pr", "merge-archive-pr"}
+    ):
+        recovery_evidence_written = _write_application_recovery_evidence(
+            args.recovery_evidence_path,
             result=result,
-            batch=batch,
-            source=plan.source,
             repository=repository,
             token=token,
-            current_revision=args.revision,
-            default_branch=args.default_branch,
+            source=plan.source,
             request_comment_id=plan.request_comment_id,
+            trigger_comment_id=event_comment_id or plan.request_comment_id,
+            authorization_revision=request.authorization_revision,
+            current_revision=args.revision,
+            run_attempt=args.run_attempt,
+            continuation=continuation,
+            predecessor=predecessor_evidence,
         )
+    if recovery_evidence_written and _recover_deterministic_accepted_merge_failure(
+        result=result,
+        batch=batch,
+        source=plan.source,
+        repository=repository,
+        token=token,
+        current_revision=args.revision,
+        default_branch=args.default_branch,
+        request_comment_id=plan.request_comment_id,
     ):
         _write_carrier_outputs(ApplyResult(True, "accepted-merge-recovery-handoff"))
         _write_validation_outputs(None)
@@ -6076,20 +6097,21 @@ def _main_unprotected(context: ApplicationExceptionContext) -> int:
         target = None
     _write_carrier_outputs(result)
     _write_validation_outputs(target)
-    _write_application_recovery_evidence(
-        args.recovery_evidence_path,
-        result=result,
-        repository=repository,
-        token=token,
-        source=plan.source,
-        request_comment_id=plan.request_comment_id,
-        trigger_comment_id=event_comment_id or plan.request_comment_id,
-        authorization_revision=request.authorization_revision,
-        current_revision=args.revision,
-        run_attempt=args.run_attempt,
-        continuation=continuation,
-        predecessor=predecessor_evidence,
-    )
+    if not recovery_evidence_written:
+        _write_application_recovery_evidence(
+            args.recovery_evidence_path,
+            result=result,
+            repository=repository,
+            token=token,
+            source=plan.source,
+            request_comment_id=plan.request_comment_id,
+            trigger_comment_id=event_comment_id or plan.request_comment_id,
+            authorization_revision=request.authorization_revision,
+            current_revision=args.revision,
+            run_attempt=args.run_attempt,
+            continuation=continuation,
+            predecessor=predecessor_evidence,
+        )
     print(
         json.dumps(
             {

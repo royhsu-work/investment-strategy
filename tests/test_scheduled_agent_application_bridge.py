@@ -3756,8 +3756,134 @@ def test_accepted_merge_recovery_routes_only_fresh_proven_zero_write_failure(
         assert "Reason: accepted-merge-precondition-rejected" in comments[0]
 
 
+@pytest.mark.parametrize("run_identity_available", [True, False])
+def test_recovery_evidence_is_prepared_before_first_administrative_write(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_identity_available: bool
+) -> None:
+    """A crash after recovery POST retains the original run's continuation proof."""
+
+    source = WorkerRequest(138, "executor", "merge-implementation-pr")
+    effect = StagedEffect(
+        "github-mutation",
+        json.dumps(
+            {
+                "operation": "pull-request-merge",
+                "issue_number": 138,
+                "number": 418,
+                "expected_head_sha": _REVISION,
+                "merge_method": "squash",
+            },
+            sort_keys=True,
+        ),
+    )
+    worker = _worker_result(action=source.action, role=source.role, result_kind="merged")
+    worker["change"] = _CHANGE
+    worker["requested_effects"] = [{"kind": effect.kind, "payload_json": effect.payload_json}]
+    raw = json.dumps(worker, sort_keys=True, separators=(",", ":"))
+    request_body = _effect_request(worker)
+    accepted = _accepted_record(
+        raw, request_body, source=source, change=_CHANGE, result_kind="merged"
+    )
+    accepted_body = "qualified original ACCEPTED MERGED"
+    rejection = ApplicationRejection(
+        ApplicationRejectionKind.EFFECT_PRECONDITION_UNSATISFIED,
+        "merge current proof",
+        "confirmed Git conflict",
+    )
+    evidence = EffectRecoveryEvidence(
+        failed_effect_index=0,
+        failed_effect_kind=effect.kind,
+        failed_effect_sha256=hashlib.sha256(effect.payload_json.encode()).hexdigest(),
+        completed_effect_indexes=(),
+        completed_effect_sha256=(),
+        mutation_status="not-complete",
+        unfinished_boundary="effect-precondition",
+        rejection=rejection,
+    )
+    result = bridge.ApplyResult(False, "effect precondition rejected", recovery_evidence=evidence)
+    batch = EffectBatch(source, (effect,), typed_result=None)
+    event_path = tmp_path / "effect-event.json"
+    event_path.write_text(json.dumps(_event(request_body)), encoding="utf-8")
+    evidence_path = tmp_path / "application-recovery-evidence"
+    github_output = tmp_path / "github-output"
+    workflow = Path(".github/workflows/scheduled-agent-application.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "if: always() && steps.apply.outputs.recovery_evidence_path != ''" in workflow
+    assert "name: application-recovery-evidence" in workflow
+    monkeypatch.setenv("GITHUB_REPOSITORY", _REPOSITORY)
+    monkeypatch.setenv("GITHUB_TOKEN", "test")
+    if run_identity_available:
+        monkeypatch.setenv("GITHUB_RUN_ID", "8001")
+    else:
+        monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(github_output))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "application-bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            _REVISION,
+            "--default-branch",
+            "main",
+            "--recovery-evidence-path",
+            str(evidence_path),
+        ],
+    )
+    monkeypatch.setattr(bridge, "_fresh_event_observation", lambda *_args: False)
+    monkeypatch.setattr(bridge, "acquire_current_github_preflight", lambda *_args: object())
+    monkeypatch.setattr(
+        bridge,
+        "plan_application",
+        lambda **_kwargs: bridge.ApplicationPlan(
+            True, source=source, raw_worker_result=raw, change=_CHANGE, request_comment_id=102
+        ),
+    )
+    monkeypatch.setattr(
+        bridge, "_fresh_application_worker_result", lambda original, **_kw: original
+    )
+    monkeypatch.setattr(
+        bridge, "run_guarded_effect_application", lambda *_args, **_kwargs: (batch, result)
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_application_decision_comment_for_request",
+        lambda **_kwargs: (accepted, accepted_body),
+    )
+
+    def interrupted_after_comment(**_kwargs: object) -> bool:
+        assert evidence_path.is_file(), "continuation evidence must precede recovery POST"
+        checkpoint = json.loads(evidence_path.read_text(encoding="utf-8"))
+        assert checkpoint["continuation_eligible"] is True
+        assert checkpoint["failure_evidence"]["completed_effect_indexes"] == []
+        assert (
+            checkpoint["accepted_decision_sha256"]
+            == hashlib.sha256(accepted_body.encode()).hexdigest()
+        )
+        assert f"recovery_evidence_path={evidence_path}" in github_output.read_text(
+            encoding="utf-8"
+        )
+        raise RuntimeError("interrupted after durable APPLICATION_RECOVERY comment")
+
+    monkeypatch.setattr(
+        bridge, "_recover_deterministic_accepted_merge_failure", interrupted_after_comment
+    )
+    if run_identity_available:
+        with pytest.raises(RuntimeError, match="interrupted after durable"):
+            bridge._main_unprotected(bridge.ApplicationExceptionContext())
+    else:
+        # An incomplete predecessor identity cannot authorize either the
+        # administrative comment or the routing write.
+        assert bridge._main_unprotected(bridge.ApplicationExceptionContext()) == 1
+        assert not evidence_path.exists()
+
+
 def test_interrupted_accepted_merge_recovery_completes_without_replaying_merge(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     source = WorkerRequest(138, "executor", "merge-implementation-pr")
     worker = _worker_result(action=source.action, role=source.role, result_kind="merged")
@@ -3862,6 +3988,74 @@ def test_interrupted_accepted_merge_recovery_completes_without_replaying_merge(
             selected_routing=observation(issue).routing,
         ),
     )
+
+    # An ordinary external dispatch wake transports the existing
+    # APPLICATION_CONTINUATION body as an issue_comment event. GitHub's
+    # original GITHUB_TOKEN-authored APPLICATION_RECOVERY comment does not
+    # itself launch an application job. Test the admitted event-to-repair
+    # entry point, not just a direct call to the private repair helper.
+    accepted_body = "original immutable ACCEPTED MERGED decision"
+    decision_digest = hashlib.sha256(accepted_body.encode()).hexdigest()
+    continuation = bridge.render_application_continuation_request(
+        repository=_REPOSITORY,
+        issue_number=source.issue_number,
+        original_request_comment_id=record.request_comment_id,
+        accepted_decision_sha256=decision_digest,
+        predecessor_run_id=8001,
+        predecessor_run_attempt=1,
+        predecessor_job_id=8002,
+        predecessor_artifact_id=8003,
+        predecessor_artifact_digest="sha256:" + "c" * 64,
+        failure_evidence_sha256="b" * 64,
+        recovery_episode_sha256="d" * 64,
+    )
+    event_path = tmp_path / "application-continuation-event.json"
+    event_path.write_text(
+        json.dumps(
+            {
+                "action": "created",
+                "issue": {"number": 142},
+                "comment": {"id": 8004, "body": continuation},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_REPOSITORY", _REPOSITORY)
+    monkeypatch.setenv("GITHUB_TOKEN", "test")
+    monkeypatch.setattr(bridge, "_fresh_event_observation", lambda *_args: False)
+    monkeypatch.setattr(
+        bridge,
+        "_find_application_decision_from_current_frontier",
+        lambda **_kwargs: record,
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_application_decision_comment_for_request",
+        lambda **_kwargs: (record, accepted_body),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "qualify_application_continuation_predecessor",
+        lambda *_args, **_kwargs: SimpleNamespace(continuation_eligible=True),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "application-bridge",
+            "--event-path",
+            str(event_path),
+            "--revision",
+            _REVISION,
+            "--default-branch",
+            "main",
+        ],
+    )
+    assert "startsWith(github.event.comment.body, 'APPLICATION_CONTINUATION')" in Path(
+        ".github/workflows/scheduled-agent-application.yml"
+    ).read_text(encoding="utf-8")
+    assert bridge.main() == 0
+    assert writes == ["issues/138"]
 
     for _ in range(2):
         assert bridge._resume_pending_accepted_merge_recovery(
