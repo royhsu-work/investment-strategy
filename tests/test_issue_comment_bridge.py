@@ -20,6 +20,7 @@ import pytest
 
 from investment_strategy import issue_comment_bridge as bridge
 from investment_strategy import scheduled_agent_carrier as carrier
+from investment_strategy.scheduled_agent_application_bridge import render_application_request
 from investment_strategy.scheduled_agent_checkin import checkin_title
 from investment_strategy.scheduled_agent_idle_admission import (
     IdleCandidate,
@@ -5270,8 +5271,9 @@ def _failed_prewrite_merge_fixture(
     dict[str, object],
     dict[str, object],
     bytes,
+    dict[str, object],
 ]:
-    """Exact single-effect merge stopped in read-only carrier qualification."""
+    """Production-shaped ACCEPTED projection bound to its immutable request."""
 
     intent = {
         "issue_number": 322,
@@ -5279,6 +5281,8 @@ def _failed_prewrite_merge_fixture(
         "action": action,
         "change": "restore-no-work-idle-discovery",
         "result_kind": "merged",
+        "result_content": "exact reviewed PR merge, subject to application postconditions",
+        "evidence_ref": "https://github.com/royhsu-work/investment-strategy/pull/418",
         "requested_effects": [
             {
                 "kind": "github-mutation",
@@ -5294,12 +5298,34 @@ def _failed_prewrite_merge_fixture(
             }
         ],
     }
+    semantic_intent = dict(intent, _semantic_intent_version=2, requested_effects=[])
+    accepted_raw = json.dumps(semantic_intent, sort_keys=True, separators=(",", ":"))
+    original_request_body = render_application_request(
+        bridge.ApplicationRequest(
+            authorization_revision=REVISION,
+            raw_worker_result=json.dumps(intent),
+            dispatch_correlation=bridge.dispatch_correlation_for(
+                "royhsu-work/investment-strategy",
+                bridge.WorkerRequest(322, "executor", action),
+                REVISION,
+            ),
+        )
+    )
+    ingress_comment = {
+        "id": 90,
+        "body": original_request_body,
+        "user": {"login": "royhsu-work"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
     record = replace(
         _accepted_carrier_record(),
         role="executor",
         action=action,
         result_kind="merged",
-        raw_worker_result=json.dumps(intent),
+        raw_worker_result=accepted_raw,
+        worker_result_sha256=hashlib.sha256(accepted_raw.encode("utf-8")).hexdigest(),
+        request_body_sha256=hashlib.sha256(original_request_body.encode("utf-8")).hexdigest(),
+        authorization_revision=REVISION,
     )
     run = {
         "id": 777,
@@ -5355,7 +5381,7 @@ def _failed_prewrite_merge_fixture(
             "  in _github_json\n"
         ),
     }
-    return record, run, job, json.dumps(document).encode("utf-8")
+    return record, run, job, json.dumps(document).encode("utf-8"), ingress_comment
 
 
 @pytest.mark.parametrize(
@@ -5371,6 +5397,12 @@ def _failed_prewrite_merge_fixture(
         "later-successful-write-step",
         "wrong-run-attempt",
         "more-than-one-effect",
+        "missing-request",
+        "untrusted-request",
+        "changed-request-body",
+        "wrong-dispatch-correlation",
+        "different-semantic-result",
+        "wrong-accepted-authorization",
         "changed-action",
         "wrong-exception-action",
         "wrong-traceback",
@@ -5385,7 +5417,7 @@ def _failed_prewrite_merge_fixture(
 def test_accepted_merge_prewrite_504_releases_only_proven_no_effect(
     monkeypatch: pytest.MonkeyPatch, alteration: str, action: str
 ) -> None:
-    record, run, job, raw_document = _failed_prewrite_merge_fixture(action)
+    record, run, job, raw_document, ingress_comment = _failed_prewrite_merge_fixture(action)
     artifacts = [
         {
             "id": 999,
@@ -5412,9 +5444,51 @@ def test_accepted_merge_prewrite_504_releases_only_proven_no_effect(
     if alteration == "wrong-run-attempt":
         run["run_attempt"] = 2
     if alteration == "more-than-one-effect":
-        intent = json.loads(record.raw_worker_result)
+        request = bridge.parse_application_request(cast(str, ingress_comment["body"]))
+        assert request is not None
+        intent = json.loads(request.raw_worker_result)
         intent["requested_effects"].append(intent["requested_effects"][0])
-        record = replace(record, raw_worker_result=json.dumps(intent))
+        ingress_comment["body"] = render_application_request(
+            replace(request, raw_worker_result=json.dumps(intent))
+        )
+        record = replace(
+            record,
+            request_body_sha256=hashlib.sha256(
+                cast(str, ingress_comment["body"]).encode("utf-8")
+            ).hexdigest(),
+        )
+    if alteration == "untrusted-request":
+        ingress_comment["performed_via_github_app"] = {"slug": "untrusted"}
+    if alteration == "changed-request-body":
+        ingress_comment["body"] = cast(str, ingress_comment["body"]) + "\n"
+    if alteration == "wrong-dispatch-correlation":
+        request = bridge.parse_application_request(cast(str, ingress_comment["body"]))
+        assert request is not None
+        ingress_comment["body"] = render_application_request(
+            replace(request, dispatch_correlation="0" * 64)
+        )
+        record = replace(
+            record,
+            request_body_sha256=hashlib.sha256(
+                cast(str, ingress_comment["body"]).encode("utf-8")
+            ).hexdigest(),
+        )
+    if alteration == "different-semantic-result":
+        request = bridge.parse_application_request(cast(str, ingress_comment["body"]))
+        assert request is not None
+        intent = json.loads(request.raw_worker_result)
+        intent["result_content"] = "different semantic outcome"
+        ingress_comment["body"] = render_application_request(
+            replace(request, raw_worker_result=json.dumps(intent))
+        )
+        record = replace(
+            record,
+            request_body_sha256=hashlib.sha256(
+                cast(str, ingress_comment["body"]).encode("utf-8")
+            ).hexdigest(),
+        )
+    if alteration == "wrong-accepted-authorization":
+        record = replace(record, authorization_revision="a" * 40)
     if alteration == "changed-action":
         record = replace(record, action="implement-change")
     if alteration in {
@@ -5452,6 +5526,8 @@ def test_accepted_merge_prewrite_504_releases_only_proven_no_effect(
                 "total_count": len(artifacts) + (alteration == "incomplete-artifact-list"),
                 "artifacts": artifacts,
             }
+        if path == "issues/comments/90":
+            return None if alteration == "missing-request" else ingress_comment
         if path == "pulls/418":
             if alteration == "missing-pr":
                 return None
@@ -5494,13 +5570,15 @@ def test_accepted_merge_prewrite_504_releases_only_proven_no_effect(
 def test_merge_prewrite_reconciliation_refuses_unavailable_github_reads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    record, run, job, _raw_document = _failed_prewrite_merge_fixture()
+    record, run, job, _raw_document, ingress_comment = _failed_prewrite_merge_fixture()
 
     def read(_repository: str, _token: str, path: str) -> object:
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": [run]}
         if path == "actions/runs/777/jobs":
             return {"jobs": [job]}
+        if path == "issues/comments/90":
+            return ingress_comment
         if path == "actions/runs/777/artifacts?per_page=100":
             raise RuntimeError("GitHub read unavailable")
         raise AssertionError(path)
@@ -5537,7 +5615,7 @@ def test_fresh_no_write_abort_retires_only_an_earlier_accepted_occurrence(
     completion_state: str,
     expected_retired: set[int],
 ) -> None:
-    old, _, _, _ = _failed_prewrite_merge_fixture()
+    old, _, _, _, _ = _failed_prewrite_merge_fixture()
     new = replace(old, request_comment_id=91)
     observed_requests: list[int] = []
 

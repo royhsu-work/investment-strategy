@@ -34,6 +34,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
     ApplicationRequest,
     _application_owned_worker_result,
     _materialization_effects,
+    _worker_semantic_projection,
     application_continuation_correlation,
     dispatch_correlation_for,
     parse_application_continuation_request,
@@ -2497,23 +2498,56 @@ def _qualified_unapplied_merge_exception(
     ):
         return False
 
+    # The ACCEPTED decision deliberately persists a semantic projection:
+    # mechanical merge effects are removed from its requested_effects.  Read
+    # the immutable EFFECT_REQUEST instead and bind it to the accepted body's
+    # digest, source, authorization and exact semantic projection.  Looking
+    # for a merge effect in record.raw_worker_result can never prove ABORTED.
+    original_comment = read(repository, token, f"issues/comments/{record.request_comment_id}")
+    if not isinstance(original_comment, Mapping):
+        return False
+    original_body = original_comment.get("body")
+    if (
+        original_comment.get("id") != record.request_comment_id
+        or not _trusted_connector_comment(original_comment, repository.split("/", 1)[0])
+        or not isinstance(original_body, str)
+        or hashlib.sha256(original_body.encode("utf-8")).hexdigest() != record.request_body_sha256
+    ):
+        return False
     try:
-        intent = json.loads(record.raw_worker_result)
-    except (ValueError, TypeError):
+        original = parse_application_request(original_body)
+        source = WorkerRequest(record.issue_number, record.role, record.action)
+        original_worker = (
+            None
+            if original is None
+            else parse_worker_result(
+                original.raw_worker_result, source, authorized_change=record.change
+            )
+        )
+        accepted_worker = parse_worker_result(
+            record.raw_worker_result, source, authorized_change=record.change
+        )
+        if (
+            original is None
+            or original_worker is None
+            or original.authorization_revision != record.authorization_revision
+            or original.dispatch_correlation
+            != dispatch_correlation_for(repository, source, original.authorization_revision)
+            or original_worker.typed_result.result.kind.value != record.result_kind
+            or accepted_worker.typed_result.result.kind.value != record.result_kind
+            or _worker_semantic_projection(original.raw_worker_result)
+            != _worker_semantic_projection(record.raw_worker_result)
+        ):
+            return False
+    except (ValueError, TypeError, RuntimeError, json.JSONDecodeError):
         return False
-    if not isinstance(intent, Mapping) or intent.get("result_kind") != "merged":
+    if record.result_kind != "merged" or len(original_worker.requested_effects) != 1:
         return False
-    effects = intent.get("requested_effects")
-    if not isinstance(effects, list) or len(effects) != 1:
-        return False
-    effect = effects[0]
-    if not isinstance(effect, Mapping) or effect.get("kind") != "github-mutation":
-        return False
-    payload_json = effect.get("payload_json")
-    if not isinstance(payload_json, str):
+    effect = original_worker.requested_effects[0]
+    if effect.kind != "github-mutation":
         return False
     try:
-        payload = json.loads(payload_json)
+        payload = json.loads(effect.payload_json)
     except ValueError:
         return False
     if not isinstance(payload, Mapping):
