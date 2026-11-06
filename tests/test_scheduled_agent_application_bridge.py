@@ -3806,9 +3806,7 @@ def test_recovery_evidence_is_prepared_before_first_administrative_write(
     event_path.write_text(json.dumps(_event(request_body)), encoding="utf-8")
     evidence_path = tmp_path / "application-recovery-evidence"
     github_output = tmp_path / "github-output"
-    workflow = Path(".github/workflows/scheduled-agent-application.yml").read_text(
-        encoding="utf-8"
-    )
+    workflow = Path(".github/workflows/scheduled-agent-application.yml").read_text(encoding="utf-8")
     assert "if: always() && steps.apply.outputs.recovery_evidence_path != ''" in workflow
     assert "name: application-recovery-evidence" in workflow
     monkeypatch.setenv("GITHUB_REPOSITORY", _REPOSITORY)
