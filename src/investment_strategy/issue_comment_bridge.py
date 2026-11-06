@@ -2449,8 +2449,6 @@ def _qualified_unapplied_terminal_carrier_effect(
     run_id: int,
     run_attempt: int,
     read: GitHubReader,
-    source_issue_comments: tuple[Mapping[str, object], ...] | None,
-    current_issue: Mapping[str, object] | None,
 ) -> bool:
     """Reconcile a terminal Application against immutable effects, not errors.
 
@@ -2464,31 +2462,6 @@ def _qualified_unapplied_terminal_carrier_effect(
     these cases remain UNKNOWN. HTTP status, exception content and traceback
     are deliberately irrelevant.
     """
-
-    # The first apply step can itself publish an application-owned formal
-    # ACTION_RESULT and a derived successor after a carrier-only PR operation
-    # is already satisfied. Skipped *later* workflow steps do not exclude
-    # these partial writes. The caller supplies a complete source-Issue
-    # history and the current routing observation; neither is optional proof.
-    observation = normalize_github_issue(current_issue) if current_issue is not None else None
-    if (
-        source_issue_comments is None
-        or observation is None
-        or not observation.authoritative
-        or observation.issue_number != record.issue_number
-        or observation.state != "open"
-        or observation.routing != (record.role, record.action)
-        or observation.change not in {record.change, "unset"}
-    ):
-        return False
-    correlation_prefix = (
-        f"Application-Correlation: application:{record.request_comment_id}:{record.issue_number}:"
-    )
-    if any(
-        not isinstance(comment.get("body"), str) or correlation_prefix in cast(str, comment["body"])
-        for comment in source_issue_comments
-    ):
-        return False
 
     steps = job.get("steps")
     if (
@@ -2524,6 +2497,39 @@ def _qualified_unapplied_terminal_carrier_effect(
                 "Upload final exact application recovery evidence",
             )
         )
+    ):
+        return False
+
+    # The failed *first* apply step can itself write ACTION_RESULT and derived
+    # routing after an idempotently satisfied PR effect. Re-read *after* the
+    # terminal run/job and skipped-writer proof: a comment tuple captured by
+    # the outer completion classifier before the writer terminated is stale
+    # evidence for absence. Both reads must succeed and be authoritative.
+    terminal_comments = _paged_list(
+        repository,
+        token,
+        f"issues/{record.issue_number}/comments?sort=created&direction=asc",
+        read=read,
+    )
+    terminal_issue = read(repository, token, f"issues/{record.issue_number}")
+    observation = (
+        normalize_github_issue(terminal_issue) if isinstance(terminal_issue, Mapping) else None
+    )
+    if (
+        observation is None
+        or not observation.authoritative
+        or observation.issue_number != record.issue_number
+        or observation.state != "open"
+        or observation.routing != (record.role, record.action)
+        or observation.change not in {record.change, "unset"}
+    ):
+        return False
+    correlation_prefix = (
+        f"Application-Correlation: application:{record.request_comment_id}:{record.issue_number}:"
+    )
+    if any(
+        not isinstance(comment.get("body"), str) or correlation_prefix in cast(str, comment["body"])
+        for comment in terminal_comments
     ):
         return False
 
@@ -2627,14 +2633,13 @@ def _qualified_unapplied_terminal_carrier_effect(
         ):
             return False
         owner = repository.split("/", 1)[0]
-        query = (
-            f"pulls?state=all&head={quote(f'{owner}:{branch}', safe='')}"
-            f"&base={quote(base_ref, safe='')}&per_page=100"
-        )
+        query = f"pulls?state=all&head={quote(f'{owner}:{branch}', safe='')}&per_page=100"
         candidates = read(repository, token, query)
-        # An empty first page of an exact head/base search is complete; a
-        # nonempty or malformed result never proves a negative postcondition.
-        return isinstance(candidates, list) and not candidates
+        # PR base is mutable: a successful creation can later be retargeted.
+        # Search every PR on this head, regardless of current base, matching
+        # the real PR-create writer's identity boundary. A full first page
+        # is not proven complete and never supplies a negative witness.
+        return isinstance(candidates, list) and len(candidates) == 0
 
     number = _positive_int(payload.get("number"))
     expected_head = payload.get("expected_head_sha")
@@ -2680,8 +2685,6 @@ def _application_job(
     accepted_decision_sha256: str | None = None,
     recent_comments: tuple[Mapping[str, object], ...] = (),
     current_dispatch_request_comment_id: int | None = None,
-    source_issue_comments: tuple[Mapping[str, object], ...] | None = None,
-    current_issue: Mapping[str, object] | None = None,
 ) -> ApplicationCompletion:
     """Locate one exact application run and prefer its durable carrier handoff."""
 
@@ -2762,8 +2765,6 @@ def _application_job(
                 run_id=run_id,
                 run_attempt=run_attempt,
                 read=read,
-                source_issue_comments=source_issue_comments,
-                current_issue=current_issue,
             ):
                 return ApplicationCompletion(
                     "ABORTED",
@@ -3123,7 +3124,6 @@ def _proven_aborted_predecessors(
     ingress_times: Mapping[int, str | None],
     decision_times: Mapping[int, str | None],
     issue_comments: tuple[Mapping[str, object], ...],
-    current_issue: Mapping[str, object],
     read: GitHubReader,
 ) -> set[int]:
     """Retire only an earlier, provably no-write ACCEPTED merge occurrence.
@@ -3175,8 +3175,6 @@ def _proven_aborted_predecessors(
                 read=read,
                 record=record,
                 accepted_decision_sha256=digest,
-                source_issue_comments=issue_comments,
-                current_issue=current_issue,
             )
         except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
             continue
@@ -3635,8 +3633,6 @@ def _accepted_application_state(
             accepted_decision_sha256=accepted_decision_sha256,
             recent_comments=recent_comments,
             current_dispatch_request_comment_id=current_dispatch_request_comment_id,
-            source_issue_comments=issue_comments,
-            current_issue=current_issue,
         )
         if resumed.state == "RESUMABLE":
             return resumed
@@ -3708,8 +3704,6 @@ def _accepted_application_state(
             accepted_decision_sha256=accepted_decision_sha256,
             recent_comments=recent_comments,
             current_dispatch_request_comment_id=current_dispatch_request_comment_id,
-            source_issue_comments=issue_comments,
-            current_issue=current_issue,
         )
     if successor is not None and observation.routing == expected_routing:
         return ApplicationCompletion(
@@ -5115,7 +5109,6 @@ def qualify_application_completion(
                 for record in relevant_decisions
             },
             issue_comments=issue_comments,
-            current_issue=cast(Mapping[str, object], issue),
             read=read,
         )
         relevant_decisions = [

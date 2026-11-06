@@ -5432,6 +5432,10 @@ def _terminal_carrier_issue(action: str) -> dict[str, object]:
         "missing-pr",
         "partial-formal-write",
         "successor-routing-write",
+        "terminal-comment-read-failed",
+        "terminal-comment-list-truncated",
+        "terminal-issue-read-failed",
+        "terminal-issue-unavailable",
     ],
 )
 @pytest.mark.parametrize("action", ["merge-implementation-pr", "merge-archive-pr"])
@@ -5571,6 +5575,18 @@ def test_terminal_merge_effect_reconciles_without_error_semantics(
             return {"workflow_runs": [run]}
         if path == "actions/runs/777/jobs":
             return {"jobs": [job]}
+        if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
+            if alteration == "terminal-comment-read-failed":
+                raise OSError("terminal source history unavailable")
+            if alteration == "terminal-comment-list-truncated":
+                return {"incomplete": True}
+            return list(source_comments)
+        if path == "issues/322":
+            if alteration == "terminal-issue-read-failed":
+                raise OSError("terminal routing unavailable")
+            if alteration == "terminal-issue-unavailable":
+                return None
+            return current_issue
         if path == "actions/runs/777/artifacts?per_page=100":
             return {
                 "total_count": len(artifacts) + (alteration == "incomplete-artifact-list"),
@@ -5611,8 +5627,6 @@ def test_terminal_merge_effect_reconciles_without_error_semantics(
         read=read,
         record=record,
         accepted_decision_sha256="a" * 64,
-        source_issue_comments=source_comments,
-        current_issue=current_issue,
     )
 
     if alteration in {
@@ -5710,6 +5724,10 @@ def test_terminal_carrier_effect_reconciles_by_operation_postcondition(
             return {"workflow_runs": [run]}
         if path == "actions/runs/777/jobs":
             return {"jobs": [job]}
+        if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
+            return []
+        if path == "issues/322":
+            return _terminal_carrier_issue("implement-change")
         if path == "issues/comments/90":
             return ingress_comment
         if path == "actions/runs/777/artifacts?per_page=100":
@@ -5736,8 +5754,6 @@ def test_terminal_carrier_effect_reconciles_by_operation_postcondition(
         read=read,
         record=record,
         accepted_decision_sha256="a" * 64,
-        source_issue_comments=(),
-        current_issue=_terminal_carrier_issue("implement-change"),
     )
     assert completion.state == expected_state
     if expected_state == "ABORTED":
@@ -5754,6 +5770,10 @@ def test_merge_prewrite_reconciliation_refuses_unavailable_github_reads(
             return {"workflow_runs": [run]}
         if path == "actions/runs/777/jobs":
             return {"jobs": [job]}
+        if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
+            return []
+        if path == "issues/322":
+            return _terminal_carrier_issue("merge-implementation-pr")
         if path == "issues/comments/90":
             return ingress_comment
         if path == "actions/runs/777/artifacts?per_page=100":
@@ -5768,8 +5788,6 @@ def test_merge_prewrite_reconciliation_refuses_unavailable_github_reads(
         read=read,
         record=record,
         accepted_decision_sha256="a" * 64,
-        source_issue_comments=(),
-        current_issue=_terminal_carrier_issue("merge-implementation-pr"),
     )
     assert completion.state == "INVALID"
     assert completion.reason == "application-completion-effect-evidence-unavailable"
@@ -5799,7 +5817,7 @@ def test_new_ingress_cannot_retire_an_accepted_partial_write(
             {"name": "action:resolve-question"},
             {"name": "human:approved"},
         ]
-    source_comments: tuple[Mapping[str, object], ...] = (
+    terminal_comments: tuple[Mapping[str, object], ...] = (
         (
             {
                 "id": 115,
@@ -5814,12 +5832,21 @@ def test_new_ingress_cannot_retire_an_accepted_partial_write(
         else ()
     )
 
+    reads: list[str] = []
+
     def read(repository: str, _token: str, path: str) -> object:
         assert repository == "royhsu-work/investment-strategy"
+        reads.append(path)
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": [run]}
         if path == "actions/runs/777/jobs":
             return {"jobs": [job]}
+        if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
+            assert "actions/runs/777/jobs" in reads
+            return list(terminal_comments)
+        if path == "issues/322":
+            assert "actions/runs/777/jobs" in reads
+            return issue
         if path == "issues/comments/90":
             return ingress
         if path == "actions/runs/777/artifacts?per_page=100":
@@ -5843,12 +5870,143 @@ def test_new_ingress_cannot_retire_an_accepted_partial_write(
             records=[old],
             ingress_times={91: "2026-11-06T03:00:01Z"},
             decision_times={90: "2026-11-06T03:00:00Z"},
-            issue_comments=source_comments,
-            current_issue=issue,
+            # The caller's earlier snapshot can predate a formal result;
+            # the terminal writer's completed state must be followed by a
+            # new complete source-Issue observation.
+            issue_comments=(),
             read=read,
         )
         == retired
     )
+
+
+@pytest.mark.parametrize(
+    ("retargeted", "late_formal", "expected_retired"),
+    [
+        (False, False, {90}),
+        (True, False, set()),
+        (False, True, set()),
+        (True, True, set()),
+    ],
+)
+def test_create_retarget_and_post_terminal_formal_race_do_not_retire_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+    retargeted: bool,
+    late_formal: bool,
+    expected_retired: set[int],
+) -> None:
+    """A pre-terminal comment snapshot and mutable PR base cannot prove no write."""
+
+    record, run, job, _diagnostic, ingress = _failed_prewrite_merge_fixture()
+    request = bridge.parse_application_request(cast(str, ingress["body"]))
+    assert request is not None
+    intent = json.loads(request.raw_worker_result)
+    intent["action"] = "implement-change"
+    intent["result_kind"] = "ready"
+    intent["requested_effects"][0]["payload_json"] = json.dumps(
+        {
+            "issue_number": 322,
+            "operation": "pull-request-create",
+            "title": "implementation",
+            "head": "agent/restore-no-work-idle-discovery",
+            "base": "main",
+        }
+    )
+    ingress["body"] = render_application_request(
+        replace(
+            request,
+            raw_worker_result=json.dumps(intent),
+            dispatch_correlation=bridge.dispatch_correlation_for(
+                "royhsu-work/investment-strategy",
+                bridge.WorkerRequest(322, "executor", "implement-change"),
+                REVISION,
+            ),
+        )
+    )
+    semantic = dict(intent, requested_effects=[], _semantic_intent_version=2)
+    accepted_raw = json.dumps(semantic)
+    record = replace(
+        record,
+        action="implement-change",
+        result_kind="ready",
+        raw_worker_result=accepted_raw,
+        worker_result_sha256=hashlib.sha256(accepted_raw.encode()).hexdigest(),
+        request_body_sha256=hashlib.sha256(cast(str, ingress["body"]).encode()).hexdigest(),
+    )
+
+    # The source comments seen by the outer completion classifier were empty
+    # *before* the terminal job was observed. A formal comment can appear
+    # between these reads; only the post-terminal source read can exclude it.
+    terminal_comments = (
+        [
+            {
+                "id": 115,
+                "body": (
+                    "ACTION_RESULT\n"
+                    "Application-Correlation: application:90:322:"
+                    "restore-no-work-idle-discovery:executor:implement-change:ready:shadow\n"
+                ),
+            }
+        ]
+        if late_formal
+        else []
+    )
+    reads: list[str] = []
+
+    def read(repository: str, _token: str, path: str) -> object:
+        assert repository == "royhsu-work/investment-strategy"
+        reads.append(path)
+        if path.startswith("actions/workflows/"):
+            return {"workflow_runs": [run]}
+        if path == "actions/runs/777/jobs":
+            return {"jobs": [job]}
+        if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
+            assert "actions/runs/777/jobs" in reads
+            return terminal_comments
+        if path == "issues/322":
+            assert "actions/runs/777/jobs" in reads
+            return _terminal_carrier_issue("implement-change")
+        if path == "issues/comments/90":
+            return ingress
+        if path == "actions/runs/777/artifacts?per_page=100":
+            return {"total_count": 0, "artifacts": []}
+        if path.startswith("pulls?state=all&head="):
+            assert "&base=" not in path
+            assert "actions/runs/777/jobs" in reads
+            return (
+                [
+                    {
+                        "number": 418,
+                        "state": "open",
+                        "head": {
+                            "ref": "agent/restore-no-work-idle-discovery",
+                            "repo": {"full_name": repository},
+                            "sha": "3" * 40,
+                        },
+                        # Same PR was successfully created but later retargeted.
+                        "base": {"ref": "maintenance"},
+                    }
+                ]
+                if retargeted
+                else []
+            )
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "_accepted_decision_sha256", lambda *_a: "a" * 64)
+    monkeypatch.setattr(bridge, "read_application_recovery_artifact", lambda *_a, **_k: None)
+    assert (
+        bridge._proven_aborted_predecessors(
+            "royhsu-work/investment-strategy",
+            "test-token",
+            records=[record],
+            ingress_times={91: "2026-11-06T03:00:01Z"},
+            decision_times={90: "2026-11-06T03:00:00Z"},
+            issue_comments=(),  # stale pre-terminal snapshot
+            read=read,
+        )
+        == expected_retired
+    )
+    assert "issues/322/comments?sort=created&direction=asc&per_page=100&page=1" in reads
 
 
 @pytest.mark.parametrize(
@@ -5893,7 +6051,6 @@ def test_fresh_no_write_abort_retires_only_an_earlier_accepted_occurrence(
         ingress_times={91: new_ingress_time},
         decision_times={90: "2026-11-06T03:00:00Z", 91: new_decision_time},
         issue_comments=(),
-        current_issue=_terminal_carrier_issue("merge-implementation-pr"),
         read=lambda *_args: pytest.fail("mock application job should own the reads"),
     )
     assert retired == expected_retired
