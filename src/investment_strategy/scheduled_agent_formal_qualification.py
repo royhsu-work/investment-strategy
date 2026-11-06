@@ -8,8 +8,10 @@ owns no workflow state, cursor, registry, or carrier.
 
 from __future__ import annotations
 
+import hashlib
+import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, cast
 
 from investment_strategy.scheduled_agent_action_model import (
@@ -40,6 +42,8 @@ _RECOVERY_MARKER = "APPLICATION_RECOVERY"
 _RECOVERY_REASON = "partial-first-activation"
 _RECOVERY_SOURCE = ("lead", "propose-change")
 _RECOVERY_TARGET = ("lead", "resolve-question")
+_MERGE_RECOVERY_REASON = "accepted-merge-precondition-rejected"
+_MERGE_RECOVERY_ACTIONS = frozenset({"merge-implementation-pr", "merge-archive-pr"})
 _EXCEPTION_322_REQUEST_PREFIX = (
     "application:6568245475:322:restore-no-work-idle-discovery:executor:implement-change:ready:"
 )
@@ -70,6 +74,10 @@ class AdministrativeRecoveryEvent:
     request_comment_id: int | None
     reason: str | None
     valid: bool
+    accepted_decision_sha256: str | None = None
+    failure_evidence_sha256: str | None = None
+    pr_number: int | None = None
+    pr_head_sha: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,20 +176,50 @@ def _recovery_event_from_payload(
     failed_authorization_revision = _field(body, "Failed-Authorization-Revision")
     request_comment_id = _positive_decimal(_field(body, "Request-Comment-ID"))
     reason = _field(body, "Reason")
+    accepted_sha = _field(body, "Accepted-Decision-SHA256")
+    failure_sha = _field(body, "Failure-Evidence-SHA256")
+    pr_number = _positive_decimal(_field(body, "PR-Number"))
+    pr_head = _field(body, "PR-Head-SHA")
     comment_id = payload.get("id")
     valid_comment_id = (
         isinstance(comment_id, int) and not isinstance(comment_id, bool) and comment_id > 0
     )
+    merge_recovery = (
+        source is not None
+        and source[0] == "executor"
+        and source[1] in _MERGE_RECOVERY_ACTIONS
+        and reason == _MERGE_RECOVERY_REASON
+    )
+    expected_merge_target = None
+    if merge_recovery and source is not None:
+        successor = next_action(Action(source[1]), TypedResult(ResultKind.LIFECYCLE_VIOLATION))
+        expected_merge_target = (
+            None if successor is None else (role_for(successor).value, successor.value)
+        )
     valid = (
         valid_comment_id
         and issue_number is not None
         and change not in {None, "", "unset"}
-        and source == _RECOVERY_SOURCE
-        and target == _RECOVERY_TARGET
+        and (
+            (
+                source == _RECOVERY_SOURCE
+                and target == _RECOVERY_TARGET
+                and reason == _RECOVERY_REASON
+            )
+            or (
+                merge_recovery
+                and target == expected_merge_target
+                and isinstance(accepted_sha, str)
+                and re.fullmatch(r"[0-9a-f]{64}", accepted_sha) is not None
+                and isinstance(failure_sha, str)
+                and re.fullmatch(r"[0-9a-f]{64}", failure_sha) is not None
+                and pr_number is not None
+                and _valid_sha(pr_head)
+            )
+        )
         and _valid_sha(default_branch_revision)
         and _valid_sha(failed_authorization_revision)
         and request_comment_id is not None
-        and reason == _RECOVERY_REASON
         and current_revision is not None
     )
     return AdministrativeRecoveryEvent(
@@ -199,7 +237,61 @@ def _recovery_event_from_payload(
         request_comment_id=request_comment_id,
         reason=reason,
         valid=valid,
+        accepted_decision_sha256=accepted_sha if merge_recovery else None,
+        failure_evidence_sha256=failure_sha if merge_recovery else None,
+        pr_number=pr_number if merge_recovery else None,
+        pr_head_sha=pr_head if merge_recovery and _valid_sha(pr_head) else None,
     )
+
+
+def _accepted_merge_recovery_link_is_bound(
+    recovery: AdministrativeRecoveryEvent,
+    comments: tuple[Mapping[str, object], ...],
+    lifecycle: tuple[IssueLifecycleEvent, ...],
+) -> bool:
+    """Bind an application repair to the preceding immutable ACCEPTED MERGED intent."""
+
+    if (
+        recovery.reason != _MERGE_RECOVERY_REASON
+        or recovery.source is None
+        or recovery.accepted_decision_sha256 is None
+        or recovery.request_comment_id is None
+    ):
+        return False
+    matches = []
+    for comment in comments:
+        body = comment.get("body")
+        if (
+            not isinstance(body, str)
+            or _marker(body) != "APPLICATION_DECISION"
+            or not _is_github_actions_comment(comment)
+            or hashlib.sha256(body.encode("utf-8")).hexdigest() != recovery.accepted_decision_sha256
+            or _field(body, "Disposition") != "ACCEPTED"
+            or _field(body, "Result-Kind") != "merged"
+            or _field(body, "Issue") != str(recovery.issue_number)
+            or _field(body, "Role") != recovery.source[0]
+            or _field(body, "Action") != recovery.source[1]
+            or _field(body, "Change") != recovery.change
+            or _field(body, "Request-Comment") != str(recovery.request_comment_id)
+        ):
+            continue
+        decision_id = comment.get("id")
+        if not isinstance(decision_id, int) or isinstance(decision_id, bool):
+            continue
+        decision_order = _comment_order_key(
+            AdministrativeRecoveryEvent(
+                decision_id, None, None, None, None, None, None, None, None, False
+            ),
+            lifecycle,
+        )
+        recovery_order = _comment_order_key(recovery, lifecycle)
+        if (
+            decision_order is not None
+            and recovery_order is not None
+            and decision_order < recovery_order
+        ):
+            matches.append(decision_id)
+    return len(matches) == 1
 
 
 def _event_from_checkpoint(
@@ -408,7 +500,8 @@ def build_qualification_input(
     checkpoint_events: list[FormalLifecycleEvent] = []
     recovery_events: list[AdministrativeRecoveryEvent] = []
     human_handoffs = 0
-    for comment in comments:
+    comment_snapshot = tuple(comments)
+    for comment in comment_snapshot:
         actor = comment.get("user")
         if (
             comment.get("id") == 6569195457
@@ -443,6 +536,16 @@ def build_qualification_input(
         if event.application_correlation not in formal_correlations
     )
     events.sort(key=lambda item: _formal_order_key(item, lifecycle_tuple))
+    recovery_events = [
+        replace(
+            event,
+            valid=event.valid
+            and _accepted_merge_recovery_link_is_bound(event, comment_snapshot, lifecycle_tuple),
+        )
+        if event.reason == _MERGE_RECOVERY_REASON
+        else event
+        for event in recovery_events
+    ]
     recovery_events.sort(key=lambda item: _recovery_order_key(item, lifecycle_tuple))
     return QualificationInput(
         issue_number=issue_number,
@@ -747,16 +850,73 @@ def _qualify_administrative_recovery(
     if qualification.mode != "current" or not qualification.recovery_events:
         return None
     recovery = qualification.recovery_events[-1]
+    merge_recovery = recovery.reason == _MERGE_RECOVERY_REASON
+    competing_merge_recoveries = sum(
+        event.reason == _MERGE_RECOVERY_REASON
+        and event.request_comment_id == recovery.request_comment_id
+        for event in qualification.recovery_events
+    )
     if (
-        len(qualification.recovery_events) != 1
+        (not merge_recovery and len(qualification.recovery_events) != 1)
+        or (merge_recovery and competing_merge_recoveries != 1)
         or not recovery.valid
         or recovery.issue_number != qualification.issue_number
         or recovery.change != qualification.change
-        or recovery.source != _RECOVERY_SOURCE
-        or recovery.target != _RECOVERY_TARGET
-        or recovery.reason != _RECOVERY_REASON
+        or (
+            not merge_recovery
+            and (
+                recovery.source != _RECOVERY_SOURCE
+                or recovery.target != _RECOVERY_TARGET
+                or recovery.reason != _RECOVERY_REASON
+            )
+        )
     ):
         return _indeterminate("administrative-recovery-evidence-incomplete", recovery)
+    if merge_recovery:
+        recovery_order = _comment_order_key(recovery, qualification.lifecycle_events)
+        preceding = tuple(
+            event
+            for event in qualification.events
+            if _comment_order_key(event, qualification.lifecycle_events) is not None
+            and recovery_order is not None
+            and cast(tuple[str, int], _comment_order_key(event, qualification.lifecycle_events))
+            < recovery_order
+        )
+        last = preceding[-1] if preceding else None
+        interval = (
+            None
+            if last is None
+            else _event_interval(last, recovery, qualification.lifecycle_events)
+        )
+        review_handoff = (
+            last is not None
+            and last.result_kind == "pass"
+            and last.action in {"review-implementation", "review-archive"}
+        )
+        blocked_merge_handoff = (
+            last is not None
+            and last.result_kind == "blocked"
+            and last.action in _MERGE_RECOVERY_ACTIONS
+        )
+        self_loop_bound = (
+            blocked_merge_handoff
+            and len(preceding) >= 2
+            and preceding[-2].valid
+            and preceding[-2].successor == recovery.source
+            and interval is not None
+            and not any(
+                item.event in {"labeled", "unlabeled", "closed", "reopened"} for item in interval
+            )
+        )
+        if (
+            last is None
+            or not last.valid
+            or last.successor != recovery.source
+            or not (review_handoff or blocked_merge_handoff)
+            or interval is None
+            or not (_interval_binds_successor(interval, recovery.source, False) or self_loop_bound)
+        ):
+            return _indeterminate("merge-recovery-predecessor-unqualified", recovery)
     if (
         recovery.default_branch_revision != qualification.current_revision
         and (
@@ -793,14 +953,26 @@ def _qualify_administrative_recovery_predecessor(
     """
 
     recovery = qualification.recovery_events[-1]
+    merge_recovery = recovery.reason == _MERGE_RECOVERY_REASON
+    competing_merge_recoveries = sum(
+        event.reason == _MERGE_RECOVERY_REASON
+        and event.request_comment_id == recovery.request_comment_id
+        for event in qualification.recovery_events
+    )
     if (
-        len(qualification.recovery_events) != 1
+        (not merge_recovery and len(qualification.recovery_events) != 1)
+        or (merge_recovery and competing_merge_recoveries != 1)
         or not recovery.valid
         or recovery.issue_number != qualification.issue_number
         or recovery.change != qualification.change
-        or recovery.source != _RECOVERY_SOURCE
-        or recovery.target != _RECOVERY_TARGET
-        or recovery.reason != _RECOVERY_REASON
+        or (
+            not merge_recovery
+            and (
+                recovery.source != _RECOVERY_SOURCE
+                or recovery.target != _RECOVERY_TARGET
+                or recovery.reason != _RECOVERY_REASON
+            )
+        )
     ):
         return _indeterminate("administrative-recovery-evidence-incomplete", recovery)
     if (
@@ -814,6 +986,7 @@ def _qualify_administrative_recovery_predecessor(
         return _indeterminate("administrative-recovery-evidence-stale", recovery)
     if (
         not formal_event.valid
+        or recovery.target is None
         or formal_event.issue_number != qualification.issue_number
         or formal_event.change != qualification.change
         or formal_event.role != recovery.target[0]
@@ -899,8 +1072,24 @@ def qualify_current_formal_consequence(
     if not _lifecycle_integrity(qualification.lifecycle_events):
         return _indeterminate("issue-lifecycle-evidence-incomplete")
     if qualification.recovery_events:
+        latest_recovery = qualification.recovery_events[-1]
+        recovery_order = _comment_order_key(latest_recovery, qualification.lifecycle_events)
+        if recovery_order is None:
+            return _indeterminate("administrative-recovery-order-unavailable", latest_recovery)
         competing = tuple(
-            event for event in qualification.events if event.change == qualification.change
+            event
+            for event in qualification.events
+            if event.change == qualification.change
+            and (
+                latest_recovery.reason != _MERGE_RECOVERY_REASON
+                or (
+                    _comment_order_key(event, qualification.lifecycle_events) is not None
+                    and cast(
+                        tuple[str, int], _comment_order_key(event, qualification.lifecycle_events)
+                    )
+                    > recovery_order
+                )
+            )
         )
         if competing:
             predecessor = _qualify_administrative_recovery_predecessor(
@@ -933,7 +1122,19 @@ def qualify_current_formal_consequence(
     ):
         return _indeterminate("latest-formal-evidence-stale", latest)
     relevant_suffix: list[FormalLifecycleEvent] = []
+    last_recovery_order = (
+        None
+        if not qualification.recovery_events
+        else _comment_order_key(qualification.recovery_events[-1], qualification.lifecycle_events)
+    )
     for event in reversed(qualification.events):
+        if (
+            last_recovery_order is not None
+            and _comment_order_key(event, qualification.lifecycle_events) is not None
+            and cast(tuple[str, int], _comment_order_key(event, qualification.lifecycle_events))
+            < last_recovery_order
+        ):
+            break
         if (
             not event.valid
             or event.issue_number != qualification.issue_number

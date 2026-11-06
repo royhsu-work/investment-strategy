@@ -35,6 +35,7 @@ CarrierDisposition = Literal[
     "INDETERMINATE",
 ]
 RecoveryClassification = Literal["RECOVERABLE", "INDETERMINATE", "UNSAFE"]
+DivergenceEvidence = Literal["SAFE", "NEEDS_RECONCILIATION", "INDETERMINATE"]
 GitHubReader = Callable[..., object | None]
 
 _CHANGE_CARRIER_SOURCES = frozenset(
@@ -468,7 +469,7 @@ def _changed_paths(
     return frozenset(paths)
 
 
-def _disjoint_divergence_is_mergeable(
+def _divergence_evidence(
     repository: str,
     token: str,
     *,
@@ -476,7 +477,7 @@ def _disjoint_divergence_is_mergeable(
     head_sha: str,
     default_revision: str,
     read: GitHubReader,
-) -> bool:
+) -> DivergenceEvidence:
     """Prove an open PR can integrate an advanced main without moving its HEAD.
 
     GitHub's current mergeability is necessary but not sufficient: the exact
@@ -485,8 +486,17 @@ def _disjoint_divergence_is_mergeable(
     never silently acquires the existing exact-head review's authority.
     """
 
+    # A PR head already contained in main is an observed integration relation,
+    # not an unknown GitHub mergeability calculation. The branch can be
+    # reconciled by its owner without treating this as a current merge PASS.
+    if _compare_is_ancestor(
+        repository, token, ancestor=head_sha, descendant=default_revision, read=read
+    ):
+        return "NEEDS_RECONCILIATION"
+    if pr.get("mergeable") is False:
+        return "NEEDS_RECONCILIATION"
     if pr.get("mergeable") is not True:
-        return False
+        return "INDETERMINATE"
     comparison = _as_mapping(read(repository, token, f"compare/{head_sha}...{default_revision}"))
     merge_base = None if comparison is None else _as_mapping(comparison.get("merge_base_commit"))
     ancestor = None if merge_base is None else merge_base.get("sha")
@@ -505,18 +515,39 @@ def _disjoint_divergence_is_mergeable(
             read=read,
         )
     ):
-        return False
+        return "INDETERMINATE"
     main_paths = _changed_paths(
         repository, token, ancestor=cast(str, ancestor), descendant=default_revision, read=read
     )
     carrier_paths = _changed_paths(
         repository, token, ancestor=cast(str, ancestor), descendant=head_sha, read=read
     )
+    if main_paths is None or carrier_paths is None or not carrier_paths:
+        return "INDETERMINATE"
+    return "SAFE" if main_paths.isdisjoint(carrier_paths) else "NEEDS_RECONCILIATION"
+
+
+def _disjoint_divergence_is_mergeable(
+    repository: str,
+    token: str,
+    *,
+    pr: Mapping[str, object],
+    head_sha: str,
+    default_revision: str,
+    read: GitHubReader,
+) -> bool:
+    """Compatibility predicate; application qualification retains unknown evidence."""
+
     return (
-        main_paths is not None
-        and carrier_paths is not None
-        and bool(carrier_paths)
-        and main_paths.isdisjoint(carrier_paths)
+        _divergence_evidence(
+            repository,
+            token,
+            pr=pr,
+            head_sha=head_sha,
+            default_revision=default_revision,
+            read=read,
+        )
+        == "SAFE"
     )
 
 
@@ -1703,9 +1734,9 @@ def qualify_change_carrier(
         descendant=head_sha,
         read=reader,
     )
-    disjoint_mergeable = False
+    divergence_evidence: DivergenceEvidence = "NEEDS_RECONCILIATION"
     if not default_is_ancestor:
-        disjoint_mergeable = _disjoint_divergence_is_mergeable(
+        divergence_evidence = _divergence_evidence(
             repository,
             token,
             pr=pr,
@@ -1716,7 +1747,20 @@ def qualify_change_carrier(
 
     disposition: CarrierDisposition
     reason: str
-    if disjoint_mergeable:
+    if divergence_evidence == "INDETERMINATE":
+        return _indeterminate(
+            repository=repository,
+            source=source,
+            change=change,
+            pr_number=pr_number,
+            reason="carrier-current-integration-evidence-unavailable",
+            branch=branch,
+            head_sha=head_sha,
+            default_branch=default_branch,
+            default_revision=default_revision,
+            historical_pr_number=historical_pr_number,
+        )
+    if divergence_evidence == "SAFE":
         disposition = "QUALIFIED"
         reason = "carrier-qualified-after-disjoint-mergeable-default-advance"
     elif not base_is_current:

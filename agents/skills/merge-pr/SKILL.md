@@ -32,6 +32,15 @@ Executor and a new exact-head Reviewer gate. Use `BLOCKED` only for a bounded, a
 external prerequisite; unavailable evidence remains fail-closed and requires fresh observation.
 An already ACCEPTED merge intent is immutable: neither this instruction nor a later retry may
 replace its result, assume an aborted write, or replay a merge with unknown postconditions.
+If an ACCEPTED `MERGED` intent encounters a freshly proven, deterministic precondition rejection
+*before any merge or other effect is written*, the repository Application owns the separate
+`APPLICATION_RECOVERY` administrative handoff. It binds the original accepted-decision digest,
+failure-evidence digest, exact PR/head and existing model-derived lifecycle-violation successor;
+then it verifies the new routing and fresh dispatch. This does not publish a replacement
+`MERGE_RESULT`/`ACTION_RESULT` or execute Lead's correction in the same wake. An interrupted
+recovery resumes only this exact administrative handoff, never the original merge effect.
+Unknown/partial writes and unavailable Git evidence remain indeterminate, not recoverable
+merge permission.
 
 For merge-implementation-pr, require review-implementation PASS for exact head and implementation
 completion. For merge-archive-pr, additionally require review-archive PASS, archive preparation,

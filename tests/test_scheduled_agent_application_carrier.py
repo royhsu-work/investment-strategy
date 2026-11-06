@@ -1108,8 +1108,9 @@ def test_diverged_continuation_is_recognized_only_for_reconciliation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     decision = _qualify(monkeypatch, _fake_github(default_is_ancestor=False))
-    assert decision.disposition == "RECONCILIATION_REQUIRED"
-    assert decision.recognized
+    assert decision.disposition == "INDETERMINATE"
+    assert decision.reason == "carrier-current-integration-evidence-unavailable"
+    assert not decision.recognized
     assert not decision.qualified
 
 
@@ -1190,6 +1191,53 @@ def test_divergence_does_not_treat_truncated_or_unavailable_evidence_as_safe() -
         head_sha=HEAD,
         default_revision=MAIN,
         read=read,
+    )
+
+
+@pytest.mark.parametrize(
+    ("mergeable", "drop_compare", "expected"),
+    [
+        (None, None, "INDETERMINATE"),
+        (True, "merge-base", "INDETERMINATE"),
+        (True, "main-paths", "INDETERMINATE"),
+        (True, None, "RECONCILIATION_REQUIRED"),
+        (False, None, "RECONCILIATION_REQUIRED"),
+    ],
+)
+def test_diverged_carrier_final_classification_preserves_unknown_git_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    mergeable: bool | None,
+    drop_compare: str | None,
+    expected: str,
+) -> None:
+    current = _continuation_pr(branch=f"agent/{CHANGE}")
+    current["mergeable"] = mergeable
+    base = "a" * 40
+    fake = _fake_github(
+        current_pr=current,
+        historical_pr=None,
+        open_prs=[current],
+        default_is_ancestor=False,
+        pr_files=[{"filename": f"openspec/changes/{CHANGE}/proposal.md"}],
+    )
+
+    def read(repo: str, token: str, path: str, **kwargs: object) -> object | None:
+        if path == f"compare/{HEAD}...{MAIN}":
+            if drop_compare == "merge-base":
+                return None
+            return {"status": "diverged", "merge_base_commit": {"sha": base}}
+        if path == f"compare/{base}...{HEAD}":
+            return {"status": "ahead", "behind_by": 0, "files": [{"filename": "a.py"}]}
+        if path == f"compare/{base}...{MAIN}":
+            if drop_compare == "main-paths":
+                return {"status": "ahead", "behind_by": 0, "files": [{"filename": "x"}] * 300}
+            return {"status": "ahead", "behind_by": 0, "files": [{"filename": "a.py"}]}
+        return fake(repo, token, path, **kwargs)
+
+    decision = _qualify(monkeypatch, read)
+    assert decision.disposition == expected, decision.reason
+    assert decision.recovery_classification == (
+        "INDETERMINATE" if expected == "INDETERMINATE" else "RECOVERABLE"
     )
 
 
@@ -1362,10 +1410,10 @@ def test_stale_open_continuation_carrier_is_reconcilable_but_not_qualified(
         monkeypatch,
         _fake_github(current_pr=current, open_prs=[current], default_is_ancestor=False),
     )
-    assert decision.disposition == "RECONCILIATION_REQUIRED"
-    assert decision.recognized
+    assert decision.disposition == "INDETERMINATE"
+    assert not decision.recognized
     assert not decision.qualified
-    assert decision.reason == "carrier-pr-base-is-stale"
+    assert decision.reason == "carrier-current-integration-evidence-unavailable"
 
 
 def test_reconciled_continuation_branch_qualifies_even_if_pr_base_sha_is_old(
@@ -1501,7 +1549,7 @@ def test_historical_carrier_with_competing_active_change_fails_closed(
         ([{"filename": "src/investment_strategy/example.py"}], False),
     ],
 )
-def test_initial_carrier_does_not_trust_old_pr_base_without_current_merge_proof(
+def test_initial_carrier_does_not_treat_missing_git_proof_as_recoverable(
     monkeypatch: pytest.MonkeyPatch,
     default_advance_files: list[dict[str, object]],
     qualified: bool,
@@ -1527,8 +1575,8 @@ def test_initial_carrier_does_not_trust_old_pr_base_without_current_merge_proof(
         current_revision=new_default,
     )
     assert decision.qualified is qualified
-    assert decision.disposition == "RECONCILIATION_REQUIRED"
-    assert decision.reason == "initial-carrier-requires-default-reconciliation"
+    assert decision.disposition == "INDETERMINATE"
+    assert decision.reason == "carrier-current-integration-evidence-unavailable"
 
 
 def test_second_generation_openspec_continuation_uses_latest_merged_predecessor(
