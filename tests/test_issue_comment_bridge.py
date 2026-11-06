@@ -7,10 +7,14 @@ import sys
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, date, datetime
+from email.message import Message
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Literal, cast
+from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
+from urllib.request import Request
 
 import pytest
 
@@ -43,6 +47,28 @@ _RECOVERY_TEST_FIELDS = {
     "failure_evidence_sha256": "2" * 64,
     "recovery_episode_sha256": "3" * 64,
 }
+
+
+@pytest.mark.parametrize("status", [502, 503, 504])
+def test_dispatch_github_read_retries_transient_gateway_failure(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    attempts: list[str] = []
+    delays: list[float] = []
+
+    def urlopen(request: Request, *, timeout: int) -> BytesIO:
+        assert timeout == 30
+        assert request.get_method() == "GET"
+        attempts.append(request.full_url)
+        if len(attempts) <= 2:
+            raise HTTPError(request.full_url, status, "transient", Message(), None)
+        return BytesIO(b'{"number":322}')
+
+    monkeypatch.setattr(bridge, "urlopen", urlopen)
+    monkeypatch.setattr(bridge.time, "sleep", delays.append)
+    assert bridge._github_json("owner/repo", "test-token", "issues/322") == {"number": 322}
+    assert len(attempts) == 3
+    assert delays == [0.25, 0.5]
 
 
 def test_workflow_run_history_reads_beyond_filtered_thousand_without_weakening_identity() -> None:
@@ -3294,6 +3320,134 @@ def test_distinct_accepted_requests_never_alias_by_equal_payload() -> None:
     assert completion.reason == "application-completion-accepted-ambiguous"
 
 
+@pytest.mark.parametrize("alteration", ["copied", "duplicate", "missing-time"])
+def test_accepted_ordering_never_uses_untrusted_or_ambiguous_decision_time(
+    monkeypatch: pytest.MonkeyPatch, alteration: str
+) -> None:
+    """Only the unique Actions decision event can timestamp an ACCEPTED intent."""
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    old_request = _effect_request_comment(comment_id=654, created_at="2026-09-18T01:00:00Z")
+    # This ingress precedes the old ACCEPTED decision, despite a later ACCEPT
+    # decision for the competing request.
+    new_request = _effect_request_comment(comment_id=655, created_at="2026-09-18T01:15:00Z")
+    old_decision = {
+        **_application_decision_comment(old_request, comment_id=700),
+        "created_at": "2026-09-18T01:30:00Z",
+    }
+    new_decision = {
+        **_application_decision_comment(new_request, comment_id=701),
+        "created_at": "2026-09-18T01:31:00Z",
+    }
+    decisions = [old_decision, new_decision]
+    if alteration == "copied":
+        # A non-Actions actor re-posts the exact accepted record with an
+        # earlier timestamp. It must not overwrite the trusted 01:30 source.
+        decisions.append(
+            {
+                **old_decision,
+                "id": 702,
+                "created_at": "2026-09-18T01:10:00Z",
+                "user": {"login": "unrelated-user"},
+                "performed_via_github_app": None,
+            }
+        )
+    elif alteration == "duplicate":
+        decisions.append({**old_decision, "id": 702, "created_at": "2026-09-18T01:10:00Z"})
+    else:
+        decisions[0] = {**old_decision, "created_at": None}
+
+    # Neither an early ingress nor a copied/ambiguous timestamp can authorize
+    # pre-write retirement, even if a job could otherwise prove ABORTED.
+    observed_jobs: list[int] = []
+
+    def application_job(
+        _repository: str, _token: str, request_id: int, **_kwargs: object
+    ) -> bridge.ApplicationCompletion:
+        observed_jobs.append(request_id)
+        return bridge.ApplicationCompletion("ABORTED", "test-no-effect", request_id)
+
+    monkeypatch.setattr(bridge, "_application_job", application_job)
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [old_request, new_request]
+        if path.startswith("issues/138/comments?"):
+            return decisions
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return _preactivation_admission()
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+    assert completion.state == "AMBIGUOUS"
+    assert completion.reason == "application-completion-accepted-ambiguous"
+    assert observed_jobs == []
+
+
+def test_proven_prewrite_abort_yields_to_qualified_later_ingress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = bridge.WorkerRequest(138, "lead", "explore-change")
+    old_request = _effect_request_comment(comment_id=654, created_at="2026-09-18T01:00:00Z")
+    new_request = _effect_request_comment(comment_id=655, created_at="2026-09-18T01:10:00Z")
+    old_decision = {
+        **_application_decision_comment(old_request, comment_id=700),
+        "created_at": "2026-09-18T01:05:00Z",
+    }
+    new_decision = {
+        **_application_decision_comment(new_request, comment_id=701),
+        "created_at": "2026-09-18T01:20:00Z",
+    }
+    aborted_ids: list[int] = []
+    resumed_ids: list[int] = []
+
+    def application_job(
+        _repository: str, _token: str, request_id: int, **_kwargs: object
+    ) -> bridge.ApplicationCompletion:
+        aborted_ids.append(request_id)
+        return bridge.ApplicationCompletion("ABORTED", "proven-no-write", request_id)
+
+    def accepted_state(**kwargs: object) -> bridge.ApplicationCompletion:
+        record = kwargs["record"]
+        assert isinstance(record, bridge.ApplicationDecisionRecord)
+        resumed_ids.append(record.request_comment_id)
+        return bridge.ApplicationCompletion("RESUMABLE", "test-current", record.request_comment_id)
+
+    monkeypatch.setattr(bridge, "_application_job", application_job)
+    monkeypatch.setattr(bridge, "_accepted_application_state", accepted_state)
+
+    def fake_read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("issues/comments?"):
+            return [old_request, new_request]
+        if path.startswith("issues/138/comments?"):
+            return [old_decision, new_decision]
+        if path == "issues/138":
+            return _current_source_issue()
+        if path.startswith("issues/138/timeline?"):
+            return _preactivation_admission()
+        raise AssertionError(path)
+
+    completion = bridge.qualify_application_completion(
+        "owner/repo",
+        "token",
+        source=source,
+        current_revision=REVISION,
+        read=fake_read,
+        now=datetime(2026, 9, 18, 2, 0, tzinfo=UTC),
+    )
+    assert completion == bridge.ApplicationCompletion("RESUMABLE", "test-current", 655)
+    assert aborted_ids == [654]
+    assert resumed_ids == [655]
+
+
 def test_completed_formal_result_uses_fresh_revision_for_postconditions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5107,6 +5261,312 @@ def test_recovery_artifact_read_failure_is_not_legacy_missing_evidence(
     assert completion.state == "INVALID"
     assert completion.reason == "application-completion-recovery-evidence-unavailable"
     assert completion.job_id is None
+
+
+def _failed_prewrite_merge_fixture(
+    action: str = "merge-implementation-pr",
+) -> tuple[
+    bridge.ApplicationDecisionRecord,
+    dict[str, object],
+    dict[str, object],
+    bytes,
+]:
+    """Exact single-effect merge stopped in read-only carrier qualification."""
+
+    intent = {
+        "issue_number": 322,
+        "role": "executor",
+        "action": action,
+        "change": "restore-no-work-idle-discovery",
+        "result_kind": "merged",
+        "requested_effects": [
+            {
+                "kind": "github-mutation",
+                "payload_json": json.dumps(
+                    {
+                        "issue_number": 322,
+                        "operation": "pull-request-merge",
+                        "number": 418,
+                        "expected_head_sha": "3" * 40,
+                        "merge_method": "squash",
+                    }
+                ),
+            }
+        ],
+    }
+    record = replace(
+        _accepted_carrier_record(),
+        role="executor",
+        action=action,
+        result_kind="merged",
+        raw_worker_result=json.dumps(intent),
+    )
+    run = {
+        "id": 777,
+        "run_attempt": 1,
+        "display_title": "Scheduled Agent Application 90",
+        "head_sha": REVISION,
+        "status": "completed",
+        "conclusion": "failure",
+    }
+    job = {
+        "id": 888,
+        "name": "apply",
+        "status": "completed",
+        "conclusion": "failure",
+        "steps": [
+            {
+                "name": "Freshly authorize and apply repository-owned effects",
+                "conclusion": "failure",
+            },
+            {"name": "Upload exact application recovery evidence", "conclusion": "skipped"},
+            {
+                "name": "Upload pre-ACCEPT or interrupted application exception evidence",
+                "conclusion": "success",
+            },
+            {"name": "Persist exact external carrier plan", "conclusion": "skipped"},
+            {"name": "Upload exact external carrier plan", "conclusion": "skipped"},
+            {
+                "name": "Persist the derived successor after exact validation",
+                "conclusion": "skipped",
+            },
+        ],
+    }
+    document = {
+        "schema": "scheduled-agent-execution-exception/v1",
+        "repository": "royhsu-work/investment-strategy",
+        "issue_number": 322,
+        "role": "executor",
+        "action": action,
+        "change": "restore-no-work-idle-discovery",
+        "revision": REVISION,
+        "request_comment_id": 90,
+        "trigger_comment_id": 90,
+        "run_id": 777,
+        "run_attempt": 1,
+        "attempted_operation": "application-effect-and-postcondition",
+        "mutation_status": "UNKNOWN_REQUIRES_FRESH_RECONCILIATION",
+        "exception_type": "HTTPError",
+        "raw_error": "HTTP Error 504: Gateway Timeout",
+        "raw_traceback": (
+            "Traceback (most recent call last):\n"
+            "  in _carrier_plan_for_github_mutation\n"
+            "  in _source_pull_request\n"
+            "  in _github_json\n"
+        ),
+    }
+    return record, run, job, json.dumps(document).encode("utf-8")
+
+
+@pytest.mark.parametrize(
+    "alteration",
+    [
+        "none",
+        "digest",
+        "expired",
+        "duplicate-artifact",
+        "incomplete-artifact-list",
+        "missing-exception-upload",
+        "duplicate-step",
+        "later-successful-write-step",
+        "wrong-run-attempt",
+        "more-than-one-effect",
+        "changed-action",
+        "wrong-exception-action",
+        "wrong-traceback",
+        "wrong-status-code",
+        "wrong-source-repo",
+        "malformed-exception-json",
+        "merged-pr",
+        "missing-pr",
+    ],
+)
+@pytest.mark.parametrize("action", ["merge-implementation-pr", "merge-archive-pr"])
+def test_accepted_merge_prewrite_504_releases_only_proven_no_effect(
+    monkeypatch: pytest.MonkeyPatch, alteration: str, action: str
+) -> None:
+    record, run, job, raw_document = _failed_prewrite_merge_fixture(action)
+    artifacts = [
+        {
+            "id": 999,
+            "name": "application-execution-exception.json",
+            "expired": False,
+            "digest": f"sha256:{hashlib.sha256(raw_document).hexdigest()}",
+            "workflow_run": {"id": 777, "head_sha": REVISION},
+        }
+    ]
+    if alteration == "digest":
+        artifacts[0]["digest"] = "sha256:" + "0" * 64
+    if alteration == "expired":
+        artifacts[0]["expired"] = True
+    if alteration == "duplicate-artifact":
+        artifacts.append(dict(artifacts[0], id=1000))
+    if alteration == "missing-exception-upload":
+        cast(list[dict[str, str]], job["steps"])[2]["conclusion"] = "skipped"
+    if alteration == "duplicate-step":
+        cast(list[dict[str, str]], job["steps"]).append(
+            {"name": "Upload exact application recovery evidence", "conclusion": "skipped"}
+        )
+    if alteration == "later-successful-write-step":
+        cast(list[dict[str, str]], job["steps"])[3]["conclusion"] = "success"
+    if alteration == "wrong-run-attempt":
+        run["run_attempt"] = 2
+    if alteration == "more-than-one-effect":
+        intent = json.loads(record.raw_worker_result)
+        intent["requested_effects"].append(intent["requested_effects"][0])
+        record = replace(record, raw_worker_result=json.dumps(intent))
+    if alteration == "changed-action":
+        record = replace(record, action="implement-change")
+    if alteration in {
+        "wrong-exception-action",
+        "wrong-traceback",
+        "wrong-status-code",
+        "wrong-source-repo",
+    }:
+        document = json.loads(raw_document)
+        if alteration == "wrong-exception-action":
+            document["action"] = "review-implementation"
+        if alteration == "wrong-traceback":
+            document["raw_traceback"] = "in _github_json\nin _perform_merge_write"
+        if alteration == "wrong-status-code":
+            document["raw_error"] = "HTTP Error 422: Unprocessable Entity"
+        if alteration == "wrong-source-repo":
+            document["repository"] = "other/repo"
+        raw_document = json.dumps(document).encode("utf-8")
+        artifacts[0]["digest"] = f"sha256:{hashlib.sha256(raw_document).hexdigest()}"
+    if alteration == "malformed-exception-json":
+        raw_document = b"not JSON"
+
+    reads: list[str] = []
+
+    def read(repository: str, token: str, path: str) -> object:
+        assert repository == "royhsu-work/investment-strategy"
+        assert bool(token)
+        reads.append(path)
+        if path.startswith("actions/workflows/"):
+            return {"workflow_runs": [run]}
+        if path == "actions/runs/777/jobs":
+            return {"jobs": [job]}
+        if path == "actions/runs/777/artifacts?per_page=100":
+            return {
+                "total_count": len(artifacts) + (alteration == "incomplete-artifact-list"),
+                "artifacts": artifacts,
+            }
+        if path == "pulls/418":
+            if alteration == "missing-pr":
+                return None
+            return {
+                "number": 418,
+                "state": "closed" if alteration == "merged-pr" else "open",
+                "merged": alteration == "merged-pr",
+                "head": {"repo": {"full_name": repository}, "sha": "4" * 40},
+                "base": {"repo": {"full_name": repository}, "ref": "main"},
+            }
+        raise AssertionError(f"unexpected read: {path}")
+
+    monkeypatch.setattr(bridge, "read_github_artifact_bytes", lambda *_args: raw_document)
+    monkeypatch.setattr(
+        bridge,
+        "read_application_recovery_artifact",
+        lambda *_args, **_kwargs: None,
+    )
+    completion = bridge._application_job(
+        "royhsu-work/investment-strategy",
+        "test-token",
+        90,
+        read=read,
+        record=record,
+        accepted_decision_sha256="a" * 64,
+    )
+
+    if alteration == "none":
+        assert completion == bridge.ApplicationCompletion(
+            "ABORTED", "application-completion-prewrite-carrier-read-failed", 90
+        )
+        # Current PR HEAD deliberately differs from the historical accepted
+        # head: the next dispatch must freshly qualify it rather than replay.
+        assert "pulls/418" in reads
+    else:
+        assert completion.state == "INVALID"
+        assert completion.reason != "application-completion-prewrite-carrier-read-failed"
+
+
+def test_merge_prewrite_reconciliation_refuses_unavailable_github_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record, run, job, _raw_document = _failed_prewrite_merge_fixture()
+
+    def read(_repository: str, _token: str, path: str) -> object:
+        if path.startswith("actions/workflows/"):
+            return {"workflow_runs": [run]}
+        if path == "actions/runs/777/jobs":
+            return {"jobs": [job]}
+        if path == "actions/runs/777/artifacts?per_page=100":
+            raise RuntimeError("GitHub read unavailable")
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "read_application_recovery_artifact", lambda *_a, **_kw: None)
+    completion = bridge._application_job(
+        "royhsu-work/investment-strategy",
+        "test-token",
+        90,
+        read=read,
+        record=record,
+        accepted_decision_sha256="a" * 64,
+    )
+    assert completion.state == "INVALID"
+    assert completion.reason == "application-completion-exception-evidence-unavailable"
+
+
+@pytest.mark.parametrize(
+    ("new_ingress_time", "new_decision_time", "completion_state", "expected_retired"),
+    [
+        ("2026-11-06T03:00:01Z", "2026-11-06T03:00:02Z", "ABORTED", {90}),
+        ("2026-11-06T03:00:01Z", "2026-11-06T03:00:02Z", "INVALID", set()),
+        # A later decision does NOT turn an earlier ingress into a new request.
+        ("2026-11-06T02:59:59Z", "2026-11-06T03:00:01Z", "ABORTED", set()),
+        ("2026-11-06T03:00:00Z", "2026-11-06T03:00:01Z", "ABORTED", set()),
+        (None, "2026-11-06T03:00:01Z", "ABORTED", set()),
+        ("2026-11-06T03:00:01Z", None, "ABORTED", set()),
+    ],
+)
+def test_fresh_no_write_abort_retires_only_an_earlier_accepted_occurrence(
+    monkeypatch: pytest.MonkeyPatch,
+    new_ingress_time: str | None,
+    new_decision_time: str | None,
+    completion_state: str,
+    expected_retired: set[int],
+) -> None:
+    old, _, _, _ = _failed_prewrite_merge_fixture()
+    new = replace(old, request_comment_id=91)
+    observed_requests: list[int] = []
+
+    def application_job(
+        _repository: str, _token: str, request_id: int, **_kwargs: object
+    ) -> bridge.ApplicationCompletion:
+        observed_requests.append(request_id)
+        return bridge.ApplicationCompletion(
+            "ABORTED" if completion_state == "ABORTED" else "INVALID",
+            "test-only",
+            request_id,
+        )
+
+    monkeypatch.setattr(bridge, "_application_job", application_job)
+    monkeypatch.setattr(bridge, "_accepted_decision_sha256", lambda *_args: "a" * 64)
+    retired = bridge._proven_aborted_predecessors(
+        "royhsu-work/investment-strategy",
+        "test-token",
+        records=[old, new],
+        ingress_times={91: new_ingress_time},
+        decision_times={90: "2026-11-06T03:00:00Z", 91: new_decision_time},
+        issue_comments=(),
+        read=lambda *_args: pytest.fail("mock application job should own the reads"),
+    )
+    assert retired == expected_retired
+    expected_observed = (
+        [90] if new_ingress_time == "2026-11-06T03:00:01Z" and new_decision_time is not None else []
+    )
+    assert observed_requests == expected_observed
 
 
 @pytest.mark.parametrize("terminal", ["cancelled", "timed_out", "skipped"])

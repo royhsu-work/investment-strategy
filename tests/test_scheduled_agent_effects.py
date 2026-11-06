@@ -6,8 +6,12 @@ import hashlib
 import inspect
 import json
 from collections.abc import Callable, Mapping
+from email.message import Message
+from io import BytesIO
 from types import SimpleNamespace
 from typing import cast
+from urllib.error import HTTPError
+from urllib.request import Request
 
 import pytest
 
@@ -2535,6 +2539,69 @@ def test_empty_github_api_path_uses_repository_endpoint(
 
     assert effects._github_json("owner/repo", "token", "") == {"default_branch": "main"}
     assert urls == ["https://api.github.com/repos/owner/repo"]
+
+
+def test_transient_504_retries_only_idempotent_github_get(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts: list[str] = []
+    delays: list[float] = []
+
+    def urlopen(request: Request, *, timeout: int) -> BytesIO:
+        assert timeout == 30
+        assert request.get_method() == "GET"
+        attempts.append(request.full_url)
+        if len(attempts) < 3:
+            raise HTTPError(attempts[-1], 504, "Gateway Timeout", Message(), None)
+        return BytesIO(b'{"state":"open"}')
+
+    monkeypatch.setattr(effects, "urlopen", urlopen)
+    monkeypatch.setattr(effects.time, "sleep", delays.append)
+
+    assert effects._github_json("owner/repo", "token", "pulls/418") == {"state": "open"}
+    assert attempts == ["https://api.github.com/repos/owner/repo/pulls/418"] * 3
+    assert delays == [0.25, 0.5]
+
+
+@pytest.mark.parametrize("method", ["POST", "PATCH", "DELETE"])
+def test_github_write_http_504_is_never_retried(
+    monkeypatch: pytest.MonkeyPatch, method: str
+) -> None:
+    attempts: list[str] = []
+
+    def urlopen(request: Request, *, timeout: int) -> BytesIO:
+        assert timeout == 30
+        attempts.append(request.get_method())
+        raise HTTPError("github-api", 504, "Gateway Timeout", Message(), None)
+
+    monkeypatch.setattr(effects, "urlopen", urlopen)
+    monkeypatch.setattr(
+        effects.time, "sleep", lambda *_args: pytest.fail("mutation must not retry")
+    )
+
+    with pytest.raises(HTTPError, match="504"):
+        effects._github_json("owner/repo", "token", "issues/322", method=method)
+    assert attempts == [method]
+
+
+@pytest.mark.parametrize("status", [404, 403, 504])
+def test_github_get_http_failure_remains_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    calls = 0
+
+    def urlopen(_request: object, *, timeout: int) -> BytesIO:
+        nonlocal calls
+        assert timeout == 30
+        calls += 1
+        raise HTTPError("github-api", status, "service failure", Message(), None)
+
+    monkeypatch.setattr(effects, "urlopen", urlopen)
+    monkeypatch.setattr(effects.time, "sleep", lambda *_args: None)
+
+    with pytest.raises(HTTPError):
+        effects._github_json("owner/repo", "token", "issues/322/timeline")
+    assert calls == (3 if status == 504 else 1)
 
 
 def test_transition_validator_is_not_a_runtime_dependency() -> None:
