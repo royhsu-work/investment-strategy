@@ -20,6 +20,7 @@ import pytest
 
 from investment_strategy import issue_comment_bridge as bridge
 from investment_strategy import scheduled_agent_carrier as carrier
+from investment_strategy.scheduled_agent_application_bridge import render_application_request
 from investment_strategy.scheduled_agent_checkin import checkin_title
 from investment_strategy.scheduled_agent_idle_admission import (
     IdleCandidate,
@@ -5270,8 +5271,9 @@ def _failed_prewrite_merge_fixture(
     dict[str, object],
     dict[str, object],
     bytes,
+    dict[str, object],
 ]:
-    """Exact single-effect merge stopped in read-only carrier qualification."""
+    """Production-shaped ACCEPTED projection bound to its immutable request."""
 
     intent = {
         "issue_number": 322,
@@ -5279,6 +5281,8 @@ def _failed_prewrite_merge_fixture(
         "action": action,
         "change": "restore-no-work-idle-discovery",
         "result_kind": "merged",
+        "result_content": "exact reviewed PR merge, subject to application postconditions",
+        "evidence_ref": "https://github.com/royhsu-work/investment-strategy/pull/418",
         "requested_effects": [
             {
                 "kind": "github-mutation",
@@ -5294,12 +5298,34 @@ def _failed_prewrite_merge_fixture(
             }
         ],
     }
+    semantic_intent = dict(intent, _semantic_intent_version=2, requested_effects=[])
+    accepted_raw = json.dumps(semantic_intent, sort_keys=True, separators=(",", ":"))
+    original_request_body = render_application_request(
+        bridge.ApplicationRequest(
+            authorization_revision=REVISION,
+            raw_worker_result=json.dumps(intent),
+            dispatch_correlation=bridge.dispatch_correlation_for(
+                "royhsu-work/investment-strategy",
+                bridge.WorkerRequest(322, "executor", action),
+                REVISION,
+            ),
+        )
+    )
+    ingress_comment = {
+        "id": 90,
+        "body": original_request_body,
+        "user": {"login": "royhsu-work"},
+        "performed_via_github_app": {"slug": "chatgpt-codex-connector"},
+    }
     record = replace(
         _accepted_carrier_record(),
         role="executor",
         action=action,
         result_kind="merged",
-        raw_worker_result=json.dumps(intent),
+        raw_worker_result=accepted_raw,
+        worker_result_sha256=hashlib.sha256(accepted_raw.encode("utf-8")).hexdigest(),
+        request_body_sha256=hashlib.sha256(original_request_body.encode("utf-8")).hexdigest(),
+        authorization_revision=REVISION,
     )
     run = {
         "id": 777,
@@ -5330,6 +5356,7 @@ def _failed_prewrite_merge_fixture(
                 "name": "Persist the derived successor after exact validation",
                 "conclusion": "skipped",
             },
+            {"name": "Upload final exact application recovery evidence", "conclusion": "skipped"},
         ],
     }
     document = {
@@ -5355,13 +5382,26 @@ def _failed_prewrite_merge_fixture(
             "  in _github_json\n"
         ),
     }
-    return record, run, job, json.dumps(document).encode("utf-8")
+    return record, run, job, json.dumps(document).encode("utf-8"), ingress_comment
+
+
+def _terminal_carrier_issue(action: str) -> dict[str, object]:
+    return {
+        "number": 322,
+        "title": "Restore NO_WORK idle discovery",
+        "state": "open",
+        "created_at": "2026-09-22T15:39:54Z",
+        "closed_at": None,
+        "body": "Change: restore-no-work-idle-discovery",
+        "labels": [{"name": f"action:{action}"}, {"name": "human:approved"}],
+    }
 
 
 @pytest.mark.parametrize(
     "alteration",
     [
         "none",
+        "missing-exception-artifact",
         "digest",
         "expired",
         "duplicate-artifact",
@@ -5369,8 +5409,18 @@ def _failed_prewrite_merge_fixture(
         "missing-exception-upload",
         "duplicate-step",
         "later-successful-write-step",
+        "carrier-artifact-present",
+        "recovery-artifact-present",
+        "missing-final-upload-step",
+        "run-succeeded",
         "wrong-run-attempt",
         "more-than-one-effect",
+        "missing-request",
+        "untrusted-request",
+        "changed-request-body",
+        "wrong-dispatch-correlation",
+        "different-semantic-result",
+        "wrong-accepted-authorization",
         "changed-action",
         "wrong-exception-action",
         "wrong-traceback",
@@ -5378,14 +5428,21 @@ def _failed_prewrite_merge_fixture(
         "wrong-source-repo",
         "malformed-exception-json",
         "merged-pr",
+        "closed-unmerged-pr",
         "missing-pr",
+        "partial-formal-write",
+        "successor-routing-write",
+        "terminal-comment-read-failed",
+        "terminal-comment-list-truncated",
+        "terminal-issue-read-failed",
+        "terminal-issue-unavailable",
     ],
 )
 @pytest.mark.parametrize("action", ["merge-implementation-pr", "merge-archive-pr"])
-def test_accepted_merge_prewrite_504_releases_only_proven_no_effect(
+def test_terminal_merge_effect_reconciles_without_error_semantics(
     monkeypatch: pytest.MonkeyPatch, alteration: str, action: str
 ) -> None:
-    record, run, job, raw_document = _failed_prewrite_merge_fixture(action)
+    record, run, job, raw_document, ingress_comment = _failed_prewrite_merge_fixture(action)
     artifacts = [
         {
             "id": 999,
@@ -5397,12 +5454,23 @@ def test_accepted_merge_prewrite_504_releases_only_proven_no_effect(
     ]
     if alteration == "digest":
         artifacts[0]["digest"] = "sha256:" + "0" * 64
+    if alteration == "missing-exception-artifact":
+        artifacts.clear()
     if alteration == "expired":
         artifacts[0]["expired"] = True
     if alteration == "duplicate-artifact":
         artifacts.append(dict(artifacts[0], id=1000))
     if alteration == "missing-exception-upload":
         cast(list[dict[str, str]], job["steps"])[2]["conclusion"] = "skipped"
+    if alteration == "carrier-artifact-present":
+        artifacts.append({"id": 1001, "name": "carrier-plan.json"})
+    if alteration == "recovery-artifact-present":
+        artifacts.append({"id": 1002, "name": "application-recovery-evidence"})
+    if alteration == "missing-final-upload-step":
+        cast(list[dict[str, str]], job["steps"]).pop()
+    if alteration == "run-succeeded":
+        run["conclusion"] = "success"
+        job["conclusion"] = "success"
     if alteration == "duplicate-step":
         cast(list[dict[str, str]], job["steps"]).append(
             {"name": "Upload exact application recovery evidence", "conclusion": "skipped"}
@@ -5412,9 +5480,51 @@ def test_accepted_merge_prewrite_504_releases_only_proven_no_effect(
     if alteration == "wrong-run-attempt":
         run["run_attempt"] = 2
     if alteration == "more-than-one-effect":
-        intent = json.loads(record.raw_worker_result)
+        request = bridge.parse_application_request(cast(str, ingress_comment["body"]))
+        assert request is not None
+        intent = json.loads(request.raw_worker_result)
         intent["requested_effects"].append(intent["requested_effects"][0])
-        record = replace(record, raw_worker_result=json.dumps(intent))
+        ingress_comment["body"] = render_application_request(
+            replace(request, raw_worker_result=json.dumps(intent))
+        )
+        record = replace(
+            record,
+            request_body_sha256=hashlib.sha256(
+                cast(str, ingress_comment["body"]).encode("utf-8")
+            ).hexdigest(),
+        )
+    if alteration == "untrusted-request":
+        ingress_comment["performed_via_github_app"] = {"slug": "untrusted"}
+    if alteration == "changed-request-body":
+        ingress_comment["body"] = cast(str, ingress_comment["body"]) + "\n"
+    if alteration == "wrong-dispatch-correlation":
+        request = bridge.parse_application_request(cast(str, ingress_comment["body"]))
+        assert request is not None
+        ingress_comment["body"] = render_application_request(
+            replace(request, dispatch_correlation="0" * 64)
+        )
+        record = replace(
+            record,
+            request_body_sha256=hashlib.sha256(
+                cast(str, ingress_comment["body"]).encode("utf-8")
+            ).hexdigest(),
+        )
+    if alteration == "different-semantic-result":
+        request = bridge.parse_application_request(cast(str, ingress_comment["body"]))
+        assert request is not None
+        intent = json.loads(request.raw_worker_result)
+        intent["result_content"] = "different semantic outcome"
+        ingress_comment["body"] = render_application_request(
+            replace(request, raw_worker_result=json.dumps(intent))
+        )
+        record = replace(
+            record,
+            request_body_sha256=hashlib.sha256(
+                cast(str, ingress_comment["body"]).encode("utf-8")
+            ).hexdigest(),
+        )
+    if alteration == "wrong-accepted-authorization":
+        record = replace(record, authorization_revision="a" * 40)
     if alteration == "changed-action":
         record = replace(record, action="implement-change")
     if alteration in {
@@ -5438,6 +5548,24 @@ def test_accepted_merge_prewrite_504_releases_only_proven_no_effect(
         raw_document = b"not JSON"
 
     reads: list[str] = []
+    source_comments: tuple[Mapping[str, object], ...] = ()
+    current_issue = _terminal_carrier_issue(action)
+    if alteration == "partial-formal-write":
+        source_comments = (
+            {
+                "id": 101,
+                "body": (
+                    "ACTION_RESULT\n"
+                    "Application-Correlation: application:90:322:executor:"
+                    f"{action}:merged:{REVISION}\n"
+                ),
+            },
+        )
+    if alteration == "successor-routing-write":
+        current_issue["labels"] = [
+            {"name": "action:resolve-question"},
+            {"name": "human:approved"},
+        ]
 
     def read(repository: str, token: str, path: str) -> object:
         assert repository == "royhsu-work/investment-strategy"
@@ -5447,24 +5575,46 @@ def test_accepted_merge_prewrite_504_releases_only_proven_no_effect(
             return {"workflow_runs": [run]}
         if path == "actions/runs/777/jobs":
             return {"jobs": [job]}
+        if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
+            if alteration == "terminal-comment-read-failed":
+                raise OSError("terminal source history unavailable")
+            if alteration == "terminal-comment-list-truncated":
+                return {"incomplete": True}
+            return list(source_comments)
+        if path == "issues/322":
+            if alteration == "terminal-issue-read-failed":
+                raise OSError("terminal routing unavailable")
+            if alteration == "terminal-issue-unavailable":
+                return None
+            return current_issue
         if path == "actions/runs/777/artifacts?per_page=100":
             return {
                 "total_count": len(artifacts) + (alteration == "incomplete-artifact-list"),
                 "artifacts": artifacts,
             }
+        if path == "issues/comments/90":
+            return None if alteration == "missing-request" else ingress_comment
         if path == "pulls/418":
             if alteration == "missing-pr":
                 return None
             return {
                 "number": 418,
-                "state": "closed" if alteration == "merged-pr" else "open",
+                "state": (
+                    "closed" if alteration in {"merged-pr", "closed-unmerged-pr"} else "open"
+                ),
                 "merged": alteration == "merged-pr",
                 "head": {"repo": {"full_name": repository}, "sha": "4" * 40},
                 "base": {"repo": {"full_name": repository}, "ref": "main"},
             }
         raise AssertionError(f"unexpected read: {path}")
 
-    monkeypatch.setattr(bridge, "read_github_artifact_bytes", lambda *_args: raw_document)
+    # Diagnostic bytes are not a source of effect truth. A failed attempt to
+    # read this optional artifact must never change the outcome.
+    monkeypatch.setattr(
+        bridge,
+        "read_github_artifact_bytes",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("diagnostic read attempted")),
+    )
     monkeypatch.setattr(
         bridge,
         "read_application_recovery_artifact",
@@ -5479,28 +5629,153 @@ def test_accepted_merge_prewrite_504_releases_only_proven_no_effect(
         accepted_decision_sha256="a" * 64,
     )
 
-    if alteration == "none":
+    if alteration in {
+        "none",
+        "missing-exception-artifact",
+        "digest",
+        "expired",
+        "duplicate-artifact",
+        "missing-exception-upload",
+        "wrong-exception-action",
+        "wrong-traceback",
+        "wrong-status-code",
+        "wrong-source-repo",
+        "malformed-exception-json",
+    }:
         assert completion == bridge.ApplicationCompletion(
-            "ABORTED", "application-completion-prewrite-carrier-read-failed", 90
+            "ABORTED", "application-completion-terminal-effect-not-applied", 90
         )
         # Current PR HEAD deliberately differs from the historical accepted
         # head: the next dispatch must freshly qualify it rather than replay.
         assert "pulls/418" in reads
     else:
         assert completion.state == "INVALID"
-        assert completion.reason != "application-completion-prewrite-carrier-read-failed"
+        assert completion.reason != "application-completion-terminal-effect-not-applied"
+
+
+@pytest.mark.parametrize(
+    ("operation", "postcondition_absent", "expected_state"),
+    [
+        ("pull-request-create", True, "ABORTED"),
+        ("pull-request-create", False, "INVALID"),
+        ("pull-request-update", True, "INVALID"),
+        ("pull-request-update", False, "INVALID"),
+        ("pull-request-ready", True, "INVALID"),
+        ("pull-request-ready", False, "INVALID"),
+        ("issue-update", True, "INVALID"),
+    ],
+)
+def test_terminal_carrier_effect_reconciles_by_operation_postcondition(
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    postcondition_absent: bool,
+    expected_state: str,
+) -> None:
+    record, run, job, _raw_document, ingress_comment = _failed_prewrite_merge_fixture()
+    request = bridge.parse_application_request(cast(str, ingress_comment["body"]))
+    assert request is not None
+    intent = json.loads(request.raw_worker_result)
+    intent["action"] = "implement-change"
+    intent["result_kind"] = "ready"
+    payload = {
+        "issue_number": 322,
+        "operation": operation,
+        "number": 418,
+        "expected_head_sha": "3" * 40,
+    }
+    if operation == "pull-request-create":
+        payload = {
+            "issue_number": 322,
+            "operation": operation,
+            "title": "implementation",
+            "head": "agent/restore-no-work-idle-discovery",
+            "base": "main",
+        }
+    elif operation == "pull-request-update":
+        payload["fields"] = {"title": "reviewed implementation"}
+    elif operation == "issue-update":
+        payload = {"issue_number": 322, "operation": operation, "fields": {"title": "new"}}
+    intent["requested_effects"][0]["payload_json"] = json.dumps(payload)
+    ingress_comment["body"] = render_application_request(
+        replace(
+            request,
+            raw_worker_result=json.dumps(intent),
+            dispatch_correlation=bridge.dispatch_correlation_for(
+                "royhsu-work/investment-strategy",
+                bridge.WorkerRequest(322, "executor", "implement-change"),
+                REVISION,
+            ),
+        )
+    )
+    semantic = dict(intent, requested_effects=[], _semantic_intent_version=2)
+    accepted_raw = json.dumps(semantic)
+    record = replace(
+        record,
+        action="implement-change",
+        result_kind="ready",
+        raw_worker_result=accepted_raw,
+        worker_result_sha256=hashlib.sha256(accepted_raw.encode()).hexdigest(),
+        request_body_sha256=hashlib.sha256(cast(str, ingress_comment["body"]).encode()).hexdigest(),
+    )
+
+    def read(repository: str, _token: str, path: str) -> object:
+        assert repository == "royhsu-work/investment-strategy"
+        if path.startswith("actions/workflows/"):
+            return {"workflow_runs": [run]}
+        if path == "actions/runs/777/jobs":
+            return {"jobs": [job]}
+        if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
+            return []
+        if path == "issues/322":
+            return _terminal_carrier_issue("implement-change")
+        if path == "issues/comments/90":
+            return ingress_comment
+        if path == "actions/runs/777/artifacts?per_page=100":
+            return {"total_count": 0, "artifacts": []}
+        if path.startswith("pulls?state=all&head="):
+            return [] if postcondition_absent else [{"number": 418}]
+        if path == "pulls/418":
+            return {
+                "number": 418,
+                "state": "open",
+                "merged": False,
+                "draft": postcondition_absent,
+                "title": "old title" if postcondition_absent else "reviewed implementation",
+                "head": {"repo": {"full_name": repository}, "sha": "4" * 40},
+                "base": {"repo": {"full_name": repository}, "ref": "main"},
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "read_application_recovery_artifact", lambda *_a, **_kw: None)
+    completion = bridge._application_job(
+        "royhsu-work/investment-strategy",
+        "test-token",
+        90,
+        read=read,
+        record=record,
+        accepted_decision_sha256="a" * 64,
+    )
+    assert completion.state == expected_state
+    if expected_state == "ABORTED":
+        assert completion.reason == "application-completion-terminal-effect-not-applied"
 
 
 def test_merge_prewrite_reconciliation_refuses_unavailable_github_reads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    record, run, job, _raw_document = _failed_prewrite_merge_fixture()
+    record, run, job, _raw_document, ingress_comment = _failed_prewrite_merge_fixture()
 
     def read(_repository: str, _token: str, path: str) -> object:
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": [run]}
         if path == "actions/runs/777/jobs":
             return {"jobs": [job]}
+        if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
+            return []
+        if path == "issues/322":
+            return _terminal_carrier_issue("merge-implementation-pr")
+        if path == "issues/comments/90":
+            return ingress_comment
         if path == "actions/runs/777/artifacts?per_page=100":
             raise RuntimeError("GitHub read unavailable")
         raise AssertionError(path)
@@ -5515,7 +5790,223 @@ def test_merge_prewrite_reconciliation_refuses_unavailable_github_reads(
         accepted_decision_sha256="a" * 64,
     )
     assert completion.state == "INVALID"
-    assert completion.reason == "application-completion-exception-evidence-unavailable"
+    assert completion.reason == "application-completion-effect-evidence-unavailable"
+
+
+@pytest.mark.parametrize(
+    ("partial_formal", "successor_routing", "retired"),
+    [
+        (False, False, {90}),
+        (True, False, set()),
+        (False, True, set()),
+        (True, True, set()),
+    ],
+)
+def test_new_ingress_cannot_retire_an_accepted_partial_write(
+    monkeypatch: pytest.MonkeyPatch,
+    partial_formal: bool,
+    successor_routing: bool,
+    retired: set[int],
+) -> None:
+    """Exercise predecessor retirement through the actual terminal job owner."""
+
+    old, run, job, _diagnostic, ingress = _failed_prewrite_merge_fixture()
+    issue = _terminal_carrier_issue("merge-implementation-pr")
+    if successor_routing:
+        issue["labels"] = [
+            {"name": "action:resolve-question"},
+            {"name": "human:approved"},
+        ]
+    terminal_comments: tuple[Mapping[str, object], ...] = (
+        (
+            {
+                "id": 115,
+                "body": (
+                    "ACTION_RESULT\n"
+                    "Application-Correlation: application:90:322:executor:"
+                    "merge-implementation-pr:merged:shadow\n"
+                ),
+            },
+        )
+        if partial_formal
+        else ()
+    )
+
+    reads: list[str] = []
+
+    def read(repository: str, _token: str, path: str) -> object:
+        assert repository == "royhsu-work/investment-strategy"
+        reads.append(path)
+        if path.startswith("actions/workflows/"):
+            return {"workflow_runs": [run]}
+        if path == "actions/runs/777/jobs":
+            return {"jobs": [job]}
+        if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
+            assert "actions/runs/777/jobs" in reads
+            return list(terminal_comments)
+        if path == "issues/322":
+            assert "actions/runs/777/jobs" in reads
+            return issue
+        if path == "issues/comments/90":
+            return ingress
+        if path == "actions/runs/777/artifacts?per_page=100":
+            return {"total_count": 0, "artifacts": []}
+        if path == "pulls/418":
+            return {
+                "number": 418,
+                "state": "open",
+                "merged": False,
+                "head": {"repo": {"full_name": repository}, "sha": "4" * 40},
+                "base": {"repo": {"full_name": repository}, "ref": "main"},
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "_accepted_decision_sha256", lambda *_args: "a" * 64)
+    monkeypatch.setattr(bridge, "read_application_recovery_artifact", lambda *_a, **_kw: None)
+    assert (
+        bridge._proven_aborted_predecessors(
+            "royhsu-work/investment-strategy",
+            "test-token",
+            records=[old],
+            ingress_times={91: "2026-11-06T03:00:01Z"},
+            decision_times={90: "2026-11-06T03:00:00Z"},
+            # The caller's earlier snapshot can predate a formal result;
+            # the terminal writer's completed state must be followed by a
+            # new complete source-Issue observation.
+            issue_comments=(),
+            read=read,
+        )
+        == retired
+    )
+
+
+@pytest.mark.parametrize(
+    ("retargeted", "late_formal", "expected_retired"),
+    [
+        (False, False, {90}),
+        (True, False, set()),
+        (False, True, set()),
+        (True, True, set()),
+    ],
+)
+def test_create_retarget_and_post_terminal_formal_race_do_not_retire_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+    retargeted: bool,
+    late_formal: bool,
+    expected_retired: set[int],
+) -> None:
+    """A pre-terminal comment snapshot and mutable PR base cannot prove no write."""
+
+    record, run, job, _diagnostic, ingress = _failed_prewrite_merge_fixture()
+    request = bridge.parse_application_request(cast(str, ingress["body"]))
+    assert request is not None
+    intent = json.loads(request.raw_worker_result)
+    intent["action"] = "implement-change"
+    intent["result_kind"] = "ready"
+    intent["requested_effects"][0]["payload_json"] = json.dumps(
+        {
+            "issue_number": 322,
+            "operation": "pull-request-create",
+            "title": "implementation",
+            "head": "agent/restore-no-work-idle-discovery",
+            "base": "main",
+        }
+    )
+    ingress["body"] = render_application_request(
+        replace(
+            request,
+            raw_worker_result=json.dumps(intent),
+            dispatch_correlation=bridge.dispatch_correlation_for(
+                "royhsu-work/investment-strategy",
+                bridge.WorkerRequest(322, "executor", "implement-change"),
+                REVISION,
+            ),
+        )
+    )
+    semantic = dict(intent, requested_effects=[], _semantic_intent_version=2)
+    accepted_raw = json.dumps(semantic)
+    record = replace(
+        record,
+        action="implement-change",
+        result_kind="ready",
+        raw_worker_result=accepted_raw,
+        worker_result_sha256=hashlib.sha256(accepted_raw.encode()).hexdigest(),
+        request_body_sha256=hashlib.sha256(cast(str, ingress["body"]).encode()).hexdigest(),
+    )
+
+    # The source comments seen by the outer completion classifier were empty
+    # *before* the terminal job was observed. A formal comment can appear
+    # between these reads; only the post-terminal source read can exclude it.
+    terminal_comments = (
+        [
+            {
+                "id": 115,
+                "body": (
+                    "ACTION_RESULT\n"
+                    "Application-Correlation: application:90:322:"
+                    "restore-no-work-idle-discovery:executor:implement-change:ready:shadow\n"
+                ),
+            }
+        ]
+        if late_formal
+        else []
+    )
+    reads: list[str] = []
+
+    def read(repository: str, _token: str, path: str) -> object:
+        assert repository == "royhsu-work/investment-strategy"
+        reads.append(path)
+        if path.startswith("actions/workflows/"):
+            return {"workflow_runs": [run]}
+        if path == "actions/runs/777/jobs":
+            return {"jobs": [job]}
+        if path == "issues/322/comments?sort=created&direction=asc&per_page=100&page=1":
+            assert "actions/runs/777/jobs" in reads
+            return terminal_comments
+        if path == "issues/322":
+            assert "actions/runs/777/jobs" in reads
+            return _terminal_carrier_issue("implement-change")
+        if path == "issues/comments/90":
+            return ingress
+        if path == "actions/runs/777/artifacts?per_page=100":
+            return {"total_count": 0, "artifacts": []}
+        if path.startswith("pulls?state=all&head="):
+            assert "&base=" not in path
+            assert "actions/runs/777/jobs" in reads
+            return (
+                [
+                    {
+                        "number": 418,
+                        "state": "open",
+                        "head": {
+                            "ref": "agent/restore-no-work-idle-discovery",
+                            "repo": {"full_name": repository},
+                            "sha": "3" * 40,
+                        },
+                        # Same PR was successfully created but later retargeted.
+                        "base": {"ref": "maintenance"},
+                    }
+                ]
+                if retargeted
+                else []
+            )
+        raise AssertionError(path)
+
+    monkeypatch.setattr(bridge, "_accepted_decision_sha256", lambda *_a: "a" * 64)
+    monkeypatch.setattr(bridge, "read_application_recovery_artifact", lambda *_a, **_k: None)
+    assert (
+        bridge._proven_aborted_predecessors(
+            "royhsu-work/investment-strategy",
+            "test-token",
+            records=[record],
+            ingress_times={91: "2026-11-06T03:00:01Z"},
+            decision_times={90: "2026-11-06T03:00:00Z"},
+            issue_comments=(),  # stale pre-terminal snapshot
+            read=read,
+        )
+        == expected_retired
+    )
+    assert "issues/322/comments?sort=created&direction=asc&per_page=100&page=1" in reads
 
 
 @pytest.mark.parametrize(
@@ -5537,7 +6028,7 @@ def test_fresh_no_write_abort_retires_only_an_earlier_accepted_occurrence(
     completion_state: str,
     expected_retired: set[int],
 ) -> None:
-    old, _, _, _ = _failed_prewrite_merge_fixture()
+    old, _, _, _, _ = _failed_prewrite_merge_fixture()
     new = replace(old, request_comment_id=91)
     observed_requests: list[int] = []
 

@@ -34,6 +34,7 @@ from investment_strategy.scheduled_agent_application_bridge import (
     ApplicationRequest,
     _application_owned_worker_result,
     _materialization_effects,
+    _worker_semantic_projection,
     application_continuation_correlation,
     dispatch_correlation_for,
     parse_application_continuation_request,
@@ -2438,7 +2439,7 @@ def _prior_dispatch_handoff_reason(
     return None
 
 
-def _qualified_unapplied_merge_exception(
+def _qualified_unapplied_terminal_carrier_effect(
     repository: str,
     token: str,
     *,
@@ -2449,24 +2450,28 @@ def _qualified_unapplied_merge_exception(
     run_attempt: int,
     read: GitHubReader,
 ) -> bool:
-    """Prove that an accepted merge stopped at a read-only carrier-plan boundary.
+    """Reconcile a terminal Application against immutable effects, not errors.
 
-    Only the immutable, single-effect merge request qualifies. The exception
-    artifact proves the failed Python call stack; a fresh PR observation proves
-    that no merge effect occurred. Neither a generic 5xx nor an UNKNOWN
-    mutation marker alone authorizes another Action.
+    Carrier-only PR mutations are *never* written by the Application job.  A
+    complete, current-attempt artifact inventory and skipped carrier/successor
+    steps prove that this invocation handed no writer an executable plan.
+    ABORTED additionally needs a *monotonic* negative postcondition: an
+    already-created PR cannot disappear and a merged PR cannot reopen. For
+    mutable update/ready effects the current mismatch does not prove an
+    earlier idempotent success never reached the formal/derived writers;
+    these cases remain UNKNOWN. HTTP status, exception content and traceback
+    are deliberately irrelevant.
     """
 
     steps = job.get("steps")
     if (
         record.disposition != "ACCEPTED"
-        or record.action not in {"merge-implementation-pr", "merge-archive-pr"}
         or record.role != "executor"
         or run_attempt != 1
         or run.get("status") != "completed"
-        or run.get("conclusion") != "failure"
+        or run.get("conclusion") not in {"failure", "cancelled", "timed_out"}
         or job.get("status") != "completed"
-        or job.get("conclusion") != "failure"
+        or job.get("conclusion") not in {"failure", "cancelled", "timed_out"}
         or not isinstance(steps, list)
     ):
         return False
@@ -2480,52 +2485,111 @@ def _qualified_unapplied_merge_exception(
             return False
         conclusions[name] = conclusion
     if (
-        conclusions.get("Freshly authorize and apply repository-owned effects") != "failure"
+        conclusions.get("Freshly authorize and apply repository-owned effects")
+        not in {"failure", "cancelled", "timed_out"}
         or conclusions.get("Upload exact application recovery evidence") != "skipped"
-        or conclusions.get("Upload pre-ACCEPT or interrupted application exception evidence")
-        != "success"
         or any(
-            conclusions.get(name) not in {"skipped", None}
+            conclusions.get(name) != "skipped"
             for name in (
                 "Persist exact external carrier plan",
                 "Upload exact external carrier plan",
                 "Persist the derived successor after exact validation",
                 "Upload final exact application recovery evidence",
-                "Upload post-validation application exception evidence",
             )
         )
     ):
         return False
 
+    # The failed *first* apply step can itself write ACTION_RESULT and derived
+    # routing after an idempotently satisfied PR effect. Re-read *after* the
+    # terminal run/job and skipped-writer proof: a comment tuple captured by
+    # the outer completion classifier before the writer terminated is stale
+    # evidence for absence. Both reads must succeed and be authoritative.
+    terminal_comments = _paged_list(
+        repository,
+        token,
+        f"issues/{record.issue_number}/comments?sort=created&direction=asc",
+        read=read,
+    )
+    terminal_issue = read(repository, token, f"issues/{record.issue_number}")
+    observation = (
+        normalize_github_issue(terminal_issue) if isinstance(terminal_issue, Mapping) else None
+    )
+    if (
+        observation is None
+        or not observation.authoritative
+        or observation.issue_number != record.issue_number
+        or observation.state != "open"
+        or observation.routing != (record.role, record.action)
+        or observation.change not in {record.change, "unset"}
+    ):
+        return False
+    correlation_prefix = (
+        f"Application-Correlation: application:{record.request_comment_id}:{record.issue_number}:"
+    )
+    if any(
+        not isinstance(comment.get("body"), str) or correlation_prefix in cast(str, comment["body"])
+        for comment in terminal_comments
+    ):
+        return False
+
+    # ACCEPTED retains a semantic projection, not the mechanical effects.
+    # Recover the exact requested effect from its immutable, trusted source,
+    # and bind both versions to the same authorized semantic intent.
+    original_comment = read(repository, token, f"issues/comments/{record.request_comment_id}")
+    if not isinstance(original_comment, Mapping):
+        return False
+    original_body = original_comment.get("body")
+    if (
+        original_comment.get("id") != record.request_comment_id
+        or not _trusted_connector_comment(original_comment, repository.split("/", 1)[0])
+        or not isinstance(original_body, str)
+        or hashlib.sha256(original_body.encode("utf-8")).hexdigest() != record.request_body_sha256
+    ):
+        return False
     try:
-        intent = json.loads(record.raw_worker_result)
-    except (ValueError, TypeError):
+        original = parse_application_request(original_body)
+        source = WorkerRequest(record.issue_number, record.role, record.action)
+        original_worker = (
+            None
+            if original is None
+            else parse_worker_result(
+                original.raw_worker_result, source, authorized_change=record.change
+            )
+        )
+        accepted_worker = parse_worker_result(
+            record.raw_worker_result, source, authorized_change=record.change
+        )
+        if (
+            original is None
+            or original_worker is None
+            or original.authorization_revision != record.authorization_revision
+            or original.dispatch_correlation
+            != dispatch_correlation_for(repository, source, original.authorization_revision)
+            or original_worker.typed_result.result.kind.value != record.result_kind
+            or accepted_worker.typed_result.result.kind.value != record.result_kind
+            or _worker_semantic_projection(original.raw_worker_result)
+            != _worker_semantic_projection(record.raw_worker_result)
+        ):
+            return False
+    except (ValueError, TypeError, RuntimeError, json.JSONDecodeError):
         return False
-    if not isinstance(intent, Mapping) or intent.get("result_kind") != "merged":
+    if len(original_worker.requested_effects) != 1:
         return False
-    effects = intent.get("requested_effects")
-    if not isinstance(effects, list) or len(effects) != 1:
-        return False
-    effect = effects[0]
-    if not isinstance(effect, Mapping) or effect.get("kind") != "github-mutation":
-        return False
-    payload_json = effect.get("payload_json")
-    if not isinstance(payload_json, str):
+    effect = original_worker.requested_effects[0]
+    if effect.kind != "github-mutation":
         return False
     try:
-        payload = json.loads(payload_json)
+        payload = json.loads(effect.payload_json)
     except ValueError:
         return False
     if not isinstance(payload, Mapping):
         return False
-    number = _positive_int(payload.get("number"))
-    expected_head = payload.get("expected_head_sha")
+    operation = payload.get("operation")
     if (
-        payload.get("operation") != "pull-request-merge"
+        operation not in {"pull-request-create", "pull-request-merge"}
         or payload.get("issue_number") != record.issue_number
-        or number is None
-        or not isinstance(expected_head, str)
-        or _SHA.fullmatch(expected_head) is None
+        or (operation == "pull-request-merge" and record.result_kind != "merged")
     ):
         return False
 
@@ -2540,77 +2604,51 @@ def _qualified_unapplied_merge_exception(
         or total_count != len(artifacts)
     ):
         return False
-    matching = [
-        item
-        for item in artifacts
-        if isinstance(item, Mapping)
-        and item.get("name")
-        in {"application-execution-exception", "application-execution-exception.json"}
-    ]
-    if len(matching) != 1:
-        return False
-    artifact = matching[0]
-    artifact_id = _positive_int(artifact.get("id"))
-    digest = artifact.get("digest")
-    artifact_run = artifact.get("workflow_run")
-    if (
-        artifact_id is None
-        or artifact.get("expired") is not False
-        or not isinstance(digest, str)
-        or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
-        or not isinstance(artifact_run, Mapping)
-        or artifact_run.get("id") != run_id
-        or artifact_run.get("head_sha") != run.get("head_sha")
+    if not all(
+        isinstance(artifact, Mapping)
+        and _positive_int(artifact.get("id")) is not None
+        and isinstance(artifact.get("name"), str)
+        for artifact in artifacts
     ):
         return False
-    raw = read_github_artifact_bytes(repository, token, f"actions/artifacts/{artifact_id}/zip")
-    if not raw or len(raw) > 65_536 or f"sha256:{hashlib.sha256(raw).hexdigest()}" != digest:
-        return False
-    try:
-        document = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
-        return False
-    if not isinstance(document, Mapping):
-        return False
-    traceback_text = document.get("raw_traceback")
-    if (
-        document.get("schema") != "scheduled-agent-execution-exception/v1"
-        or document.get("repository") != repository
-        or document.get("issue_number") != record.issue_number
-        or document.get("role") != record.role
-        or document.get("action") != record.action
-        or document.get("change") != record.change
-        or document.get("request_comment_id") != record.request_comment_id
-        or document.get("run_id") != run_id
-        or document.get("run_attempt") != run_attempt
-        or document.get("revision") != run.get("head_sha")
-        or document.get("attempted_operation") != "application-effect-and-postcondition"
-        or document.get("mutation_status") != "UNKNOWN_REQUIRES_FRESH_RECONCILIATION"
-        or document.get("exception_type") != "HTTPError"
-        or not isinstance(document.get("raw_error"), str)
-        or not any(
-            f"HTTP Error {status}:" in cast(str, document["raw_error"])
-            for status in (502, 503, 504)
-        )
-        or not isinstance(traceback_text, str)
-        or not all(
-            f"in {frame}" in traceback_text
-            for frame in (
-                "_carrier_plan_for_github_mutation",
-                "_source_pull_request",
-                "_github_json",
-            )
-        )
-        or run.get("display_title")
-        != f"Scheduled Agent Application {document.get('trigger_comment_id')}"
+    if any(
+        artifact["name"] in {"carrier-plan.json", "application-recovery-evidence"}
+        for artifact in artifacts
     ):
         return False
 
-    # The effect list contains only the PR merge, whose actual writer is a
-    # separate, not-yet-created carrier. The failed call stack is within its
-    # read-only plan qualification. The PR must still be open and unmerged;
-    # the head is re-qualified by the *next* fresh semantic Action, so moving
-    # main during maintenance does not replay the stale accepted head.
+    # Only immutable creation/merge consequences have a monotonic negative
+    # witness. A mutable PR field/draft state can change *after* the first
+    # apply step has already persisted a formal result. Neither the missing
+    # carrier plan nor a now-different field proves no prior partial write.
+    # Nothing is replayed: a new dispatch must requalify the full source.
+    if operation == "pull-request-create":
+        branch = payload.get("head")
+        base_ref = payload.get("base")
+        if (
+            not isinstance(branch, str)
+            or not branch
+            or not isinstance(base_ref, str)
+            or not base_ref
+        ):
+            return False
+        owner = repository.split("/", 1)[0]
+        query = f"pulls?state=all&head={quote(f'{owner}:{branch}', safe='')}&per_page=100"
+        candidates = read(repository, token, query)
+        # PR base is mutable: a successful creation can later be retargeted.
+        # Search every PR on this head, regardless of current base, matching
+        # the real PR-create writer's identity boundary. A full first page
+        # is not proven complete and never supplies a negative witness.
+        return isinstance(candidates, list) and len(candidates) == 0
+
+    number = _positive_int(payload.get("number"))
+    expected_head = payload.get("expected_head_sha")
+    if (
+        number is None
+        or not isinstance(expected_head, str)
+        or _SHA.fullmatch(expected_head) is None
+    ):
+        return False
     pr = read(repository, token, f"pulls/{number}")
     if not isinstance(pr, Mapping):
         return False
@@ -2620,7 +2658,7 @@ def _qualified_unapplied_merge_exception(
         return False
     head_repo = head.get("repo")
     base_repo = base.get("repo")
-    return (
+    identity_matches = (
         pr.get("number") == number
         and pr.get("state") == "open"
         and pr.get("merged") is False
@@ -2628,8 +2666,12 @@ def _qualified_unapplied_merge_exception(
         and head_repo.get("full_name") == repository
         and isinstance(base_repo, Mapping)
         and base_repo.get("full_name") == repository
-        and base.get("ref") == "main"
+        and isinstance(base.get("ref"), str)
     )
+    if not identity_matches:
+        return False
+    # This final observation is monotonic; historical merges cannot hide.
+    return identity_matches
 
 
 def _application_job(
@@ -2708,14 +2750,13 @@ def _application_job(
             request_comment_id=request_comment_id,
         )
 
-    # A failed, accepted merge application may have stopped while *reading*
-    # the proposed carrier plan, before any repository effect was written.
-    # The already-defined ABORTED disposition releases only that proven
-    # no-effect invocation for a new, freshly selected Action. It never
-    # replays the old EFFECT_REQUEST or represents an ambiguous write as safe.
+    # Reconcile the final durable Effect for a terminal no-carrier run before
+    # considering optional recovery/diagnostic artifacts. Error text is not a
+    # completion predicate: only immutable intent, exhausted writer paths and
+    # a monotonic negative postcondition can prove ABORTED.
     if record is not None and accepted_decision_sha256 is not None:
         try:
-            if _qualified_unapplied_merge_exception(
+            if _qualified_unapplied_terminal_carrier_effect(
                 repository,
                 token,
                 record=record,
@@ -2727,13 +2768,13 @@ def _application_job(
             ):
                 return ApplicationCompletion(
                     "ABORTED",
-                    "application-completion-prewrite-carrier-read-failed",
+                    "application-completion-terminal-effect-not-applied",
                     request_comment_id=request_comment_id,
                 )
         except (HTTPError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
             return ApplicationCompletion(
                 "INVALID",
-                "application-completion-exception-evidence-unavailable",
+                "application-completion-effect-evidence-unavailable",
                 request_comment_id=request_comment_id,
             )
 
